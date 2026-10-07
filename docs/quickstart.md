@@ -34,6 +34,9 @@ editor. It does not need the Desktop app or a separate frontend checkout.
 The first run downloads dependencies and can take several minutes. NVIDIA
 machines need a driver compatible with the pinned CUDA 13.0 Torch runtime.
 macOS uses the native Torch wheel with MPS; machines without NVIDIA use CPU.
+An empty `CUDA_VISIBLE_DEVICES` (or `-1`) forces CPU. If NVIDIA detection fails
+or the installed driver cannot use CUDA Torch, the launcher reports the reason
+and uses CPU Torch instead of blocking the editor.
 
 The scripts create the local library and managed-pack roots under `~/.dinkster`
 (`%USERPROFILE%\.dinkster` on Windows). Set `DINKSTER_HOME` before launch to

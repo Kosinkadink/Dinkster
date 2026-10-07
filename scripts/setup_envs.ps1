@@ -153,7 +153,9 @@ try {
 
     $NvidiaSmi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
     $HasNvidiaGpu = $false
-    if ($NvidiaSmi) {
+    $CudaMask = [Environment]::GetEnvironmentVariable("CUDA_VISIBLE_DEVICES", "Process")
+    $CudaEnabled = $null -eq $CudaMask -or ($CudaMask -ne "" -and $CudaMask -ne "-1")
+    if ($NvidiaSmi -and $CudaEnabled) {
         & $NvidiaSmi.Source -L *> $null
         $HasNvidiaGpu = $LASTEXITCODE -eq 0
     }
@@ -188,7 +190,7 @@ try {
         )
     }
     else {
-        Write-Host "==> no NVIDIA GPU detected - skipping .venv-gpu"
+        Write-Host "==> no enabled NVIDIA GPU detected - skipping .venv-gpu"
     }
 
     Write-Host "==> done. Gates:"

@@ -20,6 +20,7 @@ def checkout(tmp_path: Path, monkeypatch):
         launcher.shutil, "which", lambda name: None if name == "nvidia-smi" else name
     )
     monkeypatch.setenv("DINKSTER_EXECUTION_PYTHON", "wrong-inherited-python")
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
     (tmp_path / "scripts").mkdir()
     (tmp_path / "scripts/release_sources.json").write_text(json.dumps({"commit": "1" * 40}))
     frontend = tmp_path / ".run/frontend"
@@ -96,6 +97,38 @@ def test_nvidia_selects_cuda_environment(checkout, monkeypatch):
     monkeypatch.setattr(launcher.shutil, "which", lambda name: name)
     assert launcher.main() == 0
     assert launcher.os.environ["DINKSTER_EXECUTION_PYTHON"] == str(python)
+
+
+@pytest.mark.parametrize("cuda_mask", ["", "-1"])
+def test_cuda_mask_selects_cpu_even_with_nvidia_smi(checkout, monkeypatch, capsys, cuda_mask):
+    root, _ = checkout
+    monkeypatch.setattr(launcher.shutil, "which", lambda name: name)
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", cuda_mask)
+    assert launcher.main() == 0
+    assert launcher.os.environ["DINKSTER_EXECUTION_PYTHON"] == str(root / ".venv-torch/bin/python")
+    assert "CUDA_VISIBLE_DEVICES disables CUDA" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("driver_failure", ["nvidia-smi", "torch"])
+def test_unavailable_cuda_falls_back_to_cpu(checkout, monkeypatch, capsys, driver_failure):
+    root, _ = checkout
+    gpu_python = root / ".venv-gpu/bin/python"
+    gpu_python.parent.mkdir(parents=True)
+    gpu_python.touch()
+    monkeypatch.setattr(launcher.shutil, "which", lambda name: name)
+    original_output = launcher.output
+
+    def output(*args, **kwargs):
+        if args == ("nvidia-smi", "-L") and driver_failure == "nvidia-smi":
+            raise subprocess.CalledProcessError(1, args)
+        if args[0] == str(gpu_python) and driver_failure == "torch":
+            return "False"
+        return original_output(*args, **kwargs)
+
+    monkeypatch.setattr(launcher, "output", output)
+    assert launcher.main() == 0
+    assert launcher.os.environ["DINKSTER_EXECUTION_PYTHON"] == str(root / ".venv-torch/bin/python")
+    assert "Using CPU Torch: NVIDIA GPU driver" in capsys.readouterr().out
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX shell wrapper")

@@ -37,12 +37,19 @@ def main() -> int:
     if int(output("node", "--version").lstrip("v").split(".")[0]) < 22:
         raise RuntimeError("Node.js 22 or newer is required: https://nodejs.org/")
 
-    has_nvidia = platform.system() != "Darwin" and bool(shutil.which("nvidia-smi"))
+    cuda_mask = os.environ.get("CUDA_VISIBLE_DEVICES")
+    cuda_disabled = cuda_mask is not None and cuda_mask.strip() in ("", "-1")
+    has_nvidia = (
+        not cuda_disabled and platform.system() != "Darwin" and bool(shutil.which("nvidia-smi"))
+    )
+    if cuda_disabled:
+        print("Using CPU Torch: CUDA_VISIBLE_DEVICES disables CUDA devices.", flush=True)
     if has_nvidia:
         try:
             output("nvidia-smi", "-L")
         except subprocess.CalledProcessError:
-            raise RuntimeError("NVIDIA GPU driver is unavailable; repair nvidia-smi") from None
+            print("Using CPU Torch: NVIDIA GPU driver is unavailable.", flush=True)
+            has_nvidia = False
 
     npm = shutil.which("npm")
     assert npm is not None
@@ -80,13 +87,19 @@ def main() -> int:
         relative_python = "bin/python"
     execution = ROOT / ".venv-torch" / relative_python
     if has_nvidia:
-        execution = ROOT / ".venv-gpu" / relative_python
-        if not execution.is_file():
-            raise RuntimeError(
-                "NVIDIA GPU driver is unavailable; repair nvidia-smi before rerunning"
+        gpu_python = ROOT / ".venv-gpu" / relative_python
+        if (
+            gpu_python.is_file()
+            and output(str(gpu_python), "-c", "import torch; print(torch.cuda.is_available())")
+            == "True"
+        ):
+            execution = gpu_python
+        else:
+            print(
+                "Using CPU Torch: NVIDIA GPU driver cannot run pinned CUDA Torch; "
+                "update the driver to enable GPU execution.",
+                flush=True,
             )
-        if output(str(execution), "-c", "import torch; print(torch.cuda.is_available())") != "True":
-            raise RuntimeError("NVIDIA GPU driver cannot run pinned CUDA Torch; update the driver")
     os.environ["DINKSTER_EXECUTION_PYTHON"] = str(execution)
     python = str(ROOT / ".venv" / relative_python)
     run(python, "-m", "dinkster.cli", "setup")
