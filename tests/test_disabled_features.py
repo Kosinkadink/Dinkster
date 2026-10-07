@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -69,10 +70,11 @@ assert load_p2p_plugin() is None
 
 
 def test_cli_entry_points_do_not_import_optional_runtime() -> None:
-    root = Path(__file__).parents[1]
     for entry in ("dinkster-seed", "dinkster-p2p-diagnostics"):
+        command = shutil.which(entry, path=str(Path(sys.executable).parent))
+        assert command is not None
         result = subprocess.run(
-            [str(root / ".venv" / "bin" / entry)], capture_output=True, text=True, check=False
+            [command], capture_output=True, text=True, check=False
         )
         assert result.returncode != 0
         assert result.stderr.strip() == "P2P is disabled"
