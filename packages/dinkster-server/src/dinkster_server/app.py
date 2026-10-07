@@ -4571,12 +4571,13 @@ def create_app(
     app.router.add_get("/api/packs/{pack_id}/settings", handle_pack_settings_get)
     app.router.add_put("/api/packs/{pack_id}/settings", handle_pack_settings_put)
     app.router.add_get("/api/packs/{pack_id}/blueprints/{blueprint_id}", handle_pack_blueprint)
-    app.router.add_get("/api/templates", handle_templates_list)
-    app.router.add_get("/api/packs/{pack_id}/templates/{template_id}", handle_pack_template)
-    app.router.add_get(
-        "/api/packs/{pack_id}/templates/{template_id}/thumbnail",
-        handle_pack_template_thumbnail,
-    )
+    if state.settings.features["templates"]["enabled"]:
+        app.router.add_get("/api/templates", handle_templates_list)
+        app.router.add_get("/api/packs/{pack_id}/templates/{template_id}", handle_pack_template)
+        app.router.add_get(
+            "/api/packs/{pack_id}/templates/{template_id}/thumbnail",
+            handle_pack_template_thumbnail,
+        )
     app.router.add_get("/api/docs", handle_docs_list)
     app.router.add_get("/api/packs/{pack_id}/docs/pages/{digest}", handle_pack_doc_page)
     app.router.add_get("/api/packs/{pack_id}/docs/assets/{digest}", handle_pack_doc_asset)

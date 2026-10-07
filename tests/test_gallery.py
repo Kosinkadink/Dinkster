@@ -294,6 +294,8 @@ def test_gallery_choice_and_template_endpoints() -> None:
     pack, and the body endpoint serves the exact declared bytes."""
 
     async def scenario() -> None:
+        from test_settings import settings
+
         composition = await compose_serving([DEV_PACK_MANIFEST])
         client = None
         try:
@@ -304,6 +306,7 @@ def test_gallery_choice_and_template_endpoints() -> None:
                 node_packs=composition.node_packs,
                 choices=composition.choices,
                 lazy_choices=composition.lazy_choices,
+                settings=settings(features={"templates": {"enabled": True}}),
             )
             client = TestClient(TestServer(app))
             await client.start_server()

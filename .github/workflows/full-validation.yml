@@ -143,7 +143,7 @@ jobs:
         if: matrix.run_checks
       - run: uv run ruff check .
         if: matrix.run_checks
-      - run: uv run pyright
+      - run: uv run --extra p2p pyright
         if: matrix.run_checks
         env:
           NODE_OPTIONS: --max-old-space-size=4096
@@ -193,54 +193,6 @@ jobs:
           pnpm exec tsx ../tools/validate_default_catalog.mjs "$CATALOG" .
         env:
           CATALOG: ${{ runner.temp }}/default-catalog.json
-
-  p2p-descriptor-macos:
-    needs: validation-plan
-    if: needs.validation-plan.outputs.run-heavy == 'true'
-    runs-on: ${{ fromJSON(vars.CI_RUNNERS).macos }}
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          clean: true
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@v5
-        with:
-          python-version: "3.12"
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-      - run: uv sync --all-packages
-      - run: uv run --locked pytest -q tests/test_p2p_descriptor.py
-
-  p2p-artifact-smoke:
-    needs: validation-plan
-    if: needs.validation-plan.outputs.run-heavy == 'true'
-    runs-on: ${{ fromJSON(vars.CI_RUNNERS)[matrix.runner] }}
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [linux, windows, macos]
-        python-version: ["3.12"]
-        include:
-          - os: linux
-            runner: linux
-          - os: windows
-            runner: windows
-          - os: macos
-            runner: macos
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          clean: true
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-      - run: uv sync --locked
-      - run: uv run --locked pytest -q tests/test_p2p_artifact_smoke.py
 
   torch-cpu:
     needs: validation-plan
@@ -400,8 +352,6 @@ jobs:
     needs:
       - validation-plan
       - test
-      - p2p-descriptor-macos
-      - p2p-artifact-smoke
       - torch-cpu
       - model-tests-gate
       - coverage-gate
@@ -413,14 +363,12 @@ jobs:
         env:
           RUN_HEAVY: ${{ needs.validation-plan.outputs.run-heavy }}
           TEST_RESULT: ${{ needs.test.result }}
-          MACOS_RESULT: ${{ needs.p2p-descriptor-macos.result }}
-          ARTIFACT_RESULT: ${{ needs.p2p-artifact-smoke.result }}
           TORCH_RESULT: ${{ needs.torch-cpu.result }}
           MODEL_RESULT: ${{ needs.model-tests-gate.result }}
           COVERAGE_RESULT: ${{ needs.coverage-gate.result }}
         run: |
-          printf '{"commit":"%s","runHeavy":"%s","lanes":{"test":"%s","p2pDescriptorMacos":"%s","p2pArtifactSmoke":"%s","torchCpu":"%s","modelTests":"%s","coverage":"%s"}}\n' \
-            "$GITHUB_SHA" "$RUN_HEAVY" "$TEST_RESULT" "$MACOS_RESULT" "$ARTIFACT_RESULT" \
+          printf '{"commit":"%s","runHeavy":"%s","lanes":{"test":"%s","torchCpu":"%s","modelTests":"%s","coverage":"%s"}}\n' \
+            "$GITHUB_SHA" "$RUN_HEAVY" "$TEST_RESULT" \
             "$TORCH_RESULT" "$MODEL_RESULT" "$COVERAGE_RESULT" \
             > main-validation-status.json
           cat main-validation-status.json >> "$GITHUB_STEP_SUMMARY"
@@ -435,16 +383,12 @@ jobs:
         env:
           RUN_HEAVY: ${{ needs.validation-plan.outputs.run-heavy }}
           TEST_RESULT: ${{ needs.test.result }}
-          MACOS_RESULT: ${{ needs.p2p-descriptor-macos.result }}
-          ARTIFACT_RESULT: ${{ needs.p2p-artifact-smoke.result }}
           TORCH_RESULT: ${{ needs.torch-cpu.result }}
           MODEL_RESULT: ${{ needs.model-tests-gate.result }}
           COVERAGE_RESULT: ${{ needs.coverage-gate.result }}
         run: |
           if [ "$RUN_HEAVY" = false ]; then exit 0; fi
           test "$TEST_RESULT" = success
-          test "$MACOS_RESULT" = success
-          test "$ARTIFACT_RESULT" = success
           test "$TORCH_RESULT" = success
           test "$MODEL_RESULT" = success
           test "$COVERAGE_RESULT" = success

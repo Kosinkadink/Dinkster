@@ -8,8 +8,7 @@
   without a node-name or native-arm-name allowlist; malformed, unknown, and
   conflicting producer stamps are refused
 - Routes: health/auth, node catalog, extension/composition diagnostics,
-  choices, pack assets/templates, including family/model metadata and
-  immutable template thumbnails, jobs (status, cancellation, event
+  choices, pack assets, jobs (status, cancellation, event
   replay), values, queue control, live WebSocket events, settings, memory
   governance, cache trim/export; asset library and history routes when a
   library root is configured, including classified bounded latent upload
@@ -31,7 +30,14 @@
 - Official provider subscription bootstrap from explicit URL and stable-ID
   configuration, with identity verification and preserved trust/unsubscribe
   choices; no built-in provider endpoint or identity
-- Default-enabled LAN and global P2P through one shared sidecar session for canonical
+- Workflow templates are disabled by default: `features.templates.enabled`
+  defaults to false, and the catalog, template body and thumbnail routes
+  return 404. Guide Markdown and node documentation remain available through
+  their separate documentation routes; template-opening actions are hidden.
+- P2P is disabled by default and requires the optional `p2p` extra plus
+  explicit `features.p2p.enabled` opt-in at startup. Disabled installations
+  have no P2P controller, API or LAN mapping routes, or mDNS advertisement.
+  The retained optional implementation uses one shared sidecar session for canonical
   BitTorrent v2 descriptors, with six-hour trust expiry, license metadata,
   safe-format verification, durable rate and seeding budgets, metered
   network closure, and immediate resolver-omission revocation. Global resolver

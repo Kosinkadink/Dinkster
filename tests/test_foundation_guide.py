@@ -53,6 +53,8 @@ def test_foundation_manifest_ships_executable_loop_guide_and_templates() -> None
 
 
 def test_loop_templates_are_discoverable_and_load_byte_exactly() -> None:
+    from test_settings import settings
+
     async def scenario() -> None:
         composition = await compose_serving()
         client = TestClient(
@@ -64,6 +66,7 @@ def test_loop_templates_are_discoverable_and_load_byte_exactly() -> None:
                     node_packs=composition.node_packs,
                     choices=composition.choices,
                     lazy_choices=composition.lazy_choices,
+                    settings=settings(features={"templates": {"enabled": True}}),
                 )
             )
         )
