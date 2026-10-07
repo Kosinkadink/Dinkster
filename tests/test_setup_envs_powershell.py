@@ -95,7 +95,7 @@ def test_powershell_setup_pins_native_windows_test_environments() -> None:
     assert "Test-Path (Join-Path" in setup
     assert '"Python.h"' in setup
     assert "Get-Command nvidia-smi -ErrorAction SilentlyContinue" in setup
-    assert "no NVIDIA GPU detected - skipping .venv-gpu" in setup
+    assert "no enabled NVIDIA GPU detected - skipping .venv-gpu" in setup
 
 
 def test_powershell_setup_limits_force_and_has_no_private_installer() -> None:
