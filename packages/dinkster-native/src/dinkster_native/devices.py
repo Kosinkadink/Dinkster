@@ -22,7 +22,10 @@ abstract "gpu" lane - conservative, never wrong.
 from __future__ import annotations
 
 import importlib
-from collections.abc import Mapping
+import os
+import sys
+from collections.abc import Callable, Mapping
+from functools import cache
 from typing import Any, cast
 
 from dinkster_memory import MeasuredMemory
@@ -103,6 +106,50 @@ def comfy_resident_meta(obj: object) -> Mapping[str, object]:
     return meta
 
 
+def _optional_counter(read: Callable[[], object]) -> int | None:
+    try:
+        value = read()
+        return (
+            int(value)
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0
+            else None
+        )
+    except Exception:  # noqa: BLE001 - one unavailable metric must not hide the others
+        return None
+
+
+@cache
+def _nvml_device(uuid: str) -> tuple[Any, Any]:
+    nvml = cast("Any", importlib.import_module("pynvml"))
+    nvml.nvmlInit()
+    return nvml, nvml.nvmlDeviceGetHandleByUUID(uuid)
+
+
+def _nvml_telemetry(properties: Any) -> dict[str, int]:
+    """Match the physical GPU UUID; CUDA_VISIBLE_DEVICES remaps torch indices."""
+    try:
+        uuid = str(properties.uuid)
+        if not uuid.startswith("GPU-"):
+            uuid = f"GPU-{uuid}"
+        nvml, handle = _nvml_device(uuid)
+    except Exception:  # noqa: BLE001 - optional vendor telemetry
+        return {}
+    readings = {
+        "driver_free_bytes": lambda: nvml.nvmlDeviceGetMemoryInfo(handle).free,
+        "gpu_utilization_percent": lambda: nvml.nvmlDeviceGetUtilizationRates(handle).gpu,
+        "gpu_temperature_celsius": lambda: nvml.nvmlDeviceGetTemperature(
+            handle, nvml.NVML_TEMPERATURE_GPU
+        ),
+        "gpu_power_milliwatts": lambda: nvml.nvmlDeviceGetPowerUsage(handle),
+        "gpu_power_limit_milliwatts": lambda: nvml.nvmlDeviceGetPowerManagementLimit(handle),
+    }
+    return {
+        name: value
+        for name, read in readings.items()
+        if (value := _optional_counter(read)) is not None
+    }
+
+
 def torch_vram_telemetry(device: str) -> MeasuredMemory | None:
     """TelemetryProbe for ``vram:cuda:N`` and ``vram:xpu:N`` residency
     classes, backed by the device's own report (``mem_get_info`` on the
@@ -127,10 +174,37 @@ def torch_vram_telemetry(device: str) -> MeasuredMemory | None:
         mem_get_info = getattr(namespace, "mem_get_info", None)
         if not callable(mem_get_info):
             return None
-        free, total = cast(
-            "tuple[int, int]", mem_get_info(torch.device(device.removeprefix("vram:")))
+        torch_device = torch.device(device.removeprefix("vram:"))
+        free, total = cast("tuple[int, int]", mem_get_info(torch_device))
+        hardware: dict[str, int] = {}
+        name: str | None = None
+        try:
+            properties = namespace.get_device_properties(torch_device)
+            name = str(properties.name)
+            if family == "cuda" and not getattr(torch.version, "hip", None):
+                hardware = _nvml_telemetry(properties)
+        except Exception:  # noqa: BLE001 - basic capacity remains useful without device details
+            pass
+        manager_module = sys.modules.get("dinkster_inference.model_management")
+        pinned = _optional_counter(
+            lambda: cast("Any", manager_module).get_model_manager().total_pinned_memory
         )
-        return MeasuredMemory(free_bytes=int(free), total_bytes=int(total))
+        return MeasuredMemory(
+            free_bytes=int(free),
+            total_bytes=int(total),
+            torch_allocated_bytes=_optional_counter(
+                lambda: namespace.memory_allocated(torch_device)
+            ),
+            torch_reserved_bytes=_optional_counter(lambda: namespace.memory_reserved(torch_device)),
+            process_id=os.getpid(),
+            process_count=1,
+            process_rss_bytes=_optional_counter(
+                lambda: cast("Any", importlib.import_module("psutil")).Process().memory_info().rss
+            ),
+            pinned_host_bytes=pinned,
+            gpu_name=name,
+            **hardware,
+        )
     except Exception:  # noqa: BLE001 - a failing probe is an absent probe
         return None
 

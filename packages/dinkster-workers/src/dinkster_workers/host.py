@@ -1100,7 +1100,7 @@ async def serve_connection(
             report[name] = body
         return report
 
-    def measure() -> dict[str, dict[str, int]]:
+    def measure() -> dict[str, dict[str, int | str]]:
         """The pack probe's snapshot in wire shape ({device: {freeBytes,
         totalBytes}}), keys still in this process's namespace. Defensive
         end to end: a raising probe measures nothing, and malformed
@@ -1116,7 +1116,7 @@ async def serve_connection(
             return {}
         if not isinstance(snapshot, Mapping):
             return {}
-        measured: dict[str, dict[str, int]] = {}
+        measured: dict[str, dict[str, int | str]] = {}
         for device, memory in cast("Mapping[object, object]", snapshot).items():
             if not (isinstance(device, str) and device and isinstance(memory, MeasuredMemory)):
                 continue

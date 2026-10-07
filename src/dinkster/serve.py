@@ -2096,6 +2096,7 @@ def main(argv: list[str] | None = None) -> None:
                 execution_journal=execution_journal,
                 memory_headroom_changed=composer.set_memory_headroom,
                 residency_memory_budgets=composer.residency_memory_budgets,
+                applied_aimdo_policies=composer.applied_aimdo_policies,
                 workers=lambda: composer.workers(remote_specs),
                 place_execution=composer.place_execution,
                 full_free=composer.full_free,

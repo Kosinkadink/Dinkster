@@ -5,8 +5,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.error
@@ -17,6 +19,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import psutil
+from dinkster_workers.provision import workspace_packages_for
 
 
 def available_port() -> int:
@@ -65,28 +68,69 @@ def stop(process: subprocess.Popen[str]) -> None:
         raise RuntimeError("owned release verification descendants survived teardown")
 
 
+def verify_launch(state: Path, python: Path) -> None:
+    state.mkdir(parents=True)
+    url = f"http://127.0.0.1:{available_port()}"
+    with (state / "backend.log").open("w") as log:
+        backend = subprocess.Popen(
+            [
+                str(python.absolute()),
+                "-m",
+                "dinkster.serve",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                url.rsplit(":", 1)[1],
+                "--library-root",
+                str(state / "library"),
+                "--install-root",
+                str(state / "packs"),
+                "--no-default-packs",
+            ],
+            cwd=state,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        try:
+            composition = wait_for(url + "/api/composition", backend)
+            nodes = wait_for(url + "/api/nodes", backend)
+            assert nodes["schemaVersion"] == 1 and nodes["nodes"] == {}, nodes
+            (state / "composition.json").write_text(json.dumps(composition, indent=2) + "\n")
+            (state / "nodes.json").write_text(json.dumps(nodes, indent=2) + "\n")
+        finally:
+            stop(backend)
+    print(f"Independent backend launch passed: {state}")
+
+
 def verify(root: Path, state: Path, registry_command: Path, python: Path | None = None) -> None:
     root = root.resolve()
     registry_command = registry_command.resolve()
     state.mkdir(parents=True)
     if python is None:
         python = root / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-    python = python.resolve()
+    python = python.absolute()
     registry_database = "sqlite:///" + (state / "registry.db").as_posix()
     registry_objects = str(state / "registry-objects")
     packs = str(state / "packs")
     registry_url = f"http://127.0.0.1:{available_port()}"
     backend_url = f"http://127.0.0.1:{available_port()}"
+    registry_environment = {
+        **os.environ,
+        "DINKSTER_OBJECT_STORE_ROOT": registry_objects,
+        "DINKSTER_PUBLIC_BASE_URL": registry_url,
+    }
 
-    def run(module: str, *args: str, env: dict[str, str] | None = None) -> str:
+    def run(module: str, *args: str, log_name: str, env: dict[str, str] | None = None) -> str:
         result = subprocess.run(
             [str(python), "-m", module, *args],
             cwd=state,
             env=env,
             text=True,
             capture_output=True,
-            check=True,
         )
+        (state / log_name).write_text(result.stdout + result.stderr)
+        result.check_returncode()
         return result.stdout
 
     def registry_admin(*args: str) -> str:
@@ -115,11 +159,14 @@ def verify(root: Path, state: Path, registry_command: Path, python: Path | None 
     ).strip()
     with ExitStack() as stack:
 
-        def service(name: str, *command: str) -> subprocess.Popen[str]:
+        def service(
+            name: str, *command: str, env: dict[str, str] | None = None
+        ) -> subprocess.Popen[str]:
             log = stack.enter_context((state / f"{name}.log").open("w"))
             process = subprocess.Popen(
                 command,
                 cwd=state,
+                env=env,
                 stdout=log,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -137,62 +184,68 @@ def verify(root: Path, state: Path, registry_command: Path, python: Path | None 
             registry_url.rsplit(":", 1)[1],
             "--database-url",
             registry_database,
-            "--object-store-root",
-            registry_objects,
+            env=registry_environment,
         )
         wait_for(registry_url + "/v1/health", registry_process)
         environment = {**os.environ, "DINKSTER_REGISTRY_TOKEN": token}
+        publication_root = state / "template"
+        shutil.copytree(root / "templates/pack", publication_root)
+        with (publication_root / "dinkster-pack.toml").open("a") as manifest:
+            manifest.write(
+                '\n[pack.release]\nversion = "0.1.0"\ndinkster = "==0.0.1"\n'
+                'license = "GPL-3.0-or-later"\n'
+            )
         publication = run(
             "dinkster.manager",
             "--registry",
             registry_url,
             "publish",
-            str(root / "templates/pack"),
+            str(publication_root),
             "--version",
             "0.1.0",
+            log_name="publish.log",
             env=environment,
         )
-        (state / "publish.log").write_text(publication)
         candidate_id = publication.strip().rsplit(" ", 1)[-1]
-        subprocess.run(
-            [
-                str(registry_command),
-                "scanner",
-                "--once",
-                "--database-url",
-                registry_database,
-                "--object-store-root",
-                registry_objects,
-            ],
-            cwd=state,
-            text=True,
-            capture_output=True,
-            check=True,
-        )
+        with (state / "scanner.log").open("w") as log:
+            subprocess.run(
+                [
+                    str(registry_command),
+                    "scanner",
+                    "--once",
+                    "--database-url",
+                    registry_database,
+                ],
+                cwd=state,
+                env=registry_environment,
+                text=True,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                check=True,
+            )
         request = urllib.request.Request(
-            registry_url + f"/v1/reviews/{candidate_id}",
-            data=json.dumps({"decision": "accept", "reason": "Reviewed bundled template"}).encode(),
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            registry_url + f"/v1/publish/{candidate_id}",
+            headers={"Authorization": f"Bearer {token}"},
         )
         with urllib.request.urlopen(request) as response:
-            assert json.load(response)["status"] == "accepted"
-        workspace = []
-        for package in (
-            "workers",
-            "protocol",
-            "schema",
-            "values",
-            "api",
-            "memory",
-            "assets",
-            "caches",
-            "inference",
-            "video",
-        ):
-            workspace.extend(
-                ["--workspace-package", str(root / "packages" / f"dinkster-{package}")]
+            candidate = json.load(response)
+        if candidate["status"] == "review":
+            request = urllib.request.Request(
+                registry_url + f"/v1/reviews/{candidate_id}",
+                data=json.dumps(
+                    {"decision": "accept", "reason": "Reviewed bundled template"}
+                ).encode(),
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
             )
-        installation = run(
+            with urllib.request.urlopen(request) as response:
+                candidate = json.load(response)
+        (state / "candidate.json").write_text(json.dumps(candidate, indent=2) + "\n")
+        assert candidate["status"] == "accepted", candidate
+        workspace = []
+        worker_root = root / "packages/dinkster-workers"
+        for package in (worker_root, *workspace_packages_for(worker_root)):
+            workspace.extend(["--workspace-package", str(package)])
+        run(
             "dinkster.manager",
             "--root",
             packs,
@@ -204,12 +257,17 @@ def verify(root: Path, state: Path, registry_command: Path, python: Path | None 
             "install",
             "my-pack@0.1.0",
             "--yes",
+            log_name="install.log",
         )
-        (state / "install.log").write_text(installation)
-        preparation = run(
-            "dinkster.manager", "--root", packs, "--accelerator", "cpu", "prepare-catalogs"
+        run(
+            "dinkster.manager",
+            "--root",
+            packs,
+            "--accelerator",
+            "cpu",
+            "prepare-catalogs",
+            log_name="catalog-preparation.log",
         )
-        (state / "catalog-preparation.log").write_text(preparation)
         backend = service(
             "backend",
             str(python),
@@ -279,23 +337,44 @@ def verify(root: Path, state: Path, registry_command: Path, python: Path | None 
             "--port",
             backend_url.rsplit(":", 1)[1],
             "--yes",
+            log_name="registration.log",
         )
-        assert "local" in run("dinkster_supervisor.install_manager", "--config", config, "list")
+        assert "local" in run(
+            "dinkster_supervisor.install_manager",
+            "--config",
+            config,
+            "list",
+            log_name="install-list.log",
+        )
     print(
         "Registry publication, pack installation, backend catalog and install registration "
         f"passed: {state}"
     )
 
 
+def print_log_tails(state: Path) -> None:
+    for path in sorted(state.glob("*.log")):
+        print(f"--- {path.name} (last 100 lines) ---", file=sys.stderr)
+        print("\n".join(path.read_text(errors="replace").splitlines()[-100:]), file=sys.stderr)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=Path)
     parser.add_argument("--state", type=Path)
-    parser.add_argument("--registry-command", type=Path, required=True)
+    parser.add_argument("--registry-command", type=Path)
     parser.add_argument("--python", type=Path)
     args = parser.parse_args()
-    if args.state is not None:
-        verify(args.root, args.state.resolve(), args.registry_command, args.python)
-    else:
-        with tempfile.TemporaryDirectory(prefix="dinkster-release-") as directory:
-            verify(args.root, Path(directory) / "state", args.registry_command, args.python)
+    with tempfile.TemporaryDirectory(prefix="dinkster-release-") as directory:
+        state = args.state.resolve() if args.state else Path(directory) / "state"
+        try:
+            if args.registry_command:
+                verify(args.root, state, args.registry_command, args.python)
+            else:
+                python = args.python or args.root / ".venv" / (
+                    "Scripts/python.exe" if os.name == "nt" else "bin/python"
+                )
+                verify_launch(state, python)
+        except Exception:
+            print_log_tails(state)
+            raise

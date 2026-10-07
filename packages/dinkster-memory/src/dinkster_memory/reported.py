@@ -20,18 +20,18 @@ from __future__ import annotations
 
 import time
 from collections.abc import Mapping
+from dataclasses import replace
 
 from .governor import MeasuredMemory
 
 
 class ReportedTelemetry:
-    """Per-source measured-memory snapshots, freshest-wins on overlap.
+    """Per-source measurements: freshest hardware facts and summed worker usage.
 
     Sources are opaque objects (parent-side worker sessions), compared by
     identity. Two workers with the same DeviceMap-translated device key
-    genuinely see the same silicon, so serving the freshest snapshot is
-    the honest aggregation: both read the same driver counter, and newer
-    beats staler.
+    genuinely see the same silicon. Hardware facts use the freshest snapshot;
+    allocator and host counters sum distinct worker PIDs, never physical free.
     """
 
     def __init__(self) -> None:
@@ -60,13 +60,36 @@ class ReportedTelemetry:
         None when nobody measures it (honest absence, never a fake
         zero). This is the governor's TelemetryProbe shape."""
         freshest: tuple[float, int, MeasuredMemory] | None = None
+        processes: dict[int, tuple[int, MeasuredMemory]] = {}
+        unidentified = False
         for stamp, sequence, snapshot in self._snapshots.values():
             measured = snapshot.get(device)
             if measured is None:
                 continue
             if freshest is None or (stamp, sequence) > freshest[:2]:
                 freshest = (stamp, sequence, measured)
-        return None if freshest is None else freshest[2]
+            if measured.process_id is None:
+                unidentified = True
+            elif sequence > processes.get(measured.process_id, (-1, measured))[0]:
+                processes[measured.process_id] = (sequence, measured)
+        if freshest is None:
+            return None
+        if len(processes) <= 1 and not unidentified:
+            return freshest[2]
+        counters: dict[str, int | None] = {}
+        for attribute in (
+            "torch_allocated_bytes",
+            "torch_reserved_bytes",
+            "process_rss_bytes",
+            "pinned_host_bytes",
+        ):
+            values = [getattr(measured, attribute) for _, measured in processes.values()]
+            counters[attribute] = (
+                None if unidentified or any(value is None for value in values) else sum(values)
+            )
+        return replace(
+            freshest[2], process_id=None, process_count=len(processes) or None, **counters
+        )
 
     def devices(self) -> frozenset[str]:
         """Every device any source currently measures - the device

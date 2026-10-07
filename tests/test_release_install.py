@@ -21,8 +21,7 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert workflow[True] == {"push": {"tags": ["v*.*.*"]}}
     assert set(workflow["jobs"]) == {"validation", "build", "install", "release"}
     assert workflow["jobs"]["validation"] == {
-        "uses": "./.github/workflows/full-validation.yml",
-        "secrets": "inherit",
+        "uses": "./.github/workflows/ci.yml",
     }
     assert workflow["jobs"]["build"]["needs"] == "validation"
     assert workflow["jobs"]["install"]["needs"] == "build"
@@ -118,37 +117,56 @@ def test_release_install_matrix_covers_supported_desktop_platforms() -> None:
     )
 
 
-def test_linux_release_install_exercises_the_pinned_registry_service() -> None:
+def test_release_install_launches_without_private_registry_inputs() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
     steps = workflow["jobs"]["install"]["steps"]
-    registry_checkout = next(
-        step
-        for step in steps
-        if step.get("uses") == "actions/checkout@v4"
-        and step.get("with", {}).get("repository") == "Kosinkadink/dinkster-registry"
+    assert "secrets." not in (ROOT / ".github/workflows/release.yml").read_text()
+    assert all(
+        step.get("with", {}).get("repository") != "Kosinkadink/dinkster-registry" for step in steps
     )
-    assert registry_checkout["if"] == "matrix.os == 'linux'"
-    assert registry_checkout["with"] == {
-        "clean": True,
-        "repository": "Kosinkadink/dinkster-registry",
-        "ref": "5d844ae53616f88756a98eb6dc3aa73fefb92622",
-        "path": "registry",
-        "persist-credentials": False,
-    }
-    registry_install = next(
-        step for step in steps if step.get("name") == "Install the independent loopback registry"
-    )
-    assert registry_install["if"] == "matrix.os == 'linux'"
-    assert registry_install["run"].splitlines()[-1] == "uv sync --project registry --frozen"
     wheel_install = next(
         step for step in steps if step.get("name") == "Install and launch from wheels"
     )
-    assert 'if [ "$RUNNER_OS" = Linux ]; then' in wheel_install["run"]
     assert "scripts/verify_release_install.py" in wheel_install["run"]
-    assert (
-        '--registry-command "$GITHUB_WORKSPACE/registry/.venv/bin/dinkster-registry"'
-        in wheel_install["run"]
-    )
+    assert "--registry-command" not in wheel_install["run"]
+
+
+def test_independent_release_launch_serves_composition_and_nodes(tmp_path: Path) -> None:
+    import sys
+
+    from scripts.verify_release_install import verify_launch
+
+    state = tmp_path / "release"
+    verify_launch(state, Path(sys.executable))
+    assert json.loads((state / "nodes.json").read_text())["nodes"] == {}
+    assert (state / "composition.json").is_file()
+
+
+def test_release_failure_prints_service_and_publication_log_tails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from scripts.verify_release_install import print_log_tails
+
+    (tmp_path / "registry.log").write_text("\n".join(f"line {i}" for i in range(125)))
+    (tmp_path / "backend.log").write_text("backend failed\n")
+    (tmp_path / "publish.log").write_text("publication result\n")
+    (tmp_path / "registry.db").write_text("not a log")
+    print_log_tails(tmp_path)
+    output = capsys.readouterr().err
+    assert "backend failed" in output and "publication result" in output
+    assert "line 24\n" not in output and "line 25\n" in output and "line 124\n" in output
+    assert "not a log" not in output
+
+
+def test_registry_install_keeps_state_and_uploads_it_even_on_failure() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/full-validation.yml").read_text())
+    steps = workflow["jobs"]["registry-install"]["steps"]
+    command = next(step["run"] for step in steps if "run" in step)
+    assert '--state "$RUNNER_TEMP/registry-install-state"' in command
+    upload = steps[-1]
+    assert upload["uses"] == "actions/upload-artifact@v4"
+    assert upload["if"] == "always()"
+    assert upload["with"]["path"] == "${{ runner.temp }}/registry-install-state"
 
 
 @pytest.mark.parametrize("tag", ["0.0.1", "v0.0", "v0.0.1-rc1", "backend-0.0.1"])

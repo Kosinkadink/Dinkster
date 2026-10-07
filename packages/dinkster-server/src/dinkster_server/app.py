@@ -1244,6 +1244,7 @@ class ServerState:
         settings: RuntimeSettings | None = None,
         memory_headroom_changed: Callable[[int], None] | None = None,
         residency_memory_budgets: Callable[[], Mapping[str, Mapping[str, int]]] | None = None,
+        applied_aimdo_policies: Callable[[], Mapping[str, str]] | None = None,
         workers: Callable[[], Sequence[WorkerInfo]] | None = None,
         place_execution: PlaceExecution | None = None,
         debug_errors: bool = False,
@@ -1268,6 +1269,7 @@ class ServerState:
         self._workers = workers
         self._place_execution = place_execution
         self.residency_memory_budgets = residency_memory_budgets
+        self.applied_aimdo_policies = applied_aimdo_policies
         # Combo choice lists (choice-list id -> values) behind
         # /api/choices/{id}: UI vocabulary for remote ComboWidget routes,
         # never identity - a value outside the served list is the
@@ -4215,6 +4217,10 @@ def _accelerator_policy_payload(
         }
     return {
         "physicalHeadroomBytes": policy.physical_headroom_bytes,
+        "aimdoConfiguredPolicy": state.settings.aimdo_policy,
+        "aimdoPoliciesByWorker": (
+            dict(state.applied_aimdo_policies()) if state.applied_aimdo_policies is not None else {}
+        ),
         "inferenceReserveBytes": policy.inference_reserve_bytes,
         "minimumFreeBytes": policy.minimum_free_bytes,
         "aimdoSimpleHeadroomBaseBytes": policy.physical_headroom_bytes,
@@ -4233,6 +4239,14 @@ async def handle_memory_status(request: web.Request) -> web.Response:
             for name, items in state.governor.details().items()
         }
     return web.json_response(payload)
+
+
+async def handle_memory_reset_peak(request: web.Request) -> web.Response:
+    governor, _ = _governed(request.app[STATE_KEY])
+    device = _require_device(await _json_body(request))
+    if device not in governor.status():
+        raise web.HTTPNotFound(text="Device is not reported")
+    return web.json_response({"device": device, "peakUsedBytes": governor.reset_peak(device)})
 
 
 async def handle_memory_shed(request: web.Request) -> web.Response:
@@ -4465,6 +4479,7 @@ def create_app(
     pack_settings_root: Path | None = None,
     memory_headroom_changed: Callable[[int], None] | None = None,
     residency_memory_budgets: Callable[[], Mapping[str, Mapping[str, int]]] | None = None,
+    applied_aimdo_policies: Callable[[], Mapping[str, str]] | None = None,
     workers: Callable[[], Sequence[WorkerInfo]] | None = None,
     place_execution: PlaceExecution | None = None,
     debug_errors: bool = False,
@@ -4510,6 +4525,7 @@ def create_app(
         settings=settings,
         memory_headroom_changed=memory_headroom_changed,
         residency_memory_budgets=residency_memory_budgets,
+        applied_aimdo_policies=applied_aimdo_policies,
         workers=workers,
         place_execution=place_execution,
         debug_errors=debug_errors,
@@ -4597,6 +4613,7 @@ def create_app(
     app.router.add_get("/api/events", handle_events)
     add_settings_routes(app, state.settings)
     app.router.add_get("/memory/status", handle_memory_status)
+    app.router.add_post("/memory/reset-peak", handle_memory_reset_peak)
     app.router.add_post("/memory/shed", handle_memory_shed)
     app.router.add_post("/memory/free", handle_memory_free)
     app.router.add_post("/memory/reserve", handle_memory_reserve)
