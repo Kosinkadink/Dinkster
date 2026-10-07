@@ -84,7 +84,7 @@ $GpuEditablePackages = @(
     "packages/dinkster-compat-comfy"
 )
 $KitchenCpuWheel = "dinkster-kitchen@https://files.pythonhosted.org/packages/2e/20/84e29ca1dedcd51eb5edd297d3c2f6c665cf2e30bb9237892f0f8d108d0d/dinkster_kitchen-0.2.35.post1-py3-none-any.whl#sha256=31458547cdcf9ff26974a4955cf79e83ebdf50077666720d3bb3255786c5fc4f"
-$DinksterInferenceRequirement = "dinkster-inference @ git+https://github.com/Kosinkadink/dinkster-inference.git@e68a653a2852bb9892cc7e1bc69c8f4fc3ae5807"
+$DinksterInferenceRequirement = "dinkster-inference @ git+https://github.com/Kosinkadink/dinkster-inference.git@7cb5c68a1d74b26aa917e6b069c0dcb4ce392e18"
 $PreviousProject = [Environment]::GetEnvironmentVariable("UV_PROJECT", "Process")
 $PreviousProjectEnvironment = [Environment]::GetEnvironmentVariable(
     "UV_PROJECT_ENVIRONMENT", "Process"
