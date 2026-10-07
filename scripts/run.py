@@ -37,7 +37,13 @@ def main() -> int:
     if int(output("node", "--version").lstrip("v").split(".")[0]) < 22:
         raise RuntimeError("Node.js 22 or newer is required: https://nodejs.org/")
 
-    # npm.cmd needs cmd.exe on Windows; resolve the executable explicitly.
+    has_nvidia = platform.system() != "Darwin" and bool(shutil.which("nvidia-smi"))
+    if has_nvidia:
+        try:
+            output("nvidia-smi", "-L")
+        except subprocess.CalledProcessError:
+            raise RuntimeError("NVIDIA GPU driver is unavailable; repair nvidia-smi") from None
+
     npm = shutil.which("npm")
     assert npm is not None
     pnpm = (npm, "exec", "--yes", "--package=pnpm@10.31.0", "--", "pnpm")
@@ -60,25 +66,39 @@ def main() -> int:
         stamp.write_text(pin["commit"])
 
     if windows:
-        run("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-            str(ROOT / "scripts/setup_envs.ps1"))
+        run(
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(ROOT / "scripts/setup_envs.ps1"),
+        )
         relative_python = "Scripts/python.exe"
     else:
         run("bash", str(ROOT / "scripts/setup_envs.sh"))
         relative_python = "bin/python"
     execution = ROOT / ".venv-torch" / relative_python
-    if platform.system() != "Darwin" and shutil.which("nvidia-smi"):
-        run("nvidia-smi", "-L")
+    if has_nvidia:
         execution = ROOT / ".venv-gpu" / relative_python
         if not execution.is_file():
-            raise RuntimeError("NVIDIA GPU driver is unavailable; repair nvidia-smi before rerunning")
+            raise RuntimeError(
+                "NVIDIA GPU driver is unavailable; repair nvidia-smi before rerunning"
+            )
         if output(str(execution), "-c", "import torch; print(torch.cuda.is_available())") != "True":
             raise RuntimeError("NVIDIA GPU driver cannot run pinned CUDA Torch; update the driver")
     os.environ["DINKSTER_EXECUTION_PYTHON"] = str(execution)
     python = str(ROOT / ".venv" / relative_python)
     run(python, "-m", "dinkster.cli", "setup")
-    launch = [python, "-m", "dinkster.cli", "--port", str(args.port),
-              "--frontend-root", str(frontend / "packages/app/dist")]
+    launch = [
+        python,
+        "-m",
+        "dinkster.cli",
+        "--port",
+        str(args.port),
+        "--frontend-root",
+        str(frontend / "packages/app/dist"),
+    ]
     if args.no_browser:
         launch.append("--no-browser")
     run(*launch)
@@ -88,6 +108,8 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
+    except KeyboardInterrupt:
+        raise SystemExit(130) from None
     except (RuntimeError, subprocess.CalledProcessError) as error:
         print(f"error: {error}", file=sys.stderr)
         raise SystemExit(1) from None

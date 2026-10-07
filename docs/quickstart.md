@@ -7,34 +7,43 @@ source-checkout steps work on Windows x64, Linux x64, and macOS Apple Silicon.
 ## Install
 
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and
-[Node.js](https://nodejs.org/), install the pinned pnpm release with
-`npm install --global pnpm@10.31.0`, then clone the backend and frontend beside
-each other:
+[Node.js 22 or newer](https://nodejs.org/), including npm, and
+[Git](https://git-scm.com/downloads). Clone Dinkster, then run one command:
 
 ```sh
 git clone https://github.com/Kosinkadink/Dinkster.git
-git clone https://github.com/Kosinkadink/Dinkster-Frontend.git
-cd Dinkster-Frontend
-pnpm install --frozen-lockfile
-pnpm --filter @dinkster/app build
-cd ../Dinkster
-uv sync --python 3.12 --all-packages --frozen
-uv run dinkster setup
+cd Dinkster
+./run.sh
 ```
 
-Until both repositories become public, these clone commands require a GitHub
-account with access; authenticated users may instead use `gh repo clone`.
+On Windows, replace `./run.sh` with:
 
-PowerShell, Command Prompt, and POSIX shells use the same commands. The setup
-command creates the local library and managed-pack roots under `~/.dinkster`
-(`%USERPROFILE%\.dinkster` on Windows). Set `DINKSTER_HOME` before setup and
-launch to choose another writable location.
+```powershell
+.\run.ps1
+```
+
+If PowerShell blocks local scripts, use
+`powershell -NoProfile -ExecutionPolicy Bypass -File .\run.ps1`.
+The script lets uv obtain Python 3.12, prepares the pinned inference and Torch
+environments, builds the pinned frontend, creates local state, and opens the
+editor. It does not need the Desktop app or a separate frontend checkout.
+The first run downloads dependencies and can take several minutes. NVIDIA
+machines need a driver compatible with the pinned CUDA 13.0 Torch runtime.
+macOS uses the native Torch wheel with MPS; machines without NVIDIA use CPU.
+
+The scripts create the local library and managed-pack roots under `~/.dinkster`
+(`%USERPROFILE%\.dinkster` on Windows). Set `DINKSTER_HOME` before launch to
+choose another writable location. They preserve model mounts and output files.
 
 ## Launch
 
 ```sh
-uv run dinkster
+./run.sh
 ```
+
+Use `.\run.ps1` on Windows. After `git pull`, run the same command: environments
+are refreshed and the frontend rebuilds when its pin changes. The private
+`.run/frontend` directory is script-managed; do not edit it.
 
 The editor opens at `http://127.0.0.1:3639`. Its application, API, and event
 connections all use that origin. The default pack suite includes the
@@ -48,7 +57,8 @@ answers. The terminal reports each completed pack and the total preparation time
 skip catalog preparation unless pack code has changed.
 
 Use Ctrl+C in the terminal to stop the engine. If the default port is busy,
-run `uv run dinkster --port 4640`. Use `--no-browser` on a headless machine and
+run `./run.sh --port 4640` (`.\run.ps1 --port 4640` on Windows).
+Use `--no-browser` on a headless machine and
 open the printed URL from a browser on that machine.
 
 To put the supervisor in front of the engine, run:
@@ -88,33 +98,10 @@ On Windows, use a TOML path such as `C:/Users/name/Models`. Keep the existing
 `[settings]` and `[mounts.output]` sections that `dinkster setup` created. See
 [installation](install.md#model-folders) for the full format.
 
-From the Dinkster checkout, build the execution environments and launch with
-the environment for your accelerator. On Linux with an NVIDIA GPU:
-
-```sh
-./scripts/setup_envs.sh
-DINKSTER_EXECUTION_PYTHON="$PWD/.venv-gpu/bin/python" uv run dinkster
-```
-
-On Windows with an NVIDIA GPU:
-
-```powershell
-./scripts/setup_envs.ps1
-$env:DINKSTER_EXECUTION_PYTHON = "$PWD\.venv-gpu\Scripts\python.exe"
-uv run dinkster
-```
-
-The setup scripts create `.venv-gpu` only when they detect an NVIDIA GPU. For a
-CPU run on Linux or Windows, use `.venv-torch/bin/python` or
-`.venv-torch\Scripts\python.exe` instead. On macOS Apple Silicon,
-`./scripts/setup_envs.sh` installs MPS support in `.venv-torch`, so launch with:
-
-```sh
-DINKSTER_EXECUTION_PYTHON="$PWD/.venv-torch/bin/python" uv run dinkster
-```
-
-Keep this interpreter setting when the launcher refreshes pack catalogs. No
-ComfyUI checkout or server is required.
+The run scripts select the execution interpreter automatically, including
+during pack-catalog preparation. No ComfyUI checkout or server is required.
+CPU and Apple Silicon model sampling remains subject to the
+[supported host boundaries](supported/cpu-and-apple-silicon-hosts.md).
 
 Workflow templates and P2P are disabled by default. Build an SD 1.5 workflow
 on the empty canvas:
