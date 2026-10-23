@@ -23,7 +23,14 @@ def upgrade() -> None:
     connection = op.get_bind()
     inspector = sa.inspect(connection)
     tables = set(inspector.get_table_names()) - {"alembic_version"}
-    if tables:
+    objects = {
+        tuple(row)
+        for row in connection.exec_driver_sql(
+            "SELECT type, name, tbl_name FROM sqlite_master WHERE sql IS NOT NULL "
+            "AND NOT (type='table' AND name='alembic_version')"
+        )
+    }
+    if tables or objects:
         expected = {
             "records": (
                 ("id", "TEXT", 0, None, 1),
@@ -54,8 +61,10 @@ def upgrade() -> None:
                 ("manifest", "TEXT", 1, None, 0),
             ),
         }
-        if tables != set(expected):
-            raise ValueError("unversioned asset catalog has unexpected tables")
+        expected_objects = {("table", table, table) for table in expected}
+        expected_objects.add(("index", "records_scope_modified", "records"))
+        if tables != set(expected) or objects != expected_objects:
+            raise ValueError("unversioned asset catalog has unexpected schema objects")
         for table, columns in expected.items():
             actual = tuple(
                 tuple(row)[1:] for row in connection.exec_driver_sql(f"PRAGMA table_info({table})")

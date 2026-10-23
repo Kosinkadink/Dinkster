@@ -144,6 +144,9 @@ def test_catalog_alembic_head_preserves_records(tmp_path: Path, legacy: bool) ->
 @pytest.mark.parametrize(
     "change",
     [
+        "CREATE TRIGGER erase_record AFTER INSERT ON records "
+        "BEGIN DELETE FROM records WHERE id=NEW.id; END",
+        "CREATE VIEW record_names AS SELECT name FROM records",
         "DROP TABLE media_grants",
         "ALTER TABLE records ADD COLUMN unexpected TEXT",
         "DROP INDEX records_scope_modified",
