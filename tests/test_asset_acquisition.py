@@ -17,6 +17,7 @@ import struct
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
 import pytest
 from aiohttp import web
@@ -29,8 +30,11 @@ from dinkster_assets import (
     AssetNeed,
     AssetRef,
     AssetVault,
+    ChainResolver,
     DeclaredAsset,
     LibraryStore,
+    MountDef,
+    MountTable,
     PackagedSource,
     PackAssetCatalog,
     ProvenanceRecord,
@@ -69,6 +73,7 @@ from dinkster_server import STATE_KEY, ServerLibrary, create_app
 from dinkster_values import CORE_INT, TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 
+from dinkster.mounts_api import MountService, add_mount_routes
 from tests.platform_support import symlink_or_skip
 
 MODEL_BYTES = b"tiny model bytes for acquisition tests" * 32
@@ -584,7 +589,7 @@ class AssetSize(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.asset.size",
-            inputs=(InputSpec("asset", ASSET),),
+            inputs=(InputSpec("asset", ASSET, widget=AssetWidget(kind=KIND_MODEL_CHECKPOINT)),),
             outputs=(OutputSpec("bytes", INT),),
         )
 
@@ -683,18 +688,21 @@ def test_preflight_sees_through_typed_literals() -> None:
     assert graph_asset_names(listy) == {MODEL_DIGEST: "in-list.bin"}
 
 
-async def make_asset_client(tmp_path: Path) -> tuple[TestClient, ServerLibrary]:
+async def make_asset_client(
+    tmp_path: Path, *, mounts: MountTable | None = None
+) -> tuple[TestClient, ServerLibrary]:
     vault = AssetVault(tmp_path / "vault")
     library = ServerLibrary(
         vault=vault,
         store=LibraryStore(tmp_path / "library.sqlite"),
         provenance=ProvenanceStore(tmp_path / "provenance.json"),
+        resolver=mounts,
     )
 
     def make_engine(on_event: EventListener | None = None) -> Engine:
         registry = TypeRegistry()
         register_core_types(registry)
-        register_asset_type(registry, vault)
+        register_asset_type(registry, ChainResolver(vault, mounts) if mounts else vault)
         return Engine(
             schemas=SCHEMAS,
             registry=registry,
@@ -704,6 +712,8 @@ async def make_asset_client(tmp_path: Path) -> tuple[TestClient, ServerLibrary]:
         )
 
     app = create_app(make_engine, SCHEMAS, library=library)
+    if mounts is not None:
+        add_mount_routes(app, MountService(mounts))
     client = TestClient(TestServer(app))
     await client.start_server()
     return client, library
@@ -765,6 +775,40 @@ async def wait_terminal(client: TestClient, job_id: str = "j1") -> dict[str, obj
             return status
         await asyncio.sleep(0.01)
     raise AssertionError("job never reached a terminal state")
+
+
+@pytest.mark.parametrize("present", [True, False], ids=["unhashed-local", "absent"])
+def test_submit_bare_model_name_before_mount_hashing(tmp_path: Path, present: bool) -> None:
+    async def scenario() -> None:
+        root = tmp_path / "models"
+        root.mkdir()
+        name = "model.safetensors"
+        if present:
+            (root / name).write_bytes(MODEL_BYTES)
+        mounts = MountTable(tmp_path / "mounts.json", index_root=tmp_path / "indexes")
+        mounts.add(MountDef(id="models", path=root), kind=KIND_MODEL_CHECKPOINT)
+        client, _ = await make_asset_client(tmp_path, mounts=mounts)
+        try:
+            graph = Graph({"s": GraphNode("test.asset.size", {"asset": name})})
+            response = await client.post("/api/jobs", json=submit_body(graph))
+            if present:
+                assert response.status == 202
+                status = await wait_terminal(client)
+                assert status["state"] == "completed", status
+                outputs = cast("dict[str, dict[str, dict[str, object]]]", status["outputs"])
+                assert outputs["s"]["bytes"]["value"] == len(MODEL_BYTES)
+            else:
+                assert response.status == 409
+                selection = await response.json()
+                assert selection["error"] == "assets-missing"
+                assert len(selection["assets"]) == 1
+                assert selection["assets"][0]["name"] == name
+                assert selection["assets"][0]["status"] == "missing"
+            assert not (tmp_path / "indexes" / "models.json").exists()
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
 
 
 def test_submit_missing_asset_returns_plan(tmp_path: Path) -> None:

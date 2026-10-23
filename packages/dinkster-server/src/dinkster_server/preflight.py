@@ -18,14 +18,15 @@ nothing. ``assetSources`` (digest -> [urls]) lets the submission carry
 its own leads (a template's pinned URLs); they merge with the provenance
 store's and are recorded there only after bytes actually verified.
 
-A need with no digest cannot occur here (asset literals require one);
-the "unverifiable" tier is reserved for the future name-guess import
-path, which will carry its own explicit acceptance step.
+Filename-only model inputs bind to unverified local grants before digest
+preflight. Missing names return a selection without a fabricated digest;
+they never authorize a download or force hashing at submission.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from typing import Any, cast
 
 from dinkster_assets import (
@@ -37,17 +38,76 @@ from dinkster_assets import (
     acquire_need,
     is_digest,
 )
+from dinkster_assets.model import NamedAssetResolver
 from dinkster_graph import Graph, Link, RegionNode, TypedLiteral
+from dinkster_schema import AssetWidget, NodeSchema, WidgetRepresentations
 
 from .library import ServerLibrary
 
 __all__ = [
     "asset_preflight",
+    "bind_model_names",
     "graph_asset_names",
     "graph_node_types",
     "graph_provider_selections",
     "parse_asset_consent",
 ]
+
+
+def bind_model_names(
+    graph: Graph, schemas: Mapping[str, NodeSchema], library: ServerLibrary | None
+) -> tuple[Graph, list[dict[str, object]]]:
+    """Resolve filename-only model inputs without manufacturing content identity."""
+    resolver = library.resolver if library else None
+    missing: list[dict[str, object]] = []
+    nodes = dict(graph.nodes)
+    for node_id, node in graph.nodes.items():
+        if isinstance(node, RegionNode):
+            body, nested_missing = bind_model_names(node.body, schemas, library)
+            nodes[node_id] = replace(node, body=body)
+            missing.extend(nested_missing)
+            continue
+        schema = schemas.get(node.node_type)
+        if schema is None:
+            continue
+        inputs = dict(node.inputs)
+        for spec in schema.inputs:
+            raw = inputs.get(spec.id)
+            value = raw.value if isinstance(raw, TypedLiteral) else raw
+            widget = spec.widget
+            if isinstance(widget, WidgetRepresentations):
+                widget = widget.representations[0].widget
+            if (
+                not isinstance(value, str)
+                or not isinstance(widget, AssetWidget)
+                or not widget.kind.startswith("model/")
+            ):
+                continue
+            ref = (
+                resolver.bind_name(value, widget.kind)
+                if isinstance(resolver, NamedAssetResolver)
+                else None
+            )
+            if ref is None:
+                missing.append(
+                    {
+                        "name": value,
+                        "kind": widget.kind,
+                        "status": "missing",
+                        "verification": "unverified",
+                        "sources": [],
+                        "fetchable": False,
+                        "nodeId": node_id,
+                        "inputId": spec.id,
+                    }
+                )
+            else:
+                wire = ref.to_wire()
+                inputs[spec.id] = (
+                    replace(raw, value=wire) if isinstance(raw, TypedLiteral) else wire
+                )
+        nodes[node_id] = replace(node, inputs=inputs)
+    return Graph(nodes), missing
 
 
 def graph_asset_names(graph: Graph) -> dict[str, str]:
