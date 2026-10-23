@@ -48,6 +48,31 @@ def main() -> None:
 
     folder_paths.get_filename_list = file_choices
 
+    def annotate_files(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {key: annotate_files(item) for key, item in value.items()}
+        if isinstance(value, (tuple, list)):
+            converted = [annotate_files(item) for item in value]
+            if len(value) in (1, 2) and isinstance(value[0], (str, list)):
+                options = value[1] if len(value) == 2 else {}
+                if isinstance(options, dict) and (
+                    isinstance(value[0], FileChoices)
+                    or isinstance(options.get("options"), FileChoices)
+                    or any(
+                        options.get(key)
+                        for key in (
+                            "image_upload",
+                            "audio_upload",
+                            "video_upload",
+                        )
+                    )
+                ):
+                    if len(converted) == 1:
+                        converted.append({})
+                    converted[1]["file_input"] = True
+            return converted
+        return value
+
     async def dump() -> dict[str, Any]:
         base_names = set(nodes.NODE_CLASS_MAPPINGS)
         await nodes.init_builtin_extra_nodes()
@@ -62,25 +87,12 @@ def main() -> None:
                 "file_inputs": [],
             }
             try:
-                inputs = cls.INPUT_TYPES()
+                inputs = annotate_files(cls.INPUT_TYPES())
                 row["input_types"] = inputs
-                # Only file lists supplied by the upstream mount catalogue qualify.
                 for group in ("required", "optional"):
                     for key, spec in inputs.get(group, {}).items():
-                        value_type = spec[0]
                         options = spec[1] if len(spec) > 1 else {}
-                        if (
-                            isinstance(value_type, FileChoices)
-                            or isinstance(options.get("options"), FileChoices)
-                            or any(
-                                options.get(key)
-                                for key in (
-                                    "image_upload",
-                                    "audio_upload",
-                                    "video_upload",
-                                )
-                            )
-                        ):
+                        if options.get("file_input"):
                             row["file_inputs"].append(key)
             except Exception as exc:
                 row["input_types"] = None

@@ -116,6 +116,23 @@ def test_comparison_cli(tmp_path: Path) -> None:
     assert code == 1
     assert summary["registry_errors"]
 
+    registry.write_text('{"nodes": {}, "nodes": {}}')
+    duplicate = subprocess.run(
+        [
+            sys.executable,
+            "tools/compare_nodes.py",
+            str(source),
+            str(registry),
+            str(csv_path),
+            str(summary_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert duplicate.returncode != 0
+    assert "duplicate JSON key: nodes" in duplicate.stderr
+
 
 @pytest.mark.parametrize(
     "field,value",
@@ -207,3 +224,130 @@ def test_exact_ids_and_file_widget_exemption() -> None:
     summary = compare_registry(reference, registry)
     assert not summary["passed"]
     assert summary["counts"] == {"absent": 1, "Dinkster-only": 1}
+
+
+@pytest.mark.parametrize("kind", ["autogrow", "group", "combo"])
+def test_nested_inputs_preserve_file_slots_and_detect_child_drift(kind: str) -> None:
+    from tools.compare_nodes import compare_registry
+
+    reference_children = {
+        "required": {
+            "file": ["COMBO", {"options": [], "file_input": True}],
+            "strength": ["FLOAT", {"default": 0.75}],
+        }
+    }
+    native_children = [
+        {
+            "role": "input",
+            "id": "file",
+            "required": True,
+            "type": {"kind": "concrete", "types": ["COMBO"]},
+            "widget": {"type": "ASSET"},
+        },
+        {
+            "role": "input",
+            "id": "strength",
+            "required": True,
+            "type": {"kind": "concrete", "types": ["FLOAT"]},
+            "default": 0.75,
+        },
+    ]
+    if kind == "combo":
+        reference_input = [
+            "COMFY_DYNAMICCOMBO_V3",
+            {
+                "options": [
+                    {"key": "selected", "inputs": reference_children},
+                    {"key": "none", "inputs": {"required": {}}},
+                ]
+            },
+        ]
+        native_input = {
+            "role": "dynamicCombo",
+            "id": "settings",
+            "required": True,
+            "options": [
+                {"key": "selected", "inputs": native_children},
+                {"key": "none", "inputs": []},
+            ],
+        }
+    else:
+        native_input = {
+            "role": "inputFamily",
+            "id": "settings",
+            "required": True,
+            "template": native_children,
+            "minMembers": 1,
+            "maxMembers": 3,
+        }
+        if kind == "autogrow":
+            # Autogrow has one scalar template; groups have a row of fields.
+            reference_children["required"].pop("file")
+            native_children.pop(0)
+            reference_input = [
+                "COMFY_AUTOGROW_V3",
+                {
+                    "template": {
+                        "input": reference_children,
+                        "min": 1,
+                        "max": 3,
+                        "prefix": "input",
+                    }
+                },
+            ]
+            native_input["memberPrefix"] = "input"
+        else:
+            reference_input = [
+                "COMFY_DYNAMICGROUP_V3",
+                {
+                    "template": reference_children,
+                    "min": 1,
+                    "max": 3,
+                },
+            ]
+    reference = {
+        "nodes": [
+            {
+                "class_name": "Example",
+                "input_types": {"required": {"settings": reference_input}},
+                "return_types": [],
+            }
+        ]
+    }
+    registry = {"nodes": {"Example": {"nodeType": "Example", "interface": [native_input]}}}
+    assert compare_registry(reference, registry)["passed"]
+
+    native_children[-1]["default"] = 0.5
+    result = compare_registry(reference, registry)
+    assert not result["passed"]
+    assert "0.75 vs 0.5" in result["rows"][0]["differences"]
+
+
+def test_namespace_rejects_core_id_ownership_and_nested_type_prefixes() -> None:
+    from tools.compare_nodes import compare_registry
+
+    reference = {"nodes": [{"class_name": "Example", "input_types": {}, "return_types": []}]}
+    registry = {
+        "nodes": {
+            "Example": {"nodeType": "Example", "pack": "custom-pack", "interface": []},
+            "Extra": {
+                "nodeType": "Extra",
+                "interface": [
+                    {
+                        "role": "output",
+                        "id": "result",
+                        "type": {
+                            "kind": "list",
+                            "element": {"kind": "concrete", "types": ["comfy.IMAGE"]},
+                        },
+                    }
+                ],
+            },
+        }
+    }
+    result = compare_registry(reference, registry)
+    assert not result["passed"]
+    assert result["registry_errors"] == [
+        "Extra: prefixed type name: comfy.IMAGE",
+        "core class id 'Example' is claimed by pack 'custom-pack'",
+    ]

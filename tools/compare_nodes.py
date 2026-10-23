@@ -93,7 +93,7 @@ def _reference_inputs(groups: dict[str, Any]) -> list[dict[str, Any]]:
                     template=_reference_inputs(options["template"]),
                     min=options["min"],
                     max=options["max"],
-                    prefix="",
+                    prefix=None,
                 )
             elif str(value_type).startswith("COMFY_"):
                 # Unknown dynamic forms must fail rather than lose their child inputs.
@@ -105,6 +105,8 @@ def _reference_inputs(groups: dict[str, Any]) -> list[dict[str, Any]]:
                 entry["control_after_generate"] = "fixed"
             if entry.get("multiselect") is False:
                 entry.pop("multiselect")
+            if options.get("file_input"):
+                entry["file_input"] = True
             if "options" in entry and entry["type"] == "COMBO" and entry["options"]:
                 entry.setdefault("default", entry["options"][0])
             result.append(entry)
@@ -177,6 +179,15 @@ def _native_inputs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _differences(expected: Any, actual: Any, path: str) -> list[str]:
     if isinstance(expected, dict) and isinstance(actual, dict):
+        expected, actual = dict(expected), dict(actual)
+        file_input = expected.pop("file_input", False)
+        if actual.pop("file_picker", False):
+            if not file_input or expected.get("type") != "COMBO":
+                return [f"{path}: asset picker on a non-file input"]
+            # Mount contents vary, but the widget still consumes the original file slot.
+            expected.pop("options", None)
+            expected.pop("default", None)
+            actual.pop("default", None)
         missing = expected.keys() ^ actual.keys()
         result = [
             f"{path}.{key}: missing {'native' if key in expected else 'reference'} field"
@@ -205,6 +216,8 @@ def compare(row: dict[str, Any], schema: dict[str, Any]) -> list[str]:
         return [f"reference input schema unavailable: {row.get('input_types_error')}"]
     if "interface" not in schema:
         return ["native interface missing"]
+    if any(item.get("role") not in INPUT_ROLES | {"output"} for item in schema["interface"]):
+        return ["native interface contains an unsupported role or a variable output family"]
     expected = _reference_inputs(row["input_types"])
     actual = _native_inputs(schema.get("interface", []))
     differences = []
@@ -220,15 +233,9 @@ def compare(row: dict[str, Any], schema: dict[str, Any]) -> list[str]:
                 "mount",
             )
         )
-    for reference, native in zip(expected, actual, strict=False):
-        if native.pop("file_picker", False):
-            # File choices depend on local mounts, but the imported slot stays a bare name.
-            if reference["type"] == "COMBO" and reference["name"] in row.get("file_inputs", []):
-                reference.pop("options", None)
-                reference.pop("default", None)
-                native.pop("default", None)
-            else:
-                differences.append(f"{native['name']}: asset picker on a non-file input")
+    for item in expected:
+        if item["name"] in row.get("file_inputs", []):
+            item["file_input"] = True
     differences.extend(_differences(expected, actual, "inputs"))
     expected_outputs = []
     names = row.get("return_names") or row.get("return_types") or []
@@ -277,6 +284,8 @@ def compare_registry(reference: dict[str, Any], registry: dict[str, Any]) -> dic
     for key, schema in served.items():
         if key != schema.get("nodeType"):
             errors.append(f"registry key {key!r} differs from nodeType {schema.get('nodeType')!r}")
+        if key in ids and schema.get("pack", "dinkster-nodes-comfy") != "dinkster-nodes-comfy":
+            errors.append(f"core class id {key!r} is claimed by pack {schema['pack']!r}")
         if key.startswith(FORBIDDEN_PREFIXES):
             errors.append(f"prefixed node id: {key}")
         for item in schema.get("interface", []):
