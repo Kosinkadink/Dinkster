@@ -391,9 +391,7 @@ def run_worker(args: argparse.Namespace) -> int:
     model_size = int(model.model_size())
     loading_route = {
         "loader": "dinkster_native.fork_nodes.GenerationLoadDiffusionModel",
-        "assign_loaded_weights": True,
         "mmap_backed_state_dict": bool(model.fast_disk),
-        "direct_offloaded_weight_pinning": bool(model.pin_offloaded_weights),
         "dynamic_weight_loading": bool(model.is_dynamic()),
     }
     latent = cast(
