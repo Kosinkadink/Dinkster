@@ -124,8 +124,8 @@ class RemoteWorker:
         self._name = name
         self._connect_timeout = connect_timeout
         self._tls_ca_file = tls_ca_file
-        # This engine's advertised asset base URL (peer_asset_sources
-        # convention: bytes at <endpoint>/assets/<digest>) and its bearer
+        # This engine's advertised asset base URL (bytes at
+        # <endpoint>/assets/<digest>) and its bearer
         # credential, offered to the daemon as a staging source. The
         # credential rides ONLY requests to this endpoint - declared
         # provenance URLs never see it.
