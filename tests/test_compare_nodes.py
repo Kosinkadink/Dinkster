@@ -1,0 +1,162 @@
+"""The comparison CLI rejects interface drift without alias matching."""
+
+from __future__ import annotations
+
+import csv
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+
+def test_comparison_cli(tmp_path: Path) -> None:
+    reference = {
+        "nodes": [
+            {
+                "class_name": "SaveExample",
+                "file": "nodes.py",
+                "category": "image",
+                "display_name": "Save Example",
+                "output_node": True,
+                "input_types": {
+                    "required": {
+                        "filename_prefix": ["STRING", {"default": "Example"}],
+                        "quality": [["fast", "best"], {"default": "best"}],
+                    }
+                },
+                "return_types": ["IMAGE", "MASK"],
+                "return_names": ["image", "mask"],
+            },
+            {"class_name": "ComfySwitchNode"},
+        ]
+    }
+    native = {
+        "nodeType": "SaveExample",
+        "category": "image",
+        "displayName": "Save Example",
+        "outputNode": True,
+        "interface": [
+            {
+                "role": "input",
+                "id": "filename_prefix",
+                "required": True,
+                "type": {"kind": "concrete", "types": ["STRING"]},
+                "default": "Example",
+            },
+            {
+                "role": "input",
+                "id": "quality",
+                "required": True,
+                "type": {"kind": "concrete", "types": ["COMBO"]},
+                "default": "best",
+                "widget": {
+                    "type": "COMBO",
+                    "options": [
+                        {"value": "fast", "label": "Quick"},
+                        "best",
+                    ],
+                },
+            },
+            {
+                "role": "input",
+                "id": "mount",
+                "required": False,
+                "type": {"kind": "concrete", "types": ["STRING"]},
+                "default": "output",
+            },
+            {"role": "output", "id": "image", "type": {"kind": "concrete", "types": ["IMAGE"]}},
+            {"role": "output", "id": "mask", "type": {"kind": "concrete", "types": ["MASK"]}},
+        ],
+    }
+    source = tmp_path / "reference.json"
+    source.write_text(json.dumps(reference))
+    registry = tmp_path / "registry.json"
+    csv_path = tmp_path / "comparison.csv"
+    summary_path = tmp_path / "summary.json"
+
+    def run(schema: dict) -> tuple[int, dict, list[dict]]:
+        registry.write_text(json.dumps({"nodes": {"SaveExample": schema}}))
+        result = subprocess.run(
+            [
+                sys.executable,
+                "tools/compare_nodes.py",
+                str(source),
+                str(registry),
+                str(csv_path),
+                str(summary_path),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.stderr == ""
+        with csv_path.open() as handle:
+            rows = list(csv.DictReader(handle))
+        return result.returncode, json.loads(summary_path.read_text()), rows
+
+    code, summary, rows = run(native)
+    assert code == 0
+    assert summary["counts"] == {"identical": 1, "excluded": 1}
+    assert [row["status"] for row in rows] == ["identical", "excluded"]
+
+    native["interface"][1]["widget"]["options"].reverse()
+    code, summary, rows = run(native)
+    assert code == 1 and summary["counts"]["differs"] == 1
+    assert "options[0]" in rows[0]["differences"]
+
+    native["interface"][1]["widget"] = {"type": "ASSET"}
+    code, _, rows = run(native)
+    assert code == 1
+    assert "asset picker on a non-file input" in rows[0]["differences"]
+
+    native["nodeType"] = "dinkster.SaveExample"
+    code, summary, _ = run(native)
+    assert code == 1
+    assert summary["registry_errors"]
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("required", True), ("default", None), ("type", {"kind": "concrete", "types": ["INT"]})],
+)
+def test_save_mount_is_not_an_arbitrary_extra_input(field: str, value: object) -> None:
+    from tools.compare_nodes import compare_registry
+
+    mount = {
+        "role": "input",
+        "id": "mount",
+        "required": False,
+        "default": "output",
+        "type": {"kind": "concrete", "types": ["STRING"]},
+    }
+    mount[field] = value
+    reference = {
+        "nodes": [
+            {
+                "class_name": "SaveExample",
+                "input_types": {"required": {"filename_prefix": ["STRING"]}},
+                "return_types": [],
+            }
+        ]
+    }
+    registry = {
+        "nodes": {
+            "SaveExample": {
+                "nodeType": "SaveExample",
+                "interface": [
+                    {
+                        "role": "input",
+                        "id": "filename_prefix",
+                        "required": True,
+                        "type": {"kind": "concrete", "types": ["STRING"]},
+                    },
+                    mount,
+                ],
+            }
+        }
+    }
+    summary = compare_registry(reference, registry)
+    assert not summary["passed"]
+    assert "mount" in summary["rows"][0]["differences"]
