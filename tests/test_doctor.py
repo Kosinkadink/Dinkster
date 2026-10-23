@@ -486,15 +486,25 @@ def test_doctor_reports_invalid_locale_catalogs(tmp_path: Path, data: str, messa
     assert finding.fix
 
 
-def test_doctor_accepts_valid_locale_catalog(tmp_path: Path) -> None:
-    manifest_path = write_pack(
-        tmp_path / "catalog-pack", HEALTHY_MANIFEST, "healthy_nodes", HEALTHY_NODES
-    )
+@pytest.mark.parametrize("exact_node", [False, True])
+def test_doctor_accepts_valid_locale_catalog(tmp_path: Path, exact_node: bool) -> None:
+    manifest = HEALTHY_MANIFEST
+    source = HEALTHY_NODES
+    node_type = "healthy.doubler"
+    if exact_node:
+        node_type = "TextEncodeAceStepAudio1.5"
+        manifest = manifest.replace('["healthy"]', f'["healthy", "{node_type}"]')
+        source = source.replace("healthy.doubler", node_type)
+    manifest_path = write_pack(tmp_path / "catalog-pack", manifest, "healthy_nodes", source)
     locales = manifest_path.parent / "locales"
     locales.mkdir()
     (locales / "en.json").write_text(
-        '{"nodes":{"healthy.doubler":{"displayName":"Doubler"}},'
-        '"searchTerms":{"healthy.doubler":["double"]}}\n'
+        json.dumps(
+            {
+                "nodes": {node_type: {"displayName": "Doubler"}},
+                "searchTerms": {node_type: ["double"]},
+            }
+        )
     )
 
     report = diagnose(manifest_path)

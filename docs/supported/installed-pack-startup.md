@@ -4,6 +4,8 @@
   them. Namespace and exact-node ownership reject overlapping owners through
   install, composition and reload. Pack and publisher identities remain
   lowercase with equivalent separator spellings.
+- Locale catalogs preserve exact node and port IDs, including spaces, case,
+  wildcard outputs and trailing dots. Node translations must belong to the pack.
 - Installed pack schemas and static choices are available before pack workers
   start. Workers activate on demand, including in-process packs and explicitly
   configured shared-process groups.

@@ -2720,8 +2720,11 @@ def test_manifest_namespaces(tmp_path: Path) -> None:
         load_manifest(manifest("namespaces = []\n"))
     with pytest.raises(ManifestError, match="list of strings"):
         load_manifest(manifest("namespaces = [3]\n"))
+    assert load_manifest(manifest('namespaces = ["Img"]\n')).namespaces == ("Img",)
+    uppercase_pack = manifest('namespaces = ["Img"]\n')
+    uppercase_pack.write_text(uppercase_pack.read_text().replace('name = "p"', 'name = "P"'))
     with pytest.raises(ManifestError, match="lowercase"):
-        load_manifest(manifest('namespaces = ["Img"]\n'))
+        load_manifest(uppercase_pack)
     # Separator equivalence: img_x and img.x are the SAME claim.
     with pytest.raises(ManifestError, match="same claim"):
         load_manifest(manifest('namespaces = ["img_x", "img.x"]\n'))
