@@ -284,9 +284,9 @@ def compare_registry(reference: dict[str, Any], registry: dict[str, Any]) -> dic
     served = registry["nodes"]
     results = []
     errors = []
-    if "engine_exclusions" in reference and set(reference["engine_exclusions"]) != set(
-        ENGINE_EXCLUSIONS
-    ):
+    if "engine_exclusions" in reference and reference["engine_exclusions"] != {
+        name: semantics.split("; ") for name, semantics in ENGINE_EXCLUSIONS.items()
+    }:
         errors.append("measured engine exclusions differ from the settled exclusion list")
     ids = set(classes)
     for key, schema in served.items():

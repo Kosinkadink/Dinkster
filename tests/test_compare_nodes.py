@@ -358,3 +358,48 @@ def test_namespace_rejects_core_id_ownership_and_nested_type_prefixes() -> None:
         "Extra: prefixed type name: comfy.IMAGE",
         "core class id 'Example' is claimed by pack 'custom-pack'",
     ]
+
+
+def test_cli_rejects_changed_engine_exclusion_semantics(tmp_path: Path) -> None:
+    exclusions = {
+        "ComfySwitchNode": ["lazy inputs"],
+        "StartLoop": ["GraphBuilder expansion", "loop semantics"],
+        "EndLoop": ["loop semantics"],
+        "LoopIteration": ["loop semantics"],
+        "LoopProgress": ["loop semantics"],
+        "LoopResult": ["loop semantics"],
+    }
+    reference = {
+        "nodes": [{"class_name": "Example", "input_types": {}, "return_types": []}],
+        "engine_exclusions": exclusions,
+    }
+    source = tmp_path / "reference.json"
+    registry = tmp_path / "registry.json"
+    registry.write_text(
+        json.dumps({"nodes": {"Example": {"nodeType": "Example", "interface": []}}})
+    )
+    summary = tmp_path / "summary.json"
+
+    def run() -> subprocess.CompletedProcess[str]:
+        source.write_text(json.dumps(reference))
+        return subprocess.run(
+            [
+                sys.executable,
+                "tools/compare_nodes.py",
+                str(source),
+                str(registry),
+                str(tmp_path / "comparison.csv"),
+                str(summary),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    assert run().returncode == 0
+    for semantics in ([], ["loop semantics"], ["lazy inputs", "ExecutionBlocker"]):
+        exclusions["ComfySwitchNode"] = semantics
+        assert run().returncode == 1
+        assert json.loads(summary.read_text())["registry_errors"] == [
+            "measured engine exclusions differ from the settled exclusion list"
+        ]
