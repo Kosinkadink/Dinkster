@@ -123,7 +123,7 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
         "dinkster.separate_av_latent",
         "dinkster.vae_decode_audio",
     )
-    default_native = ("comfy.BlockSparseAttention", *fork_backed)
+    default_native = fork_backed
     mesh = (
         "dinkster.image_crop_to_mask",
         "dinkster.preview_mask",
@@ -173,7 +173,6 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
         "dinkster.res4lyf_rk_beta_sampler",
     }
     native_model_patches = {
-        "comfy.BlockSparseAttention",
         "dinkster.load_model_patch",
         "dinkster.apply_minimax_h3_fun_controlnet",
     }
