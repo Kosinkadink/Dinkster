@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import os
+import subprocess
+import sys
 from typing import Any, cast
 
 import pytest
@@ -26,6 +29,25 @@ from dinkster_protocol import (  # noqa: E402
     WorkUnitId,
     WorkUnitResult,
 )
+
+
+def test_attention_runtime_starts_on_cpu_without_comfy_arguments() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from dinkster_native.attention import create_attention_runtime; "
+            "runtime = create_attention_runtime(); "
+            "import dinkster_inference.model_management as memory; "
+            "assert memory.get_torch_device().type == 'cpu'; "
+            "assert 'sdpa' in runtime.capabilities.available_policies",
+        ],
+        env={**os.environ, "CUDA_VISIBLE_DEVICES": "", "DINKSTER_ACCELERATOR": "cpu"},
+        capture_output=True,
+        text=True,
+        timeout=45,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_attention_runtime_resolves_upstream_named_attention() -> None:

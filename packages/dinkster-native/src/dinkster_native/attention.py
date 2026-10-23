@@ -66,6 +66,14 @@ class AttentionRuntime:
     """Resolve worker routes through upstream's named attention functions."""
 
     def __init__(self) -> None:
+        # Upstream probes its device while importing attention, before compat bootstrap.
+        cli_args = cast("Any", importlib.import_module("dinkster_inference.cli_args"))
+        if os.environ.get("DINKSTER_ACCELERATOR", "auto") == "cpu" or not (
+            torch.cuda.is_available()
+            or torch.xpu.is_available()
+            or torch.backends.mps.is_available()
+        ):
+            cli_args.args.cpu = True
         attention = cast("Any", importlib.import_module("dinkster_inference.ldm.modules.attention"))
         available = tuple(
             policy
