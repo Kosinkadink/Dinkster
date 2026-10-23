@@ -1818,11 +1818,30 @@ def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(tmp_pa
                     nodes={
                         "text": GraphNode("PrimitiveString", {"value": "a\U0001f600"}),
                         "length": GraphNode("StringLength", {"string": Link("text", "STRING")}),
+                        "false": GraphNode("PrimitiveBoolean", {"value": False}),
+                        "not": GraphNode("ComfyNotNode", {"value": Link("length", "length")}),
+                        "and": GraphNode(
+                            "ComfyAndNode",
+                            {
+                                "values.value0": Link("length", "length"),
+                                "values.value1": Link("false", "BOOLEAN"),
+                            },
+                        ),
+                        "or": GraphNode(
+                            "ComfyOrNode",
+                            {
+                                "values.value0": Link("false", "BOOLEAN"),
+                                "values.value1": Link("length", "length"),
+                            },
+                        ),
                     }
                 ),
-                ["length"],
+                ["length", "not", "and", "or"],
             )
             assert result.outputs["length"]["length"].resolve() == 2
+            assert result.outputs["not"]["BOOLEAN"].resolve() is False
+            assert result.outputs["and"]["BOOLEAN"].resolve() is False
+            assert result.outputs["or"]["BOOLEAN"].resolve() is True
             with pytest.raises(CompositionError, match="overlaps"):
                 await composer.add_pack(PackSpec(manifest=other_manifest))
             assert set(composer.composition.schemas) == set(claims)

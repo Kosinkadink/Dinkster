@@ -27,7 +27,11 @@ class PrimitiveString(Node):
             node_type="PrimitiveString",
             display_name="Text",
             category="utilities/primitive",
-            inputs=(InputSpec("value", TypeExpr.concrete(CORE_STRING), widget=StringWidget()),),
+            inputs=(
+                InputSpec(
+                    "value", TypeExpr.concrete(CORE_STRING), widget=StringWidget(multiline=False)
+                ),
+            ),
             outputs=(OutputSpec("STRING", TypeExpr.concrete(CORE_STRING)),),
         )
 
@@ -91,7 +95,7 @@ class PrimitiveFloat(Node):
                 InputSpec(
                     "value",
                     TypeExpr.concrete(CORE_FLOAT),
-                    widget=NumberWidget(min=float(-sys.maxsize), max=float(sys.maxsize), step=0.1),
+                    widget=NumberWidget(min=-sys.maxsize, max=sys.maxsize, step=0.1),
                 ),
             ),
             outputs=(OutputSpec("FLOAT", TypeExpr.concrete(CORE_FLOAT)),),

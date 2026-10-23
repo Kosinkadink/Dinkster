@@ -1,5 +1,6 @@
 """Native Dinkster implementations of ComfyUI core nodes."""
 
+from .logic import LOGIC_NODES
 from .primitive import (
     PrimitiveBoolean,
     PrimitiveFloat,
@@ -16,4 +17,5 @@ COMFY_NODES = (
     PrimitiveInt,
     PrimitiveFloat,
     PrimitiveBoolean,
+    *LOGIC_NODES,
 )

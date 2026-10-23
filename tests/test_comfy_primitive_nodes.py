@@ -21,6 +21,9 @@ from dinkster_nodes_comfy.primitive import (
 def test_text_preserves_whitespace_and_codepoints(value: str) -> None:
     assert PrimitiveString.execute(value=value) == {"STRING": value}
     assert PrimitiveStringMultiline.execute(value=value) == {"STRING": value}
+    for node, multiline in ((PrimitiveString, False), (PrimitiveStringMultiline, True)):
+        interface = cast(list[dict[str, object]], schema_to_wire(node.schema())["interface"])
+        assert interface[0]["widget"] == {"type": "STRING", "multiline": multiline}
 
 
 @pytest.mark.parametrize("value", [-sys.maxsize, -17, 0, 2**53 + 1, sys.maxsize])
@@ -45,12 +48,15 @@ def test_boolean_remains_boolean(value: bool) -> None:
     assert type(result["BOOLEAN"]) is bool
 
 
-def test_integer_controller_and_exact_bounds_survive_serialization() -> None:
-    wire = schema_to_wire(PrimitiveInt.schema())
+@pytest.mark.parametrize("node", [PrimitiveInt, PrimitiveFloat])
+def test_numeric_controller_and_exact_bounds_survive_serialization(
+    node: type[PrimitiveInt] | type[PrimitiveFloat],
+) -> None:
+    wire = schema_to_wire(node.schema())
     interface = cast(list[dict[str, object]], wire["interface"])
     assert interface[0]["widget"] == {
         "type": "NUMBER",
         "min": "-9223372036854775807",
         "max": "9223372036854775807",
-        "controlAfterGenerate": "fixed",
+        **({"controlAfterGenerate": "fixed"} if node is PrimitiveInt else {"step": 0.1}),
     }
