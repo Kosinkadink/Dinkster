@@ -49,6 +49,10 @@ def _string(
         raise ResolverIndexError(f"{field_name!r} exceeds {RESOLVER_INDEX_MAX_STRING} characters")
     if any(ord(character) < 32 or ord(character) == 127 for character in value):
         raise ResolverIndexError(f"{field_name!r} must not contain control characters")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ResolverIndexError(f"{field_name!r} must be valid UTF-8") from exc
     return value
 
 

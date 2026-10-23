@@ -1488,6 +1488,7 @@ def test_refresh_failure_restores_every_observable(tmp_path: Path, failure: str)
     store.subscribe(str(second_path))
     before = store.subscriptions()
     saved = state.read_bytes()
+    provenance_saved = provenance_path.read_bytes()
     records = provenance.records()
     suggestions = store.suggest("example.safetensors")
     write_document(first_path, resolver_document(resolver_entry(name="updated-first.safetensors")))
@@ -1516,11 +1517,15 @@ def test_refresh_failure_restores_every_observable(tmp_path: Path, failure: str)
     )
     with fault, pytest.raises(OSError, match=f"injected {failure} failure"):
         store.refresh()
-    assert store.subscriptions() == before
+    current = store.subscriptions()
+    assert current == before
+    assert all(after is old for after, old in zip(current, before, strict=True))
     assert state.read_bytes() == saved
+    assert provenance_path.read_bytes() == provenance_saved
     assert provenance.records() == records
     assert store.suggest("example.safetensors") == suggestions
     assert store.suggest("updated-first.safetensors") == ()
+    assert store.suggest("updated-second.safetensors") == ()
 
 
 def test_refresh_does_not_overwrite_concurrent_subscription_mutation(tmp_path: Path) -> None:
@@ -1790,5 +1795,294 @@ def test_failed_cursor_refresh_retains_http_state(
             assert not provenance.sources(OTHER_DIGEST)
             reloaded = ResolverSubscriptionStore(state_path, provenance, clock=lambda: now[0])
             assert reloaded.subscriptions() == store.subscriptions()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("late_response", ["new-snapshot", "not-modified"])
+def test_refresh_deadline_releases_store_lock_and_rejects_late_results(
+    tmp_path: Path, late_response: str
+) -> None:
+    now = [100.0]
+    state = tmp_path / "subscriptions.json"
+    provenance = ProvenanceStore(tmp_path / "provenance.json")
+    store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0], fetch_timeout=0.1)
+    initial = json.dumps(resolver_document()).encode()
+    with patch.object(resolver_transport, "_fetch_page", return_value=(initial, "old")):
+        for source in ("https://first.example/index", "https://second.example/index"):
+            store.subscribe(source)
+    prior = store.subscriptions()
+    now[0] += RESOLVER_REVALIDATE_SECONDS
+    release = threading.Event()
+    workers: list[threading.Thread] = []
+
+    def blocked(*_args: object, **_kwargs: object) -> tuple[bytes | None, str]:
+        workers.append(threading.current_thread())
+        assert release.wait(3.0)
+        return (
+            None
+            if late_response == "not-modified"
+            else json.dumps(resolver_document(resolver_entry(digest=OTHER_DIGEST))).encode(),
+            "late",
+        )
+
+    with patch.object(resolver_transport, "_fetch_page", side_effect=blocked):
+        try:
+            started = time.monotonic()
+            failed = store.refresh()
+            assert time.monotonic() - started < 0.75
+            assert len(failed) == 2 and all(row["error"] for row in failed)
+            assert len(workers) == 2 and all(worker.is_alive() for worker in workers)
+            read_finished = threading.Event()
+
+            def read_store() -> None:
+                store.subscriptions()
+                read_finished.set()
+
+            reader = threading.Thread(target=read_store, daemon=True)
+            reader.start()
+            assert read_finished.wait(0.5)
+            reader.join(0.5)
+            retained = store.subscriptions()
+            saved = state.read_bytes()
+        finally:
+            release.set()
+            for worker in workers:
+                worker.join(2.0)
+                assert not worker.is_alive()
+    assert store.subscriptions() == retained
+    assert state.read_bytes() == saved
+    for old, current in zip(prior, retained, strict=True):
+        assert current.refreshed_at == old.refreshed_at
+        assert current.index == old.index
+        assert current.etag == old.etag
+    assert not provenance.sources(OTHER_DIGEST)
+    reloaded = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
+    assert reloaded.subscriptions() == retained
+
+
+def test_legacy_resolver_cache_requires_complete_unconditional_refresh(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        entry = resolver_entry()
+        mode = "initial"
+        state = tmp_path / "subscriptions.json"
+        now = [100.0]
+
+        async def index(request: web.Request) -> web.Response:
+            if mode == "revalidate":
+                assert request.headers.get("If-None-Match") == '"whole"'
+                return web.Response(status=304)
+            assert "If-None-Match" not in request.headers
+            if mode == "complete-single":
+                return web.json_response(
+                    resolver_document(entry, resolver_entry(digest=OTHER_DIGEST)),
+                    headers={"ETag": '"whole"'},
+                )
+            if mode == "legacy-304":
+                return web.Response(status=304)
+            if mode == "initial":
+                return web.json_response(resolver_document(entry), headers={"ETag": '"first"'})
+            if "cursor" not in request.query:
+                return web.json_response(
+                    {**resolver_document(entry), "nextCursor": "next"},
+                    headers={"ETag": '"first"'},
+                )
+            assert json.loads(state.read_text())["subscriptions"][0]["completeSnapshot"] is False
+            if mode == "failed-page":
+                return web.Response(status=400)
+            return web.json_response(resolver_document(resolver_entry(digest=OTHER_DIGEST)))
+
+        async with resolver_http_server(index) as url:
+            provenance = ProvenanceStore(tmp_path / "provenance.json")
+            store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
+            await asyncio.to_thread(store.subscribe, url)
+            legacy = json.loads(state.read_text())
+            del legacy["subscriptions"][0]["completeSnapshot"]
+            state.write_text(json.dumps(legacy))
+            store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
+            prior = store.subscriptions()[0]
+            assert not prior.complete_snapshot
+            assert provenance.sources(MODEL_DIGEST)
+            assert store.public_sources(MODEL_DIGEST)
+            for failure_mode in ("legacy-304", "failed-page"):
+                mode = failure_mode
+                now[0] += RESOLVER_REVALIDATE_SECONDS
+                (failed,) = await asyncio.to_thread(store.refresh)
+                assert failed["error"]
+                retained = store.subscriptions()[0]
+                assert retained.checked_at == now[0]
+                assert retained.refreshed_at == prior.refreshed_at
+                assert retained.index == prior.index
+                assert not retained.complete_snapshot
+                store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
+                assert store.subscriptions()[0] == retained
+            mode = "complete"
+            now[0] += RESOLVER_REVALIDATE_SECONDS
+            (refreshed,) = await asyncio.to_thread(store.refresh)
+            assert not refreshed["error"]
+            assert len(store.subscriptions()[0].index.entries) == 2
+            assert store.subscriptions()[0].complete_snapshot
+            assert store.subscriptions()[0].etag == ""
+            store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
+            mode = "complete-single"
+            now[0] += RESOLVER_REVALIDATE_SECONDS
+            (refreshed,) = await asyncio.to_thread(store.refresh)
+            assert not refreshed["error"]
+            assert store.subscriptions()[0].etag == '"whole"'
+            mode = "revalidate"
+            now[0] += RESOLVER_REVALIDATE_SECONDS
+            (revalidated,) = await asyncio.to_thread(store.refresh)
+            assert not revalidated["error"]
+            assert store.subscriptions()[0].refreshed_at == now[0]
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "valid",
+        "encoded-url",
+        "url-encoding",
+        "unicode-metadata",
+        "metadata-encoding",
+        "absent",
+        "identity",
+        "json",
+        "save",
+    ],
+)
+def test_resolver_api_official_bootstrap_with_fixture_provider(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, mode: str
+) -> None:
+    async def scenario() -> None:
+        async def index(_: web.Request) -> web.Response:
+            if mode == "json":
+                return web.Response(text="{")
+            document = resolver_document()
+            if mode == "metadata-encoding":
+                document["description"] = "bad\ud800"
+            elif mode == "unicode-metadata":
+                document["description"] = "r\u00e9solver"
+            return web.json_response(document)
+
+        state = tmp_path / "subscriptions.json"
+        store = ResolverSubscriptionStore(state, ProvenanceStore(tmp_path / "provenance.json"))
+        async with resolver_http_server(index) as url:
+            app = create_app(make_engine, SCHEMAS)
+            source = None if mode == "absent" else url
+            if mode == "url-encoding":
+                source = url + "?label=r\u00e9solver"
+            elif mode == "encoded-url":
+                source = url + "?label=r%C3%A9solver"
+            add_resolver_index_routes(
+                app,
+                store,
+                official_url=source,
+                official_provider_id="wrong" if mode == "identity" else "community-models",
+            )
+            client = TestClient(TestServer(app))
+            try:
+                with ExitStack() as stack:
+                    if mode == "save":
+                        stack.enter_context(
+                            patch.object(store, "_save", side_effect=OSError("disk full"))
+                        )
+                    elif mode == "url-encoding":
+                        stack.enter_context(
+                            patch(
+                                "socket.socket.connect",
+                                side_effect=AssertionError(
+                                    "invalid configuration must not connect"
+                                ),
+                            )
+                        )
+                    await client.start_server()
+                response = await client.get("/api/assets/resolver-indexes")
+                assert response.status == 200
+                subscriptions = (await response.json())["subscriptions"]
+                if mode in {"valid", "encoded-url", "unicode-metadata"}:
+                    (subscription,) = subscriptions
+                    assert subscription["entryCount"] == 1
+                    assert "official resolver bootstrap refused" not in caplog.text
+                else:
+                    assert not subscriptions and not state.exists()
+                    assert "official resolver bootstrap refused" in caplog.text
+                    if mode == "url-encoding":
+                        assert "percent-encode" in caplog.text
+            finally:
+                await client.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("terminal_null", [False, True])
+def test_official_bootstrap_complete_snapshot_identity(tmp_path: Path, terminal_null: bool) -> None:
+    async def scenario() -> None:
+        state = tmp_path / "subscriptions.json"
+        provenance = ProvenanceStore(tmp_path / "provenance.json")
+        now = [100.0]
+        mode = "initial"
+        calls: list[str | None] = []
+        store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
+
+        async def index(request: web.Request) -> web.Response:
+            assert not any(
+                name in request.headers
+                for name in ("Authorization", "Cookie", "Proxy-Authorization")
+            )
+            assert "If-None-Match" not in request.headers
+            cursor = request.query.get("cursor")
+            calls.append(cursor)
+            document = resolver_document()
+            document["entries"] = [resolver_entry()] if mode == "initial" and cursor else []
+            if not cursor:
+                document["nextCursor"] = "last"
+            elif terminal_null:
+                document["nextCursor"] = None
+            if mode == "wrong-identity":
+                document["name"] = "other-provider"
+            if mode == "initial":
+                assert not state.exists()
+            return web.json_response(document, headers={"ETag": '"page"', "Set-Cookie": "x=y"})
+
+        async with resolver_http_server(index) as url:
+            subscription = await asyncio.to_thread(
+                store.bootstrap_official, url, "community-models"
+            )
+            assert subscription is not None
+            assert subscription.complete_snapshot and subscription.etag == ""
+            assert calls == [None, "last"]
+            assert provenance.sources(MODEL_DIGEST)
+            saved = state.read_bytes()
+            store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
+            assert (
+                await asyncio.to_thread(store.bootstrap_official, url, "community-models")
+                == subscription
+            )
+            assert calls == [None, "last"]
+            assert state.read_bytes() == saved
+
+            mode = "wrong-identity"
+            now[0] += RESOLVER_REVALIDATE_SECONDS
+            (failed,) = await asyncio.to_thread(store.refresh)
+            assert "identity" in str(failed["error"])
+            retained = store.subscriptions()[0]
+            assert retained.refreshed_at == subscription.refreshed_at
+            assert retained.index == subscription.index
+            assert provenance.sources(MODEL_DIGEST)
+
+            mode = "empty"
+            now[0] += RESOLVER_REVALIDATE_SECONDS
+            await asyncio.to_thread(store.refresh)
+            assert not provenance.sources(MODEL_DIGEST)
+            store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
+            assert not store.subscriptions()[0].index.entries
+
+            corrupt = json.loads(state.read_bytes())
+            corrupt["officialBootstrap"]["providerId"] = "other-provider"
+            write_document(state, corrupt)
+            with pytest.raises(ResolverSubscriptionError, match="identity"):
+                ResolverSubscriptionStore(state, provenance)
 
     asyncio.run(scenario())
