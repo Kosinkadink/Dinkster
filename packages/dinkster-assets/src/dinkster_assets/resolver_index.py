@@ -17,7 +17,6 @@ from .component_manifest import AssetComponentManifest
 from .identity import AssetError, require_digest
 from .json_metadata import freeze_json, thaw_json
 from .kind import require_asset_kind
-from .p2p_descriptor import P2PDescriptorError, P2PDescriptorV1, validate_p2p_descriptor
 
 RESOLVER_INDEX_VERSION = 1
 RESOLVER_INDEX_MAX_BYTES = 16 * MEBIBYTE
@@ -117,7 +116,6 @@ class ResolverIndexEntry:
     family: str = ""
     variant: Mapping[str, object] = field(default_factory=dict[str, object])
     component_manifest: AssetComponentManifest | None = None
-    p2p: P2PDescriptorV1 | None = None
     gated: bool = False
 
     def __post_init__(self) -> None:
@@ -152,8 +150,6 @@ class ResolverIndexEntry:
             wire["variant"] = thaw_json(self.variant)
         if self.component_manifest is not None:
             wire["components"] = self.component_manifest.to_wire()
-        if self.p2p is not None:
-            wire["p2p"] = self.p2p.to_wire()
         return wire
 
 
@@ -241,24 +237,7 @@ def _entry_from_wire(wire: Mapping[str, object], position: int) -> ResolverIndex
         )
     except (AssetError, RecursionError) as exc:
         raise ResolverIndexError(f"{prefix}: {exc}") from exc
-    p2p: P2PDescriptorV1 | None = None
-    if "p2p" in wire:
-        p2p_raw = wire["p2p"]
-        try:
-            if cast("int", size) <= 0:
-                raise P2PDescriptorError("descriptor requires a positive entry size")
-            if not isinstance(p2p_raw, Mapping) or any(
-                not isinstance(key, str) for key in cast("Mapping[object, object]", p2p_raw)
-            ):
-                raise P2PDescriptorError("descriptor must be an object")
-            p2p = validate_p2p_descriptor(
-                cast("Mapping[str, object]", p2p_raw),
-                asset_digest=digest,
-                size=cast("int", size),
-            )
-        except P2PDescriptorError:
-            p2p = None
-    urls = _urls(wire.get("urls"), f"{prefix}.urls", allow_empty=p2p is not None)
+    urls = _urls(wire.get("urls"), f"{prefix}.urls")
     return ResolverIndexEntry(
         digest=digest,
         name=name,
@@ -271,7 +250,6 @@ def _entry_from_wire(wire: Mapping[str, object], position: int) -> ResolverIndex
         family=family,
         variant=variant,
         component_manifest=component_manifest,
-        p2p=p2p,
         gated=cast("bool", wire.get("gated", False)),
     )
 
