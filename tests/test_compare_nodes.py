@@ -1,0 +1,405 @@
+"""The comparison CLI rejects interface drift without alias matching."""
+
+from __future__ import annotations
+
+import csv
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+
+def test_comparison_cli(tmp_path: Path) -> None:
+    reference = {
+        "nodes": [
+            {
+                "class_name": "SaveExample",
+                "file": "nodes.py",
+                "category": "image",
+                "display_name": "Save Example",
+                "output_node": True,
+                "input_types": {
+                    "required": {
+                        "filename_prefix": ["STRING", {"default": "Example"}],
+                        "quality": [["fast", "best"], {"default": "best"}],
+                    }
+                },
+                "return_types": ["IMAGE", "MASK"],
+                "return_names": ["image", "mask"],
+            },
+            {"class_name": "ComfySwitchNode"},
+        ]
+    }
+    native = {
+        "nodeType": "SaveExample",
+        "category": "image",
+        "displayName": "Save Example",
+        "outputNode": True,
+        "interface": [
+            {
+                "role": "input",
+                "id": "filename_prefix",
+                "required": True,
+                "type": {"kind": "concrete", "types": ["STRING"]},
+                "default": "Example",
+            },
+            {
+                "role": "input",
+                "id": "quality",
+                "required": True,
+                "type": {"kind": "concrete", "types": ["COMBO"]},
+                "default": "best",
+                "widget": {
+                    "type": "COMBO",
+                    "options": [
+                        {"value": "fast", "label": "Quick"},
+                        "best",
+                    ],
+                },
+            },
+            {
+                "role": "input",
+                "id": "mount",
+                "required": False,
+                "type": {"kind": "concrete", "types": ["STRING"]},
+                "default": "output",
+            },
+            {"role": "output", "id": "image", "type": {"kind": "concrete", "types": ["IMAGE"]}},
+            {"role": "output", "id": "mask", "type": {"kind": "concrete", "types": ["MASK"]}},
+        ],
+    }
+    source = tmp_path / "reference.json"
+    source.write_text(json.dumps(reference))
+    registry = tmp_path / "registry.json"
+    csv_path = tmp_path / "comparison.csv"
+    summary_path = tmp_path / "summary.json"
+
+    def run(schema: dict) -> tuple[int, dict, list[dict]]:
+        registry.write_text(json.dumps({"nodes": {"SaveExample": schema}}))
+        result = subprocess.run(
+            [
+                sys.executable,
+                "tools/compare_nodes.py",
+                str(source),
+                str(registry),
+                str(csv_path),
+                str(summary_path),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.stderr == ""
+        with csv_path.open() as handle:
+            rows = list(csv.DictReader(handle))
+        return result.returncode, json.loads(summary_path.read_text()), rows
+
+    code, summary, rows = run(native)
+    assert code == 0
+    assert summary["counts"] == {"identical": 1, "excluded": 1}
+    assert [row["status"] for row in rows] == ["identical", "excluded"]
+
+    native["interface"][1]["widget"]["options"].reverse()
+    code, summary, rows = run(native)
+    assert code == 1 and summary["counts"]["differs"] == 1
+    assert "options[0]" in rows[0]["differences"]
+
+    native["interface"][1]["widget"] = {"type": "ASSET"}
+    code, _, rows = run(native)
+    assert code == 1
+    assert "asset picker on a non-file input" in rows[0]["differences"]
+
+    native["nodeType"] = "dinkster.SaveExample"
+    code, summary, _ = run(native)
+    assert code == 1
+    assert summary["registry_errors"]
+
+    registry.write_text('{"nodes": {}, "nodes": {}}')
+    duplicate = subprocess.run(
+        [
+            sys.executable,
+            "tools/compare_nodes.py",
+            str(source),
+            str(registry),
+            str(csv_path),
+            str(summary_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert duplicate.returncode != 0
+    assert "duplicate JSON key: nodes" in duplicate.stderr
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("required", True), ("default", None), ("type", {"kind": "concrete", "types": ["INT"]})],
+)
+def test_save_mount_is_not_an_arbitrary_extra_input(field: str, value: object) -> None:
+    from tools.compare_nodes import compare_registry
+
+    mount = {
+        "role": "input",
+        "id": "mount",
+        "required": False,
+        "default": "output",
+        "type": {"kind": "concrete", "types": ["STRING"]},
+    }
+    mount[field] = value
+    reference = {
+        "nodes": [
+            {
+                "class_name": "SaveExample",
+                "input_types": {"required": {"filename_prefix": ["STRING"]}},
+                "return_types": [],
+            }
+        ]
+    }
+    registry = {
+        "nodes": {
+            "SaveExample": {
+                "nodeType": "SaveExample",
+                "interface": [
+                    {
+                        "role": "input",
+                        "id": "filename_prefix",
+                        "required": True,
+                        "type": {"kind": "concrete", "types": ["STRING"]},
+                    },
+                    mount,
+                ],
+            }
+        }
+    }
+    summary = compare_registry(reference, registry)
+    assert not summary["passed"]
+    assert "mount" in summary["rows"][0]["differences"]
+
+
+@pytest.mark.parametrize("list_inputs", [False, True])
+def test_exact_ids_and_file_widget_exemption(list_inputs: bool) -> None:
+    from tools.compare_nodes import compare_registry
+
+    reference = {
+        "nodes": [
+            {
+                "class_name": "LoadExample",
+                "file_inputs": ["file"],
+                "input_is_list": list_inputs,
+                "input_types": {"required": {"file": [["original.safetensors"]]}},
+                "return_types": ["MODEL"],
+                "return_names": ["model"],
+                "output_is_list": [True],
+            }
+        ]
+    }
+    schema = {
+        "nodeType": "LoadExample",
+        "interface": [
+            {
+                "role": "input",
+                "id": "file",
+                "required": True,
+                "type": {"kind": "concrete", "types": ["COMBO"]},
+                "widget": {"type": "ASSET"},
+            },
+            {
+                "role": "output",
+                "id": "model",
+                "type": {"kind": "list", "element": {"kind": "concrete", "types": ["MODEL"]}},
+            },
+        ],
+    }
+    registry = {"nodes": {"LoadExample": schema, "Extra": {"nodeType": "Extra", "interface": []}}}
+    if list_inputs:
+        schema["interface"][0]["type"] = {
+            "kind": "list",
+            "element": {"kind": "concrete", "types": ["COMBO"]},
+        }
+    summary = compare_registry(reference, registry)
+    assert summary["passed"]
+    assert summary["counts"] == {"identical": 1, "Dinkster-only": 1}
+
+    schema["interface"][1]["type"] = {"kind": "concrete", "types": ["MODEL"]}
+    assert not compare_registry(reference, registry)["passed"]
+
+    del registry["nodes"]["LoadExample"]
+    registry["nodes"]["Extra"]["aliases"] = ["LoadExample"]
+    summary = compare_registry(reference, registry)
+    assert not summary["passed"]
+    assert summary["counts"] == {"absent": 1, "Dinkster-only": 1}
+
+
+@pytest.mark.parametrize("kind", ["autogrow", "group", "combo"])
+def test_nested_inputs_preserve_file_slots_and_detect_child_drift(kind: str) -> None:
+    from tools.compare_nodes import compare_registry
+
+    reference_children = {
+        "required": {
+            "file": ["COMBO", {"options": [], "file_input": True}],
+            "strength": ["FLOAT", {"default": 0.75}],
+        }
+    }
+    native_children = [
+        {
+            "role": "input",
+            "id": "file",
+            "required": True,
+            "type": {"kind": "concrete", "types": ["COMBO"]},
+            "widget": {"type": "ASSET"},
+        },
+        {
+            "role": "input",
+            "id": "strength",
+            "required": True,
+            "type": {"kind": "concrete", "types": ["FLOAT"]},
+            "default": 0.75,
+        },
+    ]
+    if kind == "combo":
+        reference_input = [
+            "COMFY_DYNAMICCOMBO_V3",
+            {
+                "options": [
+                    {"key": "selected", "inputs": reference_children},
+                    {"key": "none", "inputs": {"required": {}}},
+                ]
+            },
+        ]
+        native_input = {
+            "role": "dynamicCombo",
+            "id": "settings",
+            "required": True,
+            "options": [
+                {"key": "selected", "inputs": native_children},
+                {"key": "none", "inputs": []},
+            ],
+        }
+    else:
+        native_input = {
+            "role": "inputFamily",
+            "id": "settings",
+            "required": True,
+            "template": native_children,
+            "minMembers": 1,
+            "maxMembers": 3,
+        }
+        if kind == "autogrow":
+            # Autogrow has one scalar template; groups have a row of fields.
+            reference_children["required"].pop("file")
+            native_children.pop(0)
+            reference_input = [
+                "COMFY_AUTOGROW_V3",
+                {
+                    "template": {
+                        "input": reference_children,
+                        "min": 1,
+                        "max": 3,
+                        "prefix": "input",
+                    }
+                },
+            ]
+            native_input["memberPrefix"] = "input"
+        else:
+            reference_input = [
+                "COMFY_DYNAMICGROUP_V3",
+                {
+                    "template": reference_children,
+                    "min": 1,
+                    "max": 3,
+                },
+            ]
+    reference = {
+        "nodes": [
+            {
+                "class_name": "Example",
+                "input_types": {"required": {"settings": reference_input}},
+                "return_types": [],
+            }
+        ]
+    }
+    registry = {"nodes": {"Example": {"nodeType": "Example", "interface": [native_input]}}}
+    assert compare_registry(reference, registry)["passed"]
+
+    native_children[-1]["default"] = 0.5
+    result = compare_registry(reference, registry)
+    assert not result["passed"]
+    assert "0.75 vs 0.5" in result["rows"][0]["differences"]
+
+
+def test_namespace_rejects_core_id_ownership_and_nested_type_prefixes() -> None:
+    from tools.compare_nodes import compare_registry
+
+    reference = {"nodes": [{"class_name": "Example", "input_types": {}, "return_types": []}]}
+    registry = {
+        "nodes": {
+            "Example": {"nodeType": "Example", "pack": "custom-pack", "interface": []},
+            "Extra": {
+                "nodeType": "Extra",
+                "interface": [
+                    {
+                        "role": "output",
+                        "id": "result",
+                        "type": {
+                            "kind": "list",
+                            "element": {"kind": "concrete", "types": ["comfy.IMAGE"]},
+                        },
+                    }
+                ],
+            },
+        }
+    }
+    result = compare_registry(reference, registry)
+    assert not result["passed"]
+    assert result["registry_errors"] == [
+        "Extra: prefixed type name: comfy.IMAGE",
+        "core class id 'Example' is claimed by pack 'custom-pack'",
+    ]
+
+
+def test_cli_rejects_changed_engine_exclusion_semantics(tmp_path: Path) -> None:
+    exclusions = {
+        "ComfySwitchNode": ["lazy inputs"],
+        "StartLoop": ["GraphBuilder expansion", "loop semantics"],
+        "EndLoop": ["loop semantics"],
+        "LoopIteration": ["loop semantics"],
+        "LoopProgress": ["loop semantics"],
+        "LoopResult": ["loop semantics"],
+    }
+    reference = {
+        "nodes": [{"class_name": "Example", "input_types": {}, "return_types": []}],
+        "engine_exclusions": exclusions,
+    }
+    source = tmp_path / "reference.json"
+    registry = tmp_path / "registry.json"
+    registry.write_text(
+        json.dumps({"nodes": {"Example": {"nodeType": "Example", "interface": []}}})
+    )
+    summary = tmp_path / "summary.json"
+
+    def run() -> subprocess.CompletedProcess[str]:
+        source.write_text(json.dumps(reference))
+        return subprocess.run(
+            [
+                sys.executable,
+                "tools/compare_nodes.py",
+                str(source),
+                str(registry),
+                str(tmp_path / "comparison.csv"),
+                str(summary),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    assert run().returncode == 0
+    for semantics in ([], ["loop semantics"], ["lazy inputs", "ExecutionBlocker"]):
+        exclusions["ComfySwitchNode"] = semantics
+        assert run().returncode == 1
+        assert json.loads(summary.read_text())["registry_errors"] == [
+            "measured engine exclusions differ from the settled exclusion list"
+        ]
