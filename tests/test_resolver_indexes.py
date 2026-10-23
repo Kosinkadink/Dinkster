@@ -1634,40 +1634,92 @@ def test_official_bootstrap_failure_is_atomic_and_retryable(tmp_path: Path, fail
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("terminal_null", [False, True])
 def test_cursor_refresh_refetches_all_pages_despite_unchanged_first_page_etag(
-    tmp_path: Path,
+    tmp_path: Path, terminal_null: bool
 ) -> None:
     async def scenario() -> None:
         now = [100.0]
+        entries = [
+            {**resolver_entry(digest=digest_bytes(content), size=len(content)), "gated": True}
+            for content in (MODEL_BYTES, OTHER_BYTES, b"gone")
+        ]
+        mode = "initial"
         requests: list[tuple[str, str | None]] = []
+        saved = b""
         cursor = "opaque+/=&?%# cursor"
+        query = "limit=1&search=a%2fb+z&tag=a&tag=b&blank=&flag"
         state = tmp_path / "subscriptions.json"
-        store = ResolverSubscriptionStore(
-            state, ProvenanceStore(tmp_path / "provenance.json"), clock=lambda: now[0]
-        )
+        provenance = ProvenanceStore(tmp_path / "provenance.json")
+        store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
 
         async def index(request: web.Request) -> web.Response:
+            assert "Authorization" not in request.headers
+            assert "Cookie" not in request.headers
+            assert "Proxy-Authorization" not in request.headers
+            assert request.headers["User-Agent"] == "dinkster-resolver-index"
             requests.append((request.raw_path, request.headers.get("If-None-Match")))
+            if mode == "not-modified" or request.headers.get("If-None-Match") == '"first"':
+                assert "cursor" not in request.query
+                return web.Response(status=304, headers={"ETag": '"first"'})
             if "cursor" in request.query:
                 assert request.query["cursor"] == cursor
                 assert request.headers.get("If-None-Match") is None
-                return web.json_response(resolver_document(resolver_entry(digest=OTHER_DIGEST)))
+                if mode == "initial":
+                    assert not state.exists()
+                    page_entries = entries[1:]
+                else:
+                    assert state.read_bytes() == saved
+                    assert provenance.sources(str(entries[2]["digest"]))
+                    page_entries = entries[1:2]
+                terminal = {**resolver_document(*page_entries), "providerProtocol": 1}
+                if terminal_null:
+                    terminal["nextCursor"] = None
+                return web.json_response(terminal, headers={"ETag": '"last"'})
             return web.json_response(
-                {**resolver_document(), "nextCursor": cursor}, headers={"ETag": '"first"'}
+                {
+                    **resolver_document(entries[0]),
+                    "providerProtocol": 1,
+                    "nextCursor": cursor,
+                },
+                headers={"ETag": '"first"', "Set-Cookie": "session=do-not-forward"},
             )
 
         async with resolver_http_server(index) as url:
-            subscription = await asyncio.to_thread(store.subscribe, url + "?limit=1&cursor=stale")
-            assert len(subscription.index.entries) == 2 and subscription.etag == ""
+            subscription = await asyncio.to_thread(
+                store.subscribe, url + "?" + query + "&cursor=stale&%63ursor=also-stale"
+            )
+            assert len(subscription.index.entries) == 3
+            assert subscription.etag == ""
+            saved = state.read_bytes()
+            mode = "remove"
             now[0] += RESOLVER_REVALIDATE_SECONDS
             (refreshed,) = await asyncio.to_thread(store.refresh)
             assert refreshed["error"] == ""
-            assert len(store.subscriptions()[0].index.entries) == 2
+            after = store.subscriptions()[0]
+            assert after.refreshed_at == now[0]
+            assert [row.digest for row in after.index.entries] == [
+                str(row["digest"]) for row in entries[:2]
+            ]
+            assert not provenance.sources(str(entries[2]["digest"]))
+            assert "nextCursor" not in state.read_text()
+            reloaded = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
+            assert reloaded.subscriptions()[0].etag == ""
+            assert reloaded.subscriptions()[0] == after
+            mode = "not-modified"
+            now[0] += RESOLVER_REVALIDATE_SECONDS
+            (failed,) = await asyncio.to_thread(reloaded.refresh)
+            assert "not-modified" in str(failed["error"])
+            assert reloaded.subscriptions()[0].index == after.index
+            assert reloaded.subscriptions()[0].refreshed_at == after.refreshed_at
+            first_path = "/dinkster/v1/export/resolver?" + query
+            second_path = first_path + "&cursor=" + quote(cursor, safe="")
             assert requests == [
-                ("/dinkster/v1/export/resolver?limit=1", None),
-                ("/dinkster/v1/export/resolver?limit=1&cursor=" + quote(cursor, safe=""), None),
-                ("/dinkster/v1/export/resolver?limit=1", None),
-                ("/dinkster/v1/export/resolver?limit=1&cursor=" + quote(cursor, safe=""), None),
+                (first_path, None),
+                (second_path, None),
+                (first_path, None),
+                (second_path, None),
+                (first_path, None),
             ]
 
     asyncio.run(scenario())
@@ -2086,3 +2138,58 @@ def test_official_bootstrap_complete_snapshot_identity(tmp_path: Path, terminal_
                 ResolverSubscriptionStore(state, provenance)
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "license_text",
+    ["", " ", " custom license ", *["x" * n for n in (256, 300, 512, 513, 4096)]],
+    ids=["empty", "space", "custom-padded", "256", "300", "512", "513", "4096"],
+)
+def test_license_metadata_survives_refresh_and_reload(tmp_path: Path, license_text: str) -> None:
+    source = tmp_path / "resolver.json"
+    state = tmp_path / "subscriptions.json"
+    provenance = ProvenanceStore(tmp_path / "provenance.json")
+    now = [100.0]
+    entry = {**resolver_entry(), "license": license_text, "gated": True}
+    write_document(source, resolver_document(entry))
+    store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
+    subscription = store.subscribe(str(source))
+    assert subscription.index.entries[0].license == license_text
+    assert subscription.index.entries[0].gated
+    assert ResolverSubscriptionStore(state, provenance).subscriptions() == (subscription,)
+    for value in ("other metadata", license_text):
+        entry["license"] = value
+        write_document(source, resolver_document(entry))
+        now[0] += 1
+        store.refresh()
+        current = store.subscriptions()[0]
+        assert current.index.entries[0].license == value
+        assert current.index.entries[0].gated
+        assert ResolverSubscriptionStore(state, provenance).subscriptions() == (current,)
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    ["x" * 4097, "control\n", "control\t", "control\x7f", None, 1],
+    ids=["4097", "newline", "tab", "delete", "null", "number"],
+)
+def test_license_metadata_rejects_invalid_values_during_parse_and_refresh(
+    tmp_path: Path, invalid: object
+) -> None:
+    source = tmp_path / "resolver.json"
+    state = tmp_path / "subscriptions.json"
+    provenance = ProvenanceStore(tmp_path / "provenance.json")
+    write_document(source, resolver_document())
+    store = ResolverSubscriptionStore(state, provenance, clock=lambda: 100.0)
+    store.subscribe(str(source))
+    before = store.subscriptions()
+    bad_document = resolver_document({**resolver_entry(), "license": invalid})
+    with pytest.raises(ResolverIndexError):
+        resolver_index_from_wire(bad_document)
+    write_document(source, bad_document)
+    (failed,) = store.refresh()
+    assert failed["error"]
+    retained = store.subscriptions()[0]
+    assert retained.index == before[0].index
+    assert retained.refreshed_at == before[0].refreshed_at
+    assert ResolverSubscriptionStore(state, provenance).subscriptions() == (retained,)
