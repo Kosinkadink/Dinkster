@@ -93,7 +93,13 @@ class LocalAssetRef:
         path, signature = self._location()
         handle = path.open("rb")
         try:
-            if local_file_signature(os.fstat(handle.fileno())) != signature:
+            opened = local_file_signature(os.fstat(handle.fileno()))
+            # Windows creation time can differ between path and descriptor stats.
+            if (
+                opened[:2] != signature[:2]
+                or opened[3:] != signature[3:]
+                or (os.name != "nt" and opened[2] != signature[2])
+            ):
                 raise AssetError("local asset changed while opening")
         except BaseException:
             handle.close()

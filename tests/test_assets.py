@@ -10,6 +10,7 @@ import json
 import os
 from collections.abc import Mapping
 from pathlib import Path
+from types import SimpleNamespace
 from typing import BinaryIO
 
 import pytest
@@ -516,6 +517,56 @@ def test_unverified_local_binding_cannot_reuse_cache_after_change_or_revocation(
         asset_registry(table).wrap(ASSET_TYPE, ref)
     with pytest.raises(AssetError, match="unavailable"):
         worker_ref.read_bytes()
+
+
+@pytest.mark.parametrize(
+    ("platform", "changed_field", "allowed"),
+    [
+        ("nt", "st_ctime_ns", True),
+        ("posix", "st_ctime_ns", False),
+        ("nt", "st_size", False),
+        ("nt", "st_mtime_ns", False),
+        ("nt", "st_dev", False),
+        ("nt", "st_ino", False),
+    ],
+)
+def test_local_binding_descriptor_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    changed_field: str,
+    allowed: bool,
+) -> None:
+    import dinkster_assets.model as model
+
+    path = tmp_path / "weights.safetensors"
+    path.write_bytes(b"unhashed model")
+    table = MountTable()
+    table.add(MountDef(id="models", path=tmp_path), kind="model/checkpoint")
+    ref = table.bind_name(path.name, "model/checkpoint")
+    assert isinstance(ref, LocalAssetRef)
+
+    def changed_stat(fd: int) -> SimpleNamespace:
+        actual = os.fstat(fd)
+        values = {
+            field: getattr(actual, field)
+            for field in (
+                "st_size",
+                "st_mtime_ns",
+                "st_ctime_ns",
+                "st_dev",
+                "st_ino",
+            )
+        }
+        values[changed_field] += 1
+        return SimpleNamespace(**values)
+
+    monkeypatch.setattr(model, "os", SimpleNamespace(name=platform, fstat=changed_stat))
+    if allowed:
+        assert ref.read_bytes() == b"unhashed model"
+    else:
+        with pytest.raises(AssetError, match="changed while opening"):
+            ref.read_bytes()
 
 
 def test_unresolvable_ref_still_flows_but_fails_to_materialize() -> None:
