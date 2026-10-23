@@ -160,3 +160,50 @@ def test_save_mount_is_not_an_arbitrary_extra_input(field: str, value: object) -
     summary = compare_registry(reference, registry)
     assert not summary["passed"]
     assert "mount" in summary["rows"][0]["differences"]
+
+
+def test_exact_ids_and_file_widget_exemption() -> None:
+    from tools.compare_nodes import compare_registry
+
+    reference = {
+        "nodes": [
+            {
+                "class_name": "LoadExample",
+                "file_inputs": ["file"],
+                "input_types": {"required": {"file": [["original.safetensors"]]}},
+                "return_types": ["MODEL"],
+                "return_names": ["model"],
+                "output_is_list": [True],
+            }
+        ]
+    }
+    schema = {
+        "nodeType": "LoadExample",
+        "interface": [
+            {
+                "role": "input",
+                "id": "file",
+                "required": True,
+                "type": {"kind": "concrete", "types": ["COMBO"]},
+                "widget": {"type": "ASSET"},
+            },
+            {
+                "role": "output",
+                "id": "model",
+                "type": {"kind": "list", "element": {"kind": "concrete", "types": ["MODEL"]}},
+            },
+        ],
+    }
+    registry = {"nodes": {"LoadExample": schema, "Extra": {"nodeType": "Extra", "interface": []}}}
+    summary = compare_registry(reference, registry)
+    assert summary["passed"]
+    assert summary["counts"] == {"identical": 1, "Dinkster-only": 1}
+
+    schema["interface"][1]["type"] = {"kind": "concrete", "types": ["MODEL"]}
+    assert not compare_registry(reference, registry)["passed"]
+
+    del registry["nodes"]["LoadExample"]
+    registry["nodes"]["Extra"]["aliases"] = ["LoadExample"]
+    summary = compare_registry(reference, registry)
+    assert not summary["passed"]
+    assert summary["counts"] == {"absent": 1, "Dinkster-only": 1}
