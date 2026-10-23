@@ -66,7 +66,6 @@ def main(argv: list[str] | None = None) -> int:
         "--install-root",
         str(install_root),
         "--prepare-stale-catalogs",
-        "--disable-p2p",
         "--allow-mount-changes",
     ]
     if args.frontend_dev:
