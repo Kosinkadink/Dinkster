@@ -17,6 +17,7 @@ from dinkster_engine import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_protocol import (
+    CachedResult,
     Invocation,
     InvocationResult,
     LazyStatusInvocation,
@@ -535,7 +536,7 @@ def test_lazy_consumer_hooks_run_before_single_flight_coalesces_the_body() -> No
             self.get_calls = 0
             self.put_calls = 0
 
-        async def get(self, key: str) -> Mapping[str, Value] | None:
+        async def get(self, key: str) -> CachedResult | None:
             self.get_calls += 1
             return await super().get(key)
 
@@ -907,7 +908,7 @@ def test_non_idempotent_lazy_consumer_remains_uncached_and_uncoalesced() -> None
             self.get_calls = 0
             self.put_calls = 0
 
-        async def get(self, key: str) -> Mapping[str, Value] | None:
+        async def get(self, key: str) -> CachedResult | None:
             self.get_calls += 1
             return await super().get(key)
 

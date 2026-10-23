@@ -56,7 +56,6 @@ from dinkster_protocol import (
     validate_preview_animation,
     validate_preview_mode,
 )
-from dinkster_protocol.result_algebra import JsonLiteral
 from dinkster_schema import schema_from_wire, schema_to_wire
 from dinkster_values import (
     CONVERSATION_CAS_BUDGET_BYTES,
@@ -1249,31 +1248,6 @@ def encode_invocation_outcome(
     return header, blobs, segments
 
 
-def _ref_to_document(value: object) -> dict[str, object]:
-    from dinkster_protocol import CurrentOutputRef, LocalOutputRef
-
-    if isinstance(value, CurrentOutputRef):
-        return {"kind": "outputRef", "scope": "current", "outputId": value.output_id}
-    if isinstance(value, LocalOutputRef):
-        return {
-            "kind": "outputRef",
-            "scope": "local",
-            "localNodeId": value.local_node_id,
-            "outputId": value.output_id,
-        }
-    raise BoundaryError("invalid output reference")
-
-
-def _metadata_ref_to_document(value: object) -> dict[str, object]:
-    from dinkster_protocol import CurrentNodeRef, LocalNodeRef
-
-    if isinstance(value, CurrentNodeRef):
-        return {"kind": "nodeRef", "scope": "current"}
-    if isinstance(value, LocalNodeRef):
-        return {"kind": "nodeRef", "scope": "local", "localNodeId": value.local_node_id}
-    raise BoundaryError("invalid node metadata reference")
-
-
 def _outcome_to_document(
     outcome: object,
     codec: ValueCodec,
@@ -1283,15 +1257,8 @@ def _outcome_to_document(
     segments: list[SharedMemory],
     value_budget: list[int],
 ) -> dict[str, object]:
-    from dinkster_protocol import (
-        BlockedOutput,
-        DirectReturn,
-        ExpandedReturn,
-        InvocationFailure,
-        InvocationReturn,
-        LiteralInput,
-        PresentOutput,
-    )
+    from dinkster_protocol import InvocationFailure, InvocationReturn
+    from dinkster_protocol.result_document import return_unit_to_document
 
     if isinstance(outcome, InvocationFailure):
         error = outcome.error
@@ -1311,62 +1278,16 @@ def _outcome_to_document(
     if not isinstance(outcome, InvocationReturn):
         raise BoundaryError("invalid invocation outcome")
 
-    def binding(item: object) -> dict[str, object]:
-        if isinstance(item, PresentOutput):
-            _preflight_value_tree(item.value, value_budget)
-            wire, stat = codec.encode(item.value, blobs, segments)
-            index = len(values)
-            values.append(wire)
-            stats.append(_stat_to_wire(stat))
-            return {"kind": "present", "valueIndex": index}
-        if isinstance(item, BlockedOutput):
-            return {"kind": "blocked", "message": item.message}
-        return _ref_to_document(item)
+    def encode_present(value: Value) -> int:
+        _preflight_value_tree(value, value_budget)
+        wire, stat = codec.encode(value, blobs, segments)
+        index = len(values)
+        values.append(wire)
+        stats.append(_stat_to_wire(stat))
+        return index
 
-    def inputs(item: object) -> dict[str, object]:
-        if isinstance(item, LiteralInput):
-            return {"kind": "literal", "value": _literal_to_json(item.value)}
-        return _ref_to_document(item)
-
-    units = []
-    for unit in outcome.batch.units:
-        result: dict[str, object] = {
-            "bindings": [{"id": key, "value": binding(value)} for key, value in unit.bindings],
-            "kind": "direct",
-        }
-        if isinstance(unit, ExpandedReturn):
-            result["kind"] = "expanded"
-            expansion = unit.expansion
-            result["expansion"] = {
-                "nodes": [
-                    {
-                        "display": _metadata_ref_to_document(node.display)
-                        if node.display
-                        else None,
-                        "inputs": [
-                            {"id": key, "value": inputs(value)} for key, value in node.inputs
-                        ],
-                        "localId": node.local_id,
-                        "nodeType": node.node_type,
-                        "parent": _metadata_ref_to_document(node.parent) if node.parent else None,
-                    }
-                    for node in expansion.nodes
-                ]
-            }
-        elif not isinstance(unit, DirectReturn):
-            raise BoundaryError("invalid return unit")
-        units.append(result)
+    units = [return_unit_to_document(unit, encode_present) for unit in outcome.batch.units]
     return {"batch": {"mode": outcome.batch.mode, "units": units}, "kind": "return"}
-
-
-def _literal_to_json(value: object) -> object:
-    from dinkster_protocol import JsonObject
-
-    if isinstance(value, JsonObject):
-        return {key: _literal_to_json(item) for key, item in value.fields}
-    if isinstance(value, tuple):
-        return [_literal_to_json(item) for item in value]
-    return value
 
 
 def _preflight_value_tree(root: Value, budget: list[int]) -> None:
@@ -1401,24 +1322,6 @@ def _finite_number(value: object, name: str) -> float:
     if not math.isfinite(converted) or (converted == 0.0 and math.copysign(1.0, converted) < 0):
         raise BoundaryError(f"{name} must be finite and not negative zero")
     return converted
-
-
-def _json_to_literal(value: object) -> JsonLiteral:
-    from dinkster_protocol import JsonObject
-
-    if isinstance(value, list):
-        return tuple(_json_to_literal(item) for item in value)
-    if isinstance(value, dict):
-        object_value = cast("dict[object, object]", value)
-        if not all(isinstance(key, str) for key in object_value):
-            raise ValueError("literal object keys must be strings")
-        return JsonObject(
-            tuple(
-                (cast(str, key), _json_to_literal(item))
-                for key, item in sorted(object_value.items())
-            )
-        )
-    return cast("JsonLiteral", value)
 
 
 def decode_invocation_outcome(
@@ -1713,29 +1616,14 @@ def _document_to_outcome(
     document: object, values: list[Value]
 ) -> tuple[InvocationOutcome, set[int], dict[int, tuple[int, str]]]:
     from dinkster_protocol import (
-        BlockedOutput,
-        CurrentNodeRef,
-        CurrentOutputRef,
-        DirectReturn,
         ErrorHint,
-        ExpandedReturn,
         InvocationFailure,
         InvocationReturn,
-        LiteralInput,
-        LocalExpansion,
-        LocalNode,
-        LocalNodeRef,
-        LocalOutputRef,
         NodeError,
-        PresentOutput,
         ReturnBatch,
     )
-    from dinkster_protocol.result_algebra import (
-        InputBinding,
-        NodeMetadataRef,
-        OutputBinding,
-        ReturnUnit,
-    )
+    from dinkster_protocol.result_algebra import ReturnUnit
+    from dinkster_protocol.result_document import return_unit_from_document
 
     if not isinstance(document, dict):
         raise ValueError("outcome document must be an object")
@@ -1776,100 +1664,19 @@ def _document_to_outcome(
     used: set[int] = set()
     locations: dict[int, tuple[int, str]] = {}
 
-    def ref(raw: object) -> CurrentOutputRef | LocalOutputRef:
-        if not isinstance(raw, dict):
-            raise ValueError("reference must be an object")
-        item = cast("dict[str, Any]", raw)
-        kind = item.get("kind")
-        if kind != "outputRef":
-            raise ValueError("unknown reference")
-        if item.get("scope") == "current":
-            item = _exact(item, {"kind", "scope", "outputId"})
-            return CurrentOutputRef(item["outputId"])
-        if item.get("scope") == "local":
-            item = _exact(item, {"kind", "scope", "localNodeId", "outputId"})
-            return LocalOutputRef(item["localNodeId"], item["outputId"])
-        raise ValueError("unknown reference")
-
-    def metadata_ref(raw: object) -> NodeMetadataRef:
-        if not isinstance(raw, dict):
-            raise ValueError("metadata reference must be an object")
-        item = cast("dict[str, Any]", raw)
-        if item.get("kind") != "nodeRef":
-            raise ValueError("unknown metadata reference")
-        if item.get("scope") == "current":
-            _exact(item, {"kind", "scope"})
-            return CurrentNodeRef()
-        if item.get("scope") == "local":
-            item = _exact(item, {"kind", "scope", "localNodeId"})
-            return LocalNodeRef(item["localNodeId"])
-        raise ValueError("unknown metadata scope")
-
-    def binding(raw: object, unit_index: int, output_id: str) -> OutputBinding:
-        if not isinstance(raw, dict):
-            raise ValueError("binding must be an object")
-        item = cast("dict[str, Any]", raw)
-        kind = item.get("kind")
-        if kind == "present":
-            item = _exact(item, {"kind", "valueIndex"})
-            index = item["valueIndex"]
-            if type(index) is not int or index < 0 or index >= len(values) or index in used:
-                raise ValueError("invalid descriptor index")
-            used.add(index)
-            locations[index] = (unit_index, output_id)
-            return PresentOutput(values[index])
-        if kind == "blocked":
-            item = _exact(item, {"kind", "message"})
-            return BlockedOutput(item["message"])
-        return ref(item)
-
     units: list[ReturnUnit] = []
     if type(batch["units"]) is not list:
         raise ValueError("units must be an array")
     for unit_index, raw_unit in enumerate(batch["units"]):
-        if not isinstance(raw_unit, dict):
-            raise ValueError("return unit must be an object")
-        unit = cast("dict[str, Any]", raw_unit)
-        kind = unit.get("kind")
-        expected = {"kind", "bindings"} if kind == "direct" else {"kind", "bindings", "expansion"}
-        unit = _exact(unit, expected)
-        bindings: tuple[tuple[str, OutputBinding], ...] = tuple(
-            (
-                cast(str, entry["id"]),
-                binding(entry["value"], unit_index, cast(str, entry["id"])),
-            )
-            for entry in (_exact(item, {"id", "value"}) for item in unit["bindings"])
-        )
-        if kind == "direct":
-            units.append(DirectReturn(bindings))
-            continue
-        if kind != "expanded":
-            raise ValueError("unknown return kind")
-        expansion = _exact(unit["expansion"], {"nodes"})
-        nodes: list[LocalNode] = []
-        for raw_node in expansion["nodes"]:
-            node = _exact(raw_node, {"display", "inputs", "localId", "nodeType", "parent"})
-            inputs_list: list[tuple[str, InputBinding]] = []
-            for entry in (_exact(item, {"id", "value"}) for item in node["inputs"]):
-                input_value = entry["value"]
-                if isinstance(input_value, dict) and input_value.get("kind") == "literal":
-                    literal = _exact(input_value, {"kind", "value"})
-                    decoded_input = LiteralInput(_json_to_literal(literal["value"]))
-                else:
-                    decoded_input = ref(input_value)
-                inputs_list.append((cast(str, entry["id"]), decoded_input))
-            inputs = tuple(inputs_list)
-            nodes.append(
-                LocalNode(
-                    node["localId"],
-                    node["nodeType"],
-                    inputs,
-                    metadata_ref(node["parent"]) if node["parent"] is not None else None,
-                    metadata_ref(node["display"]) if node["display"] is not None else None,
-                )
-            )
-        local = LocalExpansion(tuple(nodes))
-        units.append(ExpandedReturn(local, bindings))
+
+        def decode_present(index: object, output_id: str, unit_index: int = unit_index) -> Value:
+            if type(index) is not int or index < 0 or index >= len(values) or index in used:
+                raise ValueError("invalid descriptor index")
+            used.add(index)
+            locations[index] = (unit_index, output_id)
+            return values[index]
+
+        units.append(return_unit_from_document(raw_unit, decode_present))
     return InvocationReturn(ReturnBatch(batch["mode"], tuple(units))), used, locations
 
 

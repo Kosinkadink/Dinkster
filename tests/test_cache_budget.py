@@ -17,6 +17,7 @@ from dinkster_caches.memory import entry_cost
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_memory import PressureSignal, system_memory_snapshot
+from dinkster_protocol import CachedResult
 from dinkster_schema import (
     InputSpec,
     Node,
@@ -564,10 +565,10 @@ def test_clear_during_slow_hit_does_not_promote_stale_result(tmp_path: Path) -> 
         resume = asyncio.Event()
 
         class SlowStore:
-            async def get(self, key: str) -> Mapping[str, Value] | None:
+            async def get(self, key: str) -> CachedResult | None:
                 started.set()
                 await resume.wait()
-                return entry(50)
+                return CachedResult(entry(50))
 
             async def put(self, key: str, outputs: Mapping[str, Value]) -> None:
                 pass
@@ -593,11 +594,11 @@ def test_slow_miss_does_not_block_other_keys_or_duplicate_promotion() -> None:
         requests: list[str] = []
 
         class SlowStore:
-            async def get(self, key: str) -> Mapping[str, Value] | None:
+            async def get(self, key: str) -> CachedResult | None:
                 requests.append(key)
                 started.set()
                 await resume.wait()
-                return entry(50)
+                return CachedResult(entry(50))
 
             async def put(self, key: str, outputs: Mapping[str, Value]) -> None:
                 pass

@@ -447,7 +447,7 @@ def test_cache_manifest_roundtrips_lists() -> None:
             return digest
 
         manifest = entry_to_wire("key1", encoded, store)
-        assert manifest["version"] == 2
+        assert manifest["version"] == 3
 
         async def fetch(digest: str, size: int) -> bytes | None:
             return blob_store.get(digest)

@@ -25,6 +25,8 @@ from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
+from dinkster_protocol import CachedResult, ExpandedReturn
+from dinkster_protocol.result_document import return_unit_from_document, return_unit_to_document
 from dinkster_values import (
     EncodedPayload,
     ListPayload,
@@ -39,12 +41,12 @@ from dinkster_values import (
 )
 from dinkster_values.storage import encoded_storage_meta
 
-ENTRY_WIRE_VERSION = 2
-"""v2: recursive list outputs (``elements`` instead of ``digest``/``size``).
-v1 manifests (scalar-only) remain readable; a v1 reader treats a v2 list
-manifest as the conservative miss it should."""
+ENTRY_WIRE_VERSION = 3
+"""v3 adds an atomic expansion document beside the present output values.
+v1 (scalar) and v2 (recursive lists) remain readable as direct results.
+Older readers reject v3 rather than returning an incomplete expansion."""
 
-_ACCEPTED_VERSIONS = (1, 2)
+_ACCEPTED_VERSIONS = (1, 2, 3)
 
 BlobFetch = Callable[[str, int], Awaitable[bytes | None]]
 """Fetch verified blob bytes by (digest, expected size); None on miss."""
@@ -64,6 +66,12 @@ class EncodedValue:
     value: Value
     data: bytes | None
     children: tuple[EncodedValue, ...] = ()
+
+
+@dataclass(frozen=True)
+class EncodedEntry:
+    outputs: Mapping[str, EncodedValue]
+    expansion: dict[str, object] | None
 
 
 def _encode_value(value: Value, registry: TypeRegistry) -> EncodedValue | None:
@@ -89,9 +97,7 @@ def _encode_value(value: Value, registry: TypeRegistry) -> EncodedValue | None:
     return EncodedValue(value, data)
 
 
-def encode_entry(
-    outputs: Mapping[str, Value], registry: TypeRegistry
-) -> dict[str, EncodedValue] | None:
+def encode_entry(outputs: Mapping[str, Value], registry: TypeRegistry) -> EncodedEntry | None:
     """Each output encoded for persistence, or None if the entry cannot be.
 
     Persistence is refused when:
@@ -115,7 +121,19 @@ def encode_entry(
         if encoded_value is None:
             return None
         encoded[output_id] = encoded_value
-    return encoded
+    expansion = outputs.expansion if isinstance(outputs, CachedResult) else None
+    document = None
+    if expansion is not None:
+        index = 0
+
+        def encode_present(_value: Value) -> int:
+            nonlocal index
+            result = index
+            index += 1
+            return result
+
+        document = return_unit_to_document(expansion, encode_present)
+    return EncodedEntry(encoded, document)
 
 
 def _value_to_wire(encoded: EncodedValue, store_blob: BlobStore) -> dict[str, Any]:
@@ -134,16 +152,19 @@ def _value_to_wire(encoded: EncodedValue, store_blob: BlobStore) -> dict[str, An
     return wire
 
 
-def entry_to_wire(
-    key: str, encoded: Mapping[str, EncodedValue], store_blob: BlobStore
-) -> dict[str, Any]:
+def entry_to_wire(key: str, encoded: EncodedEntry, store_blob: BlobStore) -> dict[str, Any]:
     """The manifest for an encoded entry; ``store_blob`` persists each leaf's
     bytes and names the CAS digest the manifest references."""
     outputs: dict[str, Any] = {
         output_id: _value_to_wire(encoded_value, store_blob)
-        for output_id, encoded_value in encoded.items()
+        for output_id, encoded_value in encoded.outputs.items()
     }
-    return {"version": ENTRY_WIRE_VERSION, "key": key, "outputs": outputs}
+    return {
+        "version": ENTRY_WIRE_VERSION,
+        "key": key,
+        "outputs": outputs,
+        "expansion": encoded.expansion,
+    }
 
 
 def iter_manifest_payloads(manifest: Mapping[str, Any]) -> Iterator[Mapping[str, Any]]:
@@ -245,11 +266,16 @@ async def _value_from_wire(
 
 async def entry_from_wire(
     wire: Mapping[str, Any], fetch_blob: BlobFetch, registry: TypeRegistry
-) -> dict[str, Value] | None:
+) -> CachedResult | None:
     """Rehydrate an entry from its manifest, or None (a miss) if anything
     about it cannot be trusted. Types unregistered here still rehydrate -
     as encoded envelopes that relay but do not load (hazard H2)."""
     if wire.get("version") not in _ACCEPTED_VERSIONS:
+        return None
+    if wire.get("version") == 3:
+        if set(wire) != {"version", "key", "outputs", "expansion"}:
+            return None
+    elif "expansion" in wire:
         return None
     outputs_wire = wire.get("outputs")
     if not isinstance(outputs_wire, Mapping):
@@ -259,7 +285,24 @@ async def entry_from_wire(
         if not isinstance(out, Mapping):
             return None
         value = await _value_from_wire(cast("Mapping[str, Any]", out), fetch_blob, registry)
-        if value is None:
+        if value is None or value_resource_ids(value):
             return None
         entry[str(output_id)] = value
-    return entry
+    document = wire.get("expansion")
+    if document is None:
+        return CachedResult(entry)
+    used: set[str] = set()
+
+    def decode_present(index: object, output_id: str) -> Value:
+        if type(index) is not int or index != len(used) or output_id in used:
+            raise ValueError("invalid cached present binding index")
+        used.add(output_id)
+        return entry[output_id]
+
+    try:
+        expansion = return_unit_from_document(document, decode_present)
+        if not isinstance(expansion, ExpandedReturn) or used != set(entry):
+            return None
+        return CachedResult(entry, expansion)
+    except (KeyError, TypeError, ValueError, RecursionError, OverflowError):
+        return None

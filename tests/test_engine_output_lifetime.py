@@ -12,7 +12,13 @@ import pytest
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EngineEvent, ExecutionError
 from dinkster_graph import PORTS_NODE_ID, Graph, GraphNode, Link, RegionNode, RegionOutput
-from dinkster_protocol import Invocation, InvocationResult, LazyStatusResult, NodeError
+from dinkster_protocol import (
+    CachedResult,
+    Invocation,
+    InvocationResult,
+    LazyStatusResult,
+    NodeError,
+)
 from dinkster_schema import InputSpec, NodeSchema, OutputSpec, TypeExpr
 from dinkster_values import (
     RESOURCE_ID_META_KEY,
@@ -51,7 +57,7 @@ SCHEMAS = {
 
 
 class NoCache:
-    async def get(self, key: str) -> Mapping[str, Value] | None:
+    async def get(self, key: str) -> CachedResult | None:
         return None
 
     async def put(self, key: str, outputs: Mapping[str, Value]) -> None:

@@ -1615,7 +1615,9 @@ class Engine:
                     if isinstance(reported_layer, str):
                         cache_layer = reported_layer
             entry_problem: str | None = None
-            if hit is not None and not self._cache_hit_valid(schema, hit):
+            if hit is not None and (
+                hit.expansion is not None or not self._cache_hit_valid(schema, hit)
+            ):
                 entry_problem = "invalid-entry"
                 hit = None
             # A hit referencing a dead worker lifetime can never resolve

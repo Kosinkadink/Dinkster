@@ -14,7 +14,7 @@ belong below this layer; anything more is a layering regression.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Literal, Protocol, cast
@@ -664,8 +664,39 @@ class LazyStatusWorker(Protocol):
     ) -> LazyStatusResult: ...
 
 
+@dataclass(frozen=True, eq=False)
+class CachedResult(Mapping[str, Value]):
+    """One immutable cached invocation, including its replayable graph fragment.
+
+    Mapping operations enumerate present values only. Expansion bindings
+    share those envelopes, so retention, cost and invalidation see each
+    value once rather than treating the graph as a second payload owner.
+    """
+
+    outputs: Mapping[str, Value]
+    expansion: ExpandedReturn | None = None
+
+    def __post_init__(self) -> None:
+        expansion = self.expansion
+        if expansion is None and isinstance(self.outputs, CachedResult):
+            expansion = self.outputs.expansion
+        result = InvocationResult(self.outputs, expansion=expansion)
+        assert result.outputs is not None
+        object.__setattr__(self, "outputs", MappingProxyType(dict(result.outputs)))
+        object.__setattr__(self, "expansion", result.expansion)
+
+    def __getitem__(self, key: str) -> Value:
+        return self.outputs[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.outputs)
+
+    def __len__(self) -> int:
+        return len(self.outputs)
+
+
 class CacheStore(Protocol):
-    async def get(self, key: CacheKey) -> Mapping[str, Value] | None: ...
+    async def get(self, key: CacheKey) -> CachedResult | None: ...
 
     async def put(self, key: CacheKey, outputs: Mapping[str, Value]) -> None: ...
 

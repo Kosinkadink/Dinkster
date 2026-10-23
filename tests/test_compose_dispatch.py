@@ -29,6 +29,7 @@ from dinkster_protocol import (
     AttentionPolicyConfig,
     AttentionRouteToken,
     BeginWorkGroup,
+    CachedResult,
     CacheKey,
     CancelWorkGroup,
     CommitWorkGroup,
@@ -2120,7 +2121,7 @@ def test_composer_fallback_keeps_requested_policy_in_cache_identity() -> None:
             get_calls = 0
             put_calls = 0
 
-            async def get(self, key: CacheKey) -> Mapping[str, Value] | None:
+            async def get(self, key: CacheKey) -> CachedResult | None:
                 self.get_calls += 1
                 return await super().get(key)
 

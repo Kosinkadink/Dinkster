@@ -26,6 +26,10 @@
   values retain ordinary resource ownership, source adoption, saved-artifact
   validation and shared-memory/result acknowledgements. Carrying a fragment
   across a worker boundary does not bypass graph admission by the engine.
+  Cache stores preserve these declarations with their present values across
+  memory retention, disk restart, deferred spill and peer promotion. Incomplete
+  persisted declarations are whole-entry misses; resident resources remain
+  memory-only and invalidate the entire entry when released.
 - Model-backed vision provider packs can implement stable owner node schemas.
   Ordinary node cards hide implementation pack ids. A missing selection is
   resolved deterministically from the requested semantic model and compatible
