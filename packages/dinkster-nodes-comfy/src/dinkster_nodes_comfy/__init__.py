@@ -1,6 +1,7 @@
 """Native Dinkster implementations of ComfyUI core nodes."""
 
 from .logic import LOGIC_NODES
+from .math import ComfyMathExpression
 from .primitive import (
     PrimitiveBoolean,
     PrimitiveFloat,
@@ -21,4 +22,5 @@ COMFY_NODES = (
     *LOGIC_NODES,
     ComfyNumberConvert,
     SeedNode,
+    ComfyMathExpression,
 )
