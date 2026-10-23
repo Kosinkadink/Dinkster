@@ -15,6 +15,35 @@ from test_server import SCHEMAS, make_engine
 def test_server_exposes_only_supported_features_and_keeps_templates_disabled() -> None:
     async def scenario() -> None:
         app = create_app(make_engine, SCHEMAS)
+        namespaces = {
+            "/".join(route.resource.canonical.split("/")[:3]) for route in app.router.routes()
+        }
+        assert namespaces == {
+            "/api/auth",
+            "/api/choices",
+            "/api/composition",
+            "/api/diagnostics",
+            "/api/docs",
+            "/api/events",
+            "/api/extension-assets",
+            "/api/extensions",
+            "/api/health",
+            "/api/jobs",
+            "/api/nodes",
+            "/api/packs",
+            "/api/principals",
+            "/api/queue",
+            "/api/settings",
+            "/api/values",
+            "/api/workers",
+            "/cache/trim",
+            "/memory/free",
+            "/memory/reserve",
+            "/memory/reset-peak",
+            "/memory/shed",
+            "/memory/status",
+            "/packs/{pack_id}",
+        }
         client = TestClient(TestServer(app))
         await client.start_server()
         try:
