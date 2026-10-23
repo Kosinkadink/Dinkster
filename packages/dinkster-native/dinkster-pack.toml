@@ -3,15 +3,9 @@ name = "dinkster-native"
 namespaces = ["comfy", "dinkster"]
 executes = [
     "dinkster.load_checkpoint",
-    "dinkster.load_model_patch",
-    "dinkster.apply_minimax_h3_fun_controlnet",
     "dinkster.load_diffusion_model",
     "dinkster.clip_text_encode",
     "dinkster.empty_latent_image",
-    "dinkster.temporal_window_plan",
-    "dinkster.spatial_tile_plan",
-    "dinkster.explicit_window_plan",
-    "dinkster.res4lyf_rk_beta_sampler",
     "dinkster.ksampler",
     "dinkster.vae_decode",
     "dinkster.load_clip",
@@ -38,7 +32,7 @@ executes = [
     "dinkster.mesh_to_model3d",
 ]
 requires = [
-    "dinkster-inference @ git+https://github.com/Kosinkadink/dinkster-inference.git@078028aa3e048f7944d3612cab5ae7c0132edd11",
+    "dinkster-inference @ git+https://github.com/Kosinkadink/dinkster-inference.git@c4ce40550e77f5a3b9b8d2f96597a4d6c24c1377",
 ]
 
 [pack.sandbox]
@@ -58,15 +52,9 @@ dinkster-nodes-generation = ">=0.0.1,<1"
 [pack.arms]
 native = [
     "dinkster.load_checkpoint",
-    "dinkster.load_model_patch",
-    "dinkster.apply_minimax_h3_fun_controlnet",
     "dinkster.load_diffusion_model",
     "dinkster.clip_text_encode",
     "dinkster.empty_latent_image",
-    "dinkster.temporal_window_plan",
-    "dinkster.spatial_tile_plan",
-    "dinkster.explicit_window_plan",
-    "dinkster.res4lyf_rk_beta_sampler",
     "dinkster.ksampler",
     "dinkster.vae_decode",
     "dinkster.load_clip",

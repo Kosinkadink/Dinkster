@@ -31,15 +31,9 @@ _TRANSLATION, LEGACY_REPORTS = load_legacy_packs()
 LEGACY_NODES = (*entry.COMFY_NODES, *_TRANSLATION.node_classes)
 _LEGACY_ARM_NODE_TYPES = (
     "dinkster.load_checkpoint",
-    "dinkster.load_model_patch",
-    "dinkster.apply_minimax_h3_fun_controlnet",
     "dinkster.load_diffusion_model",
     "dinkster.clip_text_encode",
     "dinkster.empty_latent_image",
-    "dinkster.temporal_window_plan",
-    "dinkster.spatial_tile_plan",
-    "dinkster.explicit_window_plan",
-    "dinkster.res4lyf_rk_beta_sampler",
     "dinkster.ksampler",
     "dinkster.vae_decode",
     "dinkster.load_clip",

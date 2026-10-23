@@ -187,7 +187,7 @@ def _distributed_config() -> _DistributedConfig:
     if (
         world_size < 2
         or not 0 <= rank < world_size
-        or mode not in ("auto", "guidance", "sequence", "window")
+        or mode not in ("auto", "guidance", "sequence")
         or not rendezvous_base.startswith("file://")
         or len(token_base) != 32
     ):

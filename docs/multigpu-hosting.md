@@ -14,7 +14,7 @@ Dinkster exposes two independent multi-GPU configurations:
 - `--single-job-multi-gpu-devices` starts one isolated rank per device for a
   single graph execution. The ranks coordinate through the worker-owned
   attention route. Job submission can choose an ordered subset of this startup
-  pool and an eligible guidance, sequence, or window mode.
+  pool and an eligible guidance or sequence mode.
 
 Do not compare the latency of one distributed job with the throughput of
 several replicas. Record wall seconds per job and completed jobs per hour as
@@ -113,8 +113,8 @@ acceptance.
 ## Performance measurements
 
 Correctness does not imply speedup. Guidance divides model-evaluated
-conditioning lanes, H3 Ulysses divides sequence rows and attention heads, and
-window mode divides a joint-window plan. Verify that the selected decomposition
+conditioning lanes and H3 Ulysses divides sequence rows and attention heads.
+Verify that the selected decomposition
 ran; process count alone is not evidence that work was sharded.
 
 When evaluating later performance work, record cold complete-workflow wall

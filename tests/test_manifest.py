@@ -108,8 +108,6 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
 
     fork_backed = (
         "dinkster.load_checkpoint",
-        "dinkster.load_model_patch",
-        "dinkster.apply_minimax_h3_fun_controlnet",
         "dinkster.load_diffusion_model",
         "dinkster.clip_text_encode",
         "dinkster.empty_latent_image",
@@ -151,32 +149,13 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
     )
 
     legacy = load_manifest(Path("packages/dinkster-compat-comfy/dinkster-legacy-pack.toml"))
-    legacy_extra = {
-        "dinkster.load_model_patch",
-        "dinkster.apply_minimax_h3_fun_controlnet",
-        "dinkster.temporal_window_plan",
-        "dinkster.spatial_tile_plan",
-        "dinkster.explicit_window_plan",
-        "dinkster.res4lyf_rk_beta_sampler",
-    }
-    legacy_native = set(fork_backed) | legacy_extra
+    legacy_native = set(fork_backed)
     assert set(legacy.executes) == legacy_native | set(mesh)
     assert set(dict(legacy.arms)["native"]) == legacy_native
     assert legacy.arm_nodes_entry == "dinkster_compat_comfy.legacy_entry:ARM_NODES"
 
     native = load_manifest(Path("packages/dinkster-native/dinkster-pack.toml"))
-    retained = set((*default_native, *mesh))
-    native_sampling = {
-        "dinkster.temporal_window_plan",
-        "dinkster.spatial_tile_plan",
-        "dinkster.explicit_window_plan",
-        "dinkster.res4lyf_rk_beta_sampler",
-    }
-    native_model_patches = {
-        "dinkster.load_model_patch",
-        "dinkster.apply_minimax_h3_fun_controlnet",
-    }
-    native_nodes = retained | native_sampling | native_model_patches
+    native_nodes = set((*default_native, *mesh))
     assert native.namespaces == ("comfy", "dinkster")
     assert set(native.executes) == native_nodes
     assert set(dict(native.arms)["native"]) == native_nodes

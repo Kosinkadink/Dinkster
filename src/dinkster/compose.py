@@ -1124,7 +1124,7 @@ class PackSpec:
             raise ValueError("replica and single-job CUDA indices are mutually exclusive")
         if self.in_process and self.asset_vault_write:
             raise ValueError("an in-process PackSpec cannot request asset vault write access")
-        if self.single_job_mode not in ("auto", "guidance", "sequence", "window"):
+        if self.single_job_mode not in ("auto", "guidance", "sequence"):
             raise ValueError("PackSpec single_job_mode is invalid")
         budgets: dict[str, int] = {}
         for residency, nbytes in self.vram_budgets.items():
