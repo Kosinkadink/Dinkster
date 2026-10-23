@@ -25,10 +25,9 @@
   freshness
 - Declarative resolver-index subscriptions from local JSON files or HTTPS
   URLs, with ETag revalidation, regional mirror priority, digest-verified
-  acquisition leads, isolated source removal, exact-basename suggestions, and
-  explicit per-subscription license-authority controls
+  acquisition leads, isolated source removal, and exact-basename suggestions
 - Official provider subscription bootstrap from explicit URL and stable-ID
-  configuration, with identity verification and preserved trust/unsubscribe
+  configuration, with identity verification and preserved unsubscribe
   choices; no built-in provider endpoint or identity
 - Workflow templates are disabled by default: `features.templates.enabled`
   defaults to false, and the catalog, template body and thumbnail routes
