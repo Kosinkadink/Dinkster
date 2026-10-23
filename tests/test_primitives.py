@@ -135,7 +135,7 @@ def test_list_slice_and_range_schemas_preserve_element_types() -> None:
     assert range_schema.inputs[1].required is True
     assert range_schema.inputs[1].default is None
     assert range_schema.inputs[2].default == 1
-    assert range_schema.outputs[0].type == TypeExpr.list_of(TypeExpr.concrete("core.int"))
+    assert range_schema.outputs[0].type == TypeExpr.list_of(TypeExpr.concrete("INT"))
 
     for schema in (slice_schema, range_schema):
         assert schema_from_wire(schema_to_wire(schema)) == schema
@@ -241,7 +241,7 @@ def test_primitive_wire_presentation() -> None:
     }
     assert target["widget"] == {"type": "SAVE_TARGET"}
     prefix = _entry(target_wire, "prefix")
-    assert prefix["type"] == {"kind": "concrete", "types": ["core.string"]}
+    assert prefix["type"] == {"kind": "concrete", "types": ["STRING"]}
     assert prefix["required"] is False
     assert "widget" not in prefix
     output = _entry(target_wire, "save_target")
@@ -252,7 +252,7 @@ def test_primitive_wire_presentation() -> None:
 
 
 def test_save_target_prefix_is_an_explicit_typed_constructor() -> None:
-    """A computed core.string may replace only the relative prefix. The
+    """A computed STRING may replace only the relative prefix. The
     structured input supplies and preserves the mount id, the output remains
     dinkster.save_target, and omitting the replacement is an exact identity."""
     from dinkster_assets import AssetError, SaveTarget
@@ -315,7 +315,7 @@ def test_primitives_execute_with_values_and_defaults() -> None:
         )
         result = await engine.run(graph, ["i", "f", "s", "m", "b", "p"])
         assert result.outputs["i"]["value"].resolve() == 7
-        assert result.outputs["i"]["value"].type_id == "core.int"
+        assert result.outputs["i"]["value"].type_id == "INT"
         assert result.outputs["f"]["value"].resolve() == 0.25
         assert result.outputs["s"]["value"].resolve() == "hello"
         assert result.outputs["m"]["value"].resolve() == "a\nb"
@@ -375,7 +375,7 @@ def test_unresolvable_payload_fails_as_node_error() -> None:
         registry = TypeRegistry()
         register_core_types(registry)
         worker = InProcessWorker(build_node_types(PRIMITIVE_TEST_NODES), registry)
-        donor = registry.wrap("core.string", "x")
+        donor = registry.wrap("STRING", "x")
         alien = dataclasses.replace(
             donor,
             type_id="alien.tensor",

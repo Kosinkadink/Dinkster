@@ -636,7 +636,7 @@ def test_core_combo_valid_boundary_and_disk_cache_round_trips(tmp_path: Path) ->
     async def scenario() -> None:
         registry = make_registry()
         value = registry.wrap(CORE_COMBO, "euler")
-        expected_fingerprint = "adfaa12b6da4ac3f28ffc6a3ec6712f845573052"
+        expected_fingerprint = "5cc02dd05421d92f092e0c685a9ae179ce868b7c"
         assert value.fingerprint == expected_fingerprint
 
         codec = ValueCodec(registry, use_shm=False)
