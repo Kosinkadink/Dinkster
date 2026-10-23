@@ -83,12 +83,14 @@ from dinkster_protocol.pack_surfaces import PACK_SETTINGS_SCHEMA_MAX_BYTES, pack
 from dinkster_schema import (
     ComfyAliasRegistry,
     ComfyGroupRegistry,
+    canonical_claim,
     canonical_name,
     claim_covers,
     claims_conflict,
     comfy_alias_registry_from_wire,
     comfy_group_registry_from_wire,
     core_logger,
+    validate_claim,
     validate_name,
 )
 from dinkster_values import MEBIBYTE
@@ -3007,7 +3009,7 @@ def _parse_namespaces(raw: object, pack_name: str, manifest_path: Path) -> tuple
         )
     claims = cast("list[str]", raw)
     for claim in claims:
-        problem = validate_name(claim)
+        problem = validate_claim(claim)
         if problem is not None:
             raise ManifestError(f"{manifest_path}: [pack] namespaces entry {claim!r} {problem}")
     for index, claim in enumerate(claims):
@@ -3015,7 +3017,7 @@ def _parse_namespaces(raw: object, pack_name: str, manifest_path: Path) -> tuple
             if claims_conflict(earlier, claim):
                 detail = (
                     "are the same claim (separators '-', '_' and '.' are one equivalence class)"
-                    if canonical_name(earlier) == canonical_name(claim)
+                    if canonical_claim(earlier) == canonical_claim(claim)
                     else "overlap (one nests inside the other); keep only the broader claim"
                 )
                 raise ManifestError(

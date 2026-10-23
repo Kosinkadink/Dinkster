@@ -57,7 +57,7 @@ from dinkster_registry import (
     plan,
 )
 from dinkster_registry.artifact import MANIFEST_FILENAME, build_artifact, unpack_artifact
-from dinkster_schema import canonical_name
+from dinkster_schema import canonical_claim, canonical_name
 from dinkster_workers import (
     PackManifest,
     detect_accelerator,
@@ -386,7 +386,7 @@ def _unpublished_entry(manifest: PackManifest, digest: str, source: str) -> Lock
         version=LOCAL_VERSION,
         artifact_digest=digest,
         publisher=LOCAL_PUBLISHER,
-        claims=tuple(canonical_name(claim) for claim in manifest.namespaces),
+        claims=tuple(canonical_claim(claim) for claim in manifest.namespaces),
         source=source,
     )
 

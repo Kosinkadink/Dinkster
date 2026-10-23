@@ -1,5 +1,9 @@
 ## Installed pack startup
 
+- Packs may own exact node IDs with case, spaces and dots, without renaming
+  them. Namespace and exact-node ownership reject overlapping owners through
+  install, composition and reload. Pack and publisher identities remain
+  lowercase with equivalent separator spellings.
 - Installed pack schemas and static choices are available before pack workers
   start. Workers activate on demand, including in-process packs and explicitly
   configured shared-process groups.

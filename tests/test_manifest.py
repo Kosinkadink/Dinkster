@@ -71,6 +71,19 @@ def write_manifest(path: Path, handler: object = None) -> Path:
     return path
 
 
+def test_manifest_keeps_exact_node_claims_and_rejects_overlapping_namespace(tmp_path: Path) -> None:
+    path = tmp_path / "dinkster-pack.toml"
+    claims = ["Epsilon Scaling", "Video Slice", "TextEncodeAceStepAudio1.5"]
+    path.write_text(
+        f'[pack]\nname = "test"\nnamespaces = {json.dumps(claims)}\n'
+        '[pack.entry]\nnodes = "test_pack:NODES"\n'
+    )
+    assert load_manifest(path).namespaces == tuple(claims)
+    path.write_text(path.read_text().replace(json.dumps(claims), '["img", "Img.Blur"]'))
+    with pytest.raises(ManifestError, match="overlap"):
+        load_manifest(path)
+
+
 def write_alias_registry(path: Path, *, carrier: str = "test.native") -> None:
     source = ComfyAliasSource("comfy-core", "TestNode", "comfy.TestNode", "b78cec87")
     registry = ComfyAliasRegistry(

@@ -1791,6 +1791,46 @@ def test_compose_rejects_namespace_collision(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
+def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(tmp_path: Path) -> None:
+    from dinkster_nodes_comfy.text import TEXT_NODES
+
+    claims = tuple(node.schema().node_type for node in TEXT_NODES)
+    manifests = []
+    for name in ("text-owner", "other-owner"):
+        directory = tmp_path / name
+        directory.mkdir()
+        module = name.replace("-", "_") + "_fixture"
+        (directory / f"{module}.py").write_text(
+            "from dinkster_nodes_comfy.text import TEXT_NODES\n"
+        )
+        path = directory / "dinkster-pack.toml"
+        path.write_text(
+            f'[pack]\nname = "{name}"\nnamespaces = {json.dumps(claims)}\n'
+            f'[pack.entry]\nnodes = "{module}:TEXT_NODES"\n'
+        )
+        manifests.append(path)
+
+    async def scenario() -> None:
+        composer = ServingComposer()
+        try:
+            await composer.add_pack(PackSpec(manifest=manifests[0]))
+            assert set(composer.composition.schemas) == set(claims)
+            assert set(composer.composition.node_packs.values()) == {"text-owner"}
+            await composer.reload_pack("text-owner")
+            result = await composer.composition.make_engine(lambda _event: None).run(
+                Graph(nodes={"length": GraphNode("StringLength", {"string": "a\U0001f600"})}),
+                ["length"],
+            )
+            assert result.outputs["length"]["length"].resolve() == 2
+            with pytest.raises(CompositionError, match="overlaps"):
+                await composer.add_pack(PackSpec(manifest=manifests[1]))
+            assert set(composer.composition.schemas) == set(claims)
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
 def test_compose_rejects_nested_namespace_claims(tmp_path: Path) -> None:
     """Overlap is atom-bounded across separator spellings: iso-extra IS
     iso.extra, which nests inside iso - two owners could otherwise both

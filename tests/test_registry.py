@@ -385,6 +385,47 @@ def test_happy_path_first_publish_needs_review_then_records() -> None:
     assert release.node_types == ("img-tools.blur",)
 
 
+def test_exact_node_claims_use_ordinary_admission_and_preserve_ownership() -> None:
+    nodes = ("Epsilon Scaling", "TextEncodeAceStepAudio1.5", "Video Slice")
+    grants = GrantTable()
+    releases = ReleaseIndex()
+    sub = submission(namespaces=nodes, doctor=evidence(node_types=nodes))
+    verdict = admit(sub, grants, releases)
+    assert verdict.state == "needs_review"
+    release = record_acceptance(sub, verdict, accepted_review(), grants, releases)
+    assert release.claims == ("img-tools", *nodes)
+    assert all(grants.owner_of(node) == "alice" for node in nodes)
+    assert grants.owner_of("textencodeacestepaudio1-5") is None
+    thief = submission(
+        publisher="bob",
+        pack="other-pack",
+        namespaces=nodes,
+        doctor=evidence(pack="other-pack", node_types=nodes),
+    )
+    assert "registry.namespace-taken" in codes(admit(thief, grants, releases))
+    uncovered = replace(sub, version="1.1.0", evidence=evidence(node_types=("Video Slice.Child",)))
+    assert "registry.node-type-uncovered" in codes(admit(uncovered, grants, releases))
+
+
+def test_namespace_transfer_includes_covered_exact_grants_but_not_lookalikes() -> None:
+    grants = GrantTable()
+    grants.grant("img", "alice")
+    grants.grant("Img.Blur", "alice")
+    grants.grant("Img-Blur", "alice")
+    assert grants.evaluate("Img.Blur", "bob") == "denied-taken"
+    assert grants.evaluate("Core.Blur", "alice") == "denied-reserved"
+    with pytest.raises(RegistryError, match="split"):
+        grants.transfer("Img.Blur", "bob")
+    moved = grants.transfer_suite("img", "bob")
+    assert {grant.claim for grant in moved} == {"img", "Img.Blur"}
+    assert grants.owner_of("Img.Blur") == "bob"
+    assert grants.owner_of("Img-Blur") == "alice"
+    with pytest.raises(RegistryError, match="conflicts"):
+        grants.grant("Img.Blur", "alice")
+    grants.transfer("Img-Blur", "bob")
+    assert grants.owner_of("Img-Blur") == "bob"
+
+
 def test_established_publisher_publishes_deterministically() -> None:
     grants = GrantTable()
     grants.grant("img-tools", "alice")
