@@ -270,6 +270,7 @@ GOLDEN_V1_SURFACE = (
     "AssetVault",
     "FolderListing",
     "IndexedAssetResolver",
+    "LocalAssetRef",
     "declared_asset",
     "digest_bytes",
     "digest_file",
