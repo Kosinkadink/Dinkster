@@ -258,9 +258,7 @@ def test_fork_loaders_call_dinkster_inference(
         "vae",
         "validate-vae",
     ]
-    assert cast("dict[str, object]", calls[1][2])["model_options"] == {
-        "assign_loaded_weights": True
-    }
+    assert cast("dict[str, object]", calls[1][2])["model_options"] == {}
     assert cast("dict[str, object]", calls[2][2])["clip_type"] == "h3"
     assert cast("dict[str, object]", calls[2][2])["ckpt_paths"] == [str(path), str(path)]
 

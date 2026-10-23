@@ -63,8 +63,8 @@ which also build the optional torch/GPU test venvs), then:
 
 On Linux and Windows, the setup script installs `comfy-kitchen==0.2.40`
 and `comfy-aimdo==0.6.0` from PyPI. macOS installs the pure-Python
-kitchen wheel and does not install Aimdo because the mechanism does not support
-that OS.
+kitchen wheel and does not enable native Aimdo residency because the mechanism
+does not support that OS.
 
 Both setup scripts pin root synchronization to this checkout's torch-free
 `.venv`, regardless of `UV_PROJECT` or `UV_PROJECT_ENVIRONMENT`. They manage
