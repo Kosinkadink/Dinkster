@@ -257,11 +257,11 @@ def normalize_setting(category: str, value: object) -> object:
 
 def normalize_features(value: object) -> dict[str, dict[str, bool]]:
     body = _object(value, "features")
-    unknown = set(body) - {"templates"}
+    unknown = set(body) - {"resolver", "templates"}
     if unknown:
         raise SettingsError(f"unknown features: {sorted(unknown)}")
     features: dict[str, dict[str, bool]] = {}
-    for name in ("templates",):
+    for name in ("resolver", "templates"):
         feature = _object(body.get(name, {"enabled": False}), f"features.{name}")
         _exact_keys(feature, {"enabled"}, f"features.{name}")
         features[name] = {"enabled": _boolean(feature["enabled"], f"features.{name}.enabled")}
