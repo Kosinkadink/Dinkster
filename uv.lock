@@ -385,6 +385,18 @@ wheels = [
 ]
 
 [[package]]
+name = "comfy-aimdo"
+version = "0.6.0"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bd/71/b6c3e8e1711e3738eb6878e286050698058472a509d5733af8b3ddad61c8/comfy_aimdo-0.6.0-cp39-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:c7775d6122873a710a375f25a32174ada5f0cdee874932d171104a11708dbe00", size = 668226, upload-time = "2026-10-21T23:20:13.584Z" },
+    { url = "https://files.pythonhosted.org/packages/21/7a/d349443e634d56ab3c1d5b279f0d4858e29905234de03171f840258e4a83/comfy_aimdo-0.6.0-cp39-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:336a96a0aabe690c5955813a7a3013db670a586910ade798cdac4b0864eb22ac", size = 442966, upload-time = "2026-10-21T23:20:15.173Z" },
+    { url = "https://files.pythonhosted.org/packages/9f/97/e97d1895618957c7fe684790cd3eaa4b9e74c8cc2237feea3b50eed1edce/comfy_aimdo-0.6.0-cp39-abi3-win_amd64.whl", hash = "sha256:45f821b5828c4b38bcac6553f2250b56e6db87bd65334ed37eb938985d809a3c", size = 284475, upload-time = "2026-10-21T23:20:16.433Z" },
+    { url = "https://files.pythonhosted.org/packages/2b/26/9c6974f96e86ff346c37040e42696d9e5316403cb555ae9b1778e56b11c2/comfy_aimdo-0.6.0-cp39-abi3-win_arm64.whl", hash = "sha256:58085b087be9a08c8c5217f0665488fb5a9aaa128f7c207148a5e69c4cb07c95", size = 261353, upload-time = "2026-10-21T23:20:17.873Z" },
+    { url = "https://files.pythonhosted.org/packages/e1/b7/4df602266532178ee08e267747a4a31aded7c81738a0c4482303ce004fa2/comfy_aimdo-0.6.0-py3-none-any.whl", hash = "sha256:0f71c893f030303dea339fdf6e300414661dadabbb3f03d3e7c5b3c4a632c0fb", size = 25555, upload-time = "2026-10-21T23:20:19.038Z" },
+]
+
+[[package]]
 name = "comfy-angle"
 version = "0.1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -394,6 +406,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/af/f4/5ddd0416e9619233b20e2a34c47d2359d4ac6b17a17f8bf59e0bfe5b93c3/comfy_angle-0.1.1-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:3d2fcab9386ebbb5653d66696fa8bcad329c1d1852ea4b61f286ea99485a840a", size = 5136221, upload-time = "2026-08-23T01:30:01.269Z" },
     { url = "https://files.pythonhosted.org/packages/69/f2/6cab25faec61e3713bc6dde1edf00a00ae750d2e75561e4b3bfd38eafd6b/comfy_angle-0.1.1-py3-none-win_amd64.whl", hash = "sha256:beddd2e3b9a67e55f5afaef4da73e3ac704fd88f0cbe6a6f67ce5718d7c7edeb", size = 5571203, upload-time = "2026-08-23T01:30:03.198Z" },
     { url = "https://files.pythonhosted.org/packages/e7/39/bbe5af7938f386dcd2acbb805395e3c1fb9eeace49aa2a900fd177c4dcb0/comfy_angle-0.1.1-py3-none-win_arm64.whl", hash = "sha256:94438f731fa9c1faa39a74d045fdeb877d316a7846b4b10ef42aee4ff44d4787", size = 5069237, upload-time = "2026-08-23T01:30:05.511Z" },
+]
+
+[[package]]
+name = "comfy-kitchen"
+version = "0.2.40"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/48/51/5944dd2e8b78c475173eb4afcaa46c07f0b5c68df2f7d6cd94823017aa5c/comfy_kitchen-0.2.40-cp312-abi3-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:3bd596482a4f69a726845ce75fa751896ce7e5c2d210ed3a30794ea17871bebb", size = 36451059, upload-time = "2026-10-22T02:26:06.151Z" },
+    { url = "https://files.pythonhosted.org/packages/5d/40/1871ee8c58eeef8d15cbf49a461eba0775303f2d9eb34c11af7c29e455c1/comfy_kitchen-0.2.40-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:eb726664c772189e6ece742876487f1349965808b854742790e9001dbb7c0f9d", size = 67811219, upload-time = "2026-10-22T02:26:10.129Z" },
+    { url = "https://files.pythonhosted.org/packages/f1/82/133fadabcc038d59d3220823633824ec731e7a8b2e543ab4544b09537357/comfy_kitchen-0.2.40-cp312-abi3-win_amd64.whl", hash = "sha256:f40547824b2a0ad3425d10946d2fe2a5ba8595cb53361991c914bda4addccfb5", size = 64015779, upload-time = "2026-10-22T02:26:15.027Z" },
+    { url = "https://files.pythonhosted.org/packages/c7/5e/09daa3f84dd1ad3fde034c9b5148417e998ce8d39c79fa9790b2089667c5/comfy_kitchen-0.2.40-cp312-abi3-win_arm64.whl", hash = "sha256:9ca9cb1518604498f914b6419fa3c07d89c9c1d0676dd39ec64bc603820489a2", size = 8554962, upload-time = "2026-10-22T02:26:17.708Z" },
+    { url = "https://files.pythonhosted.org/packages/9c/2e/1c6c621a1cd2ba89ae12fe99e095faa50986c0e6485461170732adfcfa6d/comfy_kitchen-0.2.40-py3-none-any.whl", hash = "sha256:e5834f2ce993c8d5ea8c01650157c639742b5a28ecb0d95253777f31b5248099", size = 260625, upload-time = "2026-10-22T02:26:19.45Z" },
 ]
 
 [[package]]
@@ -522,6 +546,8 @@ source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
     { name = "blake3" },
+    { name = "comfy-aimdo" },
+    { name = "comfy-kitchen" },
     { name = "dinkster-api" },
     { name = "dinkster-assets" },
     { name = "dinkster-caches" },
@@ -586,6 +612,8 @@ dev = [
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.10" },
     { name = "blake3", specifier = ">=0.4" },
+    { name = "comfy-aimdo", specifier = "==0.6.0" },
+    { name = "comfy-kitchen", specifier = "==0.2.40" },
     { name = "dinkster-api", editable = "packages/dinkster-api" },
     { name = "dinkster-assets", editable = "packages/dinkster-assets" },
     { name = "dinkster-caches", editable = "packages/dinkster-caches" },

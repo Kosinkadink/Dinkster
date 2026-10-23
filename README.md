@@ -61,8 +61,8 @@ compatibility coverage is linked from the
 `scripts/setup_envs.sh` on Linux/macOS or `scripts/setup_envs.ps1` on Windows,
 which also build the optional torch/GPU test venvs), then:
 
-On Linux and Windows, the setup script installs `dinkster-kitchen==0.2.35.post1`
-and `dinkster-aimdo==0.5.5.post2` from PyPI. macOS installs the pure-Python
+On Linux and Windows, the setup script installs `comfy-kitchen==0.2.40`
+and `comfy-aimdo==0.6.0` from PyPI. macOS installs the pure-Python
 kitchen wheel and does not install Aimdo because the mechanism does not support
 that OS.
 

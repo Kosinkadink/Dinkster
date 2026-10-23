@@ -26,12 +26,12 @@ BASELINES = {
     ("RipperPC", "guidance", "sdpa", "short"): 1.974,
     ("RipperPC", "guidance", "sdpa", "production"): 1.802,
     ("RipperPC", "sequence", "sdpa", "production"): 1.5404,
-    ("RipperPC", "sequence", "dinkster_kitchen_int8", "production"): 1.436792013659844,
+    ("RipperPC", "sequence", "comfy_kitchen_int8", "production"): 1.436792013659844,
 }
 INT8_WEIGHT_BASELINES = {
     ("X570", "sequence", "sdpa", "production"): 1.327,
 }
-POLICIES = ("sdpa", "dinkster_kitchen_int8")
+POLICIES = ("sdpa", "comfy_kitchen_int8")
 MODES = ("guidance", "sequence", "sparse")
 ATTEMPT_GROUP = "minimax-h3-multigpu-receipt"
 ATTEMPT = 1
@@ -1252,7 +1252,7 @@ def run_mint(args: argparse.Namespace) -> int:
             "attention_policy": args.policy,
             "attention_provider": {
                 "sdpa": "torch-sdpa-priority-v1",
-                "dinkster_kitchen_int8": "comfy-kitchen-int8-attention-v1",
+                "comfy_kitchen_int8": "comfy-kitchen-int8-attention-v1",
             }[args.policy],
             "sparse_backend": "comfy_kitchen_sol_chunked" if args.mode == "sparse" else None,
             "world_size": len(candidate),

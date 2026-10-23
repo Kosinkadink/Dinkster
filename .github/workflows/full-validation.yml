@@ -137,8 +137,8 @@ jobs:
         run: |
           $python = uv run --no-sync python -c "import sys; print(sys.executable)"
           uv pip install --python $python --no-deps --index-url https://pypi.org/simple `
-            "dinkster-kitchen==0.2.35.post1" "dinkster-aimdo==0.5.5.post2"
-          & $python -c "from importlib.metadata import version; from importlib.util import find_spec; assert find_spec('dinkster_kitchen') is not None; assert find_spec('dinkster_aimdo') is not None; assert version('dinkster-kitchen') == '0.2.35.post1'; assert version('dinkster-aimdo') == '0.5.5.post2'; print('dinkster-kitchen', version('dinkster-kitchen')); print('dinkster-aimdo', version('dinkster-aimdo'))"
+            "comfy-kitchen==0.2.40" "comfy-aimdo==0.6.0"
+          & $python -c "from importlib.metadata import version; from importlib.util import find_spec; assert find_spec('comfy_kitchen') is not None; assert find_spec('comfy_aimdo') is not None; assert version('comfy-kitchen') == '0.2.40'; assert version('comfy-aimdo') == '0.6.0'; print('comfy-kitchen', version('comfy-kitchen')); print('comfy-aimdo', version('comfy-aimdo'))"
       - run: uv run --locked ruff format --check .
         if: matrix.run_checks
       - run: uv run ruff check .

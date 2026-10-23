@@ -1,12 +1,12 @@
 {
   "aimdo": {
-    "repository": "Kosinkadink/dinkster-aimdo",
-    "commit": "60a8862dde1f278222dad4129e3f0ab171ed7207",
-    "releaseTag": "v0.5.5.post2",
-    "version": "0.5.5.post2",
-    "archive": "dinkster_aimdo-0.5.5.post2-cp39-abi3-win_amd64.whl",
-    "sha256": "22c3ae7dc902ebf67091cd2f4055ac9fbc9eab1713ad2f6b2d5a05072f9fe58f",
-    "size": 281463
+    "repository": "Comfy-Org/comfy-aimdo",
+    "releaseTag": "v0.6.0",
+    "version": "0.6.0",
+    "archive": "comfy_aimdo-0.6.0-cp39-abi3-win_amd64.whl",
+    "url": "https://files.pythonhosted.org/packages/9f/97/e97d1895618957c7fe684790cd3eaa4b9e74c8cc2237feea3b50eed1edce/comfy_aimdo-0.6.0-cp39-abi3-win_amd64.whl",
+    "sha256": "45f821b5828c4b38bcac6553f2250b56e6db87bd65334ed37eb938985d809a3c",
+    "size": 284475
   },
   "cudaTorch": {
     "version": "2.13.0+cu130",

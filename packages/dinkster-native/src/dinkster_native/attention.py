@@ -31,10 +31,10 @@ _POLICY_FUNCTIONS = {
     "xformers": "xformers",
     "sage": "sage",
     "sage3": "sage3",
-    "dinkster_kitchen_int8": "comfy_kitchen_int8",
+    "comfy_kitchen_int8": "comfy_kitchen_int8",
 }
 _PROVIDER_DISTRIBUTIONS = {
-    "dinkster_kitchen_int8": ("dinkster-kitchen", "comfy-kitchen"),
+    "comfy_kitchen_int8": ("comfy-kitchen", "comfy-kitchen"),
     "flash": ("flash-attn", "flash-attn"),
     "sage": ("sageattention", "sageattention"),
     "sage3": ("sageattention", "sageattention"),

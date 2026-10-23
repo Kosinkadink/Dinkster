@@ -9,7 +9,7 @@ for automatic selection. See [worker setup](serve-cli.md#cpu-and-apple-silicon-w
 
 Apple M4, 32 GiB unified memory, macOS 15.7.4 (24G517), arm64 CPython
 3.12.11, PyTorch 2.13.0, torchvision 0.28.0, NumPy 2.5.1, Pillow 12.0.0,
-dinkster-kitchen 0.2.35.post1, and no Aimdo. The recorded comparison predates
+comfy-kitchen 0.2.40, and no Aimdo. The recorded comparison predates
 the fork switch and used upstream comfy-kitchen 0.2.32 and comfy-aimdo 0.5.2
 for reference compatibility. Environments and downloads are clone-local;
 neither a system Python install nor a CUDA runtime is required. The engine
@@ -122,7 +122,7 @@ does not claim a physical multi-machine or hosted cloud generation run.
 
 Execution-receipt warnings name combinations without separately minted
 determinism receipts; they do not prevent execution. FP16 MPS attention uses
-the existing FP32 attention workaround for macOS. Dinkster-aimdo residency is
+the existing FP32 attention workaround for macOS. Comfy-aimdo residency is
 Linux and Windows CUDA only; macOS CPU and MPS use eager residency without it.
 
 Commands, timings, numerical comparisons, install records, and test totals

@@ -522,9 +522,9 @@ Syntax: `--aimdo {auto,on,off}`.
 
 Default: `auto`.
 
-Weight residency mechanism for native execution. `auto` enables dinkster-aimdo
+Weight residency mechanism for native execution. `auto` enables comfy-aimdo
 partial weight offload on supported NVIDIA CUDA workers on Linux and Windows.
-`on` requests dinkster-aimdo wherever the capability chain passes. If Aimdo is
+`on` requests comfy-aimdo wherever the capability chain passes. If Aimdo is
 unavailable, selection reports the failed capability and explicitly falls back
 to eager residency. After Aimdo is selected, component construction failures
 fail the load without changing mechanisms or caching an eager replacement.

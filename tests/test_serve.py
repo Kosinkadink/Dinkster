@@ -258,13 +258,13 @@ def test_native_runtime_versions_are_read_from_worker_interpreter(
         return type(
             "Completed",
             (),
-            {"stdout": '{"dinkster-kitchen": "0.2.31", "torch": "2.13.0+cu130"}'},
+            {"stdout": '{"comfy-kitchen": "0.2.31", "torch": "2.13.0+cu130"}'},
         )()
 
     monkeypatch.setattr(serve.subprocess, "run", run)
 
     assert serve.detect_native_runtime_versions("worker-python") == {
-        "dinkster-kitchen": "0.2.31",
+        "comfy-kitchen": "0.2.31",
         "torch": "2.13.0+cu130",
     }
     assert calls[0][:3] == ["worker-python", "-I", "-c"]
