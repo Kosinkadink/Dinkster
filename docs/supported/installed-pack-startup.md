@@ -9,6 +9,10 @@
 - The native text, primitive, eager boolean, number conversion, seed and math
   expression nodes load through their ordinary pack manifest, including isolated
   execution, reload and exact-ID ownership checks.
+- Native model and CLIP merging preserve source models and use the inference
+  patcher for weighted changes. Model-specific merges use the longest matching
+  block prefix and the first coefficient for unmatched keys. Their MODEL and
+  CLIP types register through the ordinary pack manifest.
 - Installed pack schemas and static choices are available before pack workers
   start. Workers activate on demand, including in-process packs and explicitly
   configured shared-process groups.

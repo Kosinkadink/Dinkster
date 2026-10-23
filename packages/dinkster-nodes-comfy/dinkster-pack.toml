@@ -27,6 +27,29 @@ namespaces = [
     "ComfyNumberConvert",
     "SeedNode",
     "ComfyMathExpression",
+    "ModelMergeSimple",
+    "ModelMergeSubtract",
+    "ModelMergeAdd",
+    "CLIPMergeSimple",
+    "CLIPMergeSubtract",
+    "CLIPMergeAdd",
+    "ModelMergeBlocks",
+    "ModelMergeSD1",
+    "ModelMergeSD2",
+    "ModelMergeSDXL",
+    "ModelMergeSD3_2B",
+    "ModelMergeAuraflow",
+    "ModelMergeFlux1",
+    "ModelMergeSD35_Large",
+    "ModelMergeMochiPreview",
+    "ModelMergeLTXV",
+    "ModelMergeCosmos7B",
+    "ModelMergeCosmos14B",
+    "ModelMergeWAN2_1",
+    "ModelMergeCosmosPredict2_2B",
+    "ModelMergeCosmosPredict2_14B",
+    "ModelMergeQwenImage",
+    "ModelMergeKrea2",
 ]
 
 [pack.sandbox]
@@ -37,3 +60,4 @@ api = "dinkster-api/v1"
 
 [pack.entry]
 nodes = "dinkster_nodes_comfy:COMFY_NODES"
+types = "dinkster_nodes_comfy:register_inference_types"
