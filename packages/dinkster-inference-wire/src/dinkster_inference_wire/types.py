@@ -7,14 +7,14 @@ from dinkster_values import TypeRegistry, TypeSpec, register_resident_type
 from .conditioning_wire import CONDITIONING_TYPE_ID, register_conditioning_type
 from .sampling_wire import register_sampling_type
 
-MODEL_TYPE_ID = "dinkster.model"
-CLIP_TYPE_ID = "dinkster.clip"
-CLIP_VISION_TYPE_ID = "dinkster.clip-vision"
-VAE_TYPE_ID = "dinkster.vae"
-SAMPLER_TYPE_ID = "dinkster.sampler"
-SIGMAS_TYPE_ID = "dinkster.sigmas"
-GUIDER_TYPE_ID = "dinkster.guider"
-NOISE_TYPE_ID = "dinkster.noise"
+MODEL_TYPE_ID = "MODEL"
+CLIP_TYPE_ID = "CLIP"
+CLIP_VISION_TYPE_ID = "CLIP_VISION"
+VAE_TYPE_ID = "VAE"
+SAMPLER_TYPE_ID = "SAMPLER"
+SIGMAS_TYPE_ID = "SIGMAS"
+GUIDER_TYPE_ID = "GUIDER"
+NOISE_TYPE_ID = "NOISE"
 
 _RESIDENT_TYPE_IDS = (
     MODEL_TYPE_ID,

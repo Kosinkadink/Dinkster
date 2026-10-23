@@ -697,13 +697,13 @@ def test_serving_composer_registers_inference_boundary_types() -> None:
     from dinkster_values import TypeRegistry
 
     inference_types = {
-        "dinkster.conditioning",
-        "dinkster.model",
-        "dinkster.clip",
-        "dinkster.vae",
-        "dinkster.sampler",
-        "dinkster.sigmas",
-        "dinkster.noise",
+        "CONDITIONING",
+        "MODEL",
+        "CLIP",
+        "VAE",
+        "SAMPLER",
+        "SIGMAS",
+        "NOISE",
     }
     default = ServingComposer()
     supplied_registry = TypeRegistry()

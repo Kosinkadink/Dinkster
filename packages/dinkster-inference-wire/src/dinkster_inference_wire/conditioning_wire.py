@@ -38,7 +38,7 @@ from .conditioning import (
     canonical_conditioning_set,
 )
 
-CONDITIONING_TYPE_ID = "dinkster.conditioning"
+CONDITIONING_TYPE_ID = "CONDITIONING"
 CONDITIONING_CARRIER_FORMAT = "dinkster-conditioning-carrier-v1"
 RESIDENT_CONDITIONING_FORMAT = "dinkster-resident-conditioning-v1"
 

@@ -791,9 +791,9 @@ def test_sampling_settings_cross_domains_but_guider_remains_affine(
         receiver = ValueCodec(registry, use_shm=use_shm, accept_shm=use_shm)
         inputs = {"guider": _produced("model-guider", "native-session", "native")}
         for name, type_id, raw in (
-            ("noise", "dinkster.noise", NoiseSelection(7)),
-            ("sampler", "dinkster.sampler", SamplerSelection("dinkster.euler", ())),
-            ("sigmas", "dinkster.sigmas", SigmaSchedule((1.0, 0.0))),
+            ("noise", "NOISE", NoiseSelection(7)),
+            ("sampler", "SAMPLER", SamplerSelection("dinkster.euler", ())),
+            ("sigmas", "SIGMAS", SigmaSchedule((1.0, 0.0))),
         ):
             value = stamp_resource_producer_arm(
                 registry.wrap(type_id, raw), "default-session", "default"
@@ -823,6 +823,60 @@ def test_sampling_settings_cross_domains_but_guider_remains_affine(
         assert "cannot cross residency domains" in rejected.error.message
 
     asyncio.run(scenario())
+
+
+def test_inference_wire_registers_comfy_type_ids_without_legacy_aliases() -> None:
+    from dinkster_inference_wire import ResidentConditioningCarrier, register_inference_types
+    from dinkster_inference_wire.sampling_wire import (
+        NoiseSelection,
+        SamplerSelection,
+        SigmaSchedule,
+    )
+
+    class ResidentPayload:
+        _dinkster_resident_fingerprint = "test-conditioning"
+
+    registry = TypeRegistry()
+    register_inference_types(registry)
+
+    exact_type_ids = {
+        "MODEL",
+        "CLIP",
+        "CLIP_VISION",
+        "VAE",
+        "CONDITIONING",
+        "SAMPLER",
+        "SIGMAS",
+        "GUIDER",
+        "NOISE",
+    }
+    retired_type_ids = {
+        f"dinkster.{atom}"
+        for atom in (
+            "model",
+            "clip",
+            "clip-vision",
+            "vae",
+            "conditioning",
+            "sampler",
+            "sigmas",
+            "guider",
+            "noise",
+        )
+    }
+    assert exact_type_ids <= set(registry.type_ids())
+    assert not retired_type_ids & set(registry.type_ids())
+    for retired_type_id in retired_type_ids:
+        assert retired_type_id not in registry
+
+    for type_id, raw in (
+        ("CONDITIONING", ResidentConditioningCarrier(ResidentPayload())),
+        ("SAMPLER", SamplerSelection("dinkster.euler", ())),
+        ("SIGMAS", SigmaSchedule((1.0, 0.0))),
+        ("NOISE", NoiseSelection(7)),
+    ):
+        spec = registry.spec(type_id)
+        assert spec.decode(spec.encode(raw)) == raw
 
 
 def test_residency_domains_use_identity_not_value_equality() -> None:

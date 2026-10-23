@@ -17,9 +17,9 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 
-VISION = TypeExpr.concrete("dinkster.clip-vision")
-VAE = TypeExpr.concrete("dinkster.vae")
-CONDITIONING = TypeExpr.concrete("dinkster.conditioning")
+VISION = TypeExpr.concrete("CLIP_VISION")
+VAE = TypeExpr.concrete("VAE")
+CONDITIONING = TypeExpr.concrete("CONDITIONING")
 LATENT = TypeExpr.concrete("dinkster.latent")
 IMAGE = TypeExpr.concrete("dinkster.image")
 VOXEL = TypeExpr.concrete("comfy.VOXEL")

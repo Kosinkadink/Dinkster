@@ -119,9 +119,9 @@ def register_native_types(registry: TypeRegistry) -> None:
         register_save_target_type(registry)
 
     for type_id in (
-        "dinkster.model",
-        "dinkster.clip",
-        "dinkster.vae",
+        "MODEL",
+        "CLIP",
+        "VAE",
         "comfy.MODEL_PATCH",
     ):
         _register_resident(registry, type_id)
@@ -129,7 +129,7 @@ def register_native_types(registry: TypeRegistry) -> None:
     if "dinkster.latent" not in registry:
         register_latent_type(registry, "dinkster.latent")
 
-    for type_id in ("dinkster.sampler", "dinkster.sigmas", "dinkster.noise"):
+    for type_id in ("SAMPLER", "SIGMAS", "NOISE"):
         register_sampling_type(registry, type_id)
 
     register_inference_types(registry)

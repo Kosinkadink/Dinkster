@@ -414,9 +414,9 @@ def test_unsupported_invocation_is_not_dispatched(
 @pytest.mark.parametrize(
     "type_id",
     [
-        "dinkster.model",
-        "dinkster.clip",
-        "dinkster.vae",
+        "MODEL",
+        "CLIP",
+        "VAE",
         "core.resource",
         "comfy.MODEL",
         "comfy.CLIP",
@@ -469,7 +469,7 @@ def test_unsupported_worker_results_are_explicit(
         if capability == "continuation":
             return object()
         if capability == "resident":
-            value = replace(invocation.inputs["image"], type_id="dinkster.model")
+            value = replace(invocation.inputs["image"], type_id="MODEL")
             return InvocationResult(outputs={"image": value})
         return InvocationResult(
             outputs={},

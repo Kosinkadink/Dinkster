@@ -1021,7 +1021,7 @@ def test_map_region_executes_per_element() -> None:
     [
         ("comfy.IMAGE", [[[[0.0, 0.25, 0.5], [0.75, 1.0, 0.125]]], [[[1.0, 0.5, 0.0]]]]),
         ("comfy.LATENT", [{"samples": [[[[1.5, -2.0], [3.25, 4.5]]]]}, {"samples": [[[[9.0]]]]}]),
-        ("dinkster.conditioning", [{"tokens": [1, 4], "weight": 0.75}, {"tokens": [9]}]),
+        ("CONDITIONING", [{"tokens": [1, 4], "weight": 0.75}, {"tokens": [9]}]),
         ("comfy.MASK", [[[0.0, 1.0], [0.25, 0.75]], [[1.0]]]),
         (
             "comfy.AUDIO",

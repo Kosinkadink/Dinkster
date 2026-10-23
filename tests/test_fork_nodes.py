@@ -22,7 +22,7 @@ from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 
-CONDITIONING = TypeExpr.concrete("dinkster.conditioning")
+CONDITIONING = TypeExpr.concrete("CONDITIONING")
 INT = TypeExpr.concrete("INT")
 
 
@@ -133,9 +133,9 @@ def test_native_types_preserve_resident_conditioning_codec() -> None:
     register_native_types(registry)
     carrier = ResidentConditioningCarrier(ResidentPayload())
 
-    spec = registry.spec("dinkster.conditioning")
+    spec = registry.spec("CONDITIONING")
     assert spec.decode(spec.encode(carrier)) is carrier
-    assert registry.input_object("dinkster.conditioning", carrier) == "native-conditioning"
+    assert registry.input_object("CONDITIONING", carrier) == "native-conditioning"
 
 
 def test_native_types_register_resident_model_patches() -> None:
@@ -157,7 +157,7 @@ def test_worker_unwraps_resident_conditioning_for_node_consumers() -> None:
     register_core_types(registry)
     register_native_types(registry)
     value = registry.wrap(
-        "dinkster.conditioning",
+        "CONDITIONING",
         ResidentConditioningCarrier(ResidentPayload()),
     )
     schema = _ConditioningConsumer.schema()
@@ -289,7 +289,7 @@ def test_fork_sd15_adapters_preserve_conditioning_latent_and_decode(
     )
     registry = TypeRegistry()
     register_native_types(registry)
-    assert registry.input_object("dinkster.conditioning", encoded) == (
+    assert registry.input_object("CONDITIONING", encoded) == (
         "conditioning",
         ("tokens", "hello"),
     )
