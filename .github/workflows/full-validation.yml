@@ -143,7 +143,7 @@ jobs:
         if: matrix.run_checks
       - run: uv run ruff check .
         if: matrix.run_checks
-      - run: uv run --extra p2p pyright
+      - run: uv run pyright
         if: matrix.run_checks
         env:
           NODE_OPTIONS: --max-old-space-size=4096

@@ -182,10 +182,6 @@ class ServerLibrary:
     receipts: PublicAcquisitionReceiptStore | None = None
     #: Current trusted declarations, kept separate from advisory provenance.
     public_sources_for: Callable[[str], Sequence[PublicAcquisitionSourceV1]] | None = None
-    #: Optional LAN transport bridge. It is called only from preflight's worker thread.
-    lan_resolve: Callable[[str], Path | None] | None = None
-    #: Notify the transport owner after verified local materialization.
-    p2p_acquired: Callable[[], None] | None = None
     #: Host-owned metadata classifier; this package does not depend on inference.
     model_output_profile: Callable[[Path, BinaryIO, str, int], Mapping[str, object]] | None = None
     #: Serialize the two-resource media publication so one request owns the

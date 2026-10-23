@@ -25,27 +25,17 @@
   freshness
 - Declarative resolver-index subscriptions from local JSON files or HTTPS
   URLs, with ETag revalidation, regional mirror priority, digest-verified
-  acquisition leads, isolated source removal, exact-basename suggestions, and
-  explicit per-subscription P2P trust and license-authority controls
+  acquisition leads, isolated source removal, and exact-basename suggestions
 - Official provider subscription bootstrap from explicit URL and stable-ID
-  configuration, with identity verification and preserved trust/unsubscribe
+  configuration, with identity verification and preserved unsubscribe
   choices; no built-in provider endpoint or identity
 - Workflow templates are disabled by default: `features.templates.enabled`
   defaults to false, and the catalog, template body and thumbnail routes
   return 404. Guide Markdown and node documentation remain available through
   their separate documentation routes; template-opening actions are hidden.
-- P2P is disabled by default and requires the optional `p2p` extra plus
-  explicit `features.p2p.enabled` opt-in at startup. Disabled installations
-  have no P2P controller, API or LAN mapping routes, or mDNS advertisement.
-  The retained optional implementation uses one shared sidecar session for canonical
-  BitTorrent v2 descriptors, with six-hour trust expiry, license metadata,
-  safe-format verification, durable rate and seeding budgets, metered
-  network closure, and immediate resolver-omission revocation. Global resolver
-  transport uses trackerless DHT under `lan-and-internet` scope; LAN
-  and HTTP fallback remain available when global transport closes.
-- Bounded P2P sidecar status diagnostics for native peer failures, listener
-  bindings, discovery errors, and upload-counter comparison; no packet capture
-  or persistent diagnostic logging
+- Asset acquisition checks the local vault and mounted files before packaged
+  assets and HTTP sources. Remote bytes verify against the requested digest
+  before publication, and job acquisition requires explicit consent.
 - Durable job queue when history is configured: accepted jobs are recorded
   before acknowledgment, and jobs lost to a server crash or restart appear
   in history as "interrupted" (distinguishing never-started from

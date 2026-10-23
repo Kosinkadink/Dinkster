@@ -242,8 +242,6 @@ def asset_preflight(
                         else ()
                     ),
                     receipts=library.receipts,
-                    lan_resolve=library.lan_resolve,
-                    materialized=library.p2p_acquired,
                 )
             except AssetError as exc:  # defensive: acquire reports, not raises
                 result = None
@@ -277,7 +275,7 @@ def _plan_entry(
         "name": name,
         "status": status,
         "sources": urls,
-        "fetchable": bool(urls) or bool(packaged) or library.lan_resolve is not None,
+        "fetchable": bool(urls) or bool(packaged),
     }
     if need.kind:
         entry["kind"] = need.kind

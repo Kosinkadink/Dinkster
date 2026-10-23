@@ -123,7 +123,6 @@ async def serve_process(
                 "--library-root",
                 str(path),
                 "--no-default-packs",
-                "--disable-p2p",
                 "--identity-jwks-url",
                 identity_url,
                 "--identity-issuer",
