@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 from typing import Any, cast
 
 import pytest
@@ -47,14 +48,14 @@ def test_attention_runtime_resolves_upstream_named_attention() -> None:
 
 
 def test_native_sampling_choices_match_the_installed_upstream_engine() -> None:
-    from dinkster_inference.samplers import KSampler
     from dinkster_native.fork_nodes import GenerationKSampler
     from dinkster_schema import ComboOption, ComboWidget
 
+    samplers = importlib.import_module("dinkster_inference.samplers")
     schema = GenerationKSampler.schema()
     for name, expected in (
-        ("sampler_name", KSampler.SAMPLERS),
-        ("scheduler", KSampler.SCHEDULERS),
+        ("sampler_name", samplers.KSampler.SAMPLERS),
+        ("scheduler", samplers.KSampler.SCHEDULERS),
     ):
         spec = schema.input(name)
         assert spec is not None and isinstance(spec.widget, ComboWidget)
