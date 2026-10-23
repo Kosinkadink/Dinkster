@@ -992,7 +992,7 @@ def test_native_usage_probe_measures_worker_and_matches_nvml_by_uuid(
     monkeypatch.setitem(
         sys.modules,
         "dinkster_inference.model_management",
-        SimpleNamespace(get_model_manager=lambda: SimpleNamespace(total_pinned_memory=2000)),
+        SimpleNamespace(TOTAL_PINNED_MEMORY=2000),
     )
     measured = torch_vram_telemetry(VRAM0)
     assert measured is not None

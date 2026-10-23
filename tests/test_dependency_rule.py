@@ -396,7 +396,7 @@ def test_windows_ci_installs_published_engine_dependencies_without_torch() -> No
     assert (
         "uv pip install --python $python --no-deps --index-url https://pypi.org/simple" in command
     )
-    assert '"dinkster-kitchen==0.2.35.post1"' in command
-    assert '"dinkster-aimdo==0.5.5.post2"' in command
-    assert "find_spec('dinkster_kitchen') is not None" in command
-    assert "find_spec('dinkster_aimdo') is not None" in command
+    assert '"comfy-kitchen==0.2.40"' in command
+    assert '"comfy-aimdo==0.6.0"' in command
+    assert "find_spec('comfy_kitchen') is not None" in command
+    assert "find_spec('comfy_aimdo') is not None" in command

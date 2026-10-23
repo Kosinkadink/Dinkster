@@ -460,12 +460,11 @@ ordered logical CUDA ranks as the server's allowed single-job pool. Indices are
 relative to `CUDA_VISIBLE_DEVICES`; Dinkster does not discover or add devices.
 It is mutually exclusive with `--multi-gpu-devices`.
 
-The startup mode is `auto`, `guidance`, `sequence`, or `window` (default
+The startup mode is `auto`, `guidance`, or `sequence` (default
 `auto`). Guidance splits model-evaluated conditioning lanes, sequence selects
-H3 Ulysses, and window scatters a Flux joint-window plan. Auto and guidance
+H3 Ulysses. Auto and guidance
 require exactly two participating ranks. Explicit sequence supports two or four
-ranks. Window accepts two or more ranks; four-rank window execution uses all
-four when the plan has enough work.
+ranks.
 
 Every rank is a separate process with one selected GPU and its own model
 residency. Rank 0 owns progress and the final result. A rank failure or
@@ -522,9 +521,9 @@ Syntax: `--aimdo {auto,on,off}`.
 
 Default: `auto`.
 
-Weight residency mechanism for native execution. `auto` enables dinkster-aimdo
+Weight residency mechanism for native execution. `auto` enables comfy-aimdo
 partial weight offload on supported NVIDIA CUDA workers on Linux and Windows.
-`on` requests dinkster-aimdo wherever the capability chain passes. If Aimdo is
+`on` requests comfy-aimdo wherever the capability chain passes. If Aimdo is
 unavailable, selection reports the failed capability and explicitly falls back
 to eager residency. After Aimdo is selected, component construction failures
 fail the load without changing mechanisms or caching an eager replacement.

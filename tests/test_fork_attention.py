@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import importlib
-from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -29,19 +27,41 @@ from dinkster_protocol import (  # noqa: E402
 )
 
 
-def test_attention_runtime_owns_an_isolated_named_registry() -> None:
-    first = attention.create_attention_runtime()
-    second = attention.create_attention_runtime()
+def test_attention_runtime_resolves_upstream_named_attention() -> None:
+    runtime = attention.create_attention_runtime()
+    assert "sdpa" in runtime.capabilities.available_policies
+    selected = runtime.resolve(runtime.route_token)
+    q = torch.arange(24, dtype=torch.float32).reshape(1, 3, 8) / 10
+    k = q + 0.2
+    v = q - 0.1
+    expected = (
+        torch.nn.functional.scaled_dot_product_attention(
+            q.reshape(1, 3, 2, 4).transpose(1, 2),
+            k.reshape(1, 3, 2, 4).transpose(1, 2),
+            v.reshape(1, 3, 2, 4).transpose(1, 2),
+        )
+        .transpose(1, 2)
+        .reshape(1, 3, 8)
+    )
+    torch.testing.assert_close(selected(q, k, v, 2), expected)
 
-    def marker() -> str:
-        return "first"
 
-    first.registry["worker"] = marker
+def test_native_sampling_choices_match_the_installed_upstream_engine() -> None:
+    from dinkster_inference.samplers import KSampler
+    from dinkster_native.fork_nodes import GenerationKSampler
+    from dinkster_schema import ComboOption, ComboWidget
 
-    assert first.registry is not second.registry
-    assert first.registry["worker"] is marker
-    assert "worker" not in second.registry
-    assert first.resolve(first.route_token) is first.registry["pytorch"]
+    schema = GenerationKSampler.schema()
+    for name, expected in (
+        ("sampler_name", KSampler.SAMPLERS),
+        ("scheduler", KSampler.SCHEDULERS),
+    ):
+        spec = schema.input(name)
+        assert spec is not None and isinstance(spec.widget, ComboWidget)
+        assert all(isinstance(option, ComboOption) for option in spec.widget.options)
+        assert [cast("ComboOption", option).value for option in spec.widget.options] == [
+            f"dinkster.{value}" for value in expected
+        ]
 
 
 @pytest.mark.parametrize("skip_output_reshape", (False, True))
@@ -184,101 +204,6 @@ def test_ulysses_attention_preserves_four_rank_head_and_sequence_order(
     torch.testing.assert_close(local_v, local_q + 200)
     torch.testing.assert_close(controls[0][1:], torch.tensor([8, 1, 9, 2]))
     assert exchanges == 4
-
-
-def test_sparse_attention_routes_h3_blocks_with_declared_conditioning_sinks() -> None:
-    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
-    output = torch.zeros((257, 32))
-
-    def sparse(*args: object, **kwargs: object) -> tuple[object, str, str]:
-        calls.append((args, kwargs))
-        return output, "key-mean", "value-scale"
-
-    config = {
-        "dense_blocks": (),
-        "min_tokens": 1,
-        "sigma_start": 1.0,
-        "sigma_end": 0.0,
-        "sink_conditioning": "exact_kv_and_rows",
-        "tau": 1.3,
-        "keep_percent": 0.0,
-        "extra_tokens": 128,
-    }
-    routed = attention._SparseH3Attention(sparse, config)  # pyright: ignore[reportPrivateUsage]
-    attn = SimpleNamespace(
-        qkv_proj="qkv",
-        out_proj="out",
-        q_norm="q-norm",
-        k_norm="k-norm",
-        heads=4,
-    )
-    hidden = torch.zeros((257, 32))
-    options = {
-        "minimax_h3_layout": SimpleNamespace(
-            segments=((0, 65, "text"), (65, 129, "audio"), (129, 257, "video"))
-        ),
-        "uuids": ("conditional",),
-    }
-
-    result = routed._attention(  # pyright: ignore[reportPrivateUsage]
-        attn, hidden, "rope", options, 7
-    )
-    routed._attention(attn, hidden, "rope", options, 7)  # pyright: ignore[reportPrivateUsage]
-
-    assert result is output
-    assert calls[0][0] == (hidden, "qkv", "out", "q-norm", "k-norm", 4, "rope")
-    assert calls[0][1] == {
-        "kmean": None,
-        "vscale": None,
-        "tau": 1.3,
-        "topk_ratio": 0.0,
-        "sink_blocks": [0, 3],
-        "sink_q": [1, 3],
-        "token_aug": 128,
-    }
-    assert calls[1][1]["kmean"] == "key-mean"
-    assert calls[1][1]["vscale"] == "value-scale"
-
-
-def test_sparse_attention_uses_model_sampling_sigma_boundaries(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    config = {
-        "dense_blocks": (),
-        "min_tokens": 12_288,
-        "sigma_start": 0.8,
-        "sigma_end": 0.2,
-    }
-    routed = attention._SparseH3Attention(lambda: None, config)  # pyright: ignore[reportPrivateUsage]
-    attn = SimpleNamespace(head_dim=128)
-    hidden = SimpleNamespace(
-        shape=(12_288, 4096),
-        device=SimpleNamespace(type="cuda"),
-        dtype=torch.bfloat16,
-    )
-    monkeypatch.setattr(
-        importlib,
-        "import_module",
-        lambda _name: SimpleNamespace(sol_attn_is_available=lambda _device: True),
-    )
-
-    def eligible(sigma: float) -> bool:
-        return routed._eligible(  # pyright: ignore[reportPrivateUsage]
-            attn,
-            hidden,
-            object(),
-            {
-                "minimax_h3_layout": object(),
-                "sigmas": torch.tensor([sigma], dtype=torch.float64),
-            },
-            7,
-        )
-
-    assert not eligible(0.81)
-    assert eligible(0.8)
-    assert eligible(0.5)
-    assert eligible(0.2)
-    assert not eligible(0.19)
 
 
 def test_workgroup_attempt_gates_one_invocation_and_releases_attention(

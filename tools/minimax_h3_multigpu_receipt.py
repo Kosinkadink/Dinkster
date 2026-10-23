@@ -26,13 +26,13 @@ BASELINES = {
     ("RipperPC", "guidance", "sdpa", "short"): 1.974,
     ("RipperPC", "guidance", "sdpa", "production"): 1.802,
     ("RipperPC", "sequence", "sdpa", "production"): 1.5404,
-    ("RipperPC", "sequence", "dinkster_kitchen_int8", "production"): 1.436792013659844,
+    ("RipperPC", "sequence", "comfy_kitchen_int8", "production"): 1.436792013659844,
 }
 INT8_WEIGHT_BASELINES = {
     ("X570", "sequence", "sdpa", "production"): 1.327,
 }
-POLICIES = ("sdpa", "dinkster_kitchen_int8")
-MODES = ("guidance", "sequence", "sparse")
+POLICIES = ("sdpa", "comfy_kitchen_int8")
+MODES = ("guidance", "sequence")
 ATTEMPT_GROUP = "minimax-h3-multigpu-receipt"
 ATTEMPT = 1
 
@@ -274,11 +274,10 @@ def _run_sample(
     cfg: float,
     steps: int,
     seed: int,
-    tensor_output: Path | None = None,
     collective_timer: _CollectiveTimer | None = None,
     video_vae: Any = None,
     audio_vae: Any = None,
-) -> tuple[dict[str, Any], float, float, dict[str, Any]]:
+) -> tuple[dict[str, Any], float, dict[str, Any]]:
     from dinkster_native.fork_nodes import (
         GenerationKSampler,
         GenerationVAEDecode,
@@ -316,14 +315,6 @@ def _run_sample(
     samples = sampled["samples"]
     sample_seconds = time.perf_counter() - started
     hashes: dict[str, Any] = {"latents": _latent_hashes(samples)}
-    tensor_evidence = None
-    if tensor_output is not None:
-        latent_evidence = {role: samples.by_role(role).detach().cpu() for role in samples.roles}
-        tensor_evidence = (
-            {"latents": latent_evidence}
-            if video_vae is not None or audio_vae is not None
-            else latent_evidence
-        )
     decode_seconds = 0.0
     if video_vae is not None and audio_vae is not None:
         decode_started = time.perf_counter()
@@ -335,11 +326,6 @@ def _run_sample(
         torch.cuda.synchronize()
         decode_seconds = time.perf_counter() - decode_started
         hashes["decoded"] = {"video": _tensor_sha256(video), "audio": _tensor_sha256(audio)}
-        if tensor_evidence is not None:
-            tensor_evidence["decoded"] = {
-                "video": video.detach().cpu(),
-                "audio": audio.detach().cpu(),
-            }
     elif video_vae is not None or audio_vae is not None:
         raise ReceiptError("receipt decoding requires both video and audio VAEs")
     communication_sync_seconds = (
@@ -358,14 +344,9 @@ def _run_sample(
         "decode_seconds": decode_seconds,
         "whole_job_seconds": sample_seconds + decode_seconds,
     }
-    evidence_started = time.perf_counter()
-    if tensor_output is not None:
-        assert tensor_evidence is not None
-        torch.save(tensor_evidence, tensor_output)
     return (
         hashes,
         sample_seconds + decode_seconds,
-        time.perf_counter() - evidence_started,
         timing_breakdown,
     )
 
@@ -380,7 +361,6 @@ def run_worker(args: argparse.Namespace) -> int:
     )
     from dinkster_native.fork_nodes import (
         GenerationLoadDiffusionModel,
-        NativeBlockSparseAttention,
         NativeEmptyMiniMaxH3AV,
         NativeLoadVae,
     )
@@ -390,16 +370,6 @@ def run_worker(args: argparse.Namespace) -> int:
         raise ReceiptError("MiniMax H3 receipt worker requires CUDA")
     setup_started = time.perf_counter()
     runtime, token = _route(args.policy)
-    sparse_backend_calls = 0
-    if args.sparse_enabled:
-        sparse_backend = runtime.registry["comfy_kitchen_sol_chunked"]
-
-        def counted_sparse_backend(*inputs: object, **options: object) -> object:
-            nonlocal sparse_backend_calls
-            sparse_backend_calls += 1
-            return sparse_backend(*inputs, **options)
-
-        runtime.registry["comfy_kitchen_sol_chunked"] = counted_sparse_backend
     load_started = time.perf_counter()
     model = cast(
         "Any",
@@ -421,26 +391,9 @@ def run_worker(args: argparse.Namespace) -> int:
     model_size = int(model.model_size())
     loading_route = {
         "loader": "dinkster_native.fork_nodes.GenerationLoadDiffusionModel",
-        "assign_loaded_weights": True,
         "mmap_backed_state_dict": bool(model.fast_disk),
-        "direct_offloaded_weight_pinning": bool(model.pin_offloaded_weights),
         "dynamic_weight_loading": bool(model.is_dynamic()),
     }
-    if args.sparse_enabled:
-        model = cast(
-            "Any",
-            NativeBlockSparseAttention.execute(
-                model=model,
-                selection="sol-attn",
-                start_percent=0.2,
-                end_percent=1.0,
-                dense_blocks="",
-                min_tokens=12_288,
-                extra_tokens=256,
-                sink_conditioning="exact_kv_and_rows",
-                **{"selection.tau": 1.3},  # pyright: ignore[reportArgumentType]
-            )["MODEL"],
-        )
     latent = cast(
         "dict[str, object]",
         NativeEmptyMiniMaxH3AV.execute(
@@ -468,7 +421,7 @@ def run_worker(args: argparse.Namespace) -> int:
         activate_distributed_attention(ATTEMPT_GROUP, ATTEMPT)
     try:
         with use_execution_context(context):
-            cold_hashes, cold_seconds, evidence_write_seconds, cold_timing_breakdown = _run_sample(
+            cold_hashes, cold_seconds, cold_timing_breakdown = _run_sample(
                 model,
                 latent,
                 positive,
@@ -476,12 +429,11 @@ def run_worker(args: argparse.Namespace) -> int:
                 cfg,
                 args.steps,
                 args.seed,
-                args.tensor_output,
                 collective_timer,
                 video_vae,
                 audio_vae,
             )
-            cold_workflow_seconds = time.perf_counter() - worker_started - evidence_write_seconds
+            cold_workflow_seconds = time.perf_counter() - worker_started
             warmup_runs = [
                 _run_sample(
                     model,
@@ -515,15 +467,13 @@ def run_worker(args: argparse.Namespace) -> int:
     finally:
         if distributed:
             release_distributed_attention(ATTEMPT_GROUP, ATTEMPT)
-    warmup_sample_seconds = [float(run[3]["sample_seconds"]) for run in warmup_runs]
-    warmup_whole_job_seconds = [float(run[3]["whole_job_seconds"]) for run in warmup_runs]
-    sample_seconds = [float(run[3]["sample_seconds"]) for run in measured_runs]
-    whole_job_seconds = [float(run[3]["whole_job_seconds"]) for run in measured_runs]
-    measured_breakdowns = [run[3] for run in measured_runs]
+    warmup_sample_seconds = [float(run[2]["sample_seconds"]) for run in warmup_runs]
+    warmup_whole_job_seconds = [float(run[2]["whole_job_seconds"]) for run in warmup_runs]
+    sample_seconds = [float(run[2]["sample_seconds"]) for run in measured_runs]
+    whole_job_seconds = [float(run[2]["whole_job_seconds"]) for run in measured_runs]
+    measured_breakdowns = [run[2] for run in measured_runs]
     median_sample_seconds = statistics.median(sample_seconds)
     median_whole_job_seconds = statistics.median(whole_job_seconds)
-    if args.sparse_enabled and sparse_backend_calls == 0:
-        raise ReceiptError("sparse candidate never executed its registry backend")
     properties = torch.cuda.get_device_properties(0)
     resources = cast("Any", importlib.import_module("resource"))
     loaded_size = int(model.loaded_size())
@@ -547,13 +497,12 @@ def run_worker(args: argparse.Namespace) -> int:
             "cold_sample_seconds": cold_timing_breakdown["sample_seconds"],
             "cold_decode_seconds": cold_timing_breakdown["decode_seconds"],
             "cold_whole_job_seconds": cold_seconds,
-            "excluded_evidence_write_seconds": evidence_write_seconds,
             "warmup_sample_seconds": warmup_sample_seconds,
             "warmup_whole_job_seconds": warmup_whole_job_seconds,
             "sample_seconds": sample_seconds,
             "whole_job_seconds": whole_job_seconds,
             "cold_compute_communication": cold_timing_breakdown,
-            "warmup_compute_communication": [run[3] for run in warmup_runs],
+            "warmup_compute_communication": [run[2] for run in warmup_runs],
             "measured_compute_communication": measured_breakdowns,
             "median_compute_seconds": statistics.median(
                 run["compute_seconds"] for run in measured_breakdowns
@@ -581,7 +530,6 @@ def run_worker(args: argparse.Namespace) -> int:
             "offloaded_bytes": model_size - loaded_size,
         },
         "loading_route": loading_route,
-        "sparse_backend_calls": sparse_backend_calls,
         "environment": {
             "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
             "device_capability": ".".join(
@@ -651,8 +599,6 @@ def _spawn_worker(
         *(("--video-vae-digest", args.video_vae_digest) if args.video_vae else ()),
         *(("--audio-vae", str(args.audio_vae)) if args.audio_vae else ()),
         *(("--audio-vae-digest", args.audio_vae_digest) if args.audio_vae else ()),
-        *(("--sparse-enabled",) if args.sparse_enabled else ()),
-        *(("--tensor-output", str(args.tensor_output)) if args.tensor_output else ()),
     )
     with log.open("wb") as output:
         return subprocess.Popen(
@@ -683,13 +629,12 @@ def _run_serial(
     args: argparse.Namespace,
     scratch: Path,
     *,
-    sparse_enabled: bool = False,
     name: str | None = None,
     gpu: str | None = None,
     repeats: int | None = None,
     warmups: int | None = None,
 ) -> dict[str, Any]:
-    name = name or ("sparse" if sparse_enabled else "serial")
+    name = name or "serial"
     result = scratch / f"{name}.json"
     log = scratch / f"{name}.log"
     environment = _source_environment(args.dinkster_root, args.fork_root)
@@ -702,14 +647,10 @@ def _run_serial(
     worker_args = argparse.Namespace(**vars(args))
     worker_args.repeats = repeats if repeats is not None else args.repeats
     worker_args.warmups = warmups if warmups is not None else args.warmups
-    worker_args.sparse_enabled = sparse_enabled
-    worker_args.tensor_output = scratch / f"{name}-tensors.pt" if args.mode == "sparse" else None
     worker = _spawn_worker(worker_args, result, log, environment)
     _wait(((name, worker, log),))
     loaded = _load(result)
     loaded["worker_log"] = _log_receipt(log)
-    if worker_args.tensor_output is not None:
-        loaded["_tensor_output"] = str(worker_args.tensor_output)
     return loaded
 
 
@@ -722,8 +663,6 @@ def _run_distributed(
     repeats: int | None = None,
     warmups: int | None = None,
 ) -> list[dict[str, Any]]:
-    if args.mode == "sparse":
-        raise ReceiptError("sparse attention is measured as a one-GPU registry route")
     token = secrets.token_hex(16)
     selected_gpus = tuple(gpus or args.gpu)
     rendezvous = scratch / f"{name}-rendezvous"
@@ -747,7 +686,6 @@ def _run_distributed(
         worker_args = argparse.Namespace(**vars(args))
         worker_args.repeats = repeats if repeats is not None else args.repeats
         worker_args.warmups = warmups if warmups is not None else args.warmups
-        worker_args.sparse_enabled = False
         workers.append(
             (f"{name}-rank{rank}", _spawn_worker(worker_args, result, log, environment), log)
         )
@@ -945,42 +883,6 @@ def _run_sequence_matrix(
     return segments, summaries
 
 
-def _sparse_quality_oracle(reference_path: Path, candidate_path: Path) -> dict[str, Any]:
-    torch = cast("Any", importlib.import_module("torch"))
-    reference = torch.load(reference_path, map_location="cpu", weights_only=True)
-    candidate = torch.load(candidate_path, map_location="cpu", weights_only=True)
-    if not isinstance(reference, dict) or set(reference) != set(candidate):
-        raise ReceiptError("sparse quality tensors have different roles")
-    metrics = {}
-    for role in sorted(reference):
-        expected = reference[role]
-        actual = candidate[role]
-        if not isinstance(expected, torch.Tensor) or not isinstance(actual, torch.Tensor):
-            raise ReceiptError("sparse quality output is not a tensor")
-        if expected.shape != actual.shape:
-            raise ReceiptError("sparse quality tensors have different shapes")
-        expected = expected.float().flatten()
-        actual = actual.float().flatten()
-        difference = actual - expected
-        reference_rms = float(expected.square().mean().sqrt())
-        metrics[role] = {
-            "shape": list(reference[role].shape),
-            "max_abs": float(difference.abs().max()),
-            "rmse": float(difference.square().mean().sqrt()),
-            "relative_rmse": (
-                float(difference.square().mean().sqrt()) / reference_rms if reference_rms else None
-            ),
-            "cosine_similarity": float(
-                torch.nn.functional.cosine_similarity(expected, actual, dim=0)
-            ),
-        }
-    return {
-        "baseline": "same-session dense SDPA with identical model, inputs, sampler, and seed",
-        "candidate": "fork registry comfy_kitchen_sol_chunked",
-        "metrics_by_role": metrics,
-    }
-
-
 def _mint_sequence_matrix(args: argparse.Namespace, artifact: dict[str, Any]) -> int:
     with tempfile.TemporaryDirectory(prefix="minimax-h3-u4-matrix-") as directory:
         segments, summaries = _run_sequence_matrix(args, Path(directory))
@@ -1133,12 +1035,8 @@ def run_mint(args: argparse.Namespace) -> int:
         raise ReceiptError("the matrix requires one warmup and at least five measured repeats")
     if args.matrix and (args.video_vae is None or args.audio_vae is None):
         raise ReceiptError("the matrix requires video and audio VAEs")
-    if not args.matrix and len(args.gpu) != 2 and args.mode != "sparse":
+    if not args.matrix and len(args.gpu) != 2:
         raise ReceiptError("guidance and U2R1 receipt minting require exactly two GPU UUIDs")
-    if args.mode == "sparse" and len(args.gpu) != 1:
-        raise ReceiptError("sparse attention receipt minting requires exactly one GPU UUID")
-    if args.mode == "sparse" and args.policy != "sdpa":
-        raise ReceiptError("sparse attention uses SDPA as its dense reference policy")
     if not args.model.is_file():
         raise ReceiptError(f"model does not exist: {args.model}")
     for name in ("video_vae", "audio_vae"):
@@ -1164,26 +1062,15 @@ def run_mint(args: argparse.Namespace) -> int:
         for arm in arm_order:
             if arm == "reference":
                 arms[arm] = _run_serial(args, scratch)
-            elif args.mode == "sparse":
-                arms[arm] = [_run_serial(args, scratch, sparse_enabled=True)]
             else:
                 arms[arm] = _run_distributed(args, scratch)
         serial = cast("dict[str, Any]", arms["reference"])
         candidate = cast("list[dict[str, Any]]", arms["candidate"])
-        sparse_quality_oracle = (
-            _sparse_quality_oracle(
-                Path(serial.pop("_tensor_output")),
-                Path(candidate[0].pop("_tensor_output")),
-            )
-            if args.mode == "sparse"
-            else None
-        )
-    if args.mode != "sparse":
-        hashes = {
-            json.dumps(result["output_hashes"], sort_keys=True) for result in (serial, *candidate)
-        }
-        if len(hashes) != 1:
-            raise ReceiptError("serial and distributed output hashes differ")
+    hashes = {
+        json.dumps(result["output_hashes"], sort_keys=True) for result in (serial, *candidate)
+    }
+    if len(hashes) != 1:
+        raise ReceiptError("serial and distributed output hashes differ")
     performance = _performance(serial, candidate)
     speedup = performance["speedup"]
     host = _classify_host(candidate)
@@ -1230,20 +1117,6 @@ def run_mint(args: argparse.Namespace) -> int:
             "denoise": 1.0,
             "guidance": 2.0 if args.mode == "guidance" else 1.0,
             "conditioning": "synthetic 32-token bfloat16 context with seed 220",
-            "sparse_config": (
-                {
-                    "selection": "sol-attn",
-                    "start_percent": 0.2,
-                    "end_percent": 1.0,
-                    "dense_blocks": [],
-                    "min_tokens": 12_288,
-                    "extra_tokens": 256,
-                    "sink_conditioning": "exact_kv_and_rows",
-                    "tau": 1.3,
-                }
-                if args.mode == "sparse"
-                else None
-            ),
         },
         "execution": {
             "mode": args.mode,
@@ -1252,9 +1125,8 @@ def run_mint(args: argparse.Namespace) -> int:
             "attention_policy": args.policy,
             "attention_provider": {
                 "sdpa": "torch-sdpa-priority-v1",
-                "dinkster_kitchen_int8": "comfy-kitchen-int8-attention-v1",
+                "comfy_kitchen_int8": "comfy-kitchen-int8-attention-v1",
             }[args.policy],
-            "sparse_backend": "comfy_kitchen_sol_chunked" if args.mode == "sparse" else None,
             "world_size": len(candidate),
             "arm_order": list(arm_order),
             "measurement_boundaries": {
@@ -1271,12 +1143,7 @@ def run_mint(args: argparse.Namespace) -> int:
             },
             "reference_output_hashes": serial["output_hashes"],
             "candidate_output_hashes": candidate[0]["output_hashes"],
-            "hash_contract": (
-                "all run hashes retained; sparse output may differ from dense reference"
-                if args.mode == "sparse"
-                else "bit-identical between serial and every distributed rank"
-            ),
-            "sparse_quality_oracle": sparse_quality_oracle,
+            "hash_contract": "bit-identical between serial and every distributed rank",
             "performance": performance,
             "pre_reset_speedup": baseline,
             "speedup_ratio_to_pre_reset": speedup / baseline if speedup and baseline else None,
@@ -1314,7 +1181,6 @@ def _workload_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--seed", type=int, default=20260813)
     parser.add_argument("--warmups", type=int, default=1)
     parser.add_argument("--repeats", type=int, default=5)
-    parser.add_argument("--sparse-enabled", action="store_true", help=argparse.SUPPRESS)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -1326,7 +1192,6 @@ def _parser() -> argparse.ArgumentParser:
     worker.add_argument("--video-vae-digest", help=argparse.SUPPRESS)
     worker.add_argument("--audio-vae-digest", help=argparse.SUPPRESS)
     worker.add_argument("--result", type=Path, required=True)
-    worker.add_argument("--tensor-output", type=Path, help=argparse.SUPPRESS)
     worker.set_defaults(function=run_worker)
     mint = commands.add_parser("mint")
     _workload_arguments(mint)
@@ -1339,7 +1204,7 @@ def _parser() -> argparse.ArgumentParser:
     mint.add_argument("--output", type=Path, required=True)
     mint.add_argument("--candidate-first", action="store_true")
     mint.add_argument("--matrix", action="store_true")
-    mint.set_defaults(function=run_mint, tensor_output=None)
+    mint.set_defaults(function=run_mint)
     return parser
 
 

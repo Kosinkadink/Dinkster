@@ -108,8 +108,6 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
 
     fork_backed = (
         "dinkster.load_checkpoint",
-        "dinkster.load_model_patch",
-        "dinkster.apply_minimax_h3_fun_controlnet",
         "dinkster.load_diffusion_model",
         "dinkster.clip_text_encode",
         "dinkster.empty_latent_image",
@@ -123,7 +121,7 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
         "dinkster.separate_av_latent",
         "dinkster.vae_decode_audio",
     )
-    default_native = ("comfy.BlockSparseAttention", *fork_backed)
+    default_native = fork_backed
     mesh = (
         "dinkster.image_crop_to_mask",
         "dinkster.preview_mask",
@@ -151,33 +149,13 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
     )
 
     legacy = load_manifest(Path("packages/dinkster-compat-comfy/dinkster-legacy-pack.toml"))
-    legacy_extra = {
-        "dinkster.load_model_patch",
-        "dinkster.apply_minimax_h3_fun_controlnet",
-        "dinkster.temporal_window_plan",
-        "dinkster.spatial_tile_plan",
-        "dinkster.explicit_window_plan",
-        "dinkster.res4lyf_rk_beta_sampler",
-    }
-    legacy_native = set(fork_backed) | legacy_extra
+    legacy_native = set(fork_backed)
     assert set(legacy.executes) == legacy_native | set(mesh)
     assert set(dict(legacy.arms)["native"]) == legacy_native
     assert legacy.arm_nodes_entry == "dinkster_compat_comfy.legacy_entry:ARM_NODES"
 
     native = load_manifest(Path("packages/dinkster-native/dinkster-pack.toml"))
-    retained = set((*default_native, *mesh))
-    native_sampling = {
-        "dinkster.temporal_window_plan",
-        "dinkster.spatial_tile_plan",
-        "dinkster.explicit_window_plan",
-        "dinkster.res4lyf_rk_beta_sampler",
-    }
-    native_model_patches = {
-        "comfy.BlockSparseAttention",
-        "dinkster.load_model_patch",
-        "dinkster.apply_minimax_h3_fun_controlnet",
-    }
-    native_nodes = retained | native_sampling | native_model_patches
+    native_nodes = set((*default_native, *mesh))
     assert native.namespaces == ("comfy", "dinkster")
     assert set(native.executes) == native_nodes
     assert set(dict(native.arms)["native"]) == native_nodes
@@ -185,7 +163,14 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
 
     generation = load_manifest(Path("packages/dinkster-nodes-generation/dinkster-pack.toml"))
     assert generation.namespaces == ("comfy", "dinkster")
-    assert "comfy.BlockSparseAttention" in generation.schema_only
+    assert "comfy.BlockSparseAttention" not in generation.schema_only
+    _worker, _registry, nodes, _arms = load_pack(generation, import_from_pack_root=True)
+    assert {
+        "comfy.BlockSparseAttention",
+        "dinkster.context_windows_manual",
+        "dinkster.wan_context_windows_manual",
+        "dinkster.ltxv_context_windows",
+    }.isdisjoint(node.schema().node_type for node in nodes)
 
 
 def test_manifest_loads_strict_adjacent_comfy_alias_registry_without_importing_code(

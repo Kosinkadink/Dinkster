@@ -89,7 +89,7 @@ def provider_runtime(
             "assert direct is not None\n"
             "assert json.loads(direct)['vcs_info']['commit_id'] == sys.argv[1]\n"
             "assert pathlib.Path(spec.origin).is_relative_to(sys.prefix)\n"
-            "for name in ('dinkster_engine', 'dinkster_kitchen', 'tokenizers', 'comfy'):\n"
+            "for name in ('dinkster_engine', 'comfy_kitchen', 'tokenizers', 'comfy'):\n"
             "    assert u.find_spec(name) is None, name\n",
             "dacdebc66f097e9889ce66e36e41c25a7b8f6494",
         ],
