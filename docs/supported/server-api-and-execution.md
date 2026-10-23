@@ -12,6 +12,9 @@
   replay), values, queue control, live WebSocket events, settings, memory
   governance, cache trim/export; asset library and history routes when a
   library root is configured, including classified bounded latent upload
+- Asset record catalogs upgrade automatically with versioned migrations.
+  Matching unversioned catalogs retain scoped records, verified media grants,
+  dependency manifests, and derivations; incompatible schemas are refused.
 - Filesystem mount scans report file, byte, and elapsed progress; publish
   indexed assets before the scan finishes; reuse unchanged-file indexes; and
   keep per-mount indexes under the configured library root
