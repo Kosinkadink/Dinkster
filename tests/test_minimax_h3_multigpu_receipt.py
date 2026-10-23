@@ -145,9 +145,7 @@ def test_performance_reports_compute_and_collective_shares_from_slowest_rank() -
 
 def test_pre_reset_baselines_do_not_relabel_bf16_guidance_as_int8() -> None:
     assert receipt.BASELINES[("RipperPC", "guidance", "sdpa", "production")] == 1.802
-    assert ("RipperPC", "guidance", "comfy_kitchen_int8", "production") not in (
-        receipt.BASELINES
-    )
+    assert ("RipperPC", "guidance", "comfy_kitchen_int8", "production") not in (receipt.BASELINES)
     assert ("X570", "sequence", "comfy_kitchen_int8", "production") not in (receipt.BASELINES)
     assert receipt.INT8_WEIGHT_BASELINES[("X570", "sequence", "sdpa", "production")] == 1.327
 

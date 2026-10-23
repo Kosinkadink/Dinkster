@@ -866,36 +866,26 @@ def test_aimdo_headroom_handler_replaces_base_and_converges_in_either_order(
 
     # An old parent frame keeps the current base.
     host_module._handle_aimdo_headroom(40)
-    assert os.environ["COMFY_AIMDO_HEADROOM_TARGET"] == str(
-        DEFAULT_INFERENCE_RESERVE_BYTES + 140
-    )
+    assert os.environ["COMFY_AIMDO_HEADROOM_TARGET"] == str(DEFAULT_INFERENCE_RESERVE_BYTES + 140)
     assert host_module._aimdo_bootstrap_headroom_base == DEFAULT_INFERENCE_RESERVE_BYTES + 100
 
     # Base then extras and extras then base converge on the same target.
     host_module._handle_aimdo_headroom(40, 200)
     host_module._handle_aimdo_headroom(60)
-    assert os.environ["COMFY_AIMDO_HEADROOM_TARGET"] == str(
-        DEFAULT_INFERENCE_RESERVE_BYTES + 260
-    )
+    assert os.environ["COMFY_AIMDO_HEADROOM_TARGET"] == str(DEFAULT_INFERENCE_RESERVE_BYTES + 260)
     host_module._handle_aimdo_headroom(40)
     host_module._handle_aimdo_headroom(60, 200)
-    assert os.environ["COMFY_AIMDO_HEADROOM_TARGET"] == str(
-        DEFAULT_INFERENCE_RESERVE_BYTES + 260
-    )
+    assert os.environ["COMFY_AIMDO_HEADROOM_TARGET"] == str(DEFAULT_INFERENCE_RESERVE_BYTES + 260)
     assert host_module._accelerator_headroom_base == 200
     assert host_module._aimdo_bootstrap_headroom_base == DEFAULT_INFERENCE_RESERVE_BYTES + 200
     assert host_module._aimdo_headroom_extra_bytes == 60
 
     host_module._handle_aimdo_headroom(0)
-    assert os.environ["COMFY_AIMDO_HEADROOM_TARGET"] == str(
-        DEFAULT_INFERENCE_RESERVE_BYTES + 200
-    )
+    assert os.environ["COMFY_AIMDO_HEADROOM_TARGET"] == str(DEFAULT_INFERENCE_RESERVE_BYTES + 200)
 
     monkeypatch.setattr(host_module, "_aimdo_bootstrap_headroom_base", None)
     host_module._handle_aimdo_headroom(50, 300)
-    assert os.environ["COMFY_AIMDO_HEADROOM_TARGET"] == str(
-        DEFAULT_INFERENCE_RESERVE_BYTES + 200
-    )
+    assert os.environ["COMFY_AIMDO_HEADROOM_TARGET"] == str(DEFAULT_INFERENCE_RESERVE_BYTES + 200)
 
 
 @pytest.mark.parametrize("base", [True, -1, "100", None])
