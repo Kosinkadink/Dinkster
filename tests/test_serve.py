@@ -1966,7 +1966,7 @@ def test_serve_multi_gpu_cli_reaches_compat_worker(
         ("1,0", "sequence"),
         ("3,1,2", "auto"),
         ("0,1", "guidance"),
-        ("3,2,1,0", "window"),
+        ("3,2,1,0", "sequence"),
     ),
 )
 def test_serve_single_job_multi_gpu_preserves_logical_rank_order(
@@ -2008,13 +2008,14 @@ def test_serve_single_job_multi_gpu_preserves_logical_rank_order(
     assert config.mode == mode  # type: ignore[attr-defined]
 
 
-def test_serve_rejects_removed_single_job_model_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("mode", ("model", "window"))
+def test_serve_rejects_removed_single_job_mode(monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
     from dinkster import serve
 
     monkeypatch.setattr(
         sys,
         "argv",
-        ["dinkster-serve", "--single-job-multi-gpu-mode", "model"],
+        ["dinkster-serve", "--single-job-multi-gpu-mode", mode],
     )
     with pytest.raises(SystemExit):
         serve.main()
