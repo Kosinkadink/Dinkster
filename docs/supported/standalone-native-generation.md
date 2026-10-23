@@ -11,9 +11,9 @@
 - Pinned core ComfyUI schemas are advertised as import metadata, including
   KSampler and CLIPTextEncode. They are not additional executable node IDs.
   Unsupported or ambiguous imports refuse with node-specific diagnostics.
-- Same-host NVIDIA single-job execution supports guidance-lane splitting,
-  canonical window scattering, and explicit two- or four-rank H3 Ulysses
-  sequence sharding. Automatic sequence selection remains two-rank.
+- Same-host NVIDIA single-job execution supports guidance-lane splitting and
+  explicit two- or four-rank H3 Ulysses sequence sharding. Automatic sequence
+  selection remains two-rank.
 - Unmodified legacy custom packs still require a ComfyUI installation and
   run in the compatibility quarantine.
 - Native 3D operations execute without a ComfyUI checkout: geometry estimation,
