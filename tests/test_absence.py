@@ -332,35 +332,46 @@ def test_blocked_required_output_reports_once_per_run(cache_enabled: bool, messa
         graph = Graph(
             nodes={
                 "source": GraphNode("test.block", {}),
+                "other_source": GraphNode("test.block", {}),
                 "left": GraphNode("test.add_one", {"value": Link("source", "value")}),
                 "right": GraphNode("test.add_one", {"value": Link("source", "value")}),
                 "tail": GraphNode("test.add_one", {"value": Link("left", "out")}),
+                "other": GraphNode("test.add_one", {"value": Link("other_source", "value")}),
                 "live": GraphNode("test.add_one", {"value": 18}),
             }
         )
         for attempt in range(2):
             events.clear()
-            result = await engine.run(graph, ["tail", "right", "live"], cache_enabled=cache_enabled)
-            assert set(result.skipped) == {"left", "right", "tail"}
+            result = await engine.run(
+                graph, ["tail", "right", "other", "live"], cache_enabled=cache_enabled
+            )
+            assert set(result.skipped) == {"left", "right", "tail", "other"}
             assert result.outputs["live"]["out"].resolve() == 19
-            for target in ("tail", "right"):
+            for target in ("tail", "right", "other"):
                 value = result.outputs[target]["out"]
                 assert is_absent(value)
-                assert value.meta.get(ABSENT_ORIGIN_META_KEY) == "source/value"
+                origin = "other_source/value" if target == "other" else "source/value"
+                assert value.meta.get(ABSENT_ORIGIN_META_KEY) == origin
                 assert value.meta.get(ABSENT_REASON_META_KEY) == message
             notices = [event for event in events if event.kind == "node_blocked"]
-            assert len(notices) == (1 if message else 0)
+            assert len(notices) == (2 if message else 0)
             if message:
-                assert notices[0].node_id in {"left", "right"}
-                assert notices[0].detail == {"origin": "source/value", "message": message}
-                assert events.index(notices[0]) < next(
-                    i for i, event in enumerate(events) if event.kind == "node_skipped"
-                )
+                assert {event.detail["origin"] for event in notices} == {
+                    "source/value",
+                    "other_source/value",
+                }
+                for notice in notices:
+                    assert notice.detail["message"] == message
+                    assert events.index(notice) < next(
+                        i
+                        for i, event in enumerate(events)
+                        if event.kind == "node_skipped" and event.node_id == notice.node_id
+                    )
             skips = [event for event in events if event.kind == "node_skipped"]
-            assert {event.node_id for event in skips} == {"left", "right", "tail"}
+            assert {event.node_id for event in skips} == {"left", "right", "tail", "other"}
             if attempt and cache_enabled:
-                assert set(result.cached) == {"source", "live"}
-            else:
+                assert set(result.cached) == {"source", "other_source", "live"}
+            elif not cache_enabled:
                 assert result.cached == ()
 
     asyncio.run(scenario())

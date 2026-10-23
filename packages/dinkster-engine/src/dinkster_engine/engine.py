@@ -87,12 +87,14 @@ from dinkster_schema.media import media_diagnostics
 from dinkster_values import (
     ABSENT_ORIGIN_META_KEY,
     ABSENT_REASON_META_KEY,
+    ABSENT_STANDS_FOR_META_KEY,
     ASSET_BASE_TYPE,
     LENGTH_META_KEY,
     RESOURCES_META_KEY,
     ResourcePins,
     TypeRegistry,
     Value,
+    ValueMeta,
     is_absent,
     iter_value_tree,
     list_children,
@@ -1208,6 +1210,27 @@ class Engine:
                 return False
         return True
 
+    @staticmethod
+    def _cached_output_origins(
+        label: str, schema: NodeSchema, outputs: Mapping[str, Value]
+    ) -> Mapping[str, Value]:
+        # Content-identical producers share cache entries, not diagnostic
+        # identities. Selectors forward an input's provenance unchanged.
+        if schema.selector is not None:
+            return outputs
+        rebound = dict(outputs)
+        for output_id, value in outputs.items():
+            if is_absent(value):
+                current = make_absent_value(
+                    origin=f"{label}/{output_id}",
+                    reason=str(value.meta.get(ABSENT_REASON_META_KEY, "")),
+                    stands_for=str(value.meta.get(ABSENT_STANDS_FOR_META_KEY, "")),
+                )
+                rebound[output_id] = replace(
+                    current, meta=ValueMeta({**value.meta.entries, **current.meta.entries})
+                )
+        return rebound
+
     def _pin_outputs(self, outputs: Mapping[str, Value], pinned: list[str]) -> bool:
         """Pin every resource reference in one node's outputs for the run's
         lifetime (recorded in ``pinned``; run() unpins at the end). False
@@ -1550,6 +1573,7 @@ class Engine:
                 if inflight.cancelled():
                     continue  # owner's run died; try to take ownership
                 raise
+            outputs = self._cached_output_origins(label, schema, outputs)
             # Dead-owner check FIRST: a known-unresolvable result must not
             # take pins it would only hold until run cleanup.
             if self._dead_owner(outputs) is not None or not self._pin_outputs(outputs, pinned):
@@ -1609,6 +1633,7 @@ class Engine:
                 entry_problem = "stale-resource"
                 hit = None
             if hit is not None:
+                hit = self._cached_output_origins(label, schema, hit)
                 produced[node_id] = hit
                 cached.append(label)
                 future.set_result(hit)
