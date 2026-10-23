@@ -15,9 +15,11 @@ from test_server import SCHEMAS, make_engine
 def test_server_exposes_only_supported_features_and_keeps_templates_disabled() -> None:
     async def scenario() -> None:
         app = create_app(make_engine, SCHEMAS)
-        namespaces = {
-            "/".join(route.resource.canonical.split("/")[:3]) for route in app.router.routes()
-        }
+        namespaces: set[str] = set()
+        for route in app.router.routes():
+            resource = route.resource
+            assert resource is not None
+            namespaces.add("/".join(resource.canonical.split("/")[:3]))
         assert namespaces == {
             "/api/auth",
             "/api/choices",
