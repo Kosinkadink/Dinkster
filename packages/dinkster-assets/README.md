@@ -40,6 +40,13 @@ server-scoped grants, not filesystem paths or content identities. File
 replacement and mount revocation invalidate them. Their cache fingerprints
 use an `unverified-local:` prefix and cannot be redeemed on another host.
 
+Library scans reject partial-download extensions even with custom ignore
+rules and admit files only after two size/mtime observations agree. Unchanged
+verified rows avoid rehashing. Missing or replaced identities remain in the
+existing index, available through `MountTable.missing_entries(mount_id)` but
+excluded from live resolution. A returning digest recovers its identity;
+changed bytes get a distinct digest without rebinding the old reference.
+
 Catalogs give virtual paths file-like listing and glob semantics without
 exposing real filesystem paths:
 

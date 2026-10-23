@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from collections.abc import Mapping
 from pathlib import Path
 from typing import BinaryIO
@@ -270,6 +271,46 @@ def test_library_custom_ignore_replaces_defaults(tmp_path: Path) -> None:
     assert count == 2
     assert library.catalog.get("models/checkpoints/put_checkpoints_here") is not None
     assert library.catalog.get("models/loras/style.safetensors") is None
+
+
+@pytest.mark.parametrize(
+    "extension",
+    [".part", ".partial", ".CRDOWNLOAD", ".download", ".tmp", ".aria2", ".!qb", ".opdownload"],
+)
+def test_library_rejects_partial_downloads_even_with_custom_ignore(
+    tmp_path: Path, extension: str
+) -> None:
+    (tmp_path / f"model.safetensors{extension}").write_bytes(b"partial model")
+    (tmp_path / "finished.safetensors").write_bytes(b"finished model")
+    library = LocalAssetLibrary(tmp_path, ignore=())
+    assert library.scan() == 1
+    assert [entry.name for entry in library.entries()] == ["finished.safetensors"]
+
+
+@pytest.mark.parametrize("change", ["size", "mtime"])
+def test_library_defers_unstable_file_until_a_later_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    path = tmp_path / "downloading.safetensors"
+    path.write_bytes(b"initial")
+    stable = tmp_path / "stable.safetensors"
+    stable.write_bytes(b"stable")
+    first = path.stat()
+
+    def change_between_stats(_delay: float) -> None:
+        if change == "size":
+            path.write_bytes(b"longer download")
+            os.utime(path, ns=(first.st_atime_ns, first.st_mtime_ns))
+        else:
+            os.utime(path, ns=(first.st_atime_ns, first.st_mtime_ns + 1_000_000))
+
+    library = LocalAssetLibrary(tmp_path)
+    with monkeypatch.context() as patch:
+        patch.setattr("dinkster_assets.library.time.sleep", change_between_stats)
+        assert library.scan() == 1
+        assert [entry.name for entry in library.entries()] == ["stable.safetensors"]
+    assert library.scan() == 2
+    assert library.ref("models/downloading.safetensors").read_bytes() == path.read_bytes()
 
 
 def test_library_never_catalogs_its_own_index(tmp_path: Path) -> None:

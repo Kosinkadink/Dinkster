@@ -691,6 +691,15 @@ class MountTable:
             library = row.library
         return library.entries() if library is not None else ()
 
+    def missing_entries(self, mount_id: str) -> tuple[AssetEntry, ...]:
+        """Previously indexed identities retained after disappearance or replacement."""
+        with self._lock:
+            row = self._rows.get(mount_id)
+            if row is None:
+                raise MountsError(f"unknown mount: {mount_id!r}")
+            library = row.library
+        return library.missing_entries() if library is not None else ()
+
     def ready_snapshot(self) -> tuple[ReadyMountSnapshot, ...]:
         """Capture indexed mount rows and their exact catalog generation."""
         with self._lock:
