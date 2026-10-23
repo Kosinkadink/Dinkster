@@ -1,6 +1,6 @@
 """Native Dinkster implementations of ComfyUI core nodes."""
 
-from dinkster_inference_wire import register_inference_types
+from dinkster_api.v1 import register_inference_types
 
 from .logic import LOGIC_NODES
 from .math import ComfyMathExpression

@@ -29,6 +29,7 @@ from dinkster_values import register_core_types
 from dinkster_workers import InProcessWorker
 
 GOLDEN_V1_SURFACE = (
+    "register_inference_types",
     "FrontendContribution",
     "FrontendModule",
     "JsonField",
@@ -366,6 +367,7 @@ def test_golden_surface_is_exact() -> None:
 def test_reexports_are_the_internal_objects() -> None:
     """Zero wrappers: the door hands out the internal objects themselves."""
     import dinkster_assets
+    import dinkster_inference_wire.types as inference_types
     import dinkster_memory
     import dinkster_protocol
     import dinkster_schema
@@ -373,6 +375,7 @@ def test_reexports_are_the_internal_objects() -> None:
     import dinkster_video
 
     sources = (
+        inference_types,
         dinkster_schema,
         dinkster_values,
         dinkster_protocol,

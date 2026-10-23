@@ -324,6 +324,10 @@ def __getattr__(name: str) -> object:
         import dinkster_video
 
         value = getattr(dinkster_video, name)
+    elif name == "register_inference_types":
+        from dinkster_inference_wire.types import register_inference_types
+
+        value = register_inference_types
     else:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     globals()[name] = value
@@ -331,15 +335,17 @@ def __getattr__(name: str) -> object:
 
 
 def __dir__() -> list[str]:
-    return sorted(set(globals()) | _VIDEO_MODULE_EXPORTS)
+    return sorted(set(globals()) | _VIDEO_MODULE_EXPORTS | {"register_inference_types"})
 
 
 if TYPE_CHECKING:
+    from dinkster_inference_wire.types import register_inference_types
     from dinkster_video import document as timeline_document
     from dinkster_video import image_math, timeline_runtime
     from dinkster_video import timeline as timeline_render
 
 __all__ = [
+    "register_inference_types",
     "FrontendContribution",
     "FrontendModule",
     "JsonField",

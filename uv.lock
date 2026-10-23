@@ -895,14 +895,12 @@ version = "0.0.1"
 source = { editable = "packages/dinkster-nodes-comfy" }
 dependencies = [
     { name = "dinkster-api" },
-    { name = "dinkster-inference-wire" },
     { name = "simpleeval" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-inference-wire", editable = "packages/dinkster-inference-wire" },
     { name = "simpleeval", specifier = ">=1.0.0" },
 ]
 
