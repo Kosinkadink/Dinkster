@@ -24,6 +24,7 @@ from dinkster_protocol import (
     AttentionPolicyConfig,
     AttentionRouteToken,
     CompatGateDiagnostic,
+    ExpandedReturn,
     Invocation,
     InvocationEvent,
     InvocationResult,
@@ -31,6 +32,7 @@ from dinkster_protocol import (
     LazyStatusResult,
     NodeError,
     OnInvocationEvent,
+    PresentOutput,
     SavedArtifactCandidate,
     canonical_attention_route_token_bytes,
     derive_attention_route_token,
@@ -967,6 +969,19 @@ class InProcessWorker:
                     message=message,
                 )
             )
+
+        if isinstance(raw, ExpandedReturn):
+            if not schema.may_expand_graph:
+                return contract_error("execute() expanded without declaring may_expand_graph")
+            if {name for name, _ in raw.bindings} != {out.id for out in schema.outputs}:
+                return contract_error("expansion bindings must match declared outputs")
+            declared_outputs = {out.id: out for out in schema.outputs}
+            for name, binding in raw.bindings:
+                if isinstance(binding, PresentOutput) and not declared_outputs[
+                    name
+                ].type.accepts_concrete(binding.value.type_id):
+                    return contract_error(f"output '{name}' rejects {binding.value.type_id}")
+            return InvocationResult(expansion=raw)
 
         if not isinstance(raw, Mapping):
             return contract_error(

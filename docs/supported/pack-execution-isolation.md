@@ -22,6 +22,10 @@
   user's filesystem and network authority.
 - In-process packs and remote worker daemons are outside the local serving
   sandbox on every platform.
+- Worker conversations negotiate typed runtime-expansion results. Present
+  values retain ordinary resource ownership, source adoption, saved-artifact
+  validation and shared-memory/result acknowledgements. Carrying a fragment
+  across a worker boundary does not bypass graph admission by the engine.
 - Model-backed vision provider packs can implement stable owner node schemas.
   Ordinary node cards hide implementation pack ids. A missing selection is
   resolved deterministically from the requested semantic model and compatible

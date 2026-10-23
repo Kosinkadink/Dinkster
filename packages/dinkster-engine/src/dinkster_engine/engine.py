@@ -1768,6 +1768,10 @@ class Engine:
                     )
                 )
                 raise ExecutionError(NodeError(label, node.node_type, message))
+            if result.expansion is not None:
+                raise ExecutionError(
+                    NodeError(label, node.node_type, "runtime expansion requires graph admission")
+                )
             assert result.outputs is not None
             # A fresh result must never reference a resident whose owning
             # worker lifetime already ended - the producing side stamps its

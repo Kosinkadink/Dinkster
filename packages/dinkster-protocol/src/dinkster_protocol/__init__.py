@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Literal, Protocol, cast
 
 from dinkster_schema import NodeSchema
@@ -549,6 +550,37 @@ class InvocationResult:
     error: NodeError | None = None
     artifacts: tuple[SavedArtifact, ...] = ()
     artifact_candidates: tuple[SavedArtifactCandidate, ...] = ()
+    expansion: ExpandedReturn | None = None
+
+    def __post_init__(self) -> None:
+        if self.expansion is None:
+            return
+        if self.error is not None:
+            raise ValueError("an expansion cannot accompany an invocation error")
+        present = {
+            name: binding.value
+            for name, binding in self.expansion.bindings
+            if isinstance(binding, PresentOutput)
+        }
+        outputs = MappingProxyType(dict(self.outputs if self.outputs is not None else present))
+        if set(outputs) != set(present):
+            raise ValueError("expansion outputs must name exactly its present bindings")
+        # Output replacement (producer stamps, diagnostics, device mapping)
+        # must update the algebra too, without introducing a second value owner.
+        object.__setattr__(self, "outputs", outputs)
+        object.__setattr__(
+            self,
+            "expansion",
+            ExpandedReturn(
+                self.expansion.expansion,
+                tuple(
+                    (name, PresentOutput(outputs[name]))
+                    if isinstance(binding, PresentOutput)
+                    else (name, binding)
+                    for name, binding in self.expansion.bindings
+                ),
+            ),
+        )
 
 
 @dataclass(frozen=True)

@@ -1061,7 +1061,12 @@ def decode_invocation(
 
 
 def encode_result(
-    codec: ValueCodec, result: InvocationResult, invocation_id: str, execute_ms: float
+    codec: ValueCodec,
+    result: InvocationResult,
+    invocation_id: str,
+    execute_ms: float,
+    *,
+    negotiated_capabilities: Set[str] = frozenset(),
 ) -> tuple[dict[str, object], list[bytes], list[SharedMemory]]:
     from .saved_artifacts import MAX_SAVED_ARTIFACTS, validate_candidate
 
@@ -1089,6 +1094,18 @@ def encode_result(
         ]
     if result.artifacts:
         raise BoundaryError("workers cannot send authoritative saved artifact descriptors")
+    if result.expansion is not None:
+        from dinkster_protocol import InvocationReturn, ReturnBatch
+
+        algebra_header, blobs, segments = encode_invocation_outcome(
+            codec,
+            InvocationReturn(ReturnBatch("scalar", (result.expansion,))),
+            invocation_id,
+            execute_ms,
+            negotiated_capabilities=negotiated_capabilities,
+        )
+        header.update(algebra_header)
+        return header, blobs, segments
     blobs: list[bytes] = []
     segments: list[SharedMemory] = []
     if result.error is not None:
@@ -1885,6 +1902,40 @@ def decode_result_outputs(
         else:
             stats[str(output_id)] = local
     return outputs, stats
+
+
+def decode_result(
+    codec: ValueCodec,
+    header: Mapping[str, Any],
+    blobs: Sequence[bytes],
+    consumed: list[str],
+    *,
+    negotiated_capabilities: Set[str] = frozenset(),
+) -> tuple[InvocationResult, dict[str, TransferStat]]:
+    """Decode ordinary values or one scalar expansion onto the same handoff path."""
+    if "resultAlgebra" not in header:
+        outputs, stats = decode_result_outputs(codec, header, blobs, consumed)
+        return InvocationResult(outputs=outputs), stats
+    from dinkster_protocol import ExpandedReturn, InvocationReturn
+
+    # Conversation identity and artifact claims are validated by the session;
+    # the algebra codec owns only the result payload's exact envelope.
+    fields = {"type", "invocationId", "executeMs", "resultAlgebra", "blobs"}
+    if set(header) - fields - {"jobRef", "attemptId", "artifactCandidates"}:
+        raise BoundaryError("invalid invocation expansion frame fields")
+    payload = {key: header[key] for key in fields if key in header}
+    outcome, stats = decode_invocation_outcome(
+        codec, payload, blobs, consumed, negotiated_capabilities=negotiated_capabilities
+    )
+    if (
+        not isinstance(outcome, InvocationReturn)
+        or outcome.batch.mode != "scalar"
+        or not isinstance(outcome.batch.units[0], ExpandedReturn)
+    ):
+        raise BoundaryError("invocation expansion must contain one scalar expanded return")
+    return InvocationResult(expansion=outcome.batch.units[0]), {
+        name: stat for (_, name), stat in stats.items()
+    }
 
 
 def error_from_wire(wire: Mapping[str, Any]) -> NodeError:

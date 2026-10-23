@@ -61,6 +61,15 @@ def result_asset_digests(header: Mapping[str, object], blobs: Sequence[bytes]) -
         raise AssetError("result outputs must be a mapping")
     for wire in cast("Mapping[str, object]", outputs).values():
         visit(wire)
+    algebra = header.get("resultAlgebra")
+    if algebra is not None:
+        if not isinstance(algebra, Mapping):
+            raise AssetError("result algebra must be a mapping")
+        values = cast("Mapping[str, object]", algebra).get("values")
+        if not isinstance(values, list):
+            raise AssetError("result algebra values must be a list")
+        for wire in cast("list[object]", values):
+            visit(wire)
     return digests
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from typing import Any, cast
 
 import pytest
@@ -998,3 +998,55 @@ def test_legacy_result_headers_remain_exact_and_algebra_free() -> None:
             "hints": [],
         },
     }
+
+
+@pytest.mark.parametrize("extra", ["outputs", "outputStats", "error", "artifacts", "unknown"])
+def test_invocation_expansion_rejects_mixed_result_payloads(extra: str) -> None:
+    unit = expanded_outcome().batch.units[0]
+    assert isinstance(unit, ExpandedReturn)
+    codec = ValueCodec(registry(), use_shm=False)
+    header, blobs, _ = encode_result(
+        codec,
+        InvocationResult(expansion=unit),
+        "expanded",
+        0.0,
+        negotiated_capabilities=CAPABILITIES,
+    )
+    header[extra] = {}
+    with pytest.raises(BoundaryError, match="frame fields"):
+        boundary.decode_result(
+            ValueCodec(registry(), use_shm=False),
+            header,
+            blobs,
+            [],
+            negotiated_capabilities=CAPABILITIES,
+        )
+
+
+def test_expansion_output_replacement_is_preserved_on_the_wire() -> None:
+    unit = expanded_outcome().batch.units[0]
+    assert isinstance(unit, ExpandedReturn)
+    result = InvocationResult(expansion=unit)
+    updated = {"seed": registry().wrap("core.int", 23)}
+    result = replace(result, outputs=updated)
+    updated["seed"] = registry().wrap("core.int", 99)
+    header, blobs, _ = encode_result(
+        ValueCodec(registry(), use_shm=False),
+        result,
+        "expanded",
+        0.0,
+        negotiated_capabilities=CAPABILITIES,
+    )
+    decoded, _ = boundary.decode_result(
+        ValueCodec(registry(), use_shm=False),
+        header,
+        blobs,
+        [],
+        negotiated_capabilities=CAPABILITIES,
+    )
+    assert decoded.outputs is not None
+    assert decoded.outputs["seed"].resolve() == 23
+    assert decoded.expansion is not None
+    seed = dict(decoded.expansion.bindings)["seed"]
+    assert isinstance(seed, PresentOutput)
+    assert seed.value.resolve() == 23
