@@ -4,7 +4,7 @@ from dinkster_inference_wire.types import MODEL_TYPE_ID
 from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 
 MODEL = TypeExpr.concrete(MODEL_TYPE_ID)
-FLOAT = TypeExpr.concrete("core.float")
+FLOAT = TypeExpr.concrete("FLOAT")
 
 
 class ModelSource(Node):
