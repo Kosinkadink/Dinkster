@@ -880,8 +880,6 @@ def required_capability(method: str, path: str) -> str | object | None:
         return "training:read"
     if path.startswith("/api/settings"):
         return "settings:read" if read else "settings:write"
-    if path.startswith("/api/p2p"):
-        return "settings:read" if read else "settings:write"
     if path.startswith("/api/sessions"):
         if path.endswith("/actors") and method == "POST":
             return "sessions:read"

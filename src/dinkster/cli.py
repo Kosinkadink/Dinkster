@@ -66,13 +66,6 @@ _COMMANDS: dict[str, _Command] = {
         passes_argv=True,
         summary="generate a native pack skeleton from a legacy pack (alias: dinkster-port)",
     ),
-    "p2p-diagnostics": _Command(
-        "dinkster.p2p_diagnostics",
-        passes_argv=True,
-        summary=(
-            "inspect public acquisition receipts and P2P grants (alias: dinkster-p2p-diagnostics)"
-        ),
-    ),
     "demo": _Command(
         "dinkster.demo",
         passes_argv=False,

@@ -107,9 +107,6 @@ ALLOWED: dict[str, set[str]] = {
     # Shared materialization consumes portable values, never packs or the scheduler.
     "dinkster_video": {"dinkster_values", "dinkster_image_document"},
     "dinkster_image_document": {"dinkster_assets", "dinkster_values"},
-    # The host-managed libtorrent sidecar consumes strict asset descriptors
-    # and the established private process boundary without importing the server.
-    "dinkster_p2p": {"dinkster_assets", "dinkster_workers"},
     # Packs may declare reservation policy (dinkster_memory's planner contracts)
     # but never touch the engine: planners observe InvocationView, not
     # Invocation. dinkster_graph is allowed for the Comfy API prompt adapter:
@@ -197,15 +194,9 @@ ALLOWED: dict[str, set[str]] = {
     },
 }
 
-EXTERNAL_PACKAGES = frozenset({"dinkster_p2p"})
-OPTIONAL_CORE_PACKAGES = frozenset({"dinkster_collab", "dinkster_p2p", "dinkster_supervisor"})
-OPTIONAL_PLUGIN_MODULES = frozenset(
-    {
-        REPO_ROOT / "src/dinkster/lan_p2p.py",
-        REPO_ROOT / "src/dinkster/p2p_api.py",
-        REPO_ROOT / "src/dinkster/seed.py",
-    }
-)
+EXTERNAL_PACKAGES: frozenset[str] = frozenset()
+OPTIONAL_CORE_PACKAGES = frozenset({"dinkster_collab", "dinkster_supervisor"})
+OPTIONAL_PLUGIN_MODULES: frozenset[Path] = frozenset()
 
 
 def dinkster_imports(path: Path) -> set[str]:
@@ -360,12 +351,10 @@ def test_umbrella_optional_packages_are_locked() -> None:
         ],
         "collab": ["dinkster-collab"],
         "supervisor": ["dinkster-supervisor"],
-        "p2p": ["dinkster-p2p", "libtorrent==2.1.1"],
     }
     assert {"dinkster-collab", "dinkster-supervisor"} <= {
         dependency for dependency in root_project["dependencies"]
     }
-    assert "dinkster-p2p" not in root_project["dependencies"]
     assert all(not dependency.startswith("gguf") for dependency in root_project["dependencies"])
     assert all(
         not dependency.startswith("gguf") for dependency in inference_project["dependencies"]
@@ -384,7 +373,6 @@ def test_umbrella_optional_packages_are_locked() -> None:
         ],
         "collab": [{"name": "dinkster-collab"}],
         "supervisor": [{"name": "dinkster-supervisor"}],
-        "p2p": [{"name": "dinkster-p2p"}, {"name": "libtorrent"}],
     }
     assert "gguf" not in {dependency["name"] for dependency in inference_locked["dependencies"]}
     assert "optional-dependencies" not in inference_locked

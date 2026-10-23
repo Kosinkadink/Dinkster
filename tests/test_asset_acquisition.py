@@ -256,28 +256,36 @@ def test_acquire_packaged_source_verified(tmp_path: Path) -> None:
     assert vault.resolve(MODEL_DIGEST) is not None
 
 
-def test_acquire_uses_packaged_before_lan_and_notifies_materialization(tmp_path: Path) -> None:
+def test_acquire_uses_packaged_before_http(tmp_path: Path) -> None:
     pack_root = tmp_path / "packs" / "starter"
     pack_root.mkdir(parents=True)
     (pack_root / "model.bin").write_bytes(MODEL_BYTES)
-    notified: list[None] = []
 
-    def unexpected_lan(_digest: str) -> Path | None:
-        raise AssertionError("LAN must not run before a packaged source")
+    async def scenario() -> None:
+        hits: list[str] = []
+        server = TestServer(make_asset_host({"model": OTHER_BYTES}, hits))
+        await server.start_server()
+        try:
+            result = await asyncio.to_thread(
+                acquire_need,
+                AssetNeed(
+                    name="model",
+                    digest=MODEL_DIGEST,
+                    sources=(
+                        PackagedSource("starter", "model.bin"),
+                        RemoteSource(str(server.make_url("/files/model"))),
+                    ),
+                ),
+                AssetVault(tmp_path / "vault"),
+                pack_roots={"starter": pack_root},
+            )
+            assert result.status == "acquired"
+            assert result.path is not None and result.path.read_bytes() == MODEL_BYTES
+            assert hits == []
+        finally:
+            await server.close()
 
-    result = acquire_need(
-        AssetNeed(
-            name="model",
-            digest=MODEL_DIGEST,
-            sources=(PackagedSource("starter", "model.bin"),),
-        ),
-        AssetVault(tmp_path / "vault"),
-        pack_roots={"starter": pack_root},
-        lan_resolve=unexpected_lan,
-        materialized=lambda: notified.append(None),
-    )
-    assert result.status == "acquired"
-    assert notified == [None]
+    asyncio.run(scenario())
 
 
 def test_acquire_packaged_wrong_bytes_lands_nothing(tmp_path: Path) -> None:
@@ -369,9 +377,7 @@ def test_acquire_remote_verified_and_provenance_recorded(tmp_path: Path) -> None
     asyncio.run(scenario())
 
 
-def test_acquire_uses_lan_before_http_and_falls_back_when_peer_disappears(
-    tmp_path: Path,
-) -> None:
+def test_acquire_uses_local_before_http_and_fetches_when_absent(tmp_path: Path) -> None:
     async def scenario() -> None:
         hits: list[str] = []
         server = TestServer(make_asset_host({"model": MODEL_BYTES}, hits))
@@ -382,37 +388,29 @@ def test_acquire_uses_lan_before_http_and_falls_back_when_peer_disappears(
                 digest=MODEL_DIGEST,
                 sources=(RemoteSource(str(server.make_url("/files/model"))),),
             )
-            lan_vault = AssetVault(tmp_path / "lan-vault")
-            calls: list[str] = []
-
-            def lan_resolve(digest: str) -> Path | None:
-                calls.append(digest)
-                with lan_vault.writer(digest) as writer:
-                    writer.write(MODEL_BYTES)
-                    return writer.commit()
+            local_vault = AssetVault(tmp_path / "local-vault")
+            with local_vault.writer(MODEL_DIGEST) as writer:
+                writer.write(MODEL_BYTES)
+                local_path = writer.commit()
 
             resolved = await asyncio.to_thread(
                 acquire_need,
                 need,
-                lan_vault,
-                lan_resolve=lan_resolve,
+                local_vault,
             )
-            assert resolved.status == "acquired"
-            assert calls == [MODEL_DIGEST]
+            assert resolved.status == "held"
+            assert resolved.path == local_path
             assert hits == []
 
             fallback_vault = AssetVault(tmp_path / "fallback-vault")
-            notified: list[None] = []
             fallback = await asyncio.to_thread(
                 acquire_need,
                 need,
                 fallback_vault,
-                lan_resolve=lambda digest: calls.append(digest),
-                materialized=lambda: notified.append(None),
             )
             assert fallback.status == "acquired"
+            assert fallback.path is not None and fallback.path.read_bytes() == MODEL_BYTES
             assert hits == ["model"]
-            assert notified == [None]
         finally:
             await server.close()
 

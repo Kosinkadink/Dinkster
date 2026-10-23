@@ -1,37 +1,26 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import threading
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
-from dataclasses import replace
 from pathlib import Path
 from typing import Literal, cast
 
 import pytest
 from dinkster_assets import (
-    P2P_PIECE_LENGTH,
     AssetError,
     AssetVault,
-    P2PDescriptorV1,
     TransferStatus,
     TransportCandidate,
     TransportHealth,
     TransportKind,
     TransportResolver,
-    canonical_p2p_info,
     digest_bytes,
     rank_transport_candidates,
 )
 
 ASSET_BYTES = b"transport resolver fixture" * 32
 ASSET_DIGEST = digest_bytes(ASSET_BYTES)
-FILE_ROOT = hashlib.sha256(ASSET_BYTES).hexdigest()
-INFO_HASH = hashlib.sha256(
-    canonical_p2p_info(asset_digest=ASSET_DIGEST, size=len(ASSET_BYTES), file_root=FILE_ROOT)
-).hexdigest()
-P2P_DESCRIPTOR = P2PDescriptorV1("bittorrent-v2", INFO_HASH, FILE_ROOT, P2P_PIECE_LENGTH)
-P2P_EXPIRY = 4_102_444_800.0
 FakeStatus = TransferStatus | Literal["stalled"]
 
 
@@ -52,14 +41,11 @@ class FakeBackend:
         statuses: dict[str, FakeStatus] | None = None,
         *,
         before_complete: Callable[[], Awaitable[None]] | None = None,
-        discard_error: bool = False,
     ) -> None:
         self.vault = vault
         self.statuses = statuses or {}
         self.before_complete = before_complete
-        self.discard_error = discard_error
         self.attempts: list[tuple[str, float]] = []
-        self.discarded: list[str] = []
 
     async def transfer(
         self,
@@ -81,12 +67,6 @@ class FakeBackend:
                 writer.commit()
         yield status
 
-    async def discard_partial(self, digest: str, candidate: TransportCandidate) -> None:
-        assert digest == ASSET_DIGEST
-        self.discarded.append(candidate.source)
-        if self.discard_error:
-            raise OSError("partial vanished")
-
 
 def _candidate(
     source: str,
@@ -94,18 +74,12 @@ def _candidate(
     kind: TransportKind = "http",
     region: str = "",
     health: TransportHealth = "healthy",
-    live: bool = True,
 ) -> TransportCandidate:
-    p2p = kind != "http"
     return TransportCandidate(
         kind=kind,
         source=source,
         region=region,
         health=health,
-        live=live,
-        size_bytes=len(ASSET_BYTES) if p2p else None,
-        descriptor=P2P_DESCRIPTOR if p2p else None,
-        expires_at=P2P_EXPIRY if p2p else None,
     )
 
 
@@ -115,7 +89,6 @@ def _resolver(
     local: StaticResolver | None = None,
     vault: AssetVault | None = None,
     known: Sequence[TransportCandidate] = (),
-    discovered: Sequence[TransportCandidate] = (),
     backend: FakeBackend | None = None,
     validate: Callable[[str, TransportCandidate | None, Path], bool] | None = None,
     transfer_stall_timeout: float = 0.05,
@@ -123,18 +96,13 @@ def _resolver(
     selected_vault = vault or AssetVault(tmp_path / "vault")
     selected_backend = backend or FakeBackend(selected_vault)
 
-    async def discover(_digest: str) -> Sequence[TransportCandidate]:
-        return discovered
-
     resolver = TransportResolver(
         local or StaticResolver(),
         selected_vault,
         lambda _digest: known,
-        discover,
         selected_backend,
         validate or (lambda _digest, _candidate, path: path.read_bytes() == ASSET_BYTES),
         preferred_region="us-east",
-        discovery_timeout=0.25,
         transfer_stall_timeout=transfer_stall_timeout,
     )
     return resolver, selected_backend, selected_vault
@@ -148,21 +116,15 @@ def test_transport_ranking_is_exact_and_stable() -> None:
     candidates = (
         _candidate("broken", health="broken"),
         _candidate("global-http"),
-        _candidate("global-p2p", kind="global-p2p"),
         _candidate("degraded", health="degraded"),
         _candidate("preferred-1", region="us-east"),
-        _candidate("lan", kind="lan-p2p"),
         _candidate("out-of-region", region="eu-west"),
         _candidate("preferred-2", region="us-east"),
-        _candidate("offline-lan", kind="lan-p2p", live=False),
-        _candidate("offline-global", kind="global-p2p", live=False),
     )
     ranked = rank_transport_candidates(candidates, preferred_region="us-east")
     assert [candidate.source for candidate in ranked] == [
-        "lan",
         "preferred-1",
         "preferred-2",
-        "global-p2p",
         "global-http",
         "out-of-region",
         "degraded",
@@ -183,9 +145,7 @@ def test_transport_ranking_deduplicates_one_source_without_reordering() -> None:
     "candidate",
     [
         lambda: _candidate("", kind="http"),
-        lambda: _candidate("peer", kind="lan-p2p", region="us-east"),
-        lambda: _candidate("peer", kind="global-p2p", health="degraded"),
-        lambda: _candidate("https://mirror.example/model", live=False),
+        lambda: _candidate("  https://mirror.example/model"),
         lambda: _candidate("lead", health=cast("TransportHealth", "unknown")),
         lambda: _candidate("lead", kind=cast("TransportKind", "ftp")),
     ],
@@ -197,7 +157,7 @@ def test_transport_candidate_rejects_ambiguous_facts(
         candidate()
 
 
-def test_local_and_vault_hits_do_not_discover_or_transfer(tmp_path: Path) -> None:
+def test_local_and_vault_hits_do_not_transfer(tmp_path: Path) -> None:
     local_path = tmp_path / "local.safetensors"
     local_path.write_bytes(ASSET_BYTES)
     local = StaticResolver(local_path)
@@ -234,38 +194,35 @@ def test_authoritative_vault_precedes_read_only_local_fallback(tmp_path: Path) -
     assert backend.attempts == []
 
 
-def test_lan_stall_preserves_partial_and_falls_back_to_preferred_http(tmp_path: Path) -> None:
+def test_http_stall_falls_back_to_remaining_healthy_http(tmp_path: Path) -> None:
     resolver, backend, _vault = _resolver(
         tmp_path,
         known=(
-            _candidate("global-peer", kind="global-p2p"),
             _candidate("preferred", region="us-east"),
+            _candidate("fallback"),
         ),
-        discovered=(_candidate("lan-peer", kind="lan-p2p"),),
     )
-    backend.statuses["lan-peer"] = "stalled"
+    backend.statuses["preferred"] = "stalled"
     path = _resolve(resolver)
     assert path is not None and path.read_bytes() == ASSET_BYTES
-    assert backend.attempts == [("lan-peer", 0.05), ("preferred", 0.05)]
-    assert backend.discarded == []
+    assert backend.attempts == [("preferred", 0.05), ("fallback", 0.05)]
 
 
-def test_global_p2p_failure_falls_back_to_remaining_healthy_http(tmp_path: Path) -> None:
+def test_http_failure_falls_back_to_remaining_healthy_http(tmp_path: Path) -> None:
     resolver, backend, _vault = _resolver(
         tmp_path,
         known=(
-            _candidate("global-peer", kind="global-p2p"),
+            _candidate("preferred", region="us-east"),
             _candidate("https://mirror.example/model"),
         ),
     )
-    backend.statuses["global-peer"] = "failed"
+    backend.statuses["preferred"] = "failed"
     path = _resolve(resolver)
     assert path is not None and path.read_bytes() == ASSET_BYTES
     assert [source for source, _timeout in backend.attempts] == [
-        "global-peer",
+        "preferred",
         "https://mirror.example/model",
     ]
-    assert backend.discarded == ["global-peer"]
 
 
 def test_transfer_stall_deadline_resets_on_real_progress(tmp_path: Path) -> None:
@@ -292,98 +249,29 @@ def test_transfer_stall_deadline_resets_on_real_progress(tmp_path: Path) -> None
     resolver, _, _ = _resolver(
         tmp_path,
         vault=vault,
-        known=(_candidate("slow-active-peer", kind="global-p2p"),),
+        known=(_candidate("slow-active-source"),),
         backend=backend,
     )
     assert _resolve(resolver) == vault.resolve(ASSET_DIGEST)
 
 
-def test_discovery_cap_cannot_crowd_out_preferred_http_fallback(tmp_path: Path) -> None:
-    lan_candidates = tuple(
-        _candidate(f"lan-peer-{position}", kind="lan-p2p") for position in range(80)
-    )
-    resolver, backend, _vault = _resolver(
-        tmp_path,
-        known=(
-            _candidate("global-peer", kind="global-p2p"),
-            _candidate("preferred", region="us-east"),
-        ),
-        discovered=lan_candidates,
-    )
-    backend.statuses.update((candidate.source, "stalled") for candidate in lan_candidates)
-    assert _resolve(resolver) is not None
-    assert len(backend.attempts) == 65
-    assert backend.attempts[-1] == ("preferred", 0.05)
-
-
-def test_bad_p2p_is_discarded_then_http_fallback_verifies(tmp_path: Path) -> None:
-    resolver, backend, _vault = _resolver(
-        tmp_path,
-        known=(_candidate("http"),),
-        discovered=(_candidate("forged-peer", kind="lan-p2p"),),
-    )
-    backend.statuses["forged-peer"] = "failed"
-    assert _resolve(resolver) is not None
-    assert backend.discarded == ["forged-peer"]
-    assert [attempt[0] for attempt in backend.attempts] == ["forged-peer", "http"]
-
-
-def test_expired_and_descriptor_mismatched_p2p_authority_is_never_attempted(
-    tmp_path: Path,
-) -> None:
-    wrong_descriptor = P2PDescriptorV1(
-        "bittorrent-v2",
-        "1" * 64,
-        "2" * 64,
-        P2P_PIECE_LENGTH,
-    )
-    expired = replace(_candidate("expired", kind="lan-p2p"), expires_at=1.0)
-    forged = replace(
-        _candidate("forged", kind="global-p2p"),
-        descriptor=wrong_descriptor,
-    )
-    resolver, backend, _vault = _resolver(
-        tmp_path,
-        known=(expired, forged, _candidate("http")),
-    )
-    assert _resolve(resolver) is not None
-    assert [attempt[0] for attempt in backend.attempts] == ["http"]
-
-
-def test_partial_cleanup_failure_does_not_block_http_fallback(tmp_path: Path) -> None:
-    vault = AssetVault(tmp_path / "vault")
-    backend = FakeBackend(vault, discard_error=True)
-    backend.statuses["failed-peer"] = "failed"
-    resolver, _, _ = _resolver(
-        tmp_path,
-        known=(_candidate("http"),),
-        discovered=(_candidate("failed-peer", kind="lan-p2p"),),
-        backend=backend,
-    )
-    assert _resolve(resolver) is not None
-    assert [attempt[0] for attempt in backend.attempts] == ["failed-peer", "http"]
-
-
-def test_discovery_failure_still_uses_known_http(tmp_path: Path) -> None:
+def test_known_transport_failure_returns_missing(tmp_path: Path) -> None:
     vault = AssetVault(tmp_path / "vault")
     backend = FakeBackend(vault)
 
-    async def unavailable(_digest: str) -> Sequence[TransportCandidate]:
-        await asyncio.Event().wait()
-        return ()
+    def unavailable(_digest: str) -> Sequence[TransportCandidate]:
+        raise OSError("source list unavailable")
 
     resolver = TransportResolver(
         StaticResolver(),
         vault,
-        lambda _digest: (_candidate("known-http"),),
         unavailable,
         backend,
         lambda _digest, _candidate, path: path.read_bytes() == ASSET_BYTES,
-        discovery_timeout=0.25,
         transfer_stall_timeout=0.05,
     )
-    assert _resolve(resolver) is not None
-    assert backend.attempts == [("known-http", 0.05)]
+    assert _resolve(resolver) is None
+    assert backend.attempts == []
 
 
 def test_reported_completion_requires_canonical_validated_vault_object(tmp_path: Path) -> None:
@@ -425,16 +313,12 @@ def test_one_writer_per_digest_and_waiters_reuse_result(tmp_path: Path) -> None:
             entered.set()
             await asyncio.wait_for(release.wait(), 2)
 
-        async def no_discovery(_digest: str) -> Sequence[TransportCandidate]:
-            return ()
-
         backend = FakeBackend(vault, before_complete=pause_writer)
         resolvers = tuple(
             TransportResolver(
                 StaticResolver(),
                 vault,
                 lambda _digest: (_candidate("only-source"),),
-                no_discovery,
                 backend,
                 lambda _digest, _candidate, path: path.read_bytes() == ASSET_BYTES,
             )

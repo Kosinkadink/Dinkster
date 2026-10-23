@@ -105,7 +105,6 @@ from dinkster_server import (
     TrainingSessionStore,
     comfy_dtype_args,
     create_app,
-    default_p2p_settings,
     load_authenticator,
     load_settings,
     principal_for,
@@ -159,7 +158,6 @@ from .generation_api import GenerationModel, GenerationService, add_generation_r
 from .guess_api import add_guess_routes
 from .installer import Installer
 from .mounts_api import MountService, add_mount_routes
-from .p2p_plugin import load_p2p_plugin
 from .reload_api import add_reload_routes, apply_reload
 from .remote_reconnect import RemoteReconnectSupervisor
 from .remotes import RemotesError, RemoteSpec, load_remotes
@@ -1173,11 +1171,6 @@ def main(argv: list[str] | None = None) -> None:
         "(or $DINKSTER_OFFICIAL_RESOLVER_PROVIDER_ID; no built-in default)",
     )
     parser.add_argument(
-        "--disable-p2p",
-        action="store_true",
-        help="start with P2P downloading and seeding disabled without changing saved settings",
-    )
-    parser.add_argument(
         "--execution-log-runs",
         type=int,
         default=200,
@@ -1416,8 +1409,6 @@ def main(argv: list[str] | None = None) -> None:
     from dinkster_server.settings import normalize_features
 
     features = normalize_features(persisted_settings.get("features", {}))
-    p2p_plugin = load_p2p_plugin(enabled=features["p2p"]["enabled"] and not args.disable_p2p)
-    features["p2p"]["enabled"] = p2p_plugin is not None
 
     if args.library_root:
         try:
@@ -1561,18 +1552,10 @@ def main(argv: list[str] | None = None) -> None:
     log_level = str(logging_value["level"])
     effective_overrides = dict(cast("dict[str, str]", logging_value["overrides"]))
 
-    p2p_settings = cast("dict[str, object]", persisted_settings.get("p2p", default_p2p_settings()))
-    p2p_source: SettingsSource = "persisted" if "p2p" in persisted_settings else "default"
-    if args.disable_p2p:
-        p2p_settings = {**p2p_settings, "downloadsEnabled": False, "seedingEnabled": False}
-        p2p_source = "cli"
-
     try:
         configure_logging(log_level, overrides=effective_overrides)
     except ValueError as exc:
         parser.error(str(exc))
-    if p2p_plugin is None:
-        core_logger("serve").info("p2p unavailable")
     # Worker subprocesses inherit the environment; exporting the resolved
     # config here is how --log-level/--log reach pack processes.
     os.environ[LOG_LEVEL_ENV] = log_level
@@ -1593,7 +1576,6 @@ def main(argv: list[str] | None = None) -> None:
             "worker-comfy-args": comfy_args,
             "jobs": {"maxRunningJobs": max_running_jobs},
             "logging": {"level": log_level, "overrides": effective_overrides},
-            "p2p": p2p_settings,
         },
         {
             "memory-budgets": memory_source,
@@ -1604,7 +1586,6 @@ def main(argv: list[str] | None = None) -> None:
             "worker-comfy-args": comfy_args_source,
             "jobs": jobs_source,
             "logging": logging_source,
-            "p2p": p2p_source,
         },
         granted=granted_settings,
         path=settings_path,
@@ -1946,7 +1927,6 @@ def main(argv: list[str] | None = None) -> None:
         training_sessions = None
         execution_journal = None
         resolver_indexes = None
-        p2p_manager: Any | None = None
         principal_permissions = PrincipalPermissionStore(
             Path(args.library_root) / "principals.sqlite" if args.library_root else None
         )
@@ -1979,20 +1959,6 @@ def main(argv: list[str] | None = None) -> None:
                 # catalog swaps its CONTENTS, never its identity.
                 pack_assets=composition.asset_catalog,
             )
-            if p2p_plugin is not None:
-                manager = p2p_plugin.controller(
-                    vault=vault,
-                    resolver_indexes=resolver_indexes,
-                    receipts=receipts,
-                    local_path_for=library.locate,
-                    installation_root=Path(args.install_root) if args.install_root else None,
-                )
-                p2p_manager = manager
-                library = replace(
-                    library,
-                    lan_resolve=manager.resolve_sync,
-                    p2p_acquired=manager.notify_acquired,
-                )
             # Persistent execution history rides the same persistence root:
             # terminal runs land in history.sqlite with their sourceDocument
             # link back to uploaded workflow assets.
@@ -2114,17 +2080,6 @@ def main(argv: list[str] | None = None) -> None:
                     threshold=args.event_loop_stall_threshold,
                     logger=log,
                 )
-            if p2p_plugin is not None:
-                p2p_plugin.add_routes(
-                    app,
-                    p2p_manager,
-                    runtime_settings,
-                    **(
-                        {"grant_snapshot": lambda: p2p_manager.grant_snapshot}
-                        if p2p_manager is not None
-                        else {}
-                    ),
-                )
         except BaseException:
             close_resolution_store()
             principal_permissions.close()
@@ -2146,7 +2101,6 @@ def main(argv: list[str] | None = None) -> None:
             add_resolver_index_routes(
                 app,
                 resolver_indexes,
-                p2p_granted="p2p" in runtime_settings.granted,
                 official_url=args.official_resolver_url,
                 official_provider_id=args.official_resolver_provider_id,
             )
