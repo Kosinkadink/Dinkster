@@ -183,10 +183,8 @@ from .resolver_subscription import (
 )
 from .save_target import SAVE_TARGET_TYPE, SaveTarget, register_save_target_type
 from .transport import (
-    DEFAULT_DISCOVERY_TIMEOUT,
     DEFAULT_TRANSFER_STALL_TIMEOUT,
     MAX_TRANSPORT_CANDIDATES,
-    DiscoverLanTransports,
     KnownTransports,
     TransferStatus,
     TransportBackend,
@@ -205,7 +203,6 @@ __all__ = [
     "ASSET_TYPE",
     "AssetScanProgress",
     "DEFAULT_SCOPE",
-    "DEFAULT_DISCOVERY_TIMEOUT",
     "DEFAULT_TRANSFER_STALL_TIMEOUT",
     "DIGEST_PREFIX",
     "GUESS_CONFIDENCE",
@@ -278,7 +275,6 @@ __all__ = [
     "ChainResolver",
     "DEFAULT_IGNORE",
     "DeclaredAsset",
-    "DiscoverLanTransports",
     "FetchAborted",
     "FetchingResolver",
     "FetchResult",
