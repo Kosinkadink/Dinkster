@@ -10,6 +10,7 @@ The dump contains metadata only; it does not provide Dinkster implementations.
 from __future__ import annotations
 
 import argparse
+import ast
 import asyncio
 import inspect
 import json
@@ -18,6 +19,32 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+
+
+def engine_semantics(cls: type, source: str) -> list[str]:
+    semantics = set()
+    for item in ast.walk(ast.parse(inspect.getsource(cls))):
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if item.name == "check_lazy_status":
+                semantics.add("lazy inputs")
+        if not isinstance(item, ast.Call):
+            continue
+        call = ast.unparse(item.func)
+        keywords = {keyword.arg: keyword.value for keyword in item.keywords}
+        for keyword, semantic in (
+            ("lazy", "lazy inputs"),
+            ("enable_expand", "GraphBuilder expansion"),
+        ):
+            value = keywords.get(keyword)
+            if isinstance(value, ast.Constant) and value.value is True:
+                semantics.add(semantic)
+        if call.endswith("ExecutionBlocker") or "block_execution" in keywords:
+            semantics.add("ExecutionBlocker")
+        if call.endswith("GraphBuilder") or (call.endswith("NodeOutput") and "expand" in keywords):
+            semantics.add("GraphBuilder expansion")
+    if source == "comfy_extras/nodes_loop.py":
+        semantics.add("loop semantics")
+    return sorted(semantics)
 
 
 def main() -> None:
@@ -86,6 +113,7 @@ def main() -> None:
                 "display_name": nodes.NODE_DISPLAY_NAME_MAPPINGS.get(name),
                 "file_inputs": [],
             }
+            row["engine_semantics"] = engine_semantics(cls, row["file"])
             try:
                 inputs = annotate_files(cls.INPUT_TYPES())
                 row["input_types"] = inputs
@@ -121,6 +149,11 @@ def main() -> None:
             "source_commit": commit,
             "count_nodes_py": len(base_names),
             "count_total": len(rows),
+            "engine_exclusions": {
+                row["class_name"]: row["engine_semantics"]
+                for row in rows
+                if row["engine_semantics"]
+            },
             "nodes": rows,
         }
 

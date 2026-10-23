@@ -179,7 +179,8 @@ def test_save_mount_is_not_an_arbitrary_extra_input(field: str, value: object) -
     assert "mount" in summary["rows"][0]["differences"]
 
 
-def test_exact_ids_and_file_widget_exemption() -> None:
+@pytest.mark.parametrize("list_inputs", [False, True])
+def test_exact_ids_and_file_widget_exemption(list_inputs: bool) -> None:
     from tools.compare_nodes import compare_registry
 
     reference = {
@@ -187,6 +188,7 @@ def test_exact_ids_and_file_widget_exemption() -> None:
             {
                 "class_name": "LoadExample",
                 "file_inputs": ["file"],
+                "input_is_list": list_inputs,
                 "input_types": {"required": {"file": [["original.safetensors"]]}},
                 "return_types": ["MODEL"],
                 "return_names": ["model"],
@@ -212,6 +214,11 @@ def test_exact_ids_and_file_widget_exemption() -> None:
         ],
     }
     registry = {"nodes": {"LoadExample": schema, "Extra": {"nodeType": "Extra", "interface": []}}}
+    if list_inputs:
+        schema["interface"][0]["type"] = {
+            "kind": "list",
+            "element": {"kind": "concrete", "types": ["COMBO"]},
+        }
     summary = compare_registry(reference, registry)
     assert summary["passed"]
     assert summary["counts"] == {"identical": 1, "Dinkster-only": 1}

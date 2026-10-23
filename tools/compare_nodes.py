@@ -58,7 +58,7 @@ def _type(expr: dict[str, Any]) -> Any:
     return {"unknown_type": expr}
 
 
-def _reference_inputs(groups: dict[str, Any]) -> list[dict[str, Any]]:
+def _reference_inputs(groups: dict[str, Any], list_inputs: bool = False) -> list[dict[str, Any]]:
     result = []
     for group in ("required", "optional", "hidden"):
         for name, spec in groups.get(group, {}).items():
@@ -74,13 +74,16 @@ def _reference_inputs(groups: dict[str, Any]) -> list[dict[str, Any]]:
             elif value_type == "COMFY_DYNAMICCOMBO_V3":
                 entry["type"] = "dynamicCombo"
                 entry["options"] = [
-                    {"key": option["key"], "inputs": _reference_inputs(option["inputs"])}
+                    {
+                        "key": option["key"],
+                        "inputs": _reference_inputs(option["inputs"], list_inputs),
+                    }
                     for option in options["options"]
                 ]
             elif value_type == "COMFY_AUTOGROW_V3":
                 template = options["template"]
                 entry["type"] = "inputFamily"
-                entry["template"] = _reference_inputs(template["input"])
+                entry["template"] = _reference_inputs(template["input"], list_inputs)
                 entry["min"] = template.get("min", 1)
                 if "names" in template:
                     entry["names"] = template["names"]
@@ -90,7 +93,7 @@ def _reference_inputs(groups: dict[str, Any]) -> list[dict[str, Any]]:
             elif value_type == "COMFY_DYNAMICGROUP_V3":
                 entry.update(
                     type="inputFamily",
-                    template=_reference_inputs(options["template"]),
+                    template=_reference_inputs(options["template"], list_inputs),
                     min=options["min"],
                     max=options["max"],
                     prefix=None,
@@ -109,6 +112,8 @@ def _reference_inputs(groups: dict[str, Any]) -> list[dict[str, Any]]:
                 entry["file_input"] = True
             if "options" in entry and entry["type"] == "COMBO" and entry["options"]:
                 entry.setdefault("default", entry["options"][0])
+            if list_inputs and entry["type"] not in ("inputFamily", "dynamicCombo"):
+                entry["type"] = {"list": entry["type"]}
             result.append(entry)
     return result
 
@@ -140,7 +145,7 @@ def _native_inputs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     entry[key] = item[wire_key]
             if "default" in item:
                 entry["default"] = item["default"]
-            if entry["type"] == "COMBO":
+            if entry["type"] in ("COMBO", {"list": "COMBO"}):
                 if "options" in widget:
                     entry["options"] = [
                         option["value"] if isinstance(option, dict) else option
@@ -182,7 +187,7 @@ def _differences(expected: Any, actual: Any, path: str) -> list[str]:
         expected, actual = dict(expected), dict(actual)
         file_input = expected.pop("file_input", False)
         if actual.pop("file_picker", False):
-            if not file_input or expected.get("type") != "COMBO":
+            if not file_input or expected.get("type") not in ("COMBO", {"list": "COMBO"}):
                 return [f"{path}: asset picker on a non-file input"]
             # Mount contents vary, but the widget still consumes the original file slot.
             expected.pop("options", None)
@@ -218,7 +223,7 @@ def compare(row: dict[str, Any], schema: dict[str, Any]) -> list[str]:
         return ["native interface missing"]
     if any(item.get("role") not in INPUT_ROLES | {"output"} for item in schema["interface"]):
         return ["native interface contains an unsupported role or a variable output family"]
-    expected = _reference_inputs(row["input_types"])
+    expected = _reference_inputs(row["input_types"], bool(row.get("input_is_list")))
     actual = _native_inputs(schema.get("interface", []))
     differences = []
     save_node = row["class_name"].startswith("Save") and any(
@@ -264,7 +269,6 @@ def compare(row: dict[str, Any], schema: dict[str, Any]) -> list[str]:
             schema.get("displayName") or schema.get("nodeType"),
         ),
         ("output node", bool(row.get("output_node")), bool(schema.get("outputNode"))),
-        ("input list", bool(row.get("input_is_list")), bool(schema.get("inputIsList"))),
     ):
         differences.extend(_differences(reference, native, key))
     return differences
@@ -280,6 +284,10 @@ def compare_registry(reference: dict[str, Any], registry: dict[str, Any]) -> dic
     served = registry["nodes"]
     results = []
     errors = []
+    if "engine_exclusions" in reference and set(reference["engine_exclusions"]) != set(
+        ENGINE_EXCLUSIONS
+    ):
+        errors.append("measured engine exclusions differ from the settled exclusion list")
     ids = set(classes)
     for key, schema in served.items():
         if key != schema.get("nodeType"):
