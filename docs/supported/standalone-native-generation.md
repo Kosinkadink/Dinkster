@@ -17,9 +17,7 @@
   model offloading.
 - Same-host NVIDIA single-job execution supports guidance-lane splitting,
   canonical window scattering, and explicit two- or four-rank H3 Ulysses
-  sequence sharding. Automatic sequence selection remains two-rank. H3 Sol-Attn
-  and SLA sparse attention are routed through the worker-owned fork attention
-  registry and remain incompatible with sequence mode.
+  sequence sharding. Automatic sequence selection remains two-rank.
 - Unmodified legacy custom packs still require a ComfyUI installation and
   run in the compatibility quarantine.
 - Native 3D operations execute without a ComfyUI checkout: geometry estimation,
