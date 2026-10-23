@@ -195,10 +195,10 @@ def test_worker_aggregates_three_item_sample_results_without_fork_loader_attribu
         cuda=Cuda(), __version__="test", version=types.SimpleNamespace(cuda="test")
     )
     native = types.ModuleType("dinkster_native")
-    attention = types.ModuleType("dinkster_native.attention")
+    attention = cast("Any", types.ModuleType("dinkster_native.attention"))
     attention.activate_distributed_attention = lambda *_args: None
     attention.release_distributed_attention = lambda *_args: None
-    fork_nodes = types.ModuleType("dinkster_native.fork_nodes")
+    fork_nodes = cast("Any", types.ModuleType("dinkster_native.fork_nodes"))
     fork_nodes.GenerationLoadDiffusionModel = types.SimpleNamespace(
         execute=lambda **_kwargs: {"model": Model()}
     )
@@ -206,7 +206,7 @@ def test_worker_aggregates_three_item_sample_results_without_fork_loader_attribu
         execute=lambda **_kwargs: {"latent": {}}
     )
     fork_nodes.NativeLoadVae = types.SimpleNamespace()
-    workers = types.ModuleType("dinkster_workers")
+    workers = cast("Any", types.ModuleType("dinkster_workers"))
     workers.ExecutionContext = lambda **_kwargs: object()
     workers.use_execution_context = lambda _context: contextlib.nullcontext()
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
