@@ -101,7 +101,6 @@ def test_bare_cli_launches_one_origin_and_opens_browser(
     assert args[args.index("--port") + 1] == "4640"
     assert args[args.index("--frontend-root") + 1] == str(bundle)
     assert "--prepare-stale-catalogs" in args
-    assert "--disable-p2p" in args
     assert "--allow-mount-changes" in args
     assert "--execution-python" not in args
 

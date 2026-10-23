@@ -6,7 +6,7 @@ uv run --locked python scripts/check_extension_factories.py \
   --baseline-ref "origin/${GITHUB_BASE_REF:-main}"
 uv run --locked ruff format --check .
 uv run --locked ruff check .
-uv run --locked --extra p2p pyright
+uv run --locked pyright
 uv run --locked python -m pytest -q \
   tests/test_disabled_features.py \
   tests/test_settings.py \
