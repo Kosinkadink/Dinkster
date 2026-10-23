@@ -11,10 +11,6 @@
 - Pinned core ComfyUI schemas are advertised as import metadata, including
   KSampler and CLIPTextEncode. They are not additional executable node IDs.
   Unsupported or ambiguous imports refuse with node-specific diagnostics.
-- Native diffusion loaders accept supported GGUF models, including SDXL Q8_0
-  and K-quants. GGUF residency can minimize VRAM, cache decoded weights within
-  the available VRAM budget, or eagerly decode weights while retaining normal
-  model offloading.
 - Same-host NVIDIA single-job execution supports guidance-lane splitting,
   canonical window scattering, and explicit two- or four-rank H3 Ulysses
   sequence sharding. Automatic sequence selection remains two-rank.

@@ -720,13 +720,6 @@ class LoadDiffusionModel(_SchemaOnlyNode):
                         options=("default", "fp8_e4m3fn", "fp8_e4m3fn_fast", "fp8_e5m2")
                     ),
                 ),
-                InputSpec(
-                    "gguf_residency",
-                    COMBO,
-                    required=False,
-                    default="memory",
-                    widget=ComboWidget(options=("memory", "balanced", "eager")),
-                ),
             ),
             outputs=(OutputSpec("model", MODEL),),
             aliases=("UNETLoader",),
@@ -768,13 +761,6 @@ class LoadClip(_SchemaOnlyNode):
                     COMBO,
                     default="default",
                     widget=ComboWidget(options=("default", "cpu")),
-                ),
-                InputSpec(
-                    "gguf_residency",
-                    COMBO,
-                    required=False,
-                    default="memory",
-                    widget=ComboWidget(options=("memory", "balanced", "eager")),
                 ),
             ),
             outputs=(OutputSpec("clip", CLIP),),
