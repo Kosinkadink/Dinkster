@@ -11,9 +11,10 @@ import ssl
 import threading
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
-from contextlib import asynccontextmanager, contextmanager, suppress
+from contextlib import ExitStack, asynccontextmanager, contextmanager, suppress
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import quote
 
 import pytest
 from aiohttp import web
@@ -1429,5 +1430,238 @@ def test_resolver_management_api_validates_requests(tmp_path: Path) -> None:
             assert response.status == 404
         finally:
             await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_refresh_io_does_not_block_resolver_reads(tmp_path: Path) -> None:
+    source = tmp_path / "index.json"
+    write_document(source, resolver_document())
+    store = ResolverSubscriptionStore(
+        tmp_path / "subscriptions.json", ProvenanceStore(tmp_path / "provenance.json")
+    )
+    subscription = store.subscribe(str(source))
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    read_local = resolver_transport._read_local
+
+    def blocked_read(path: str) -> bytes:
+        started.set()
+        assert release.wait(3.0)
+        return read_local(path)
+
+    with patch.object(resolver_transport, "_read_local", side_effect=blocked_read):
+        refresher = threading.Thread(target=lambda: store.refresh(subscription.id), daemon=True)
+        refresher.start()
+        assert started.wait(1.0)
+        reader = threading.Thread(
+            target=lambda: (
+                store.subscriptions(),
+                store.suggest("example.safetensors"),
+                finished.set(),
+            ),
+            daemon=True,
+        )
+        reader.start()
+        try:
+            assert finished.wait(0.5)
+        finally:
+            release.set()
+            refresher.join(2.0)
+            reader.join(2.0)
+    assert not refresher.is_alive() and not reader.is_alive()
+
+
+@pytest.mark.parametrize("failure", ["apply", "save"])
+def test_refresh_failure_restores_every_observable(tmp_path: Path, failure: str) -> None:
+    first_path = tmp_path / "first.json"
+    second_path = tmp_path / "second.json"
+    write_document(first_path, resolver_document())
+    write_document(second_path, resolver_document(resolver_entry(digest=OTHER_DIGEST)))
+    state = tmp_path / "subscriptions.json"
+    provenance_path = tmp_path / "provenance.json"
+    provenance = ProvenanceStore(provenance_path)
+    store = ResolverSubscriptionStore(state, provenance, clock=lambda: 100.0)
+    store.subscribe(str(first_path))
+    store.subscribe(str(second_path))
+    before = store.subscriptions()
+    saved = state.read_bytes()
+    records = provenance.records()
+    suggestions = store.suggest("example.safetensors")
+    write_document(first_path, resolver_document(resolver_entry(name="updated-first.safetensors")))
+    write_document(
+        second_path,
+        resolver_document(resolver_entry(digest=OTHER_DIGEST, name="updated-second.safetensors")),
+    )
+    apply, save = store._apply, store._save
+    calls = 0
+
+    def fail_during_apply(subscription: ResolverSubscription) -> None:
+        nonlocal calls
+        calls += 1
+        apply(subscription)
+        if calls == 2:
+            raise OSError("injected apply failure")
+
+    def fail_after_save() -> None:
+        save()
+        raise OSError("injected save failure")
+
+    fault = (
+        patch.object(store, "_apply", side_effect=fail_during_apply)
+        if failure == "apply"
+        else patch.object(store, "_save", side_effect=fail_after_save)
+    )
+    with fault, pytest.raises(OSError, match=f"injected {failure} failure"):
+        store.refresh()
+    assert store.subscriptions() == before
+    assert state.read_bytes() == saved
+    assert provenance.records() == records
+    assert store.suggest("example.safetensors") == suggestions
+    assert store.suggest("updated-first.safetensors") == ()
+
+
+def test_refresh_does_not_overwrite_concurrent_subscription_mutation(tmp_path: Path) -> None:
+    source = tmp_path / "index.json"
+    write_document(source, resolver_document())
+    store = ResolverSubscriptionStore(
+        tmp_path / "subscriptions.json", ProvenanceStore(tmp_path / "provenance.json")
+    )
+    subscription = store.subscribe(str(source))
+    write_document(source, resolver_document(resolver_entry(name="updated.safetensors")))
+    started, release = threading.Event(), threading.Event()
+    errors: list[BaseException] = []
+    read_local = resolver_transport._read_local
+
+    def blocked_read(path: str) -> bytes:
+        started.set()
+        assert release.wait(3.0)
+        return read_local(path)
+
+    def refresh() -> None:
+        try:
+            store.refresh(subscription.id)
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    with patch.object(resolver_transport, "_read_local", side_effect=blocked_read):
+        refresher = threading.Thread(target=refresh, daemon=True)
+        refresher.start()
+        assert started.wait(1.0)
+        assert store.unsubscribe(subscription.id)
+        release.set()
+        refresher.join(2.0)
+    assert isinstance(errors[0], ResolverSubscriptionError)
+    assert "changed during refresh" in str(errors[0])
+    mutated = store.subscribe(str(source))
+    assert store.subscriptions() == (mutated,)
+
+
+def test_official_bootstrap_identity_configuration_and_unsubscribe(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        state = tmp_path / "subscriptions.json"
+        store = ResolverSubscriptionStore(state, ProvenanceStore(tmp_path / "provenance.json"))
+
+        async def index(_: web.Request) -> web.Response:
+            return web.json_response(resolver_document(), headers={"ETag": '"one"'})
+
+        async with resolver_http_server(index) as url:
+            subscription = await asyncio.to_thread(
+                store.bootstrap_official, url, "community-models"
+            )
+            assert subscription is not None and subscription.complete_snapshot
+            saved = state.read_bytes()
+            assert (
+                await asyncio.to_thread(store.bootstrap_official, url, "community-models")
+                == subscription
+            )
+            assert state.read_bytes() == saved
+            with pytest.raises(ResolverSubscriptionError, match="configuration differs"):
+                await asyncio.to_thread(
+                    store.bootstrap_official, url + "?different=1", "community-models"
+                )
+            assert store.unsubscribe(subscription.id)
+            reloaded = ResolverSubscriptionStore(state, ProvenanceStore(tmp_path / "reloaded.json"))
+            assert (
+                await asyncio.to_thread(reloaded.bootstrap_official, url, "community-models")
+                is None
+            )
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("failure", ["identity", "json", "partial", "save"])
+def test_official_bootstrap_failure_is_atomic_and_retryable(tmp_path: Path, failure: str) -> None:
+    async def scenario() -> None:
+        failing = True
+
+        async def index(request: web.Request) -> web.Response:
+            if failing and failure == "json":
+                return web.Response(text="{")
+            document = resolver_document()
+            if failing and failure == "identity":
+                document["name"] = "wrong"
+            if failing and failure == "partial" and "cursor" not in request.query:
+                document["nextCursor"] = "next"
+            elif failing and failure == "partial":
+                return web.Response(status=500)
+            return web.json_response(document)
+
+        state = tmp_path / "subscriptions.json"
+        store = ResolverSubscriptionStore(state, ProvenanceStore(tmp_path / "provenance.json"))
+        async with resolver_http_server(index) as url:
+            with ExitStack() as stack:
+                if failure == "save":
+                    stack.enter_context(
+                        patch.object(store, "_save", side_effect=OSError("disk full"))
+                    )
+                with pytest.raises((ResolverIndexError, ResolverSubscriptionError, OSError)):
+                    await asyncio.to_thread(store.bootstrap_official, url, "community-models")
+            assert not state.exists() and not store.subscriptions()
+            failing = False
+            assert (
+                await asyncio.to_thread(store.bootstrap_official, url, "community-models")
+                is not None
+            )
+
+    asyncio.run(scenario())
+
+
+def test_cursor_refresh_refetches_all_pages_despite_unchanged_first_page_etag(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        now = [100.0]
+        requests: list[tuple[str, str | None]] = []
+        cursor = "opaque+/=&?%# cursor"
+        state = tmp_path / "subscriptions.json"
+        store = ResolverSubscriptionStore(
+            state, ProvenanceStore(tmp_path / "provenance.json"), clock=lambda: now[0]
+        )
+
+        async def index(request: web.Request) -> web.Response:
+            requests.append((request.raw_path, request.headers.get("If-None-Match")))
+            if "cursor" in request.query:
+                assert request.query["cursor"] == cursor
+                assert request.headers.get("If-None-Match") is None
+                return web.json_response(resolver_document(resolver_entry(digest=OTHER_DIGEST)))
+            return web.json_response(
+                {**resolver_document(), "nextCursor": cursor}, headers={"ETag": '"first"'}
+            )
+
+        async with resolver_http_server(index) as url:
+            subscription = await asyncio.to_thread(store.subscribe, url + "?limit=1&cursor=stale")
+            assert len(subscription.index.entries) == 2 and subscription.etag == ""
+            now[0] += RESOLVER_REVALIDATE_SECONDS
+            (refreshed,) = await asyncio.to_thread(store.refresh)
+            assert refreshed["error"] == ""
+            assert len(store.subscriptions()[0].index.entries) == 2
+            assert requests == [
+                ("/dinkster/v1/export/resolver?limit=1", None),
+                ("/dinkster/v1/export/resolver?limit=1&cursor=" + quote(cursor, safe=""), None),
+                ("/dinkster/v1/export/resolver?limit=1", None),
+                ("/dinkster/v1/export/resolver?limit=1&cursor=" + quote(cursor, safe=""), None),
+            ]
 
     asyncio.run(scenario())
