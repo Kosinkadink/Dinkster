@@ -1,8 +1,8 @@
 # SD1.5 output changes after VAE residency transition
 
 Status: verified at ComfyUI `b5cc8830279eae909a59de030af1e50761c36751` with
-Torch 2.13.0+cu130 on an RTX 4090; Dinkster normalizes model residency before
-sampling.
+Torch 2.13.0+cu130 on an RTX 4090. Dinkster's native sampler uses upstream's
+residency behavior without an additional normalization step.
 
 ## Symptom
 

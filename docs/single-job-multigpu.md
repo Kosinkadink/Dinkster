@@ -10,7 +10,7 @@ all of its ranks.
 The user supplies an ordered list of logical CUDA indices. Indices are relative
 to `CUDA_VISIBLE_DEVICES`; Dinkster never discovers or adds devices outside that
 list. Each worker receives one visible device and owns its model residency,
-CUDA state, and attention registry.
+CUDA state, and attention route.
 
 The parent uses the workgroup protocol as the control plane:
 
@@ -32,8 +32,8 @@ A rank failure fails the workgroup rather than allowing partial output.
 
 ## Attention attachment
 
-The worker owns a named attention registry and resolves its route without
-changing the fork's default registry. At a sampling boundary, Dinkster clones
+The worker resolves named functions through upstream's attention registry
+without changing its default selection. At a sampling boundary, Dinkster clones
 the resident `ModelPatcher` and attaches the invocation's optimized-attention
 callable to the clone. The resident model is never mutated.
 
