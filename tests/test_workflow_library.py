@@ -147,6 +147,11 @@ def test_catalog_alembic_head_preserves_records(tmp_path: Path, legacy: bool) ->
         "CREATE TRIGGER erase_record AFTER INSERT ON records "
         "BEGIN DELETE FROM records WHERE id=NEW.id; END",
         "CREATE VIEW record_names AS SELECT name FROM records",
+        "ALTER TABLE media_grants RENAME TO old_media_grants; "
+        "CREATE TABLE media_grants (scope TEXT COLLATE NOCASE NOT NULL, "
+        "digest TEXT NOT NULL, kind TEXT NOT NULL, media_type TEXT NOT NULL, "
+        "extension TEXT NOT NULL, byte_size INTEGER NOT NULL, PRIMARY KEY (scope, digest, kind)); "
+        "INSERT INTO media_grants SELECT * FROM old_media_grants; DROP TABLE old_media_grants",
         "DROP TABLE media_grants",
         "ALTER TABLE records ADD COLUMN unexpected TEXT",
         "DROP INDEX records_scope_modified",
@@ -159,11 +164,16 @@ def test_catalog_refuses_incompatible_unversioned_schema(tmp_path: Path, change:
     shutil.copyfile(Path(__file__).parent / "fixtures/asset-catalog-previous-main.sqlite", path)
     with sqlite3.connect(path) as connection:
         connection.executescript(change)
-        records = connection.execute("SELECT * FROM records ORDER BY id").fetchall()
+        tables = connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        rows = {
+            table: connection.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall()
+            for (table,) in tables
+        }
     with pytest.raises(ValueError, match="unversioned asset catalog"):
         LibraryStore(path)
     with sqlite3.connect(path) as connection:
-        assert connection.execute("SELECT * FROM records ORDER BY id").fetchall() == records
+        for table, expected in rows.items():
+            assert connection.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall() == expected
         assert (
             connection.execute(
                 "SELECT name FROM sqlite_master WHERE name='alembic_version'"
