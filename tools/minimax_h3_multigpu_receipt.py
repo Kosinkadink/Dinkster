@@ -467,11 +467,11 @@ def run_worker(args: argparse.Namespace) -> int:
     finally:
         if distributed:
             release_distributed_attention(ATTEMPT_GROUP, ATTEMPT)
-    warmup_sample_seconds = [float(run[3]["sample_seconds"]) for run in warmup_runs]
-    warmup_whole_job_seconds = [float(run[3]["whole_job_seconds"]) for run in warmup_runs]
-    sample_seconds = [float(run[3]["sample_seconds"]) for run in measured_runs]
-    whole_job_seconds = [float(run[3]["whole_job_seconds"]) for run in measured_runs]
-    measured_breakdowns = [run[3] for run in measured_runs]
+    warmup_sample_seconds = [float(run[2]["sample_seconds"]) for run in warmup_runs]
+    warmup_whole_job_seconds = [float(run[2]["whole_job_seconds"]) for run in warmup_runs]
+    sample_seconds = [float(run[2]["sample_seconds"]) for run in measured_runs]
+    whole_job_seconds = [float(run[2]["whole_job_seconds"]) for run in measured_runs]
+    measured_breakdowns = [run[2] for run in measured_runs]
     median_sample_seconds = statistics.median(sample_seconds)
     median_whole_job_seconds = statistics.median(whole_job_seconds)
     properties = torch.cuda.get_device_properties(0)
@@ -502,7 +502,7 @@ def run_worker(args: argparse.Namespace) -> int:
             "sample_seconds": sample_seconds,
             "whole_job_seconds": whole_job_seconds,
             "cold_compute_communication": cold_timing_breakdown,
-            "warmup_compute_communication": [run[3] for run in warmup_runs],
+            "warmup_compute_communication": [run[2] for run in warmup_runs],
             "measured_compute_communication": measured_breakdowns,
             "median_compute_seconds": statistics.median(
                 run["compute_seconds"] for run in measured_breakdowns

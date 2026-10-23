@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import struct
+import sys
+import types
 from pathlib import Path
 from typing import Any, cast
 
@@ -145,6 +148,124 @@ def test_pre_reset_baselines_do_not_relabel_bf16_guidance_as_int8() -> None:
     assert ("RipperPC", "guidance", "comfy_kitchen_int8", "production") not in (receipt.BASELINES)
     assert ("X570", "sequence", "comfy_kitchen_int8", "production") not in (receipt.BASELINES)
     assert receipt.INT8_WEIGHT_BASELINES[("X570", "sequence", "sdpa", "production")] == 1.327
+
+
+def test_worker_aggregates_three_item_sample_results_without_fork_loader_attributes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Model:
+        fast_disk = True
+
+        @staticmethod
+        def is_dynamic() -> bool:
+            return True
+
+        @staticmethod
+        def model_size() -> int:
+            return 100
+
+        @staticmethod
+        def loaded_size() -> int:
+            return 80
+
+    class Cuda:
+        nccl = types.SimpleNamespace(version=lambda: (2, 0))
+
+        @staticmethod
+        def is_available() -> bool:
+            return True
+
+        @staticmethod
+        def get_device_properties(_index: int) -> object:
+            return types.SimpleNamespace(name="test-gpu", uuid="GPU-test")
+
+        @staticmethod
+        def get_device_capability(_index: int) -> tuple[int, int]:
+            return (9, 0)
+
+        @staticmethod
+        def max_memory_allocated() -> int:
+            return 10
+
+        @staticmethod
+        def max_memory_reserved() -> int:
+            return 20
+
+    fake_torch = types.SimpleNamespace(
+        cuda=Cuda(), __version__="test", version=types.SimpleNamespace(cuda="test")
+    )
+    native = types.ModuleType("dinkster_native")
+    attention = types.ModuleType("dinkster_native.attention")
+    attention.activate_distributed_attention = lambda *_args: None
+    attention.release_distributed_attention = lambda *_args: None
+    fork_nodes = types.ModuleType("dinkster_native.fork_nodes")
+    fork_nodes.GenerationLoadDiffusionModel = types.SimpleNamespace(
+        execute=lambda **_kwargs: {"model": Model()}
+    )
+    fork_nodes.NativeEmptyMiniMaxH3AV = types.SimpleNamespace(
+        execute=lambda **_kwargs: {"latent": {}}
+    )
+    fork_nodes.NativeLoadVae = types.SimpleNamespace()
+    workers = types.ModuleType("dinkster_workers")
+    workers.ExecutionContext = lambda **_kwargs: object()
+    workers.use_execution_context = lambda _context: contextlib.nullcontext()
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setitem(sys.modules, "dinkster_native", native)
+    monkeypatch.setitem(sys.modules, "dinkster_native.attention", attention)
+    monkeypatch.setitem(sys.modules, "dinkster_native.fork_nodes", fork_nodes)
+    monkeypatch.setitem(sys.modules, "dinkster_workers", workers)
+    monkeypatch.setattr(receipt, "_inventory", lambda: {})
+    monkeypatch.setattr(
+        receipt, "_route", lambda _policy: (types.SimpleNamespace(capabilities={}), {})
+    )
+    monkeypatch.setattr(receipt, "_conditioning", lambda *_args: [])
+    monkeypatch.setattr(receipt, "_asset", lambda *_args: object())
+    breakdown = {
+        "sample_seconds": 2.0,
+        "whole_job_seconds": 3.0,
+        "decode_seconds": 1.0,
+        "compute_seconds": 1.0,
+        "communication_sync_seconds": 1.0,
+        "compute_share": 0.5,
+        "communication_sync_share": 0.5,
+    }
+    monkeypatch.setattr(
+        receipt,
+        "_run_sample",
+        lambda *_args, **_kwargs: ({"latents": {}}, 3.0, breakdown),
+    )
+    result = tmp_path / "result.json"
+    args = argparse.Namespace(
+        model=tmp_path / "model.safetensors",
+        model_digest="blake3:model",
+        video_vae=None,
+        video_vae_digest=None,
+        audio_vae=None,
+        audio_vae_digest=None,
+        width=64,
+        height=64,
+        frames=5,
+        mode="sequence",
+        policy="sdpa",
+        steps=1,
+        seed=1,
+        warmups=1,
+        repeats=2,
+        result=result,
+    )
+
+    assert receipt.run_worker(args) == 0
+
+    worker_result = json.loads(result.read_text())
+    assert worker_result["loading_route"] == {
+        "loader": "dinkster_native.fork_nodes.GenerationLoadDiffusionModel",
+        "mmap_backed_state_dict": True,
+        "dynamic_weight_loading": True,
+    }
+    assert worker_result["timing"]["warmup_sample_seconds"] == [2.0]
+    assert worker_result["timing"]["sample_seconds"] == [2.0, 2.0]
+    assert worker_result["timing"]["warmup_compute_communication"] == [breakdown]
+    assert worker_result["timing"]["measured_compute_communication"] == [breakdown, breakdown]
 
 
 def test_model_artifact_identifies_int8_convrot_and_excludes_quant_metadata(
