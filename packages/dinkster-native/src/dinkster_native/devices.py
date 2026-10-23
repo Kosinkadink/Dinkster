@@ -186,9 +186,7 @@ def torch_vram_telemetry(device: str) -> MeasuredMemory | None:
         except Exception:  # noqa: BLE001 - basic capacity remains useful without device details
             pass
         manager_module = sys.modules.get("dinkster_inference.model_management")
-        pinned = _optional_counter(
-            lambda: cast("Any", manager_module).get_model_manager().total_pinned_memory
-        )
+        pinned = _optional_counter(lambda: cast("Any", manager_module).TOTAL_PINNED_MEMORY)
         return MeasuredMemory(
             free_bytes=int(free),
             total_bytes=int(total),

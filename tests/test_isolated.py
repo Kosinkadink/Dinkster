@@ -721,7 +721,7 @@ def test_aimdo_bootstrap_unavailable_warns_and_continues(
     monkeypatch.delitem(sys.modules, "torch", raising=False)
 
     def unavailable(name: str) -> object:
-        assert name == "dinkster_aimdo.control"
+        assert name == "comfy_aimdo.control"
         raise ImportError(name)
 
     monkeypatch.setattr(importlib, "import_module", unavailable)
@@ -816,7 +816,7 @@ def test_aimdo_bootstrap_old_aimdo_degrades_headroomless_and_disarms(
     assert calls == [{"simple_vram_headroom": 128 * 1024**2}, {}]
     assert "NOT applied" in caplog.text
     assert "older than 0.4.10" in caplog.text
-    assert "upgrade dinkster-aimdo" in caplog.text
+    assert "upgrade comfy-aimdo" in caplog.text
     assert "completed successfully with simple_vram_headroom" not in caplog.text
     assert host_module._aimdo_bootstrap_headroom_base is None
 
@@ -862,40 +862,30 @@ def test_aimdo_headroom_handler_replaces_base_and_converges_in_either_order(
     monkeypatch.setattr(host_module, "_accelerator_headroom_base", 100)
     monkeypatch.setattr(host_module, "_aimdo_bootstrap_headroom_base", 100)
     monkeypatch.setattr(host_module, "_aimdo_headroom_extra_bytes", 0)
-    monkeypatch.delenv("DINKSTER_AIMDO_HEADROOM_TARGET", raising=False)
+    monkeypatch.delenv("COMFY_AIMDO_HEADROOM_TARGET", raising=False)
 
     # An old parent frame keeps the current base.
     host_module._handle_aimdo_headroom(40)
-    assert os.environ["DINKSTER_AIMDO_HEADROOM_TARGET"] == str(
-        DEFAULT_INFERENCE_RESERVE_BYTES + 140
-    )
+    assert os.environ["COMFY_AIMDO_HEADROOM_TARGET"] == str(DEFAULT_INFERENCE_RESERVE_BYTES + 140)
     assert host_module._aimdo_bootstrap_headroom_base == DEFAULT_INFERENCE_RESERVE_BYTES + 100
 
     # Base then extras and extras then base converge on the same target.
     host_module._handle_aimdo_headroom(40, 200)
     host_module._handle_aimdo_headroom(60)
-    assert os.environ["DINKSTER_AIMDO_HEADROOM_TARGET"] == str(
-        DEFAULT_INFERENCE_RESERVE_BYTES + 260
-    )
+    assert os.environ["COMFY_AIMDO_HEADROOM_TARGET"] == str(DEFAULT_INFERENCE_RESERVE_BYTES + 260)
     host_module._handle_aimdo_headroom(40)
     host_module._handle_aimdo_headroom(60, 200)
-    assert os.environ["DINKSTER_AIMDO_HEADROOM_TARGET"] == str(
-        DEFAULT_INFERENCE_RESERVE_BYTES + 260
-    )
+    assert os.environ["COMFY_AIMDO_HEADROOM_TARGET"] == str(DEFAULT_INFERENCE_RESERVE_BYTES + 260)
     assert host_module._accelerator_headroom_base == 200
     assert host_module._aimdo_bootstrap_headroom_base == DEFAULT_INFERENCE_RESERVE_BYTES + 200
     assert host_module._aimdo_headroom_extra_bytes == 60
 
     host_module._handle_aimdo_headroom(0)
-    assert os.environ["DINKSTER_AIMDO_HEADROOM_TARGET"] == str(
-        DEFAULT_INFERENCE_RESERVE_BYTES + 200
-    )
+    assert os.environ["COMFY_AIMDO_HEADROOM_TARGET"] == str(DEFAULT_INFERENCE_RESERVE_BYTES + 200)
 
     monkeypatch.setattr(host_module, "_aimdo_bootstrap_headroom_base", None)
     host_module._handle_aimdo_headroom(50, 300)
-    assert os.environ["DINKSTER_AIMDO_HEADROOM_TARGET"] == str(
-        DEFAULT_INFERENCE_RESERVE_BYTES + 200
-    )
+    assert os.environ["COMFY_AIMDO_HEADROOM_TARGET"] == str(DEFAULT_INFERENCE_RESERVE_BYTES + 200)
 
 
 @pytest.mark.parametrize("base", [True, -1, "100", None])
@@ -1351,7 +1341,7 @@ def test_host_main_sets_aimdo_arm_only_from_argv(
         del endpoint, manifest_path, shm_threshold, use_shm
         seen.append(
             (
-                os.environ.get("DINKSTER_AIMDO_ARM"),
+                os.environ.get("COMFY_AIMDO_ARM"),
                 os.environ.get("DINKSTER_ACCELERATOR_BUDGETS"),
                 os.environ.get("DINKSTER_ACCELERATOR_HEADROOM_BYTES"),
             )
@@ -1370,7 +1360,7 @@ def test_host_main_sets_aimdo_arm_only_from_argv(
     ]
     if mode is not None:
         argv.extend(("--aimdo-arm", mode))
-    monkeypatch.setenv("DINKSTER_AIMDO_ARM", "on")
+    monkeypatch.setenv("COMFY_AIMDO_ARM", "on")
     monkeypatch.setenv("DINKSTER_ACCELERATOR_BUDGETS", "0=1")
     monkeypatch.setenv("DINKSTER_ACCELERATOR_HEADROOM_BYTES", "1")
     monkeypatch.setattr(host_module, "configure_logging_from_env", lambda _env: None)
@@ -1500,7 +1490,7 @@ def test_host_main_publishes_only_validated_headroom_argv(
         del endpoint, manifest_path, shm_threshold, use_shm
         seen.append(
             (
-                os.environ.get("DINKSTER_AIMDO_ARM"),
+                os.environ.get("COMFY_AIMDO_ARM"),
                 os.environ.get("DINKSTER_ACCELERATOR_BUDGETS"),
                 os.environ.get("DINKSTER_ACCELERATOR_HEADROOM_BYTES"),
             )
@@ -1557,7 +1547,7 @@ def test_host_main_publishes_classic_policy_argv(
         del endpoint, manifest_path, shm_threshold, use_shm
         seen.append(
             (
-                os.environ.get("DINKSTER_AIMDO_ARM"),
+                os.environ.get("COMFY_AIMDO_ARM"),
                 os.environ.get("DINKSTER_ACCELERATOR_BUDGETS"),
                 os.environ.get("DINKSTER_ACCELERATOR_HEADROOM_BYTES"),
             )

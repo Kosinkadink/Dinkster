@@ -120,12 +120,12 @@ def _probe_runtime_versions(interpreter: Path | str) -> Mapping[str, str]:
     script = (
         "import importlib.metadata,json;"
         "print(json.dumps({n:importlib.metadata.version(n) "
-        "for n in ('torch','dinkster-aimdo')}))"
+        "for n in ('torch','comfy-aimdo')}))"
     )
     result = subprocess.run([str(interpreter), "-c", script], capture_output=True, text=True)
     if result.returncode != 0:
         raise InstallError(
-            "cannot read exact torch/dinkster-aimdo versions from serving interpreter: "
+            "cannot read exact torch/comfy-aimdo versions from serving interpreter: "
             + (result.stderr or result.stdout).strip()
         )
     return cast("dict[str, str]", json.loads(result.stdout))
@@ -676,9 +676,9 @@ class Installer:
         if not self._torch_capability_probe(self._serving_interpreter):
             raise InstallError("in-process hosting requires a torch-capable serving interpreter")
         pins = dict(self._runtime_version_probe(self._serving_interpreter))
-        if set(pins) != {"torch", "dinkster-aimdo"}:
+        if set(pins) != {"torch", "comfy-aimdo"}:
             raise InstallError(
-                "in-process hosting requires exact torch and dinkster-aimdo runtime pins"
+                "in-process hosting requires exact torch and comfy-aimdo runtime pins"
             )
         return pins
 
@@ -1185,9 +1185,9 @@ class Installer:
         for raw in manifest.requires_for(self.accelerator):
             requirement = Requirement(raw)
             name = canonical_name(requirement.name)
-            if name == "dinkster-aimdo":
+            if name == "comfy-aimdo":
                 raise InstallError(
-                    f"in-process pack {pack!r} must not declare a dinkster-aimdo dependency; "
+                    f"in-process pack {pack!r} must not declare a comfy-aimdo dependency; "
                     "model residency is owned by the engine tenant registry"
                 )
             if name != "torch":
@@ -1265,9 +1265,9 @@ class Installer:
                 runtime_pins = self.serving_runtime_pins()
             if not in_process:
                 runtime_pins = {}
-            if in_process and set(runtime_pins) != {"torch", "dinkster-aimdo"}:
+            if in_process and set(runtime_pins) != {"torch", "comfy-aimdo"}:
                 raise InstallError(
-                    "in-process hosting requires exact torch and dinkster-aimdo runtime pins"
+                    "in-process hosting requires exact torch and comfy-aimdo runtime pins"
                 )
             topology = _HostingTopology(
                 groups=groups,

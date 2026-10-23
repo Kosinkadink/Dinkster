@@ -1092,7 +1092,7 @@ class PackSpec:
     Other schema-only types still require a provider for a complete generation.
     """
     runtime_pins: Mapping[str, str] = field(default_factory=dict)
-    """Exact torch/dinkster-aimdo baseline recorded by the install generation."""
+    """Exact torch/comfy-aimdo baseline recorded by the install generation."""
     asset_vault_write: bool = False
     """Allow this trusted isolated pack to ingest verified assets into the host vault."""
     replica_cuda_indices: tuple[int, ...] = ()
@@ -1125,7 +1125,7 @@ class PackSpec:
             raise ValueError("replica and single-job CUDA indices are mutually exclusive")
         if self.in_process and self.asset_vault_write:
             raise ValueError("an in-process PackSpec cannot request asset vault write access")
-        if self.single_job_mode not in ("auto", "guidance", "sequence", "window"):
+        if self.single_job_mode not in ("auto", "guidance", "sequence"):
             raise ValueError("PackSpec single_job_mode is invalid")
         budgets: dict[str, int] = {}
         for residency, nbytes in self.vram_budgets.items():
@@ -2415,7 +2415,7 @@ class ServingComposer:
         self._tenant_registry = tenant_registry
         self._torch_capable = torch_capable or _probe_torch_capability
         self._runtime_versions = runtime_versions or (
-            lambda: {name: importlib.metadata.version(name) for name in ("torch", "dinkster-aimdo")}
+            lambda: {name: importlib.metadata.version(name) for name in ("torch", "comfy-aimdo")}
         )
         self._sandbox_policy = sandbox_policy
         self._sandbox_gpu_grants = frozenset(canonical_name(name) for name in sandbox_gpu_grants)
@@ -4994,7 +4994,7 @@ class ServingComposer:
                 )
             if needs_residency and not spec.runtime_pins:
                 raise CompositionError(
-                    f"in-process pack {manifest.name!r} has no exact torch/dinkster-aimdo "
+                    f"in-process pack {manifest.name!r} has no exact torch/comfy-aimdo "
                     "generation baseline"
                 )
             if spec.runtime_pins:
@@ -5003,9 +5003,9 @@ class ServingComposer:
                         f"in-process pack {manifest.name!r} requires a torch-capable "
                         "serve environment"
                     )
-                if set(spec.runtime_pins) != {"torch", "dinkster-aimdo"}:
+                if set(spec.runtime_pins) != {"torch", "comfy-aimdo"}:
                     raise CompositionError(
-                        f"in-process pack {manifest.name!r} has no exact torch/dinkster-aimdo "
+                        f"in-process pack {manifest.name!r} has no exact torch/comfy-aimdo "
                         "generation baseline"
                     )
                 try:

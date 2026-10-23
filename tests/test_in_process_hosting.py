@@ -66,7 +66,7 @@ def test_in_process_full_release_rejects_malformed_consumer_result() -> None:
     asyncio.run(scenario())
 
 
-PINS = {"torch": "2.13.0", "dinkster-aimdo": "0.4.13"}
+PINS = {"torch": "2.13.0", "comfy-aimdo": "0.4.13"}
 
 
 def _lockfile() -> Lockfile:
@@ -88,7 +88,7 @@ def test_in_process_policy_sidecar_authority_and_group_contradiction(tmp_path: P
     sidecar = tmp_path / "1.hosting.json"
     sidecar.write_text(
         '{"format":"dinkster.hosting/1","inProcess":["alpha"],'
-        '"runtimePins":{"dinkster-aimdo":"0.4.13",'
+        '"runtimePins":{"comfy-aimdo":"0.4.13",'
         '"torch":"2.13.0"},"venvGroups":{}}\n'
     )
     recorded = _decode_hosting_record(sidecar)
@@ -293,7 +293,7 @@ def test_in_process_installer_skips_venv_and_exact_pin_refusal_is_not_overridabl
         installer.apply(target, allow_doctor_findings=True)
     assert installer.current_number() is None
     assert provisioned == []
-    with pytest.raises(InstallError, match="requires exact torch and dinkster-aimdo"):
+    with pytest.raises(InstallError, match="requires exact torch and comfy-aimdo"):
         installer.apply(
             target,
             hosting_groups=(),
@@ -301,9 +301,9 @@ def test_in_process_installer_skips_venv_and_exact_pin_refusal_is_not_overridabl
             hosting_runtime_pins={},
         )
 
-    aimdo = _install_pack(tmp_path / "aimdo", "alpha", requires='"dinkster-aimdo==0.4.13"')
+    aimdo = _install_pack(tmp_path / "aimdo", "alpha", requires='"comfy-aimdo==0.4.13"')
     aimdo_target = Lockfile.of([lock_local_pack(aimdo, installer.artifacts_dir)[0]])
-    with pytest.raises(InstallError, match="must not declare a dinkster-aimdo dependency"):
+    with pytest.raises(InstallError, match="must not declare a comfy-aimdo dependency"):
         installer.apply(aimdo_target, allow_doctor_findings=True)
 
     probes = iter((PINS, {**PINS, "torch": "2.14.0"}))

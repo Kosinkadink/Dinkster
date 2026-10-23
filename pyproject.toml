@@ -6,6 +6,8 @@ requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.10",
     "blake3>=0.4",
+    "comfy-aimdo==0.6.0",
+    "comfy-kitchen==0.2.40",
     "dinkster-api",
     "dinkster-schema",
     "dinkster-values",

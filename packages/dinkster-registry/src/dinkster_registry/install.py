@@ -402,9 +402,9 @@ class PlanRecord:
         pin_names = [name for name, _ in self.runtime_pins]
         if len(set(pin_names)) != len(pin_names):
             raise InstallError("plan records duplicate runtime pin names")
-        if normalized_in_process and set(pin_names) != {"torch", "dinkster-aimdo"}:
+        if normalized_in_process and set(pin_names) != {"torch", "comfy-aimdo"}:
             raise InstallError(
-                "plan records in-process packs without exact torch and dinkster-aimdo pins"
+                "plan records in-process packs without exact torch and comfy-aimdo pins"
             )
         if self.runtime_pins and not normalized_in_process:
             raise InstallError("plan records runtime pins without in-process packs")
@@ -710,9 +710,9 @@ class SnapshotRecord:
         pin_names = [name for name, _ in self.runtime_pins]
         if len(set(pin_names)) != len(pin_names):
             raise InstallError("snapshot records duplicate runtime pin names")
-        if self.in_process and set(pin_names) != {"torch", "dinkster-aimdo"}:
+        if self.in_process and set(pin_names) != {"torch", "comfy-aimdo"}:
             raise InstallError(
-                "snapshot records in-process packs without exact torch and dinkster-aimdo pins"
+                "snapshot records in-process packs without exact torch and comfy-aimdo pins"
             )
         if self.runtime_pins and not self.in_process:
             raise InstallError("snapshot records runtime pins without in-process packs")
