@@ -60,13 +60,14 @@ def resolver_entry(
     regions: dict[str, list[str]] | None = None,
     components: list[dict[str, object]] | None = None,
     kind: str = "model/diffusion",
+    size: int | None = None,
 ) -> dict[str, object]:
     entry: dict[str, object] = {
         "digest": digest,
         "name": name,
         "urls": urls or ["https://models.example/default.safetensors"],
         "kind": kind,
-        "size": len(MODEL_BYTES),
+        "size": len(MODEL_BYTES) if size is None else size,
         "license": "apache-2.0",
         "notes": "verified community mirror",
         "regions": regions or {"cn": ["https://cn.example/model.safetensors"]},
@@ -1663,5 +1664,131 @@ def test_cursor_refresh_refetches_all_pages_despite_unchanged_first_page_etag(
                 ("/dinkster/v1/export/resolver?limit=1", None),
                 ("/dinkster/v1/export/resolver?limit=1&cursor=" + quote(cursor, safe=""), None),
             ]
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("failure", "message"),
+    [
+        ("206", "HTTP 206"),
+        ("400", "HTTP 400"),
+        ("500", "HTTP 500"),
+        ("304", "not-modified"),
+        ("json", "invalid resolver index JSON"),
+        ("truncated", "body is incomplete"),
+        ("duplicate", "duplicates digest"),
+        ("cycle", "cursor cycle"),
+        ("name", "metadata changed"),
+        ("updated", "metadata changed"),
+        ("description", "metadata changed"),
+        ("homepage", "metadata changed"),
+        ("providerProtocol", "metadata changed"),
+        ("entries", "at most 1 entries"),
+        ("pages", "exceeds 1 pages"),
+        ("bytes", "bytes"),
+        ("chunked-bytes", "bytes"),
+    ],
+)
+def test_failed_cursor_refresh_retains_http_state(
+    tmp_path: Path, failure: str, message: str
+) -> None:
+    async def scenario() -> None:
+        entry = resolver_entry()
+        removed = resolver_entry(digest=OTHER_DIGEST, size=len(OTHER_BYTES))
+        now = [100.0]
+        mode = "initial"
+        first = {**resolver_document(resolver_entry(digest=OTHER_DIGEST)), "nextCursor": "next"}
+        first["providerProtocol"] = 1
+        second = {**resolver_document(entry), "providerProtocol": 1}
+        state_path = tmp_path / "subscriptions.json"
+        provenance = ProvenanceStore(tmp_path / "provenance.json")
+        store = ResolverSubscriptionStore(state_path, provenance, clock=lambda: now[0])
+
+        async def index(request: web.Request) -> web.StreamResponse:
+            assert "Authorization" not in request.headers
+            assert "Cookie" not in request.headers
+            if mode == "initial":
+                return web.json_response(
+                    resolver_document(entry, removed), headers={"ETag": '"old"'}
+                )
+            if mode == "remove":
+                return web.json_response(resolver_document(entry), headers={"ETag": '"old"'})
+            if "cursor" not in request.query:
+                assert request.headers.get("If-None-Match") == '"old"'
+                return web.json_response(first, headers={"ETag": '"candidate"'})
+            assert request.headers.get("If-None-Match") is None
+            if failure in {"400", "500", "304"}:
+                return web.Response(status=int(failure), text="cursor-invalid")
+            if failure == "206":
+                return web.json_response(second, status=206)
+            if failure == "json":
+                return web.Response(text="{bad")
+            if failure == "truncated":
+                body = json.dumps(second).encode()
+                response = web.StreamResponse(headers={"Content-Length": str(len(body) + 1)})
+                response.force_close()
+                await response.prepare(request)
+                await response.write(body)
+                await response.write_eof()
+                return response
+            if failure == "duplicate":
+                return web.json_response({**second, "entries": first["entries"]})
+            if failure == "cycle":
+                return web.json_response({**second, "nextCursor": "next"})
+            if failure in {"name", "updated", "description", "homepage", "providerProtocol"}:
+                changed = dict(second)
+                if failure == "providerProtocol":
+                    del changed[failure]
+                elif failure == "updated":
+                    changed[failure] = "2026-09-02T00:00:00Z"
+                elif failure == "homepage":
+                    changed[failure] = "https://different.example"
+                else:
+                    changed[failure] = "different"
+                return web.json_response(changed)
+            if failure == "chunked-bytes":
+                response = web.StreamResponse()
+                response.enable_chunked_encoding()
+                await response.prepare(request)
+                await response.write(json.dumps(second).encode())
+                await response.write_eof()
+                return response
+            return web.json_response(second)
+
+        async with resolver_http_server(index) as url:
+            await asyncio.to_thread(store.subscribe, url + "?limit=1")
+            mode = "remove"
+            now[0] += RESOLVER_REVALIDATE_SECONDS
+            await asyncio.to_thread(store.refresh)
+            prior = store.subscriptions()[0]
+            assert prior.index.entries == (
+                parse_resolver_index(json.dumps(resolver_document(entry))).entries[0],
+            )
+            mode = "fail"
+            now[0] += RESOLVER_REVALIDATE_SECONDS
+            limits: dict[str, int] = {}
+            if failure == "entries":
+                limits["RESOLVER_INDEX_MAX_ENTRIES"] = 1
+            elif failure == "pages":
+                limits["RESOLVER_FETCH_MAX_PAGES"] = 1
+            elif failure in {"bytes", "chunked-bytes"}:
+                limits["RESOLVER_INDEX_MAX_BYTES"] = len(json.dumps(first).encode()) + 10
+            with ExitStack() as stack:
+                for name, value in limits.items():
+                    stack.enter_context(
+                        patch("dinkster_assets.resolver_subscription." + name, value)
+                    )
+                (failed,) = await asyncio.to_thread(store.refresh)
+            assert message in str(failed["error"])
+            retained = store.subscriptions()[0]
+            assert retained.checked_at == now[0]
+            assert retained.refreshed_at == prior.refreshed_at
+            assert retained.index == prior.index
+            assert retained.etag == prior.etag
+            assert provenance.sources(MODEL_DIGEST)
+            assert not provenance.sources(OTHER_DIGEST)
+            reloaded = ResolverSubscriptionStore(state_path, provenance, clock=lambda: now[0])
+            assert reloaded.subscriptions() == store.subscriptions()
 
     asyncio.run(scenario())
