@@ -3630,6 +3630,7 @@ class ServingComposer:
                 inputs,
                 {arm.name: arm.default_cache_tag for arm in arms},
                 attention_routes,
+                self._producer_targets(self._topology if topology is None else topology, arms),
             )
         target = selected.target if selected is not None else first_arm.name
         if provider_target is not None:
@@ -4827,6 +4828,21 @@ class ServingComposer:
             {node_type: tuple(arms) for node_type, arms in arms_by_type.items()}
         )
 
+    @staticmethod
+    def _producer_targets(topology: Topology, arms: Sequence[ArmRecord]) -> dict[str, str]:
+        targets = {arm.name: arm.name for arm in arms}
+        for producers in topology.values():
+            for producer in producers:
+                if producer.name in targets or producer.name != producer.default_arm:
+                    continue
+                for arm in arms:
+                    # Default bodies in separate packs can share resident objects,
+                    # but alternate implementations still require exact affinity.
+                    if arm.name == arm.default_arm and arm.domain is producer.domain:
+                        targets[producer.name] = arm.name
+                        break
+        return targets
+
     def _dispatch_routes(self, topology: Topology, node_types: Sequence[str]) -> dict[str, Worker]:
         routes: dict[str, Worker] = {}
         for node_type in node_types:
@@ -4841,6 +4857,7 @@ class ServingComposer:
                 resolve_owner=lambda token, snapshot=topology: self._resolve_owner(snapshot, token),
                 arm_domains={arm.name: arm.domain for arm in arms},
                 default_arms={arm.name: arm.default_arm for arm in arms},
+                producer_targets=self._producer_targets(topology, arms),
             )
         return routes
 
