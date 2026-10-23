@@ -22,27 +22,31 @@ def upgrade() -> None:
     """Upgrade schema."""
     connection = op.get_bind()
     objects = {
-        name: " ".join(sql.split())
-        for name, sql in connection.exec_driver_sql(
-            "SELECT name, sql FROM sqlite_master WHERE sql IS NOT NULL "
+        (kind, name): " ".join(sql.split())
+        for kind, name, sql in connection.exec_driver_sql(
+            "SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL "
             "AND NOT (type='table' AND name='alembic_version')"
         )
     }
     if objects:
         # Reflection omits column collations, which define scoped authority.
         expected = {
-            "records": "CREATE TABLE records ( id TEXT PRIMARY KEY, scope TEXT NOT NULL, "
+            (
+                "table",
+                "records",
+            ): "CREATE TABLE records ( id TEXT PRIMARY KEY, scope TEXT NOT NULL, "
             "name TEXT NOT NULL, digest TEXT NOT NULL, media_type TEXT NOT NULL, "
             "labels TEXT NOT NULL, folder TEXT NOT NULL, created REAL NOT NULL, "
             "modified REAL NOT NULL, revision INTEGER NOT NULL )",
-            "media_grants": "CREATE TABLE media_grants ( scope TEXT NOT NULL, digest TEXT NOT NULL, "
+            ("table", "media_grants"): "CREATE TABLE media_grants ( scope TEXT NOT NULL, "
+            "digest TEXT NOT NULL, "
             "kind TEXT NOT NULL, media_type TEXT NOT NULL, extension TEXT NOT NULL, "
             "byte_size INTEGER NOT NULL, PRIMARY KEY (scope, digest, kind) )",
-            "asset_dependencies": "CREATE TABLE asset_dependencies "
+            ("table", "asset_dependencies"): "CREATE TABLE asset_dependencies "
             "(digest TEXT PRIMARY KEY, manifest TEXT NOT NULL)",
-            "asset_derivations": "CREATE TABLE asset_derivations "
+            ("table", "asset_derivations"): "CREATE TABLE asset_derivations "
             "(cache_key TEXT PRIMARY KEY, manifest TEXT NOT NULL)",
-            "records_scope_modified": "CREATE INDEX records_scope_modified "
+            ("index", "records_scope_modified"): "CREATE INDEX records_scope_modified "
             "ON records(scope, modified DESC, id DESC)",
         }
         if objects != expected:
