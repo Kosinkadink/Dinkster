@@ -1792,39 +1792,68 @@ def test_compose_rejects_namespace_collision(tmp_path: Path) -> None:
 
 
 def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(tmp_path: Path) -> None:
-    from dinkster_nodes_comfy.text import TEXT_NODES
+    from dinkster_nodes_comfy import COMFY_NODES
 
-    claims = tuple(node.schema().node_type for node in TEXT_NODES)
-    manifests = []
-    for name in ("text-owner", "other-owner"):
-        directory = tmp_path / name
-        directory.mkdir()
-        module = name.replace("-", "_") + "_fixture"
-        (directory / f"{module}.py").write_text(
-            "from dinkster_nodes_comfy.text import TEXT_NODES\n"
-        )
-        path = directory / "dinkster-pack.toml"
-        path.write_text(
-            f'[pack]\nname = "{name}"\nnamespaces = {json.dumps(claims)}\n'
-            f'[pack.entry]\nnodes = "{module}:TEXT_NODES"\n'
-        )
-        manifests.append(path)
+    claims = tuple(node.schema().node_type for node in COMFY_NODES)
+    manifest = TESTS_DIR.parent / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+    assert load_manifest(manifest).namespaces == claims
+    other_manifest = tmp_path / "dinkster-pack.toml"
+    other_manifest.write_text(
+        '[pack]\nname = "other-owner"\nnamespaces = ["StringLength"]\n'
+        '[pack.entry]\nnodes = "other_owner_fixture:NODES"\n'
+    )
+    (tmp_path / "other_owner_fixture.py").write_text(
+        "from dinkster_nodes_comfy.text import StringLength\nNODES = (StringLength,)\n"
+    )
 
     async def scenario() -> None:
         composer = ServingComposer()
         try:
-            await composer.add_pack(PackSpec(manifest=manifests[0]))
+            await composer.add_pack(PackSpec(manifest=manifest))
             assert set(composer.composition.schemas) == set(claims)
-            assert set(composer.composition.node_packs.values()) == {"text-owner"}
-            await composer.reload_pack("text-owner")
+            assert set(composer.composition.node_packs.values()) == {"dinkster-nodes-comfy"}
+            await composer.reload_pack("dinkster-nodes-comfy")
             result = await composer.composition.make_engine(lambda _event: None).run(
-                Graph(nodes={"length": GraphNode("StringLength", {"string": "a\U0001f600"})}),
+                Graph(
+                    nodes={
+                        "text": GraphNode("PrimitiveString", {"value": "a\U0001f600"}),
+                        "length": GraphNode("StringLength", {"string": Link("text", "STRING")}),
+                    }
+                ),
                 ["length"],
             )
             assert result.outputs["length"]["length"].resolve() == 2
             with pytest.raises(CompositionError, match="overlaps"):
-                await composer.add_pack(PackSpec(manifest=manifests[1]))
+                await composer.add_pack(PackSpec(manifest=other_manifest))
             assert set(composer.composition.schemas) == set(claims)
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
+def test_native_comfy_pack_registers_container_literals_in_process() -> None:
+    async def scenario() -> None:
+        composer = ServingComposer()
+        try:
+            manifest = TESTS_DIR.parent / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+            await composer.add_pack(PackSpec(manifest=manifest, in_process=True))
+            result = await composer.composition.make_engine(lambda _event: None).run(
+                Graph(
+                    nodes={
+                        "dictionary": GraphNode(
+                            "ConvertDictionaryToString",
+                            {"dictionary": {"key": [3, True]}, "indent": 0},
+                        ),
+                        "array": GraphNode(
+                            "ConvertArrayToString", {"array": [3, {"key": False}], "indent": 0}
+                        ),
+                    }
+                ),
+                ["dictionary", "array"],
+            )
+            assert result.outputs["dictionary"]["STRING"].resolve() == '{"key": [3, true]}'
+            assert result.outputs["array"]["STRING"].resolve() == '[3, {"key": false}]'
         finally:
             await composer.close()
 

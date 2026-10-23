@@ -1,0 +1,34 @@
+[pack]
+name = "dinkster-nodes-comfy"
+namespaces = [
+    "StringFormat",
+    "StringConcatenate",
+    "StringSubstring",
+    "StringLength",
+    "CaseConverter",
+    "StringTrim",
+    "StringReplace",
+    "StringContains",
+    "StringCompare",
+    "RegexMatch",
+    "RegexExtract",
+    "RegexReplace",
+    "JsonExtractString",
+    "ConvertDictionaryToString",
+    "ConvertArrayToString",
+    "PrimitiveString",
+    "PrimitiveStringMultiline",
+    "PrimitiveInt",
+    "PrimitiveFloat",
+    "PrimitiveBoolean",
+]
+
+[pack.sandbox]
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+
+[pack.entry]
+nodes = "dinkster_nodes_comfy:COMFY_NODES"
+types = "dinkster_nodes_comfy:register_comfy_types"
