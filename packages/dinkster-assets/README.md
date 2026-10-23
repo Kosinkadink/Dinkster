@@ -2,9 +2,9 @@
 
 `dinkster-assets` models files by canonical content digest rather than host
 path. It provides asset references, catalogs, mounts, libraries, verified
-vaults and acquisition, save targets, and value-type registration; it
-depends only on values and BLAKE3, while caches, workers, and the server
-build on it.
+vaults and acquisition, save targets, and value-type registration. It uses
+values and BLAKE3 for identity, and SQLAlchemy and Alembic for catalog schema
+migrations. Caches, workers, and the server build on it.
 
 ## Setup
 
@@ -19,7 +19,7 @@ It does not install a console script.
 
 ## Use
 
-Identity is always the canonical `blake3:<64 hex>` digest:
+Verified content identity is the canonical `blake3:<64 hex>` digest:
 
 ```python
 from dinkster_assets import AssetRef, digest_bytes
@@ -31,6 +31,21 @@ ref = AssetRef(
     size=len(payload),
 )
 ```
+
+`MountTable.bind_name(name, kind)` can bind a bare model filename before
+hashing. It returns a `LocalAssetRef` marked `verification: "unverified"`
+with no digest, or a verified `AssetRef` when the scan already knows the
+same file revision. Local bindings cross worker boundaries as opaque,
+server-scoped grants, not filesystem paths or content identities. File
+replacement and mount revocation invalidate them. Their cache fingerprints
+use an `unverified-local:` prefix and cannot be redeemed on another host.
+
+Library scans reject partial-download extensions even with custom ignore
+rules and admit files only after two size/mtime observations agree. Unchanged
+verified rows avoid rehashing. Missing or replaced identities remain in the
+existing index, available through `MountTable.missing_entries(mount_id)` but
+excluded from live resolution. A returning digest recovers its identity;
+changed bytes get a distinct digest without rebinding the old reference.
 
 Catalogs give virtual paths file-like listing and glob semantics without
 exposing real filesystem paths:
@@ -59,6 +74,27 @@ Other exports cover `AssetVault`, `LocalAssetLibrary`, `MountTable`,
 publishes bounded seekable sources atomically without buffering the complete
 file. `parse_latent_asset` strictly validates native and ComfyUI latent
 safetensors headers before tensor data is materialized.
+
+## Catalog schema
+
+`LibraryStore` upgrades its SQLite catalog to the Alembic head before serving
+records. Record CRUD remains stdlib SQLite. The initial revision creates
+`records`, `media_grants`, `asset_dependencies`, `asset_derivations`, and the
+`records_scope_modified` index. An existing unversioned catalog is adopted
+only when its schema matches; an incompatible schema fails without changing
+its records or recording a version. Back up the catalog before upgrading.
+
+From the repository root:
+
+```sh
+uv run alembic -c packages/dinkster-assets/alembic.ini -x catalog=/path/to/library.sqlite current
+uv run alembic -c packages/dinkster-assets/alembic.ini -x catalog=/path/to/library.sqlite check
+```
+
+For a schema change, update `schema.py`, generate a revision with
+`alembic revision --autogenerate -m "Describe the schema change"` using the
+same configuration and catalog arguments, and review the generated operations.
+Migration resources are included in the package wheel.
 
 ## Resolver indexes
 

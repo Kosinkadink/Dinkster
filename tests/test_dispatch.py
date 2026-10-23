@@ -714,6 +714,7 @@ def test_dispatch_enforces_domain_and_producer_arm_affinity() -> None:
             resolve_owner={"same": shared, "other": other}.get,
             arm_domains={"pack": shared, "pack@alt": shared},
             default_arms={"pack": "pack", "pack@alt": "pack"},
+            producer_targets={"source": "pack"},
         )
 
         async def result(value: Value, target: str) -> InvocationResult:
@@ -721,6 +722,7 @@ def test_dispatch_enforces_domain_and_producer_arm_affinity() -> None:
 
         assert (await result(_produced("r1", "same", "pack@alt"), "pack@alt")).error is None
         assert (await result(_owned("r2", "same"), "pack")).error is None
+        assert (await result(_produced("shared", "same", "source"), "pack")).error is None
         for value, target, message in (
             (_produced("r3", "same", "pack"), "pack@alt", "affinity"),
             (_produced("r4", "same", "pack@alt"), "pack", "affinity"),
@@ -728,6 +730,9 @@ def test_dispatch_enforces_domain_and_producer_arm_affinity() -> None:
             (_produced("r6", "other", "pack@alt"), "pack@alt", "domains"),
             (_produced("r7", "same", 3), "pack@alt", "malformed"),
             (_produced("r8", "same", "unknown"), "pack@alt", "unknown"),
+            (_produced("foreign", "other", "source"), "pack", "domains"),
+            (_produced("expired", "old-session", "source"), "pack", "no live arm"),
+            (_produced("wrong-body", "same", "source"), "pack@alt", "affinity"),
         ):
             outcome = await result(value, target)
             assert outcome.error is not None and message in outcome.error.message

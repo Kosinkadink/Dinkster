@@ -199,6 +199,56 @@ def test_scan_catalogs_under_mount_namespace(tmp_path: Path) -> None:
     assert row["priority"] == 0
 
 
+def test_mount_retains_missing_identity_and_recovers_it_after_restart(tmp_path: Path) -> None:
+    root = tmp_path / "models"
+    seed(root, {"weights.bin": b"original weights"})
+    index_root = tmp_path / "indexes"
+    table = MountTable(index_root=index_root)
+    table.add(MountDef(id="models", path=root))
+    assert table.scan("models") == 1
+    old = table.ref("mounts/models/weights.bin")
+    (root / "weights.bin").unlink()
+    assert table.scan("models") == 0
+    assert table.entries("models") == ()
+    (missing,) = table.missing_entries("models")
+    assert missing.digest == old.digest
+    assert missing.metadata["missing"] is True
+    assert table.resolve(old.digest) is None
+    assert table.descriptors()[0]["missingEntryCount"] == 1
+
+    restored = MountTable(index_root=index_root)
+    restored.add(MountDef(id="models", path=root))
+    assert restored.scan("models") == 0
+    assert restored.missing_entries("models") == (missing,)
+    (root / "weights.bin").write_bytes(b"original weights")
+    assert restored.scan("models") == 1
+    assert restored.missing_entries("models") == ()
+    assert restored.ref("mounts/models/weights.bin").digest == old.digest
+    assert restored.descriptors()[0]["missingEntryCount"] == 0
+
+
+def test_mount_splits_changed_content_without_reusing_old_identity(tmp_path: Path) -> None:
+    root = tmp_path / "models"
+    seed(root, {"weights.bin": b"first"})
+    table = MountTable(index_root=tmp_path / "indexes")
+    table.add(MountDef(id="models", path=root))
+    table.scan("models")
+    old = table.ref("mounts/models/weights.bin")
+    (root / "weights.bin").write_bytes(b"second weights")
+    table.scan("models")
+    replacement = table.ref("mounts/models/weights.bin")
+    assert replacement.digest == digest_bytes(b"second weights")
+    assert replacement.digest != old.digest
+    assert table.resolve(old.digest) is None
+    assert [entry.digest for entry in table.missing_entries("models")] == [old.digest]
+    table.scan("models")
+    assert [entry.digest for entry in table.missing_entries("models")] == [old.digest]
+    (root / "weights.bin").write_bytes(b"first")
+    table.scan("models")
+    assert table.ref("mounts/models/weights.bin").digest == old.digest
+    assert [entry.digest for entry in table.missing_entries("models")] == [replacement.digest]
+
+
 def test_scan_publishes_cached_assets_and_progress_before_changed_file_finishes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

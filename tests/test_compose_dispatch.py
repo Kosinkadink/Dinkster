@@ -2245,6 +2245,64 @@ def _graph(node_type: str, value: str = "x") -> Graph:
     return Graph(nodes={"n": GraphNode(node_type, {"value": value})})
 
 
+@pytest.mark.parametrize("shared_group", [True, False])
+def test_crosspack_resident_models_survive_group_reload(tmp_path: Path, shared_group: bool) -> None:
+    async def scenario() -> None:
+        manifests = []
+        for name, entry in (("source", "SOURCE_NODES"), ("merge", "MERGE_NODES")):
+            root = tmp_path / name
+            root.mkdir()
+            manifest = root / "dinkster-pack.toml"
+            manifest.write_text(
+                f'[pack]\nname = "{name}"\nnamespaces = ["{name}"]\n'
+                f'[pack.entry]\nnodes = "crosspack_nodes:{entry}"\n'
+                'types = "dinkster_inference_wire:register_inference_types"\n'
+            )
+            manifests.append(manifest)
+        composer = ServingComposer(worker_env=_env(Path(__file__).parent))
+        try:
+            for manifest in manifests:
+                await composer.add_pack(
+                    PackSpec(
+                        manifest,
+                        worker_group="crosspack-models" if shared_group else None,
+                        group_manifests=tuple(manifests) if shared_group else (),
+                    )
+                )
+            graph = Graph(
+                nodes={
+                    "a": GraphNode("source.model", {"weight": 10.0}),
+                    "b": GraphNode("source.model", {"weight": -4.0}),
+                    "m": GraphNode(
+                        "merge.simple",
+                        {"a": Link("a", "model"), "b": Link("b", "model"), "ratio": 0.25},
+                    ),
+                    "w": GraphNode("source.weight", {"model": Link("m", "model")}),
+                    "mixed": GraphNode(
+                        "merge.simple",
+                        {"a": Link("a", "model"), "b": Link("m", "model"), "ratio": 0.25},
+                    ),
+                    "mixed_weight": GraphNode("source.weight", {"model": Link("mixed", "model")}),
+                }
+            )
+            if not shared_group:
+                with pytest.raises(ExecutionError, match="unknown producer arm"):
+                    await composer.composition.make_engine(lambda event: None).run(graph, ["w"])
+                return
+            for reload in (False, True):
+                if reload:
+                    await composer.reload_pack("source")
+                result = await composer.composition.make_engine(lambda event: None).run(
+                    graph, ["w", "mixed_weight"]
+                )
+                assert result.outputs["w"]["weight"].resolve() == -0.5
+                assert result.outputs["mixed_weight"]["weight"].resolve() == 2.125
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
 def test_enrollment_publishes_dispatch_and_keeps_claimed_schema_private(
     tmp_path: Path,
 ) -> None:

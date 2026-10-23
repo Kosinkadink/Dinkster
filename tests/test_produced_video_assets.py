@@ -18,6 +18,7 @@ from dinkster_assets import (
     AssetRef,
     AssetResolver,
     AssetVault,
+    LocalAssetRef,
     digest_bytes,
     register_video_value_type,
 )
@@ -58,6 +59,10 @@ def _value(ref: AssetRef, type_id: str = "comfy.VIDEO") -> Value:
         meta=ValueMeta({"asset_refs": [ref.to_wire()]}),
         payload=PyObjPayload({"source": ref, "edits": []}),
     )
+
+
+def _unverified_wire() -> dict[str, object]:
+    return LocalAssetRef("local-source", "source.mkv", 12, "input/source.mkv").to_wire()
 
 
 @pytest.mark.parametrize(
@@ -183,6 +188,62 @@ def test_returned_input_sources_need_no_produced_asset_vault(
     produced = _value(AssetRef(digest_bytes(b"new"), "new", 3), type_id)
     with pytest.raises(AssetError, match="require an engine DINKSTER_ASSET_VAULT"):
         authority.capture({"existing": value, "produced": produced}, inputs=inputs)
+
+
+def test_unverified_asset_inputs_do_not_need_produced_asset_adoption() -> None:
+    wire = _unverified_wire()
+    input_value = Value(
+        "dinkster.asset", "unverified-local:local-source", ValueMeta(wire), PyObjPayload(wire)
+    )
+    output_value = Value(
+        "custom.asset",
+        "source",
+        ValueMeta({"asset_refs": [wire]}),
+        PyObjPayload({"source": wire}),
+    )
+
+    ProducedAssetAuthority(None).capture({"output": output_value}, inputs={"input": input_value})
+
+
+def test_asset_provenance_omits_unverified_refs_and_preserves_verified_refs(
+    vaults: tuple[AssetVault, AssetVault],
+) -> None:
+    producer, _ = vaults
+    verified = _publish(producer, b"verified")
+    unverified = _unverified_wire()
+    blobs = [default_encode({"asset_refs": [unverified, verified.to_wire()]})]
+    header = {"outputs": {"video": {"metaBlob": 0}}}
+    value = Value(
+        "custom.asset",
+        "source",
+        ValueMeta({"asset_refs": [unverified, verified.to_wire()]}),
+        PyObjPayload({}),
+    )
+
+    assert result_asset_digests(header, blobs) == {verified.digest}
+    assert source_asset_files({"video": value}, producer) == [
+        (verified.digest, verified.local_path())
+    ]
+
+
+@pytest.mark.parametrize(
+    "wire",
+    [
+        {"verification": "unverified", "name": "source", "size": 1},
+        {"verification": "verified", "name": "source", "size": 1},
+    ],
+)
+def test_asset_provenance_rejects_malformed_wire_refs(wire: dict[str, object]) -> None:
+    blobs = [default_encode({"asset_refs": [wire]})]
+    value = Value("custom.asset", "source", ValueMeta({"asset_refs": [wire]}), PyObjPayload({}))
+    asset_input = Value("dinkster.asset", "source", ValueMeta(wire), PyObjPayload(wire))
+
+    with pytest.raises(AssetError):
+        result_asset_digests({"outputs": {"video": {"metaBlob": 0}}}, blobs)
+    with pytest.raises(AssetError):
+        source_asset_files({"video": value}, None)
+    with pytest.raises(AssetError):
+        ProducedAssetAuthority(None).capture({}, inputs={"asset": asset_input})
 
 
 @pytest.mark.parametrize(

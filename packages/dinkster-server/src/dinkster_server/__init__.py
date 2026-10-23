@@ -25,7 +25,6 @@ from .app import (
     job_to_wire,
     value_descriptor,
 )
-from .asset_client import peer_asset_sources
 from .auth import (
     CAPABILITIES,
     LOCAL_PRINCIPAL,
@@ -177,7 +176,6 @@ __all__ = [
     "job_to_wire",
     "load_settings",
     "load_authenticator",
-    "peer_asset_sources",
     "principal_for",
     "resolve_scope",
     "start_server",

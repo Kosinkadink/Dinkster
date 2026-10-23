@@ -33,6 +33,32 @@ from .integrity import AssetVerificationRecord, digest_file_with_record
 from .model import AssetRef, AssetResolution
 
 INDEX_NAME = ".dinkster-asset-index.json"
+PARTIAL_DOWNLOAD_EXTENSIONS = frozenset(
+    {".part", ".partial", ".crdownload", ".download", ".tmp", ".aria2", ".!qb", ".opdownload"}
+)
+
+
+def _retain_missing_versions(current: dict[str, object], previous: object) -> dict[str, object]:
+    if not isinstance(previous, Mapping):
+        return current
+    old = cast("Mapping[str, object]", previous)
+    versions = old.get("missingVersions", [])
+    retained = (
+        [
+            dict(cast("Mapping[str, object]", row))
+            for row in cast("list[object]", versions)
+            if isinstance(row, Mapping)
+            and cast("Mapping[str, object]", row).get("digest") != current["digest"]
+        ]
+        if isinstance(versions, list)
+        else []
+    )
+    old_digest = old.get("digest")
+    if isinstance(old_digest, str) and old_digest != current["digest"] and is_digest(old_digest):
+        retained.append({key: value for key, value in old.items() if key != "missingVersions"})
+    if retained:
+        current["missingVersions"] = retained
+    return current
 
 
 @dataclass(frozen=True)
@@ -292,13 +318,23 @@ class LocalAssetLibrary:
                 continue
             if path == self._index_path:
                 continue
+            if path.suffix.lower() in PARTIAL_DOWNLOAD_EXTENSIONS:
+                continue
             relative = path.relative_to(self._root).as_posix()
             if self._ignore.matches(relative, path.name):
                 continue
-            stat = path.stat()
+            try:
+                stat = path.stat()
+            except FileNotFoundError:
+                continue
             candidates.append((path, relative, stat))
 
-        fresh_index: dict[str, dict[str, object]] = {}
+        # A previous identity remains durable when its location disappears or changes.
+        fresh_index: dict[str, dict[str, object]] = {
+            relative: {**cast("Mapping[str, object]", row), "missing": True}
+            for relative, row in index.items()
+            if isinstance(row, Mapping)
+        }
         fresh_catalog = AssetCatalog()
         fresh_paths_by_digest: dict[str, Path] = {}
         fresh_resolutions_by_digest: dict[str, AssetResolution] = {}
@@ -329,8 +365,17 @@ class LocalAssetLibrary:
             )
 
         report(force=True)
+        if candidates:
+            time.sleep(0.1)
         pending: list[tuple[Path, str, os.stat_result]] = []
         for path, relative, stat in candidates:
+            try:
+                settled = path.stat()
+            except FileNotFoundError:
+                continue
+            if (stat.st_size, stat.st_mtime_ns) != (settled.st_size, settled.st_mtime_ns):
+                continue
+            stat = settled
             cached = index.get(relative)
             digest: str | None = None
             record: AssetVerificationRecord | None = None
@@ -349,12 +394,15 @@ class LocalAssetLibrary:
                 pending.append((path, relative, stat))
                 continue
             with self._lock:
-                fresh_index[relative] = {
-                    "size": stat.st_size,
-                    "mtimeNs": stat.st_mtime_ns,
-                    "digest": digest,
-                    **({"verification": record.to_json()} if record is not None else {}),
-                }
+                fresh_index[relative] = _retain_missing_versions(
+                    {
+                        "size": stat.st_size,
+                        "mtimeNs": stat.st_mtime_ns,
+                        "digest": digest,
+                        **({"verification": record.to_json()} if record is not None else {}),
+                    },
+                    index.get(relative),
+                )
             fresh_catalog.add(
                 AssetEntry(
                     virtual_path=f"{self._namespace}/{relative}",
@@ -375,17 +423,23 @@ class LocalAssetLibrary:
             self._current_index = fresh_index
         report(force=True)
         for path, relative, stat in pending:
-            digest, record = digest_file_with_record(path)
-            stat = path.stat()
+            try:
+                digest, record = digest_file_with_record(path)
+                stat = path.stat()
+            except FileNotFoundError:
+                continue
             if record is not None and not record.matches(stat):
                 raise AssetError(f"asset path changed while being ingested: {path}")
             with self._lock:
-                fresh_index[relative] = {
-                    "size": stat.st_size,
-                    "mtimeNs": stat.st_mtime_ns,
-                    "digest": digest,
-                    **({"verification": record.to_json()} if record is not None else {}),
-                }
+                fresh_index[relative] = _retain_missing_versions(
+                    {
+                        "size": stat.st_size,
+                        "mtimeNs": stat.st_mtime_ns,
+                        "digest": digest,
+                        **({"verification": record.to_json()} if record is not None else {}),
+                    },
+                    index.get(relative),
+                )
             self._publish_entry(path, relative, stat.st_size, digest, record)
             files_done += 1
             bytes_done += stat.st_size
@@ -507,6 +561,38 @@ class LocalAssetLibrary:
         with self._lock:
             return self._catalog.entries()
 
+    def missing_entries(self) -> tuple[AssetEntry, ...]:
+        """Retained identities with no live location, excluded from resolution."""
+        entries: list[AssetEntry] = []
+        with self._lock:
+            for relative, row in self._current_index.items():
+                previous = row.get("missingVersions", [])
+                versions = (
+                    list(cast("list[object]", previous)) if isinstance(previous, list) else []
+                )
+                if row.get("missing") is True:
+                    versions.append(row)
+                for version in versions:
+                    if not isinstance(version, Mapping):
+                        continue
+                    old = cast("Mapping[str, object]", version)
+                    digest, size = old.get("digest"), old.get("size")
+                    if (
+                        not isinstance(digest, str)
+                        or not is_digest(digest)
+                        or type(size) is not int
+                    ):
+                        continue
+                    entries.append(
+                        AssetEntry(
+                            virtual_path=f"{self._namespace}/{relative}",
+                            digest=digest,
+                            size=size,
+                            metadata={"missing": True},
+                        )
+                    )
+        return tuple(entries)
+
     def list_folder(self, prefix: str = "") -> FolderListing:
         self.refresh_writes()
         with self._lock:
@@ -587,6 +673,8 @@ class IndexedAssetResolver:
             if not isinstance(row, Mapping):
                 continue
             entry = cast("Mapping[str, object]", row)
+            if entry.get("missing") is True:
+                continue
             digest, size, mtime = entry.get("digest"), entry.get("size"), entry.get("mtimeNs")
             if isinstance(digest, str) and isinstance(size, int) and isinstance(mtime, int):
                 record = AssetVerificationRecord.from_json(digest, entry.get("verification"))

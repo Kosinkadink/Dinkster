@@ -12,8 +12,14 @@ its query.
 from __future__ import annotations
 
 import asyncio
+import json
 import random
+import shutil
+import sqlite3
+import subprocess
+import sys
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from pathlib import Path
 
@@ -63,6 +69,117 @@ class Echo(Node):
 
 NODES = (Echo,)
 SCHEMAS = build_schemas(NODES)
+
+
+def test_catalog_concurrent_initialization_keeps_stores_independent(tmp_path: Path) -> None:
+    def create(index: int) -> None:
+        store = LibraryStore(tmp_path / f"library-{index}.sqlite")
+        try:
+            store.create("local", str(index), digest_bytes(str(index).encode()), "text/plain")
+        finally:
+            store.close()
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        list(executor.map(create, range(8)))
+    for index in range(8):
+        store = LibraryStore(tmp_path / f"library-{index}.sqlite")
+        try:
+            assert [record.name for record in store.query("local")] == [str(index)]
+        finally:
+            store.close()
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_catalog_alembic_head_preserves_records(tmp_path: Path, legacy: bool) -> None:
+    path = tmp_path / "library.sqlite"
+    before: dict[str, list[tuple[object, ...]]] = {}
+    if legacy:
+        shutil.copyfile(Path(__file__).parent / "fixtures/asset-catalog-previous-main.sqlite", path)
+        with sqlite3.connect(path) as connection:
+            for table in ("records", "media_grants", "asset_dependencies", "asset_derivations"):
+                before[table] = connection.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall()
+                assert len(before[table]) == 2
+    store = LibraryStore(path)
+    try:
+        for row in before.get("records", []):
+            record = store.get(str(row[1]), str(row[0]))
+            assert record is not None
+            assert (record.name, record.digest, record.media_type, record.folder) == (
+                row[2],
+                row[3],
+                row[4],
+                row[6],
+            )
+            assert list(record.labels) == json.loads(str(row[5]))
+            assert (record.created, record.modified, record.revision) == row[7:]
+        for row in before.get("media_grants", []):
+            grant = store.media_grant(str(row[0]), str(row[1]), str(row[2]))
+            assert grant is not None
+            assert (grant.media_type, grant.extension, grant.byte_size) == row[3:]
+        for digest, manifest in before.get("asset_dependencies", []):
+            assert store.get_dependencies(str(digest)) == json.loads(str(manifest))
+        for key, manifest in before.get("asset_derivations", []):
+            assert store.get_derivation(str(key)) == json.loads(str(manifest))
+    finally:
+        store.close()
+    with sqlite3.connect(path) as connection:
+        for table, rows in before.items():
+            assert connection.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall() == rows
+    args = [
+        sys.executable,
+        "-m",
+        "alembic",
+        "-c",
+        "packages/dinkster-assets/alembic.ini",
+        "-x",
+        f"catalog={path}",
+    ]
+    current = subprocess.run([*args, "current"], text=True, capture_output=True, check=True)
+    assert "0001_asset_records (head)" in current.stdout
+    checked = subprocess.run([*args, "check"], text=True, capture_output=True, check=True)
+    assert "No new upgrade operations detected" in checked.stdout
+    LibraryStore(path).close()
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "CREATE TRIGGER erase_record AFTER INSERT ON records "
+        "BEGIN DELETE FROM records WHERE id=NEW.id; END",
+        "CREATE VIEW record_names AS SELECT name FROM records",
+        "ALTER TABLE media_grants RENAME TO old_media_grants; "
+        "CREATE TABLE media_grants (scope TEXT COLLATE NOCASE NOT NULL, "
+        "digest TEXT NOT NULL, kind TEXT NOT NULL, media_type TEXT NOT NULL, "
+        "extension TEXT NOT NULL, byte_size INTEGER NOT NULL, PRIMARY KEY (scope, digest, kind)); "
+        "INSERT INTO media_grants SELECT * FROM old_media_grants; DROP TABLE old_media_grants",
+        "DROP TABLE media_grants",
+        "ALTER TABLE records ADD COLUMN unexpected TEXT",
+        "DROP INDEX records_scope_modified",
+        "DROP INDEX records_scope_modified; "
+        "CREATE INDEX records_scope_modified ON records(scope, modified, id)",
+    ],
+)
+def test_catalog_refuses_incompatible_unversioned_schema(tmp_path: Path, change: str) -> None:
+    path = tmp_path / "library.sqlite"
+    shutil.copyfile(Path(__file__).parent / "fixtures/asset-catalog-previous-main.sqlite", path)
+    with sqlite3.connect(path) as connection:
+        connection.executescript(change)
+        tables = connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        rows = {
+            table: connection.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall()
+            for (table,) in tables
+        }
+    with pytest.raises(ValueError, match="unversioned asset catalog"):
+        LibraryStore(path)
+    with sqlite3.connect(path) as connection:
+        for table, expected in rows.items():
+            assert connection.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall() == expected
+        assert (
+            connection.execute(
+                "SELECT name FROM sqlite_master WHERE name='alembic_version'"
+            ).fetchall()
+            == []
+        )
 
 
 def make_engine(on_event: EventListener | None = None) -> Engine:
