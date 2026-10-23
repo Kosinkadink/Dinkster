@@ -80,7 +80,6 @@ LATENT_LIST = TypeExpr.list_of(LATENT)
 INT_LIST = TypeExpr.list_of(INT)
 
 SAMPLER_IDS = (
-    "dinkster.ar_video",
     "dinkster.euler",
     "dinkster.euler_cfg_pp",
     "dinkster.euler_ancestral",
@@ -111,6 +110,7 @@ SAMPLER_IDS = (
     "dinkster.ipndm",
     "dinkster.ipndm_v",
     "dinkster.deis",
+    "dinkster.cfgpp_ud10_ab",
     "dinkster.res_multistep",
     "dinkster.res_multistep_cfg_pp",
     "dinkster.res_multistep_ancestral",
@@ -125,23 +125,6 @@ SAMPLER_IDS = (
     "dinkster.ddim",
     "dinkster.uni_pc",
     "dinkster.uni_pc_bh2",
-    "res4lyf.res_2m",
-    "res4lyf.res_3m",
-    "res4lyf.res_2s",
-    "res4lyf.res_3s",
-    "res4lyf.res_5s",
-    "res4lyf.res_6s",
-    "res4lyf.res_2m_ode",
-    "res4lyf.res_3m_ode",
-    "res4lyf.res_2s_ode",
-    "res4lyf.res_3s_ode",
-    "res4lyf.res_5s_ode",
-    "res4lyf.res_6s_ode",
-    "res4lyf.deis_2m",
-    "res4lyf.deis_3m",
-    "res4lyf.deis_2m_ode",
-    "res4lyf.deis_3m_ode",
-    "res4lyf.rk_beta",
 )
 SCHEDULER_IDS = (
     "dinkster.simple",
@@ -153,8 +136,6 @@ SCHEDULER_IDS = (
     "dinkster.normal",
     "dinkster.linear_quadratic",
     "dinkster.kl_optimal",
-    "res4lyf.bong_tangent",
-    "res4lyf.beta57",
 )
 SAMPLER_CHOICES = tuple(
     ComboOption(value=option_id, label=option_id.split(".", 1)[1]) for option_id in SAMPLER_IDS
