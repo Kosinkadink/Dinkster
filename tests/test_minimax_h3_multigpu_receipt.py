@@ -11,10 +11,7 @@ import pytest
 torch = cast("Any", pytest.importorskip("torch"))
 
 from tools import minimax_h3_multigpu_receipt as receipt  # noqa: E402
-from tools.minimax_h3_multigpu_receipt import (  # noqa: E402
-    _CollectiveTimer,
-    _sparse_quality_oracle,
-)
+from tools.minimax_h3_multigpu_receipt import _CollectiveTimer  # noqa: E402
 
 
 def test_collective_timer_records_and_resets_cuda_event_durations() -> None:
@@ -196,7 +193,7 @@ def test_model_artifact_identifies_int8_convrot_and_excludes_quant_metadata(
     )
 
 
-def test_mint_arguments_initialize_worker_only_tensor_output() -> None:
+def test_mint_arguments_reject_removed_sparse_mode() -> None:
     args = receipt._parser().parse_args(  # pyright: ignore[reportPrivateUsage]
         [
             "mint",
@@ -222,8 +219,31 @@ def test_mint_arguments_initialize_worker_only_tensor_output() -> None:
         ]
     )
 
-    assert args.tensor_output is None
     assert args.repeats == 5
+    with pytest.raises(SystemExit):
+        receipt._parser().parse_args(  # pyright: ignore[reportPrivateUsage]
+            [
+                "mint",
+                "--model",
+                "model.safetensors",
+                "--mode",
+                "sparse",
+                "--policy",
+                "sdpa",
+                "--dinkster-root",
+                "Dinkster",
+                "--fork-root",
+                "dinkster-inference",
+                "--model-source-url",
+                "https://models.example/model.safetensors",
+                "--model-source-revision",
+                "revision-test",
+                "--gpu",
+                "GPU-test",
+                "--output",
+                "receipt.json",
+            ]
+        )
 
 
 def _matrix_result(world_size: int, rank: int = 0) -> dict[str, object]:
@@ -419,7 +439,6 @@ def test_matrix_requires_four_unique_gpus_and_both_decoders(tmp_path: Path) -> N
         "candidate_first": False,
         "model_source_url": "https://models.example/model.safetensors",
         "model_source_revision": "revision-test",
-        "tensor_output": None,
     }
     with pytest.raises(receipt.ReceiptError, match="four unique GPU"):
         receipt.run_mint(
@@ -441,105 +460,3 @@ def test_matrix_requires_four_unique_gpus_and_both_decoders(tmp_path: Path) -> N
                 audio_vae=None,
             )
         )
-
-
-def test_sparse_quality_oracle_reports_dense_relative_error_by_role(tmp_path) -> None:
-    reference_path = tmp_path / "reference.pt"
-    candidate_path = tmp_path / "candidate.pt"
-    torch.save(
-        {
-            "audio": torch.tensor([3.0, 4.0]),
-            "video": torch.tensor([[1.0, -2.0], [3.0, -4.0]]),
-        },
-        reference_path,
-    )
-    torch.save(
-        {
-            "audio": torch.tensor([0.0, 4.0]),
-            "video": torch.tensor([[2.0, -2.0], [3.0, -6.0]]),
-        },
-        candidate_path,
-    )
-
-    oracle = _sparse_quality_oracle(reference_path, candidate_path)
-
-    assert oracle["baseline"].startswith("same-session dense SDPA")
-    audio = oracle["metrics_by_role"]["audio"]
-    assert audio["shape"] == [2]
-    assert audio["max_abs"] == 3.0
-    assert audio["rmse"] == pytest.approx(3.0 / 2.0**0.5)
-    assert audio["relative_rmse"] == pytest.approx(0.6)
-    video = oracle["metrics_by_role"]["video"]
-    assert video["shape"] == [2, 2]
-    assert video["max_abs"] == 2.0
-    assert video["rmse"] == pytest.approx(5.0**0.5 / 2.0)
-    assert video["cosine_similarity"] == pytest.approx(39.0 / (30.0 * 53.0) ** 0.5)
-
-
-def test_sparse_mint_reads_quality_tensors_before_scratch_cleanup(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    model = tmp_path / "model.safetensors"
-    model.write_bytes(b"model")
-    dinkster = tmp_path / "dinkster"
-    fork = tmp_path / "fork"
-    dinkster.mkdir()
-    fork.mkdir()
-    observed: list[tuple[bool, bool]] = []
-
-    def run_serial(
-        _args: argparse.Namespace, scratch: Path, *, sparse_enabled: bool = False
-    ) -> dict[str, object]:
-        tensor = scratch / ("sparse.pt" if sparse_enabled else "serial.pt")
-        torch.save({"video": torch.tensor([float(sparse_enabled)])}, tensor)
-        return {"_tensor_output": str(tensor), "output_hashes": {"video": "hash"}}
-
-    def quality(reference: Path, candidate: Path) -> dict[str, object]:
-        observed.append((reference.is_file(), candidate.is_file()))
-        return {"quality": "loaded"}
-
-    monkeypatch.setattr(
-        receipt, "_git", lambda _root, *arguments: "" if arguments[0] == "status" else "head"
-    )
-    monkeypatch.setattr(receipt, "_run_serial", run_serial)
-    monkeypatch.setattr(receipt, "_sparse_quality_oracle", quality)
-    monkeypatch.setattr(receipt, "_performance", lambda *_args: {"speedup": 1.0})
-    monkeypatch.setattr(receipt, "_classify_host", lambda *_args: "test-host")
-    monkeypatch.setattr(receipt, "_nvidia_smi", lambda *_args: "topology")
-    monkeypatch.setattr(
-        receipt,
-        "_model_artifact",
-        lambda *_args: {
-            "sha256": "model-sha256",
-            "provider": "bf16-linear",
-            "logical_weight_bytes": 5,
-            "tensor_dtype_counts": {"BF16": 1},
-            "quantized_linear_weights": 0,
-            "quantization_format": None,
-            "convrot_group_sizes": [],
-        },
-    )
-    output = tmp_path / "receipt.json"
-    args = argparse.Namespace(
-        dinkster_root=dinkster,
-        fork_root=fork,
-        model=model,
-        mode="sparse",
-        policy="sdpa",
-        width=64,
-        height=64,
-        frames=5,
-        steps=1,
-        seed=1,
-        warmups=0,
-        repeats=1,
-        gpu=["GPU-test"],
-        output=output,
-        candidate_first=False,
-        model_source_url="https://models.example/model.safetensors",
-        model_source_revision="revision-test",
-    )
-
-    assert receipt.run_mint(args) == 0
-    assert observed == [(True, True)]
-    assert output.is_file()
