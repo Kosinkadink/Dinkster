@@ -15,7 +15,8 @@ def render_item(kind: str, item: object, _context: object) -> str | Literal[Fals
 
 
 def run(connection: Connection) -> None:
-    connection.exec_driver_sql("BEGIN IMMEDIATE")
+    if not connection.in_transaction():
+        connection.exec_driver_sql("BEGIN IMMEDIATE")
     context.configure(connection=connection, target_metadata=metadata, render_item=render_item)
     with context.begin_transaction():
         context.run_migrations()
