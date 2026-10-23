@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from typing import cast
 
 import pytest
 from aiohttp import web
@@ -90,7 +91,8 @@ def test_parse_resolver_index_round_trip_and_http_requirements() -> None:
         ["https://user:password@models.example/model"],
     ):
         document = resolver_document()
-        document["entries"][0]["urls"] = urls
+        entries = cast("list[dict[str, object]]", document["entries"])
+        entries[0]["urls"] = urls
         with pytest.raises(ResolverIndexError):
             resolver_index_from_wire(document)
 
@@ -104,10 +106,13 @@ def test_resolver_gated_metadata_requires_boolean(gated: object) -> None:
 
 
 def test_parse_resolver_index_retains_components_and_ignores_unknown_optional_fields() -> None:
-    components = [{"kind": "model/diffusion", "architecture": "example-transformer"}]
+    components: list[dict[str, object]] = [
+        {"kind": "model/diffusion", "architecture": "example-transformer"}
+    ]
     document = resolver_document(resolver_entry(components=components))
     document["futureDocumentField"] = {"version": 2}
-    document["entries"][0]["futureEntryField"] = True
+    entries = cast("list[dict[str, object]]", document["entries"])
+    entries[0]["futureEntryField"] = True
 
     parsed = resolver_index_from_wire(document)
 
@@ -275,7 +280,9 @@ def test_resolver_management_and_filename_guess_api(tmp_path: Path) -> None:
     provenance = ProvenanceStore(tmp_path / "provenance.json")
     store = ResolverSubscriptionStore(tmp_path / "subscriptions.json", provenance)
     library = ServerLibrary(
-        AssetVault(tmp_path / "vault"), LibraryStore(tmp_path / "library.sqlite"), provenance
+        AssetVault(tmp_path / "vault"),
+        LibraryStore(tmp_path / "library.sqlite"),
+        provenance=provenance,
     )
 
     async def scenario() -> None:
