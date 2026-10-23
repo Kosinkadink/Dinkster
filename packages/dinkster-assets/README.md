@@ -19,7 +19,7 @@ It does not install a console script.
 
 ## Use
 
-Identity is always the canonical `blake3:<64 hex>` digest:
+Verified content identity is the canonical `blake3:<64 hex>` digest:
 
 ```python
 from dinkster_assets import AssetRef, digest_bytes
@@ -31,6 +31,14 @@ ref = AssetRef(
     size=len(payload),
 )
 ```
+
+`MountTable.bind_name(name, kind)` can bind a bare model filename before
+hashing. It returns a `LocalAssetRef` marked `verification: "unverified"`
+with no digest, or a verified `AssetRef` when the scan already knows the
+same file revision. Local bindings cross worker boundaries as opaque,
+server-scoped grants, not filesystem paths or content identities. File
+replacement and mount revocation invalidate them. Their cache fingerprints
+use an `unverified-local:` prefix and cannot be redeemed on another host.
 
 Catalogs give virtual paths file-like listing and glob semantics without
 exposing real filesystem paths:

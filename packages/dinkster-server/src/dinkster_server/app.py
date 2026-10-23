@@ -336,6 +336,7 @@ from .pack_surfaces import FrontendModuleRead, PackRouteDispatch, install_pack_s
 from .paging import decode_cursor, encode_cursor
 from .preflight import (
     asset_preflight,
+    bind_model_names,
     graph_asset_names,
     graph_node_types,
     graph_provider_selections,
@@ -3410,6 +3411,13 @@ async def handle_submit(request: web.Request) -> web.Response:
             raise _bad_request(str(exc)) from exc
         graph = lowered.graph
         targets = list(lowered.targets)
+        graph, missing_names = await asyncio.to_thread(
+            bind_model_names, graph, execution.schemas, library
+        )
+        if missing_names:
+            return web.json_response(
+                {"error": "assets-missing", "assets": missing_names}, status=409
+            )
         execution = state.place_execution(execution, placement)
         execution_graph = graph
         if execution.resolve_providers is not None:

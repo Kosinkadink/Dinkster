@@ -18,9 +18,14 @@ from dinkster_assets import (
     AssetEntry,
     AssetError,
     AssetRef,
+    AssetResolver,
     ChainResolver,
     IndexedAssetResolver,
     LocalAssetLibrary,
+    LocalAssetRef,
+    MountDef,
+    MountSnapshotResolver,
+    MountTable,
     digest_bytes,
     digest_file,
     is_digest,
@@ -343,7 +348,7 @@ def test_library_index_writes_are_atomic_and_quiescent(tmp_path: Path) -> None:
 # --- value type: fingerprint is the digest; boundary carries no bytes --------
 
 
-def asset_registry(resolver: LocalAssetLibrary | None = None) -> TypeRegistry:
+def asset_registry(resolver: AssetResolver | None = None) -> TypeRegistry:
     registry = TypeRegistry()
     register_core_types(registry)
     register_asset_type(registry, resolver)
@@ -393,6 +398,83 @@ def test_codec_crossing_carries_identity_not_bytes(tmp_path: Path) -> None:
     ref = crossed.resolve()
     assert isinstance(ref, AssetRef)
     assert ref.read_bytes() == b"lora bytes"
+
+
+def test_unverified_local_binding_crosses_worker_codec_and_reconciles_after_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "models"
+    root.mkdir()
+    data = b"not yet hashed model bytes"
+    (root / "weights.safetensors").write_bytes(data)
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot, index_root=tmp_path / "indexes")
+    table.add(MountDef(id="checkpoints", path=root), kind="model/checkpoint")
+
+    def forbid_hash(*args: object, **kwargs: object) -> None:
+        raise AssertionError("unverified name binding must not hash file content")
+
+    with monkeypatch.context() as patch:
+        patch.setattr("dinkster_assets.library.digest_file_with_record", forbid_hash)
+        patch.setattr("dinkster_assets.identity.digest_file", forbid_hash)
+        ref = table.bind_name("weights.safetensors", "model/checkpoint")
+        assert isinstance(ref, LocalAssetRef)
+        assert ref.read_bytes() == data
+        registry = asset_registry(table)
+        value = registry.wrap(ASSET_TYPE, ref)
+        assert value.meta.get("verification") == "unverified"
+        assert "digest" not in value.meta.entries
+        assert not is_digest(value.fingerprint)
+        assert "digest" not in ref.to_wire()
+        assert str(root) not in json.dumps(ref.to_wire())
+        worker_registry = asset_registry(MountSnapshotResolver(snapshot))
+        blobs: list[bytes] = []
+        wire, _ = ValueCodec(registry).encode(value, blobs, [])
+        crossed, _ = ValueCodec(worker_registry).decode(wire, blobs, [])
+        assert crossed.fingerprint == value.fingerprint
+        worker_ref = crossed.resolve()
+        assert isinstance(worker_ref, LocalAssetRef)
+        assert worker_ref.read_bytes() == data
+        foreign = LocalAssetRef.from_wire(ref.to_wire(), MountTable())
+        with pytest.raises(AssetError, match="unavailable"):
+            foreign.read_bytes()
+
+    assert table.scan("checkpoints") == 1
+    reconciled = registry.wrap(ASSET_TYPE, ref)
+    verified = reconciled.resolve()
+    assert isinstance(verified, AssetRef)
+    assert verified.digest == digest_bytes(data)
+    assert reconciled.fingerprint == verified.digest
+    assert reconciled.meta.get("digest") == verified.digest
+    assert isinstance(worker_registry.wrap(ASSET_TYPE, worker_ref).resolve(), AssetRef)
+
+
+@pytest.mark.parametrize("change", ["replace", "revoke", "regrant"])
+def test_unverified_local_binding_cannot_reuse_cache_after_change_or_revocation(
+    tmp_path: Path, change: str
+) -> None:
+    root = tmp_path / "models"
+    root.mkdir()
+    path = root / "weights.safetensors"
+    path.write_bytes(b"original model")
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot)
+    mount = MountDef(id="models", path=root)
+    table.add(mount, kind="model/checkpoint")
+    ref = table.bind_name(path.name, "model/checkpoint")
+    assert isinstance(ref, LocalAssetRef)
+    worker_ref = LocalAssetRef.from_wire(ref.to_wire(), MountSnapshotResolver(snapshot))
+    if change == "replace":
+        path.unlink()
+        path.write_bytes(b"different data")
+    else:
+        table.remove("models")
+        if change == "regrant":
+            table.add(mount, kind="model/checkpoint")
+    with pytest.raises(AssetError, match="unavailable"):
+        asset_registry(table).wrap(ASSET_TYPE, ref)
+    with pytest.raises(AssetError, match="unavailable"):
+        worker_ref.read_bytes()
 
 
 def test_unresolvable_ref_still_flows_but_fails_to_materialize() -> None:
