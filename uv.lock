@@ -24,6 +24,7 @@ members = [
     "dinkster-inference-wire",
     "dinkster-memory",
     "dinkster-native",
+    "dinkster-nodes-comfy",
     "dinkster-nodes-dev",
     "dinkster-nodes-foundation",
     "dinkster-nodes-generation",
@@ -865,6 +866,17 @@ requires-dist = [
     { name = "numba", specifier = ">=0.67" },
     { name = "numpy", specifier = ">=1.26" },
 ]
+
+[[package]]
+name = "dinkster-nodes-comfy"
+version = "0.0.1"
+source = { editable = "packages/dinkster-nodes-comfy" }
+dependencies = [
+    { name = "dinkster-api" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "dinkster-api", editable = "packages/dinkster-api" }]
 
 [[package]]
 name = "dinkster-nodes-dev"
