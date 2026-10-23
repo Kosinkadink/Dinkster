@@ -506,6 +506,7 @@ class Engine:
         self._run_artifacts: dict[str, list[SavedArtifact]] = {}
         self._run_prepared_types: dict[str, set[str]] = {}
         self._run_prepare_locks: dict[str, asyncio.Lock] = {}
+        self._run_blocked_origins: dict[str, set[str]] = {}
         self._compiling_run_ids: set[str] = set()
 
     def announce_schemas(self, schemas: Mapping[str, NodeSchema]) -> None:
@@ -1200,10 +1201,9 @@ class Engine:
         for out in schema.outputs:
             expected = out.type.runtime_type_id()
             if expected is not None and hit[out.id].type_id != expected:
-                # A deliberate absence is a valid cached value for an output
-                # declared optional (DESIGN 3.15) - it replays exactly like
-                # the value it stands in for.
-                if out.optional and is_absent(hit[out.id]):
+                # Blocking can make even a required output absent. The worker
+                # validates the node-side marker before caching the envelope.
+                if is_absent(hit[out.id]):
                     continue
                 return False
         return True
@@ -1467,6 +1467,14 @@ class Engine:
             # so diagnostics always name the producer that decided no value
             # exists - never this node, which is a bystander (DESIGN 3.15).
             input_id, origin, reason = skip
+            reported = self._run_blocked_origins[run_id]
+            if reason and origin not in reported:
+                reported.add(origin)
+                self._emit(
+                    EngineEvent(
+                        "node_blocked", run_id, label, {"origin": origin, "message": reason}
+                    )
+                )
             produced[node_id] = {
                 out.id: make_absent_value(
                     origin=origin,
@@ -2656,6 +2664,7 @@ class Engine:
         self._run_attempts[run_id] = attempt_id
         self._run_prepared_types[run_id] = set()
         self._run_prepare_locks[run_id] = asyncio.Lock()
+        self._run_blocked_origins[run_id] = set()
         if preview_policy is not None:
             self._run_preview_policy[run_id] = preview_policy
         if attention_config is not None:
@@ -2762,6 +2771,7 @@ class Engine:
             self._run_artifacts.pop(run_id, None)
             self._run_prepared_types.pop(run_id, None)
             self._run_prepare_locks.pop(run_id, None)
+            self._run_blocked_origins.pop(run_id, None)
             _execution_runtime.reset(runtime_token)
             if runtime.run_finished is not None:
                 runtime.run_finished(run_id)

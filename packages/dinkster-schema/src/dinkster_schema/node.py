@@ -24,13 +24,24 @@ class AbsentOutput:
     (DESIGN 3.15): ``return cls.outputs(vae=ABSENT)`` or
     ``cls.outputs(vae=AbsentOutput("model has no VAE"))``. The worker turns
     it into a typed absent envelope carrying this node as the origin;
-    returning it for a non-optional output is a contract error."""
+    returning it for a non-optional output is a contract error unless
+    ``blocked`` is set by ``BLOCKED(message)``."""
 
     reason: str = ""
+    blocked: bool = False
 
 
 ABSENT = AbsentOutput()
 """The bare marker for reason-less absence."""
+
+
+def BLOCKED(message: str = "") -> AbsentOutput:
+    """Block any output, including a required one, without failing the run.
+
+    Consumers apply their absent-input policy. The first skipped consumer
+    reports a nonempty message once per origin in that run.
+    """
+    return AbsentOutput(reason=message, blocked=True)
 
 
 class Node:

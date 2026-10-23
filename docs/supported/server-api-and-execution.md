@@ -46,6 +46,11 @@
   execution that recomputes every node without restarting the server or
   releasing loaded model consumers; partial execution (execute up/between/from
   via target outputs), binary WebSocket preview frames
+- Nodes may return `BLOCKED(message)` on any output. Default-policy consumers
+  skip without failing the run; a nonempty absence reason produces one
+  `node_blocked` event per origin per run, including cache replay. Silent
+  blockers skip without a notice. Explicit accept, omit and fail input
+  policies retain their normal behavior.
 - Memory governance: budgets, headroom, reservations with renewal,
   governed shedding, admission waiting, and item details with Aimdo model-weight
   page residency when the active Aimdo build exposes it

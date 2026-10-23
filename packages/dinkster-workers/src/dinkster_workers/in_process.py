@@ -1032,10 +1032,9 @@ class InProcessWorker:
                 expected = resolved_type_id(out.type, bindings)
             returned_value = raw[out.id]
             if isinstance(returned_value, AbsentOutput):
-                # Deliberate absence (DESIGN 3.15): only outputs declared
-                # optional may carry it, and this node is the origin - the
-                # provenance downstream diagnostics will name.
-                if not out.optional:
+                # Blocking applies to required outputs too; ordinary absence
+                # still requires an optional output declaration.
+                if not out.optional and not returned_value.blocked:
                     return contract_error(
                         f"output '{out.id}' returned ABSENT but is not declared optional"
                     )

@@ -1,6 +1,6 @@
 """First-class absence (DESIGN 3.15): typed no-value with provenance.
 
-The anti-ExecutionBlocker slice: deliberate absence from optional outputs,
+Deliberate absence from optional outputs, blockers on any output,
 per-input policies (skip/omit/accept/fail), engine-level skip cascades with
 root-cause provenance, cache replay, boundary crossing, and the maybe-absent
 document diagnostic.
@@ -17,6 +17,7 @@ from dinkster_engine import Engine, ExecutionError
 from dinkster_graph import Graph, GraphNode, Link, validate
 from dinkster_schema import (
     ABSENT,
+    BLOCKED,
     AbsentOutput,
     AbsentPolicy,
     InputSpec,
@@ -296,6 +297,71 @@ def test_absent_on_non_optional_output_is_contract_error() -> None:
         graph = Graph(nodes={"i": GraphNode("test.illegal_absent", {})})
         with pytest.raises(ExecutionError, match="not.*declared optional"):
             await engine.run(graph, ["i"])
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("cache_enabled", [True, False])
+@pytest.mark.parametrize("message", ["selected branch has no value", ""])
+def test_blocked_required_output_reports_once_per_run(cache_enabled: bool, message: str) -> None:
+    class Block(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                node_type="test.block",
+                inputs=(),
+                outputs=(OutputSpec("value", TypeExpr.concrete("core.int")),),
+            )
+
+        @classmethod
+        def execute(cls) -> Mapping[str, object]:
+            return cls.outputs(value=BLOCKED(message))
+
+    async def scenario() -> None:
+        nodes = (Block, AddOne)
+        registry = TypeRegistry()
+        register_core_types(registry)
+        events: list = []
+        engine = Engine(
+            schemas=build_schemas(nodes),
+            registry=registry,
+            worker=InProcessWorker(build_node_types(nodes), registry),
+            cache=MemoryLRUCache(),
+            on_event=events.append,
+        )
+        graph = Graph(
+            nodes={
+                "source": GraphNode("test.block", {}),
+                "left": GraphNode("test.add_one", {"value": Link("source", "value")}),
+                "right": GraphNode("test.add_one", {"value": Link("source", "value")}),
+                "tail": GraphNode("test.add_one", {"value": Link("left", "out")}),
+                "live": GraphNode("test.add_one", {"value": 18}),
+            }
+        )
+        for attempt in range(2):
+            events.clear()
+            result = await engine.run(graph, ["tail", "right", "live"], cache_enabled=cache_enabled)
+            assert set(result.skipped) == {"left", "right", "tail"}
+            assert result.outputs["live"]["out"].resolve() == 19
+            for target in ("tail", "right"):
+                value = result.outputs[target]["out"]
+                assert is_absent(value)
+                assert value.meta.get(ABSENT_ORIGIN_META_KEY) == "source/value"
+                assert value.meta.get(ABSENT_REASON_META_KEY) == message
+            notices = [event for event in events if event.kind == "node_blocked"]
+            assert len(notices) == (1 if message else 0)
+            if message:
+                assert notices[0].node_id in {"left", "right"}
+                assert notices[0].detail == {"origin": "source/value", "message": message}
+                assert events.index(notices[0]) < next(
+                    i for i, event in enumerate(events) if event.kind == "node_skipped"
+                )
+            skips = [event for event in events if event.kind == "node_skipped"]
+            assert {event.node_id for event in skips} == {"left", "right", "tail"}
+            if attempt and cache_enabled:
+                assert set(result.cached) == {"source", "live"}
+            else:
+                assert result.cached == ()
 
     asyncio.run(scenario())
 

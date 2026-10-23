@@ -123,6 +123,7 @@ from .names import (
 )
 from .node import (
     ABSENT,
+    BLOCKED,
     AbsentOutput,
     Node,
     NodeOutputError,
@@ -176,6 +177,7 @@ from .wire import (
 
 __all__ = [
     "ABSENT",
+    "BLOCKED",
     "COMFY_ALIAS_FORMAT",
     "COMFY_GROUP_FORMAT",
     "COMFY_GROUP_MAX_EDGES",
