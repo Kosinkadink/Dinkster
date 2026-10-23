@@ -164,6 +164,13 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
     generation = load_manifest(Path("packages/dinkster-nodes-generation/dinkster-pack.toml"))
     assert generation.namespaces == ("comfy", "dinkster")
     assert "comfy.BlockSparseAttention" not in generation.schema_only
+    _worker, _registry, nodes, _arms = load_pack(generation, import_from_pack_root=True)
+    assert {
+        "comfy.BlockSparseAttention",
+        "dinkster.context_windows_manual",
+        "dinkster.wan_context_windows_manual",
+        "dinkster.ltxv_context_windows",
+    }.isdisjoint(node.schema().node_type for node in nodes)
 
 
 def test_manifest_loads_strict_adjacent_comfy_alias_registry_without_importing_code(
