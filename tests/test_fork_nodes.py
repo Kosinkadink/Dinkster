@@ -9,7 +9,7 @@ from typing import Any, cast
 
 import numpy as np
 import pytest
-from dinkster_assets import AssetRef, digest_file
+from dinkster_assets import AssetRef, LocalAssetRef, MountDef, MountTable, digest_file
 from dinkster_compat_comfy.translate import CompatTranslation
 from dinkster_inference_wire import (
     MultiStreamLatent,
@@ -192,12 +192,22 @@ def test_compat_sampler_boundary_values_remain_process_resident() -> None:
         assert spec.decode(spec.encode(value)) is value
 
 
+@pytest.mark.parametrize("verified", [False, True])
 def test_fork_loaders_call_dinkster_inference(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, verified: bool
 ) -> None:
     path = tmp_path / "weights.safetensors"
     path.write_bytes(b"weights")
-    asset = _asset(path)
+    asset: AssetRef | LocalAssetRef
+    if verified:
+        asset = _asset(path)
+    else:
+        mounts = MountTable()
+        mounts.add(MountDef(id="models", path=tmp_path), kind="model/checkpoint")
+        binding = mounts.bind_name(path.name, "model/checkpoint")
+        assert isinstance(binding, LocalAssetRef)
+        asset = binding
+        assert "digest" not in asset.to_wire()
     calls: list[tuple[object, ...]] = []
     model, clip, vae = object(), object(), object()
 
@@ -261,6 +271,9 @@ def test_fork_loaders_call_dinkster_inference(
     assert cast("dict[str, object]", calls[1][2])["model_options"] == {}
     assert cast("dict[str, object]", calls[2][2])["clip_type"] == "h3"
     assert cast("dict[str, object]", calls[2][2])["ckpt_paths"] == [str(path), str(path)]
+    assert calls[0][1] == (str(path),)
+    assert calls[1][1] == (str(path),)
+    assert calls[3][1] == (str(path),)
 
 
 def test_fork_sd15_adapters_preserve_conditioning_latent_and_decode(
