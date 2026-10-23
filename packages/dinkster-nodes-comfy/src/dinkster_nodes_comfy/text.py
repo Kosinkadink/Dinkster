@@ -61,6 +61,7 @@ class StringFormat(Node):
             display_name="Format Text",
             category="text",
             inputs=(_text("f_string", default="{a}"),),
+            input_order=("values", "f_string"),
             input_families=(
                 InputFamilySpec(
                     "values",

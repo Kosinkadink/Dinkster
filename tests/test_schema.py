@@ -12,6 +12,10 @@ from dinkster_schema import (
     CurveWidget,
     CustomWidgetDescriptor,
     Deprecation,
+    DynamicComboOption,
+    DynamicComboSpec,
+    DynamicSlotSpec,
+    InputFamilySpec,
     InputSpec,
     MultiComboWidget,
     Node,
@@ -23,6 +27,7 @@ from dinkster_schema import (
     SaveTargetWidget,
     StringWidget,
     TypeExpr,
+    elaborate,
     schema_from_wire,
     schema_signature,
     schema_to_wire,
@@ -239,4 +244,61 @@ def test_duplicate_ids_are_rejected() -> None:
                 InputSpec("x", TypeExpr.concrete("core.int")),
                 InputSpec("x", TypeExpr.concrete("core.int")),
             ),
+        )
+
+
+def test_mixed_input_order_survives_wire_and_elaboration() -> None:
+    integer = TypeExpr.concrete("core.int")
+    schema = NodeSchema(
+        "test.ordered",
+        inputs=(InputSpec("before", integer), InputSpec("after", integer)),
+        input_families=(InputFamilySpec("values", integer, min_members=0),),
+        combos=(
+            DynamicComboSpec(
+                "mode",
+                (DynamicComboOption("a", (InputSpec("value", integer),)),),
+                default="a",
+            ),
+        ),
+        slots=(DynamicSlotSpec("slot", slot_type=integer, required=False),),
+        input_order=("values", "before", "slot", "mode", "after"),
+    )
+    wire = schema_to_wire(schema)
+    assert [item["id"] for item in cast("list[dict[str, Any]]", wire["interface"])] == [
+        "values",
+        "before",
+        "slot",
+        "mode",
+        "after",
+    ]
+    assert schema_from_wire(wire) == schema
+    effective = elaborate(
+        schema_from_wire(wire),
+        ("values.b", "values.a", "slot"),
+        slot_variants={"mode": "a"},
+    )
+    assert [spec.id for spec in effective.inputs] == [
+        "values.b",
+        "values.a",
+        "before",
+        "slot",
+        "mode.value",
+        "after",
+    ]
+    assert schema_from_wire(schema_to_wire(effective)) == effective
+    assert schema_signature(schema) != schema_signature(dataclasses.replace(schema, input_order=()))
+
+
+@pytest.mark.parametrize(
+    "order",
+    [("family", "a"), ("family", "a", "a"), ("unknown", "a", "b"), ("family", "b", "a")],
+)
+def test_input_order_rejects_missing_duplicate_unknown_or_reversed_entries(order) -> None:
+    integer = TypeExpr.concrete("core.int")
+    with pytest.raises(ValueError, match="input_order"):
+        NodeSchema(
+            "test.invalid_order",
+            inputs=(InputSpec("a", integer), InputSpec("b", integer)),
+            input_families=(InputFamilySpec("family", integer, min_members=0),),
+            input_order=order,
         )

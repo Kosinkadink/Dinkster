@@ -2165,6 +2165,12 @@ class NodeSchema:
     chunk_safe: tuple[tuple[str, ...], tuple[str, ...]] | None = None
     """Media ranges; ordinary inputs promise independent, cardinality-preserving execution."""
     chunk_safe_applies: Mapping[str, tuple[str, ...]] | None = None
+    input_order: tuple[str, ...] = ()
+    """Interleave top-level input groups in the wire interface and elaboration.
+
+    Empty retains inputs, families, combos, then slots. An explicit order
+    names every entry exactly once and preserves order within each group.
+    """
 
     def __post_init__(self) -> None:
         if not self.node_type:
@@ -2302,6 +2308,22 @@ class NodeSchema:
         out_family_ids = [fam.id for fam in self.output_families]
         combo_ids = [combo.id for combo in self.combos]
         slot_ids = [slot.id for slot in self.slots]
+        if not isinstance(cast("object", self.input_order), tuple):
+            raise ValueError(f"{self.node_type}: input_order must be an immutable tuple")
+        if self.input_order:
+            groups = (input_ids, in_family_ids, combo_ids, slot_ids)
+            all_ids = [name for group in groups for name in group]
+            if len(self.input_order) != len(all_ids) or set(self.input_order) != set(all_ids):
+                raise ValueError(
+                    f"{self.node_type}: input_order must name every input exactly once"
+                )
+            for group in groups:
+                if [name for name in self.input_order if name in group] != group:
+                    raise ValueError(
+                        f"{self.node_type}: input_order must preserve each group's order"
+                    )
+            if self.input_order == tuple(all_ids):
+                object.__setattr__(self, "input_order", ())
         reserved = RESERVED_INPUT_IDS & (
             set(input_ids) | set(in_family_ids) | set(combo_ids) | set(slot_ids)
         )
@@ -2552,6 +2574,14 @@ class NodeSchema:
             if spec.id == output_id:
                 return spec
         return None
+
+    @property
+    def input_entries(self) -> tuple[DynamicEntry, ...]:
+        entries = (*self.inputs, *self.input_families, *self.combos, *self.slots)
+        if not self.input_order:
+            return entries
+        by_id = {entry.id: entry for entry in entries}
+        return tuple(by_id[name] for name in self.input_order)
 
 
 def _remote_choice_ids(schema: NodeSchema) -> tuple[str, ...]:
