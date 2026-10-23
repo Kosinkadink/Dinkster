@@ -70,7 +70,6 @@ def test_help_lists_every_command_exit_0(capsys) -> None:
         "pack",
         "installs",
         "port",
-        "p2p-diagnostics",
         "demo",
         "isolated-demo",
     ):

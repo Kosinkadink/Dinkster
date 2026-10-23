@@ -111,7 +111,7 @@ during pack-catalog preparation. No ComfyUI checkout or server is required.
 CPU and Apple Silicon model sampling remains subject to the
 [supported host boundaries](supported/cpu-and-apple-silicon-hosts.md).
 
-Workflow templates and P2P are disabled by default. Build an SD 1.5 workflow
+Workflow templates are disabled by default. Build an SD 1.5 workflow
 on the empty canvas:
 
 1. Load the checkpoint with `Load Checkpoint`.

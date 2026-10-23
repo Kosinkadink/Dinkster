@@ -1098,8 +1098,6 @@ def test_missing_capability_is_403_for_every_route_family() -> None:
         ("GET", "/api/settings", "settings:read"),
         ("PUT", "/api/settings/jobs", "settings:write"),
         ("PUT", "/api/packs/missing/settings", "settings:write"),
-        ("GET", "/api/p2p/status", "settings:read"),
-        ("POST", f"/api/p2p/transfers/blake3:{'a' * 64}/pause", "settings:write"),
         ("GET", "/api/sessions", "sessions:read"),
         ("POST", "/api/sessions", "sessions:write"),
         ("GET", "/api/queue", "queue:control"),
