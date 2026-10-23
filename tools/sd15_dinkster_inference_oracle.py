@@ -85,7 +85,7 @@ class _FixedResolver:
         return self.path
 
 
-def _run_worker(checkpoint: Path) -> dict[str, object]:
+def _run_worker(checkpoint: Path, output_image: Path | None = None) -> dict[str, object]:
     from dinkster_assets import AssetRef, digest_file
     from dinkster_native.fork_nodes import (
         GenerationClipTextEncode,
@@ -132,6 +132,12 @@ def _run_worker(checkpoint: Path) -> dict[str, object]:
                 "image": _sha256_tensor(image),
             }
         )
+    if output_image is not None:
+        from PIL import Image
+
+        pixels = cast("Any", image)[0].detach().cpu().clamp(0, 1).mul(255).to(torch.uint8)
+        output_image.parent.mkdir(parents=True, exist_ok=True)
+        Image.fromarray(pixels.numpy()).save(output_image)
     module_file = sd.__file__
     if module_file is None:
         raise RuntimeError("dinkster_inference.sd has no module file")
@@ -154,7 +160,9 @@ def _git_revision(repository: Path) -> str:
     return completed.stdout.strip()
 
 
-def _child(command: str, checkpoint: Path, stock_root: Path | None) -> None:
+def _child(
+    command: str, checkpoint: Path, stock_root: Path | None, output_image: Path | None = None
+) -> None:
     if not checkpoint.is_file():
         raise SystemExit(f"checkpoint does not exist: {checkpoint}")
     if command == "stock":
@@ -162,7 +170,7 @@ def _child(command: str, checkpoint: Path, stock_root: Path | None) -> None:
             raise SystemExit("--stock-root is required for the stock child")
         result = _run_stock(checkpoint, stock_root)
     else:
-        result = _run_worker(checkpoint)
+        result = _run_worker(checkpoint, output_image)
     print(json.dumps(result, sort_keys=True))
 
 
@@ -236,9 +244,12 @@ def main() -> None:
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--stock-root", type=Path)
     parser.add_argument("--child", choices=("stock", "worker"))
+    parser.add_argument("--output-image", type=Path, help="save the worker child's decoded PNG")
     args = parser.parse_args()
+    if args.output_image is not None and args.child != "worker":
+        parser.error("--output-image requires --child worker")
     if args.child:
-        _child(args.child, args.checkpoint, args.stock_root)
+        _child(args.child, args.checkpoint, args.stock_root, args.output_image)
         return
     if args.stock_root is None:
         parser.error("--stock-root is required")
