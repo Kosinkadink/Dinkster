@@ -214,6 +214,7 @@ def test_mount_retains_missing_identity_and_recovers_it_after_restart(tmp_path: 
     assert missing.digest == old.digest
     assert missing.metadata["missing"] is True
     assert table.resolve(old.digest) is None
+    assert table.descriptors()[0]["missingEntryCount"] == 1
 
     restored = MountTable(index_root=index_root)
     restored.add(MountDef(id="models", path=root))
@@ -223,6 +224,7 @@ def test_mount_retains_missing_identity_and_recovers_it_after_restart(tmp_path: 
     assert restored.scan("models") == 1
     assert restored.missing_entries("models") == ()
     assert restored.ref("mounts/models/weights.bin").digest == old.digest
+    assert restored.descriptors()[0]["missingEntryCount"] == 0
 
 
 def test_mount_splits_changed_content_without_reusing_old_identity(tmp_path: Path) -> None:

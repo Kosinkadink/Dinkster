@@ -427,6 +427,7 @@ class _MountRow:
         self.error: str | None = None
         self.library: LocalAssetLibrary | None = None
         self.entry_count: int | None = None
+        self.missing_entry_count: int | None = None
         self.progress: AssetScanProgress | None = None
         self.scan_started: float | None = None
 
@@ -571,6 +572,8 @@ class MountTable:
                     wire["path"] = str(row.mount.path)
                 if row.entry_count is not None:
                     wire["entryCount"] = row.entry_count
+                if row.missing_entry_count is not None:
+                    wire["missingEntryCount"] = row.missing_entry_count
                 progress = self._current_progress(row)
                 if progress is not None:
                     wire["scanProgress"] = {
@@ -676,6 +679,7 @@ class MountTable:
                 return count
             row.library = library
             row.entry_count = count
+            row.missing_entry_count = len(library.missing_entries())
             self.write_snapshot()
             row.state = "ready"
             row.progress = None
