@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, cast
 
-from dinkster_assets import AssetRef
+from dinkster_assets import AssetRef, LocalAssetRef
 from dinkster_nodes_generation.nodes import (
     CLIPTextEncode,
     EmptyLatentImage,
@@ -102,8 +102,8 @@ class GenerationLoadCheckpoint(LoadCheckpoint):
     def execute(  # pyright: ignore[reportIncompatibleMethodOverride]
         cls, *, checkpoint: object
     ) -> Mapping[str, object]:
-        if not isinstance(checkpoint, AssetRef):
-            raise TypeError("checkpoint must be an AssetRef")
+        if not isinstance(checkpoint, (AssetRef, LocalAssetRef)):
+            raise TypeError("checkpoint must be an AssetRef or LocalAssetRef")
         model, clip, vae, _ = importlib.import_module(
             "dinkster_inference.sd"
         ).load_checkpoint_guess_config(
@@ -123,8 +123,8 @@ class GenerationLoadDiffusionModel(LoadDiffusionModel):
         diffusion_model: object,
         weight_dtype: str,
     ) -> Mapping[str, object]:
-        if not isinstance(diffusion_model, AssetRef):
-            raise TypeError("diffusion_model must be an AssetRef")
+        if not isinstance(diffusion_model, (AssetRef, LocalAssetRef)):
+            raise TypeError("diffusion_model must be an AssetRef or LocalAssetRef")
         torch = cast("Any", importlib.import_module("torch"))
         options: dict[str, object] = {}
         if weight_dtype in ("fp8_e4m3fn", "fp8_e4m3fn_fast"):
@@ -150,10 +150,10 @@ class NativeLoadClip(LoadClip):
         text_encoder_2: object = None,
         device: str = "default",
     ) -> Mapping[str, object]:
-        if not isinstance(text_encoder, AssetRef):
-            raise TypeError("text_encoder must be an AssetRef")
-        if text_encoder_2 is not None and not isinstance(text_encoder_2, AssetRef):
-            raise TypeError("text_encoder_2 must be an AssetRef")
+        if not isinstance(text_encoder, (AssetRef, LocalAssetRef)):
+            raise TypeError("text_encoder must be an AssetRef or LocalAssetRef")
+        if text_encoder_2 is not None and not isinstance(text_encoder_2, (AssetRef, LocalAssetRef)):
+            raise TypeError("text_encoder_2 must be an AssetRef or LocalAssetRef")
         sd = importlib.import_module("dinkster_inference.sd")
         try:
             clip_type = getattr(sd.CLIPType, type.upper())
@@ -182,8 +182,8 @@ class NativeLoadVae(LoadVAE):
     ) -> Mapping[str, object]:
         if pixel_space:
             raise ValueError("pixel-space codecs are not supported")
-        if not isinstance(vae, AssetRef):
-            raise TypeError("vae must be an AssetRef")
+        if not isinstance(vae, (AssetRef, LocalAssetRef)):
+            raise TypeError("vae must be an AssetRef or LocalAssetRef")
         state, metadata = importlib.import_module("dinkster_inference.utils").load_torch_file(
             str(vae.local_path()), return_metadata=True
         )

@@ -4,12 +4,43 @@ from __future__ import annotations
 
 import asyncio
 from importlib.metadata import distribution
+from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
+from dinkster_assets import ProvenanceStore, ResolverSubscriptionStore
 from dinkster_server import create_app
-from dinkster_server.settings import normalize_features
+from dinkster_server.settings import RuntimeSettings, normalize_features
 from test_server import SCHEMAS, make_engine
+
+from dinkster.resolver_api import RESOLVER_INDEXES_KEY, add_resolver_index_routes
+
+
+def _settings(*, resolver_enabled: bool) -> RuntimeSettings:
+    return RuntimeSettings(
+        {
+            "memory-budgets": {},
+            "memory-headroom": 256 * 1024**2,
+            "aimdo-policy": "auto",
+            "dtype-policy": {"diffusion": "auto", "textEncoder": "auto", "vae": "auto"},
+            "fp8-matmul": False,
+            "worker-comfy-args": (),
+            "jobs": {"maxRunningJobs": 1},
+            "logging": {"level": "info", "overrides": {}},
+        },
+        {
+            "memory-budgets": "default",
+            "memory-headroom": "default",
+            "aimdo-policy": "default",
+            "dtype-policy": "default",
+            "fp8-matmul": "default",
+            "worker-comfy-args": "default",
+            "jobs": "default",
+            "logging": "default",
+        },
+        features={"resolver": {"enabled": resolver_enabled}},
+    )
 
 
 def test_server_exposes_only_supported_features_and_keeps_templates_disabled() -> None:
@@ -57,6 +88,7 @@ def test_server_exposes_only_supported_features_and_keeps_templates_disabled() -
                 assert (await client.get(path)).status == 404, path
             payload = await (await client.get("/api/settings")).json()
             assert payload["features"] == {
+                "resolver": {"enabled": False},
                 "templates": {"enabled": False},
             }
             assert payload["categories"]["available"] == [
@@ -75,6 +107,55 @@ def test_server_exposes_only_supported_features_and_keeps_templates_disabled() -
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("resolver_enabled", [False, True])
+def test_resolver_index_routes_require_explicit_opt_in(
+    tmp_path: Path, resolver_enabled: bool
+) -> None:
+    async def scenario() -> None:
+        store = ResolverSubscriptionStore(
+            tmp_path / "resolver-indexes.json",
+            ProvenanceStore(tmp_path / "provenance.json"),
+        )
+        app = create_app(
+            make_engine, SCHEMAS, settings=_settings(resolver_enabled=resolver_enabled)
+        )
+        add_resolver_index_routes(app, store)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            response = await client.get("/api/assets/resolver-indexes")
+            assert response.status == (200 if resolver_enabled else 404)
+            assert (RESOLVER_INDEXES_KEY in app) is resolver_enabled
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_disabled_resolver_routes_do_not_bootstrap_or_refresh(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        store = ResolverSubscriptionStore(
+            tmp_path / "resolver-indexes.json",
+            ProvenanceStore(tmp_path / "provenance.json"),
+        )
+        app = create_app(make_engine, SCHEMAS, settings=_settings(resolver_enabled=False))
+        with (
+            patch.object(store, "bootstrap_official") as bootstrap,
+            patch.object(store, "refresh") as refresh,
+        ):
+            add_resolver_index_routes(app, store)
+            client = TestClient(TestServer(app))
+            await client.start_server()
+            try:
+                assert (await client.get("/api/assets/resolver-indexes")).status == 404
+                bootstrap.assert_not_called()
+                refresh.assert_not_called()
+            finally:
+                await client.close()
+
+    asyncio.run(scenario())
+
+
 def test_installed_entry_points_match_the_shipped_commands() -> None:
     assert {
         entry.name
@@ -84,7 +165,12 @@ def test_installed_entry_points_match_the_shipped_commands() -> None:
 
 
 def test_feature_flags_require_boolean_opt_in() -> None:
-    assert normalize_features({}) == {"templates": {"enabled": False}}
+    assert normalize_features({}) == {
+        "resolver": {"enabled": False},
+        "templates": {"enabled": False},
+    }
     assert normalize_features({"templates": {"enabled": True}})["templates"]["enabled"]
-    with pytest.raises(ValueError, match="boolean"):
-        normalize_features({"templates": {"enabled": "false"}})
+    assert normalize_features({"resolver": {"enabled": True}})["resolver"]["enabled"]
+    for feature in ("resolver", "templates"):
+        with pytest.raises(ValueError, match="boolean"):
+            normalize_features({feature: {"enabled": "false"}})

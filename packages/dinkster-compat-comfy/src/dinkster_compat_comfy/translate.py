@@ -109,6 +109,7 @@ from dinkster_assets import (
     ASSET_TYPE,
     AssetError,
     AssetRef,
+    LocalAssetRef,
     MountSnapshotResolver,
     register_asset_type,
     resolver_from_env,
@@ -595,19 +596,19 @@ def _stable_sorted_listing(
 
 
 def _asset_to_model_filename(value: object, category: str) -> str:
-    """Convert one digest-backed asset to the exact relative name v1 expects.
+    """Convert a verified asset or local grant to the exact relative name v1 expects.
 
     ComfyUI loader functions do not accept arbitrary paths: they accept a
     relative filename and resolve it again through ``folder_paths``. The
     conversion therefore proves all of the following before returning a
-    name: the category is allowlisted, the verified asset path is under
+    name: the category is allowlisted, the granted asset path is under
     exactly one configured category root, and ComfyUI's own lookup of the
     resulting name resolves back to the same file. Assets in a vault,
     another model category, a shadowed later root, or overlapping roots fail
-    closed instead of making v1 open bytes other than the selected digest."""
-    if not isinstance(value, AssetRef):
+    closed instead of making v1 open a different file."""
+    if not isinstance(value, AssetRef | LocalAssetRef):
         raise AssetError(
-            f"translated model input for {category!r} requires an AssetRef, "
+            f"translated model input for {category!r} requires an asset reference, "
             f"got {type(value).__name__}"
         )
     if category not in MODEL_FILE_CATEGORIES:
@@ -633,7 +634,10 @@ def _asset_to_model_filename(value: object, category: str) -> str:
         raise AssetError(f"folder_paths returned invalid roots for category {category!r}")
 
     snapshot = os.environ.get("DINKSTER_MOUNTS_SNAPSHOT", "")
-    if snapshot:
+    identity = value.digest if isinstance(value, AssetRef) else f"local binding {value.binding}"
+    if isinstance(value, LocalAssetRef):
+        asset_path = value.local_path().resolve()
+    elif snapshot:
         kind = MODEL_FILE_CATEGORIES[category].kind
         resolution = MountSnapshotResolver(snapshot).resolve_asset_for_kind(value.digest, kind)
         if resolution is None:
@@ -649,15 +653,13 @@ def _asset_to_model_filename(value: object, category: str) -> str:
     roots = tuple(dict.fromkeys(Path(root).resolve() for root in cast("Sequence[str]", raw_roots)))
     matches = [root for root in roots if asset_path.is_relative_to(root)]
     if not matches:
-        raise AssetError(f"asset {value.digest} is not under a configured {category!r} model root")
+        raise AssetError(f"asset {identity} is not under a configured {category!r} model root")
     if len(matches) != 1:
-        raise AssetError(f"asset {value.digest} is ambiguous across {category!r} model roots")
+        raise AssetError(f"asset {identity} is ambiguous across {category!r} model roots")
     relative = asset_path.relative_to(matches[0]).as_posix()
     resolved = get_full_path(category, relative)
     if not isinstance(resolved, str) or Path(resolved).resolve() != asset_path:
-        raise AssetError(
-            f"asset {value.digest} is shadowed or unresolved as {category!r}/{relative}"
-        )
+        raise AssetError(f"asset {identity} is shadowed or unresolved as {category!r}/{relative}")
     return relative
 
 

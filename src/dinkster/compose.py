@@ -2449,7 +2449,7 @@ class ServingComposer:
             self._diagnostic_listener = fan_out
         self._worker_env = dict(worker_env or {})
         # The asset base URL composed remote workers offer their daemons
-        # as a staging source (pull-over-HTTP; peer_asset_sources URL
+        # as a staging source (pull-over-HTTP asset endpoint URL
         # shape), plus the bearer credential for it when this engine
         # serves with auth. Engine-global: one advertised surface, every
         # remote hears the same address.

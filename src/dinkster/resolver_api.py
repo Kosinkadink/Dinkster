@@ -104,6 +104,8 @@ def add_resolver_index_routes(
     official_url: str | None = None,
     official_provider_id: str | None = None,
 ) -> None:
+    if not app[STATE_KEY].settings.features["resolver"]["enabled"]:
+        return
     app[RESOLVER_INDEXES_KEY] = store
     app.router.add_get("/api/assets/resolver-indexes", handle_resolver_indexes_list)
     app.router.add_post("/api/assets/resolver-indexes", handle_resolver_index_subscribe)

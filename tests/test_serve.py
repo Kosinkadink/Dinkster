@@ -664,6 +664,7 @@ def test_serve_official_bootstrap_configuration_preserves_identity_and_permissio
         source += "?cli=1"
         provider_id = "cli-provider"
         flags += ["--official-resolver-url", source, "--official-resolver-provider-id", provider_id]
+    settings_path.write_text('{"features":{"resolver":{"enabled":true}}}\n', "utf-8")
     original = settings_path.read_bytes() if settings_path.exists() else None
     calls: list[tuple[str | None, str | None]] = []
 

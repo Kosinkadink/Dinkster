@@ -16,7 +16,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from dinkster_assets import AssetVault, register_asset_type
+from assetpack_nodes import ReadAssetInput
+from dinkster_assets import AssetVault, MountDef, MountTable, register_asset_type
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, ExecutionError
 from dinkster_graph import Graph, GraphNode
@@ -266,6 +267,34 @@ def test_missing_endpoint_refuses_at_dispatch(tmp_path: Path) -> None:
                 await worker.close()
         finally:
             await stop_service(proc)
+
+    asyncio.run(scenario())
+
+
+def test_unverified_local_asset_refuses_remote_dispatch(tmp_path: Path) -> None:
+    path = tmp_path / "unhashed.bin"
+    path.write_bytes(MODEL_BYTES)
+    mounts = MountTable()
+    mounts.add(MountDef(id="models", path=tmp_path), kind="model/checkpoint")
+    reference = mounts.bind_name(path.name, "model/checkpoint")
+    assert reference is not None
+    registry = TypeRegistry()
+    register_core_types(registry)
+    register_asset_type(registry, mounts)
+    invocation = Invocation(
+        invocation_id="local-only",
+        node_id="r",
+        node_type="apack.read",
+        inputs={"data": registry.wrap("dinkster.asset", reference)},
+        effective_schema=ReadAssetInput.define_schema(),
+    )
+
+    async def scenario() -> None:
+        worker = job_worker("127.0.0.1", 1, None)
+        result = await worker.invoke(invocation)
+        assert result.error is not None
+        assert "unverified local-only asset" in result.error.message
+        assert "granting host" in result.error.message
 
     asyncio.run(scenario())
 
