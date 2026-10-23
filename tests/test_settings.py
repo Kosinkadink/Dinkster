@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import importlib
 import json
 import os
 from collections.abc import Mapping
@@ -11,18 +10,10 @@ from pathlib import Path
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
-from dinkster_assets import P2PPluginRegistration
-from dinkster_assets.p2p_settings import (
-    default_p2p_settings as shared_default_p2p_settings,
-)
-from dinkster_assets.p2p_settings import (
-    normalize_p2p_settings as shared_normalize_p2p_settings,
-)
 from dinkster_memory import MemoryGovernor
 from dinkster_schema import LOG_LEVEL_ENV, LOG_OVERRIDES_ENV
 from dinkster_server import (
     ComfyArgumentError,
-    P2PSettingsError,
     Principal,
     RuntimeSettings,
     SettingsError,
@@ -32,13 +23,6 @@ from dinkster_server import (
     load_settings,
     validate_comfy_args,
 )
-from dinkster_server import (
-    default_p2p_settings as server_default_p2p_settings,
-)
-from dinkster_server import (
-    normalize_p2p_settings as server_normalize_p2p_settings,
-)
-from dinkster_server.p2p_plugin import default_p2p_settings
 from test_server import SCHEMAS, StubAuthenticator, make_engine
 
 
@@ -63,7 +47,6 @@ def settings(
             "worker-comfy-args": (),
             "jobs": {"maxRunningJobs": 1},
             "logging": {"level": "info", "overrides": {}},
-            "p2p": default_p2p_settings(),
         },
         {
             "memory-budgets": "config",
@@ -74,152 +57,12 @@ def settings(
             "worker-comfy-args": "default",
             "jobs": "default",
             "logging": "default",
-            "p2p": "default",
         },
         granted=granted,
         path=path,
         persisted_values=persisted,
         features=features,
     )
-
-
-def test_server_p2p_settings_use_shared_validation_with_and_without_registration(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    registration_module = importlib.import_module("dinkster_assets.p2p_plugin")
-    plugin_defaults = shared_default_p2p_settings()
-
-    monkeypatch.setattr(registration_module, "_registration", None)
-    assert server_default_p2p_settings() == plugin_defaults
-    assert server_normalize_p2p_settings(plugin_defaults) == shared_normalize_p2p_settings(
-        plugin_defaults
-    )
-
-    registration = P2PPluginRegistration(
-        default_settings=shared_default_p2p_settings,
-        normalize_settings=shared_normalize_p2p_settings,
-        lan_interfaces=lambda: (),
-    )
-    monkeypatch.setattr(registration_module, "_registration", registration)
-    assert server_default_p2p_settings() == plugin_defaults
-    assert server_normalize_p2p_settings(plugin_defaults) == shared_normalize_p2p_settings(
-        plugin_defaults
-    )
-    runtime = settings(granted=frozenset({"p2p"}))
-
-    def reject_settings(_value: object) -> dict[str, object]:
-        raise ValueError("plugin rejected settings")
-
-    monkeypatch.setattr(
-        registration_module,
-        "_registration",
-        P2PPluginRegistration(
-            default_settings=shared_default_p2p_settings,
-            normalize_settings=reject_settings,
-            lan_interfaces=lambda: (),
-        ),
-    )
-    with pytest.raises(P2PSettingsError, match="plugin rejected settings"):
-        server_normalize_p2p_settings(plugin_defaults)
-
-    async def scenario() -> None:
-        app = create_app(
-            make_engine,
-            SCHEMAS,
-            settings=runtime,
-        )
-        client = TestClient(TestServer(app))
-        await client.start_server()
-        try:
-            response = await client.put("/api/settings/p2p", json=plugin_defaults)
-            assert response.status == 400
-            assert await response.json() == {
-                "error": "invalid-settings",
-                "category": "p2p",
-                "message": "plugin rejected settings",
-            }
-        finally:
-            await client.close()
-
-    asyncio.run(scenario())
-
-
-def test_server_p2p_settings_match_the_plugin_with_and_without_registration(
-    monkeypatch: pytest.MonkeyPatch,
-    pytestconfig: pytest.Config,
-) -> None:
-    if not pytestconfig.getoption("--p2p"):
-        pytest.skip("plugin comparison requires --p2p")
-    plugin = pytest.importorskip("dinkster_p2p")
-    registration_module = importlib.import_module("dinkster_assets.p2p_plugin")
-    defaults = plugin.default_p2p_settings()
-    for registration in (
-        None,
-        P2PPluginRegistration(
-            default_settings=plugin.default_p2p_settings,
-            normalize_settings=plugin.normalize_p2p_settings,
-            lan_interfaces=lambda: (),
-        ),
-    ):
-        monkeypatch.setattr(registration_module, "_registration", registration)
-        assert server_default_p2p_settings() == defaults
-        assert server_normalize_p2p_settings(defaults) == plugin.normalize_p2p_settings(defaults)
-
-
-@pytest.mark.parametrize(
-    ("field", "invalid"),
-    [
-        ("downloadsEnabled", 1),
-        ("scope", "internet"),
-        ("internetUploadBytesPerSecond", True),
-        ("internetDownloadBytesPerSecond", -1),
-        ("lanUploadBytesPerSecond", 2**31),
-        ("stagingBudgetBytes", 2**53),
-        ("stagingBudgetBytes", 1.5),
-        ("maxActiveSeeds", 0),
-        ("maxActiveSeeds", 4097),
-        ("listenPort", -1),
-        ("listenPort", 65536),
-        ("internetSeedRatio", True),
-        ("internetSeedRatio", float("inf")),
-        ("internetSeedRatio", float("nan")),
-        ("internetSeedRatio", -0.5),
-        ("internetSeedRatio", 10**400),
-    ],
-)
-def test_shared_p2p_validation_rejects_invalid_boundaries(field: str, invalid: object) -> None:
-    with pytest.raises(P2PSettingsError, match=field):
-        shared_normalize_p2p_settings({**shared_default_p2p_settings(), field: invalid})
-
-
-def test_shared_p2p_validation_preserves_legacy_scope_and_budget_boundaries() -> None:
-    legacy = {
-        key: value
-        for key, value in shared_default_p2p_settings().items()
-        if key not in {"stagingBudgetBytes", "maxActiveSeeds", "listenPort"}
-    }
-    legacy.update(downloadsEnabled=True, scope="lan-only", internetSeedRatio=2)
-    assert shared_normalize_p2p_settings(legacy) == {
-        **legacy,
-        "stagingBudgetBytes": 64 * 1024**3,
-        "maxActiveSeeds": 64,
-        "listenPort": 0,
-    }
-    assert "stagingBudgetBytes" not in legacy
-    limits = {
-        **legacy,
-        "stagingBudgetBytes": 2**53 - 1,
-        "maxActiveSeeds": 4096,
-        "listenPort": 65535,
-        "internetUploadBytesPerSecond": 2**31 - 1,
-    }
-    normalized = shared_normalize_p2p_settings(limits)
-    assert normalized == limits
-    assert type(normalized["internetSeedRatio"]) is float
-    with pytest.raises(P2PSettingsError, match="exactly"):
-        shared_normalize_p2p_settings({**limits, "dhtEnabled": True})
-    with pytest.raises(P2PSettingsError, match="object"):
-        shared_normalize_p2p_settings([])
 
 
 def test_settings_get_is_ungated_and_reports_mutability() -> None:
@@ -244,8 +87,6 @@ def test_settings_get_is_ungated_and_reports_mutability() -> None:
             assert body["settings"]["worker-comfy-args"]["mutability"] == ("on-worker-restart")
             assert body["settings"]["worker-comfy-args"]["value"] == []
             assert body["settings"]["jobs"]["mutability"] == "live"
-            assert body["settings"]["p2p"]["value"] == default_p2p_settings()
-            assert body["settings"]["p2p"]["mutability"] == "live"
         finally:
             await client.close()
 
@@ -317,10 +158,6 @@ def test_settings_put_permission_validation_and_happy_path_matrix() -> None:
         "logging": (
             {"level": "debug", "overrides": {"dinkster.server": "warning"}},
             {"level": "loud", "overrides": {}},
-        ),
-        "p2p": (
-            {**default_p2p_settings(), "downloadsEnabled": True},
-            {**default_p2p_settings(), "scope": "internet"},
         ),
     }
 
@@ -494,7 +331,6 @@ def test_settings_logging_reapplies_and_reexports(
         ("worker-comfy-args", "--preview-size"),
         ("jobs", {"maxRunningJobs": True}),
         ("logging", {"level": "info", "overrides": {"urllib3": "debug"}}),
-        ("p2p", {**default_p2p_settings(), "seedingEnabled": "yes"}),
     ],
 )
 def test_settings_file_rejects_each_invalid_value_kind(

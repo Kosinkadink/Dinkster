@@ -760,19 +760,11 @@ URLs. Region names contain 1-32 lowercase letters, digits, or hyphens.
 
 With a library root, resolver indexes are managed through
 `GET/POST /api/assets/resolver-indexes`,
-`PATCH /api/assets/resolver-indexes/{subscriptionId}`,
 `DELETE /api/assets/resolver-indexes/{subscriptionId}`, and
 `POST /api/assets/resolver-indexes/refresh`. Mutations require
 `assets:write`; listing requires `assets:read`. The guess endpoint includes
 exact, case-sensitive basename suggestions from subscribed indexes and never
 downloads a suggestion.
-
-The PATCH body is
-`{"trustedForP2P":boolean,"licenseAuthoritative":boolean}`. Both flags default
-false, and setting them requires the host's `p2p` settings grant. A subscription
-with `trustedForP2P` enabled can authorize its resolver `p2p` entries;
-`licenseAuthoritative` identifies metadata authority, not transfer eligibility.
-Provider names and URLs never imply either flag.
 
 Hosted subscription sources require HTTPS. Loopback HTTP is accepted for
 local development.
@@ -788,27 +780,16 @@ the export's `name` must match that ID exactly. HTTPS is required except for
 loopback HTTP fixtures. URLs must be ASCII: percent-encode non-ASCII paths and
 queries, and use IDNA hostnames. Requests send no authorization or cookies.
 
-Startup creates the subscription with both `trustedForP2P` and
-`licenseAuthoritative` true only after fetching a complete, identity-matching
-export. Missing configuration, invalid identity, or fetch failure emits an
+Startup creates the subscription only after fetching a complete,
+identity-matching export. Missing configuration, invalid identity, or fetch failure emits an
 `official resolver bootstrap refused` diagnostic and leaves ordinary serving
-available. Provider deployment still requires live allowlist, canonical
-descriptor, full-enumeration, and omission/tombstone validation.
+available.
 
-Bootstrap is recorded once in `resolver-indexes.json`. An existing matching
-subscription retains its trust flags. Later trust changes and unsubscribe
-survive restart; bootstrap never regrants trust or recreates a removed
+Bootstrap is recorded once in `resolver-indexes.json`. Unsubscribe choices
+survive restart; bootstrap never recreates a removed
 subscription. A different configured URL/ID pair is refused rather than
 silently replacing the recorded choice. Refresh rejects provider identity
-changes without renewing cached authority. Other subscriptions still default
-both flags false. Bootstrap never changes P2P settings, saved opt-outs,
-`--disable-p2p`, or settings-write permissions.
-
-### --disable-p2p
-
-Disable peer-to-peer downloads and background seeding at startup. Fresh settings
-leave both off; existing saved choices are preserved.
-This override does not modify saved settings or grant settings-write access.
+changes. Bootstrap never changes settings-write permissions.
 
 ### --allow-settings-changes
 
@@ -819,7 +800,7 @@ writable.
 
 Grant runtime mutation for one category. The v1 categories are
 `memory-budgets`, `memory-headroom`, `aimdo-policy`, `dtype-policy`,
-`fp8-matmul`, `worker-comfy-args`, `jobs`, `logging`, and `p2p`. Repeat the
+`fp8-matmul`, `worker-comfy-args`, `jobs`, and `logging`. Repeat the
 flag to grant a union:
 
 ```

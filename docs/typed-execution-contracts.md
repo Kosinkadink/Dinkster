@@ -1696,7 +1696,7 @@ contract.
 
 Asset discovery traverses VIDEO references in addition to ordinary asset
 inputs and list descendants. The transport validates `asset_refs`, stages
-missing authorized content through the existing vault/value-store/P2P chain,
+missing authorized content through the existing vault/value-store chain,
 and deduplicates by digest. A value referencing an unavailable source fails
 with that source identity; it never falls back to a producer-local path.
 Admission includes nested references for authorization, not just transfer.
