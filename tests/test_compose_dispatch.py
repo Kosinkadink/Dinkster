@@ -1020,7 +1020,7 @@ class Own(Node):
 from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_values import TypeRegistry
 
-STRING = TypeExpr.concrete("core.string")
+STRING = TypeExpr.concrete("STRING")
 
 def register_types(registry: TypeRegistry) -> None:
     pass
@@ -1095,8 +1095,8 @@ def _write_vision_provider_packs(
 
 from dinkster_api.v1 import ComboWidget, InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 
-STRING = TypeExpr.concrete("core.string")
-COMBO = TypeExpr.concrete("core.combo")
+STRING = TypeExpr.concrete("STRING")
+COMBO = TypeExpr.concrete("COMBO")
 
 class Vision(Node):
     @classmethod
@@ -1448,8 +1448,8 @@ def _write_generation_provider_packs(root: Path) -> tuple[Path, Path, Path]:
 
 from dinkster_api.v1 import ComboWidget, InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 
-STRING = TypeExpr.concrete("core.string")
-COMBO = TypeExpr.concrete("core.combo")
+STRING = TypeExpr.concrete("STRING")
+COMBO = TypeExpr.concrete("COMBO")
 
 class Generate(Node):
     @classmethod
@@ -2340,7 +2340,7 @@ def test_cross_pack_provider_may_publish_same_session_body_arms(tmp_path: Path) 
                     invocation_id=target,
                     node_id=target,
                     node_type="owned.echo",
-                    inputs={"value": registry.wrap("core.string", "ok")},
+                    inputs={"value": registry.wrap("STRING", "ok")},
                     effective_schema=schema,
                     executor=target,
                     expected_execution_identity="identity",
@@ -2438,7 +2438,7 @@ def test_schema_only_owner_routes_only_after_provider_composes(
 
 
 def _fixture_alias_registry(carrier: str) -> ComfyAliasRegistry:
-    string = TypeExpr.concrete("core.string")
+    string = TypeExpr.concrete("STRING")
     source = ComfyAliasSource("comfy-core", "Echo", "comfy.Echo", "b78cec87")
     return ComfyAliasRegistry(
         source_schemas=(
@@ -3093,7 +3093,7 @@ def test_same_session_body_arm_routes_without_selector_bleed(tmp_path: Path) -> 
                     invocation_id=f"inv-{index}",
                     node_id=f"n-{index}",
                     node_type="same.echo",
-                    inputs={"value": registry.wrap("core.string", str(index))},
+                    inputs={"value": registry.wrap("STRING", str(index))},
                     effective_schema=schema,
                     executor=target,
                     expected_execution_identity=f"identity-{index}",
@@ -3211,7 +3211,7 @@ def test_single_job_topology_follows_replacement_rank_workers(tmp_path: Path) ->
                     invocation_id="replacement",
                     node_id="replacement",
                     node_type="same.echo",
-                    inputs={"value": registry.wrap("core.string", "ok")},
+                    inputs={"value": registry.wrap("STRING", "ok")},
                     effective_schema=composer.composition.schemas["same.echo"],
                     executor=arms[1].name,
                 )

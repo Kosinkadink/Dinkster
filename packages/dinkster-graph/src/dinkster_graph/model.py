@@ -55,7 +55,7 @@ class GraphNode:
 
 PORTS_NODE_ID = "$region"
 REGION_INDEX_PORT_ID = "index"
-REGION_INDEX_PORT_TYPE = TypeExpr.concrete("core.int")
+REGION_INDEX_PORT_TYPE = TypeExpr.concrete("INT")
 """Inside a region body, ``$region`` reads declared ports and the implicit
 zero-based ``index`` of the immediate region. A declared ``index`` port keeps
 its existing meaning and shadows the implicit value for compatibility.

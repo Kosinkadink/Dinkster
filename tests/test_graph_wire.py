@@ -68,19 +68,19 @@ def test_typed_literal_round_trip_and_wire_shape() -> None:
             "n": GraphNode(
                 "t",
                 {
-                    "scalar": TypedLiteral("core.int", 7),
-                    "listy": TypedLiteral("list<core.float>", [1.0, 2.0]),
-                    "nully": TypedLiteral("core.string", None),
+                    "scalar": TypedLiteral("INT", 7),
+                    "listy": TypedLiteral("list<FLOAT>", [1.0, 2.0]),
+                    "nully": TypedLiteral("STRING", None),
                 },
             )
         }
     )
     wire = graph_to_wire(graph)
     inputs = wire["nodes"]["n"]["inputs"]
-    assert inputs["scalar"] == {"$typed": {"type": "core.int", "value": 7}}
-    assert inputs["listy"] == {"$typed": {"type": "list<core.float>", "value": [1.0, 2.0]}}
+    assert inputs["scalar"] == {"$typed": {"type": "INT", "value": 7}}
+    assert inputs["listy"] == {"$typed": {"type": "list<FLOAT>", "value": [1.0, 2.0]}}
     # Explicit null is a present value: it must survive the round trip.
-    assert inputs["nully"] == {"$typed": {"type": "core.string", "value": None}}
+    assert inputs["nully"] == {"$typed": {"type": "STRING", "value": None}}
     back = graph_from_wire(wire)
     node = back.nodes["n"]
     assert isinstance(node, GraphNode)
@@ -123,7 +123,7 @@ def test_malformed_decimal_integer_literal_rejected_on_decode() -> None:
 
 @pytest.mark.parametrize(
     "literal",
-    ([0xFFFFFFFFFFFFFFFF], {"nested": 2**53}, TypedLiteral("core.int", 2**53)),
+    ([0xFFFFFFFFFFFFFFFF], {"nested": 2**53}, TypedLiteral("INT", 2**53)),
 )
 def test_nested_unsafe_integer_literal_rejected_on_encode(literal: object) -> None:
     graph = Graph(nodes={"n": GraphNode("t", {"x": literal})})
@@ -136,7 +136,7 @@ def test_nested_unsafe_integer_literal_rejected_on_encode(literal: object) -> No
     (
         [2**53],
         {"nested": 2**53},
-        {"$typed": {"type": "core.int", "value": 2**53}},
+        {"$typed": {"type": "INT", "value": 2**53}},
     ),
 )
 def test_nested_unsafe_integer_literal_rejected_on_decode(literal: object) -> None:
@@ -151,7 +151,7 @@ def test_safe_nested_integer_literals_still_round_trip() -> None:
         nodes={
             "n": GraphNode(
                 "t",
-                {"list": [safe], "typed": TypedLiteral("core.int", safe)},
+                {"list": [safe], "typed": TypedLiteral("INT", safe)},
             )
         }
     )
@@ -168,12 +168,12 @@ def test_typed_literal_round_trip_inside_region_body() -> None:
                         "nodes": {
                             "n": {
                                 "nodeType": "t",
-                                "inputs": {"x": {"$typed": {"type": "core.int", "value": 3}}},
+                                "inputs": {"x": {"$typed": {"type": "INT", "value": 3}}},
                             }
                         }
                     },
-                    "inputs": {"p": {"$typed": {"type": "core.int", "value": 9}}},
-                    "ports": {"p": {"kind": "concrete", "types": ["core.int"]}},
+                    "inputs": {"p": {"$typed": {"type": "INT", "value": 9}}},
+                    "ports": {"p": {"kind": "concrete", "types": ["INT"]}},
                     "outputs": {},
                 }
             }
@@ -184,12 +184,12 @@ def test_typed_literal_round_trip_inside_region_body() -> None:
     from dinkster_graph import RegionNode
 
     assert isinstance(region, RegionNode)
-    assert region.inputs["p"] == TypedLiteral("core.int", 9)
+    assert region.inputs["p"] == TypedLiteral("INT", 9)
     body_node = region.body.nodes["n"]
     assert isinstance(body_node, GraphNode)
-    assert body_node.inputs["x"] == TypedLiteral("core.int", 3)
+    assert body_node.inputs["x"] == TypedLiteral("INT", 3)
     assert graph_to_wire(graph)["nodes"]["r"]["region"]["inputs"]["p"] == {
-        "$typed": {"type": "core.int", "value": 9}
+        "$typed": {"type": "INT", "value": 9}
     }
 
 
@@ -199,8 +199,8 @@ def test_malformed_typed_literal_rejected_on_decode() -> None:
         {"value": 7},  # missing type
         {"type": 1, "value": 7},  # non-string type
         {"type": "", "value": 7},  # empty type
-        {"type": "core.int"},  # missing value (explicit null is fine)
-        ["core.int", 7],  # payload not an object
+        {"type": "INT"},  # missing value (explicit null is fine)
+        ["INT", 7],  # payload not an object
     ):
         wire = {"nodes": {"n": {"nodeType": "t", "inputs": {"x": {"$typed": bad_typed}}}}}
         with pytest.raises(GraphWireError, match="malformed typed literal"):
@@ -213,10 +213,10 @@ def test_marker_inputs_must_be_exactly_the_marker() -> None:
     # produce either shape).
     both = {
         "$link": {"node": "a", "output": "o"},
-        "$typed": {"type": "core.int", "value": 7},
+        "$typed": {"type": "INT", "value": 7},
     }
     extra_by_link = {"$link": {"node": "a", "output": "o"}, "x": 1}
-    extra_by_typed = {"$typed": {"type": "core.int", "value": 7}, "x": 1}
+    extra_by_typed = {"$typed": {"type": "INT", "value": 7}, "x": 1}
     extra_by_int = {"$int": "9007199254740992", "x": 1}
     for bad_input in (both, extra_by_link, extra_by_typed, extra_by_int):
         wire = {"nodes": {"n": {"nodeType": "t", "inputs": {"x": bad_input}}}}

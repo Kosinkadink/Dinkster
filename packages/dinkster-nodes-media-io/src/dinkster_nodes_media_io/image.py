@@ -851,9 +851,7 @@ class SaveImage(Node):
                     default=4,
                     widget=NumberWidget(min=0, max=9, step=1),
                 ),
-                InputSpec(
-                    "lossless", TypeExpr.concrete("core.boolean"), required=False, default=True
-                ),
+                InputSpec("lossless", TypeExpr.concrete("BOOLEAN"), required=False, default=True),
                 InputSpec(
                     "metadata_json",
                     STRING,
@@ -1052,9 +1050,7 @@ class SaveAnimatedImage(Node):
                     default=0,
                     widget=NumberWidget(min=0, max=65535, step=1),
                 ),
-                InputSpec(
-                    "lossless", TypeExpr.concrete("core.boolean"), required=False, default=True
-                ),
+                InputSpec("lossless", TypeExpr.concrete("BOOLEAN"), required=False, default=True),
                 InputSpec(
                     "quality",
                     INT,

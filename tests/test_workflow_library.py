@@ -44,7 +44,7 @@ from PIL import Image
 
 WORKFLOW_MEDIA_TYPE = "application/x-dinkster-workflow+json"
 
-STRING = TypeExpr.concrete("core.string")
+STRING = TypeExpr.concrete("STRING")
 
 
 class Echo(Node):

@@ -122,7 +122,7 @@ def _is_combo_choice(entries: Sequence[DynamicEntry], parts: Sequence[str]) -> b
 class InputCoercionError(Exception):
     """An input failed worker-side admission or asset coercion.
 
-    This includes the hard core.combo boundary and asset inputs whose
+    This includes the hard COMBO boundary and asset inputs whose
     provider is missing or whose decode/merge fails. It is a fact about THIS
     node's inputs, exactly like UnresolvablePayload - reported as a NodeError,
     never a worker crash.
@@ -812,7 +812,7 @@ class InProcessWorker:
             if combo_type_mismatch_is_error(value.type_id, spec.type):
                 raise InputCoercionError(
                     f"input '{input_id}' rejects runtime type {value.type_id}: "
-                    "core.combo mismatches require an explicit converter"
+                    "COMBO mismatches require an explicit converter"
                 )
             return input_object(value.type_id, value.resolve())
         decoder = self._registry.asset_decoder_for(plan.target_type_id)

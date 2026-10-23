@@ -379,7 +379,7 @@ def test_blend_schema_translation() -> None:
     assert by_id["factor"].default == 0.5 and not by_id["factor"].required
     assert by_id["mode"].default == "normal"  # combo defaults to first choice
     # The choice list survives as a static dropdown (wire v9 COMBO) on the
-    # concrete core.combo socket; its vocabulary remains presentation only.
+    # concrete COMBO socket; its vocabulary remains presentation only.
     widget = by_id["mode"].widget
     assert isinstance(widget, ComboWidget)
     assert widget.options == ("normal", "multiply", "screen")
@@ -557,7 +557,7 @@ def test_v1_widget_v19_declarations_are_preserved_without_inference() -> None:
     assert by_id["choice"].widget == ComboWidget(
         options=("a", "b"), control_after_generate="randomize"
     )
-    assert by_id["color"].type == TypeExpr.concrete("core.string")
+    assert by_id["color"].type == TypeExpr.concrete("STRING")
     assert by_id["color"].widget == ColorWidget()
     assert by_id["opaque"].type == TypeExpr.concrete("comfy.COLORS")
     assert "comfy.COLOR" not in translation.opaque_types
@@ -851,7 +851,7 @@ def test_numeric_combo_wire_keys_restore_original_choice_types(listed: bool, v3:
     assert result == {"combo": ["10", "2.5"] if listed else "10"}
     registry = TypeRegistry()
     register_core_types(registry)
-    output_type = "list<core.combo>" if listed else CORE_COMBO
+    output_type = "list<COMBO>" if listed else CORE_COMBO
     assert registry.wrap(output_type, result["combo"]).resolve() == result["combo"]
 
 
@@ -959,7 +959,7 @@ def test_v1_multicombo_translates_exact_list_contract_and_refuses_lookalikes() -
 
 def test_boolean_combo_translates_to_labeled_toggle() -> None:
     """A two-option combo that is a disguised boolean (enable/disable and
-    kin, either order, any case) becomes an honest core.boolean wearing
+    kin, either order, any case) becomes an honest BOOLEAN wearing
     the original strings as toggle labels; execute() maps the boolean
     back onto the v1 vocabulary, and a legacy prompt still sending the
     string passes through verbatim. v1 BOOLEAN inputs keep their
@@ -2010,7 +2010,7 @@ def test_output_is_list_values_flow_as_native_lists() -> None:
         parts = result.outputs["d"]["doubled"]
         assert parts.resolve() == [0, 2, 4]
         # The envelope carries the canonical runtime list type id.
-        assert parts.type_id == "list<core.int>"
+        assert parts.type_id == "list<INT>"
 
     asyncio.run(scenario())
 
@@ -3688,7 +3688,7 @@ def test_v3_matchtype_autogrow_lists_share_output_variable_and_execute() -> None
         )
         result = await engine.run(graph, ["list"])
         value = result.outputs["list"]["list"]
-        assert value.type_id == "list<core.int>"
+        assert value.type_id == "list<INT>"
         assert value.resolve() == [0, 1, 0, 1, 2]
 
     asyncio.run(scenario())

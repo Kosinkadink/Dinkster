@@ -7,7 +7,7 @@ these tests drive it with plain fakes shaped exactly like comfy_api's
 ComfyUI/comfy_api/latest/_io.py). The contract under test:
 
 - io_type strings translate by the same rules as v1 type strings
-  (primitives, COMBO -> core.combo, ``*`` -> wildcard, opaque comfy.*),
+  (primitives, COMBO -> COMBO, ``*`` -> wildcard, opaque comfy.*),
 - MultiType comma-joins become unions, MatchType templates become type
   variables, Autogrow inputs become input families,
 - lifecycle flags land on the Dinkster fields that mean the same thing,
@@ -396,7 +396,7 @@ def test_basic_schema_translates() -> None:
     assert not a.required  # has a default
     assert a.doc == "first addend"
     assert b.required
-    # Combo identity is core.combo; the first option is the implicit default,
+    # Combo identity is COMBO; the first option is the implicit default,
     # and the choice list rides along as a static dropdown widget.
     assert mode.type == TypeExpr.concrete(CORE_COMBO)
     assert mode.default == "fast"

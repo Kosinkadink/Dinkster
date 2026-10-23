@@ -954,8 +954,8 @@ def test_lazy_audio_chain_matches_across_worker_shared_memory(source, concat) ->
                     node_type="dinkster.audio.trim",
                     inputs={
                         "audio": registry.wrap("comfy.AUDIO", value),
-                        "start": registry.wrap("core.float", 0.113),
-                        "duration": registry.wrap("core.float", 0.751),
+                        "start": registry.wrap("FLOAT", 0.113),
+                        "duration": registry.wrap("FLOAT", 0.751),
                     },
                     effective_schema=worker.schemas["dinkster.audio.trim"],
                 )

@@ -10,12 +10,12 @@ never learns v1 existed.
 Translation rules:
 
 - v1 primitive type strings map to core envelope types; combo lists map
-  to core.combo (choice vocabulary is UI affordance within that identity).
+  to COMBO (choice vocabulary is UI affordance within that identity).
   When
   every choice is a non-empty string the list rides along as a
   ComboWidget with baked options, so the native wire renders the same
   dropdown v1 did - except under INPUT_IS_LIST, where the socket is
-  list<core.combo> and a widget on a list socket is undefined in the
+  list<COMBO> and a widget on a list socket is undefined in the
   wire contract. A combo whose choice list IS a filesystem listing (the
   very object folder_paths.get_filename_list returned, observed by an
   injected probe) additionally carries a remote route
@@ -24,7 +24,7 @@ Translation rules:
   the honesty rules.
 - Two-option combos that are disguised booleans (enable/disable, on/off,
   true/false, yes/no - case-insensitive, either order) become honest
-  core.boolean inputs wearing a BooleanWidget whose labels are the
+  BOOLEAN inputs wearing a BooleanWidget whose labels are the
   original option strings. execute() maps the boolean back to the v1
   string, and a legacy prompt still sending the string passes through
   verbatim. v1 BOOLEAN inputs keep their label_on/label_off config as
@@ -1430,7 +1430,7 @@ def boolean_combo(v1_type: object) -> tuple[str, str] | None:
     a disguised boolean - exactly two string choices matching one of the
     recognized truthy/falsy word pairs, either order - else None.
 
-    These translate to core.boolean with the original strings as toggle
+    These translate to BOOLEAN with the original strings as toggle
     labels; execute() maps the boolean back to the v1 string, so the
     wrapped function never learns the schema got honest."""
     if not isinstance(v1_type, (list, tuple)):
@@ -2797,7 +2797,7 @@ def translate_node(
             default = _combo_token(default)
         required_spec = required and default is None
         # The v1 choice list survives as a static dropdown - except under
-        # INPUT_IS_LIST, where the socket is list<core.combo> and a
+        # INPUT_IS_LIST, where the socket is list<COMBO> and a
         # widget on a list socket is undefined in the wire contract.
         widget: Widget | None = None
         if not input_is_list:
@@ -3034,7 +3034,7 @@ def translate_node(
             if name in restored:
                 restored[name] = _asset_to_model_filename(restored[name], category)
         for name, (on_string, off_string) in boolean_combo_strings.items():
-            # The schema says core.boolean; the v1 function compares
+            # The schema says BOOLEAN; the v1 function compares
             # strings. Convert honest booleans back, and pass a legacy
             # prompt's original string through verbatim.
             if name in restored:

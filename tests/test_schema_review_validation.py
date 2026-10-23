@@ -21,8 +21,8 @@ def _wire() -> dict[str, Any]:
         schema_to_wire(
             NodeSchema(
                 node_type="review.node",
-                inputs=(InputSpec("value", TypeExpr.concrete("core.int")),),
-                outputs=(OutputSpec("out", TypeExpr.concrete("core.int")),),
+                inputs=(InputSpec("value", TypeExpr.concrete("INT")),),
+                outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
             )
         ),
     )
@@ -31,9 +31,9 @@ def _wire() -> dict[str, Any]:
 @pytest.mark.parametrize(
     ("widget", "type_id", "message"),
     [
-        (BooleanWidget(label_on="yes"), "core.string", "boolean widget"),
-        (ComboWidget(options=("a",)), "core.int", "combo widget"),
-        (SaveTargetWidget(), "core.string", "save target widget"),
+        (BooleanWidget(label_on="yes"), "STRING", "boolean widget"),
+        (ComboWidget(options=("a",)), "INT", "combo widget"),
+        (SaveTargetWidget(), "STRING", "save target widget"),
     ],
 )
 def test_new_widget_socket_bindings_are_enforced(

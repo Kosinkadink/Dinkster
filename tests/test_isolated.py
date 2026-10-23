@@ -2202,7 +2202,7 @@ def test_shm_transport_for_large_payloads_and_cleanup() -> None:
             # they must cross via shared memory, not inline bytes.
             assert stats_inputs["image"].transport == "shm"
             blend_inputs = {c.edge_id: c for c in by_node["dev.image.blend"].inputs}
-            # ratio is a small core.float: inline either way.
+            # ratio is a small FLOAT: inline either way.
             assert blend_inputs["ratio"].transport == "inline"
         finally:
             await worker.close()
@@ -2355,7 +2355,7 @@ def test_isolated_lazy_hook_protocol_and_attribution(tmp_path: Path) -> None:
                     request_id=request_id,
                     node_id="lazy",
                     node_type="iso.lazy_probe",
-                    available_inputs={"mode": registry.wrap("core.string", mode)},
+                    available_inputs={"mode": registry.wrap("STRING", mode)},
                     connected_undemanded_inputs=("value",),
                     effective_schema=schema,
                 )
@@ -3630,7 +3630,7 @@ def test_load_pack_validates_comfy_alias_carrier_ownership_and_references(
                 ComfyAliasSourceSchema(
                     NodeSchema(
                         source.node_type,
-                        inputs=(InputSpec("value", TypeExpr.concrete("core.string")),),
+                        inputs=(InputSpec("value", TypeExpr.concrete("STRING")),),
                     ),
                     SCHEMA_WIRE_VERSION,
                 ),

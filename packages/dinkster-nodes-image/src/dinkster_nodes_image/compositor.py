@@ -59,7 +59,7 @@ class AddLayer(Node):
                 ),
                 InputSpec(
                     "name",
-                    TypeExpr.concrete("core.string"),
+                    TypeExpr.concrete("STRING"),
                     required=False,
                     default="Layer",
                     widget=StringWidget(),
@@ -167,7 +167,7 @@ class LayersFromBoundingBoxes(Node):
                 InputSpec("canvas_height", INT, required=False, default=0),
                 InputSpec(
                     "bboxes",
-                    TypeExpr.union("core.string", "comfy.BOUNDING_BOX", "comfy.ARRAY"),
+                    TypeExpr.union("STRING", "comfy.BOUNDING_BOX", "comfy.ARRAY"),
                     required=False,
                     default=None,
                 ),

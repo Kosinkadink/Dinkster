@@ -544,7 +544,7 @@ def test_disk_cache_survives_restart(tmp_path: Path) -> None:
     async def scenario() -> None:
         registry = make_registry()
         first = DiskCacheStore(tmp_path, registry)
-        value = registry.wrap("core.int", 42)
+        value = registry.wrap("INT", 42)
         await first.put("key-1", {"answer": value})
 
         # A fresh store over the same root - "the process restarted".
@@ -552,7 +552,7 @@ def test_disk_cache_survives_restart(tmp_path: Path) -> None:
         hit = await second.get("key-1")
         assert hit is not None
         assert hit["answer"].fingerprint == value.fingerprint  # H4: unchanged
-        assert hit["answer"].type_id == "core.int"
+        assert hit["answer"].type_id == "INT"
         assert hit["answer"].resolve() == 42
         assert second.hits == 1
 
@@ -665,12 +665,12 @@ def test_disk_cache_refuses_resource_stubs(tmp_path: Path) -> None:
     async def scenario() -> None:
         registry = make_registry()
         stub = Value(
-            type_id="core.int",
+            type_id="INT",
             fingerprint="resident:abc",
             meta=ValueMeta({RESOURCE_ID_META_KEY: "res-1"}),
-            payload=EncodedPayload("core.int", b"json:1", None),
+            payload=EncodedPayload("INT", b"json:1", None),
         )
-        plain = registry.wrap("core.int", 7)
+        plain = registry.wrap("INT", 7)
         store = DiskCacheStore(tmp_path, registry)
         await store.put("key-stub", {"stub": stub, "plain": plain})
         assert await store.get("key-stub") is None
@@ -683,7 +683,7 @@ def test_disk_cache_missing_blob_is_miss(tmp_path: Path) -> None:
     async def scenario() -> None:
         registry = make_registry()
         store = DiskCacheStore(tmp_path, registry)
-        await store.put("key-1", {"answer": registry.wrap("core.int", 42)})
+        await store.put("key-1", {"answer": registry.wrap("INT", 42)})
         for digest in DiskCAS(tmp_path / "cas").digests():
             DiskCAS(tmp_path / "cas").delete(digest)
         assert await store.get("key-1") is None
@@ -780,7 +780,7 @@ def test_disk_cache_process_lock_waits_for_another_instance(tmp_path: Path) -> N
             assert not waiting.done()
             release.set()
             store = waiting.result(timeout=15)
-        asyncio.run(store.put("after-lock", {"out": registry.wrap("core.int", 7)}))
+        asyncio.run(store.put("after-lock", {"out": registry.wrap("INT", 7)}))
         assert asyncio.run(store.get("after-lock")) is not None
     finally:
         release.set()
@@ -795,7 +795,7 @@ def test_disk_cache_startup_recovers_orphans_and_interrupted_manifests(tmp_path:
     async def scenario() -> None:
         registry = make_registry()
         store = DiskCacheStore(tmp_path, registry)
-        await store.put("keeper", {"out": registry.wrap("core.int", 7)})
+        await store.put("keeper", {"out": registry.wrap("INT", 7)})
         cas = DiskCAS(tmp_path / "cas")
         orphan = cas.put(b"unreferenced payload")
         interrupted = tmp_path / "entries" / ".interrupted.tmp"
@@ -821,7 +821,7 @@ def test_disk_cache_shared_blob_survives_one_eviction(tmp_path: Path) -> None:
 
         registry = make_registry()
         store = DiskCacheStore(tmp_path, registry)
-        value = registry.wrap("core.string", "shared payload " * 100)
+        value = registry.wrap("STRING", "shared payload " * 100)
         await store.put("key-a", {"out": value})
         await store.put("key-b", {"out": value})
         cas = DiskCAS(tmp_path / "cas")
@@ -836,14 +836,14 @@ def test_disk_cache_shared_blob_survives_one_eviction(tmp_path: Path) -> None:
         total = cas.total_bytes() + sum(p.stat().st_size for p in entries.glob("*.json"))
         probe_root = tmp_path / "probe"
         probe = DiskCacheStore(probe_root, registry)
-        await probe.put("key-c", {"out": registry.wrap("core.string", "more")})
+        await probe.put("key-c", {"out": registry.wrap("STRING", "more")})
         added = DiskCAS(probe_root / "cas").total_bytes() + sum(
             p.stat().st_size for p in (probe_root / "entries").glob("*.json")
         )
         # Exactly the post-write usage minus key-a's manifest: removing the
         # first shared reference is sufficient, but must not credit its blob.
         tight = DiskCacheStore(tmp_path, registry, max_bytes=total + added - key_a.stat().st_size)
-        await tight.put("key-c", {"out": registry.wrap("core.string", "more")})
+        await tight.put("key-c", {"out": registry.wrap("STRING", "more")})
 
         assert await tight.get("key-a") is None  # evicted (was LRU)
         hit = await tight.get("key-b")  # its shared blob survived
@@ -864,7 +864,7 @@ def test_layered_cache_promotes_hits(tmp_path: Path) -> None:
         layered = LayeredCache(memory, disk)
 
         # Seed disk only (as if a previous process wrote it).
-        await disk.put("key-1", {"out": registry.wrap("core.int", 9)})
+        await disk.put("key-1", {"out": registry.wrap("INT", 9)})
         assert len(memory) == 0
 
         hit = await layered.get("key-1")
@@ -878,7 +878,7 @@ def test_layered_cache_promotes_hits(tmp_path: Path) -> None:
         assert layered.hits_by_layer == {"disk": 1, "memory": 1}
 
         # Write-through: a put lands everywhere.
-        await layered.put("key-2", {"out": registry.wrap("core.int", 10)})
+        await layered.put("key-2", {"out": registry.wrap("INT", 10)})
         assert await memory.get("key-2") is not None
         assert await DiskCacheStore(tmp_path, registry).get("key-2") is not None
 
@@ -895,10 +895,10 @@ def test_layered_cache_invalidation_fans_out(tmp_path: Path) -> None:
         memory = MemoryLRUCache()
         layered = LayeredCache(memory, DiskCacheStore(tmp_path, registry))
         stub = Value(
-            type_id="core.int",
+            type_id="INT",
             fingerprint="resident:abc",
             meta=ValueMeta({RESOURCE_ID_META_KEY: "res-1"}),
-            payload=EncodedPayload("core.int", b"json:1", None),
+            payload=EncodedPayload("INT", b"json:1", None),
         )
         await layered.put("key-stub", {"out": stub})
         assert await memory.get("key-stub") is not None  # memory took it
@@ -917,7 +917,7 @@ def test_layered_cache_keeps_unencodable_values_in_memory(tmp_path: Path) -> Non
             raise ValueError("not persistable")
 
         registry.register("test.unpersistable", encode=reject_encode, decode=lambda data: data)
-        payload = registry.wrap("core.int", 5).payload
+        payload = registry.wrap("INT", 5).payload
         value = Value("test.unpersistable", "fp-unpersistable", ValueMeta(), payload)
         memory = MemoryLRUCache()
         layered = LayeredCache(memory, DiskCacheStore(tmp_path, registry))
@@ -953,7 +953,7 @@ def test_cas_transport_sends_bytes_once() -> None:
     """First crossing carries digest + bytes; every repeat crossing of the
     same payload is digest-only and still decodes to the same bytes."""
     left, right, registry = _paired_cas_codecs()
-    value = registry.wrap("core.string", "x" * 100)
+    value = registry.wrap("STRING", "x" * 100)
 
     blobs: list[bytes] = []
     wire, stat = left.encode(value, blobs, [])
@@ -978,7 +978,7 @@ def test_cas_transport_dedups_echo_back() -> None:
     receiver can echo the value back digest-only, because both sides retain
     every crossed payload for the conversation."""
     left, right, registry = _paired_cas_codecs()
-    value = registry.wrap("core.string", "y" * 100)
+    value = registry.wrap("STRING", "y" * 100)
 
     blobs: list[bytes] = []
     wire, _ = left.encode(value, blobs, [])
@@ -1002,8 +1002,8 @@ def test_cas_transport_budget_bounds_retention() -> None:
     left.enable_cas()
     right.enable_cas()
 
-    fits = registry.wrap("core.string", "a" * 100)
-    over = registry.wrap("core.string", "b" * 100)  # second 100B blows the 150B budget
+    fits = registry.wrap("STRING", "a" * 100)
+    over = registry.wrap("STRING", "b" * 100)  # second 100B blows the 150B budget
 
     blobs: list[bytes] = []
     wire, _ = left.encode(fits, blobs, [])
@@ -1029,7 +1029,7 @@ def test_cas_transport_budget_bounds_retention() -> None:
 
 def test_cas_transport_requires_negotiation() -> None:
     left, _, registry = _paired_cas_codecs()
-    value = registry.wrap("core.string", "z" * 100)
+    value = registry.wrap("STRING", "z" * 100)
     blobs: list[bytes] = []
     wire, _ = left.encode(value, blobs, [])
 
@@ -1044,7 +1044,7 @@ def test_cas_transport_requires_negotiation() -> None:
 
 def test_cas_transport_conservative_failures() -> None:
     left, right, registry = _paired_cas_codecs()
-    value = registry.wrap("core.string", "w" * 100)
+    value = registry.wrap("STRING", "w" * 100)
     blobs: list[bytes] = []
     wire, _ = left.encode(value, blobs, [])
 
@@ -1112,7 +1112,7 @@ def test_core_combo_encoded_validation_is_enforced_at_worker_boundary() -> None:
     wire, _ = codec.encode(value, blobs, [])
     with pytest.raises(
         EncodedPayloadValidationError,
-        match="encoded payload validation failed for type 'core.combo'",
+        match="encoded payload validation failed for type 'COMBO'",
     ):
         codec.decode(wire, blobs, [])
 

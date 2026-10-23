@@ -424,14 +424,14 @@ def test_generated_pack_imports_and_schemas_survive(
     assert sampler.output_node is True
     assert sampler.idempotent is False
     assert sampler.occupies == ("gpu",)
-    # Hidden v1 inputs never enter the schema; the combo is core.combo.
+    # Hidden v1 inputs never enter the schema; the combo is COMBO.
     assert [spec.id for spec in sampler.inputs] == ["model", "mode", "add_noise"]
     # Translated widgets survive codegen: the combo keeps its dropdown,
     # the disguised boolean becomes a labeled toggle.
     mode_spec, noise_spec = sampler.inputs[1], sampler.inputs[2]
-    assert mode_spec.type == TypeExpr.concrete("core.combo")
+    assert mode_spec.type == TypeExpr.concrete("COMBO")
     assert mode_spec.widget == ComboWidget(options=("fast", "slow", "exact"))
-    assert noise_spec.type == TypeExpr.concrete("core.boolean")
+    assert noise_spec.type == TypeExpr.concrete("BOOLEAN")
     assert noise_spec.widget == BooleanWidget(label_on="enable", label_off="disable")
 
     batcher = schemas["fancy-pack.batcher"]
@@ -446,7 +446,7 @@ def test_generated_pack_imports_and_schemas_survive(
     text = (out / "fancy_pack_nodes.py").read_text(encoding="utf-8")
     assert "def add(self, a, b):" in text
     assert "TODO(port)" in text
-    assert "mode: str" in text  # core.combo payloads stay string-shaped
+    assert "mode: str" in text  # COMBO payloads stay string-shaped
     # Choices that became widgets need no prose reminder.
     assert "source combo choices" not in text
 

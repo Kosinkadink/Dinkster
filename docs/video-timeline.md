@@ -55,7 +55,7 @@ updates the selected trim fields, preserving unrelated widget fields.
 
 Node IDs are `dinkster.video_document.<command>`. No HTTP timeline endpoint is
 implied. Every mutation takes `document: dinkster.video_document` and
-`params: core.string` containing JSON, and returns `document` of the same type.
+`params: STRING` containing JSON, and returns `document` of the same type.
 Indices are zero-based OTIO child indices, including gaps/transitions, not
 indices of clips with those items filtered out. `track` defaults to 0 and
 `clip` defaults to 0; track selection addresses top-level tracks.
@@ -76,8 +76,8 @@ indices of clips with those items filtered out. `track` defaults to 0 and
 | `ripple` | track, clip, start_time/duration/strict_duration; closes removed time. |
 | `roll` | track, clip, delta seconds; moves an adjacent cut without changing total duration. |
 | `render` | document -> video: comfy.VIDEO. Lazy, no encoding. |
-| `import_otio` | otio: core.string -> document. No source resolution. |
-| `export_otio` | document -> otio: core.string. |
+| `import_otio` | otio: STRING -> document. No source resolution. |
+| `export_otio` | document -> otio: STRING. |
 
 Effects remain ordered in `clip.metadata.dinkster.effects`. A parameter may be
 `{type: "dinkster.curve", value: {points: [{position, value}], interpolation}}`.

@@ -41,11 +41,11 @@ SCHEMA = NodeSchema(
     display_name="Test Node",
     category="test",
     inputs=(
-        InputSpec("a", TypeExpr.concrete("core.int")),
-        InputSpec("b", TypeExpr.union("core.int", "core.float"), required=False, default=1),
+        InputSpec("a", TypeExpr.concrete("INT")),
+        InputSpec("b", TypeExpr.union("INT", "FLOAT"), required=False, default=1),
         InputSpec("anything", TypeExpr.wildcard(), required=False),
     ),
-    outputs=(OutputSpec("out", TypeExpr.concrete("core.int")),),
+    outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
 )
 
 
@@ -104,19 +104,19 @@ def test_current_schema_features_roundtrip() -> None:
             SaveTargetWidget(".png"),
             {"type": "SAVE_TARGET", "suffix": ".png"},
         ),
-        ("core.combo", ComboWidget(options=("a", "b")), {"type": "COMBO", "options": ["a", "b"]}),
+        ("COMBO", ComboWidget(options=("a", "b")), {"type": "COMBO", "options": ["a", "b"]}),
         (
-            "core.boolean",
+            "BOOLEAN",
             BooleanWidget("yes", "no"),
             {"type": "BOOLEAN", "labelOn": "yes", "labelOff": "no"},
         ),
         (
-            "core.int",
+            "INT",
             NumberWidget(min=0, max=10, step=1),
             {"type": "NUMBER", "min": 0, "max": 10, "step": 1},
         ),
-        ("core.string", StringWidget(multiline=True), {"type": "STRING", "multiline": True}),
-        ("core.string", ColorWidget(), {"type": "COLOR"}),
+        ("STRING", StringWidget(multiline=True), {"type": "STRING", "multiline": True}),
+        ("STRING", ColorWidget(), {"type": "COLOR"}),
         ("dinkster.curve", CurveWidget(), {"type": "CURVE"}),
         ("dinkster.compositor", CompositorWidget(), {"type": "COMPOSITOR"}),
     ],
@@ -134,13 +134,36 @@ def test_widget_roundtrip(type_id: str, widget: object, expected: dict[str, obje
     )
 
 
+def test_float_widget_preserves_large_integral_bounds_on_the_wire() -> None:
+    schema = NodeSchema(
+        "test.float-bounds",
+        inputs=(
+            InputSpec(
+                "value",
+                TypeExpr.concrete("FLOAT"),
+                widget=NumberWidget(min=-(2**63) + 37, max=2**63 + 19, step=0.25),
+            ),
+        ),
+    )
+
+    wire = schema_to_wire(schema)
+    widget = cast("list[dict[str, object]]", wire["interface"])[0]["widget"]
+    assert widget == {
+        "type": "NUMBER",
+        "min": "-9223372036854775771",
+        "max": "9223372036854775827",
+        "step": 0.25,
+    }
+    assert schema_from_wire(wire) == schema
+
+
 def test_multi_combo_roundtrip() -> None:
     schema = NodeSchema(
         "test.multi",
         inputs=(
             InputSpec(
                 "values",
-                TypeExpr.list_of(TypeExpr.concrete("core.combo")),
+                TypeExpr.list_of(TypeExpr.concrete("COMBO")),
                 default=["a"],
                 widget=MultiComboWidget(options=("a", "b")),
             ),
@@ -151,11 +174,11 @@ def test_multi_combo_roundtrip() -> None:
 
 def test_type_expressions_roundtrip_and_remain_closed() -> None:
     expressions = (
-        TypeExpr.concrete("core.int"),
-        TypeExpr.union("core.int", "core.float"),
+        TypeExpr.concrete("INT"),
+        TypeExpr.union("INT", "FLOAT"),
         TypeExpr.wildcard(),
-        TypeExpr.variable("T", ("core.int",)),
-        TypeExpr.list_of(TypeExpr.concrete("core.int")),
+        TypeExpr.variable("T", ("INT",)),
+        TypeExpr.list_of(TypeExpr.concrete("INT")),
         TypeExpr.asset_of(TypeExpr.concrete("dinkster.image")),
     )
     for expression in expressions:
@@ -224,8 +247,8 @@ class TwoOutputs(Node):
         return NodeSchema(
             "test.two_outputs",
             outputs=(
-                OutputSpec("first", TypeExpr.concrete("core.int")),
-                OutputSpec("second", TypeExpr.concrete("core.int")),
+                OutputSpec("first", TypeExpr.concrete("INT")),
+                OutputSpec("second", TypeExpr.concrete("INT")),
             ),
         )
 
@@ -241,14 +264,14 @@ def test_duplicate_ids_are_rejected() -> None:
         NodeSchema(
             "test.duplicate",
             inputs=(
-                InputSpec("x", TypeExpr.concrete("core.int")),
-                InputSpec("x", TypeExpr.concrete("core.int")),
+                InputSpec("x", TypeExpr.concrete("INT")),
+                InputSpec("x", TypeExpr.concrete("INT")),
             ),
         )
 
 
 def test_mixed_input_order_survives_wire_and_elaboration() -> None:
-    integer = TypeExpr.concrete("core.int")
+    integer = TypeExpr.concrete("INT")
     schema = NodeSchema(
         "test.ordered",
         inputs=(InputSpec("before", integer), InputSpec("after", integer)),
@@ -294,7 +317,7 @@ def test_mixed_input_order_survives_wire_and_elaboration() -> None:
     [("family", "a"), ("family", "a", "a"), ("unknown", "a", "b"), ("family", "b", "a")],
 )
 def test_input_order_rejects_missing_duplicate_unknown_or_reversed_entries(order) -> None:
-    integer = TypeExpr.concrete("core.int")
+    integer = TypeExpr.concrete("INT")
     with pytest.raises(ValueError, match="input_order"):
         NodeSchema(
             "test.invalid_order",

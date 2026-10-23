@@ -343,8 +343,8 @@ def test_native_video_chain_matches_across_worker_shared_memory() -> None:
                     node_type="dinkster.video.trim",
                     inputs={
                         "video": registry.wrap("comfy.VIDEO", source),
-                        "start_time": registry.wrap("core.float", 0.5),
-                        "duration": registry.wrap("core.float", 1.0),
+                        "start_time": registry.wrap("FLOAT", 0.5),
+                        "duration": registry.wrap("FLOAT", 1.0),
                     },
                     effective_schema=worker.schemas["dinkster.video.trim"],
                 )

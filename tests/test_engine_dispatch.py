@@ -48,7 +48,7 @@ from dinkster_values import (
     register_resource_handle_type,
 )
 
-STRING = TypeExpr.concrete("core.string")
+STRING = TypeExpr.concrete("STRING")
 HANDLE_LIST = TypeExpr.list_of(TypeExpr.concrete(RESOURCE_HANDLE_TYPE))
 
 _WRAP_REGISTRY = TypeRegistry()
@@ -80,7 +80,7 @@ class Load(Node):
 
 
 def _string(text: str) -> Value:
-    return _WRAP_REGISTRY.wrap("core.string", text)
+    return _WRAP_REGISTRY.wrap("STRING", text)
 
 
 def _stamped(rid: str, owner: str) -> Value:

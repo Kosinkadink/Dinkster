@@ -42,7 +42,7 @@ assert plan(graph, ["double"]) == ["source", "double"]
 Given a mapping of node type to `NodeSchema`, `validate(graph, schemas,
 targets)` returns structured `Diagnostic` objects. Structural errors are
 authoritative; type mismatches are advisory warnings except for the scoped
-`core.combo` boundary, which is hard so strings and combos require explicit
+`COMBO` boundary, which is hard so strings and combos require explicit
 converter nodes.
 
 ## Learn more

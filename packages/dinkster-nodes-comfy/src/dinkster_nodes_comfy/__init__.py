@@ -1,7 +1,5 @@
 """Native Dinkster implementations of ComfyUI core nodes."""
 
-from dinkster_api.v1 import TypeRegistry
-
 from .primitive import (
     PrimitiveBoolean,
     PrimitiveFloat,
@@ -19,9 +17,3 @@ COMFY_NODES = (
     PrimitiveFloat,
     PrimitiveBoolean,
 )
-
-
-def register_comfy_types(registry: TypeRegistry) -> None:
-    """Container values use the registry's general Python value codec."""
-    registry.register("DICT")
-    registry.register("ARRAY")

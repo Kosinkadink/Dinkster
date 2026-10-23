@@ -79,14 +79,14 @@ def test_capability_schemas_share_detection_value_contract() -> None:
     detect = DetectObjects.schema()
     max_results = detect.input("max_results")
     assert max_results is not None
-    assert max_results.type == TypeExpr.concrete("core.int")
+    assert max_results.type == TypeExpr.concrete("INT")
     assert not max_results.required and max_results.default == -1
     assert max_results.widget == NumberWidget(step=1)
     min_score = detect.input("min_score")
     assert min_score is not None and min_score.widget == NumberWidget(step=0.01)
     result_limit_mode = detect.input("result_limit_mode")
     assert result_limit_mode is not None
-    assert result_limit_mode.type == TypeExpr.concrete("core.combo")
+    assert result_limit_mode.type == TypeExpr.concrete("COMBO")
     assert not result_limit_mode.required and result_limit_mode.default == "count"
     assert result_limit_mode.widget == ComboWidget(options=("count", "slice-stop"))
     assert [output.id for output in detect.outputs] == ["detections", "count"]

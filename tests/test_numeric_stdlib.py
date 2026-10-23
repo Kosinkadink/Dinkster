@@ -229,12 +229,12 @@ def test_expression_schema_declares_the_mirror_the_vector_verifies() -> None:
     assert family.min_members == 1
     family_input = family.template[0]
     assert isinstance(family_input, InputSpec)
-    assert family_input.type == TypeExpr.union("core.float", "core.int", "core.boolean")
+    assert family_input.type == TypeExpr.union("FLOAT", "INT", "BOOLEAN")
     assert family_input.force_input is True
     assert tuple((output.id, output.type, output.optional) for output in schema.outputs) == (
-        ("float", TypeExpr.concrete("core.float"), False),
-        ("int", TypeExpr.concrete("core.int"), False),
-        ("boolean", TypeExpr.concrete("core.boolean"), False),
+        ("float", TypeExpr.concrete("FLOAT"), False),
+        ("int", TypeExpr.concrete("INT"), False),
+        ("boolean", TypeExpr.concrete("BOOLEAN"), False),
     )
 
     wire = schema_to_wire(schema)
@@ -243,14 +243,14 @@ def test_expression_schema_declares_the_mirror_the_vector_verifies() -> None:
     family_wire = next(entry for entry in interface if entry["role"] == "inputFamily")
     assert family_wire["template"][0]["type"] == {
         "kind": "union",
-        "types": ["core.float", "core.int", "core.boolean"],
+        "types": ["FLOAT", "INT", "BOOLEAN"],
     }
     assert family_wire["template"][0]["forceInput"] is True
     output_wire = [entry for entry in interface if entry["role"] == "output"]
     assert [(entry["id"], entry["type"]) for entry in output_wire] == [
-        ("float", {"kind": "concrete", "types": ["core.float"]}),
-        ("int", {"kind": "concrete", "types": ["core.int"]}),
-        ("boolean", {"kind": "concrete", "types": ["core.boolean"]}),
+        ("float", {"kind": "concrete", "types": ["FLOAT"]}),
+        ("int", {"kind": "concrete", "types": ["INT"]}),
+        ("boolean", {"kind": "concrete", "types": ["BOOLEAN"]}),
     ]
     assert all("optional" not in entry for entry in output_wire)
 
@@ -358,7 +358,7 @@ def test_foundation_comfy_alias_behavior() -> None:
     assert math_source.input_families[0].member_names == tuple("abcdefghijklmnopqrstuvwxyz")
     math_family_input = math_source.input_families[0].template[0]
     assert isinstance(math_family_input, InputSpec)
-    assert math_family_input.type == TypeExpr.union("core.float", "core.int", "core.boolean")
+    assert math_family_input.type == TypeExpr.union("FLOAT", "INT", "BOOLEAN")
     assert tuple((output.id, output.optional) for output in math_source.outputs) == (
         ("FLOAT", False),
         ("INT", False),
@@ -514,15 +514,15 @@ def test_existing_scalar_math_workflow_needs_no_migration() -> None:
         "dinkster.math.expression",
         {
             "expression": "a / b",
-            "values.a": TypedLiteral("core.int", 7),
-            "values.b": TypedLiteral("core.int", 2),
+            "values.a": TypedLiteral("INT", 7),
+            "values.b": TypedLiteral("INT", 2),
         },
     )
     nodes: dict[str, GraphNode] = {"expression": expression}
     for output, type_id, expected in (
-        ("float", "core.float", 3.5),
-        ("int", "core.int", 3),
-        ("boolean", "core.boolean", True),
+        ("float", "FLOAT", 3.5),
+        ("int", "INT", 3),
+        ("boolean", "BOOLEAN", True),
     ):
         nodes[f"compare_{output}"] = GraphNode(
             "dinkster.value.compare",

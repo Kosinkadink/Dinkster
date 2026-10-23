@@ -50,52 +50,52 @@ from dinkster_workers.devices import DeviceMap
 
 
 def test_list_type_id_grammar() -> None:
-    assert list_type_id("core.int") == "list<core.int>"
-    assert parse_list_type_id("list<core.int>") == "core.int"
-    assert parse_list_type_id("list<list<core.int>>") == "list<core.int>"
-    assert parse_list_type_id("core.int") is None
+    assert list_type_id("INT") == "list<INT>"
+    assert parse_list_type_id("list<INT>") == "INT"
+    assert parse_list_type_id("list<list<INT>>") == "list<INT>"
+    assert parse_list_type_id("INT") is None
     assert parse_list_type_id("list<>") is None
 
 
 def test_list_types_have_one_schema_spelling() -> None:
     with pytest.raises(ValueError):
-        TypeExpr.concrete("list<core.int>")
+        TypeExpr.concrete("list<INT>")
 
 
 def test_type_expr_list_kind() -> None:
-    expr = TypeExpr.list_of(TypeExpr.concrete("core.int"))
-    assert expr.runtime_type_id() == "list<core.int>"
+    expr = TypeExpr.list_of(TypeExpr.concrete("INT"))
+    assert expr.runtime_type_id() == "list<INT>"
     nested = TypeExpr.list_of(expr)
-    assert nested.runtime_type_id() == "list<list<core.int>>"
+    assert nested.runtime_type_id() == "list<list<INT>>"
     assert TypeExpr.list_of(TypeExpr.wildcard()).runtime_type_id() is None
 
     assert expr.cardinality() == "list"
-    assert TypeExpr.concrete("core.int").cardinality() == "scalar"
+    assert TypeExpr.concrete("INT").cardinality() == "scalar"
     assert TypeExpr.wildcard().cardinality() == "unknown"
 
-    assert expr.accepts_concrete("list<core.int>")
-    assert not expr.accepts_concrete("core.int")
-    assert not expr.accepts_concrete("list<core.float>")
+    assert expr.accepts_concrete("list<INT>")
+    assert not expr.accepts_concrete("INT")
+    assert not expr.accepts_concrete("list<FLOAT>")
     assert TypeExpr.list_of(TypeExpr.wildcard()).accepts_concrete("list<anything>")
 
     with pytest.raises(ValueError):
         TypeExpr(kind="list")  # no element
     with pytest.raises(ValueError):
-        TypeExpr(kind="concrete", types=("core.int",), element=TypeExpr.wildcard())
+        TypeExpr(kind="concrete", types=("INT",), element=TypeExpr.wildcard())
 
 
 def test_schema_wire_roundtrip_with_lists() -> None:
     schema = NodeSchema(
         node_type="test.lists",
         inputs=(
-            InputSpec("values", TypeExpr.list_of(TypeExpr.concrete("core.int"))),
+            InputSpec("values", TypeExpr.list_of(TypeExpr.concrete("INT"))),
             InputSpec(
                 "matrix",
-                TypeExpr.list_of(TypeExpr.list_of(TypeExpr.concrete("core.float"))),
+                TypeExpr.list_of(TypeExpr.list_of(TypeExpr.concrete("FLOAT"))),
                 required=False,
             ),
         ),
-        outputs=(OutputSpec("out", TypeExpr.list_of(TypeExpr.concrete("core.string"))),),
+        outputs=(OutputSpec("out", TypeExpr.list_of(TypeExpr.concrete("STRING"))),),
     )
     assert schema_from_wire(schema_to_wire(schema)) == schema
 
@@ -111,8 +111,8 @@ def make_registry() -> TypeRegistry:
 
 def test_wrap_list_builds_child_envelopes() -> None:
     registry = make_registry()
-    value = registry.wrap("list<core.int>", [1, 2, 3])
-    assert value.type_id == "list<core.int>"
+    value = registry.wrap("list<INT>", [1, 2, 3])
+    assert value.type_id == "list<INT>"
     assert value.meta.get("length") == 3
     assert value.resolve() == [1, 2, 3]
     children = list_children(value)
@@ -124,10 +124,10 @@ def test_wrap_list_builds_child_envelopes() -> None:
 
 def test_list_fingerprint_is_order_sensitive_and_stable() -> None:
     registry = make_registry()
-    a = registry.wrap("list<core.int>", [1, 2, 3])
-    b = registry.wrap("list<core.int>", [1, 2, 3])
-    c = registry.wrap("list<core.int>", [3, 2, 1])
-    d = registry.wrap("list<core.int>", [1, 2])
+    a = registry.wrap("list<INT>", [1, 2, 3])
+    b = registry.wrap("list<INT>", [1, 2, 3])
+    c = registry.wrap("list<INT>", [3, 2, 1])
+    d = registry.wrap("list<INT>", [1, 2])
     assert a.fingerprint == b.fingerprint
     assert a.fingerprint != c.fingerprint
     assert a.fingerprint != d.fingerprint
@@ -135,17 +135,17 @@ def test_list_fingerprint_is_order_sensitive_and_stable() -> None:
 
 def test_wrap_nested_lists() -> None:
     registry = make_registry()
-    value = registry.wrap("list<list<core.int>>", [[1, 2], [3]])
+    value = registry.wrap("list<list<INT>>", [[1, 2], [3]])
     assert value.resolve() == [[1, 2], [3]]
     children = list_children(value)
     assert children is not None
-    assert [c.type_id for c in children] == ["list<core.int>"] * 2
+    assert [c.type_id for c in children] == ["list<INT>"] * 2
 
 
 def test_wrap_combo_lists_preserves_empty_order_and_duplicates() -> None:
     registry = make_registry()
-    empty = registry.wrap("list<core.combo>", [])
-    ordered = registry.wrap("list<core.combo>", ["b", "a", "b"])
+    empty = registry.wrap("list<COMBO>", [])
+    ordered = registry.wrap("list<COMBO>", ["b", "a", "b"])
 
     assert empty.resolve() == []
     assert ordered.resolve() == ["b", "a", "b"]
@@ -154,29 +154,29 @@ def test_wrap_combo_lists_preserves_empty_order_and_duplicates() -> None:
     assert [child.type_id for child in children] == [CORE_COMBO] * 3
     assert children[0].fingerprint == children[2].fingerprint
     assert children[0].fingerprint != children[1].fingerprint
-    assert ordered.fingerprint != registry.wrap("list<core.combo>", ["a", "b", "b"]).fingerprint
+    assert ordered.fingerprint != registry.wrap("list<COMBO>", ["a", "b", "b"]).fingerprint
 
 
 @pytest.mark.parametrize("invalid", [["ok", 1], [None], [["nested"]]])
 def test_wrap_combo_lists_recursively_rejects_non_strings(invalid: object) -> None:
     registry = make_registry()
-    with pytest.raises(TypeError, match="core.combo expects a string"):
-        registry.wrap("list<core.combo>", invalid)
+    with pytest.raises(TypeError, match="COMBO expects a string"):
+        registry.wrap("list<COMBO>", invalid)
 
 
 def test_wrap_list_rejects_non_sequences() -> None:
     registry = make_registry()
     with pytest.raises(TypeError):
-        registry.wrap("list<core.int>", 5)
+        registry.wrap("list<INT>", 5)
     with pytest.raises(TypeError):
-        registry.wrap("list<core.string>", "not-a-list-of-strings")
+        registry.wrap("list<STRING>", "not-a-list-of-strings")
 
 
 def test_make_list_value_rejects_mismatched_children() -> None:
     registry = make_registry()
     child = registry.wrap(CORE_INT, 1)
     with pytest.raises(ValueError):
-        make_list_value("core.float", [child])
+        make_list_value("FLOAT", [child])
 
 
 def _handle_value(registry: TypeRegistry, rid: str, device: str = "cuda:0"):
@@ -209,8 +209,8 @@ class MakeRange(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.make_range",
-            inputs=(InputSpec("count", TypeExpr.concrete("core.int")),),
-            outputs=(OutputSpec("values", TypeExpr.list_of(TypeExpr.concrete("core.int"))),),
+            inputs=(InputSpec("count", TypeExpr.concrete("INT")),),
+            outputs=(OutputSpec("values", TypeExpr.list_of(TypeExpr.concrete("INT"))),),
         )
 
     @classmethod
@@ -225,8 +225,8 @@ class SumList(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.sum_list",
-            inputs=(InputSpec("values", TypeExpr.list_of(TypeExpr.concrete("core.int"))),),
-            outputs=(OutputSpec("total", TypeExpr.concrete("core.int")),),
+            inputs=(InputSpec("values", TypeExpr.list_of(TypeExpr.concrete("INT"))),),
+            outputs=(OutputSpec("total", TypeExpr.concrete("INT")),),
         )
 
     @classmethod
@@ -241,7 +241,7 @@ class BadListOutput(Node):
         return NodeSchema(
             node_type="test.bad_list_output",
             inputs=(),
-            outputs=(OutputSpec("values", TypeExpr.list_of(TypeExpr.concrete("core.int"))),),
+            outputs=(OutputSpec("values", TypeExpr.list_of(TypeExpr.concrete("INT"))),),
         )
 
     @classmethod
@@ -323,8 +323,8 @@ class TakesScalar(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.takes_scalar",
-            inputs=(InputSpec("value", TypeExpr.concrete("core.int")),),
-            outputs=(OutputSpec("out", TypeExpr.concrete("core.int")),),
+            inputs=(InputSpec("value", TypeExpr.concrete("INT")),),
+            outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
         )
 
 
@@ -364,7 +364,7 @@ def test_list_element_type_mismatch_is_advisory() -> None:
             return NodeSchema(
                 node_type="test.make_floats",
                 inputs=(),
-                outputs=(OutputSpec("values", TypeExpr.list_of(TypeExpr.concrete("core.float"))),),
+                outputs=(OutputSpec("values", TypeExpr.list_of(TypeExpr.concrete("FLOAT"))),),
             )
 
     graph = Graph(
@@ -393,8 +393,8 @@ def test_codec_roundtrips_lists_with_child_envelopes() -> None:
     receiver = ValueCodec(registry, use_shm=False, accept_shm=False)
 
     stub = _handle_value(registry, "model-x", device="cuda:1")
-    inner = registry.wrap("list<core.int>", [1, 2])
-    value = make_list_value("list<core.int>", [inner, registry.wrap("list<core.int>", [3])])
+    inner = registry.wrap("list<INT>", [1, 2])
+    value = make_list_value("list<INT>", [inner, registry.wrap("list<INT>", [3])])
 
     blobs: list[bytes] = []
     wire, stat = sender.encode(value, blobs, [])
@@ -435,7 +435,7 @@ def test_device_map_rewrites_list_children() -> None:
 def test_cache_manifest_roundtrips_lists() -> None:
     async def scenario() -> None:
         registry = make_registry()
-        outputs = {"values": registry.wrap("list<list<core.int>>", [[1], [2, 3]])}
+        outputs = {"values": registry.wrap("list<list<INT>>", [[1], [2, 3]])}
         encoded = encode_entry(outputs, registry)
         assert encoded is not None
 

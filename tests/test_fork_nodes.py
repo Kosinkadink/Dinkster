@@ -23,7 +23,7 @@ from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 
 CONDITIONING = TypeExpr.concrete("dinkster.conditioning")
-INT = TypeExpr.concrete("core.int")
+INT = TypeExpr.concrete("INT")
 
 
 class _ConditioningConsumer(Node):

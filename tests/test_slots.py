@@ -50,9 +50,9 @@ from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 from scaffold_nodes import SCAFFOLD_NODES, register_scaffold_types
 
-STRING = TypeExpr.concrete("core.string")
-FLOAT = TypeExpr.concrete("core.float")
-MATCHED = TypeExpr.variable("T", ("core.string", "core.float"))
+STRING = TypeExpr.concrete("STRING")
+FLOAT = TypeExpr.concrete("FLOAT")
+MATCHED = TypeExpr.variable("T", ("STRING", "FLOAT"))
 
 SOURCE_SLOT = DynamicSlotSpec(
     id="source",
@@ -119,7 +119,7 @@ def test_variant_key_grammar_is_closed() -> None:
 def test_variant_type_must_be_recursively_concrete() -> None:
     for expr in (
         TypeExpr.wildcard(),
-        TypeExpr(kind="union", types=("core.string", "core.float")),
+        TypeExpr(kind="union", types=("STRING", "FLOAT")),
         TypeExpr.list_of(TypeExpr.wildcard()),
     ):
         with pytest.raises(ValueError, match="recursively concrete"):
@@ -215,7 +215,7 @@ def test_slot_type_binding_guardrails() -> None:
         NodeSchema(
             node_type="test.disallowed-slot-binding",
             slots=(MATCHED_SLOT,),
-            outputs=(OutputSpec("out", TypeExpr.variable("T", ("core.string",))),),
+            outputs=(OutputSpec("out", TypeExpr.variable("T", ("STRING",))),),
         )
 
 
@@ -285,7 +285,7 @@ def test_selected_slot_variant_rejects_an_incompatible_active_input() -> None:
             SlotVariant(
                 "number",
                 FLOAT,
-                inputs=(InputSpec("copy", TypeExpr.variable("T", ("core.string",))),),
+                inputs=(InputSpec("copy", TypeExpr.variable("T", ("STRING",))),),
             ),
         ),
         type_template_id="T",
@@ -295,14 +295,14 @@ def test_selected_slot_variant_rejects_an_incompatible_active_input() -> None:
         slots=(slot,),
         outputs=(OutputSpec("out", MATCHED),),
     )
-    with pytest.raises(ElaborationError, match="does not allow selected type 'core.float'"):
+    with pytest.raises(ElaborationError, match="does not allow selected type 'FLOAT'"):
         elaborate(schema, ["source", "source.copy"], slot_variants={"source": "number"})
 
 
 def test_slot_binding_resolves_count_bound_output_members() -> None:
     schema = NodeSchema(
         node_type="test.matched-output-family",
-        inputs=(InputSpec("count", TypeExpr.concrete("core.int")),),
+        inputs=(InputSpec("count", TypeExpr.concrete("INT")),),
         slots=(MATCHED_SLOT,),
         output_families=(OutputFamilySpec("items", MATCHED, count=OutputCountSpec("count")),),
     )
@@ -681,8 +681,8 @@ def test_worker_wraps_matched_slot_output_as_the_selected_type() -> None:
         schema = MatchedSlotPass.define_schema()
         worker = InProcessWorker({schema.node_type: MatchedSlotPass}, registry)
         for variant, type_id, value in (
-            ("text", "core.string", "hello"),
-            ("number", "core.float", 2.5),
+            ("text", "STRING", "hello"),
+            ("number", "FLOAT", 2.5),
         ):
             effective = elaborate(
                 schema,
@@ -806,8 +806,8 @@ def test_worker_groups_slot_inputs_via_invocation_schema() -> None:
                 node_id="n",
                 node_type="test.stylize",
                 inputs={
-                    "source": registry.wrap("core.string", "world"),
-                    "source.prefix": registry.wrap("core.string", "* "),
+                    "source": registry.wrap("STRING", "world"),
+                    "source.prefix": registry.wrap("STRING", "* "),
                 },
                 effective_schema=effective,
             )
@@ -832,8 +832,8 @@ def test_worker_delivers_open_slot_plain_and_omits_it_when_absent() -> None:
                 node_id="n",
                 node_type="test.open-slot",
                 inputs={
-                    "source": registry.wrap("core.string", "value"),
-                    "source.scale": registry.wrap("core.float", 2.0),
+                    "source": registry.wrap("STRING", "value"),
+                    "source.scale": registry.wrap("FLOAT", 2.0),
                 },
                 effective_schema=elaborate(OPEN_SCHEMA, ["source", "source.scale"]),
             )

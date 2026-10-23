@@ -36,7 +36,7 @@ from dinkster_values import TypeRegistry, list_children, register_core_types
 from dinkster_workers import InProcessWorker
 from scaffold_nodes import SCAFFOLD_NODES, register_scaffold_types
 
-INT = TypeExpr.concrete("core.int")
+INT = TypeExpr.concrete("INT")
 T = TypeExpr.variable("T")
 
 
@@ -73,26 +73,26 @@ def int_source(value: int) -> GraphNode:
 
 def test_bind_flat_variable() -> None:
     specs = (InputSpec("a", T), InputSpec("b", T))
-    bindings = bind_type_variables(specs, {"a": "core.int", "b": "core.int"})
-    assert bindings == {"T": "core.int"}
+    bindings = bind_type_variables(specs, {"a": "INT", "b": "INT"})
+    assert bindings == {"T": "INT"}
 
 
 def test_bind_through_list_constructor() -> None:
     specs = (InputSpec("list", TypeExpr.list_of(T)),)
-    bindings = bind_type_variables(specs, {"list": "list<list<core.int>>"})
-    assert bindings == {"T": "list<core.int>"}
+    bindings = bind_type_variables(specs, {"list": "list<list<INT>>"})
+    assert bindings == {"T": "list<INT>"}
 
 
 def test_bind_conflict_is_loud() -> None:
     specs = (InputSpec("a", T), InputSpec("b", T))
     with pytest.raises(TypeSolveError, match="already bound"):
-        bind_type_variables(specs, {"a": "core.int", "b": "core.string"})
+        bind_type_variables(specs, {"a": "INT", "b": "STRING"})
 
 
 def test_bind_respects_allowlist() -> None:
-    constrained = TypeExpr.variable("N", allowed=("core.int", "core.float"))
+    constrained = TypeExpr.variable("N", allowed=("INT", "FLOAT"))
     with pytest.raises(TypeSolveError, match="allowlist"):
-        bind_type_variables((InputSpec("a", constrained),), {"a": "core.string"})
+        bind_type_variables((InputSpec("a", constrained),), {"a": "STRING"})
 
 
 def test_bind_allowlist_requires_exact_atom() -> None:
@@ -122,21 +122,19 @@ def test_bind_does_not_conflate_image_and_mask() -> None:
 def test_bind_scalar_into_list_expression_is_loud() -> None:
     specs = (InputSpec("list", TypeExpr.list_of(T)),)
     with pytest.raises(TypeSolveError, match="expected a list"):
-        bind_type_variables(specs, {"list": "core.int"})
+        bind_type_variables(specs, {"list": "INT"})
 
 
 def test_bind_ignores_unfed_and_nonvariable_inputs() -> None:
     specs = (InputSpec("a", T), InputSpec("b", INT))
-    assert bind_type_variables(specs, {"b": "core.int"}) == {}
+    assert bind_type_variables(specs, {"b": "INT"}) == {}
 
 
 def test_resolved_type_id_substitutes_recursively() -> None:
-    bindings = {"T": "core.int"}
-    assert resolved_type_id(T, bindings) == "core.int"
-    assert resolved_type_id(TypeExpr.list_of(T), bindings) == "list<core.int>"
-    assert (
-        resolved_type_id(TypeExpr.list_of(TypeExpr.list_of(T)), bindings) == "list<list<core.int>>"
-    )
+    bindings = {"T": "INT"}
+    assert resolved_type_id(T, bindings) == "INT"
+    assert resolved_type_id(TypeExpr.list_of(T), bindings) == "list<INT>"
+    assert resolved_type_id(TypeExpr.list_of(TypeExpr.list_of(T)), bindings) == "list<list<INT>>"
     assert resolved_type_id(TypeExpr.variable("U"), bindings) is None
     assert resolved_type_id(TypeExpr.wildcard(), bindings) is None
 
@@ -156,7 +154,7 @@ def test_make_list_collects_in_document_order() -> None:
         }
     )
     result = run(graph, ["m"])
-    assert result.outputs["m"]["list"].type_id == "list<core.int>"
+    assert result.outputs["m"]["list"].type_id == "list<INT>"
     assert resolved_list(result, "m", "list") == [5, 7]
 
 
@@ -168,12 +166,12 @@ def test_make_list_element_type_follows_inputs() -> None:
         }
     )
     result = run(graph, ["m"])
-    assert result.outputs["m"]["list"].type_id == "list<core.string>"
+    assert result.outputs["m"]["list"].type_id == "list<STRING>"
     assert resolved_list(result, "m", "list") == ["a b"]
 
 
 def test_nested_lists_end_to_end() -> None:
-    """list<list<core.int>> flows through make/element/length unchanged:
+    """list<list<INT>> flows through make/element/length unchanged:
     the constructor nests arbitrarily and the solver binds T to a list type."""
     graph = Graph(
         nodes={
@@ -195,11 +193,11 @@ def test_nested_lists_end_to_end() -> None:
     )
     result = run(graph, ["outer", "pick", "n"])
     outer = result.outputs["outer"]["list"]
-    assert outer.type_id == "list<list<core.int>>"
+    assert outer.type_id == "list<list<INT>>"
     assert outer.meta.get("length") == 2  # outer length only
     inner = list_children(outer)
     assert inner is not None and inner[0].meta.get("length") == 2  # depth via children
-    assert result.outputs["pick"]["item"].type_id == "list<core.int>"
+    assert result.outputs["pick"]["item"].type_id == "list<INT>"
     assert resolved_list(result, "pick", "item") == [1, 2]
     assert result.outputs["n"]["length"].resolve() == 2
 
@@ -244,7 +242,7 @@ def test_append_to_list_preserves_document_order_and_serialization() -> None:
     assert restored == graph
 
     result = run(restored, ["append"])
-    assert result.outputs["append"]["list"].type_id == "list<core.int>"
+    assert result.outputs["append"]["list"].type_id == "list<INT>"
     assert resolved_list(result, "append", "list") == [1, 2, 3, 4]
 
 
@@ -263,7 +261,7 @@ def test_append_to_list_keeps_a_list_item_nested() -> None:
         }
     )
     result = run(graph, ["append"])
-    assert result.outputs["append"]["list"].type_id == "list<list<core.int>>"
+    assert result.outputs["append"]["list"].type_id == "list<list<INT>>"
     assert resolved_list(result, "append", "list") == [[1], [2]]
 
 
@@ -305,12 +303,12 @@ def test_length_element_reverse_concat_repeat() -> None:
     )
     result = run(graph, ["len", "first", "last", "rev", "cat", "rep"])
     assert result.outputs["len"]["length"].resolve() == 2
-    assert result.outputs["first"]["item"].type_id == "core.int"
+    assert result.outputs["first"]["item"].type_id == "INT"
     assert result.outputs["first"]["item"].resolve() == 5
     assert result.outputs["last"]["item"].resolve() == 6
     assert resolved_list(result, "rev", "list") == [6, 5]
     assert resolved_list(result, "cat", "list") == [5, 6, 6, 5]
-    assert result.outputs["rep"]["list"].type_id == "list<core.int>"
+    assert result.outputs["rep"]["list"].type_id == "list<INT>"
     assert resolved_list(result, "rep", "list") == [5, 5, 5]
 
 
@@ -340,10 +338,10 @@ def test_list_slice_uses_python_bounds_and_direction() -> None:
     )
 
     result = run(graph, ["clamped", "reversed", "tail"])
-    assert result.outputs["clamped"]["list"].type_id == "list<core.int>"
+    assert result.outputs["clamped"]["list"].type_id == "list<INT>"
     assert resolved_list(result, "clamped", "list") == [-2, 2, 6]
     assert resolved_list(result, "reversed", "list") == [6, 4, 2, 0, -2]
-    assert result.outputs["tail"]["list"].type_id == "list<core.string>"
+    assert result.outputs["tail"]["list"].type_id == "list<STRING>"
     assert resolved_list(result, "tail", "list") == ["beta"]
 
 
@@ -359,7 +357,7 @@ def test_integer_range_uses_python_ordering_and_empty_behavior() -> None:
     result = run(graph, ["ascending", "descending", "empty"])
     assert resolved_list(result, "ascending", "list") == [0, 1, 2, 3, 4]
     assert resolved_list(result, "descending", "list") == [5, 3, 1, -1]
-    assert result.outputs["empty"]["list"].type_id == "list<core.int>"
+    assert result.outputs["empty"]["list"].type_id == "list<INT>"
     assert resolved_list(result, "empty", "list") == []
 
 
@@ -415,10 +413,10 @@ def test_generic_value_nodes_accept_lists_as_whole_values() -> None:
     )
     result = run(graph, ["repeat", "select", "switch", "gate"])
 
-    assert result.outputs["repeat"]["list"].type_id == "list<list<core.int>>"
+    assert result.outputs["repeat"]["list"].type_id == "list<list<INT>>"
     assert resolved_list(result, "repeat", "list") == [[5], [5]]
     for node in ("select", "switch", "gate"):
-        assert result.outputs[node]["value"].type_id == "list<core.int>"
+        assert result.outputs[node]["value"].type_id == "list<INT>"
         assert resolved_list(result, node, "value") == [5]
 
 
@@ -442,7 +440,7 @@ def test_repeat_zero_is_typed_empty_and_negative_is_loud() -> None:
         }
     )
     result = run(graph, ["rep"])
-    assert result.outputs["rep"]["list"].type_id == "list<core.int>"
+    assert result.outputs["rep"]["list"].type_id == "list<INT>"
     assert resolved_list(result, "rep", "list") == []
 
     bad = Graph(
@@ -473,8 +471,8 @@ def test_cross_product_output_types_follow_each_input() -> None:
         }
     )
     result = run(graph, ["cross"])
-    assert result.outputs["cross"]["a"].type_id == "list<core.int>"
-    assert result.outputs["cross"]["b"].type_id == "list<core.string>"
+    assert result.outputs["cross"]["a"].type_id == "list<INT>"
+    assert result.outputs["cross"]["b"].type_id == "list<STRING>"
     assert resolved_list(result, "cross", "a") == [1, 2]
     assert resolved_list(result, "cross", "b") == ["pq", "pq"]
 
@@ -608,7 +606,7 @@ def test_generic_node_result_is_cached_with_solved_type() -> None:
         assert "append" in first.executed
         second = await engine.run(graph, ["append"])
         assert "append" in second.cached
-        assert second.outputs["append"]["list"].type_id == "list<core.int>"
+        assert second.outputs["append"]["list"].type_id == "list<INT>"
         assert resolved_list(second, "append", "list") == [1, 2]
 
     asyncio.run(scenario())

@@ -24,7 +24,7 @@ from dinkster_workers.boundary import ValueCodec, decode_invocation, encode_invo
 from dinkster_workers.catalog import worker_declarations
 
 IMAGE = TypeExpr.concrete("comfy.IMAGE")
-STRING = TypeExpr.concrete("core.string")
+STRING = TypeExpr.concrete("STRING")
 STREAM = TypeExpr.stream_of(IMAGE)
 
 
@@ -86,8 +86,8 @@ def test_stream_output_variable_is_bound_by_dynamic_slot() -> None:
 
 
 def test_stream_combo_mismatch_keeps_hard_combo_boundary() -> None:
-    expected = TypeExpr.stream_of(TypeExpr.concrete("core.combo"))
-    assert combo_type_mismatch_is_error("stream<core.string>", expected)
+    expected = TypeExpr.stream_of(TypeExpr.concrete("COMBO"))
+    assert combo_type_mismatch_is_error("stream<STRING>", expected)
 
 
 def test_storage_descriptors_policies_and_streams_coexist() -> None:

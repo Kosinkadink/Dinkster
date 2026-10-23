@@ -24,7 +24,7 @@ from .types import Region
 LAYERS = TypeExpr.concrete("dinkster.layers")
 IMAGE = TypeExpr.concrete("dinkster.image")
 MASK = TypeExpr.concrete("dinkster.mask")
-STRING = TypeExpr.concrete("core.string")
+STRING = TypeExpr.concrete("STRING")
 
 
 def migrate_layers(obj: object) -> ImageDocument:

@@ -36,7 +36,7 @@ SourceMedia = timeline_runtime.SourceMedia
 TimelineVideo = timeline_video.TimelineVideo
 
 DOCUMENT = TypeExpr.concrete(DOCUMENT_TYPE)
-STRING = TypeExpr.concrete("core.string")
+STRING = TypeExpr.concrete("STRING")
 
 
 class MakeVideoDocument(Node):

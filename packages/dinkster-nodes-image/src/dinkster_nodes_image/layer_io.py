@@ -62,7 +62,7 @@ class SaveLayers(Node):
                 InputSpec("target", TypeExpr.concrete(SAVE_TARGET_TYPE), widget=SaveTargetWidget()),
                 InputSpec(
                     "format",
-                    TypeExpr.concrete("core.combo"),
+                    TypeExpr.concrete("COMBO"),
                     required=False,
                     default="native",
                     widget=ComboWidget(options=("native", "ora", "psd")),

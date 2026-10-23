@@ -103,7 +103,7 @@ def _authority(ref: AssetRef, size: int) -> MediaSourceAuthority:
 _HOST_SCHEMA = NodeSchema(
     node_type="test.stage",
     inputs=(),
-    outputs=(OutputSpec("out", TypeExpr.concrete("core.string")),),
+    outputs=(OutputSpec("out", TypeExpr.concrete("STRING")),),
 )
 
 
@@ -155,7 +155,7 @@ class _HostWorker:
             return InvocationResult(
                 error=NodeError(invocation.node_id, invocation.node_type, "node boom")
             )
-        return InvocationResult(outputs={"out": self.registry.wrap("core.string", "ok")})
+        return InvocationResult(outputs={"out": self.registry.wrap("STRING", "ok")})
 
 
 async def _host_result(
@@ -338,7 +338,7 @@ class _LateMaterializingWorker(_HostWorker):
             except RuntimeError as exc:
                 assert "closing or closed" in str(exc)
                 self.late_refused.set()
-            return InvocationResult(outputs={"out": self.registry.wrap("core.string", "ok")})
+            return InvocationResult(outputs={"out": self.registry.wrap("STRING", "ok")})
 
         return await asyncio.to_thread(execute)
 
@@ -424,7 +424,7 @@ class _DoubleCancelWorker(_HostWorker):
             except RuntimeError as exc:
                 assert "closing or closed" in str(exc)
                 self.late_refused.set()
-            return InvocationResult(outputs={"out": self.registry.wrap("core.string", "ok")})
+            return InvocationResult(outputs={"out": self.registry.wrap("STRING", "ok")})
 
         return await asyncio.to_thread(execute)
 

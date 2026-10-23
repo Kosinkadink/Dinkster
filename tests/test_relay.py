@@ -1161,7 +1161,7 @@ def test_cancelled_in_process_invocation_refuses_late_source_materialization() -
         registry = core_registry()
         schema = NodeSchema(
             node_type="test.late_source",
-            outputs=(OutputSpec("result", TypeExpr.concrete("core.string")),),
+            outputs=(OutputSpec("result", TypeExpr.concrete("STRING")),),
         )
         entered = threading.Event()
         finished = threading.Event()

@@ -46,7 +46,7 @@ class MathExpressions(Node):
             input_families=(
                 InputFamilySpec(
                     "values",
-                    TypeExpr.union("core.float", "core.int", "core.boolean"),
+                    TypeExpr.union("FLOAT", "INT", "BOOLEAN"),
                     member_names=tuple(string.ascii_lowercase),
                 ),
             ),
@@ -67,10 +67,10 @@ class MathExpressions(Node):
             type_id = output.type.runtime_type_id()
             assert type_id is not None
             results[output.id] = {
-                "core.float": floating,
-                "core.int": integer,
-                "core.boolean": boolean,
-                "core.string": str(floating),
+                "FLOAT": floating,
+                "INT": integer,
+                "BOOLEAN": boolean,
+                "STRING": str(floating),
             }[type_id]
         return results
 

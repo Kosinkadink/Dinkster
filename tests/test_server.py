@@ -113,8 +113,8 @@ from scaffold_nodes import (
     scaffold_lazy_choices,
 )
 
-STRING = TypeExpr.concrete("core.string")
-FLOAT = TypeExpr.concrete("core.float")
+STRING = TypeExpr.concrete("STRING")
+FLOAT = TypeExpr.concrete("FLOAT")
 
 
 class Echo(Node):
@@ -2050,7 +2050,7 @@ def test_job_placement_rejects_nodes_removed_by_selector_lowering(
     selector_schema = NodeSchema(
         "test.placement_selector",
         inputs=(
-            InputSpec("switch", TypeExpr.concrete("core.boolean")),
+            InputSpec("switch", TypeExpr.concrete("BOOLEAN")),
             InputSpec("off", STRING),
             InputSpec("on", STRING),
         ),
@@ -2373,17 +2373,17 @@ def test_nodes_envelope_lists_mergeable_types_sorted() -> None:
             # Post-startup registration, deliberately in non-sorted order
             # to pin the sort.
             registry.register_batch_merge(
-                "core.string",
+                "STRING",
                 provider_id="test.string-merge@1",
                 merge=lambda vs: vs[0],
             )
             registry.register_batch_merge(
-                "core.int", provider_id="test.int-merge@1", merge=lambda vs: vs[0]
+                "INT", provider_id="test.int-merge@1", merge=lambda vs: vs[0]
             )
             resp = await client.get("/api/nodes")
             assert resp.status == 200
             data = await resp.json()
-            assert data["dinkster"]["mergeableTypes"] == ["core.int", "core.string"]
+            assert data["dinkster"]["mergeableTypes"] == ["INT", "STRING"]
         finally:
             await client.close()
 
@@ -3726,7 +3726,7 @@ def test_job_lifecycle_over_http() -> None:
             assert status["extensionSnapshotDigest"] == accepted["extensionSnapshotDigest"]
             # Results are value descriptors: envelope facts, not raw payloads.
             out = status["outputs"]["s"]["out"]
-            assert out["typeId"] == "core.string"
+            assert out["typeId"] == "STRING"
             assert out["fingerprint"]
             # Node progress is a state map.
             assert status["nodeStates"] == {"e": "completed", "s": "completed"}
@@ -3762,11 +3762,11 @@ def test_list_output_descriptor_reports_length() -> None:
                     await asyncio.sleep(0.01)
             assert status["state"] == "completed"
             words = status["outputs"]["sp"]["words"]
-            assert words["typeId"] == "list<core.string>"
+            assert words["typeId"] == "list<STRING>"
             assert words["length"] == 3
             # Child descriptors recurse (bounded): per-element structure is
             # remotely interrogable, not just the top-level count.
-            assert [e["typeId"] for e in words["elements"]] == ["core.string"] * 3
+            assert [e["typeId"] for e in words["elements"]] == ["STRING"] * 3
             assert "elementsTruncated" not in words
         finally:
             await client.close()
@@ -3783,19 +3783,19 @@ def test_value_descriptor_recurses_and_truncates() -> None:
 
     registry = TypeRegistry()
     register_core_types(registry)
-    inner1 = registry.wrap("list<core.int>", [1, 2])
-    inner2 = registry.wrap("list<core.int>", [3])
-    outer = make_list_value("list<core.int>", (inner1, inner2))
+    inner1 = registry.wrap("list<INT>", [1, 2])
+    inner2 = registry.wrap("list<INT>", [3])
+    outer = make_list_value("list<INT>", (inner1, inner2))
 
     descriptor = value_descriptor(outer)
-    assert descriptor["typeId"] == "list<list<core.int>>"
+    assert descriptor["typeId"] == "list<list<INT>>"
     assert descriptor["length"] == 2
     elements = descriptor["elements"]
     assert isinstance(elements, list)
     assert [e["length"] for e in elements] == [2, 1]  # ragged shape visible
-    assert elements[0]["elements"][0]["typeId"] == "core.int"
+    assert elements[0]["elements"][0]["typeId"] == "INT"
 
-    big = registry.wrap("list<core.int>", list(range(DESCRIPTOR_ELEMENT_CAP + 5)))
+    big = registry.wrap("list<INT>", list(range(DESCRIPTOR_ELEMENT_CAP + 5)))
     descriptor = value_descriptor(big)
     assert descriptor["length"] == DESCRIPTOR_ELEMENT_CAP + 5
     big_elements = descriptor["elements"]
@@ -5831,7 +5831,7 @@ def test_values_endpoint_serves_target_and_intermediate() -> None:
             assert resp.status == 200
             data = await resp.json()
             assert data["available"] is True
-            assert data["descriptor"]["typeId"] == "core.string"
+            assert data["descriptor"]["typeId"] == "STRING"
             assert data["descriptor"]["value"] == "HELLO"
             assert data["descriptor"]["fingerprint"]
             assert data["renditions"] == []  # strings have no rich rendition
@@ -5932,7 +5932,7 @@ def test_values_endpoint_element_traversal() -> None:
 
             resp = await client.get(values_url("sp", output_id="words", element="1"))
             data = await resp.json()
-            assert data["descriptor"]["typeId"] == "core.string"
+            assert data["descriptor"]["typeId"] == "STRING"
             assert data["descriptor"]["value"] == "b"
 
             resp = await client.get(values_url("sp", output_id="words", element="5"))

@@ -1613,7 +1613,7 @@ def test_compose_dev_mode(caplog: pytest.LogCaptureFixture) -> None:
         node_id="n",
         node_type="iso.echo",
         pack="isopack",
-        inputs=(EdgeCost("text", "core.string", "inline", 12, 0.2, True, False),),
+        inputs=(EdgeCost("text", "STRING", "inline", 12, 0.2, True, False),),
         outputs=(EdgeCost("out", "iso.blob", "shm", 4096, 1.5, False, False),),
         execute_ms=10.0,
         round_trip_ms=14.0,
@@ -1832,12 +1832,13 @@ def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(tmp_pa
     asyncio.run(scenario())
 
 
-def test_native_comfy_pack_registers_container_literals_in_process() -> None:
+@pytest.mark.parametrize("in_process", (True, False))
+def test_native_comfy_pack_registers_container_literals(in_process: bool) -> None:
     async def scenario() -> None:
-        composer = ServingComposer()
+        composer = ServingComposer(worker_env=WORKER_ENV)
         try:
             manifest = TESTS_DIR.parent / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
-            await composer.add_pack(PackSpec(manifest=manifest, in_process=True))
+            await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
             result = await composer.composition.make_engine(lambda _event: None).run(
                 Graph(
                     nodes={

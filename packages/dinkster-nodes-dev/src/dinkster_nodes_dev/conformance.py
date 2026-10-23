@@ -25,8 +25,8 @@ from dinkster_api.v1 import (
 
 from .image import DEV_IMAGE
 
-INT = TypeExpr.concrete("core.int")
-BOOLEAN = TypeExpr.concrete("core.boolean")
+INT = TypeExpr.concrete("INT")
+BOOLEAN = TypeExpr.concrete("BOOLEAN")
 IMAGE = TypeExpr.concrete(DEV_IMAGE)
 
 

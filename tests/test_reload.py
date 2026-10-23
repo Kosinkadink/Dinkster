@@ -39,7 +39,7 @@ from dinkster_workers import GroupIsolatedWorker, InProcessWorker, IsolatedWorke
 from dinkster.compose import CompositionError, PackSpec, ServingComposer, UnknownPackError
 from dinkster.reload_api import add_reload_routes, apply_reload, apply_remove
 
-STRING = TypeExpr.concrete("core.string")
+STRING = TypeExpr.concrete("STRING")
 
 MODULE_TEMPLATE = '''\
 """Reload test pack, generation {gen!r}: rewritten on disk mid-test."""
@@ -49,7 +49,7 @@ from collections.abc import Mapping
 from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_values import TypeRegistry
 
-STRING = TypeExpr.concrete("core.string")
+STRING = TypeExpr.concrete("STRING")
 
 
 def register_types(registry: TypeRegistry) -> None:
@@ -131,7 +131,7 @@ def write_group_pack(
         "import os\n"
         "from collections.abc import Mapping\n"
         "from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr\n"
-        "STRING = TypeExpr.concrete('core.string')\n"
+        "STRING = TypeExpr.concrete('STRING')\n"
         "class Echo(Node):\n"
         "    @classmethod\n"
         "    def define_schema(cls) -> NodeSchema:\n"

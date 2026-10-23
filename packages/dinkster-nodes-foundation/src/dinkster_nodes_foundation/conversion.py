@@ -175,7 +175,7 @@ class ValueConvert(Node):
                 InputSpec("value", SCALAR, force_input=True),
                 InputSpec(
                     "target",
-                    TypeExpr.concrete("core.combo"),
+                    TypeExpr.concrete("COMBO"),
                     default="float",
                     widget=ComboWidget(options=("int", "float", "number", "string", "boolean")),
                 ),

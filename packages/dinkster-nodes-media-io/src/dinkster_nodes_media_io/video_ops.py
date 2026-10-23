@@ -281,7 +281,7 @@ class DisassembleVideo(Node):
                 OutputSpec("fps", FLOAT),
                 OutputSpec("duration", FLOAT),
                 OutputSpec("bit_depth", INT),
-                OutputSpec("color_space", TypeExpr.concrete("core.string")),
+                OutputSpec("color_space", TypeExpr.concrete("STRING")),
             ),
             search_terms=("video to images", "extract frames", "components", "demux"),
         )
@@ -329,7 +329,7 @@ class TrimVideo(Node):
                 ),
                 InputSpec(
                     "strict_duration",
-                    TypeExpr.concrete("core.boolean"),
+                    TypeExpr.concrete("BOOLEAN"),
                     required=False,
                     default=False,
                 ),
@@ -429,7 +429,7 @@ class VideoInfo(Node):
             category="video",
             inputs=(InputSpec("video", VIDEO),),
             outputs=(
-                OutputSpec("info", TypeExpr.concrete("core.string")),
+                OutputSpec("info", TypeExpr.concrete("STRING")),
                 OutputSpec("width", INT),
                 OutputSpec("height", INT),
                 OutputSpec("fps", FLOAT, optional=True),

@@ -61,7 +61,7 @@ from dinkster_workers.boundary import (
 from dinkster_workers.host import load_pack
 from dinkster_workers.manifest import ManifestError, load_manifest
 
-STRING = TypeExpr.concrete("core.string")
+STRING = TypeExpr.concrete("STRING")
 
 SCHEMA = NodeSchema(
     node_type="test.produce",
@@ -79,7 +79,7 @@ register_resource_handle_type(_REGISTRY)
 
 
 def _string(text: str) -> Value:
-    return _REGISTRY.wrap("core.string", text)
+    return _REGISTRY.wrap("STRING", text)
 
 
 def _owned(rid: str, owner: str | None, *, as_list: bool = False) -> Value:
@@ -918,7 +918,7 @@ def test_worker_startup_rejects_invalid_arm_registration(
     (tmp_path / f"{module}.py").write_text(
         f"""from collections.abc import Mapping
 from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
-STRING = TypeExpr.concrete("core.string")
+STRING = TypeExpr.concrete("STRING")
 class Base(Node):
     @classmethod
     def define_schema(cls):

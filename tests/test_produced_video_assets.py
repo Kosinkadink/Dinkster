@@ -543,7 +543,7 @@ def test_buffered_result_and_eof_retain_source_until_adoption(
         pending = asyncio.create_task(session.invoke(make_invocation(0)))
         await asyncio.sleep(0)
         value = replace(
-            registry.wrap("core.string", "source descriptor"),
+            registry.wrap("STRING", "source descriptor"),
             meta=ValueMeta({"asset_refs": [ref.to_wire()]}),
         )
         header, blobs, _ = encode_result(

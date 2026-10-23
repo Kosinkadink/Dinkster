@@ -31,7 +31,7 @@ from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 from scaffold_nodes import SCAFFOLD_NODES, register_scaffold_types
 
-STRING = TypeExpr.concrete("core.string")
+STRING = TypeExpr.concrete("STRING")
 
 
 class Sleeper(Node):

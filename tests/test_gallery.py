@@ -91,7 +91,7 @@ def test_gallery_widget_wire_coverage() -> None:
             static = _entry(wire, "combo_static")["widget"]
             assert _entry(wire, "combo_static")["type"] == {
                 "kind": "concrete",
-                "types": ["core.combo"],
+                "types": ["COMBO"],
             }
             assert isinstance(static, dict)
             assert static["type"] == "COMBO"
@@ -101,7 +101,7 @@ def test_gallery_widget_wire_coverage() -> None:
             remote = _entry(wire, "combo_remote")["widget"]
             assert _entry(wire, "combo_remote")["type"] == {
                 "kind": "concrete",
-                "types": ["core.combo"],
+                "types": ["COMBO"],
             }
             assert isinstance(remote, dict)
             assert remote["options"] == list(SAMPLERS)
@@ -113,7 +113,7 @@ def test_gallery_widget_wire_coverage() -> None:
             remote_empty = _entry(wire, "combo_remote_empty")["widget"]
             assert _entry(wire, "combo_remote_empty")["type"] == {
                 "kind": "concrete",
-                "types": ["core.combo"],
+                "types": ["COMBO"],
             }
             assert isinstance(remote_empty, dict)
             assert "options" not in remote_empty

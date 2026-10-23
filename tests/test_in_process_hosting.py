@@ -148,7 +148,7 @@ def _placement_manifest(directory: Path) -> Path:
     directory.mkdir()
     (directory / "h31_placement_nodes.py").write_text(
         "from dinkster_schema import InputSpec,Node,NodeSchema,OutputSpec,TypeExpr\n"
-        "STRING=TypeExpr.concrete('core.string')\n"
+        "STRING=TypeExpr.concrete('STRING')\n"
         "class Echo(Node):\n"
         "    @classmethod\n"
         "    def define_schema(cls):\n"
@@ -454,7 +454,7 @@ def test_in_process_tenant_registers_on_invocation_unregisters_on_remove_and_ref
         "class TenantNode(Node):\n"
         "    @classmethod\n"
         "    def define_schema(cls):\n"
-        "        output=OutputSpec('device',TypeExpr.concrete('core.string'))\n"
+        "        output=OutputSpec('device',TypeExpr.concrete('STRING'))\n"
         "        return NodeSchema(node_type='tenant.load',outputs=(output,))\n"
         "    @classmethod\n"
         "    async def execute(cls):\n"

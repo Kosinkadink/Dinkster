@@ -106,7 +106,7 @@ def install_packs(root: Path, count: int) -> Path:
             "    @classmethod\n"
             "    def define_schema(cls):\n"
             f"        return NodeSchema(node_type='{name}.constant', "
-            "outputs=(OutputSpec('value', TypeExpr.concrete('core.int')),))\n"
+            "outputs=(OutputSpec('value', TypeExpr.concrete('INT')),))\n"
             "    @classmethod\n"
             "    def execute(cls):\n"
             "        return cls.outputs(value=1)\n"

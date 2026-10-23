@@ -39,7 +39,7 @@ from dinkster_workers import ExecutionContext, use_execution_context
 from dinkster_workers.boundary import write_frame
 
 IMAGE = TypeExpr.asset_of(TypeExpr.concrete("dinkster.image"))
-STRING = TypeExpr.concrete("core.string")
+STRING = TypeExpr.concrete("STRING")
 RECORDED_GATEWAY_FIXTURE = Path(__file__).parent / "fixtures" / "gateway_session.json"
 
 

@@ -193,7 +193,7 @@ def test_prepare_and_catalog_do_not_dispatch(harness: Harness) -> None:
 def test_dynamic_output_descriptors_are_not_dispatched(harness: Harness) -> None:
     schema = NodeSchema(
         node_type="test.descriptors",
-        inputs=(InputSpec("description", TypeExpr.concrete("core.string")),),
+        inputs=(InputSpec("description", TypeExpr.concrete("STRING")),),
         output_descriptors=OutputDescriptorsSpec(
             "description", (OutputSpec("image", IMAGE),), max_entries=1
         ),
@@ -706,7 +706,7 @@ def test_real_inprocess_error_and_event_paths(
 
 def test_recursive_list_values_and_resident_child(harness: Harness) -> None:
     async def scenario() -> None:
-        inner = make_list_value("core.int", (harness.registry.wrap("core.int", 7),))
+        inner = make_list_value("INT", (harness.registry.wrap("INT", 7),))
         values = {"nested": make_list_value(inner.type_id, (inner,))}
         invocation = replace(harness.invocation(), inputs=values)
         header, blobs, _, _ = encode_invocation(harness.client_transport.codec(), invocation)

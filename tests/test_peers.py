@@ -40,7 +40,7 @@ from dinkster_server import (
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 
-STRING = TypeExpr.concrete("core.string")
+STRING = TypeExpr.concrete("STRING")
 
 
 class Echo(Node):

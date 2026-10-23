@@ -13,8 +13,8 @@ from the authoritative runtime type ids on the input envelopes:
     resolved_type_id(output TypeExpr, bindings) -> runtime type id
 
 Unification is structural through the ``list``, ``asset``, and ``stream``
-constructors: an input declared ``list<T>`` receiving a ``list<core.int>``
-value binds T=core.int, and the same rule applies to typed assets and streams.
+constructors: an input declared ``list<T>`` receiving a ``list<INT>``
+value binds T=INT, and the same rule applies to typed assets and streams.
 All mentions of a variable must agree, and a non-empty allowlist must contain
 the exact bound atom. Registered type equivalences are applied by engine input
 admission before this worker-side solver runs.

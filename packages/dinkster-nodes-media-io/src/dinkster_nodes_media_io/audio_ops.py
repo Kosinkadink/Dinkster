@@ -58,7 +58,7 @@ _ENVELOPE_OPERATIONS = ("avg", "max", "sum")
 _MAX_ENVELOPE_FPS = 240.0
 _MAX_ENVELOPE_HZ = 100_000.0
 
-BOOLEAN = TypeExpr.concrete("core.boolean")
+BOOLEAN = TypeExpr.concrete("BOOLEAN")
 FLOAT_LIST = TypeExpr.list_of(FLOAT)
 
 

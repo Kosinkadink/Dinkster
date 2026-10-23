@@ -820,26 +820,26 @@ class TypeRegistry:
         return Value(type_id=type_id, fingerprint=fp, meta=meta, payload=PyObjPayload(obj))
 
 
-CORE_INT = "core.int"
-CORE_FLOAT = "core.float"
-CORE_STRING = "core.string"
-CORE_COMBO = "core.combo"
-CORE_BOOLEAN = "core.boolean"
+CORE_INT = "INT"
+CORE_FLOAT = "FLOAT"
+CORE_STRING = "STRING"
+CORE_COMBO = "COMBO"
+CORE_BOOLEAN = "BOOLEAN"
 
 
 def _coerce_combo(obj: object) -> str:
     if type(obj) is not str:
-        raise TypeError(f"core.combo expects a string, got {type(obj).__name__}")
+        raise TypeError(f"COMBO expects a string, got {type(obj).__name__}")
     return obj
 
 
 def _validate_combo_encoded(data: bytes, _metadata: Mapping[str, object]) -> None:
     if not data.startswith(b"json:"):
-        raise ValueError("core.combo expects canonical JSON encoding")
+        raise ValueError("COMBO expects canonical JSON encoding")
     obj = default_decode(data)
     _coerce_combo(obj)
     if default_encode(obj) != data:
-        raise ValueError("core.combo expects canonical JSON encoding")
+        raise ValueError("COMBO expects canonical JSON encoding")
 
 
 def register_core_types(registry: TypeRegistry) -> None:
@@ -856,6 +856,8 @@ def register_core_types(registry: TypeRegistry) -> None:
         validate_encoded=_validate_combo_encoded,
     )
     registry.register(CORE_BOOLEAN, inline=lambda obj: obj)
+    registry.register("DICT")
+    registry.register("ARRAY")
     # core.absent registers with the default codec (payload is None, which
     # JSON-encodes) so absences cross boundaries and caches like any value.
     registry.register(CORE_ABSENT)

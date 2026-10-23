@@ -20,7 +20,7 @@ from dinkster_image_document.document import ImageDocument, flatten
 
 IMAGE = TypeExpr.concrete("dinkster.image")
 ASSET = TypeExpr.concrete(ASSET_TYPE)
-STRING = TypeExpr.concrete("core.string")
+STRING = TypeExpr.concrete("STRING")
 
 
 class RenderImageDocument(Node):
