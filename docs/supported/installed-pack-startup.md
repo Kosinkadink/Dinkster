@@ -6,8 +6,9 @@
   lowercase with equivalent separator spellings.
 - Locale catalogs preserve exact node and port IDs, including spaces, case,
   wildcard outputs and trailing dots. Node translations must belong to the pack.
-- The native text, primitive and eager boolean nodes load through their ordinary
-  pack manifest, including isolated execution, reload and exact-ID ownership checks.
+- The native text, primitive, eager boolean, number conversion and seed nodes
+  load through their ordinary pack manifest, including isolated execution,
+  reload and exact-ID ownership checks.
 - Installed pack schemas and static choices are available before pack workers
   start. Workers activate on demand, including in-process packs and explicitly
   configured shared-process groups.

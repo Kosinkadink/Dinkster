@@ -9,6 +9,7 @@ from .primitive import (
     PrimitiveStringMultiline,
 )
 from .text import TEXT_NODES
+from .utilities import ComfyNumberConvert, SeedNode
 
 COMFY_NODES = (
     *TEXT_NODES,
@@ -18,4 +19,6 @@ COMFY_NODES = (
     PrimitiveFloat,
     PrimitiveBoolean,
     *LOGIC_NODES,
+    ComfyNumberConvert,
+    SeedNode,
 )

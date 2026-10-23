@@ -24,6 +24,8 @@ namespaces = [
     "ComfyNotNode",
     "ComfyAndNode",
     "ComfyOrNode",
+    "ComfyNumberConvert",
+    "SeedNode",
 ]
 
 [pack.sandbox]
