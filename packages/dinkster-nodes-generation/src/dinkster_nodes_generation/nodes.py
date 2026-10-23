@@ -6092,7 +6092,6 @@ GENERATION_COMPAT_CARRIER_NODE_IDS = tuple(
 )
 _SUPPORTED_SCHEMA_NODE_IDS = frozenset(
     {
-        "comfy.BlockSparseAttention",
         "dinkster.load_checkpoint",
         "dinkster.load_diffusion_model",
         "dinkster.load_clip",

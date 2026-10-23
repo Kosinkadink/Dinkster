@@ -163,7 +163,7 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
 
     generation = load_manifest(Path("packages/dinkster-nodes-generation/dinkster-pack.toml"))
     assert generation.namespaces == ("comfy", "dinkster")
-    assert "comfy.BlockSparseAttention" in generation.schema_only
+    assert "comfy.BlockSparseAttention" not in generation.schema_only
 
 
 def test_manifest_loads_strict_adjacent_comfy_alias_registry_without_importing_code(
