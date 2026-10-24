@@ -5,6 +5,7 @@ from typing import cast
 from dinkster_api.v1 import NumberWidget, schema_to_wire
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.video_latent import VIDEO_LATENT_NODES
+from dinkster_nodes_comfy.video_latent_ops import VIDEO_LATENT_OPERATION_NODES
 
 
 def test_video_latent_schemas_match_the_fixed_reference_contract() -> None:
@@ -73,4 +74,31 @@ def test_video_latent_schemas_match_the_fixed_reference_contract() -> None:
     for node in VIDEO_LATENT_NODES:
         assert node in COMFY_NODES
         assert [output.id for output in node.schema().outputs] == ["LATENT"]
+        assert schema_to_wire(node.schema())
+
+
+def test_video_latent_transform_schemas_match_the_fixed_reference_contract() -> None:
+    trim, freeze = VIDEO_LATENT_OPERATION_NODES
+    trim_schema, freeze_schema = trim.schema(), freeze.schema()
+
+    assert (trim_schema.node_type, trim_schema.display_name, trim_schema.category) == (
+        "TrimVideoLatent",
+        "Trim Video Latent",
+        "model/latent",
+    )
+    assert [input_spec.id for input_spec in trim_schema.inputs] == ["samples", "trim_amount"]
+    trim_amount = cast(NumberWidget, trim_schema.inputs[1].widget)
+    assert (trim_schema.inputs[1].default, trim_amount.min, trim_amount.max) == (0, 0, 99999)
+    assert [output.id for output in trim_schema.outputs] == ["LATENT"]
+
+    assert (freeze_schema.node_type, freeze_schema.display_name, freeze_schema.category) == (
+        "LTXVFreezeLatent",
+        "LTXV Freeze Latent",
+        "model/latent/ltxv",
+    )
+    assert [input_spec.id for input_spec in freeze_schema.inputs] == ["latent"]
+    assert [output.id for output in freeze_schema.outputs] == ["latent"]
+
+    for node in VIDEO_LATENT_OPERATION_NODES:
+        assert node in COMFY_NODES
         assert schema_to_wire(node.schema())
