@@ -118,14 +118,12 @@ namespaces = [
     "JoinImageWithAlpha",
     "ImageScale",
     "ImageScaleBy",
-    "GetImageSize",
-    "GetLatentSize",
-    "RebatchImages",
-    "RebatchLatents",
     "ImageInvert",
     "ImageBatch",
     "EmptyImage",
     "ImagePadForOutpaint",
+    "GetImageSize",
+    "GetLatentSize",
     "ImageBlend",
     "ImageBlur",
     "ImageQuantize",
@@ -152,6 +150,8 @@ namespaces = [
     "BatchMasksNode",
     "BatchLatentsNode",
     "ColorTransfer",
+    "RebatchImages",
+    "RebatchLatents",
 ]
 
 [pack.sandbox]
