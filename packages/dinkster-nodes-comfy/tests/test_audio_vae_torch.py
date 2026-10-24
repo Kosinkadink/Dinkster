@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import os
+import statistics
 from pathlib import Path
 from typing import Any
 
@@ -76,6 +78,7 @@ def test_encode_uses_pinned_resample_for_unequal_rates(source_rate: int, vae_rat
         audio_sample_rate = vae_rate
 
     waveform = torch.tensor([[[0.0, 1.0, -0.5]], [[0.5, -1.0, 0.25]]], dtype=torch.float64)
+    before = waveform.clone()
     vae = RateVAE()
     result = VAEEncodeAudio.execute(
         audio={"waveform": waveform, "sample_rate": source_rate}, vae=vae
@@ -84,20 +87,25 @@ def test_encode_uses_pinned_resample_for_unequal_rates(source_rate: int, vae_rat
     torch.testing.assert_close(result["samples"], expected + 2)
     assert result["samples"].dtype is torch.float64
     assert result["samples"].device == waveform.device
+    assert torch.equal(waveform, before)
 
 
 def test_decode_uses_last_nested_stream_normalizes_each_batch_and_selects_rate() -> None:
     vae = AudioVAE()
-    first = torch.full((1, 2, 3), 9.0)
-    last = torch.tensor([[[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]], [[0.0, 0.1, 0.2], [0.3, 0.4, 0.5]]])
+    first = torch.full((1, 2, 3), 9.0, dtype=torch.float64)
+    last = torch.tensor(
+        [[[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]], [[0.0, 0.1, 0.2], [0.3, 0.4, 0.5]]],
+        dtype=torch.float64,
+    )
     expected = last.clone()
-    std = expected.std(dim=[1, 2], keepdim=True) * 5.0
-    std[std < 1.0] = 1.0
+    expected[0] /= 5 * math.sqrt(3.5)
     nested = torch.nested.nested_tensor([first, last])
     samples = {"samples": nested, "sample_rate": 48000, "extra": "source"}
     output = VAEDecodeAudio.execute(samples=samples, vae=vae)["AUDIO"]
-    assert torch.equal(vae.decoded, expected / std)
-    torch.testing.assert_close(output["waveform"], expected / std)
+    torch.testing.assert_close(vae.decoded, expected)
+    torch.testing.assert_close(output["waveform"], expected)
+    torch.testing.assert_close(nested.unbind()[-1], expected)
+    assert torch.equal(nested.unbind()[0], first)
     assert output["sample_rate"] == 48000
     assert output["waveform"].dtype == last.dtype and output["waveform"].device == last.device
     assert samples["extra"] == "source"
@@ -153,7 +161,13 @@ class AudioVAESource(Node):
     def execute(cls) -> dict[str, object]:
         return cls.outputs(
             audio={
-                "waveform": torch.tensor([[[0.0, 1.0, -0.5], [0.5, -1.0, 0.25]]]),
+                "waveform": torch.tensor(
+                    [
+                        [[0.0, 8.0, -4.0], [4.0, -8.0, 2.0]],
+                        [[0.0, 0.01, -0.005], [0.005, -0.01, 0.0025]],
+                    ],
+                    dtype=torch.float64,
+                ),
                 "sample_rate": 24000,
             },
             vae=GraphAudioVAE(),
@@ -171,13 +185,19 @@ class AudioVAEInspect(Node):
 
     @classmethod
     def execute(cls, *, ordinary: Any, tiled: Any) -> dict[str, object]:
+        expected = torch.tensor(
+            [[[0.0, 8.0, -4.0], [4.0, -8.0, 2.0]], [[0.0, 0.01, -0.005], [0.005, -0.01, 0.0025]]],
+            dtype=torch.float32,
+        )
+        expected[0] /= 5 * statistics.stdev([0.0, 8.0, -4.0, 4.0, -8.0, 2.0])
         for output in (ordinary, tiled):
             audio = materialize_audio(output)
             assert set(audio) == {"waveform", "sample_rate"}
             assert audio["sample_rate"] == 32000
             assert audio["waveform"].dtype is torch.float32
             assert audio["waveform"].device.type == "cpu"
-            assert tuple(audio["waveform"].shape) == (1, 2, 3)
+            assert tuple(audio["waveform"].shape) == (2, 2, 3)
+            torch.testing.assert_close(audio["waveform"], expected)
         return cls.outputs(summary="audio-vae")
 
 

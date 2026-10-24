@@ -1,5 +1,8 @@
 """Torch-free schemas for native ComfyUI audio VAE nodes."""
 
+import subprocess
+import sys
+
 from dinkster_api.v1 import (
     AUDIO_TYPE,
     CORE_INT,
@@ -69,3 +72,19 @@ def test_audio_vae_interfaces_match_comfy_schemas() -> None:
             maximum,
             8,
         )
+
+
+def test_audio_vae_cold_discovery() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; from dinkster_nodes_comfy.audio_vae "
+            "import AUDIO_VAE_NODES; assert len([n.schema() for n in AUDIO_VAE_NODES]) == 3; "
+            "assert 'torch' not in sys.modules; "
+            "assert 'dinkster_inference.model_management' not in sys.modules",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
