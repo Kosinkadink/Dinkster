@@ -88,6 +88,8 @@ namespaces = [
     "SelectModelDevice",
     "SelectCLIPDevice",
     "SelectVAEDevice",
+    "TorchCompileModel",
+    "wanBlockSwap",
     "AlignYourStepsScheduler",
     "GITSScheduler",
     "OptimalStepsScheduler",
