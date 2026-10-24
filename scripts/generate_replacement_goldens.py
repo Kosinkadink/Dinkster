@@ -44,16 +44,17 @@ from dinkster_schema import (
     schema_to_wire,
     validate_replacement_references,
 )
+from dinkster_values import CORE_BOOLEAN, CORE_COMBO, CORE_FLOAT, CORE_INT, CORE_STRING
 
 GOLDENS_DIR = Path(__file__).resolve().parent.parent / "goldens" / "replacements"
 
-_INT = TypeExpr.concrete("INT")
-_FLOAT = TypeExpr.concrete("FLOAT")
-_STRING = TypeExpr.concrete("STRING")
-_COMBO = TypeExpr.concrete("COMBO")
+_INT = TypeExpr.concrete(CORE_INT)
+_FLOAT = TypeExpr.concrete(CORE_FLOAT)
+_STRING = TypeExpr.concrete(CORE_STRING)
+_COMBO = TypeExpr.concrete(CORE_COMBO)
 _COMBO_LIST = TypeExpr.list_of(_COMBO)
-_BOOLEAN = TypeExpr.concrete("BOOLEAN")
-_IMAGE_LIST = TypeExpr.list_of(TypeExpr.concrete("STRING"))
+_BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
+_IMAGE_LIST = TypeExpr.list_of(TypeExpr.concrete(CORE_STRING))
 
 
 def _vocabulary_schemas() -> dict[str, NodeSchema]:

@@ -67,6 +67,7 @@ from dinkster_schema import (
     ComfyAliasRegistry,
     ComfyGroupRegistry,
     NodeSchema,
+    TypeExpr,
     combo_choices_json_bytes,
     comfy_alias_registry_from_wire,
     comfy_group_registry_from_wire,
@@ -401,6 +402,13 @@ class PackDeclarations:
             declarations, role=role, pack=pack
         )
         self.renditions = _renditions_from_hello(declarations, role=role, pack=pack)
+        registered_types = declarations.get("registeredTypes", [])
+        if not isinstance(registered_types, list) or any(
+            not isinstance(tid, str) or TypeExpr.runtime_type_atom(tid) != tid
+            for tid in cast("list[object]", registered_types)
+        ):
+            raise ValueError(f"{role} '{pack}' carried malformed registeredTypes")
+        self.registered_types = tuple(cast("list[str]", registered_types))
 
 
 class BoundarySession:
@@ -528,6 +536,7 @@ class BoundarySession:
         self._comfy_groups: ComfyGroupRegistry | None = None
         self._combo_choices: dict[str, tuple[str, ...]] = {}
         self._renditions: tuple[RenditionDeclaration, ...] = ()
+        self._registered_types: tuple[str, ...] = ()
         self._lazy_choice_ids: tuple[str, ...] = ()
         self._compat_skips: dict[str, CompatGateDiagnostic] = {}
         self._body_arms: dict[str, tuple[str, ...]] | None = None
@@ -644,6 +653,12 @@ class BoundarySession:
         if self._schemas is None:
             raise RuntimeError("BoundarySession.begin() has not completed")
         return self._renditions
+
+    @property
+    def registered_types(self) -> tuple[str, ...]:
+        if self._schemas is None:
+            raise RuntimeError("BoundarySession.begin() has not completed")
+        return self._registered_types
 
     @property
     def lazy_choice_ids(self) -> tuple[str, ...]:
@@ -825,6 +840,7 @@ class BoundarySession:
                 ) from exc
         self._combo_choices = declarations.combo_choices
         self._renditions = declarations.renditions
+        self._registered_types = declarations.registered_types
         self._lazy_choice_ids = declarations.lazy_choice_ids
         self._compat_skips = declarations.compat_skips
         self._body_arms = declarations.body_arms

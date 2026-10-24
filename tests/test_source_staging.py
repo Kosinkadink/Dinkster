@@ -140,6 +140,7 @@ class _HostProvider:
 class _HostWorker:
     attention_capabilities = None
     attention_route_token = None
+    registered_types: tuple[str, ...] = ()
 
     def __init__(self, registry: TypeRegistry, ref: AssetRef, *, node_error: bool) -> None:
         self.registry = registry

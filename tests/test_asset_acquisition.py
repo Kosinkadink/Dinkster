@@ -544,7 +544,7 @@ def test_asset_widget_kind_round_trips_on_the_wire() -> None:
         inputs=(
             InputSpec(
                 "model",
-                TypeExpr.concrete("dinkster.asset"),
+                TypeExpr.concrete("ASSET"),
                 widget=AssetWidget(accept=("application/octet-stream",), kind="model/lora"),
             ),
         ),
@@ -565,7 +565,7 @@ def test_asset_widget_kind_round_trips_on_the_wire() -> None:
     bare = schema_to_wire(
         NodeSchema(
             node_type="test.bare",
-            inputs=(InputSpec("a", TypeExpr.concrete("dinkster.asset"), widget=AssetWidget()),),
+            inputs=(InputSpec("a", TypeExpr.concrete("ASSET"), widget=AssetWidget()),),
             outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
         )
     )
@@ -580,7 +580,7 @@ def test_asset_widget_rejects_ungrammatical_kind() -> None:
 
 # --- job preflight: plan, consent, acquire, run --------------------------------
 
-ASSET = TypeExpr.concrete("dinkster.asset")
+ASSET = TypeExpr.concrete("ASSET")
 INT = TypeExpr.concrete(CORE_INT)
 
 
@@ -664,7 +664,7 @@ def test_preflight_sees_through_typed_literals() -> None:
                 "test.asset.size",
                 {
                     "asset": TypedLiteral(
-                        "dinkster.asset",
+                        "ASSET",
                         asset_literal(MODEL_DIGEST, "stamped.bin", len(MODEL_BYTES)),
                     )
                 },
@@ -678,7 +678,7 @@ def test_preflight_sees_through_typed_literals() -> None:
                 "test.asset.size",
                 {
                     "asset": TypedLiteral(
-                        "list<dinkster.asset>",
+                        "list<ASSET>",
                         [asset_literal(MODEL_DIGEST, "in-list.bin", len(MODEL_BYTES))],
                     )
                 },

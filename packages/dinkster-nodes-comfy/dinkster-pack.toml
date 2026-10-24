@@ -1,5 +1,6 @@
 [pack]
 name = "dinkster-nodes-comfy"
+publisher = "dinkster"
 namespaces = [
     "StringFormat",
     "StringConcatenate",
@@ -23,6 +24,11 @@ namespaces = [
     "AddTextSuffix",
     "ReplaceText",
     "StripWhitespace",
+    "ShuffleDataset",
+    "ShuffleImageTextDataset",
+    "ImageDeduplication",
+    "ImageGrid",
+    "MergeTextLists",
     "PrimitiveString",
     "PrimitiveStringMultiline",
     "PrimitiveInt",
@@ -63,6 +69,8 @@ namespaces = [
     "ModelMergeKrea2",
     "FreeU",
     "FreeU_V2",
+    "ScaleROPE",
+    "DifferentialDiffusion",
     "EmptyLatentImage",
     "LatentFromBatch",
     "RepeatLatentBatch",
@@ -89,6 +97,13 @@ namespaces = [
     "LatentOperationTonemapReinhard",
     "LatentOperationSharpen",
     "ReplaceVideoLatentFrames",
+    "EmptySD3LatentImage",
+    "EmptyFlux2LatentImage",
+    "EmptyChromaRadianceLatentImage",
+    "EmptyHiDreamO1LatentImage",
+    "EmptyQwenImageLayeredLatentImage",
+    "EmptyLatentHunyuan3Dv2",
+    "EmptyTrellis2LatentStructure",
     "CLIPTextEncode",
     "CLIPSetLastLayer",
     "CLIPTextEncodeSDXLRefiner",
@@ -116,6 +131,10 @@ namespaces = [
     "ReferenceLatent",
     "VAEEncodeForInpaint",
     "InpaintModelConditioning",
+    "ControlNetApply",
+    "ControlNetApplyAdvanced",
+    "SetUnionControlNetType",
+    "ControlNetInpaintingAliMamaApply",
     "LatentCompositeMasked",
     "ImageCompositeMasked",
     "MaskToImage",
@@ -142,6 +161,7 @@ namespaces = [
     "ImageQuantize",
     "ImageSharpen",
     "ImageScaleToTotalPixels",
+    "Canny",
     "ImageCrop",
     "RepeatImageBatch",
     "ImageFromBatch",
@@ -169,6 +189,10 @@ namespaces = [
     "BatchLatentsNode",
     "ColorTransfer",
     "EmptyMochiLatentVideo",
+    "EmptyLatentAudio",
+    "EmptyAceStepLatentAudio",
+    "EmptyAceStep1.5LatentAudio",
+    "EmptyYuE2LatentAudio",
 ]
 
 [pack.sandbox]

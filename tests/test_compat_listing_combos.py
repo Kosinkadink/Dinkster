@@ -174,7 +174,7 @@ def test_exact_model_selector_becomes_digest_backed_asset() -> None:
         probe=_probe_with(_listing("checkpoints", listed)),
     )
     (spec,) = node.schema().inputs
-    assert spec.type == TypeExpr.concrete("dinkster.asset")
+    assert spec.type == TypeExpr.concrete("ASSET")
     assert spec.required and spec.default is None
     assert _only_asset_widget(node) == AssetWidget(
         accept=("application/octet-stream",), kind="model/checkpoint"
@@ -183,7 +183,7 @@ def test_exact_model_selector_becomes_digest_backed_asset() -> None:
     assert translation.listing_snapshots == {}
     registry = TypeRegistry()
     translation.register_types(registry)
-    assert "dinkster.asset" in registry
+    assert "ASSET" in registry
 
 
 def test_custom_node_using_model_category_remains_remote_combo() -> None:
@@ -203,7 +203,7 @@ def test_custom_node_using_model_category_remains_remote_combo() -> None:
     )
     registry = TypeRegistry()
     translation.register_types(registry)
-    assert "dinkster.asset" not in registry
+    assert "ASSET" not in registry
 
 
 def test_unrecognized_listing_category_keeps_remote_combo() -> None:
@@ -223,7 +223,7 @@ def test_unrecognized_listing_category_keeps_remote_combo() -> None:
     assert translation.listing_snapshots == {"comfy.files.custom_models": ("a.bin", "b.bin")}
     registry = TypeRegistry()
     translation.register_types(registry)
-    assert "dinkster.asset" not in registry
+    assert "ASSET" not in registry
 
 
 def test_true_enum_stays_frozen_under_probe() -> None:
@@ -297,7 +297,7 @@ def test_listing_shared_by_two_supported_categories_refuses() -> None:
     assert translation.listing_snapshots == {}
     registry = TypeRegistry()
     translation.register_types(registry)
-    assert "dinkster.asset" not in registry
+    assert "ASSET" not in registry
 
 
 def test_identity_disambiguates_equal_value_categories() -> None:
@@ -753,7 +753,7 @@ def test_translated_model_asset_converts_to_exact_v1_relative_name(
     assert node.execute(ckpt_name=ref) == {"model": "sd15/model.safetensors"}
     registry = TypeRegistry()
     translation.register_types(registry)
-    assert "dinkster.asset" in registry
+    assert "ASSET" in registry
 
 
 def test_translated_unhashed_model_uses_granted_worker_binding(
