@@ -1,5 +1,7 @@
 ## Image operations
 
+- Native Stable Cascade stage C/B latent creation, stage C VAE encoding,
+  stage B prior conditioning, and super-resolution control inputs
 - Typed `dinkster.region` rectangle values for shared crop and placement geometry
 - Typed per-frame `dinkster.pose` keypoint and skeleton values, including
   OpenPose/controlnet_aux JSON import and export and human/AP10K rendering
