@@ -94,6 +94,8 @@ namespaces = [
     "ConditioningSetMask",
     "ConditioningZeroOut",
     "ConditioningSetTimestepRange",
+    "InstructPixToPixConditioning",
+    "ReferenceLatent",
     "LatentCompositeMasked",
     "ImageCompositeMasked",
     "MaskToImage",
@@ -137,8 +139,6 @@ namespaces = [
     "BatchMasksNode",
     "BatchLatentsNode",
     "ColorTransfer",
-    "InstructPixToPixConditioning",
-    "ReferenceLatent",
 ]
 
 [pack.sandbox]
