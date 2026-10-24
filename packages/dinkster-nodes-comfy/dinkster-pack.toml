@@ -50,6 +50,8 @@ namespaces = [
     "ModelMergeCosmosPredict2_14B",
     "ModelMergeQwenImage",
     "ModelMergeKrea2",
+    "FreeU",
+    "FreeU_V2",
     "EmptyLatentImage",
     "LatentFromBatch",
     "RepeatLatentBatch",
@@ -78,6 +80,10 @@ namespaces = [
     "ReplaceVideoLatentFrames",
     "CLIPTextEncode",
     "CLIPSetLastLayer",
+    "VAEDecode",
+    "VAEEncode",
+    "VAEDecodeTiled",
+    "VAEEncodeTiled",
     "ConditioningAverage",
     "ConditioningCombine",
     "ConditioningConcat",
@@ -130,6 +136,11 @@ namespaces = [
     "StableCascade_StageB_Conditioning",
     "StableCascade_StageC_VAEEncode",
     "StableCascade_SuperResolutionControlnet",
+    "ResizeImageMaskNode",
+    "BatchImagesNode",
+    "BatchMasksNode",
+    "BatchLatentsNode",
+    "ColorTransfer",
 ]
 
 [pack.sandbox]
