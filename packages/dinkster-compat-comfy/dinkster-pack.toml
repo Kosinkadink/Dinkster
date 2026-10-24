@@ -33,7 +33,6 @@ type-namespaces = [
     "comfy.FILE_3D_STL",
     "comfy.FILE_3D_USDZ",
     "comfy.FLOATS",
-    "comfy.GLIGEN",
     "comfy.GUIDER",
     "comfy.HISTOGRAM",
     "comfy.HOOKS",
