@@ -33,14 +33,14 @@ result = asyncio.run(Delay.execute(value="ready", seconds=0.01))
 assert result == {"value": "ready"}
 ```
 
-Compose the installed pack with an explicit host trust grant:
+Compose the pack explicitly from the repository root:
 
 ```console
-uv run dinkster-serve --development-pack
+uv run dinkster-serve --pack packages/dinkster-nodes-dev
 ```
 
-Ordinary `--pack` paths remain untrusted and cannot claim the reserved `dev`
-namespace. Python hosts can compose `dinkster.compose.development_pack_spec()`.
+The pack stays outside the default pack set. Its `dev` namespace is ordinary;
+another pack claiming the same namespace is refused by the overlap rule.
 
 ## The widget/socket gallery
 

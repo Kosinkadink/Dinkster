@@ -2782,10 +2782,14 @@ def test_memory_budget_failure_retains_server_output(tmp_path: Path) -> None:
     process.wait.assert_called_once_with(timeout=30)
 
 
-def test_serve_development_pack_is_explicitly_trusted(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "pack_path", ["packages/dinkster-nodes-dev", "packages/dinkster-nodes-dev/dinkster-pack.toml"]
+)
+def test_serve_plain_dev_pack_is_announced(tmp_path: Path, pack_path: str) -> None:
     port = free_port()
+    pack = Path(__file__).resolve().parent.parent / pack_path
     process, log = start_logged_serve(
-        serve_command(port, "--no-default-packs", "--development-pack"), tmp_path
+        serve_command(port, "--no-default-packs", "--pack", str(pack)), tmp_path
     )
     pending_error: BaseException | None = None
     try:

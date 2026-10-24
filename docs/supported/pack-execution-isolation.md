@@ -1,8 +1,8 @@
 ## Pack execution isolation
 
-- `dinkster-serve --development-pack` explicitly trusts the installed first-party
-  development scaffold pack. It stays outside the default pack set. Ordinary
-  `--pack` paths receive no reserved-namespace trust from this option.
+- `dinkster-serve --pack packages/dinkster-nodes-dev` composes the development
+  scaffold pack as an ordinary isolated pack. It stays outside the default pack
+  set. Its `dev` namespace is not reserved; overlapping pack claims are refused.
 - Value type ownership is discoverable for live and cold-catalog packs without
   activating cold workers. Removing or replacing a pack retracts its old type
   identities; a rejected replacement preserves the active owners.
