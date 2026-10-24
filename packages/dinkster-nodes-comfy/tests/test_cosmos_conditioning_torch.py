@@ -110,12 +110,13 @@ def test_cosmos_no_image_returns_a_single_unmasked_source_batch(
     assert not latent["samples"].count_nonzero()
 
 
-def test_cosmos_padding_crops_rgb_before_resize_and_bounds_frame_count() -> None:
-    source = _image(10)
+def test_cosmos_padding_crops_rgb_before_resize_and_fills_non_saturated_frames() -> None:
+    source = _image(1, 2.0)
     before = source.clone()
-    _, vae = _execute(CosmosImageToVideoLatent, length=9, start_image=source)
+    _, vae = _execute(CosmosImageToVideoLatent, length=17, start_image=source)
     assert vae.images[0].shape == (9, 16, 24, 3)
-    torch.testing.assert_close(vae.images[0][:9], source[:9, :, :, :3])
+    torch.testing.assert_close(vae.images[0][0], source[0, :, :, :3])
+    torch.testing.assert_close(vae.images[0][1:], torch.full_like(vae.images[0][1:], 0.5))
     torch.testing.assert_close(source, before)
 
 
@@ -140,6 +141,22 @@ def test_cosmos_assigns_start_end_and_overlap_with_end_winning() -> None:
     assert not end_only["noise_mask"][:, :, -3:].count_nonzero()
     torch.testing.assert_close(both["samples"][:, :, -3:], end_only["samples"][:, :, -3:])
     assert not both["noise_mask"].count_nonzero()
+
+
+def test_cosmos_start_end_masks_and_samples_are_distinct_and_exact() -> None:
+    start = torch.full((1, 16, 24, 4), 2.0)
+    end = torch.full((1, 16, 24, 4), 9.0)
+    latent, _ = _execute(
+        CosmosImageToVideoLatent, length=25, start_image=start, end_image=end, batch_size=2
+    )
+    expected = torch.zeros((1, 16, 4, 2, 3))
+    expected[:, :, 0] = 2.0
+    expected[:, :, -1] = 9.0
+    expected_mask = torch.ones((1, 1, 4, 2, 3))
+    expected_mask[:, :, 0] = 0.0
+    expected_mask[:, :, -1] = 0.0
+    torch.testing.assert_close(latent["samples"], expected.repeat(2, 1, 1, 1, 1))
+    torch.testing.assert_close(latent["noise_mask"], expected_mask.repeat(2, 1, 1, 1, 1))
 
 
 def test_predict2_normalizes_unconditioned_positions_with_wan21() -> None:
@@ -184,10 +201,25 @@ class Inspect(Node):
     def execute(cls, *, latent: object) -> dict[str, object]:
         value = materialize_latent(latent)
         samples = materialize_image(value["samples"])
+        assert set(value) == {"samples", "noise_mask"}
         assert samples.shape in ((2, 16, 2, 2, 3), (2, 16, 3, 2, 3))
         assert samples.dtype == torch.get_default_dtype()
         assert samples.device.type == "cpu"
-        assert value["noise_mask"].shape == (2, 1, samples.shape[2], 2, 3)
+        mask = value["noise_mask"]
+        assert mask.shape == (2, 1, samples.shape[2], 2, 3)
+        assert mask.dtype == torch.get_default_dtype()
+        assert mask.device.type == "cpu"
+        source_value = _image(1, 3.0)[..., :3].mean()
+        expected = torch.zeros((1, 16, samples.shape[2], 2, 3))
+        expected[:, :, 0] = source_value
+        expected_mask = torch.ones((1, 1, samples.shape[2], 2, 3))
+        expected_mask[:, :, 0] = 0.0
+        if samples.shape[2] == 3:
+            expected = Wan21().process_out(expected) * expected_mask + expected * (
+                1.0 - expected_mask
+            )
+        torch.testing.assert_close(samples, expected.repeat(2, 1, 1, 1, 1))
+        torch.testing.assert_close(mask, expected_mask.repeat(2, 1, 1, 1, 1))
         return cls.outputs(summary="cosmos")
 
 

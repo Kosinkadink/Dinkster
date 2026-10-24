@@ -62,6 +62,10 @@ class _CosmosImageToVideoLatent(Node):
     temporal_ratio = 8
 
     @classmethod
+    def _process_out(cls, latent: Any, mask: Any) -> Any:
+        return latent
+
+    @classmethod
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type=cls.__name__,
@@ -120,6 +124,7 @@ class _CosmosImageToVideoLatent(Node):
             latent_temp = vae_encode_with_padding(vae, end_image, width, height, length)
             latent[:, :, -latent_temp.shape[-3] :] = latent_temp
             mask[:, :, -latent_temp.shape[-3] :] *= 0.0
+        latent = cls._process_out(latent, mask)
         return cls.outputs(
             LATENT={
                 "samples": latent.repeat((batch_size,) + (1,) * (latent.ndim - 1)),
@@ -140,18 +145,9 @@ class CosmosPredict2ImageToVideoLatent(_CosmosImageToVideoLatent):
     temporal_ratio = 4
 
     @classmethod
-    def execute(cls, **kwargs: Any) -> Mapping[str, object]:
-        result: dict[str, Any] = dict(super().execute(**kwargs))
-        latent = result["LATENT"]
-        if "noise_mask" not in latent:
-            return result
+    def _process_out(cls, latent: Any, mask: Any) -> Any:
         latent_formats = importlib.import_module("dinkster_inference.latent_formats")
-        samples = latent["samples"]
-        mask = latent["noise_mask"]
-        latent["samples"] = latent_formats.Wan21().process_out(samples) * mask + samples * (
-            1.0 - mask
-        )
-        return result
+        return latent_formats.Wan21().process_out(latent) * mask + latent * (1.0 - mask)
 
 
 COSMOS_CONDITIONING_NODES = (CosmosImageToVideoLatent, CosmosPredict2ImageToVideoLatent)
