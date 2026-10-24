@@ -1935,9 +1935,7 @@ def test_serve_rejects_removed_single_job_mode(monkeypatch: pytest.MonkeyPatch, 
 
 
 @pytest.mark.parametrize("argument", ["--dev", "--development-pack"])
-def test_serve_rejects_removed_dev_argument(
-    monkeypatch: pytest.MonkeyPatch, argument: str
-) -> None:
+def test_serve_rejects_removed_dev_argument(monkeypatch: pytest.MonkeyPatch, argument: str) -> None:
     from dinkster import serve
 
     monkeypatch.setattr(sys, "argv", ["dinkster-serve", argument])
