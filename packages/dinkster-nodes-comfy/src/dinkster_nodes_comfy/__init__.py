@@ -43,6 +43,7 @@ from .model_merging import MODEL_MERGE_NODES
 from .model_merging_specific import MODEL_SPECIFIC_MERGE_NODES
 from .model_specific_schedulers import MODEL_SPECIFIC_SCHEDULER_NODES
 from .morphology import MORPHOLOGY_NODES
+from .noise import NOISE_NODES
 from .noise_guidance import NOISE_GUIDANCE_NODES
 from .post_processing import POST_PROCESSING_NODES
 from .primitive import (
@@ -95,6 +96,7 @@ COMFY_NODES = (
     *SPATIAL_MODEL_PATCH_NODES,
     *ROPE_AND_MASK_NODES,
     *NOISE_GUIDANCE_NODES,
+    *NOISE_NODES,
     *SIGMA_OPERATION_NODES,
     *LATENT_NODES,
     *LATENT_ADVANCED_NODES,
