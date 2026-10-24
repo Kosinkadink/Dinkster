@@ -675,8 +675,6 @@ __all__ = [
     "ReservationRequest",
     "Shedder",
     # -- assets (dinkster-assets)
-    "ASSET_TYPE",
-    "SAVE_TARGET_TYPE",
     "AssetEntry",
     "AssetError",
     "AssetIntegrityError",
