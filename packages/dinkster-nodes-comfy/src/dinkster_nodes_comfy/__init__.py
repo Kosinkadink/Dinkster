@@ -15,6 +15,7 @@ from .math import ComfyMathExpression
 from .model_merging import MODEL_MERGE_NODES
 from .model_merging_specific import MODEL_SPECIFIC_MERGE_NODES
 from .morphology import MORPHOLOGY_NODES
+from .post_processing import POST_PROCESSING_NODES
 from .primitive import (
     PrimitiveBoolean,
     PrimitiveFloat,
@@ -47,6 +48,7 @@ COMFY_NODES = (
     *IMAGE_FILTER_NODES,
     *IMAGE_TRANSFORM_NODES,
     *MORPHOLOGY_NODES,
+    *POST_PROCESSING_NODES,
 )
 
 __all__ = ["COMFY_NODES", "register_inference_types"]

@@ -121,6 +121,11 @@ namespaces = [
     "Morphology",
     "ImageRGBToYUV",
     "ImageYUVToRGB",
+    "ResizeImageMaskNode",
+    "BatchImagesNode",
+    "BatchMasksNode",
+    "BatchLatentsNode",
+    "ColorTransfer",
 ]
 
 [pack.sandbox]
