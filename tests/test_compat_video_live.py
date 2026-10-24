@@ -16,6 +16,7 @@ from typing import Any, cast
 import av
 import numpy as np
 import pytest
+from dinkster_api.v1 import VIDEO_TYPE
 from dinkster_assets import (
     AssetRef,
     LocalAssetLibrary,
@@ -248,9 +249,9 @@ def test_pinned_core_video_workflows_cross_the_compat_boundary(tmp_path: Path) -
                 translated = schemas[f"comfy.{node_id}"]
                 assert translated.node_type == f"comfy.{node_id}"
                 assert translated.aliases == (node_id,)
-            assert schemas["comfy.LoadVideo"].inputs[0].type.types == ("ASSET",)
-            assert schemas["comfy.LoadVideo"].outputs[0].type.types == ("comfy.VIDEO",)
-            assert schemas["comfy.CreateVideo"].outputs[0].type.types == ("comfy.VIDEO",)
+            assert schemas["comfy.LoadVideo"].inputs[0].type.types == ("dinkster.asset",)
+            assert schemas["comfy.LoadVideo"].outputs[0].type.types == (VIDEO_TYPE,)
+            assert schemas["comfy.CreateVideo"].outputs[0].type.types == (VIDEO_TYPE,)
             assert schemas["comfy.SaveVideo"].output_node is True
             assert schemas["comfy.SaveWEBM"].output_node is True
 

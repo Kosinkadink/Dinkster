@@ -23,4 +23,5 @@ uv run --locked python -m pytest -q \
   tests/test_validation_inputs.py \
   tests/test_values.py \
   tests/test_graph.py \
-  tests/test_graph_wire.py
+  tests/test_graph_wire.py \
+  tests/test_vision_capability_schemas.py

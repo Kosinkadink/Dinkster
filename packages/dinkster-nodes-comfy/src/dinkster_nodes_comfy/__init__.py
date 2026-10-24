@@ -4,6 +4,7 @@ from dinkster_api.v1 import register_inference_types
 
 from .attention_multiply import ATTENTION_MULTIPLY_NODES
 from .audio_latent import AUDIO_LATENT_NODES
+from .cfg_guidance import CFG_GUIDANCE_NODES
 from .clip import CLIP_NODES
 from .clip_model_specific import MODEL_TEXT_ENCODER_NODES
 from .clip_sdxl import CLIP_SDXL_NODES
@@ -44,6 +45,7 @@ from .switch import ComfySwitchNode
 from .text import TEXT_NODES
 from .utilities import ComfyNumberConvert, SeedNode
 from .vae import VAE_NODES
+from .video_latent import VIDEO_LATENT_NODES
 
 COMFY_NODES = (
     *TEXT_NODES,
@@ -63,6 +65,7 @@ COMFY_NODES = (
     *ATTENTION_MULTIPLY_NODES,
     *MODEL_MERGE_NODES,
     *MODEL_SPECIFIC_MERGE_NODES,
+    *CFG_GUIDANCE_NODES,
     *FREEU_NODES,
     *ROPE_AND_MASK_NODES,
     *LATENT_NODES,
@@ -84,6 +87,7 @@ COMFY_NODES = (
     *IMAGE_TRANSFORM_NODES,
     *MORPHOLOGY_NODES,
     *STABLE_CASCADE_NODES,
+    *VIDEO_LATENT_NODES,
     *POST_PROCESSING_NODES,
     EmptyMochiLatentVideo,
     *AUDIO_LATENT_NODES,

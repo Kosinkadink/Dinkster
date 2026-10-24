@@ -297,7 +297,7 @@ GOLDEN_V1_SURFACE = (
     "validate_splat_encoded",
     # -- video codec (dinkster-values.video_codec): encoded container bytes
     # across boundaries and the original container as the browser
-    # rendition. Added so packs can register and operate on comfy.VIDEO
+    # rendition. Added so packs can register and operate on VIDEO
     # values the same way the compat surface does.
     "decode_video",
     "encode_video",
