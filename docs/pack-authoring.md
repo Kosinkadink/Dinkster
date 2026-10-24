@@ -427,8 +427,9 @@ node type you announce must sit under a claim at a `.` boundary
 (`my-pack` covers `my-pack.shout`, never `my-pack-extra.shout`). Claims
 are just that - claims: the local host refuses overlapping claims between
 installed packs, and the public registry (not your manifest) is the
-authority for who owns a namespace. `std`, `comfy`, `core`, and `dinkster`
-are reserved roots; don't claim them or names nesting under them.
+authority for who owns a namespace. `std`, `comfy`, `core`, `dev`, and
+`dinkster` are reserved roots; only publisher `dinkster` may claim them or
+names nesting under them, including when the pack name uses that root.
 
 `[pack.presentation]` is pixels only: it never joins schema signatures,
 cache identity, or documents, and malformed fields warn-and-drop (a bad

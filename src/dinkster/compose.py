@@ -207,6 +207,7 @@ from dinkster_workers import (
     HeadroomMirror,
     InProcessWorker,
     IsolatedWorker,
+    ManifestError,
     PackManifest,
     ReleaseGuard,
     RemoteWorker,
@@ -417,6 +418,10 @@ class _ReplicaWorkerPool:
     @property
     def renditions(self) -> object:
         return getattr(self._first, "renditions", ())
+
+    @property
+    def registered_types(self) -> tuple[str, ...]:
+        return tuple(getattr(self._first, "registered_types", ()))
 
     async def resolve_rendition(
         self,
@@ -3038,10 +3043,10 @@ class ServingComposer:
     ) -> tuple[tuple[str, ...], CompositionGeneration]:
         type_claims = self._base_registry.copy()
         for manifest, _spec in entries.values():
-            validate_registration_claims(manifest)
             try:
+                validate_registration_claims(manifest)
                 type_claims.claim_types(manifest.name, manifest.type_namespaces)
-            except ValueError as exc:
+            except (ManifestError, ValueError) as exc:
                 raise CompositionError(str(exc)) from exc
         _composition_generation(entries, {}, "development")
         order, receipts = _resolve_pack_contracts(entries)
@@ -5215,6 +5220,7 @@ class ServingComposer:
             self._validate_body_arms(manifest, worker)
             self._validate_schema_only(manifest, worker)
             self._validate_executes(manifest, worker)
+            self._register_worker_types(staged_registry, manifest, worker)
             delta_schemas: dict[str, NodeSchema] = {}
             delta_node_packs: dict[str, str] = {}
             for node_type, schema in worker.schemas.items():
@@ -6450,9 +6456,12 @@ class ServingComposer:
             staged_records = dict(self._records)
             del staged_records[name]
             staged_records[manifest.name] = new_record
+            staged_registry = composition._registry.copy()
+            staged_registry.remove_pack_types(name)
             snapshot: ExtensionSnapshot | None = None
             topology: Topology | None = None
             try:
+                self._register_worker_types(staged_registry, manifest, worker)
                 topology = self._build_topology(staged_records)
                 (
                     snapshot,
@@ -6473,7 +6482,6 @@ class ServingComposer:
                 raise
             old_derived_choices = self._current_derived_choices()
             old_choice_owners = dict(self._choice_owners)
-            staged_registry = composition._registry.copy()
             staged_registry.remove_relayed_renditions(name)
             if not spec.in_process:
                 self._register_worker_renditions(staged_registry, manifest.name, worker)
@@ -6897,7 +6905,10 @@ class ServingComposer:
                 tuple(node_type for node_type in route_candidates if topology.get(node_type)),
             )
             staged_registry = self.composition._registry.copy()
+            for pack in specs:
+                staged_registry.remove_pack_types(pack)
             for pack, member_spec in specs.items():
+                self._register_worker_types(staged_registry, manifest_by_name[pack], members[pack])
                 staged_registry.remove_relayed_renditions(pack)
                 self._register_worker_renditions(staged_registry, pack, members[pack])
                 if member_spec.host_types is not None:
@@ -7071,6 +7082,7 @@ class ServingComposer:
             old_derived_choices = self._current_derived_choices()
             old_choice_owners = dict(self._choice_owners)
             staged_registry = composition._registry.copy()
+            staged_registry.remove_pack_types(name)
             staged_registry.remove_relayed_renditions(name)
             route_candidates = tuple(dict.fromkeys((*old_types, *record.executes)))
             removed_routes = tuple(
@@ -7534,6 +7546,20 @@ class ServingComposer:
                 if arms is not None
                 else ("native",)
             )
+
+    @staticmethod
+    def _register_worker_types(registry: TypeRegistry, manifest: PackManifest, worker: Any) -> None:
+        type_ids = tuple(getattr(worker, "registered_types", ()))
+        if manifest.publisher != "dinkster" and any(
+            not claim_covers(manifest.name, tid) for tid in type_ids
+        ):
+            raise CompositionError(
+                f"{manifest.name}: registered types must use the pack-name prefix"
+            )
+        try:
+            registry.declare_types(manifest.name, manifest.type_namespaces, type_ids)
+        except ValueError as exc:
+            raise CompositionError(str(exc)) from exc
 
     @staticmethod
     def _register_worker_renditions(registry: TypeRegistry, owner: str, worker: Any) -> None:

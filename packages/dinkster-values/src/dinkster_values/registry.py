@@ -360,6 +360,38 @@ class TypeRegistry:
         """Return registered atom owners for registry discovery."""
         return dict(self._owners)
 
+    def declare_types(
+        self, owner: str, claims: tuple[str, ...], type_ids: Sequence[TypeId]
+    ) -> None:
+        """Publish worker-owned type identities without importing their codecs."""
+        for type_id in type_ids:
+            if not any(type_id == claim or claim_covers(claim, type_id) for claim in claims):
+                raise ValueError(f"{owner}: type {type_id!r} is outside its declared type claims")
+            if (held := self.owner_of(type_id)) is not None and held != owner:
+                raise ValueError(f"type {type_id!r} is owned by {held!r}, not {owner!r}")
+        self.claim_types(owner, claims)
+        self._owners.update(dict.fromkeys(type_ids, owner))
+
+    def remove_pack_types(self, owner: str) -> None:
+        """Release a pack's claims, codecs, and type-specific registrations."""
+        removed = {type_id for type_id, holder in self._owners.items() if holder == owner}
+        self._claims.pop(owner, None)
+        for type_id in removed:
+            self._owners.pop(type_id)
+            self._types.pop(type_id, None)
+            self._renditions.pop(type_id, None)
+            self._batch_merges.pop(type_id, None)
+        self._asset_decoders = {
+            target: spec
+            for target, spec in self._asset_decoders.items()
+            if runtime_type_atom(target) not in removed
+        }
+        self._type_equivalences = {
+            type_id: pair
+            for type_id, pair in self._type_equivalences.items()
+            if type_id not in removed and pair[0] not in removed
+        }
+
     def register(
         self,
         type_id: TypeId,

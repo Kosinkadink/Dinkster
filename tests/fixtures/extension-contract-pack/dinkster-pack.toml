@@ -1,5 +1,6 @@
 [pack]
-name = "dinkster-extension-contract-fixture"
+name = "fixture"
+publisher = "fixture-author"
 namespaces = ["fixture"]
 
 [pack.contracts]

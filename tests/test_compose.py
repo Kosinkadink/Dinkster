@@ -1985,6 +1985,79 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize(
+    "in_process, cold", [(False, False), (False, True), (True, False), (True, True)]
+)
+def test_pack_type_owners_are_discovered_without_activation_and_retracted(
+    tmp_path: Path, in_process: bool, cold: bool
+) -> None:
+    module = f"type_owner_pack_{int(in_process)}_{int(cold)}"
+    source = tmp_path / f"{module}.py"
+    source.write_text(
+        'NODES = []\ndef register_types(registry):\n    registry.register("mypack.thing")\n'
+    )
+    manifest = tmp_path / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname = "mypack"\npublisher = "someone"\n'
+        "[pack.entry]\n"
+        f'nodes = "{module}:NODES"\ntypes = "{module}:register_types"\n'
+    )
+    if cold:
+        assert prepare_catalog(manifest, environment=os.environ).ok
+
+    async def scenario() -> None:
+        composer = ServingComposer()
+        client: TestClient | None = None
+        try:
+            await composer.add_pack(PackSpec(manifest, in_process=in_process, require_catalog=cold))
+            registry = composer.composition._registry
+            assert registry.type_owners()["mypack.thing"] == "mypack"
+            if cold:
+                assert composer._records["mypack"].worker.cold
+                assert "mypack.thing" not in registry
+            client = TestClient(
+                TestServer(
+                    create_app(composer.composition.make_engine, composer.composition.schemas)
+                )
+            )
+            await client.start_server()
+            data = await (await client.get("/api/nodes")).json()
+            assert data["typeOwners"]["mypack.thing"] == "mypack"
+            if cold:
+                assert composer._records["mypack"].worker.cold
+            if not in_process:
+                original_manifest = manifest.read_text()
+                manifest.write_text(
+                    original_manifest.replace(
+                        "[pack.entry]", 'type-namespaces = ["FOREIGN"]\n[pack.entry]'
+                    )
+                )
+                with pytest.raises(CompositionError, match="must be prefixed"):
+                    await composer.reload_pack("mypack")
+                data = await (await client.get("/api/nodes")).json()
+                assert data["typeOwners"]["mypack.thing"] == "mypack"
+                manifest.write_text(original_manifest)
+                source.write_text(source.read_text().replace("mypack.thing", "mypack.replacement"))
+                if cold:
+                    assert prepare_catalog(manifest, environment=os.environ).ok
+                await composer.reload_pack("mypack")
+                data = await (await client.get("/api/nodes")).json()
+                assert "mypack.thing" not in data["typeOwners"]
+                assert data["typeOwners"]["mypack.replacement"] == "mypack"
+            await composer.remove_pack("mypack")
+            data = await (await client.get("/api/nodes")).json()
+            assert "mypack.thing" not in data["typeOwners"]
+            assert "mypack.replacement" not in data["typeOwners"]
+            assert registry.owner_of("mypack.thing") is None
+            assert "mypack.thing" not in registry
+        finally:
+            if client is not None:
+                await client.close()
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
 def test_serving_composer_replaces_and_retracts_pack_renditions(tmp_path: Path) -> None:
     async def scenario() -> None:
         composer = ServingComposer(worker_env=WORKER_ENV)
@@ -2340,7 +2413,7 @@ def test_generation_staging_rebuilds_pack_type_registrations(tmp_path: Path) -> 
         )
         manifest = tmp_path / "dinkster-pack.toml"
         manifest.write_text(
-            '[pack]\nname = "generation-types"\nnamespaces = ["generation"]\n'
+            '[pack]\nname = "generation"\npublisher = "fixture-author"\n'
             '[pack.entry]\nnodes = "generation_types_nodes:NODES"\n'
             'types = "generation_types_nodes:register_types"\n',
             encoding="utf-8",

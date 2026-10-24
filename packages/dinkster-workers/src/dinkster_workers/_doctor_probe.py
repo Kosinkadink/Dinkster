@@ -154,6 +154,7 @@ def probe(manifest_path: str) -> dict[str, Any]:
         add_pack_root_to_import_path,
         load_manifest,
         resolve_entry,
+        validate_registration_claims,
     )
 
     manifest = load_manifest(manifest_path)
@@ -191,6 +192,7 @@ def probe(manifest_path: str) -> dict[str, Any]:
             contextlib.redirect_stderr(err),
             _capture_dinkster_logs(cast("list[dict[str, str]]", report["import_logs"])),
         ):
+            validate_registration_claims(manifest)
             nodes_obj = resolve_entry(manifest.nodes_entry)
             types_fn = resolve_entry(manifest.types_entry) if manifest.types_entry else None
             for scope in EXTENSION_SCOPES:
@@ -278,7 +280,12 @@ def probe(manifest_path: str) -> dict[str, Any]:
             )
         else:
             try:
-                types_fn(registry)
+                with registry.registering_pack(
+                    manifest.name,
+                    manifest.type_namespaces,
+                    allow_bare=manifest.publisher == "dinkster",
+                ):
+                    types_fn(registry)
             except BaseException as exc:  # noqa: BLE001
                 report["types_error"] = _exception_detail(exc)
     pack_ids = [tid for tid in registry.type_ids() if tid not in core_ids]
@@ -304,6 +311,7 @@ def probe(manifest_path: str) -> dict[str, Any]:
                     body_arms=dict(manifest.arms),
                     extension_contributions=load_extension_contributions(manifest),
                     renditions=registry.registered_renditions(),
+                    registered_types=pack_ids,
                 )
             )
             report["catalog"]["types"] = {

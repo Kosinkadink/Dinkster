@@ -80,6 +80,7 @@ class PackCatalog(PackDeclarations):
     def __init__(self, declarations: Mapping[str, Any], source: str) -> None:
         super().__init__(declarations)
         self.types = CatalogTypes.from_wire(declarations["types"])
+        self.registered_types = tuple(sorted(self.types.type_ids))
         self.source = source
 
 
@@ -112,6 +113,7 @@ def worker_declarations(worker: Any) -> dict[str, Any]:
     arms = cast("Mapping[str, tuple[str, ...]]", worker.body_arms or {})
     return {
         "schemas": {name: schema_to_wire(schema) for name, schema in worker.schemas.items()},
+        "registeredTypes": sorted(getattr(worker, "registered_types", ())),
         "comboChoices": {name: list(values) for name, values in worker.combo_choices.items()},
         "lazyChoiceIds": sorted(worker.lazy_choice_ids),
         "compatSkips": {name: value.to_wire() for name, value in worker.compat_skips.items()},

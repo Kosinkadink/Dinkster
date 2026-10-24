@@ -45,7 +45,7 @@ import re
 
 NAME_MAX = 64
 
-RESERVED_NAMESPACES: frozenset[str] = frozenset({"std", "comfy", "core", "dinkster"})
+RESERVED_NAMESPACES: frozenset[str] = frozenset({"std", "comfy", "core", "dinkster", "dev"})
 
 _NAME_RE = re.compile(r"^[a-z][a-z0-9]*(?:[-_.][a-z0-9]+)*$")
 _SEP_SPLIT_RE = re.compile(r"([-_.])")

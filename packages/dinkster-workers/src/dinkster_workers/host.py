@@ -423,6 +423,7 @@ def load_pack(
         if registry is None:
             registry = TypeRegistry()
             register_core_types(registry)
+        previous_types = frozenset(registry.type_ids())
         if manifest.types_entry is not None:
             register = resolve_pack_entry(manifest.types_entry)
             if not callable(register):
@@ -449,6 +450,7 @@ def load_pack(
             combo_choices=choices.static,
             lazy_choices=choices.lazy,
             memory_consumers=consumers,
+            registered_types=tuple(tid for tid in registry.type_ids() if tid not in previous_types),
         )
         default_schemas = build_schemas(node_classes)
         if manifest.comfy_aliases is not None:
@@ -1150,6 +1152,7 @@ async def serve_connection(
         "type": "hello",
         "pack": pack_name,
         "schemas": {t: schema_to_wire(s) for t, s in schemas.items()},
+        "registeredTypes": list(worker.registered_types),
         "lazyStatus": True,
         # This process lifetime's identity: the same token resident codecs
         # stamp as RESOURCE_OWNER_META_KEY on the envelopes they produce, so

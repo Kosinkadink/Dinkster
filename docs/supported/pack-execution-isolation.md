@@ -1,5 +1,8 @@
 ## Pack execution isolation
 
+- Value type ownership is discoverable for live and cold-catalog packs without
+  activating cold workers. Removing or replacing a pack retracts its old type
+  identities; a rejected replacement preserves the active owners.
 - All supported platforms can run packs in separate worker processes and
   virtual environments for dependency and crash isolation. That alone is not
   a host security boundary. Each manifest directory is on its worker's import

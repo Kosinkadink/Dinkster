@@ -92,6 +92,21 @@ def test_registration_requires_pack_prefix_for_non_dinkster_publishers(
     validate_registration_claims(load_manifest(path))
 
 
+@pytest.mark.parametrize("pack_name", ["dinkster", "std", "comfy", "dev", "std-extra"])
+def test_non_dinkster_publisher_cannot_own_reserved_pack_prefix(
+    tmp_path: Path, pack_name: str
+) -> None:
+    path = tmp_path / "dinkster-pack.toml"
+    path.write_text(
+        f'[pack]\nname = "{pack_name}"\npublisher = "someone"\n'
+        '[pack.entry]\nnodes = "mypack:NODES"\n'
+    )
+    with pytest.raises(ManifestError, match="only publisher 'dinkster'.*reserved"):
+        validate_registration_claims(load_manifest(path))
+    path.write_text(path.read_text().replace('"someone"', '"dinkster"'))
+    validate_registration_claims(load_manifest(path))
+
+
 def test_manifest_type_claims_accept_exact_ids_and_reject_overlaps(tmp_path: Path) -> None:
     path = tmp_path / "dinkster-pack.toml"
     path.write_text(

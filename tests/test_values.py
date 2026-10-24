@@ -73,6 +73,29 @@ def test_type_registration_enforces_exact_claim_and_pack_prefix() -> None:
         registry.claim_types("another-official", ("THING",))
 
 
+def test_declared_type_can_activate_and_release_its_codec_and_providers() -> None:
+    registry = make_registry()
+    registry.declare_types("mypack", ("mypack",), ("mypack.thing",))
+    assert registry.owner_of("mypack.thing") == "mypack"
+    assert "mypack.thing" not in registry
+    with registry.registering_pack("mypack", ("mypack",)):
+        registry.register("mypack.thing")
+    registry.register_asset_decoder(
+        "list<mypack.thing>", provider_id="mypack.decoder", decode=lambda obj: obj
+    )
+    registry.register_batch_merge("mypack.thing", provider_id="mypack.merge", merge=list)
+    registry.remove_pack_types("mypack")
+    assert registry.owner_of("mypack.thing") is None
+    assert "mypack.thing" not in registry
+    assert registry.asset_decoder_for("list<mypack.thing>") is None
+    assert registry.batch_merge_for("mypack.thing") is None
+    assert registry.owner_of(CORE_INT) == "dinkster-nodes-foundation"
+    assert registry.wrap(CORE_INT, 17).payload.load() == 17
+    with registry.registering_pack("mypack", ("mypack",)):
+        registry.register("mypack.thing")
+    assert registry.wrap("mypack.thing", 23).payload.load() == 23
+
+
 def test_encoded_buffer_is_read_only_and_materializes_on_demand() -> None:
     backing = bytearray(b"encoded payload")
     released: list[bool] = []

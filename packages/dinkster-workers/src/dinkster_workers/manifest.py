@@ -89,6 +89,7 @@ from dinkster_schema import (
     comfy_alias_registry_from_wire,
     comfy_group_registry_from_wire,
     core_logger,
+    reserved_root,
     validate_name,
 )
 from dinkster_values import MEBIBYTE
@@ -3042,6 +3043,11 @@ def validate_registration_claims(manifest: PackManifest) -> None:
         ("type-namespaces", manifest.type_namespaces),
     ):
         for claim in claims:
+            if reserved_root(claim) is not None:
+                raise ManifestError(
+                    f"{manifest.path}: {field} claim {claim!r} is reserved; "
+                    "only publisher 'dinkster' may claim reserved namespaces"
+                )
             if claim != manifest.name and not claim_covers(manifest.name, claim):
                 raise ManifestError(
                     f"{manifest.path}: {field} claim {claim!r} must be prefixed by "
