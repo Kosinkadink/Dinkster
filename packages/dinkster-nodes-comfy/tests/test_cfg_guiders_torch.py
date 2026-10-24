@@ -2,12 +2,27 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Mapping
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 import torch
-from dinkster_api.v1 import initialize_inference_process
+from dinkster_api.v1 import (
+    CONDITIONING_TYPE,
+    CORE_FLOAT,
+    GUIDER_TYPE,
+    MODEL_TYPE,
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+    initialize_inference_process,
+)
+from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.cfg_guiders import (
     CFG_GUIDER_NODES,
     BasicGuider,
@@ -16,6 +31,13 @@ from dinkster_nodes_comfy.cfg_guiders import (
     DualCFGGuider,
     DualModelGuider,
 )
+
+from dinkster.compose import PackSpec, ServingComposer
+
+_CONDITIONING_TYPE = TypeExpr.concrete(CONDITIONING_TYPE)
+_FLOAT_TYPE = TypeExpr.concrete(CORE_FLOAT)
+_GUIDER_TYPE = TypeExpr.concrete(GUIDER_TYPE)
+_MODEL_TYPE = TypeExpr.concrete(MODEL_TYPE)
 
 
 class _Sampling:
@@ -49,6 +71,308 @@ def _patcher() -> Any:
 
 def _conditioning(value: float, tag: str) -> list[list[object]]:
     return [[torch.tensor([value]), {"tag": tag}]]
+
+
+class GuiderSource(Node):
+    positive = [[torch.tensor([[10.0, -6.0]]), {"tag": "positive"}]]
+    middle = [[torch.tensor([[4.0, 3.0]]), {"tag": "middle"}]]
+    negative = [[torch.tensor([[1.0, -2.0]]), {"tag": "negative"}]]
+
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="cfg-guiders-fixture.source",
+            outputs=(
+                OutputSpec("model", _MODEL_TYPE),
+                OutputSpec("negative_model", _MODEL_TYPE),
+                OutputSpec("positive", _CONDITIONING_TYPE),
+                OutputSpec("middle", _CONDITIONING_TYPE),
+                OutputSpec("negative", _CONDITIONING_TYPE),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> Mapping[str, object]:
+        cls.positive = [[torch.tensor([[10.0, -6.0]]), {"tag": "positive"}]]
+        cls.middle = [[torch.tensor([[4.0, 3.0]]), {"tag": "middle"}]]
+        cls.negative = [[torch.tensor([[1.0, -2.0]]), {"tag": "negative"}]]
+        return cls.outputs(
+            model=_patcher(),
+            negative_model=_patcher(),
+            positive=cls.positive,
+            middle=cls.middle,
+            negative=cls.negative,
+        )
+
+
+class GuiderConsumer(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="cfg-guiders-fixture.consumer",
+            inputs=(
+                InputSpec("basic", _GUIDER_TYPE),
+                InputSpec("cfg", _GUIDER_TYPE),
+                InputSpec("dual_regular", _GUIDER_TYPE),
+                InputSpec("dual_nested", _GUIDER_TYPE),
+                InputSpec("dual_model", _GUIDER_TYPE),
+                InputSpec("dual_fallback", _GUIDER_TYPE),
+            ),
+            outputs=(OutputSpec("summary", _FLOAT_TYPE),),
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        basic: Any,
+        cfg: Any,
+        dual_regular: Any,
+        dual_nested: Any,
+        dual_model: Any,
+        dual_fallback: Any,
+    ) -> Mapping[str, object]:
+        import dinkster_inference.patcher_extension as patcher_extension
+        import dinkster_inference.samplers as samplers
+
+        assert isinstance(basic, samplers.CFGGuider)
+        assert isinstance(cfg, samplers.CFGGuider)
+        assert isinstance(dual_regular, samplers.CFGGuider)
+        assert isinstance(dual_nested, samplers.CFGGuider)
+        assert isinstance(dual_model, samplers.CFGGuider)
+        assert isinstance(dual_fallback, samplers.CFGGuider)
+        assert basic.original_conds["positive"][0]["tag"] == "positive"
+        assert dual_regular.original_conds["middle"][0]["prompt_type"] == "negative"
+        assert GuiderSource.middle[0][1] == {"tag": "middle"}
+        assert dual_regular.cfg1 == 2.0 and dual_regular.cfg2 == 3.0
+        assert dual_regular.nested is False and dual_nested.nested is True
+        assert dual_model.uncond_model_patcher is not dual_model.model_patcher
+        assert dual_fallback.model_patcher is not None
+        assert "cross_attn" not in dual_fallback.original_conds["negative"][0]
+        assert torch.equal(GuiderSource.positive[0][0], torch.tensor([[10.0, -6.0]]))
+        assert torch.equal(GuiderSource.negative[0][0], torch.tensor([[1.0, -2.0]]))
+
+        values = {
+            None: torch.zeros((1, 2)),
+            "positive": torch.tensor([[10.0, -6.0]]),
+            "middle": torch.tensor([[4.0, 3.0]]),
+            "negative": torch.tensor([[1.0, -2.0]]),
+        }
+        original_calc = samplers.calc_cond_batch
+
+        def calc(_model: Any, conditions: list[Any], *_args: Any) -> list[torch.Tensor]:
+            return [values[condition].clone() for condition in conditions]
+
+        samplers.calc_cond_batch = calc
+        try:
+            for guider, nested, expected in (
+                (dual_regular, False, torch.tensor([[22.0, -5.0]])),
+                (dual_nested, True, torch.tensor([[46.0, -41.0]])),
+            ):
+                guider.inner_model = "primary"
+                guider.conds = {
+                    "positive": "positive",
+                    "middle": "middle",
+                    "negative": "negative",
+                }
+                torch.testing.assert_close(
+                    guider.predict_noise(torch.zeros((1, 2)), torch.ones(1)), expected
+                )
+                assert guider.nested is nested
+
+            dual_regular.cfg1 = 1.0
+            dual_regular.cfg2 = 1.0
+            calls: list[list[Any]] = []
+
+            def optimizing_calc(
+                _model: Any, conditions: list[Any], *_args: Any
+            ) -> list[torch.Tensor]:
+                calls.append(conditions)
+                return [values[condition].clone() for condition in conditions]
+
+            samplers.calc_cond_batch = optimizing_calc
+            dual_regular.predict_noise(torch.zeros((1, 2)), torch.ones(1))
+            dual_regular.predict_noise(
+                torch.zeros((1, 2)), torch.ones(1), {"disable_cfg1_optimization": True}
+            )
+            assert calls == [[None, None, "positive"], ["negative", "middle", "positive"]]
+
+            dual_model.inner_model = "primary"
+            dual_model.uncond_inner = "negative-model"
+            dual_model.conds = {"positive": "positive"}
+            dual_model._uncond_conds = "negative"
+            torch.testing.assert_close(
+                dual_model.predict_noise(
+                    torch.zeros((1, 2)), torch.ones(1), {"multigpu_clones": [object()]}
+                ),
+                torch.tensor([[19.0, -10.0]]),
+            )
+        finally:
+            samplers.calc_cond_batch = original_calc
+
+        wrappers = cfg.model_patcher.get_all_wrappers(patcher_extension.WrappersMP.PREDICT_NOISE)
+        observed: list[float] = []
+
+        def predict(*_args: object, **_kwargs: object) -> torch.Tensor:
+            observed.append(cfg.cfg)
+            return torch.tensor([cfg.cfg])
+
+        output = patcher_extension.WrapperExecutor.new_class_executor(
+            predict, cfg, wrappers
+        ).execute(torch.zeros(1), torch.tensor([5.0]))
+        assert observed == [7.0]
+        assert cfg.cfg == 2.5
+        return cls.outputs(summary=float(output.item()) + 44.0)
+
+
+GUIDER_FIXTURE_NODES = (GuiderSource, GuiderConsumer)
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_native_guider_nodes_connect_fixture_producer_and_consumer_twice(
+    tmp_path: Path, in_process: bool
+) -> None:
+    async def scenario() -> None:
+        module = f"cfg_guiders_fixture_{int(in_process)}"
+        (tmp_path / f"{module}.py").write_text(
+            "from dinkster_inference_wire import register_inference_types\n"
+            "from test_cfg_guiders_torch import GUIDER_FIXTURE_NODES\n"
+            "NODES = GUIDER_FIXTURE_NODES\n",
+            encoding="ascii",
+        )
+        fixture_manifest = tmp_path / "dinkster-pack.toml"
+        fixture_manifest.write_text(
+            "[pack]\n"
+            'name = "cfg-guiders-fixture"\n'
+            'publisher = "dinkster"\n'
+            'namespaces = ["cfg-guiders-fixture"]\n'
+            "[pack.entry]\n"
+            f'nodes = "{module}:NODES"\n'
+            f'types = "{module}:register_inference_types"\n',
+            encoding="ascii",
+        )
+        native_manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+        composer = ServingComposer(
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "PYTHONPATH": str(Path(__file__).parent),
+            }
+        )
+        try:
+            group_options: dict[str, object] = {}
+            if not in_process:
+                group_options = {
+                    "worker_group": "cfg-guiders-test",
+                    "group_manifests": (native_manifest, fixture_manifest),
+                }
+            await composer.add_pack(
+                PackSpec(
+                    manifest=native_manifest,
+                    in_process=in_process,
+                    **group_options,
+                )
+            )
+            await composer.add_pack(
+                PackSpec(
+                    manifest=fixture_manifest,
+                    in_process=in_process,
+                    **group_options,
+                )
+            )
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("cfg-guiders-fixture.source"),
+                    "override": GraphNode(
+                        "CFGOverride",
+                        {
+                            "model": Link("source", "model"),
+                            "cfg": 7.0,
+                            "start_percent": 0.2,
+                            "end_percent": 0.8,
+                        },
+                    ),
+                    "basic": GraphNode(
+                        "BasicGuider",
+                        {
+                            "model": Link("override", "MODEL"),
+                            "conditioning": Link("source", "positive"),
+                        },
+                    ),
+                    "cfg": GraphNode(
+                        "CFGGuider",
+                        {
+                            "model": Link("override", "MODEL"),
+                            "positive": Link("source", "positive"),
+                            "negative": Link("source", "negative"),
+                            "cfg": 2.5,
+                        },
+                    ),
+                    "dual_regular": GraphNode(
+                        "DualCFGGuider",
+                        {
+                            "model": Link("override", "MODEL"),
+                            "cond1": Link("source", "positive"),
+                            "cond2": Link("source", "middle"),
+                            "negative": Link("source", "negative"),
+                            "cfg_conds": 2.0,
+                            "cfg_cond2_negative": 3.0,
+                            "style": "regular",
+                        },
+                    ),
+                    "dual_nested": GraphNode(
+                        "DualCFGGuider",
+                        {
+                            "model": Link("override", "MODEL"),
+                            "cond1": Link("source", "positive"),
+                            "cond2": Link("source", "middle"),
+                            "negative": Link("source", "negative"),
+                            "cfg_conds": 2.0,
+                            "cfg_cond2_negative": 3.0,
+                            "style": "nested",
+                        },
+                    ),
+                    "dual_model": GraphNode(
+                        "DualModelGuider",
+                        {
+                            "model": Link("override", "MODEL"),
+                            "model_negative": Link("source", "negative_model"),
+                            "positive": Link("source", "positive"),
+                            "negative": Link("source", "negative"),
+                            "cfg": 2.0,
+                        },
+                    ),
+                    "dual_fallback": GraphNode(
+                        "DualModelGuider",
+                        {
+                            "model": Link("override", "MODEL"),
+                            "positive": Link("source", "positive"),
+                            "cfg": 1.0,
+                        },
+                    ),
+                    "consumer": GraphNode(
+                        "cfg-guiders-fixture.consumer",
+                        {
+                            "basic": Link("basic", "GUIDER"),
+                            "cfg": Link("cfg", "GUIDER"),
+                            "dual_regular": Link("dual_regular", "GUIDER"),
+                            "dual_nested": Link("dual_nested", "GUIDER"),
+                            "dual_model": Link("dual_model", "GUIDER"),
+                            "dual_fallback": Link("dual_fallback", "GUIDER"),
+                        },
+                    ),
+                }
+            )
+            engine = composer.composition.make_engine(lambda _event: None)
+            for attempt in range(2):
+                result = await engine.run(graph, ["consumer"])
+                assert result.outputs["consumer"]["summary"].resolve() == 51.0
+                if attempt:
+                    assert set(result.cached) == set(graph.nodes)
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
 
 
 def test_cold_schemas_and_registry_export_exact_five_nodes_without_torch_import() -> None:
