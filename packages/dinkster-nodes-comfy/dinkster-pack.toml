@@ -230,6 +230,8 @@ namespaces = [
     "SV3D_Conditioning",
     "EmptyHunyuanImageLatent",
     "HunyuanRefinerLatent",
+    "CLIPTextEncodeHunyuanDiT",
+    "TextEncodeHunyuanVideo_ImageToVideo",
     "SVD_img2vid_Conditioning",
     "CosmosImageToVideoLatent",
     "CosmosPredict2ImageToVideoLatent",
