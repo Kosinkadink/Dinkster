@@ -19,6 +19,7 @@ behavior, then keep the file for provenance.
 
 | Issue | Area | Status |
 | --- | --- | --- |
+| [dataset-text-output-wrapping.md](dataset-text-output-wrapping.md) | Dataset text output types | reproduced at bc5f880d; native preserves reference behavior |
 | [grow-mask-bfloat16-numpy.md](grow-mask-bfloat16-numpy.md) | GrowMask NumPy conversion | reproduced at bc5f880d; native preserves reference behavior |
 | [sd15-post-vae-residency-drift.md](sd15-post-vae-residency-drift.md) | comfy/model_management.py + comfy/model_patcher.py | verified at b5cc8830; Dinkster normalizes residency before sampling |
 | [t5-positive-end-layer-index.md](t5-positive-end-layer-index.md) | comfy/sd1_clip.py + comfy/text_encoders/t5.py | verified in pinned source; Dinkster rejects the invalid index |
