@@ -67,6 +67,8 @@
   and strict numeric schedule parsing
 - Role-labeled multi-stream values inside ordinary `comfy.LATENT`, with generic
   audio/video concat, separate, visual preview, and audio preview nodes
+- Empty LATENT mappings remain present values through host transport and cache;
+  nonempty LATENT mappings still require a samples entry
 - Asset-backed native Save/Load Latent with deterministic `.latent`
   safetensors, ordered multi-stream roles, VAE provenance hints, and safe
   stock ComfyUI single-latent import; legacy `LoadLatent` prompts resolve
