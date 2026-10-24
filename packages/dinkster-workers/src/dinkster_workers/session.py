@@ -39,7 +39,6 @@ from dinkster_memory import (
     Shedder,
 )
 from dinkster_protocol import (
-    RESULT_ALGEBRA_CAPABILITY,
     AttentionCapabilityEvidence,
     AttentionPolicyConfig,
     AttentionRouteToken,
@@ -62,7 +61,6 @@ from dinkster_protocol import (
     attention_route_token_from_wire,
     canonical_attention_route_token_bytes,
     derive_attention_route_token,
-    negotiate_result_capabilities,
 )
 from dinkster_protocol.pack_surfaces import PackRoute, pack_surfaces_from_wire
 from dinkster_schema import (
@@ -526,7 +524,6 @@ class BoundarySession:
         self._blob_store: ValueStore | None = None
         self._blob_transfer: BlobTransfer | None = None
         self._schemas: dict[str, NodeSchema] | None = None
-        self._result_capabilities: frozenset[str] = frozenset()
         self._comfy_aliases: ComfyAliasRegistry | None = None
         self._comfy_groups: ComfyGroupRegistry | None = None
         self._combo_choices: dict[str, tuple[str, ...]] = {}
@@ -810,7 +807,6 @@ class BoundarySession:
         self._pack = str(header.get("pack", self._pack))
         declarations = PackDeclarations(header, role=self._role, pack=self._pack)
         self._schemas = declarations.schemas
-        self._result_capabilities = negotiate_result_capabilities(header.get("resultCapabilities"))
         aliases_wire = header.get("comfyAliases")
         if aliases_wire is not None:
             try:
@@ -1393,17 +1389,6 @@ class BoundarySession:
     ) -> InvocationResult:
         if not self._alive:
             return self._dead_result(invocation)
-        if (
-            invocation.effective_schema.may_expand_graph
-            and RESULT_ALGEBRA_CAPABILITY not in self._result_capabilities
-        ):
-            return InvocationResult(
-                error=NodeError(
-                    invocation.node_id,
-                    invocation.node_type,
-                    f"runtime expansion requires negotiated capability {RESULT_ALGEBRA_CAPABILITY}",
-                )
-            )
         key = InvocationKey(
             invocation.job_ref or invocation.invocation_id,
             invocation.attempt_id,
@@ -1498,7 +1483,6 @@ class BoundarySession:
                 reply_header,
                 reply_blobs,
                 consumed,
-                negotiated_capabilities=self._result_capabilities,
             )
             assert decoded.outputs is not None
             outputs = decoded.outputs
@@ -1905,8 +1889,6 @@ class BoundarySession:
             segments: list[SharedMemory] = []
             try:
                 header, blobs, segments, stats = encode_invocation(self._codec, invocation)
-                if self._result_capabilities:
-                    header["resultCapabilities"] = sorted(self._result_capabilities)
                 pending = self._codec.take_pending_store_blobs()
                 if header_updates is not None:
                     header.update(header_updates)
@@ -1981,9 +1963,7 @@ class BoundarySession:
                 header, blobs = frame
                 kind = header.get("type")
                 if kind == "result":
-                    if "resultAlgebra" in header and (
-                        not self._result_capabilities or "error" in header
-                    ):
+                    if "resultAlgebra" in header and "error" in header:
                         raise BoundaryError("unexpected result algebra frame")
                     invocation_id = str(header.get("invocationId"))
                     key: InvocationKey | None = None

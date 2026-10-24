@@ -14,8 +14,6 @@ from dinkster_values import MEBIBYTE, Value
 
 from . import ErrorHint, NodeError
 
-RESULT_ALGEBRA_CAPABILITY = "dinkster.invocation-result-algebra.v2"
-RESULT_ALGEBRA_VERSION = 2
 RESULT_ALGEBRA_MAX_COUNT = 4096
 RESULT_ALGEBRA_MAX_LITERAL_DEPTH = 32
 RESULT_ALGEBRA_MAX_LITERAL_ITEMS = 16384
@@ -363,15 +361,3 @@ class InvocationReturn:
 
 
 InvocationOutcome: TypeAlias = InvocationFailure | InvocationReturn
-
-
-def negotiate_result_capabilities(requested: object) -> frozenset[str]:
-    """Strictly parse an optional hello list and return the supported intersection."""
-    if requested is None:
-        return frozenset()
-    if not isinstance(requested, (list, tuple, set, frozenset)):
-        raise ValueError("result capabilities must be an array or set")
-    items = tuple(requested)
-    if not all(type(item) is str for item in items) or len(items) != len(set(items)):
-        raise ValueError("result capabilities must be unique strings")
-    return frozenset({RESULT_ALGEBRA_CAPABILITY}.intersection(items))

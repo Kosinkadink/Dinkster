@@ -8,8 +8,6 @@ from typing import Any, cast
 
 import pytest
 from dinkster_protocol import (
-    RESULT_ALGEBRA_CAPABILITY,
-    RESULT_ALGEBRA_VERSION,
     BlockedOutput,
     CurrentNodeRef,
     CurrentOutputRef,
@@ -17,7 +15,6 @@ from dinkster_protocol import (
     ErrorHint,
     ExpandedReturn,
     ExportSnapshot,
-    ExternalOutputRef,
     Invocation,
     InvocationFailure,
     InvocationResult,
@@ -31,7 +28,6 @@ from dinkster_protocol import (
     NodeError,
     PresentOutput,
     ReturnBatch,
-    negotiate_result_capabilities,
 )
 from dinkster_schema import NodeSchema
 from dinkster_values import ListPayload, TypeRegistry, Value, make_list_value, register_core_types
@@ -47,8 +43,6 @@ from dinkster_workers.boundary import (
     write_frame,
 )
 from dinkster_workers.session import BoundarySession, WorkerDied
-
-CAPABILITIES = frozenset({RESULT_ALGEBRA_CAPABILITY})
 
 
 def registry() -> TypeRegistry:
@@ -117,7 +111,6 @@ def encode(outcome: InvocationReturn | InvocationFailure) -> tuple[dict[str, obj
         outcome,
         "inv-1",
         1.5,
-        negotiated_capabilities=CAPABILITIES,
     )
     assert segments == []
     return header, blobs
@@ -129,7 +122,6 @@ def decode(header: dict[str, object], blobs: list[bytes]) -> object:
         header,
         blobs,
         [],
-        negotiated_capabilities=CAPABILITIES,
     )[0]
 
 
@@ -238,59 +230,10 @@ def test_local_references_are_closed_and_acyclic() -> None:
         DirectReturn((("out", CurrentOutputRef("missing")),))
 
 
-def test_capability_negotiation_is_exact_and_strict() -> None:
-    assert negotiate_result_capabilities(None) == frozenset()
-    assert negotiate_result_capabilities(["unknown"]) == frozenset()
-    assert negotiate_result_capabilities(["dinkster.invocation-result-algebra.v1"]) == frozenset()
-    assert negotiate_result_capabilities([RESULT_ALGEBRA_CAPABILITY]) == CAPABILITIES
-    with pytest.raises(ValueError, match="unique strings"):
-        negotiate_result_capabilities([RESULT_ALGEBRA_CAPABILITY] * 2)
-    with pytest.raises(ValueError, match="array or set"):
-        negotiate_result_capabilities(RESULT_ALGEBRA_CAPABILITY)
-
-
-def test_external_expansion_cannot_be_encoded_for_a_v1_peer() -> None:
-    unit = ExpandedReturn(
-        LocalExpansion((LocalNode("child", "Example"),)),
-        (("out", ExternalOutputRef("existing", "value")),),
-    )
-    with pytest.raises(BoundaryError, match="not negotiated"):
-        encode_result(
-            ValueCodec(registry(), use_shm=False),
-            InvocationResult(expansion=unit),
-            "external",
-            0.0,
-            negotiated_capabilities=frozenset({"dinkster.invocation-result-algebra.v1"}),
-        )
-    header, blobs = encode(InvocationReturn(ReturnBatch("scalar", (unit,))))
-    algebra(header).update(capability="dinkster.invocation-result-algebra.v1", version=1)
-    with pytest.raises(BoundaryError, match="capability or version"):
-        decode(header, blobs)
-
-
-def test_expanding_invocation_is_not_sent_to_a_v1_peer() -> None:
-    reg = registry()
-    session = BoundarySession(reg, role="test worker", pack="test", codec=ValueCodec(reg))
-    session._alive = True  # noqa: SLF001 - an adopted peer without any supported result capability
-    session._result_capabilities = negotiate_result_capabilities(  # noqa: SLF001
-        ["dinkster.invocation-result-algebra.v1"]
-    )
-    session._writer = cast(Any, object())  # noqa: SLF001 - any attempted write fails the test
-    invocation = Invocation(
-        "external", "node", "Example", {}, NodeSchema("Example", may_expand_graph=True)
-    )
-    result = asyncio.run(session.invoke(invocation))
-    assert result.error is not None
-    assert (
-        result.error.message
-        == f"runtime expansion requires negotiated capability {RESULT_ALGEBRA_CAPABILITY}"
-    )
-    assert session.alive
-
-
 def test_direct_canonical_wire_and_value_blob_round_trip() -> None:
     header, blobs = encode(direct_outcome())
     assert set(header) == {"type", "invocationId", "executeMs", "resultAlgebra"}
+    assert set(algebra(header)) == {"document", "values", "valueStats"}
     assert len(blobs) == 2
     document = algebra(header)["document"]
     assert document == (
@@ -337,37 +280,15 @@ def test_indexed_local_output_references_round_trip() -> None:
 @pytest.mark.parametrize(
     "mutation,match",
     [
-        (lambda h: algebra(h).update(version=RESULT_ALGEBRA_VERSION + 1), "capability or version"),
-        (lambda h: algebra(h).update(capability="wrong"), "capability or version"),
         (lambda h: algebra(h).update(extra=True), "fields"),
         (lambda h: h.update(extra=True), "typed result frame"),
     ],
 )
-def test_envelope_refuses_wrong_fields_capability_and_version(mutation: object, match: str) -> None:
+def test_envelope_refuses_wrong_fields(mutation: object, match: str) -> None:
     header, blobs = encode(direct_outcome())
     cast(Any, mutation)(header)
     with pytest.raises(BoundaryError, match=match):
         decode(header, blobs)
-
-
-def test_codec_requires_negotiated_capability() -> None:
-    with pytest.raises(BoundaryError, match="not negotiated"):
-        encode_invocation_outcome(
-            ValueCodec(registry()),
-            direct_outcome(),
-            "inv",
-            0.0,
-            negotiated_capabilities=frozenset(),
-        )
-    header, blobs = encode(direct_outcome())
-    with pytest.raises(BoundaryError, match="not negotiated"):
-        decode_invocation_outcome(
-            ValueCodec(registry()),
-            header,
-            blobs,
-            [],
-            negotiated_capabilities=frozenset(),
-        )
 
 
 @pytest.mark.parametrize(
@@ -381,7 +302,6 @@ def test_encode_refuses_noncanonical_execute_time(execute_ms: object) -> None:
             direct_outcome(),
             "inv",
             cast(Any, execute_ms),
-            negotiated_capabilities=CAPABILITIES,
         )
 
 
@@ -402,7 +322,6 @@ def test_value_tree_preflight_refuses_noncanonical_or_excessive_lists() -> None:
                 outcome,
                 "inv",
                 0.0,
-                negotiated_capabilities=CAPABILITIES,
             )
 
 
@@ -431,7 +350,6 @@ def test_typed_encode_rolls_back_segments_on_later_failure(monkeypatch: pytest.M
             outcome,
             "inv",
             0.0,
-            negotiated_capabilities=CAPABILITIES,
         )
     assert len(released) == 1
 
@@ -450,18 +368,16 @@ def test_typed_encode_rolls_back_cas_retention_on_later_failure() -> None:
         )
     )
     with pytest.raises(BoundaryError):
-        encode_invocation_outcome(codec, failed, "inv", 0.0, negotiated_capabilities=CAPABILITIES)
+        encode_invocation_outcome(codec, failed, "inv", 0.0)
     retry = InvocationReturn(ReturnBatch("scalar", (DirectReturn((("a", PresentOutput(first)),)),)))
-    header, blobs, _ = encode_invocation_outcome(
-        codec, retry, "retry", 0.0, negotiated_capabilities=CAPABILITIES
-    )
+    header, blobs, _ = encode_invocation_outcome(codec, retry, "retry", 0.0)
     wire = cast(dict[str, Any], algebra(header)["values"][0])
     assert "blob" in wire["payload"]
     peer = ValueCodec(reg, use_shm=False, cas_threshold=1)
     peer.enable_cas()
     decoded = cast(
         InvocationReturn,
-        decode_invocation_outcome(peer, header, blobs, [], negotiated_capabilities=CAPABILITIES)[0],
+        decode_invocation_outcome(peer, header, blobs, [])[0],
     )
     unit = cast(DirectReturn, decoded.batch.units[0])
     assert cast(PresentOutput, unit.bindings[0][1]).value.resolve() == "retained"
@@ -898,71 +814,6 @@ def test_invocation_encode_releases_partial_shared_memory(
     assert len(released) == 1
 
 
-@pytest.mark.parametrize(
-    ("reply_id", "execute_ms"),
-    [("first", 0.0), ("unknown", 0.0), ("first", "malformed")],
-)
-def test_unexpected_typed_frame_is_session_fatal_before_execute_time(
-    reply_id: str, execute_ms: object, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    reg = registry()
-    session = BoundarySession(
-        reg,
-        role="test worker",
-        pack="test",
-        codec=ValueCodec(reg, use_shm=False),
-    )
-    closed: list[bool] = []
-    released: list[object] = []
-
-    class Writer:
-        def write(self, _data: bytes) -> None:
-            return None
-
-        async def drain(self) -> None:
-            return None
-
-        def close(self) -> None:
-            closed.append(True)
-
-    monkeypatch.setattr(boundary, "release_segment", released.append)
-    monkeypatch.setattr("dinkster_workers.session.release_segment", released.append)
-    session._writer = cast(Any, Writer())  # noqa: SLF001
-    session._alive = True  # noqa: SLF001
-    sent_segment = object()
-    session._sent_segments["sent"] = cast(Any, sent_segment)  # noqa: SLF001
-    first = Invocation("first", "a", "Node", {}, NodeSchema("Node"))
-    second = Invocation("second", "b", "Node", {}, NodeSchema("Node"))
-
-    async def scenario() -> tuple[InvocationResult, InvocationResult]:
-        reader = asyncio.StreamReader()
-        session._reader = reader  # noqa: SLF001 - drive the production receive path
-        session._reader_task = asyncio.create_task(session._read_loop())  # noqa: SLF001
-        first_task = asyncio.create_task(session.invoke(first))
-        second_task = asyncio.create_task(session.invoke(second))
-        await asyncio.sleep(0)
-        header = {
-            "type": "result",
-            "invocationId": reply_id,
-            "executeMs": execute_ms,
-            "resultAlgebra": {},
-            "blobs": [],
-        }
-        encoded = json.dumps(header, separators=(",", ":")).encode("utf-8")
-        reader.feed_data(len(encoded).to_bytes(4, "big") + encoded)
-        await cast(asyncio.Task[None], session._reader_task)
-        return await first_task, await second_task
-
-    first_result, second_result = asyncio.run(scenario())
-    assert not session.alive
-    assert closed == [True]
-    assert released == [sent_segment]
-    assert first_result.error is not None
-    assert "is not running" in first_result.error.message
-    assert second_result.error is not None
-    assert "is not running" in second_result.error.message
-
-
 def test_unknown_missing_and_escaping_document_fields_are_refused() -> None:
     header, blobs = encode(direct_outcome())
     document = json.loads(algebra(header)["document"])
@@ -1026,11 +877,11 @@ def test_excessive_nesting_is_refused_before_typed_construction() -> None:
         decode(header, blobs)
 
 
-def test_legacy_result_headers_remain_exact_and_algebra_free() -> None:
+def test_plain_result_headers_contain_outputs_or_error() -> None:
     reg = registry()
     codec = ValueCodec(reg, use_shm=False)
     value = reg.wrap("core.int", 3)
-    success, _, _ = encode_result(codec, InvocationResult(outputs={"out": value}), "legacy", 2.0)
+    success, _, _ = encode_result(codec, InvocationResult(outputs={"out": value}), "plain", 2.0)
     assert success["type"] == "result"
     assert set(success) == {"type", "invocationId", "executeMs", "outputs", "outputStats"}
     assert "resultAlgebra" not in success
@@ -1038,13 +889,13 @@ def test_legacy_result_headers_remain_exact_and_algebra_free() -> None:
     error, blobs, segments = encode_result(
         codec,
         InvocationResult(error=NodeError("node", "Type", "bad")),
-        "legacy",
+        "plain",
         2.0,
     )
     assert blobs == [] and segments == []
     assert error == {
         "type": "result",
-        "invocationId": "legacy",
+        "invocationId": "plain",
         "executeMs": 2.0,
         "error": {
             "nodeId": "node",
@@ -1066,7 +917,6 @@ def test_invocation_expansion_rejects_mixed_result_payloads(extra: str) -> None:
         InvocationResult(expansion=unit),
         "expanded",
         0.0,
-        negotiated_capabilities=CAPABILITIES,
     )
     header[extra] = {}
     with pytest.raises(BoundaryError, match="frame fields"):
@@ -1075,7 +925,6 @@ def test_invocation_expansion_rejects_mixed_result_payloads(extra: str) -> None:
             header,
             blobs,
             [],
-            negotiated_capabilities=CAPABILITIES,
         )
 
 
@@ -1091,14 +940,12 @@ def test_expansion_output_replacement_is_preserved_on_the_wire() -> None:
         result,
         "expanded",
         0.0,
-        negotiated_capabilities=CAPABILITIES,
     )
     decoded, _ = boundary.decode_result(
         ValueCodec(registry(), use_shm=False),
         header,
         blobs,
         [],
-        negotiated_capabilities=CAPABILITIES,
     )
     assert decoded.outputs is not None
     assert decoded.outputs["seed"].resolve() == 23

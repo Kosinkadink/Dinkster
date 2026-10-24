@@ -50,7 +50,6 @@ from dinkster_protocol import (
     WorkUnitId,
     WorkUnitProgress,
     WorkUnitResult,
-    negotiate_result_capabilities,
     negotiate_workgroup_capabilities,
     reduce_workgroup,
     workgroup_message_from_wire,
@@ -594,7 +593,7 @@ def test_reducer_rejects_foreign_subclasses() -> None:
         reduce_workgroup(WorkGroupLifecycle(definition()), ForeignBegin())
 
 
-def test_boundary_protocol_version_preserves_legacy_error_results() -> None:
+def test_boundary_protocol_and_error_result() -> None:
     assert PROTOCOL_VERSION == 9
     header, blobs, segments = encode_result(
         ValueCodec(TypeRegistry(), use_shm=False),
@@ -616,7 +615,3 @@ def test_boundary_protocol_version_preserves_legacy_error_results() -> None:
     }
     assert blobs == []
     assert segments == []
-    assert negotiate_result_capabilities([]) == frozenset()
-    assert negotiate_result_capabilities(["dinkster.invocation-result-algebra.v1"]) == frozenset(
-        {"dinkster.invocation-result-algebra.v1"}
-    )

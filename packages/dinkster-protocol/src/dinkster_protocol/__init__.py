@@ -702,13 +702,11 @@ class CacheStore(Protocol):
 
 
 from .result_algebra import (  # noqa: E402 - NodeError is the algebra's leaf error
-    RESULT_ALGEBRA_CAPABILITY,
     RESULT_ALGEBRA_MAX_COUNT,
     RESULT_ALGEBRA_MAX_DOCUMENT_BYTES,
     RESULT_ALGEBRA_MAX_LITERAL_DEPTH,
     RESULT_ALGEBRA_MAX_LITERAL_ITEMS,
     RESULT_ALGEBRA_MAX_NESTING,
-    RESULT_ALGEBRA_VERSION,
     BlockedOutput,
     CurrentNodeRef,
     CurrentOutputRef,
@@ -727,7 +725,6 @@ from .result_algebra import (  # noqa: E402 - NodeError is the algebra's leaf er
     LocalOutputRef,
     PresentOutput,
     ReturnBatch,
-    negotiate_result_capabilities,
 )
 
 __all__ = [
@@ -823,13 +820,11 @@ __all__ = [
     "SingleJobMultiGpuExecution",
     "SingleJobMultiGpuMode",
     "Worker",
-    "RESULT_ALGEBRA_CAPABILITY",
     "RESULT_ALGEBRA_MAX_COUNT",
     "RESULT_ALGEBRA_MAX_DOCUMENT_BYTES",
     "RESULT_ALGEBRA_MAX_LITERAL_DEPTH",
     "RESULT_ALGEBRA_MAX_LITERAL_ITEMS",
     "RESULT_ALGEBRA_MAX_NESTING",
-    "RESULT_ALGEBRA_VERSION",
     "BlockedOutput",
     "CurrentOutputRef",
     "CurrentNodeRef",
@@ -848,7 +843,6 @@ __all__ = [
     "LocalOutputRef",
     "PresentOutput",
     "ReturnBatch",
-    "negotiate_result_capabilities",
     "canonical_compile_reply_bytes",
     "canonical_extension_snapshot",
     "extension_behavior_hash",

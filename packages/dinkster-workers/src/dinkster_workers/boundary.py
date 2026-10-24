@@ -36,7 +36,7 @@ import os
 import sys
 import time
 import uuid
-from collections.abc import Callable, Collection, Generator, Mapping, Sequence, Set
+from collections.abc import Callable, Collection, Generator, Mapping, Sequence
 from dataclasses import dataclass
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
@@ -1064,8 +1064,6 @@ def encode_result(
     result: InvocationResult,
     invocation_id: str,
     execute_ms: float,
-    *,
-    negotiated_capabilities: Set[str] = frozenset(),
 ) -> tuple[dict[str, object], list[bytes], list[SharedMemory]]:
     from .saved_artifacts import MAX_SAVED_ARTIFACTS, validate_candidate
 
@@ -1101,7 +1099,6 @@ def encode_result(
             InvocationReturn(ReturnBatch("scalar", (result.expansion,))),
             invocation_id,
             execute_ms,
-            negotiated_capabilities=negotiated_capabilities,
         )
         header.update(algebra_header)
         return header, blobs, segments
@@ -1187,19 +1184,13 @@ def encode_invocation_outcome(
     outcome: InvocationOutcome,
     invocation_id: str,
     execute_ms: float,
-    *,
-    negotiated_capabilities: Set[str],
 ) -> tuple[dict[str, object], list[bytes], list[SharedMemory]]:
-    """Encode the dormant result algebra without changing legacy results."""
+    """Encode invocation return units and their typed present values."""
     from dinkster_protocol import (
-        RESULT_ALGEBRA_CAPABILITY,
         RESULT_ALGEBRA_MAX_COUNT,
         RESULT_ALGEBRA_MAX_DOCUMENT_BYTES,
-        RESULT_ALGEBRA_VERSION,
     )
 
-    if RESULT_ALGEBRA_CAPABILITY not in negotiated_capabilities:
-        raise BoundaryError("result algebra capability was not negotiated")
     if type(invocation_id) is not str:
         raise BoundaryError("typed result invocation id must be a string")
     _finite_number(execute_ms, "typed result executeMs")
@@ -1229,8 +1220,6 @@ def encode_invocation_outcome(
             "invocationId": invocation_id,
             "executeMs": execute_ms,
             "resultAlgebra": {
-                "capability": RESULT_ALGEBRA_CAPABILITY,
-                "version": RESULT_ALGEBRA_VERSION,
                 "document": document_json,
                 "values": values,
                 "valueStats": stats,
@@ -1329,15 +1318,11 @@ def decode_invocation_outcome(
     header: Mapping[str, Any],
     blobs: Sequence[bytes],
     consumed: list[str],
-    *,
-    negotiated_capabilities: Set[str],
 ) -> tuple[InvocationOutcome, dict[tuple[int, str], TransferStat]]:
-    """Strictly decode a negotiated typed result frame."""
+    """Strictly decode an invocation return-unit frame."""
     from dinkster_protocol import (
-        RESULT_ALGEBRA_CAPABILITY,
         RESULT_ALGEBRA_MAX_COUNT,
         RESULT_ALGEBRA_MAX_DOCUMENT_BYTES,
-        RESULT_ALGEBRA_VERSION,
     )
 
     expected_header = {"type", "invocationId", "executeMs", "resultAlgebra"}
@@ -1360,24 +1345,13 @@ def decode_invocation_outcome(
             or list(lengths) != [len(blob) for blob in blobs]
         ):
             raise BoundaryError("typed result frame has invalid blob lengths")
-    if RESULT_ALGEBRA_CAPABILITY not in negotiated_capabilities:
-        raise BoundaryError("result algebra capability was not negotiated")
     algebra = header["resultAlgebra"]
     if not isinstance(algebra, Mapping) or set(algebra) != {
-        "capability",
-        "version",
         "document",
         "values",
         "valueStats",
     }:
         raise BoundaryError("invalid resultAlgebra fields")
-    if (
-        type(algebra["capability"]) is not str
-        or algebra["capability"] != RESULT_ALGEBRA_CAPABILITY
-        or type(algebra["version"]) is not int
-        or algebra["version"] != RESULT_ALGEBRA_VERSION
-    ):
-        raise BoundaryError("unsupported result algebra capability or version")
     text = algebra["document"]
     try:
         if type(text) is not str or len(text.encode("ascii")) > RESULT_ALGEBRA_MAX_DOCUMENT_BYTES:
@@ -1716,8 +1690,6 @@ def decode_result(
     header: Mapping[str, Any],
     blobs: Sequence[bytes],
     consumed: list[str],
-    *,
-    negotiated_capabilities: Set[str] = frozenset(),
 ) -> tuple[InvocationResult, dict[str, TransferStat]]:
     """Decode ordinary values or one scalar expansion onto the same handoff path."""
     if "resultAlgebra" not in header:
@@ -1731,9 +1703,7 @@ def decode_result(
     if set(header) - fields - {"jobRef", "attemptId", "artifactCandidates"}:
         raise BoundaryError("invalid invocation expansion frame fields")
     payload = {key: header[key] for key in fields if key in header}
-    outcome, stats = decode_invocation_outcome(
-        codec, payload, blobs, consumed, negotiated_capabilities=negotiated_capabilities
-    )
+    outcome, stats = decode_invocation_outcome(codec, payload, blobs, consumed)
     if (
         not isinstance(outcome, InvocationReturn)
         or outcome.batch.mode != "scalar"

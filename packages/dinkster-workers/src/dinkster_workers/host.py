@@ -57,7 +57,6 @@ from dinkster_memory import (
     Shedder,
 )
 from dinkster_protocol import (
-    RESULT_ALGEBRA_CAPABILITY,
     WORKGROUP_CAPABILITY,
     AttentionCapabilityEvidence,
     AttentionRouteToken,
@@ -80,7 +79,6 @@ from dinkster_protocol import (
     WorkUnitFailed,
     attention_capability_evidence_to_wire,
     attention_route_token_to_wire,
-    negotiate_result_capabilities,
 )
 from dinkster_protocol.pack_surfaces import (
     PACK_EVENTS_SURFACE,
@@ -1146,7 +1144,6 @@ async def serve_connection(
         "pack": pack_name,
         "schemas": {t: schema_to_wire(s) for t, s in schemas.items()},
         "lazyStatus": True,
-        "resultCapabilities": [RESULT_ALGEBRA_CAPABILITY],
         # This process lifetime's identity: the same token resident codecs
         # stamp as RESOURCE_OWNER_META_KEY on the envelopes they produce, so
         # the parent can map an owner token back to a live session (and know
@@ -1384,19 +1381,6 @@ async def serve_connection(
                     )
                     return
             assert selected_worker is not None
-            selected_schema = selected_worker.schemas.get(invocation.node_type)
-            if (
-                selected_schema is not None
-                and selected_schema.may_expand_graph
-                and RESULT_ALGEBRA_CAPABILITY
-                not in negotiate_result_capabilities(header.get("resultCapabilities"))
-            ):
-                await send_error(
-                    invocation_id,
-                    header,
-                    f"runtime expansion requires negotiated capability {RESULT_ALGEBRA_CAPABILITY}",
-                )
-                return
             if not attention_route_token_matches_capabilities(
                 selected_worker.attention_capabilities,
                 invocation.attention_route_token,
@@ -1524,9 +1508,6 @@ async def serve_connection(
                 result,
                 invocation_id,
                 execute_ms,
-                negotiated_capabilities=negotiate_result_capabilities(
-                    header.get("resultCapabilities")
-                ),
             )
             pending_blobs: list[tuple[str, bytes | Path]] = list(codec.take_pending_store_blobs())
             pending_blobs.extend(source_files)
