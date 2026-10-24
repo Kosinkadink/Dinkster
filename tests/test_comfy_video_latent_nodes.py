@@ -1,6 +1,8 @@
 """Torch-free video latent node interfaces."""
 
-from dinkster_api.v1 import schema_to_wire
+from typing import cast
+
+from dinkster_api.v1 import NumberWidget, schema_to_wire
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.video_latent import VIDEO_LATENT_NODES
 
@@ -45,7 +47,7 @@ def test_video_latent_schemas_match_the_fixed_reference_contract() -> None:
         ),
         (
             "EmptyARVideoLatent",
-            None,
+            "",
             "model/latent/autoregressive",
             (832, 480, 81, 1),
             (16, 16, 1, 1),
@@ -59,9 +61,11 @@ def test_video_latent_schemas_match_the_fixed_reference_contract() -> None:
             node.schema().display_name,
             node.schema().category,
             tuple(input_spec.default for input_spec in node.schema().inputs),
-            tuple(input_spec.widget.min for input_spec in node.schema().inputs),
-            tuple(input_spec.widget.max for input_spec in node.schema().inputs),
-            tuple(input_spec.widget.step for input_spec in node.schema().inputs),
+            tuple(cast(NumberWidget, input_spec.widget).min for input_spec in node.schema().inputs),
+            tuple(cast(NumberWidget, input_spec.widget).max for input_spec in node.schema().inputs),
+            tuple(
+                cast(NumberWidget, input_spec.widget).step for input_spec in node.schema().inputs
+            ),
         )
         for node in VIDEO_LATENT_NODES
     )

@@ -32,7 +32,7 @@ def _integer(
 
 def _schema(
     node_type: str,
-    display_name: str | None,
+    display_name: str,
     category: str,
     *,
     width: int,
@@ -197,7 +197,7 @@ class EmptyARVideoLatent(Node):
     def define_schema(cls) -> NodeSchema:
         return _schema(
             "EmptyARVideoLatent",
-            None,
+            "",
             "model/latent/autoregressive",
             width=832,
             height=480,
