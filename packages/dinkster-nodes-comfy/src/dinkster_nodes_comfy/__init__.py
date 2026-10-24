@@ -64,6 +64,7 @@ from .primitive import (
 from .reference_conditioning import REFERENCE_CONDITIONING_NODES
 from .rope_and_mask import ROPE_AND_MASK_NODES
 from .sampler_factories import SAMPLER_FACTORY_NODES
+from .save_text import SaveText
 from .sigma_operations import SIGMA_OPERATION_NODES
 from .sigma_schedulers import SIGMA_SCHEDULER_NODES
 from .sparse_attention import SPARSE_ATTENTION_NODES
@@ -82,6 +83,7 @@ from .video_latent_ops import VIDEO_LATENT_OPERATION_NODES
 COMFY_NODES = (
     *TEXT_NODES,
     *DATASET_TEXT_NODES,
+    SaveText,
     *DATASET_COLLECTION_NODES,
     PrimitiveString,
     PrimitiveStringMultiline,
