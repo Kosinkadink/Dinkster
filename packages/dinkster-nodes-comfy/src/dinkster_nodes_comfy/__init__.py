@@ -2,6 +2,7 @@
 
 from dinkster_api.v1 import register_inference_types
 
+from .attention_guidance import ATTENTION_GUIDANCE_NODES
 from .attention_multiply import ATTENTION_MULTIPLY_NODES
 from .audio_combine import AUDIO_COMBINE_NODES
 from .audio_generators import AUDIO_GENERATOR_NODES
@@ -75,6 +76,7 @@ COMFY_NODES = (
     SeedNode,
     ComfyMathExpression,
     *ATTENTION_MULTIPLY_NODES,
+    *ATTENTION_GUIDANCE_NODES,
     *CACHE_NODES,
     *MODEL_MERGE_NODES,
     *MODEL_SPECIFIC_MERGE_NODES,

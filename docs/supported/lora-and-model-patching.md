@@ -19,5 +19,10 @@ CLIP attention, and temporal-attention projection weights through the model
 patcher. LoRA loading, scheduled patches, context-window patches, and
 model-family patch formats are not currently exposed by Dinkster.
 
+Self-Attention Guidance, Perturbed Attention Guidance, and both Skip Layer
+Guidance DiT nodes clone a model and install sampler or attention callbacks.
+They use the inference sampler's conditional-routing and model-patch mechanisms;
+they do not load or apply LoRA weights.
+
 ControlNet values use the native `CONTROL_NET` type and stay resident in their
 owning worker, with the same governed lifetime as other loaded models.
