@@ -2,6 +2,7 @@
 
 from dinkster_api.v1 import register_inference_types
 
+from .advanced_samplers import ADVANCED_SAMPLER_NODES
 from .attention_guidance import ATTENTION_GUIDANCE_NODES
 from .attention_multiply import ATTENTION_MULTIPLY_NODES
 from .audio_combine import AUDIO_COMBINE_NODES
@@ -124,6 +125,8 @@ COMFY_NODES = (
     *VIDEO_LATENT_NODES,
     *VIDEO_LATENT_OPERATION_NODES,
     *POST_PROCESSING_NODES,
+    *SAMPLER_FACTORY_NODES,
+    *ADVANCED_SAMPLER_NODES,
     EmptyMochiLatentVideo,
     *AUDIO_COMBINE_NODES,
     *AUDIO_EFFECT_NODES,
