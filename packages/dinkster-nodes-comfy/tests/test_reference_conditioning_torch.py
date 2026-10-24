@@ -24,6 +24,7 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 from dinkster_graph import Graph, GraphNode, Link
+from dinkster_inference.utils import common_upscale
 from dinkster_nodes_comfy.reference_conditioning import (
     InstructPixToPixConditioning,
     ReferenceLatent,
@@ -163,6 +164,34 @@ class ReferenceSource(Node):
         )
 
 
+class ReferenceMultiSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="reference-fixture.multi-source",
+            outputs=tuple(
+                OutputSpec(name, TypeExpr.concrete(type_id))
+                for name, type_id in (
+                    ("positive", CONDITIONING_TYPE),
+                    ("negative", CONDITIONING_TYPE),
+                    ("vae", VAE_TYPE),
+                    ("image2", IMAGE_TYPE),
+                    ("image10", IMAGE_TYPE),
+                )
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        return cls.outputs(
+            positive=[["multi-positive", {"strength": 0.7}]],
+            negative=[["multi-negative", {"strength": 0.2}]],
+            vae=ImageVAE(),
+            image2=np.full((1, 3, 5, 4), 0.25, dtype=np.float32),
+            image10=np.full((1, 5, 3, 4), 0.75, dtype=np.float32),
+        )
+
+
 class MediaConditioningInspect(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -239,9 +268,10 @@ class ReferenceMultiInspect(Node):
             inputs=tuple(
                 InputSpec(name, TypeExpr.concrete(type_id))
                 for name, type_id in (
-                    ("conditioning", CONDITIONING_TYPE),
-                    ("negative", CONDITIONING_TYPE),
-                    ("empty_latent", "core.latent"),
+                    ("resized", CONDITIONING_TYPE),
+                    ("resized_negative", CONDITIONING_TYPE),
+                    ("resized_empty", "core.latent"),
+                    ("kept", CONDITIONING_TYPE),
                     ("source_positive", CONDITIONING_TYPE),
                     ("source_negative", CONDITIONING_TYPE),
                 )
@@ -253,28 +283,43 @@ class ReferenceMultiInspect(Node):
     def execute(
         cls,
         *,
-        conditioning: Any,
-        negative: Any,
-        empty_latent: Any,
+        resized: Any,
+        resized_negative: Any,
+        resized_empty: Any,
+        kept: Any,
         source_positive: Any,
         source_negative: Any,
     ) -> dict[str, object]:
-        references = conditioning[0][1]["reference_latents"]
-        negative_references = negative[0][1]["reference_latents"]
-        assert len(references) == len(negative_references) == 2
-        first = materialize_image(references[0])
-        second = materialize_image(references[1])
-        torch.testing.assert_close(first, torch.full((1, 4, 3, 5), -0.5))
-        torch.testing.assert_close(second, torch.full((1, 4, 5, 3), 0.5))
-        torch.testing.assert_close(
-            materialize_image(materialize_latent(empty_latent)["samples"]),
-            torch.zeros((1, 4, 3, 5)),
+        resized_references = resized[0][1]["reference_latents"]
+        resized_negative_references = resized_negative[0][1]["reference_latents"]
+        kept_references = kept[0][1]["reference_latents"]
+        assert (
+            len(resized_references) == len(resized_negative_references) == len(kept_references) == 2
         )
-        assert conditioning[0][1]["strength"] == 2.5
-        assert negative[0][1]["strength"] == 0.2
+        assert resized_negative[0][0] == "multi-positive"
+        assert source_positive[0][0] == "multi-positive"
+        assert source_negative[0][0] == "multi-negative"
+        resized_first = materialize_image(resized_references[0])
+        resized_second = materialize_image(resized_references[1])
+        kept_first = materialize_image(kept_references[0])
+        kept_second = materialize_image(kept_references[1])
+        image2 = torch.full((1, 4, 3, 5), 63 / 255)
+        image10 = torch.full((1, 4, 5, 3), 191 / 255)
+        expected_resized_first = common_upscale(image2, 132, 79, "lanczos", "disabled") * 2 - 1
+        expected_resized_second = common_upscale(image10, 79, 132, "lanczos", "disabled") * 2 - 1
+        torch.testing.assert_close(resized_first, expected_resized_first)
+        torch.testing.assert_close(resized_second, expected_resized_second)
+        torch.testing.assert_close(kept_first, torch.full((1, 4, 3, 5), -0.5))
+        torch.testing.assert_close(kept_second, torch.full((1, 4, 5, 3), 0.5))
+        torch.testing.assert_close(
+            materialize_image(materialize_latent(resized_empty)["samples"]),
+            torch.zeros((1, 4, 79, 132)),
+        )
+        assert resized[0][1]["strength"] == 2.5
+        assert kept[0][1]["strength"] == 3.5
         assert source_positive[0][1] == {"strength": 0.7}
         assert source_negative[0][1] == {"strength": 0.2}
-        return cls.outputs(value=float(first[0, 0, 0, 0]))
+        return cls.outputs(value=float(resized_first[0, 0, 0, 0] + kept_first[0, 0, 0, 0]))
 
 
 @pytest.mark.parametrize("in_process", (True, False))
@@ -289,30 +334,46 @@ def test_ordinary_manifest_links_image_edit_and_reference_nodes(
         try:
             (tmp_path / "reference_fixture.py").write_text(
                 "from test_reference_conditioning_torch import (\n"
-                "    ReferenceMultiInspect, ReferenceSource, ReferenceInspect,\n"
+                "    ReferenceMultiInspect, ReferenceMultiSource,\n"
+                "    ReferenceSource, ReferenceInspect,\n"
                 ")\n"
                 "from test_reference_conditioning_torch import MediaConditioningInspect\n"
-                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "NODES = (*COMFY_NODES, ReferenceSource, ReferenceInspect, ReferenceMultiInspect,\n"
+                "from dinkster_inference_wire import register_inference_types\n"
+                "NODES = (ReferenceSource, ReferenceMultiSource, ReferenceInspect,\n"
+                "         ReferenceMultiInspect,\n"
                 "         MediaConditioningInspect)\n",
                 encoding="ascii",
             )
-            manifest = tmp_path / "dinkster-pack.toml"
-            manifest.write_text(
-                (root / "dinkster-pack.toml")
-                .read_text(encoding="ascii")
-                .replace("namespaces = [", 'namespaces = ["reference-fixture",')
-                .replace("dinkster_nodes_comfy:COMFY_NODES", "reference_fixture:NODES")
-                .replace(
-                    "dinkster_nodes_comfy:register_inference_types",
-                    "reference_fixture:register_inference_types",
-                ),
+            fixture_manifest = tmp_path / "reference-fixture-pack.toml"
+            fixture_manifest.write_text(
+                '[pack]\nname = "reference-conditioning-fixture"\npublisher = "dinkster"\n'
+                'namespaces = ["reference-fixture"]\n'
+                '[pack.entry]\nnodes = "reference_fixture:NODES"\n'
+                'types = "reference_fixture:register_inference_types"\n',
                 encoding="ascii",
             )
-            await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
+            native_manifest = root / "dinkster-pack.toml"
+            if in_process:
+                native_spec = PackSpec(manifest=native_manifest, in_process=True)
+                fixture_spec = PackSpec(manifest=fixture_manifest, in_process=True)
+            else:
+                group_manifests = (native_manifest, fixture_manifest)
+                native_spec = PackSpec(
+                    manifest=native_manifest,
+                    worker_group="reference-conditioning",
+                    group_manifests=group_manifests,
+                )
+                fixture_spec = PackSpec(
+                    manifest=fixture_manifest,
+                    worker_group="reference-conditioning",
+                    group_manifests=group_manifests,
+                )
+            await composer.add_pack(native_spec)
+            await composer.add_pack(fixture_spec)
             graph = Graph(
                 nodes={
                     "source": GraphNode("reference-fixture.source"),
+                    "multi_source": GraphNode("reference-fixture.multi-source"),
                     "timed": GraphNode(
                         "ConditioningStableAudio",
                         {
@@ -359,29 +420,45 @@ def test_ordinary_manifest_links_image_edit_and_reference_nodes(
                             "latent": Link("edit", "latent"),
                         },
                     ),
-                    "multi": GraphNode(
+                    "multi_resize": GraphNode(
                         "ReferenceMultiLatent",
                         {
-                            "positive": Link("source", "positive"),
-                            "negative": Link("source", "negative"),
-                            "vae": Link("source", "vae"),
-                            "images.image10": Link("source", "image10"),
-                            "images.image2": Link("source", "image2"),
+                            "positive": Link("multi_source", "positive"),
+                            "vae": Link("multi_source", "vae"),
+                            "images.image10": Link("multi_source", "image10"),
+                            "images.image2": Link("multi_source", "image2"),
+                            "resolution.megapixels": 0.01,
+                        },
+                        slot_variants={"resolution": "resize"},
+                    ),
+                    "multi_keep": GraphNode(
+                        "ReferenceMultiLatent",
+                        {
+                            "positive": Link("multi_source", "positive"),
+                            "negative": Link("multi_source", "negative"),
+                            "vae": Link("multi_source", "vae"),
+                            "images.image10": Link("multi_source", "image10"),
+                            "images.image2": Link("multi_source", "image2"),
                         },
                         slot_variants={"resolution": "keep resolution"},
                     ),
-                    "strength": GraphNode(
+                    "resize_strength": GraphNode(
                         "ConditioningSetAreaStrength",
-                        {"conditioning": Link("multi", "positive"), "strength": 2.5},
+                        {"conditioning": Link("multi_resize", "positive"), "strength": 2.5},
+                    ),
+                    "keep_strength": GraphNode(
+                        "ConditioningSetAreaStrength",
+                        {"conditioning": Link("multi_keep", "positive"), "strength": 3.5},
                     ),
                     "multi_inspect": GraphNode(
                         "reference-fixture.multi-inspect",
                         {
-                            "conditioning": Link("strength", "CONDITIONING"),
-                            "negative": Link("multi", "negative"),
-                            "empty_latent": Link("multi", "empty_latent"),
-                            "source_positive": Link("source", "positive"),
-                            "source_negative": Link("source", "negative"),
+                            "resized": Link("resize_strength", "CONDITIONING"),
+                            "resized_negative": Link("multi_resize", "negative"),
+                            "resized_empty": Link("multi_resize", "empty_latent"),
+                            "kept": Link("keep_strength", "CONDITIONING"),
+                            "source_positive": Link("multi_source", "positive"),
+                            "source_negative": Link("multi_source", "negative"),
                         },
                     ),
                     "inspect": GraphNode(
@@ -399,7 +476,25 @@ def test_ordinary_manifest_links_image_edit_and_reference_nodes(
                 result = await engine.run(graph, ["inspect", "media_inspect", "multi_inspect"])
                 assert result.outputs["inspect"]["pixel"].resolve() == -105 / 128
                 assert result.outputs["media_inspect"]["strength"].resolve() == 2.5
-                assert result.outputs["multi_inspect"]["value"].resolve() == -0.5
+                assert result.outputs["multi_inspect"]["value"].resolve() == pytest.approx(
+                    -127 / 255 - 0.5
+                )
+                if _:
+                    assert set(result.cached) == {
+                        "source",
+                        "multi_source",
+                        "timed",
+                        "area",
+                        "media_inspect",
+                        "edit",
+                        "reference",
+                        "multi_resize",
+                        "multi_keep",
+                        "resize_strength",
+                        "keep_strength",
+                        "multi_inspect",
+                        "inspect",
+                    }
         finally:
             await composer.close()
 
