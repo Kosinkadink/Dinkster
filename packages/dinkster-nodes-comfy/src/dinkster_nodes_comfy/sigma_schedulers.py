@@ -59,13 +59,14 @@ def _float(
     step: float,
     *,
     advanced: bool = True,
+    round: bool | None = None,
 ) -> InputSpec:
     return InputSpec(
         name,
         _FLOAT,
         default=default,
         advanced=advanced,
-        widget=NumberWidget(min=minimum, max=maximum, step=step),
+        widget=NumberWidget(min=minimum, max=maximum, step=step, round=round),
     )
 
 
@@ -112,9 +113,9 @@ class KarrasScheduler(Node):
             category=_CATEGORY,
             inputs=(
                 _integer("steps", 20, 1, 10_000),
-                _float("sigma_max", 14.614642, 0.0, 5000.0, 0.01),
-                _float("sigma_min", 0.0291675, 0.0, 5000.0, 0.01),
-                _float("rho", 7.0, 0.0, 100.0, 0.01),
+                _float("sigma_max", 14.614642, 0.0, 5000.0, 0.01, round=False),
+                _float("sigma_min", 0.0291675, 0.0, 5000.0, 0.01, round=False),
+                _float("rho", 7.0, 0.0, 100.0, 0.01, round=False),
             ),
             outputs=(OutputSpec("SIGMAS", _SIGMAS),),
         )
@@ -136,8 +137,8 @@ class ExponentialScheduler(Node):
             category=_CATEGORY,
             inputs=(
                 _integer("steps", 20, 1, 10_000),
-                _float("sigma_max", 14.614642, 0.0, 5000.0, 0.01),
-                _float("sigma_min", 0.0291675, 0.0, 5000.0, 0.01),
+                _float("sigma_max", 14.614642, 0.0, 5000.0, 0.01, round=False),
+                _float("sigma_min", 0.0291675, 0.0, 5000.0, 0.01, round=False),
             ),
             outputs=(OutputSpec("SIGMAS", _SIGMAS),),
         )
@@ -157,9 +158,9 @@ class PolyexponentialScheduler(Node):
             category=_CATEGORY,
             inputs=(
                 _integer("steps", 20, 1, 10_000),
-                _float("sigma_max", 14.614642, 0.0, 5000.0, 0.01),
-                _float("sigma_min", 0.0291675, 0.0, 5000.0, 0.01),
-                _float("rho", 1.0, 0.0, 100.0, 0.01),
+                _float("sigma_max", 14.614642, 0.0, 5000.0, 0.01, round=False),
+                _float("sigma_min", 0.0291675, 0.0, 5000.0, 0.01, round=False),
+                _float("rho", 1.0, 0.0, 100.0, 0.01, round=False),
             ),
             outputs=(OutputSpec("SIGMAS", _SIGMAS),),
         )
@@ -183,10 +184,10 @@ class LaplaceScheduler(Node):
             category=_CATEGORY,
             inputs=(
                 _integer("steps", 20, 1, 10_000),
-                _float("sigma_max", 14.614642, 0.0, 5000.0, 0.01),
-                _float("sigma_min", 0.0291675, 0.0, 5000.0, 0.01),
-                _float("mu", 0.0, -10.0, 10.0, 0.1),
-                _float("beta", 0.5, 0.0, 10.0, 0.1),
+                _float("sigma_max", 14.614642, 0.0, 5000.0, 0.01, round=False),
+                _float("sigma_min", 0.0291675, 0.0, 5000.0, 0.01, round=False),
+                _float("mu", 0.0, -10.0, 10.0, 0.1, round=False),
+                _float("beta", 0.5, 0.0, 10.0, 0.1, round=False),
             ),
             outputs=(OutputSpec("SIGMAS", _SIGMAS),),
         )
@@ -210,9 +211,9 @@ class VPScheduler(Node):
             category=_CATEGORY,
             inputs=(
                 _integer("steps", 20, 1, 10_000),
-                _float("beta_d", 19.9, 0.0, 5000.0, 0.01),
-                _float("beta_min", 0.1, 0.0, 5000.0, 0.01),
-                _float("eps_s", 0.001, 0.0, 1.0, 0.0001),
+                _float("beta_d", 19.9, 0.0, 5000.0, 0.01, round=False),
+                _float("beta_min", 0.1, 0.0, 5000.0, 0.01, round=False),
+                _float("eps_s", 0.001, 0.0, 1.0, 0.0001, round=False),
             ),
             outputs=(OutputSpec("SIGMAS", _SIGMAS),),
         )
@@ -237,8 +238,8 @@ class BetaSamplingScheduler(Node):
             inputs=(
                 InputSpec("model", _MODEL),
                 _integer("steps", 20, 1, 10_000),
-                _float("alpha", 0.6, 0.0, 50.0, 0.01),
-                _float("beta", 0.6, 0.0, 50.0, 0.01),
+                _float("alpha", 0.6, 0.0, 50.0, 0.01, round=False),
+                _float("beta", 0.6, 0.0, 50.0, 0.01, round=False),
             ),
             outputs=(OutputSpec("SIGMAS", _SIGMAS),),
         )

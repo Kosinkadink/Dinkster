@@ -2,6 +2,7 @@
 
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.sigma_schedulers import SIGMA_SCHEDULER_NODES
+from dinkster_schema import NumberWidget
 
 
 def test_native_sigma_scheduler_nodes_are_registered_with_comfy_schemas() -> None:
@@ -21,3 +22,11 @@ def test_native_sigma_scheduler_nodes_are_registered_with_comfy_schemas() -> Non
     } == expected_inputs
     assert all(nodes[name].outputs[0].id == "SIGMAS" for name in expected_inputs)
     assert set(SIGMA_SCHEDULER_NODES).issubset(COMFY_NODES)
+    for schema in nodes.values():
+        for port in schema.inputs:
+            if (
+                port.type.types == ("FLOAT",)
+                and port.id != "denoise"
+                and isinstance(port.widget, NumberWidget)
+            ):
+                assert port.widget.round is False
