@@ -1,5 +1,7 @@
 """Torch-free public interfaces for native ComfyUI audio combine nodes."""
 
+from typing import Any, cast
+
 from dinkster_api.v1 import AUDIO_TYPE, CORE_COMBO, ComboWidget, schema_from_wire, schema_to_wire
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.audio_combine import AUDIO_COMBINE_NODES
@@ -35,8 +37,8 @@ def test_audio_combine_schemas_match_comfyui() -> None:
     assert concat.default == "after"
     assert isinstance(concat.widget, ComboWidget)
     assert isinstance(merge.widget, ComboWidget)
-    assert tuple(option.value for option in concat.widget.options) == ("after", "before")
-    assert tuple(option.value for option in merge.widget.options) == (
+    assert tuple(option.value for option in cast(Any, concat.widget).options) == ("after", "before")
+    assert tuple(option.value for option in cast(Any, merge.widget).options) == (
         "add",
         "mean",
         "subtract",
