@@ -381,6 +381,10 @@ def __getattr__(name: str) -> object:
         import dinkster_video
 
         value = getattr(dinkster_video, name)
+    elif name in {"LatentStream", "MultiStreamLatent"}:
+        from dinkster_inference_wire import latents
+
+        value = getattr(latents, name)
     elif name in {
         "register_inference_types",
         "materialize_audio",
@@ -406,6 +410,8 @@ def __dir__() -> list[str]:
         set(globals())
         | _VIDEO_MODULE_EXPORTS
         | {
+            "LatentStream",
+            "MultiStreamLatent",
             "register_inference_types",
             "materialize_audio",
             "materialize_image",
@@ -417,6 +423,7 @@ def __dir__() -> list[str]:
 
 
 if TYPE_CHECKING:
+    from dinkster_inference_wire.latents import LatentStream, MultiStreamLatent
     from dinkster_inference_wire.process import initialize_inference_process
     from dinkster_inference_wire.types import (
         materialize_audio,
@@ -435,6 +442,8 @@ __all__ = [
     "ExpansionBuilder",
     "ExpansionNode",
     "ExpansionOutput",
+    "LatentStream",
+    "MultiStreamLatent",
     "initialize_inference_process",
     "materialize_audio",
     "materialize_clip_vision_output",

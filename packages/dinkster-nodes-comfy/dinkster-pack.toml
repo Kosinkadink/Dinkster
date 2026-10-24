@@ -239,6 +239,8 @@ namespaces = [
     "HunyuanRefinerLatent",
     "CLIPTextEncodeHunyuanDiT",
     "TextEncodeHunyuanVideo_ImageToVideo",
+    "HunyuanImageToVideo",
+    "HunyuanVideo15ImageToVideo",
     "SVD_img2vid_Conditioning",
     "CosmosImageToVideoLatent",
     "CosmosPredict2ImageToVideoLatent",
@@ -278,6 +280,7 @@ namespaces = [
     "VAEDecodeAudioTiled",
     "LTXVAudioVAEEncode",
     "LTXVAudioVAEDecode",
+    "LTXVEmptyLatentAudio",
     "ResizeImagesByShorterEdge",
     "ResizeImagesByLongerEdge",
     "CenterCropImages",
@@ -305,6 +308,9 @@ namespaces = [
     "SamplerER_SDE",
     "SamplerSASolver",
     "SamplerSEEDS2",
+    "SamplerLCMUpscale",
+    "SamplerLCM",
+    "SamplerEulerCFGpp",
 ]
 
 [pack.sandbox]
