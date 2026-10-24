@@ -2,10 +2,13 @@
 
 from dinkster_api.v1 import register_inference_types
 
+from .attention_multiply import ATTENTION_MULTIPLY_NODES
 from .clip import CLIP_NODES
 from .clip_model_specific import MODEL_TEXT_ENCODER_NODES
+from .clip_sdxl import CLIP_SDXL_NODES
 from .compositing import COMPOSITING_NODES
 from .conditioning import CONDITIONING_NODES
+from .controlnet import CONTROLNET_NODES
 from .dataset_text import DATASET_TEXT_NODES
 from .freeu import FREEU_NODES
 from .image_core import IMAGE_CORE_NODES
@@ -14,10 +17,12 @@ from .image_transform import IMAGE_TRANSFORM_NODES
 from .inpaint import INPAINT_NODES
 from .latent import LATENT_NODES
 from .latent_advanced import LATENT_ADVANCED_NODES
+from .latent_model_specific import MODEL_LATENT_NODES
 from .latent_operations import LATENT_OPERATION_NODES
 from .logic import LOGIC_NODES
 from .mask import MASK_NODES
 from .math import ComfyMathExpression
+from .mochi import EmptyMochiLatentVideo
 from .model_merging import MODEL_MERGE_NODES
 from .model_merging_specific import MODEL_SPECIFIC_MERGE_NODES
 from .morphology import MORPHOLOGY_NODES
@@ -29,6 +34,7 @@ from .primitive import (
     PrimitiveString,
     PrimitiveStringMultiline,
 )
+from .reference_conditioning import REFERENCE_CONDITIONING_NODES
 from .stable_cascade import STABLE_CASCADE_NODES
 from .text import TEXT_NODES
 from .utilities import ComfyNumberConvert, SeedNode
@@ -46,17 +52,22 @@ COMFY_NODES = (
     ComfyNumberConvert,
     SeedNode,
     ComfyMathExpression,
+    *ATTENTION_MULTIPLY_NODES,
     *MODEL_MERGE_NODES,
     *MODEL_SPECIFIC_MERGE_NODES,
     *FREEU_NODES,
     *LATENT_NODES,
     *LATENT_ADVANCED_NODES,
     *LATENT_OPERATION_NODES,
+    *MODEL_LATENT_NODES,
     *CLIP_NODES,
+    *CLIP_SDXL_NODES,
     *MODEL_TEXT_ENCODER_NODES,
     *VAE_NODES,
     *CONDITIONING_NODES,
+    *REFERENCE_CONDITIONING_NODES,
     *INPAINT_NODES,
+    *CONTROLNET_NODES,
     *MASK_NODES,
     *COMPOSITING_NODES,
     *IMAGE_CORE_NODES,
@@ -65,6 +76,7 @@ COMFY_NODES = (
     *MORPHOLOGY_NODES,
     *STABLE_CASCADE_NODES,
     *POST_PROCESSING_NODES,
+    EmptyMochiLatentVideo,
 )
 
 __all__ = ["COMFY_NODES", "register_inference_types"]
