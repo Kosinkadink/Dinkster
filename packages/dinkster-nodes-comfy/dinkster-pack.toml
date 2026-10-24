@@ -135,6 +135,8 @@ namespaces = [
     "BatchMasksNode",
     "BatchLatentsNode",
     "ColorTransfer",
+    "MergeImageLists",
+    "ResolutionBucket",
 ]
 
 [pack.sandbox]

@@ -5,6 +5,7 @@ from dinkster_api.v1 import register_inference_types
 from .clip import CLIP_NODES
 from .compositing import COMPOSITING_NODES
 from .conditioning import CONDITIONING_NODES
+from .dataset_groups import DATASET_GROUP_NODES
 from .image_core import IMAGE_CORE_NODES
 from .image_filters import IMAGE_FILTER_NODES
 from .image_transform import IMAGE_TRANSFORM_NODES
@@ -55,6 +56,7 @@ COMFY_NODES = (
     *IMAGE_TRANSFORM_NODES,
     *MORPHOLOGY_NODES,
     *POST_PROCESSING_NODES,
+    *DATASET_GROUP_NODES,
 )
 
 __all__ = ["COMFY_NODES", "register_inference_types"]

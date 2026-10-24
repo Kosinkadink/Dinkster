@@ -24,6 +24,8 @@
   stitch, resize with padding, rotate, flip, and scale to a maximum dimension.
 - Native morphology applies erosion, dilation, opening, closing, gradients and
   top/bottom hats; RGB/YUV conversion splits and joins three image channels.
+- Native dataset nodes merge image batches into frame lists and bucket training
+  latents with their paired conditioning by resolution in first-seen order.
 - Portable masks become Torch tensors at native tensor-consuming nodes, without
   moving already-live tensors or loading Torch in the host decoder.
 - `dinkster-serve --comfy-root ... --legacy-pack PATH` runs unmodified v1 and
