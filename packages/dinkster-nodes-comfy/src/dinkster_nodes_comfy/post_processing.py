@@ -596,7 +596,8 @@ class ColorTransfer(Node):
                 )
                 return lambda source, _: source * scale + offset
             transform = cls._mkl_matrix(source_scale, reference_scale, epsilon)
-            return lambda source, _: transform @ source + reference_mean - transform @ source_mean
+            offset = reference_mean - transform @ source_mean
+            return lambda source, _: transform @ source + offset
 
         def per_frame(source: Any, index: int) -> Any:
             source_mean, source_scale = cls._frame_stats(source, pixels, reinhard, epsilon)

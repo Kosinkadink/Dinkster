@@ -98,6 +98,34 @@ def test_post_processing_uses_real_cpu_inference_utilities_at_asymmetric_boundar
     torch.testing.assert_close(target, target_before)
 
 
+@pytest.mark.parametrize(("stats", "target_index"), (("uniform", 0), ("target_frame", 1)))
+def test_mkl_lab_shared_statistics_preserve_reference_operation_order(
+    stats: str, target_index: int
+) -> None:
+    generator = torch.Generator().manual_seed(511)
+    target = torch.rand((2, 7, 11, 3), generator=generator)
+    reference = torch.rand((1, 5, 9, 3), generator=generator)
+    device = torch.device("cpu")
+    epsilon = 1e-6
+    channels, pixels = target.shape[-1], target.shape[1] * target.shape[2]
+    reference_mean, reference_scale = ColorTransfer._pool_stats(reference, device, False, epsilon)
+    if stats == "uniform":
+        source_mean, source_scale = ColorTransfer._pool_stats(target, device, False, epsilon)
+    else:
+        source_lab = ColorTransfer._to_lab(target, target_index, device).view(channels, -1)
+        source_mean, source_scale = ColorTransfer._frame_stats(source_lab, pixels, False, epsilon)
+    matrix = ColorTransfer._mkl_matrix(source_scale, reference_scale, epsilon)
+    source = ColorTransfer._to_lab(target, 0, device).view(channels, -1)
+    expected = matrix @ source + (reference_mean - matrix @ source_mean)
+    legacy = matrix @ source + reference_mean - matrix @ source_mean
+    actual = ColorTransfer._lab_transform(target, reference, device, stats, target_index, False)(
+        source, 0
+    )
+
+    assert not torch.equal(expected, legacy)
+    assert torch.equal(actual, expected)
+
+
 class PostProcessingSource(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
