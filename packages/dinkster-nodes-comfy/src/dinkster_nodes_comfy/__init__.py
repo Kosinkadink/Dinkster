@@ -11,6 +11,7 @@ from .conditioning import CONDITIONING_NODES
 from .controlnet import CONTROLNET_NODES
 from .dataset_text import DATASET_TEXT_NODES
 from .freeu import FREEU_NODES
+from .hunyuan3d import HUNYUAN3D_CONDITIONING_NODES
 from .image_core import IMAGE_CORE_NODES
 from .image_filters import IMAGE_FILTER_NODES
 from .image_transform import IMAGE_TRANSFORM_NODES
@@ -68,6 +69,7 @@ COMFY_NODES = (
     *VAE_NODES,
     *CONDITIONING_NODES,
     *REFERENCE_CONDITIONING_NODES,
+    *HUNYUAN3D_CONDITIONING_NODES,
     *INPAINT_NODES,
     *CONTROLNET_NODES,
     *MASK_NODES,
