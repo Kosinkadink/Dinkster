@@ -646,8 +646,8 @@ _DECIMAL_WIRE_INT_MAX = 2**64 - 1
 class NumberWidget:
     """Presentation request for a numeric input's editor.
 
-    Only meaningful on ``INT``/``FLOAT`` inputs; the socket type
-    decides integer vs float rendering, so one widget kind covers both.
+    Only meaningful on ``INT``/``FLOAT`` inputs or their exact numeric union;
+    the union uses float presentation, so one widget kind covers both.
     All constraints are UI vocabulary: the runtime value stays a plain
     number and out-of-range stored values are the frontend's diagnostic to
     surface, never a schema error. Absent min/max means unbounded. Integer
@@ -666,8 +666,9 @@ class NumberWidget:
     (pinned with the frontend).
 
     Socket binding: this descriptor is only
-    legal on concrete ``INT``/``FLOAT`` inputs, and constraints
-    are interpreted in the socket's domain - an int socket with a
+    legal on concrete ``INT``/``FLOAT`` inputs, their one-level lists, and
+    the scalar ``INT``/``FLOAT`` union. Constraints use the socket's domain
+    (FLOAT for the union) - an int socket with a
     fractional min/max/step is malformed. Enforced by InputSpec, which is
     the first place the widget meets its socket type."""
 
@@ -989,10 +990,12 @@ def _validate_widget_binding(input_id: str, input_type: TypeExpr, widget: Widget
     )
     if isinstance(widget, NumberWidget):
         socket = primitive_type.types[0] if primitive_type.kind == "concrete" else None
+        if input_type.kind == "union" and set(input_type.types) == {CORE_INT, CORE_FLOAT}:
+            socket = CORE_FLOAT
         if socket not in (CORE_INT, CORE_FLOAT):
             raise ValueError(
                 f"input {input_id}: number widget requires a concrete "
-                f"INT or FLOAT input, got {input_type.kind} "
+                f"INT or FLOAT input or their scalar union, got {input_type.kind} "
                 f"{socket or ''}".rstrip()
             )
         if socket == CORE_INT:
