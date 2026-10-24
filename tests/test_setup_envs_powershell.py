@@ -5,6 +5,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -58,7 +59,7 @@ def test_powershell_setup_pins_native_windows_test_environments() -> None:
         "packaging",
         "numpy>=1.26",
         "scipy>=1.11",
-        "simpleeval==1.0.3",
+        "simpleeval==1.0.8",
         "onnxruntime==1.29.0",
         "opencv-python-headless==5.0.0.93",
         "pillow==12.0.0",
@@ -96,6 +97,20 @@ def test_powershell_setup_pins_native_windows_test_environments() -> None:
     assert '"Python.h"' in setup
     assert "Get-Command nvidia-smi -ErrorAction SilentlyContinue" in setup
     assert "no enabled NVIDIA GPU detected - skipping .venv-gpu" in setup
+
+
+def test_setup_math_dependency_matches_workspace_lock() -> None:
+    lock = tomllib.loads((REPO_ROOT / "uv.lock").read_text())
+    version = next(item["version"] for item in lock["package"] if item["name"] == "simpleeval")
+    requirement = f"simpleeval=={version}"
+    project = tomllib.loads(
+        (REPO_ROOT / "packages/dinkster-nodes-comfy/pyproject.toml").read_text()
+    )
+    assert requirement in project["project"]["dependencies"]
+    assert requirement in _powershell_dependency_array(
+        POWERSHELL_SETUP.read_text(), "CpuDependencies"
+    )
+    assert f'"{requirement}"' in POSIX_SETUP.read_text()
 
 
 def test_powershell_setup_limits_force_and_has_no_private_installer() -> None:
