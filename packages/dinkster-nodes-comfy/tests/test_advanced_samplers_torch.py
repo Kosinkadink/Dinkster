@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -196,6 +197,82 @@ def test_alternative_cfgpp_routes_unconditioned_denoised_through_post_cfg_callba
     torch.testing.assert_close(actual, source * 0.65625)
 
 
+class _SamplingSpace:
+    noise_scale = 1.0
+    sigma_max = 2.0
+
+    def get_model_object(self, name: str) -> _SamplingSpace:
+        assert name == "model_sampling"
+        return self
+
+    def noise_scaling(
+        self, sigma: torch.Tensor, noise: torch.Tensor, latent: torch.Tensor, *_: object
+    ) -> torch.Tensor:
+        return latent + sigma * noise
+
+    def inverse_noise_scaling(self, _sigma: torch.Tensor, samples: torch.Tensor) -> torch.Tensor:
+        return samples
+
+
+class _RuntimeSamplingModel:
+    def __init__(self) -> None:
+        self.model_sampling = _SamplingSpace()
+        self.model_patcher = SimpleNamespace(
+            model=object(), get_model_object=self.model_sampling.get_model_object
+        )
+        self.inner_model = SimpleNamespace(
+            model_sampling=self.model_sampling, model_patcher=self.model_patcher
+        )
+        self.cfg = 1.5
+        self.calls: list[tuple[torch.Tensor, torch.Tensor, dict[str, object], int | None]] = []
+
+    def __call__(
+        self,
+        value: torch.Tensor,
+        sigma: torch.Tensor,
+        *,
+        model_options: dict[str, object],
+        seed: int | None,
+    ) -> torch.Tensor:
+        self.calls.append((value.clone(), sigma.clone(), model_options, seed))
+        denoised = value * 0.5 + sigma.reshape((-1, 1, 1, 1)) * 0.1
+        uncond_denoised = value * -0.25 + sigma.reshape((-1, 1, 1, 1)) * 0.05
+        for function in model_options.get("sampler_post_cfg_function", []):
+            denoised = function({"denoised": denoised, "uncond_denoised": uncond_denoised})
+        return denoised
+
+
+def _sample(
+    sampler: Any,
+    model: _RuntimeSamplingModel,
+    sigmas: torch.Tensor,
+    noise: torch.Tensor,
+    latent: torch.Tensor,
+    callback_records: list[tuple[int, torch.Tensor, torch.Tensor, int]],
+    *,
+    model_options: dict[str, object],
+) -> torch.Tensor:
+    return sampler.sample(
+        model,
+        sigmas,
+        {"seed": 739, "model_options": model_options},
+        lambda index, denoised, value, total: callback_records.append(
+            (index, denoised.clone(), value.clone(), total)
+        ),
+        noise,
+        latent_image=latent,
+        disable_pbar=True,
+    )
+
+
+def _denoised(value: torch.Tensor, sigma: torch.Tensor) -> torch.Tensor:
+    return value * 0.5 + sigma * 0.1
+
+
+def _uncond_denoised(value: torch.Tensor, sigma: torch.Tensor) -> torch.Tensor:
+    return value * -0.25 + sigma * 0.05
+
+
 class AdvancedSamplerConsumer(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -205,13 +282,16 @@ class AdvancedSamplerConsumer(Node):
             inputs=(
                 InputSpec("upscale", sampler),
                 InputSpec("lcm", sampler),
-                InputSpec("cfgpp", sampler),
+                InputSpec("regular", sampler),
+                InputSpec("alternative", sampler),
             ),
             outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
         )
 
     @classmethod
-    def execute(cls, *, upscale: Any, lcm: Any, cfgpp: Any) -> dict[str, object]:
+    def execute(
+        cls, *, upscale: Any, lcm: Any, regular: Any, alternative: Any
+    ) -> dict[str, object]:
         assert upscale.sampler_function is sample_lcm_upscale
         assert upscale.extra_options == {
             "total_upscale": 1.5,
@@ -224,16 +304,150 @@ class AdvancedSamplerConsumer(Node):
             "s_noise_end": 1.75,
             "noise_clip_std": 0.25,
         }
-        assert cfgpp.sampler_function is sample_euler_cfg_pp_alternative
-        return cls.outputs(
-            summary="|".join(
-                (
-                    upscale.sampler_function.__name__,
-                    lcm.sampler_function.__name__,
-                    cfgpp.sampler_function.__name__,
-                )
-            )
+        assert regular.sampler_function.__name__ == "sample_euler_cfg_pp"
+        assert alternative.sampler_function is sample_euler_cfg_pp_alternative
+
+        noise = torch.tensor(
+            [[[[0.2, -0.4, 1.1], [-0.8, 0.6, -1.3]]]], dtype=torch.float32, requires_grad=True
         )
+        latent = torch.tensor(
+            [[[[1.2, -0.7, 0.5], [0.25, -1.5, 0.9]]]], dtype=torch.float32, requires_grad=True
+        )
+        original_noise = noise.detach().clone()
+        original_latent = latent.detach().clone()
+
+        upscale_records: list[tuple[int, torch.Tensor, torch.Tensor, int]] = []
+        upscale_model = _RuntimeSamplingModel()
+        torch.manual_seed(918)
+        upscale_result = _sample(
+            upscale,
+            upscale_model,
+            torch.tensor((1.0, 0.5, 0.25, 0.0)),
+            noise,
+            latent,
+            upscale_records,
+            model_options={"marker": "upscale"},
+        )
+        torch.manual_seed(918)
+        upscale_expected = original_latent + original_noise
+        for index, size in enumerate(((2, 4), (3, 4), None)):
+            sigma = (1.0, 0.5, 0.25)[index]
+            upscale_expected = _denoised(upscale_expected, torch.tensor(sigma))
+            if size is not None:
+                upscale_expected = torch.nn.functional.interpolate(
+                    upscale_expected, size=size, mode="nearest-exact"
+                )
+            next_sigma = (0.5, 0.25, 0.0)[index]
+            if next_sigma:
+                upscale_expected += next_sigma * torch.randn_like(upscale_expected)
+        torch.testing.assert_close(upscale_result, upscale_expected)
+        assert [record[0] for record in upscale_records] == [0, 1, 2]
+        assert [record[3] for record in upscale_records] == [3, 3, 3]
+        assert [tuple(record[2].shape) for record in upscale_records] == [
+            (1, 1, 2, 3),
+            (1, 1, 2, 4),
+            (1, 1, 3, 4),
+        ]
+        torch.testing.assert_close(
+            upscale_records[0][1], _denoised(original_latent + original_noise, torch.tensor(1.0))
+        )
+        assert all(options["marker"] == "upscale" for _, _, options, _ in upscale_model.calls)
+
+        lcm_records: list[tuple[int, torch.Tensor, torch.Tensor, int]] = []
+        lcm_model = _RuntimeSamplingModel()
+        lcm_result = _sample(
+            lcm,
+            lcm_model,
+            torch.tensor((1.0, 0.5, 0.0)),
+            noise,
+            latent,
+            lcm_records,
+            model_options={"marker": "lcm"},
+        )
+        lcm_expected = original_latent + original_noise
+        lcm_expected = _denoised(lcm_expected, torch.tensor(1.0))
+        lcm_noise = torch.randn(original_noise.shape, generator=torch.Generator().manual_seed(740))
+        lcm_noise = lcm_noise.clamp(min=-0.25 * lcm_noise.std(), max=0.25 * lcm_noise.std())
+        lcm_expected += 0.5 * lcm_noise * 0.375
+        lcm_expected = _denoised(lcm_expected, torch.tensor(0.5))
+        torch.testing.assert_close(lcm_result, lcm_expected)
+        assert [record[0] for record in lcm_records] == [0, 1]
+        assert [record[3] for record in lcm_records] == [2, 2]
+        torch.testing.assert_close(
+            lcm_records[0][1], _denoised(original_latent + original_noise, torch.tensor(1.0))
+        )
+        assert all(options["marker"] == "lcm" for _, _, options, _ in lcm_model.calls)
+
+        cfg_sigmas = torch.tensor((2.0, 1.0, 0.0))
+        regular_options = {"marker": "regular"}
+        regular_records: list[tuple[int, torch.Tensor, torch.Tensor, int]] = []
+        regular_model = _RuntimeSamplingModel()
+        regular_result = _sample(
+            regular,
+            regular_model,
+            cfg_sigmas,
+            noise,
+            latent,
+            regular_records,
+            model_options=regular_options,
+        )
+        regular_initial = original_latent + 2.0 * original_noise
+        regular_first = _denoised(regular_initial, torch.tensor(2.0))
+        regular_step = (
+            regular_first
+            + (regular_initial - _uncond_denoised(regular_initial, torch.tensor(2.0))) / 2.0
+        )
+        regular_expected = _denoised(regular_step, torch.tensor(1.0))
+        torch.testing.assert_close(regular_result, regular_expected)
+        assert [record[0] for record in regular_records] == [0, 1]
+        assert [record[3] for record in regular_records] == [2, 2]
+        torch.testing.assert_close(regular_records[0][1], regular_first)
+        assert regular_options == {"marker": "regular"}
+        assert all(options["marker"] == "regular" for _, _, options, _ in regular_model.calls)
+
+        alternative_options = {"marker": "alternative"}
+        alternative_records: list[tuple[int, torch.Tensor, torch.Tensor, int]] = []
+        alternative_model = _RuntimeSamplingModel()
+        alternative_result = _sample(
+            alternative,
+            alternative_model,
+            cfg_sigmas,
+            noise,
+            latent,
+            alternative_records,
+            model_options=alternative_options,
+        )
+        alternative_initial = regular_initial
+        alternative_first = _denoised(alternative_initial, torch.tensor(2.0))
+        alternative_step = (
+            alternative_initial
+            - (
+                alternative_initial
+                + _uncond_denoised(alternative_initial, torch.tensor(2.0))
+                - 2.0 * alternative_first
+            )
+            / 2.0
+        )
+        alternative_second = _denoised(alternative_step, torch.tensor(1.0))
+        alternative_expected = 2.0 * alternative_second - _uncond_denoised(
+            alternative_step, torch.tensor(1.0)
+        )
+        torch.testing.assert_close(alternative_result, alternative_expected)
+        assert [record[0] for record in alternative_records] == [0, 1]
+        assert [record[3] for record in alternative_records] == [2, 2]
+        torch.testing.assert_close(alternative_records[0][1], alternative_first)
+        assert alternative_options == {"marker": "alternative"}
+        assert all(
+            options["marker"] == "alternative" for _, _, options, _ in alternative_model.calls
+        )
+        assert not torch.equal(regular_result, alternative_result)
+        assert not upscale_result.requires_grad
+        assert not lcm_result.requires_grad
+        assert not regular_result.requires_grad
+        assert not alternative_result.requires_grad
+        assert torch.equal(noise.detach(), original_noise)
+        assert torch.equal(latent.detach(), original_latent)
+        return cls.outputs(summary="public-sample-contracts")
 
 
 @pytest.mark.parametrize("in_process", (True, False))
@@ -252,23 +466,40 @@ def test_advanced_samplers_cross_ordinary_manifest_hosts_twice_with_cache(
             module = f"advanced_samplers_fixture_{int(in_process)}"
             (tmp_path / f"{module}.py").write_text(
                 "from test_advanced_samplers_torch import AdvancedSamplerConsumer\n"
-                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "NODES = (*COMFY_NODES, AdvancedSamplerConsumer)\n",
+                "from dinkster_nodes_comfy import register_inference_types\n"
+                "NODES = (AdvancedSamplerConsumer,)\n",
                 encoding="ascii",
             )
-            manifest = tmp_path / "dinkster-pack.toml"
-            source = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
-            manifest.write_text(
-                source.read_text(encoding="ascii")
-                .replace("namespaces = [", 'namespaces = ["advanced-sampler",')
-                .replace("dinkster_nodes_comfy:COMFY_NODES", f"{module}:NODES")
-                .replace(
-                    "dinkster_nodes_comfy:register_inference_types",
-                    f"{module}:register_inference_types",
-                ),
+            fixture_manifest = tmp_path / "fixture-dinkster-pack.toml"
+            fixture_manifest.write_text(
+                '[pack]\nname = "advanced-sampler-fixture"\npublisher = "dinkster"\n'
+                'namespaces = ["advanced-sampler"]\n'
+                f'[pack.entry]\nnodes = "{module}:NODES"\n'
+                f'types = "{module}:register_inference_types"\n',
                 encoding="ascii",
             )
-            await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
+            native_manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+            specs = (
+                (
+                    PackSpec(manifest=native_manifest, in_process=True),
+                    PackSpec(manifest=fixture_manifest, in_process=True),
+                )
+                if in_process
+                else (
+                    PackSpec(
+                        manifest=native_manifest,
+                        worker_group="advanced-sampler-fixture",
+                        group_manifests=(native_manifest, fixture_manifest),
+                    ),
+                    PackSpec(
+                        manifest=fixture_manifest,
+                        worker_group="advanced-sampler-fixture",
+                        group_manifests=(native_manifest, fixture_manifest),
+                    ),
+                )
+            )
+            for spec in specs:
+                await composer.add_pack(spec)
             graph = Graph(
                 nodes={
                     "upscale": GraphNode(
@@ -283,24 +514,31 @@ def test_advanced_samplers_cross_ordinary_manifest_hosts_twice_with_cache(
                         "SamplerLCM",
                         {"s_noise": 0.375, "s_noise_end": 1.75, "noise_clip_std": 0.25},
                     ),
-                    "cfgpp": GraphNode("SamplerEulerCFGpp", {"version": "alternative"}),
+                    "regular": GraphNode("SamplerEulerCFGpp", {"version": "regular"}),
+                    "alternative": GraphNode("SamplerEulerCFGpp", {"version": "alternative"}),
                     "consumer": GraphNode(
                         "advanced-sampler.consumer",
                         {
                             "upscale": Link("upscale", "SAMPLER"),
                             "lcm": Link("lcm", "SAMPLER"),
-                            "cfgpp": Link("cfgpp", "SAMPLER"),
+                            "regular": Link("regular", "SAMPLER"),
+                            "alternative": Link("alternative", "SAMPLER"),
                         },
                     ),
                 }
             )
             engine = composer.composition.make_engine(lambda _event: None)
-            expected = "sample_lcm_upscale|sample_lcm|sample_euler_cfg_pp_alternative"
             for attempt in range(2):
                 result = await engine.run(graph, ["consumer"])
-                assert result.outputs["consumer"]["summary"].resolve() == expected
+                assert result.outputs["consumer"]["summary"].resolve() == "public-sample-contracts"
                 if attempt:
-                    assert set(result.cached) == {"upscale", "lcm", "cfgpp", "consumer"}
+                    assert set(result.cached) == {
+                        "upscale",
+                        "lcm",
+                        "regular",
+                        "alternative",
+                        "consumer",
+                    }
         finally:
             await composer.close()
 
