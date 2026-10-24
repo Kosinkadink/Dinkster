@@ -49,13 +49,6 @@ from dinkster_values import (
 from dinkster_values import (
     runtime_type_atom as _runtime_type_atom,
 )
-from dinkster_values.builtin_types import (
-    CORE_BOOLEAN,
-    CORE_COMBO,
-    CORE_FLOAT,
-    CORE_INT,
-    CORE_STRING,
-)
 from dinkster_values.streams import parse_stream_type_id, stream_type_id
 
 from .names import validate_name

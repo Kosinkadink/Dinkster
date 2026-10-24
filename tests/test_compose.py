@@ -2352,8 +2352,6 @@ def test_add_pack_applies_host_types_at_commit(tmp_path: Path) -> None:
 
 
 def test_reload_preserves_pack_owned_host_codecs_and_providers(tmp_path: Path) -> None:
-    from dinkster_values import TypeRegistry
-
     def host_types(registry: TypeRegistry) -> None:
         if "iso.blob" not in registry:
             registry.register(
