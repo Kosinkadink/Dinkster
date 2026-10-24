@@ -8,6 +8,9 @@ from typing import Any, cast
 from dinkster_values import (
     IMAGE_BATCH_MERGER_ID,
     IMAGE_FILE_DECODER_ID,
+    IMAGE_TYPE,
+    LATENT_TYPE,
+    MASK_TYPE,
     PNG_CONTAINER_VERSION,
     EncodedLatentTensor,
     EncodedMultiStreamLatent,
@@ -78,8 +81,8 @@ def register_media_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
     """Register exact media atoms with process-independent byte contracts."""
     registered: list[TypeSpec] = []
     for type_id, meta, render in (
-        ("IMAGE", image_array_meta, render_image_png),
-        ("MASK", mask_array_meta, render_mask_png),
+        (IMAGE_TYPE, image_array_meta, render_image_png),
+        (MASK_TYPE, mask_array_meta, render_mask_png),
     ):
         if type_id not in registry:
             registry.register(
@@ -98,23 +101,23 @@ def register_media_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
             registry.register_rendition(
                 type_id, "png", mime="image/png", render=render, version=PNG_CONTAINER_VERSION
             )
-    if registry.asset_decoder_for("IMAGE") is None:
+    if registry.asset_decoder_for(IMAGE_TYPE) is None:
         registry.register_asset_decoder(
-            "IMAGE", provider_id=IMAGE_FILE_DECODER_ID, decode=decode_image_file
+            IMAGE_TYPE, provider_id=IMAGE_FILE_DECODER_ID, decode=decode_image_file
         )
-    if registry.batch_merge_for("IMAGE") is None:
+    if registry.batch_merge_for(IMAGE_TYPE) is None:
         registry.register_batch_merge(
-            "IMAGE", provider_id=IMAGE_BATCH_MERGER_ID, merge=merge_image_batches
+            IMAGE_TYPE, provider_id=IMAGE_BATCH_MERGER_ID, merge=merge_image_batches
         )
-    if "LATENT" not in registry:
+    if LATENT_TYPE not in registry:
         registry.register(
-            "LATENT",
+            LATENT_TYPE,
             encode=encode_latent,
             decode=decode_latent,
-            fingerprint=latent_fingerprint("LATENT"),
+            fingerprint=latent_fingerprint(LATENT_TYPE),
             validate_encoded=validate_latent_encoded,
         )
-    registered.append(registry.spec("LATENT"))
+    registered.append(registry.spec(LATENT_TYPE))
     return tuple(registered)
 
 

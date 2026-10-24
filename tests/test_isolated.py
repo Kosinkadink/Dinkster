@@ -148,7 +148,8 @@ def write_iso_manifest(
 ) -> Path:
     manifest = tmp_path / "dinkster-pack.toml"
     manifest.write_text(
-        f'[pack]\nname = "{name}"\n\n[pack.entry]\n'
+        f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
+        'type-namespaces = ["iso"]\n\n[pack.entry]\n'
         f'nodes = "{module_name}:NODES"\ntypes = "{module_name}:register_types"\n'
     )
     return manifest
@@ -292,7 +293,8 @@ def test_isolated_worker_uses_interpreter_entry_for_split_package(tmp_path: Path
     (pack_root / "isopack_nodes" / "__init__.py").write_text("\n")
     manifest = pack_root / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname = "isopack"\n\n[pack.entry]\n'
+        '[pack]\nname = "isopack"\npublisher = "dinkster"\n'
+        'type-namespaces = ["iso"]\n\n[pack.entry]\n'
         'nodes = "isopack_nodes.entries:NODES"\n'
         'types = "isopack_nodes.entries:register_types"\n'
     )
@@ -2169,7 +2171,8 @@ def test_group_isolated_close_is_idempotent(tmp_path: Path) -> None:
             directory.mkdir()
             manifest = directory / "dinkster-pack.toml"
             manifest.write_text(
-                f'[pack]\nname = "{name}"\nnamespaces = ["iso"]\n\n'
+                f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
+                'type-namespaces = ["iso"]\nnamespaces = ["iso"]\n\n'
                 '[pack.entry]\nnodes = "isopack_nodes:NODES"\n'
                 'types = "isopack_nodes:register_types"\n',
                 encoding="utf-8",

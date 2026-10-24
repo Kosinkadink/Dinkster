@@ -38,7 +38,7 @@ from dinkster_schema import (
     build_node_types,
     build_schemas,
 )
-from dinkster_values import TypeRegistry, register_core_types
+from dinkster_values import CORE_FLOAT, CORE_STRING, TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker, load_manifest
 from dinkster_workers.host import load_pack
 
@@ -57,10 +57,10 @@ class GpuDelay(Node):
             display_name="GPU Delay",
             category="demo",
             inputs=(
-                InputSpec("value", TypeExpr.concrete("STRING")),
-                InputSpec("seconds", TypeExpr.concrete("FLOAT"), default=0.1),
+                InputSpec("value", TypeExpr.concrete(CORE_STRING)),
+                InputSpec("seconds", TypeExpr.concrete(CORE_FLOAT), default=0.1),
             ),
-            outputs=(OutputSpec("value", TypeExpr.concrete("STRING")),),
+            outputs=(OutputSpec("value", TypeExpr.concrete(CORE_STRING)),),
             occupies=("gpu",),
         )
 

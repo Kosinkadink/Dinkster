@@ -242,6 +242,10 @@ class IsolatedWorker:
     def renditions(self) -> tuple[RenditionDeclaration, ...]:
         return self._session.renditions
 
+    @property
+    def registered_types(self) -> tuple[str, ...]:
+        return self._session.registered_types
+
     async def resolve_rendition(
         self,
         type_id: str,
@@ -540,6 +544,10 @@ class GroupMemberWorker:
     @property
     def renditions(self):
         return self._session.renditions
+
+    @property
+    def registered_types(self):
+        return self._session.registered_types
 
     async def resolve_rendition(
         self,

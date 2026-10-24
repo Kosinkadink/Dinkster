@@ -30,6 +30,7 @@ from dinkster_workers import InProcessWorker
 
 GOLDEN_V1_SURFACE = (
     "initialize_inference_process",
+    "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
     "register_inference_types",
@@ -156,6 +157,7 @@ GOLDEN_V1_SURFACE = (
     "BACKGROUND_REMOVAL_TYPE",
     "BOUNDING_BOX_TYPE",
     "CLIP_TYPE",
+    "CLIP_VISION_OUTPUT_TYPE",
     "CLIP_VISION_TYPE",
     "COMFY_ARRAY_TYPE",
     "COMPOSITOR_TYPE",
@@ -266,7 +268,7 @@ GOLDEN_V1_SURFACE = (
     "region_meta",
     # -- model3d codec (dinkster-values.model3d_codec): raw GLB bytes across
     # boundaries, the original container as the browser rendition, and the
-    # asset<dinkster.model3d> file decode provider.
+    # asset<MODEL3D> file decode provider.
     "MODEL3D_FILE_DECODER_ID",
     "decode_model3d",
     "decode_model3d_file",
@@ -279,7 +281,7 @@ GOLDEN_V1_SURFACE = (
     "validate_model3d_encoded",
     # -- gaussian splat codec (dinkster-values.splat_codec): framed tensor
     # buffers across boundaries, PLY interchange renditions, and the
-    # asset<dinkster.splat> file decode provider.
+    # asset<SPLAT> file decode provider.
     "SPLAT_FILE_DECODER_ID",
     "SPLAT_PLY_MIME",
     "decode_splat",

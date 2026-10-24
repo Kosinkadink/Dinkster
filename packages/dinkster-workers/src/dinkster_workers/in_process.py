@@ -209,9 +209,11 @@ class InProcessWorker:
         combo_choices: Mapping[str, tuple[str, ...]] | None = None,
         lazy_choices: Mapping[str, Callable[[], Sequence[str]]] | None = None,
         memory_consumers: Mapping[str, Shedder] | None = None,
+        registered_types: tuple[str, ...] = (),
     ) -> None:
         self._node_types = dict(node_types)
         self._registry = registry
+        self.registered_types = registered_types
         self._pack_context = pack_context or contextlib.nullcontext
         if attention_route_token is not None and not isinstance(
             cast("object", attention_route_token), AttentionRouteToken

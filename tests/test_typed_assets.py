@@ -166,7 +166,7 @@ def test_parametric_asset_wrap_keeps_the_stamp() -> None:
     typed = registry.wrap("asset<STRING>", ref)
     assert typed.type_id == "asset<STRING>"
     assert typed.fingerprint == ref.digest  # identity is the content digest
-    untyped = registry.wrap("dinkster.asset", ref)
+    untyped = registry.wrap("ASSET", ref)
     assert untyped.fingerprint == typed.fingerprint
 
     assert "asset<STRING>" in registry
@@ -478,7 +478,7 @@ def test_validation_errors_on_missing_providers() -> None:
     assert "batch merge" in diags[0].message
     # No registry at hand (plain atom set): structural acceptance, silent -
     # the engine's own registry-backed validation is the enforcement point.
-    quiet = validate(graph, SCHEMAS, ["m"], known_types={"STRING", "dinkster.asset"})
+    quiet = validate(graph, SCHEMAS, ["m"], known_types={"STRING", "ASSET"})
     assert quiet == []
 
 

@@ -250,7 +250,7 @@ def test_crossfade_title_render_uses_shared_kernels(bound_video):
                     "text": "test",
                     "font_size": 10,
                     "opacity": {
-                        "type": "dinkster.curve",
+                        "type": "CURVE",
                         "value": {
                             "points": [{"position": 0, "value": 0}, {"position": 1, "value": 1}]
                         },
@@ -356,7 +356,7 @@ def test_layer_source_uses_declared_resources_and_shared_renderer(media_assets):
     )
     asset = publish(_canonical(layer), "layers.json")
     reference = {
-        "type": "dinkster.layers",
+        "type": "LAYERS",
         "asset": asset.to_wire(),
         "resources": [raster.to_wire()],
     }

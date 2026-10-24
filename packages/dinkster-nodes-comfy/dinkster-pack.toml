@@ -1,5 +1,6 @@
 [pack]
 name = "dinkster-nodes-comfy"
+publisher = "dinkster"
 namespaces = [
     "StringFormat",
     "StringConcatenate",
@@ -69,6 +70,8 @@ namespaces = [
     "ModelMergeKrea2",
     "FreeU",
     "FreeU_V2",
+    "ScaleROPE",
+    "DifferentialDiffusion",
     "EmptyLatentImage",
     "LatentFromBatch",
     "RepeatLatentBatch",
@@ -95,6 +98,13 @@ namespaces = [
     "LatentOperationTonemapReinhard",
     "LatentOperationSharpen",
     "ReplaceVideoLatentFrames",
+    "EmptySD3LatentImage",
+    "EmptyFlux2LatentImage",
+    "EmptyChromaRadianceLatentImage",
+    "EmptyHiDreamO1LatentImage",
+    "EmptyQwenImageLayeredLatentImage",
+    "EmptyLatentHunyuan3Dv2",
+    "EmptyTrellis2LatentStructure",
     "CLIPTextEncode",
     "CLIPSetLastLayer",
     "CLIPTextEncodeSDXLRefiner",
