@@ -9,11 +9,15 @@ from dataclasses import dataclass
 from typing import Any, TypeAlias, cast
 
 from dinkster_values import (
+    LATENT_CODEC_MAGIC,
     NOISE_TYPE,
     SAMPLER_TYPE,
     SIGMAS_TYPE,
+    EncodedLatentTensor,
     TypeRegistry,
     TypeSpec,
+    decode_latent,
+    encode_latent,
     stable_hash,
 )
 
@@ -56,6 +60,23 @@ class SamplerSelection(BuiltinSamplerSelection):
     extension_ids: tuple[str, ...] = ()
 
 
+def _encode_sigma_tensor(value: object) -> bytes:
+    try:
+        encoded = encode_latent({"samples": value})
+        decoded = decode_latent(encoded)
+    except (TypeError, ValueError) as exc:
+        raise TypeError(f"invalid SIGMAS tensor: {type(value).__name__}") from exc
+    if type(decoded) is not dict:
+        raise TypeError("SIGMAS tensor frame must contain only samples")
+    record = cast("dict[str, object]", decoded)
+    if set(record) != {"samples"}:
+        raise TypeError("SIGMAS tensor frame must contain only samples")
+    samples = record["samples"]
+    if type(samples) is not EncodedLatentTensor:
+        raise TypeError("SIGMAS tensor frame samples must be a tensor")
+    return encoded
+
+
 def _encode(type_id: str, obj: object) -> bytes:
     record: dict[str, object]
     if type_id == NOISE_TYPE and type(obj) is NoiseSelection:
@@ -63,6 +84,8 @@ def _encode(type_id: str, obj: object) -> bytes:
         if seed is not None and (type(seed) is not int or not 0 <= seed < 2**64):
             raise ValueError("noise seed must be None or an unsigned 64-bit integer")
         record = {"seed": seed}
+    elif type_id == SIGMAS_TYPE and type(obj) is not SigmaSchedule:
+        return _encode_sigma_tensor(obj)
     elif type_id == SIGMAS_TYPE and type(obj) is SigmaSchedule:
         if type(obj.values) is not tuple or any(
             type(value) not in (int, float) or not math.isfinite(value) for value in obj.values
@@ -115,6 +138,19 @@ def _encode(type_id: str, obj: object) -> bytes:
 
 
 def _decode(type_id: str, data: bytes) -> object:
+    if type_id == SIGMAS_TYPE and data.startswith(LATENT_CODEC_MAGIC):
+        decoded = decode_latent(data)
+        if type(decoded) is not dict:
+            raise ValueError("SIGMAS tensor frame must contain only samples")
+        record = cast("dict[str, object]", decoded)
+        if set(record) != {"samples"}:
+            raise ValueError("SIGMAS tensor frame must contain only samples")
+        tensor = record["samples"]
+        if type(tensor) is not EncodedLatentTensor:
+            raise ValueError("SIGMAS tensor frame samples must be a tensor")
+        if _encode_sigma_tensor(tensor) != data:
+            raise ValueError("SIGMAS tensor frame must use canonical encoding")
+        return tensor
     try:
         loaded: object = json.loads(data)
         if type(loaded) is not dict:
