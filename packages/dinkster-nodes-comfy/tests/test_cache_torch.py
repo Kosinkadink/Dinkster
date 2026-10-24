@@ -44,12 +44,14 @@ def test_easycache_reuses_per_uuid_diffs_and_resets_for_metadata_change() -> Non
         calls += 1
         return x + 2
 
-    source = torch.zeros((2, 2, 4, 4))
+    source = torch.tensor([0.0, 1.0]).reshape(2, 1, 1, 1).expand(2, 2, 4, 4).clone()
     assert torch.equal(easycache_forward_wrapper(executor, source.clone(), options), source + 2)
-    holder.relative_transformation_rate = torch.tensor(0.0)
-    reused = easycache_forward_wrapper(executor, source.clone(), options)
-    assert torch.equal(reused, source + 2)
-    assert calls == 1
+    warmup = source + 0.5
+    assert torch.equal(easycache_forward_wrapper(executor, warmup.clone(), options), warmup + 2)
+    reuse_input = warmup + 0.05
+    reused = easycache_forward_wrapper(executor, reuse_input.clone(), options)
+    assert torch.equal(reused, reuse_input + 2)
+    assert calls == 2
     assert holder.total_steps_skipped == 1
     assert not holder.check_metadata(torch.zeros((2, 2, 5, 4)))
     assert holder.uuid_cache_diffs == {}
@@ -86,17 +88,24 @@ def test_lazycache_reuses_diff_and_metadata_reset_restarts_state() -> None:
         calls += 1
         return x + 4
 
-    source = torch.zeros((1, 2, 4, 4))
+    source = torch.arange(32, dtype=torch.float32).reshape(1, 2, 4, 4)
     assert torch.equal(
         lazycache_predict_noise_wrapper(executor, source.clone(), torch.tensor([0.5]), options),
         source + 4,
     )
-    holder.relative_transformation_rate = torch.tensor(0.0)
+    warmup = source + 0.5
     assert torch.equal(
-        lazycache_predict_noise_wrapper(executor, source.clone(), torch.tensor([0.5]), options),
-        source + 4,
+        lazycache_predict_noise_wrapper(executor, warmup.clone(), torch.tensor([0.5]), options),
+        warmup + 4,
     )
-    assert calls == 1
+    reuse_input = warmup + 0.05
+    assert torch.equal(
+        lazycache_predict_noise_wrapper(
+            executor, reuse_input.clone(), torch.tensor([0.5]), options
+        ),
+        reuse_input + 4,
+    )
+    assert calls == 2
     assert not holder.check_metadata(torch.zeros((1, 2, 5, 4)))
     assert holder.cache_diff is None
 

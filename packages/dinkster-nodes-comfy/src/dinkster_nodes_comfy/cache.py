@@ -62,6 +62,7 @@ class _CacheHolder:
         self.start_t = 0.0
         self.end_t = 0.0
         self.reset()
+        self.relative_transformation_rate = None
 
     def prepare_timesteps(self, model_sampling: Any) -> _CacheHolder:
         self.start_t = model_sampling.percent_to_sigma(self.start_percent)
@@ -129,6 +130,34 @@ class EasyCacheHolder(_CacheHolder):
     name = "EasyCache"
     per_conditioning = True
 
+    def __init__(
+        self,
+        reuse_threshold: float,
+        start_percent: float,
+        end_percent: float,
+        subsample_factor: int,
+        offload_cache_diff: bool,
+        verbose: bool,
+        output_channels: int,
+    ) -> None:
+        self.allow_mismatch = True
+        self.cut_from_start = True
+        super().__init__(
+            reuse_threshold,
+            start_percent,
+            end_percent,
+            subsample_factor,
+            offload_cache_diff,
+            verbose,
+            output_channels,
+        )
+
+    def reset(self) -> EasyCacheHolder:
+        approx_output_change_rates = getattr(self, "approx_output_change_rates", [])
+        super().reset()
+        self.approx_output_change_rates = approx_output_change_rates
+        return self
+
     def subsample(self, x: Any, uuids: list[Any], clone: bool = True) -> Any:
         batch_offset = x.shape[0] // len(uuids)
         uuid_index = uuids.index(self.first_cond_uuid)
@@ -149,9 +178,17 @@ class EasyCacheHolder(_CacheHolder):
             cache_diff = diffs[uuid]
             batch_slice: list[slice] = [slice(index * batch_offset, (index + 1) * batch_offset)]
             if x.shape[1:] != cache_diff.shape[1:]:
+                if not self.allow_mismatch:
+                    raise ValueError(
+                        f"Cached dims {cache_diff.shape} do not match x dims {x.shape}."
+                    )
                 for cached, current in zip(cache_diff.shape[1:], x.shape[1:], strict=True):
                     batch_slice.append(
-                        slice(current - cached, None) if cached != current else slice(None)
+                        slice(current - cached, None)
+                        if self.cut_from_start and cached != current
+                        else slice(None, cached)
+                        if cached != current
+                        else slice(None)
                     )
             x[tuple(batch_slice)] += cache_diff.to(x.device)
         return x
@@ -161,16 +198,25 @@ class EasyCacheHolder(_CacheHolder):
     ) -> None:
         diffs = self.uuid_cache_diffs_audio if is_audio else self.uuid_cache_diffs
         if output.shape[1:] != x.shape[1:]:
+            if not self.allow_mismatch:
+                raise ValueError(f"Output dims {output.shape} do not match x dims {x.shape}.")
             slices = [slice(None)]
             for output_dim, input_dim in zip(output.shape[1:], x.shape[1:], strict=True):
                 slices.append(
-                    slice(input_dim - output_dim, None) if output_dim != input_dim else slice(None)
+                    slice(input_dim - output_dim, None)
+                    if self.cut_from_start and output_dim != input_dim
+                    else slice(None, output_dim)
+                    if output_dim != input_dim
+                    else slice(None)
                 )
             x = x[tuple(slices)]
         diff = output - x
         batch_offset = diff.shape[0] // len(uuids)
         for index, uuid in enumerate(uuids):
             diffs[uuid] = diff[index * batch_offset : (index + 1) * batch_offset]
+
+    def has_first_cond_uuid(self, uuids: list[Any]) -> bool:
+        return self.first_cond_uuid in uuids
 
 
 class LazyCacheHolder(_CacheHolder):
@@ -193,23 +239,6 @@ class LazyCacheHolder(_CacheHolder):
         self.cache_diff = output - x
 
 
-def _record_change(
-    holder: Any, output: Any, x: Any, subsampled_output: Any, input_change: Any
-) -> None:
-    if not holder.has_output_prev_norm():
-        return
-    output_change = (subsampled_output - holder.output_prev_subsampled).flatten().abs().mean()
-    if holder.verbose:
-        holder.output_change_rates.append((output_change / holder.output_prev_norm).item())
-    if holder.has_relative_transformation_rate():
-        approximation = (
-            holder.relative_transformation_rate * input_change
-        ) / holder.output_prev_norm
-        holder.approx_output_change_rates.append(approximation.item())
-    if input_change is not None:
-        holder.relative_transformation_rate = output_change / input_change
-
-
 def easycache_forward_wrapper(executor: Any, *args: Any, **kwargs: Any) -> Any:
     transformer_options = args[-1]
     if not isinstance(transformer_options, dict):
@@ -221,11 +250,19 @@ def easycache_forward_wrapper(executor: Any, *args: Any, **kwargs: Any) -> Any:
     uuids = cast(list[Any], transformer_options["uuids"])
     if sigmas is not None and holder.is_past_end_timestep(sigmas):
         return executor(*args, **kwargs)
+    has_first_cond_uuid = holder.has_first_cond_uuid(uuids)
+    next_x_prev = x
     input_change = None
-    can_apply = holder.can_apply_cache_diff(uuids)
     if holder.should_do_easycache(sigmas):
         holder.check_metadata(x)
-        if holder.skip_current_step and can_apply:
+        can_apply_cache_diff = holder.can_apply_cache_diff(uuids)
+        if holder.skip_current_step and can_apply_cache_diff:
+            if holder.verbose:
+                logging.info(
+                    "EasyCache [verbose] - was marked to skip this step by %s. Present uuids: %s",
+                    holder.first_cond_uuid,
+                    uuids,
+                )
             output = holder.apply_cache_diff(x, uuids)
             return (
                 [output, holder.apply_cache_diff(audio_x, uuids, True)]
@@ -234,8 +271,9 @@ def easycache_forward_wrapper(executor: Any, *args: Any, **kwargs: Any) -> Any:
             )
         if holder.initial_step:
             holder.first_cond_uuid = uuids[0]
+            has_first_cond_uuid = holder.has_first_cond_uuid(uuids)
             holder.initial_step = False
-        if holder.first_cond_uuid in uuids:
+        if has_first_cond_uuid:
             if holder.has_x_prev_subsampled():
                 input_change = (
                     (holder.subsample(x, uuids, False) - holder.x_prev_subsampled)
@@ -249,7 +287,14 @@ def easycache_forward_wrapper(executor: Any, *args: Any, **kwargs: Any) -> Any:
                 holder.cumulative_change_rate += (
                     holder.relative_transformation_rate * input_change / holder.output_prev_norm
                 )
-                if holder.cumulative_change_rate < holder.reuse_threshold and can_apply:
+                if holder.cumulative_change_rate < holder.reuse_threshold and can_apply_cache_diff:
+                    if holder.verbose:
+                        logging.info(
+                            "EasyCache [verbose] - skipping step; cumulative_change_rate: %s, "
+                            "reuse_threshold: %s",
+                            holder.cumulative_change_rate,
+                            holder.reuse_threshold,
+                        )
                     holder.skip_current_step = True
                     output = holder.apply_cache_diff(x, uuids)
                     return (
@@ -257,18 +302,53 @@ def easycache_forward_wrapper(executor: Any, *args: Any, **kwargs: Any) -> Any:
                         if audio_x is not None
                         else output
                     )
-                holder.cumulative_change_rate = 0.0
+                else:
+                    if holder.verbose:
+                        logging.info(
+                            "EasyCache [verbose] - NOT skipping step; cumulative_change_rate: %s, "
+                            "reuse_threshold: %s",
+                            holder.cumulative_change_rate,
+                            holder.reuse_threshold,
+                        )
+                    holder.cumulative_change_rate = 0.0
     full_output = executor(*args, **kwargs)
     output, audio_output = _extract_tensor(full_output, holder.output_channels)
-    if holder.first_cond_uuid in uuids:
-        _record_change(holder, output, x, holder.subsample(output, uuids, False), input_change)
-    holder.update_cache_diff(output, x, uuids)
+    if has_first_cond_uuid and holder.has_output_prev_norm():
+        assert holder.output_prev_subsampled is not None
+        assert holder.output_prev_norm is not None
+        output_change = (
+            (holder.subsample(output, uuids, False) - holder.output_prev_subsampled)
+            .flatten()
+            .abs()
+            .mean()
+        )
+        output_change_rate = output_change / holder.output_prev_norm
+        if holder.verbose:
+            holder.output_change_rates.append(output_change_rate.item())
+        if holder.has_relative_transformation_rate():
+            assert holder.relative_transformation_rate is not None
+            approximation = (
+                holder.relative_transformation_rate * input_change
+            ) / holder.output_prev_norm
+            holder.approx_output_change_rates.append(approximation.item())
+            if holder.verbose:
+                logging.info("EasyCache [verbose] - approx_output_change_rate: %s", approximation)
+        if input_change is not None:
+            holder.relative_transformation_rate = output_change / input_change
+        if holder.verbose:
+            logging.info("EasyCache [verbose] - output_change_rate: %s", output_change_rate)
+    holder.update_cache_diff(output, next_x_prev, uuids)
     if audio_output is not None:
         holder.update_cache_diff(audio_output, audio_x, uuids, True)
-    if holder.first_cond_uuid in uuids:
-        holder.x_prev_subsampled = holder.subsample(x, uuids)
+    if has_first_cond_uuid:
+        holder.x_prev_subsampled = holder.subsample(next_x_prev, uuids)
         holder.output_prev_subsampled = holder.subsample(output, uuids)
         holder.output_prev_norm = output.flatten().abs().mean()
+        if holder.verbose:
+            assert holder.x_prev_subsampled is not None
+            logging.info(
+                "EasyCache [verbose] - x_prev_subsampled: %s", holder.x_prev_subsampled.shape
+            )
     return full_output
 
 
@@ -279,6 +359,7 @@ def lazycache_predict_noise_wrapper(executor: Any, *args: Any, **kwargs: Any) ->
     if holder.is_past_end_timestep(timestep):
         return executor(*args, **kwargs)
     x = args[0][:, : holder.output_channels]
+    next_x_prev = x
     input_change = None
     if holder.should_do_easycache(timestep):
         holder.check_metadata(x)
@@ -291,15 +372,53 @@ def lazycache_predict_noise_wrapper(executor: Any, *args: Any, **kwargs: Any) ->
                     holder.relative_transformation_rate * input_change / holder.output_prev_norm
                 )
                 if holder.cumulative_change_rate < holder.reuse_threshold:
+                    if holder.verbose:
+                        logging.info(
+                            "LazyCache [verbose] - skipping step; cumulative_change_rate: %s, "
+                            "reuse_threshold: %s",
+                            holder.cumulative_change_rate,
+                            holder.reuse_threshold,
+                        )
                     holder.skip_current_step = True
                     return holder.apply_cache_diff(x)
-                holder.cumulative_change_rate = 0.0
+                else:
+                    if holder.verbose:
+                        logging.info(
+                            "LazyCache [verbose] - NOT skipping step; cumulative_change_rate: %s, "
+                            "reuse_threshold: %s",
+                            holder.cumulative_change_rate,
+                            holder.reuse_threshold,
+                        )
+                    holder.cumulative_change_rate = 0.0
     output = executor(*args, **kwargs)
-    _record_change(holder, output, x, holder.subsample(output, False), input_change)
-    holder.update_cache_diff(output, x)
-    holder.x_prev_subsampled = holder.subsample(x)
+    if holder.has_output_prev_norm():
+        assert holder.output_prev_subsampled is not None
+        assert holder.output_prev_norm is not None
+        output_change = (
+            (holder.subsample(output, False) - holder.output_prev_subsampled).flatten().abs().mean()
+        )
+        output_change_rate = output_change / holder.output_prev_norm
+        if holder.verbose:
+            holder.output_change_rates.append(output_change_rate.item())
+        if holder.has_relative_transformation_rate():
+            assert holder.relative_transformation_rate is not None
+            approximation = (
+                holder.relative_transformation_rate * input_change
+            ) / holder.output_prev_norm
+            holder.approx_output_change_rates.append(approximation.item())
+            if holder.verbose:
+                logging.info("LazyCache [verbose] - approx_output_change_rate: %s", approximation)
+        if input_change is not None:
+            holder.relative_transformation_rate = output_change / input_change
+        if holder.verbose:
+            logging.info("LazyCache [verbose] - output_change_rate: %s", output_change_rate)
+    holder.update_cache_diff(output, next_x_prev)
+    holder.x_prev_subsampled = holder.subsample(next_x_prev)
     holder.output_prev_subsampled = holder.subsample(output)
     holder.output_prev_norm = output.flatten().abs().mean()
+    if holder.verbose:
+        assert holder.x_prev_subsampled is not None
+        logging.info("LazyCache [verbose] - x_prev_subsampled: %s", holder.x_prev_subsampled.shape)
     return output
 
 
@@ -318,9 +437,41 @@ def easycache_sample_wrapper(executor: Any, *args: Any, **kwargs: Any) -> Any:
         guider.model_options["transformer_options"]["easycache"] = holder.prepare_timesteps(
             guider.model_patcher.model.model_sampling
         )
+        logging.info(
+            "%s enabled - threshold: %s, start_percent: %s, end_percent: %s",
+            holder.name,
+            holder.reuse_threshold,
+            holder.start_percent,
+            holder.end_percent,
+        )
         return executor(*args, **kwargs)
     finally:
         holder = guider.model_options["transformer_options"]["easycache"]
+        if holder.verbose:
+            logging.info(
+                "%s [verbose] - output_change_rates %d: %s",
+                holder.name,
+                len(holder.output_change_rates),
+                holder.output_change_rates,
+            )
+            logging.info(
+                "%s [verbose] - approx_output_change_rates %d: %s",
+                holder.name,
+                len(holder.approx_output_change_rates),
+                holder.approx_output_change_rates,
+            )
+        total_steps = len(args[3]) - 1
+        try:
+            speedup = total_steps / (total_steps - holder.total_steps_skipped)
+        except ZeroDivisionError:
+            speedup = 1.0
+        logging.info(
+            "%s - skipped %d/%d steps (%.2fx speedup).",
+            holder.name,
+            holder.total_steps_skipped,
+            total_steps,
+            speedup,
+        )
         holder.reset()
         guider.model_options = original_options
 
@@ -334,15 +485,23 @@ class _CacheNode(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type=cls.__name__,
+            display_name=cls.__name__,
             category="advanced/debug",
             description=cls.description,
             inputs=(
-                InputSpec("model", _MODEL),
+                InputSpec("model", _MODEL, doc=f"The model to add {cls.__name__} to."),
                 *(
                     InputSpec(
                         name,
                         TypeExpr.concrete(CORE_FLOAT),
                         default=default,
+                        doc=(
+                            "The threshold for reusing cached steps."
+                            if name == "reuse_threshold"
+                            else "The relative sampling step to "
+                            f"{'begin' if name == 'start_percent' else 'end'} "
+                            f"use of {cls.__name__}."
+                        ),
                         advanced=True,
                         widget=NumberWidget(min=0.0, max=maximum, step=0.01),
                     )
@@ -352,9 +511,15 @@ class _CacheNode(Node):
                         ("end_percent", 0.95, 1.0),
                     )
                 ),
-                InputSpec("verbose", TypeExpr.concrete(CORE_BOOLEAN), default=False, advanced=True),
+                InputSpec(
+                    "verbose",
+                    TypeExpr.concrete(CORE_BOOLEAN),
+                    default=False,
+                    doc="Whether to log verbose information.",
+                    advanced=True,
+                ),
             ),
-            outputs=(OutputSpec("MODEL", _MODEL),),
+            outputs=(OutputSpec("MODEL", _MODEL, doc=f"The model with {cls.__name__}."),),
         )
 
     @classmethod
@@ -412,8 +577,9 @@ class LazyCache(_CacheNode):
     holder_type = LazyCacheHolder
     wrapper_names = ("lazycache", "lazycache")
     description = (
-        "A homebrew version of EasyCache that works with every ComfyUI model, "
-        "but is less effective."
+        "A homebrew version of EasyCache - even 'easier' version of EasyCache to implement. "
+        "Overall works worse than EasyCache, but better in some rare cases AND universal "
+        "compatibility with everything in ComfyUI."
     )
 
 
