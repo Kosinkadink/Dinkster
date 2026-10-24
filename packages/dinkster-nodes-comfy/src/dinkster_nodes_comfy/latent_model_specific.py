@@ -15,6 +15,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
+    initialize_inference_process,
 )
 
 
@@ -55,8 +56,7 @@ def _schema(
 
 
 def _runtime() -> tuple[Any, Any]:
-    api = importlib.import_module("dinkster_api.v1")
-    api.initialize_inference_process()
+    initialize_inference_process()
     return importlib.import_module("torch"), importlib.import_module(
         "dinkster_inference.model_management"
     )

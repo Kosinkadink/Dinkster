@@ -8,7 +8,6 @@ import os
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import pytest
 import torch
 from dinkster_api.v1 import (
@@ -19,6 +18,7 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
+    materialize_latent,
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.latent_model_specific import (
@@ -96,17 +96,12 @@ class InspectLatent(Node):
 
     @classmethod
     def execute(cls, *, latent: dict[str, Any]) -> dict[str, object]:
-        samples = latent["samples"]
-        array = (
-            samples.detach().cpu().numpy()
-            if isinstance(samples, torch.Tensor)
-            else np.asarray(samples)
-        )
+        samples = materialize_latent(latent)["samples"]
         return cls.outputs(
             text=json.dumps(
                 {
-                    "shape": list(array.shape),
-                    "zeros": bool(np.all(array == 0)),
+                    "shape": list(samples.shape),
+                    "zeros": torch.count_nonzero(samples).item() == 0,
                     "metadata": {k: v for k, v in latent.items() if k != "samples"},
                 },
                 sort_keys=True,

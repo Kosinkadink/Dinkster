@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 from dinkster_api.v1 import Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_graph import Graph, GraphNode, Link
+from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.latent import (
     LATENT_NODES,
     LatentBlend,
@@ -23,9 +24,24 @@ from dinkster_nodes_comfy.latent import (
     SetLatentNoiseMask,
 )
 from dinkster_nodes_comfy.latent_model_specific import MODEL_LATENT_NODES
+from dinkster_nodes_comfy.mochi import EmptyMochiLatentVideo
 from dinkster_values import EncodedLatentTensor, decode_latent, encode_latent
 
 from dinkster.compose import PackSpec, ServingComposer
+
+
+def test_mochi_interface_is_registered_with_temporal_widget_defaults() -> None:
+    schema = EmptyMochiLatentVideo.schema()
+    assert EmptyMochiLatentVideo in COMFY_NODES
+    assert schema.node_type == "EmptyMochiLatentVideo"
+    assert schema.category == "model/latent/mochi"
+    assert [(spec.id, spec.default) for spec in schema.inputs] == [
+        ("width", 848),
+        ("height", 480),
+        ("length", 25),
+        ("batch_size", 1),
+    ]
+    assert [(spec.id, spec.type.types) for spec in schema.outputs] == [("LATENT", ("LATENT",))]
 
 
 @pytest.mark.parametrize(
