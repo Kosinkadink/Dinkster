@@ -662,7 +662,7 @@ class BlockSparseAttention(Node):
         cls,
         *,
         model: Any,
-        selection: Mapping[str, Any],
+        selection: str | Mapping[str, Any],
         start_percent: float = 0.2,
         end_percent: float = 1.0,
         dense_blocks: str = "",
@@ -670,13 +670,23 @@ class BlockSparseAttention(Node):
         extra_tokens: int = 0,
         sink_conditioning: str = "exact_kv_and_rows",
         verbose: bool = False,
+        **values: Any,
     ) -> Mapping[str, object]:
-        mode = selection["selection"]
+        if isinstance(selection, Mapping):
+            selected = selection
+        else:
+            selected = {
+                "selection": selection,
+                **{
+                    input_id.removeprefix("selection."): value for input_id, value in values.items()
+                },
+            }
+        mode = selected["selection"]
         return cls.outputs(
             MODEL=apply_block_sparse_attention(
                 model,
-                tau=float(selection.get("tau", 1.3)),
-                topk_ratio=0.0 if mode == "sol-attn" else float(selection["keep_percent"]) / 100.0,
+                tau=float(selected.get("tau", 1.3)),
+                topk_ratio=0.0 if mode == "sol-attn" else float(selected["keep_percent"]) / 100.0,
                 vsa=mode == "vsa",
                 start_percent=start_percent,
                 end_percent=end_percent,
