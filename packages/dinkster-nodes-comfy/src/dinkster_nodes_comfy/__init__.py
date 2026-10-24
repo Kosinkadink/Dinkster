@@ -22,6 +22,7 @@ from .primitive import (
     PrimitiveString,
     PrimitiveStringMultiline,
 )
+from .switch import ComfySwitchNode
 from .text import TEXT_NODES
 from .utilities import ComfyNumberConvert, SeedNode
 
@@ -33,6 +34,7 @@ COMFY_NODES = (
     PrimitiveFloat,
     PrimitiveBoolean,
     *LOGIC_NODES,
+    ComfySwitchNode,
     ComfyNumberConvert,
     SeedNode,
     ComfyMathExpression,

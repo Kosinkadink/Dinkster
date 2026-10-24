@@ -1370,7 +1370,7 @@ class Engine:
         label = prefix + node_id
         schema = effective[node_id]
         lazy_inputs = tuple(spec for spec in schema.inputs if spec.lazy)
-        lazy_links = {
+        lazy_links: dict[str, Link] = {
             spec.id: cast("Link", node.inputs[spec.id])
             for spec in lazy_inputs
             if isinstance(node.inputs.get(spec.id), Link)
@@ -1418,7 +1418,9 @@ class Engine:
                     else:
                         branch = selector.branches["true" if selected else "false"]
                         result = LazyStatusResult(
-                            requested_inputs=() if branch in inputs else (branch,)
+                            requested_inputs=(branch,)
+                            if branch in lazy_links and branch not in inputs
+                            else ()
                         )
                 else:
                     runtime_worker = self._runtime().worker
@@ -1439,9 +1441,7 @@ class Engine:
                                 node_type=node.node_type,
                                 available_inputs=inputs,
                                 connected_undemanded_inputs=tuple(
-                                    spec.id
-                                    for spec in schema.inputs
-                                    if spec.id in lazy_links and spec.id not in demanded
+                                    name for name in lazy_links if name not in demanded
                                 ),
                                 effective_schema=schema,
                                 extension_snapshot_digest=(
@@ -1773,7 +1773,15 @@ class Engine:
                 selected = inputs[selector.input].resolve()
                 assert type(selected) is bool
                 branch = selector.branches["true" if selected else "false"]
-                result = InvocationResult(outputs={schema.outputs[0].id: inputs[branch]})
+                output = schema.outputs[0]
+                value = inputs.get(branch)
+                if value is None:
+                    value = make_absent_value(
+                        origin=f"{label}/{output.id}",
+                        reason="",
+                        stands_for=output.type.runtime_type_id(),
+                    )
+                result = InvocationResult(outputs={output.id: value})
             else:
                 async with InvocationLease(
                     lambda: self._admission(schema, inputs, selection)
