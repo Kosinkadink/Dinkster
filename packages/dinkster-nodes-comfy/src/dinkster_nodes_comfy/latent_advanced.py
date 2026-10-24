@@ -10,6 +10,7 @@ from typing import Any
 from dinkster_api.v1 import (
     ComboOption,
     ComboWidget,
+    Deprecation,
     InputSpec,
     Node,
     NodeSchema,
@@ -45,7 +46,12 @@ def _combo(name: str, options: tuple[str, ...], default: str | None = None) -> I
 
 
 def _schema(
-    node_type: str, display_name: str, inputs: tuple[InputSpec, ...], category: str
+    node_type: str,
+    display_name: str,
+    inputs: tuple[InputSpec, ...],
+    category: str,
+    *,
+    deprecated: bool = False,
 ) -> NodeSchema:
     return NodeSchema(
         node_type=node_type,
@@ -53,6 +59,8 @@ def _schema(
         category=category,
         inputs=inputs,
         outputs=(OutputSpec("LATENT", _LATENT),),
+        deprecation=Deprecation("Deprecated in ComfyUI.") if deprecated else None,
+        search_visibility="deprecated" if deprecated else "normal",
     )
 
 
@@ -67,18 +75,12 @@ def _reshape_latent_to(
     return utils.repeat_to_batch_size(latent, target_shape[0]) if repeat_batch else latent
 
 
-def _repeat_to_batch_size(latent: Any, batch_size: int) -> Any:
-    return importlib.import_module("dinkster_inference.utils").repeat_to_batch_size(
-        latent, batch_size
-    )
-
-
 class LatentAdd(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         return _schema(
             "LatentAdd",
-            "Latent Add",
+            "LatentAdd",
             (InputSpec("samples1", _LATENT), InputSpec("samples2", _LATENT)),
             "model/latent/advanced",
         )
@@ -98,7 +100,7 @@ class LatentSubtract(Node):
     def define_schema(cls) -> NodeSchema:
         return _schema(
             "LatentSubtract",
-            "Latent Subtract",
+            "LatentSubtract",
             (InputSpec("samples1", _LATENT), InputSpec("samples2", _LATENT)),
             "model/latent/advanced",
         )
@@ -118,7 +120,7 @@ class LatentMultiply(Node):
     def define_schema(cls) -> NodeSchema:
         return _schema(
             "LatentMultiply",
-            "Latent Multiply",
+            "LatentMultiply",
             (
                 InputSpec("samples", _LATENT),
                 InputSpec(
@@ -144,7 +146,7 @@ class LatentInterpolate(Node):
     def define_schema(cls) -> NodeSchema:
         return _schema(
             "LatentInterpolate",
-            "Latent Interpolate",
+            "LatentInterpolate",
             (
                 InputSpec("samples1", _LATENT),
                 InputSpec("samples2", _LATENT),
@@ -181,7 +183,7 @@ class LatentConcat(Node):
     def define_schema(cls) -> NodeSchema:
         return _schema(
             "LatentConcat",
-            "Latent Concat",
+            "LatentConcat",
             (
                 InputSpec("samples1", _LATENT),
                 InputSpec("samples2", _LATENT),
@@ -198,7 +200,9 @@ class LatentConcat(Node):
         torch = importlib.import_module("torch")
         result = samples1.copy()
         first, second = samples1["samples"], samples2["samples"]
-        second = _repeat_to_batch_size(second, first.shape[0])
+        second = importlib.import_module("dinkster_inference.utils").repeat_to_batch_size(
+            second, first.shape[0]
+        )
         if "-" in dim:
             first, second = second, first
         axis = -1 if "x" in dim else -2 if "y" in dim else -3
@@ -211,7 +215,7 @@ class LatentCut(Node):
     def define_schema(cls) -> NodeSchema:
         return _schema(
             "LatentCut",
-            "Latent Cut",
+            "LatentCut",
             (
                 InputSpec("samples", _LATENT),
                 _combo("dim", ("x", "y", "t")),
@@ -245,7 +249,7 @@ class LatentCutToBatch(Node):
     def define_schema(cls) -> NodeSchema:
         return _schema(
             "LatentCutToBatch",
-            "Latent Cut To Batch",
+            "LatentCutToBatch",
             (
                 InputSpec("samples", _LATENT),
                 _combo("dim", ("t", "x", "y")),
@@ -279,6 +283,7 @@ class LatentBatch(Node):
             "Batch Latents (DEPRECATED)",
             (InputSpec("samples1", _LATENT), InputSpec("samples2", _LATENT)),
             "model/latent/batch",
+            deprecated=True,
         )
 
     @classmethod
@@ -300,7 +305,7 @@ class LatentBatchSeedBehavior(Node):
     def define_schema(cls) -> NodeSchema:
         return _schema(
             "LatentBatchSeedBehavior",
-            "Latent Batch Seed Behavior",
+            "LatentBatchSeedBehavior",
             (InputSpec("samples", _LATENT), _combo("seed_behavior", ("random", "fixed"), "fixed")),
             "model/latent/advanced",
         )
