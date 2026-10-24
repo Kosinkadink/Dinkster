@@ -21,6 +21,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
+    initialize_inference_process,
 )
 
 _MODEL = TypeExpr.concrete(MODEL_TYPE)
@@ -392,6 +393,7 @@ class PatchModelAddDownscale(Node):
         downscale_method: str,
         upscale_method: str,
     ) -> Mapping[str, object]:
+        initialize_inference_process()
         sampling = model.get_model_object("model_sampling")
         sigma_start = sampling.percent_to_sigma(start_percent)
         sigma_end = sampling.percent_to_sigma(end_percent)

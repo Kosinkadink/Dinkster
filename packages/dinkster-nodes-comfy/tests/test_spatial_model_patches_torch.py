@@ -43,7 +43,14 @@ class Patcher:
         self.output_patch: Any = None
 
     def clone(self) -> Patcher:
-        return Patcher()
+        result = Patcher()
+        result.sampling = self.sampling
+        result.attn_input = self.attn_input
+        result.attn_output = self.attn_output
+        result.input_patch = self.input_patch
+        result.after_skip_patch = self.after_skip_patch
+        result.output_patch = self.output_patch
+        return result
 
     def get_model_object(self, name: str) -> Any:
         assert name == "model_sampling"
@@ -80,6 +87,20 @@ def test_tome_merges_and_unmerges_seeded_asymmetric_tokens_without_mutating_sour
     assert key.shape == query.shape
     assert value.shape == query.shape
     assert restored.shape == query.shape
+    assert torch.equal(
+        merged[0, -4:], torch.tensor([[3.0, 4.0], [1.0, 2.0], [5.0, 6.0], [15.0, 16.0]])
+    )
+    assert torch.equal(restored[0, 5:10], torch.full((5, 2), 15.0).add(torch.tensor([0.0, 1.0])))
+
+
+def test_tome_bypasses_zero_ratio_and_downsampled_attention() -> None:
+    query = torch.arange(30, dtype=torch.float32).reshape(1, 15, 2) + 1
+    for ratio, shape in ((0.0, (1, 2, 3, 5)), (0.3, (1, 2, 6, 10))):
+        patched = TomePatchModel.execute(model=Patcher(), ratio=ratio)["MODEL"]
+        merged, _, _ = patched.attn_input(query, query, query, {"original_shape": shape})
+        restored = patched.attn_output(merged, {})
+        assert merged is query
+        assert restored is query
 
 
 def test_hypertile_round_trips_asymmetric_tiles_and_preserves_source() -> None:
@@ -99,6 +120,10 @@ def test_hypertile_round_trips_asymmetric_tiles_and_preserves_source() -> None:
     assert key.shape == query.shape
     assert value.shape == query.shape
     assert torch.equal(restored, query)
+
+    bypass, _, _ = patched.attn_input(query, query, query, {"original_shape": (1, 2, 7, 13)})
+    assert bypass is query
+    assert patched.attn_output(bypass, {}) is query
 
 
 @pytest.mark.parametrize("after_skip", (False, True))
@@ -121,11 +146,16 @@ def test_downscale_respects_sigma_window_skip_branch_and_restores_skip_shape(
     assert source.after_skip_patch is None
     assert source.output_patch is None
     hidden = torch.arange(35, dtype=torch.float32).reshape(1, 1, 5, 7)
-    active = installed(hidden, {"block": ("input", 3), "sigmas": [torch.tensor(0.8)]})
+    active = installed(hidden, {"block": ("input", 3), "sigmas": [torch.tensor(1.0)]})
+    ending = installed(
+        hidden, {"block": ("input", 3), "sigmas": [torch.tensor(0.65, dtype=torch.float64)]}
+    )
     wrong_block = installed(hidden, {"block": ("input", 2), "sigmas": [torch.tensor(0.8)]})
     outside_window = installed(hidden, {"block": ("input", 3), "sigmas": [torch.tensor(0.2)]})
     resized, skip = patched.output_patch(active, hidden, {})
     assert active.shape == (1, 1, 2, 4)
+    assert torch.equal(active, torch.tensor([[[[7.0, 9.0, 11.0, 13.0], [21.0, 23.0, 25.0, 27.0]]]]))
+    assert torch.equal(ending, active)
     assert wrong_block is hidden
     assert outside_window is hidden
     assert resized.shape == hidden.shape
@@ -157,10 +187,48 @@ class ModelResult(Node):
 
     @classmethod
     def execute(cls, *, model: Patcher) -> Mapping[str, object]:
-        return cls.outputs(value=float(model.attn_input is not None))
+        query = torch.arange(30, dtype=torch.float32).reshape(1, 15, 2) + 1
+        merged, _, _ = model.attn_input(query, query, query, {"original_shape": (1, 2, 3, 5)})
+        restored = model.attn_output(merged, {})
+        return cls.outputs(value=float(restored.sum()))
 
 
-FIXTURE_NODES = (ModelSource, ModelResult)
+class HyperTileResult(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="spatial-fixture.hypertile-result",
+            inputs=(InputSpec("model", TypeExpr.concrete(MODEL_TYPE)),),
+            outputs=(OutputSpec("value", TypeExpr.concrete(CORE_FLOAT)),),
+        )
+
+    @classmethod
+    def execute(cls, *, model: Patcher) -> Mapping[str, object]:
+        query = torch.arange(192, dtype=torch.float32).reshape(1, 96, 2)
+        tiled, _, _ = model.attn_input(query, query, query, {"original_shape": (1, 2, 8, 12)})
+        return cls.outputs(value=float(model.attn_output(tiled, {}).sum()))
+
+
+class DownscaleResult(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="spatial-fixture.downscale-result",
+            inputs=(InputSpec("model", TypeExpr.concrete(MODEL_TYPE)),),
+            outputs=(OutputSpec("value", TypeExpr.concrete(CORE_FLOAT)),),
+        )
+
+    @classmethod
+    def execute(cls, *, model: Patcher) -> Mapping[str, object]:
+        hidden = torch.arange(35, dtype=torch.float32).reshape(1, 1, 5, 7)
+        reduced = model.after_skip_patch(
+            hidden, {"block": ("input", 3), "sigmas": [torch.tensor(1.0)]}
+        )
+        restored, _ = model.output_patch(reduced, hidden, {})
+        return cls.outputs(value=float(restored.sum()))
+
+
+FIXTURE_NODES = (ModelSource, ModelResult, HyperTileResult, DownscaleResult)
 
 
 @pytest.mark.parametrize("in_process", (True, False))
@@ -199,11 +267,44 @@ def test_complete_manifest_transports_an_ordinary_tome_model_graph_in_both_hosts
                         "result": GraphNode(
                             "spatial-fixture.result", {"model": Link("patch", "MODEL")}
                         ),
+                        "hypertile": GraphNode(
+                            "HyperTile",
+                            {
+                                "model": Link("source", "MODEL"),
+                                "tile_size": 32,
+                                "swap_size": 2,
+                                "max_depth": 0,
+                                "scale_depth": False,
+                            },
+                        ),
+                        "hypertile_result": GraphNode(
+                            "spatial-fixture.hypertile-result",
+                            {"model": Link("hypertile", "MODEL")},
+                        ),
+                        "downscale": GraphNode(
+                            "PatchModelAddDownscale",
+                            {
+                                "model": Link("source", "MODEL"),
+                                "block_number": 3,
+                                "downscale_factor": 2.0,
+                                "start_percent": 0.0,
+                                "end_percent": 0.35,
+                                "downscale_after_skip": True,
+                                "downscale_method": "nearest-exact",
+                                "upscale_method": "nearest-exact",
+                            },
+                        ),
+                        "downscale_result": GraphNode(
+                            "spatial-fixture.downscale-result",
+                            {"model": Link("downscale", "MODEL")},
+                        ),
                     }
                 ),
-                ["result"],
+                ["result", "hypertile_result", "downscale_result"],
             )
-            assert result.outputs["result"]["value"].resolve() == 1.0
+            assert result.outputs["result"]["value"].resolve() == 465.0
+            assert result.outputs["hypertile_result"]["value"].resolve() == 18336.0
+            assert result.outputs["downscale_result"]["value"].resolve() == 649.0
         finally:
             await composer.close()
 
