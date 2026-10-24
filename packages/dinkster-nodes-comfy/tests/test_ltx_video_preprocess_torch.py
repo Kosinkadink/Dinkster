@@ -135,31 +135,51 @@ def test_ltx_video_preprocess_executes_twice_through_both_production_hosts(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
                 "DINKSTER_ACCELERATOR": "cpu",
-                "PYTHONPATH": os.pathsep.join((str(Path(__file__).parent), str(source_root))),
+                "PYTHONPATH": os.pathsep.join(
+                    (str(tmp_path), str(Path(__file__).parent), str(source_root))
+                ),
             }
         )
         try:
-            manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+            native_manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
             (tmp_path / "ltx_preprocess_fixture.py").write_text(
                 "from test_ltx_video_preprocess_torch import (\n"
                 "    LTXPreprocessConsumer, LTXPreprocessSource,\n"
                 ")\n"
-                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "NODES = (*COMFY_NODES, LTXPreprocessSource, LTXPreprocessConsumer)\n",
+                "from dinkster_nodes_comfy import register_inference_types\n"
+                "NODES = (LTXPreprocessSource, LTXPreprocessConsumer)\n",
                 encoding="ascii",
             )
-            fixture = tmp_path / "dinkster-pack.toml"
-            fixture.write_text(
-                manifest.read_text(encoding="ascii")
-                .replace("namespaces = [", 'namespaces = ["ltx-preprocess-fixture",')
-                .replace("dinkster_nodes_comfy:COMFY_NODES", "ltx_preprocess_fixture:NODES")
-                .replace(
-                    "dinkster_nodes_comfy:register_inference_types",
-                    "ltx_preprocess_fixture:register_inference_types",
-                ),
+            fixture_manifest = tmp_path / "dinkster-pack.toml"
+            fixture_manifest.write_text(
+                "[pack]\n"
+                'name = "ltx-preprocess-fixture"\n'
+                'publisher = "dinkster"\n'
+                'namespaces = ["ltx-preprocess-fixture"]\n'
+                "\n[pack.entry]\n"
+                'nodes = "ltx_preprocess_fixture:NODES"\n'
+                'types = "ltx_preprocess_fixture:register_inference_types"\n',
                 encoding="ascii",
             )
-            await composer.add_pack(PackSpec(manifest=fixture, in_process=in_process))
+            if in_process:
+                await composer.add_pack(PackSpec(manifest=native_manifest, in_process=True))
+                await composer.add_pack(PackSpec(manifest=fixture_manifest, in_process=True))
+            else:
+                group_manifests = (native_manifest, fixture_manifest)
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=native_manifest,
+                        worker_group="ltx-preprocess-fixture",
+                        group_manifests=group_manifests,
+                    )
+                )
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=fixture_manifest,
+                        worker_group="ltx-preprocess-fixture",
+                        group_manifests=group_manifests,
+                    )
+                )
             engine = composer.composition.make_engine(lambda _event: None)
             graph = Graph(
                 nodes={
