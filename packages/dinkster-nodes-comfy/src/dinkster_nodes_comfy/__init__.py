@@ -12,6 +12,7 @@ from .compositing import COMPOSITING_NODES
 from .conditioning import CONDITIONING_NODES
 from .controlnet import CONTROLNET_NODES
 from .dataset_collections import DATASET_COLLECTION_NODES
+from .dataset_images import DATASET_IMAGE_NODES
 from .dataset_text import DATASET_TEXT_NODES
 from .freeu import FREEU_NODES
 from .image_core import IMAGE_CORE_NODES
@@ -26,6 +27,7 @@ from .logic import LOGIC_NODES
 from .mask import MASK_NODES
 from .math import ComfyMathExpression
 from .mochi import EmptyMochiLatentVideo
+from .model_advanced import MODEL_ADVANCED_NODES
 from .model_merging import MODEL_MERGE_NODES
 from .model_merging_specific import MODEL_SPECIFIC_MERGE_NODES
 from .morphology import MORPHOLOGY_NODES
@@ -40,6 +42,7 @@ from .primitive import (
 from .reference_conditioning import REFERENCE_CONDITIONING_NODES
 from .rope_and_mask import ROPE_AND_MASK_NODES
 from .sigma_operations import SIGMA_OPERATION_NODES
+from .stable3d import STABLE3D_NODES
 from .stable_cascade import STABLE_CASCADE_NODES
 from .text import TEXT_NODES
 from .utilities import ComfyNumberConvert, SeedNode
@@ -62,6 +65,7 @@ COMFY_NODES = (
     *ATTENTION_MULTIPLY_NODES,
     *MODEL_MERGE_NODES,
     *MODEL_SPECIFIC_MERGE_NODES,
+    *MODEL_ADVANCED_NODES,
     *CFG_GUIDANCE_NODES,
     *FREEU_NODES,
     *ROPE_AND_MASK_NODES,
@@ -85,10 +89,12 @@ COMFY_NODES = (
     *IMAGE_TRANSFORM_NODES,
     *MORPHOLOGY_NODES,
     *STABLE_CASCADE_NODES,
+    *STABLE3D_NODES,
     *VIDEO_LATENT_NODES,
     *POST_PROCESSING_NODES,
     EmptyMochiLatentVideo,
     *AUDIO_LATENT_NODES,
+    *DATASET_IMAGE_NODES,
 )
 
 __all__ = ["COMFY_NODES", "register_inference_types"]
