@@ -271,6 +271,8 @@ def compare(row: dict[str, Any], schema: dict[str, Any]) -> list[str]:
         mount = actual.pop()
         if mount.get("multiline") is False:
             mount.pop("multiline")
+        # The production serializer omits the configured-output None sentinel.
+        mount.setdefault("default", None)
         differences.extend(
             _differences(
                 {"name": "mount", "group": "optional", "type": "STRING", "default": None},
