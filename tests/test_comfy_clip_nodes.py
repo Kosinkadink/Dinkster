@@ -20,6 +20,12 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.clip import CLIPSetLastLayer, CLIPTextEncode
+from dinkster_nodes_comfy.clip_model_specific import (
+    CLIPTextEncodeHiDream,
+    CLIPTextEncodeLumina2,
+    CLIPTextEncodePixArtAlpha,
+    T5TokenizerOptions,
+)
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -61,6 +67,95 @@ def test_layer_selection_preserves_source_and_scheduled_conditioning(layer: int)
 def test_missing_clip_reports_checkpoint_encoder_error() -> None:
     with pytest.raises(RuntimeError, match="checkpoint does not contain a valid clip"):
         CLIPTextEncode.execute(clip=None, text="prompt")
+
+
+class ModelTextEncoder:
+    def __init__(self) -> None:
+        self.options: dict[str, int] = {"unrelated": 17}
+
+    def clone(self) -> ModelTextEncoder:
+        result = ModelTextEncoder()
+        result.options = self.options.copy()
+        return result
+
+    def set_tokenizer_option(self, name: str, value: int) -> None:
+        self.options[name] = value
+
+    def tokenize(self, text: str) -> dict[str, str]:
+        return {key: f"{key}:{text}" for key in ("l", "g", "t5xxl", "llama", "extra")}
+
+    def encode_from_tokens_scheduled(
+        self, tokens: dict[str, str], add_dict: dict[str, int] | None = None
+    ) -> list[list[object]]:
+        return [[tokens, {"start_percent": 0.25, **(add_dict or {})}]]
+
+
+def test_model_specific_prompts_and_resolution() -> None:
+    encoder = ModelTextEncoder()
+    pixart = CLIPTextEncodePixArtAlpha.execute(
+        clip=encoder, text="literal\n{one|two}", width=832, height=1216
+    )["CONDITIONING"]
+    assert pixart == [
+        [
+            encoder.tokenize("literal\n{one|two}"),
+            {"start_percent": 0.25, "width": 832, "height": 1216},
+        ]
+    ]
+    hidream: Any = CLIPTextEncodeHiDream.execute(
+        clip=encoder, clip_l="left", clip_g="global", t5xxl="long", llama="instruct"
+    )["CONDITIONING"]
+    assert hidream == [
+        [
+            {
+                "l": "l:left",
+                "g": "g:global",
+                "t5xxl": "t5xxl:long",
+                "llama": "llama:instruct",
+                "extra": "extra:global",
+            },
+            {"start_percent": 0.25},
+        ]
+    ]
+    for key, system in (
+        (
+            "superior",
+            "You are an assistant designed to generate superior images with the superior "
+            "degree of image-text alignment based on textual prompts or user prompts.",
+        ),
+        (
+            "alignment",
+            "You are an assistant designed to generate high-quality images with the "
+            "highest degree of image-text alignment based on textual prompts.",
+        ),
+    ):
+        result = CLIPTextEncodeLumina2.execute(
+            clip=encoder, user_prompt="  user\n", system_prompt=key
+        )["CONDITIONING"]
+        assert result == [
+            [encoder.tokenize(f"{system} <Prompt Start>   user\n"), {"start_percent": 0.25}]
+        ]
+    with pytest.raises(RuntimeError, match="checkpoint does not contain a valid clip"):
+        CLIPTextEncodeLumina2.execute(clip=None, user_prompt="", system_prompt="alignment")
+
+
+def test_t5_options_preserve_source_and_other_tokenizers() -> None:
+    source = ModelTextEncoder()
+    selected: Any = T5TokenizerOptions.execute(clip=source, min_padding=7, min_length=43)["CLIP"]
+    assert selected is not source
+    assert source.options == {"unrelated": 17}
+    assert selected.options == {
+        "unrelated": 17,
+        "t5xxl_min_padding": 7,
+        "t5xxl_min_length": 43,
+        "pile_t5xl_min_padding": 7,
+        "pile_t5xl_min_length": 43,
+        "t5base_min_padding": 7,
+        "t5base_min_length": 43,
+        "mt5xl_min_padding": 7,
+        "mt5xl_min_length": 43,
+        "umt5xxl_min_padding": 7,
+        "umt5xxl_min_length": 43,
+    }
 
 
 class EncoderSource(Node):

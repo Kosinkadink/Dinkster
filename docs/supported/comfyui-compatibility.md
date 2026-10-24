@@ -11,6 +11,9 @@
   concatenate, cut, split to batches, join batches, and set batch seed behavior.
 - Native CLIP text encoding preserves scheduled conditioning; layer selection
   clones the encoder without changing the source under exact core interfaces.
+- PixArt Alpha, Lumina 2, and HiDream text encoders preserve resolution, system
+  prompts, and per-encoder text respectively. Controlnet text conditioning keeps
+  existing embeddings and metadata; T5 tokenizer options clone the source CLIP.
 - Ten native conditioning nodes combine, blend, concatenate, multiply, mask,
   zero, and set area or timestep metadata under their exact ComfyUI interfaces.
 - Fifteen native mask and composite nodes convert, create, invert, crop, combine,

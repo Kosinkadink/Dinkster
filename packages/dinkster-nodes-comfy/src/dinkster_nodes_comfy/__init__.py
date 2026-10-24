@@ -3,6 +3,7 @@
 from dinkster_api.v1 import register_inference_types
 
 from .clip import CLIP_NODES
+from .clip_model_specific import MODEL_TEXT_ENCODER_NODES
 from .compositing import COMPOSITING_NODES
 from .conditioning import CONDITIONING_NODES
 from .image_core import IMAGE_CORE_NODES
@@ -44,6 +45,7 @@ COMFY_NODES = (
     *LATENT_ADVANCED_NODES,
     *LATENT_OPERATION_NODES,
     *CLIP_NODES,
+    *MODEL_TEXT_ENCODER_NODES,
     *CONDITIONING_NODES,
     *MASK_NODES,
     *COMPOSITING_NODES,
