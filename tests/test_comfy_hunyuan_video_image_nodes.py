@@ -133,7 +133,8 @@ def test_hunyuan_video_image_cold_discovery() -> None:
             "sys.modules['torch'] = None\n"
             "from dinkster_nodes_comfy import COMFY_NODES\n"
             "ids = {node.schema().node_type for node in COMFY_NODES}\n"
-            "assert {'HunyuanImageToVideo', 'HunyuanVideo15ImageToVideo', 'HunyuanVideo15SuperResolution'} <= ids\n",
+            "assert {'HunyuanImageToVideo', 'HunyuanVideo15ImageToVideo',\n"
+            "        'HunyuanVideo15SuperResolution'} <= ids\n",
         ],
         capture_output=True,
         text=True,
