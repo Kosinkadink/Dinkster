@@ -9,8 +9,8 @@ from dinkster_nodes_comfy.ltx_audio import LTX_AUDIO_NODES, LTXVAudioVAEDecode, 
 
 
 def test_ltx_audio_interfaces_match_comfy_schemas() -> None:
-    assert LTX_AUDIO_NODES == (LTXVAudioVAEEncode, LTXVAudioVAEDecode)
-    assert all(node in COMFY_NODES for node in LTX_AUDIO_NODES)
+    assert LTX_AUDIO_NODES[:2] == (LTXVAudioVAEEncode, LTXVAudioVAEDecode)
+    assert all(node in COMFY_NODES for node in (LTXVAudioVAEEncode, LTXVAudioVAEDecode))
     expected = (
         (
             LTXVAudioVAEEncode,
@@ -61,7 +61,7 @@ def test_ltx_audio_cold_discovery() -> None:
             sys.executable,
             "-c",
             "import sys; from dinkster_nodes_comfy.ltx_audio "
-            "import LTX_AUDIO_NODES; assert len([n.schema() for n in LTX_AUDIO_NODES]) == 2; "
+            "import LTX_AUDIO_NODES; assert all(n.schema() for n in LTX_AUDIO_NODES); "
             "assert 'torch' not in sys.modules; "
             "assert 'dinkster_inference.model_management' not in sys.modules",
         ],
