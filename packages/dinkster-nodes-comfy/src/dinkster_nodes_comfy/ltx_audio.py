@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import importlib
 from collections.abc import Mapping
 from typing import Any, cast
 
 from dinkster_api.v1 import (
     AUDIO_TYPE,
+    CORE_FLOAT,
+    CORE_INT,
     LATENT_TYPE,
     VAE_TYPE,
     InputSpec,
     Node,
     NodeSchema,
+    NumberWidget,
     OutputSpec,
     TypeExpr,
     initialize_inference_process,
@@ -83,4 +87,64 @@ class LTXVAudioVAEDecode(Node):
         )
 
 
-LTX_AUDIO_NODES = (LTXVAudioVAEEncode, LTXVAudioVAEDecode)
+class LTXVEmptyLatentAudio(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="LTXVEmptyLatentAudio",
+            display_name="Empty LTXV Latent Audio",
+            category="model/latent/ltxv",
+            inputs=(
+                InputSpec(
+                    "frames_number",
+                    TypeExpr.concrete(CORE_INT),
+                    default=97,
+                    widget=NumberWidget(min=1, max=1000, step=1, display="number"),
+                    doc="Number of frames.",
+                ),
+                InputSpec(
+                    "frame_rate",
+                    TypeExpr.union(CORE_FLOAT, CORE_INT),
+                    default=25.0,
+                    widget=NumberWidget(min=1.0, max=1000.0, step=0.01, display="number"),
+                    doc="Number of frames per second.",
+                ),
+                InputSpec(
+                    "batch_size",
+                    TypeExpr.concrete(CORE_INT),
+                    default=1,
+                    widget=NumberWidget(min=1, max=4096, display="number"),
+                    doc="The number of latent audio samples in the batch.",
+                ),
+                InputSpec(
+                    "audio_vae",
+                    _VAE,
+                    display_name="Audio VAE",
+                    doc="The Audio VAE model to get configuration from.",
+                ),
+            ),
+            outputs=(OutputSpec("LATENT", _LATENT, display_name="Latent"),),
+        )
+
+    @classmethod
+    def execute(
+        cls, *, frames_number: int, frame_rate: float, batch_size: int, audio_vae: Any
+    ) -> Mapping[str, object]:
+        assert audio_vae is not None, "Audio VAE model is required"
+        initialize_inference_process()
+        torch = importlib.import_module("torch")
+        management = importlib.import_module("dinkster_inference.model_management")
+        first_stage = audio_vae.first_stage_model
+        latent = torch.zeros(
+            (
+                batch_size,
+                audio_vae.latent_channels,
+                first_stage.num_of_latents_from_frames(frames_number, frame_rate),
+                first_stage.latent_frequency_bins,
+            ),
+            device=management.intermediate_device(),
+        )
+        return cls.outputs(LATENT={"samples": latent, "type": "audio"})
+
+
+LTX_AUDIO_NODES = (LTXVAudioVAEEncode, LTXVAudioVAEDecode, LTXVEmptyLatentAudio)
