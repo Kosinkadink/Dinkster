@@ -261,7 +261,7 @@ def _write_manifest(root: Path, *, compat: bool) -> Path:
     manifest = root / "dinkster-pack.toml"
     manifest.write_text(
         f'[pack]\nname = "{pack}"\npublisher = "dinkster"\n'
-        f'type-namespaces = ["{namespace}"]\nnamespaces = ["{namespace}"]\n\n'
+        f'type-namespaces = []\nnamespaces = ["{namespace}"]\n\n'
         f'[pack.entry]\nnodes = "{module}:NODES"\n'
         f'types = "{module}:register_types"\n',
         encoding="utf-8",

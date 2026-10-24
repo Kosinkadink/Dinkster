@@ -450,7 +450,7 @@ def test_dynamic_inputs_preserve_v1_types_defaults_and_options() -> None:
             if isinstance(entry, InputSpec):
                 expected_type = (
                     TypeExpr.concrete("REGION")
-                    if (node_type, entry.id) == ("dinkster.image.crop", "region")
+                    if old.type == TypeExpr.concrete("dinkster.region")
                     else old.type
                 )
                 assert (entry.type, entry.default, entry.widget) == (
