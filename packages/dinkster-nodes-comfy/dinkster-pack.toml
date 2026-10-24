@@ -156,6 +156,7 @@ namespaces = [
     "ImageQuantize",
     "ImageSharpen",
     "ImageScaleToTotalPixels",
+    "Canny",
     "ImageCrop",
     "RepeatImageBatch",
     "ImageFromBatch",

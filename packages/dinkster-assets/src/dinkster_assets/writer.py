@@ -120,10 +120,13 @@ class AssetWriter:
     def __init__(self, authority: MountWriteAuthority) -> None:
         self._authority = authority
 
-    def output_target(self, prefix: str) -> dict[str, str]:
-        if not isinstance(self._authority, MountSnapshotWriter):
-            raise AssetError("default output selection requires a mounts snapshot")
-        return {"mount": self._authority.output_mount(), "prefix": prefix}
+    def output_target(self, prefix: str, mount: str | None = None) -> dict[str, str]:
+        """Combine separate node inputs without resolving a host path or granting writes."""
+        if mount is None:
+            if not isinstance(self._authority, MountSnapshotWriter):
+                raise AssetError("default output selection requires a mounts snapshot")
+            mount = self._authority.output_mount()
+        return {"mount": mount, "prefix": prefix}
 
     def save_bytes(
         self,
