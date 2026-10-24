@@ -88,7 +88,12 @@ def test_video_latent_transform_schemas_match_the_fixed_reference_contract() -> 
     )
     assert [input_spec.id for input_spec in trim_schema.inputs] == ["samples", "trim_amount"]
     trim_amount = cast(NumberWidget, trim_schema.inputs[1].widget)
-    assert (trim_schema.inputs[1].default, trim_amount.min, trim_amount.max) == (0, 0, 99999)
+    assert (trim_schema.inputs[1].default, trim_amount.min, trim_amount.max, trim_amount.step) == (
+        0,
+        0,
+        99999,
+        None,
+    )
     assert [output.id for output in trim_schema.outputs] == ["LATENT"]
 
     assert (freeze_schema.node_type, freeze_schema.display_name, freeze_schema.category) == (

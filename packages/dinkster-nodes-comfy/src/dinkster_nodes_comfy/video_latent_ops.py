@@ -34,7 +34,7 @@ class TrimVideoLatent(Node):
                     "trim_amount",
                     TypeExpr.concrete(CORE_INT),
                     default=0,
-                    widget=NumberWidget(min=0, max=99999, step=1),
+                    widget=NumberWidget(min=0, max=99999),
                 ),
             ),
             outputs=(OutputSpec("LATENT", _LATENT),),
