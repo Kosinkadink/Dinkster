@@ -149,6 +149,20 @@ from dinkster_values import (
     CORE_STRING,
     TypeRegistry,
 )
+from dinkster_values.builtin_types import (
+    AUDIO_TYPE,
+    BACKGROUND_REMOVAL_TYPE,
+    BOUNDING_BOX_TYPE,
+    LATENT_UPSCALE_MODEL_TYPE,
+    MESH_TYPE,
+    MODEL_PATCH_TYPE,
+    MOGE_GEOMETRY_TYPE,
+    MOGE_MODEL_TYPE,
+    SHAPE_SUBDIVIDES_TYPE,
+    VIDEO_EDIT_TYPE,
+    VIDEO_TYPE,
+    VOXEL_TYPE,
+)
 from dinkster_workers import CompatGateDiagnostic, current_execution_context
 
 from .audio import AUDIO_V1_NAME, register_audio_type
@@ -163,7 +177,25 @@ from .saved_results import capture_saved_results
 from .video import VIDEO_V1_NAME, register_video_type
 
 COMFY_TYPE_PREFIX = "comfy."
-COMFY_VALUE_TYPE_NAMES = frozenset(("IMAGE", "MASK", "LATENT"))
+COMFY_VALUE_TYPE_NAMES = frozenset(
+    (
+        "IMAGE",
+        "MASK",
+        "LATENT",
+        AUDIO_TYPE,
+        VIDEO_TYPE,
+        VIDEO_EDIT_TYPE,
+        MOGE_MODEL_TYPE,
+        MOGE_GEOMETRY_TYPE,
+        BACKGROUND_REMOVAL_TYPE,
+        VOXEL_TYPE,
+        MESH_TYPE,
+        SHAPE_SUBDIVIDES_TYPE,
+        BOUNDING_BOX_TYPE,
+        MODEL_PATCH_TYPE,
+        LATENT_UPSCALE_MODEL_TYPE,
+    )
+)
 V3_AUTOGROW_IO_TYPE = "COMFY_AUTOGROW_V3"
 V3_DYNAMICCOMBO_IO_TYPE = "COMFY_DYNAMICCOMBO_V3"
 V3_DYNAMICSLOT_IO_TYPE = "COMFY_DYNAMICSLOT_V3"
@@ -1541,6 +1573,9 @@ def number_widget(
         if field not in config:
             continue
         raw_value = config[field]
+        if field == "round" and raw_value is False:
+            accepted[field] = False
+            continue
         if type(raw_value) not in (int, float):
             continue
         value = cast("int | float", raw_value)

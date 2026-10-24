@@ -21,6 +21,7 @@ from types import SimpleNamespace
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from dinkster_api.v1 import AUDIO_TYPE
 from dinkster_assets import AssetVault, digest_bytes
 from dinkster_engine import EngineEvent, ExecutionError, ExecutionSelection
 from dinkster_graph import (
@@ -232,7 +233,7 @@ def test_add_remote_composes_full_media_pack_with_lazy_capture_choices(
                     execution=composer.place_execution(engine.pin_execution(), {"empty": "box1"}),
                 )
                 assert result.executed == ("empty",)
-                assert result.outputs["empty"]["audio"].type_id == "comfy.AUDIO"
+                assert result.outputs["empty"]["audio"].type_id == AUDIO_TYPE
             finally:
                 await composer.close()
         finally:

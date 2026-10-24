@@ -9,6 +9,7 @@ from typing import Any, cast
 import av
 import numpy as np
 import pytest
+from dinkster_api.v1 import VIDEO_TYPE
 from dinkster_assets import AssetRef
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EngineEvent
@@ -43,7 +44,7 @@ class FormatSource(Node):
                 InputSpec("alpha", TypeExpr.concrete("BOOLEAN")),
                 InputSpec("audio", TypeExpr.concrete("BOOLEAN"), default=False),
             ),
-            outputs=(OutputSpec("video", TypeExpr.concrete("comfy.VIDEO")),),
+            outputs=(OutputSpec("video", TypeExpr.concrete(VIDEO_TYPE)),),
         )
 
     @classmethod

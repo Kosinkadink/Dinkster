@@ -194,7 +194,7 @@ def test_efficient_sam_provider_executes_in_an_isolated_worker(tmp_path: Path) -
                         {
                             "image": TypedLiteral("IMAGE", image.tolist()),
                             "detections": TypedLiteral(
-                                "list<dinkster.detection>",
+                                "list<DETECTION>",
                                 [detection.to_record() for detection in detections],
                             ),
                             "provider": "dinkster-vision-efficient-sam",

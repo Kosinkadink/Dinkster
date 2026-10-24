@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
+from dinkster_api.v1 import ComboOption, ComboWidget
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.controlnet import (
     CONTROLNET_NODES,
     ControlNetApply,
     ControlNetApplyAdvanced,
+    SetUnionControlNetType,
 )
 
 
@@ -42,6 +46,39 @@ def test_controlnet_schemas_register_the_exact_core_ids() -> None:
         ("start_percent", 0.0),
         ("end_percent", 1.0),
     ]
+    union = SetUnionControlNetType.define_schema().inputs[1].widget
+    assert isinstance(union, ComboWidget)
+    assert [
+        option.value if isinstance(option, ComboOption) else option for option in union.options
+    ] == [
+        "auto",
+        "openpose",
+        "depth",
+        "hed/pidi/scribble/ted",
+        "canny/lineart/anime_lineart/mlsd",
+        "normal",
+        "segment",
+        "tile",
+        "repaint",
+    ]
+
+
+def test_native_manifest_schemas_are_available_without_inference_or_torch() -> None:
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys\n"
+            "sys.modules['dinkster_inference'] = None\n"
+            "sys.modules['torch'] = None\n"
+            "from dinkster_nodes_comfy import COMFY_NODES\n"
+            "schemas = [node.define_schema() for node in COMFY_NODES]\n"
+            "assert any(schema.node_type == 'SetUnionControlNetType' for schema in schemas)\n",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 
 def test_zero_strength_returns_sources_without_accessing_control_or_image() -> None:
