@@ -26,6 +26,7 @@ from .primitive import (
     PrimitiveString,
     PrimitiveStringMultiline,
 )
+from .reference_conditioning import REFERENCE_CONDITIONING_NODES
 from .text import TEXT_NODES
 from .utilities import ComfyNumberConvert, SeedNode
 from .vae import VAE_NODES
@@ -50,6 +51,7 @@ COMFY_NODES = (
     *CLIP_NODES,
     *VAE_NODES,
     *CONDITIONING_NODES,
+    *REFERENCE_CONDITIONING_NODES,
     *MASK_NODES,
     *COMPOSITING_NODES,
     *IMAGE_CORE_NODES,

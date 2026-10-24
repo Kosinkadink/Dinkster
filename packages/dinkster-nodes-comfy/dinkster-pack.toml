@@ -137,6 +137,8 @@ namespaces = [
     "BatchMasksNode",
     "BatchLatentsNode",
     "ColorTransfer",
+    "InstructPixToPixConditioning",
+    "ReferenceLatent",
 ]
 
 [pack.sandbox]
