@@ -38,3 +38,30 @@ def test_reference_conditioning_interfaces_and_manifest() -> None:
     assert not reference.inputs[1].required
     conditioning = [["embedding", {"reference_latents": ["first"], "strength": 0.7}]]
     assert ReferenceLatent.execute(conditioning=conditioning)["CONDITIONING"] is conditioning
+
+
+def test_hunyuan_vision_interfaces_are_native() -> None:
+    from dinkster_api.v1 import CLIP_VISION_OUTPUT_TYPE
+    from dinkster_nodes_comfy.hunyuan3d import HUNYUAN3D_CONDITIONING_NODES
+
+    for node in HUNYUAN3D_CONDITIONING_NODES:
+        assert node in COMFY_NODES
+        schema = node.schema()
+        assert schema.category == "model/conditioning/hunyuan 3d"
+        assert [(port.id, port.type) for port in schema.outputs] == [
+            ("positive", TypeExpr.concrete(CONDITIONING_TYPE)),
+            ("negative", TypeExpr.concrete(CONDITIONING_TYPE)),
+        ]
+        assert all(
+            port.type == TypeExpr.concrete(CLIP_VISION_OUTPUT_TYPE) for port in schema.inputs
+        )
+    single, multi = HUNYUAN3D_CONDITIONING_NODES
+    assert [(port.id, port.required) for port in single.schema().inputs] == [
+        ("clip_vision_output", True)
+    ]
+    assert [(port.id, port.required) for port in multi.schema().inputs] == [
+        ("front", False),
+        ("left", False),
+        ("back", False),
+        ("right", False),
+    ]

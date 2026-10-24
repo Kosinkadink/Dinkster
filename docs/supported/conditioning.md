@@ -17,4 +17,6 @@
   attaches image conditioning to both prompt streams, and returns a zero latent.
 - Native `ReferenceLatent` appends a guiding latent to conditioning while
   preserving existing references; an unconnected latent leaves conditioning unchanged.
+- Hunyuan 3D v2 uses single-view vision features or ordered front/left/back/right
+  positional features for positive conditioning and matching zero negative conditioning.
 - Other model-family conditioning surfaces are unsupported.
