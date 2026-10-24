@@ -132,20 +132,21 @@ def test_save_text_executes_through_the_ordinary_manifest(
         )
         try:
             await composer.add_pack(PackSpec(manifest=fixture_manifest, in_process=in_process))
-            result = await composer.composition.make_engine(lambda _event: None).run(
-                Graph(
-                    nodes={
-                        "save": GraphNode(
-                            "SaveText",
-                            {"text": "manifest\n", "filename_prefix": "manifest", "format": "txt"},
-                        )
-                    }
-                ),
-                ["save"],
+            graph = Graph(
+                nodes={
+                    "save": GraphNode(
+                        "SaveText",
+                        {"text": "manifest\n", "filename_prefix": "manifest", "format": "txt"},
+                    )
+                }
             )
-            assert result.outputs["save"]["text"].resolve() == "manifest\n"
+            engine = composer.composition.make_engine(lambda _event: None)
+            for _ in range(2):
+                result = await engine.run(graph, ["save"])
+                assert result.outputs["save"]["text"].resolve() == "manifest\n"
         finally:
             await composer.close()
 
     asyncio.run(scenario())
     assert (roots["default"] / "manifest_00001.txt").read_bytes() == b"manifest\n"
+    assert (roots["default"] / "manifest_00002.txt").read_bytes() == b"manifest\n"

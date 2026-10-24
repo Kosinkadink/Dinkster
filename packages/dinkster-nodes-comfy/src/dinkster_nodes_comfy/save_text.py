@@ -51,7 +51,7 @@ class SaveText(Node):
             node_type="SaveText",
             display_name="Save Text",
             category="text",
-            description="Save text content to the output directory.",
+            description="Save text content to a file in the output directory.",
             search_terms=("save text", "write text", "export text"),
             inputs=(
                 InputSpec("text", _STRING, force_input=True, widget=StringWidget()),

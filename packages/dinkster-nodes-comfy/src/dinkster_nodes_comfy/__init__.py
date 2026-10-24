@@ -45,8 +45,8 @@ from .vae import VAE_NODES
 
 COMFY_NODES = (
     *TEXT_NODES,
-    SaveText,
     *DATASET_TEXT_NODES,
+    SaveText,
     PrimitiveString,
     PrimitiveStringMultiline,
     PrimitiveInt,
