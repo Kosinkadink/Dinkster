@@ -185,13 +185,28 @@ class ConditioningInspector(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="style-apply-fixture.inspect",
-            inputs=(InputSpec("conditioning", TypeExpr.concrete(CONDITIONING_TYPE)),),
+            inputs=(
+                InputSpec("conditioning", TypeExpr.concrete(CONDITIONING_TYPE)),
+                InputSpec("original", TypeExpr.concrete(CONDITIONING_TYPE)),
+            ),
             outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
         )
 
     @classmethod
-    def execute(cls, *, conditioning: object) -> dict[str, object]:
+    def execute(cls, *, conditioning: object, original: object) -> dict[str, object]:
         records = cast(list[list[Any]], conditioning)
+        source = cast(list[list[Any]], original)
+        assert len(records) == len(source) == 1
+        assert torch.equal(
+            records[0][0],
+            torch.tensor([[[1.0, 2.0], [-3.75, -3.75], [-1.75, 13.625], [1.0, 2.0]]]),
+        )
+        mask = torch.zeros((1, 4, 4), dtype=torch.float16)
+        mask[:, (0, 3), 1:3] = torch.log(torch.tensor(0.25)).to(torch.float16)
+        assert torch.equal(records[0][1]["attention_mask"], mask)
+        assert records[0][1]["attention_mask_img_shape"] == (1, 1)
+        assert torch.equal(source[0][0], torch.tensor([[[1.0, 2.0]]]))
+        assert source[0][1] == {"source": "raw"}
         return cls.outputs(
             summary=json.dumps(
                 [[list(record[0].shape), record[1].get("source")] for record in records],
@@ -246,8 +261,8 @@ def test_style_apply_runs_through_native_conditioning_consumer_twice(
                             "conditioning": Link("conditioning", "conditioning"),
                             "style_model": Link("style", "style"),
                             "clip_vision_output": Link("vision", "vision"),
-                            "strength": 1.0,
-                            "strength_type": "multiply",
+                            "strength": 0.25,
+                            "strength_type": "attn_bias",
                         },
                     ),
                     "consume": GraphNode(
@@ -259,7 +274,10 @@ def test_style_apply_runs_through_native_conditioning_consumer_twice(
                     ),
                     "inspect": GraphNode(
                         "style-apply-fixture.inspect",
-                        {"conditioning": Link("consume", "CONDITIONING")},
+                        {
+                            "conditioning": Link("consume", "CONDITIONING"),
+                            "original": Link("conditioning", "conditioning"),
+                        },
                     ),
                 }
             )
