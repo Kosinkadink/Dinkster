@@ -87,6 +87,8 @@ namespaces = [
     "ReplaceVideoLatentFrames",
     "CLIPTextEncode",
     "CLIPSetLastLayer",
+    "CLIPTextEncodeSDXLRefiner",
+    "CLIPTextEncodeSDXL",
     "CLIPTextEncodePixArtAlpha",
     "CLIPTextEncodeLumina2",
     "CLIPTextEncodeHiDream",

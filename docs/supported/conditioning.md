@@ -2,6 +2,10 @@
 
 - SD1.5 positive and negative text conditioning executes through the pinned
   `dinkster_inference` runtime.
+- `CLIPTextEncodeSDXL` encodes separate global and local prompts with size,
+  crop and target-size conditioning. Unequal token streams are padded with
+  empty-prompt tokens. `CLIPTextEncodeSDXLRefiner` adds aesthetic-score and
+  size conditioning. Both preserve scheduled CLIP outputs.
 - MiniMax H3 supports text-to-video conditioning through the pinned
   `dinkster_inference` runtime. First/last-frame, reference image, clip, and audio
   guide conditioning are unsupported.
