@@ -2,6 +2,11 @@
 
 - Input types: concrete, union, wildcard, variable, list, asset;
   scalar/list cardinality; required/advanced/hidden/lazy input flags
+- Backend schemas describe fixed positional tuples, derive tuple outputs from
+  independently typed input families in document order, and select a position's
+  type using a stored integer index. Tuple declarations round-trip through the
+  schema wire contract; ordinary list families retain homogeneous binding.
+  This does not claim tuple runtime transport or frontend editor support.
 - Required closed dynamic slots can bind their selected variant type to shared
   input and output variables, including list and asset element types
 - Widgets: asset, save-target, combo and multi-combo with optional labels,

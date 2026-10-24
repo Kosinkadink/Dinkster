@@ -51,6 +51,25 @@ class Double(Node):
 static output IDs at the return site. Execution still receives and returns
 plain Python values; workers own envelope and transport details.
 
+## Positional tuple declarations
+
+`TypeExpr.tuple_of(...)` describes a fixed ordered sequence of independently
+typed positions. A tuple has scalar cardinality, including when a position
+contains a list. Its canonical type stamp is `tuple<IMAGE,INT>` for an image
+followed by an integer.
+
+An input family with `independent_types=True` gives each member its own type
+variables. `TypeExpr.tuple_from_family("items")` on an output projects that
+family's effective member types in document order. Ordinary families retain
+shared variables and therefore homogeneous list binding.
+
+`TypeExpr.tuple_element("value", "index")` projects an output from a named
+tuple input and a document-stored integer selector. Elaboration uses a missing
+selector's integer default; a non-integer stored selector is rejected. Type
+solving rejects non-tuple sources and out-of-range positions and supports
+negative indices. These declarations are schema and solver contracts, not a
+runtime transport or frontend editor capability.
+
 ## Stored output descriptors
 
 `NodeSchema.output_descriptors` and its `OutputDescriptorsSpec`
