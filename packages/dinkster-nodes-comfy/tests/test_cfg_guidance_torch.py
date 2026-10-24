@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -55,10 +56,10 @@ def test_cfg_guidance_callbacks_produce_asymmetric_tensor_outputs_without_source
     cond = torch.tensor([[[[6.0, -2.0]]]])
     uncond = torch.tensor([[[[1.0, 3.0]]]])
     x = torch.tensor([[[[2.0, 4.0]]]])
-    for node, kwargs in (
-        (CFGZeroStar, {}),
-        (CFGNorm, {"strength": 0.7}),
-        (Mahiro, {}),
+    for node, kwargs, expected in (
+        (CFGZeroStar, {}, [11.0, -7.0]),
+        (CFGNorm, {"strength": 0.7}, [4.2, -1.4]),
+        (Mahiro, {}, [13.0, -6.0]),
     ):
         patched = node.execute(model=source, **kwargs)["MODEL"]
         result = patched.post(
@@ -70,28 +71,39 @@ def test_cfg_guidance_callbacks_produce_asymmetric_tensor_outputs_without_source
                 "denoised": cond * 2 - uncond,
             }
         )
-        assert result.shape == cond.shape
-        assert not torch.equal(result, cond)
+        torch.testing.assert_close(result, torch.tensor(expected).reshape_as(cond))
         assert source.post is None
     pre_norm = CFGNorm.execute(model=source, strength=0.7, pre_cfg=True)["MODEL"]
     pre_result = pre_norm.pre({"cond": cond, "uncond": uncond, "cond_scale": 2.5})
-    assert pre_result.shape == cond.shape
-    assert not torch.equal(pre_result, cond)
+    torch.testing.assert_close(pre_result, torch.tensor([8.25, -4.25]).reshape_as(cond))
     apg = APG.execute(model=source, eta=0.25, norm_threshold=2.0, momentum=0.5)["MODEL"]
     apg_result = apg.pre(
         {"conds_out": [cond, uncond, x], "sigma": torch.tensor([2.0]), "cond_scale": 2.5}
     )
     assert len(apg_result) == 3
-    assert not torch.equal(apg_result[0], cond)
+    torch.testing.assert_close(
+        apg_result[0],
+        torch.tensor([3 + 0.1 * math.sqrt(2), 1 - 0.7 * math.sqrt(2)]).reshape_as(cond),
+    )
+    assert apg_result[1] is uncond
+    assert apg_result[2] is x
     tcfg = TCFG.execute(model=source)["MODEL"]
-    tcfg_result = tcfg.pre({"input": x, "conds_out": [cond, uncond], "conds": [object(), object()]})
-    assert tcfg_result[0] is cond
-    assert not torch.equal(tcfg_result[1], uncond)
+    orthogonal_cond = torch.tensor([2.0, 0.0]).reshape_as(cond)
+    orthogonal_uncond = torch.tensor([0.0, 1.0]).reshape_as(cond)
+    tcfg_result = tcfg.pre(
+        {
+            "input": torch.zeros_like(x),
+            "conds_out": [orthogonal_cond, orthogonal_uncond],
+            "conds": [object(), object()],
+        }
+    )
+    assert tcfg_result[0] is orthogonal_cond
+    torch.testing.assert_close(tcfg_result[1], torch.zeros_like(uncond))
     nag = NAGuidance.execute(model=source, nag_scale=2.0, nag_alpha=0.5, nag_tau=1.5)["MODEL"]
     attention = torch.tensor([[[1.0, 2.0]], [[4.0, -3.0]]])
     before = attention.clone()
     result = nag.attention(attention.clone(), {"cond_or_uncond": [0, 1]})
-    assert result.shape == attention.shape
+    torch.testing.assert_close(result, torch.tensor([[[0.0, 2.75]], [[4.0, -3.0]]]))
     assert torch.equal(attention, before)
     assert nag.optimization_disabled
 
