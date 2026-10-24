@@ -169,12 +169,12 @@ def test_trellis2_3d_output_aliases_preserve_models() -> None:
         inputs = {item["id"]: item for item in source["interface"] if item["role"] == "input"}
         assert inputs["model_3d"]["type"] == {
             "kind": "concrete",
-            "types": ["dinkster.model3d"],
+            "types": ["MODEL3D"],
         }
         assert inputs["viewport_state"]["widget"]["multiline"] is False
         assert source["interface"][-1]["type"] == {
             "kind": "concrete",
-            "types": ["dinkster.model3d"],
+            "types": ["MODEL3D"],
         }
 
     save_source = source_schemas[save["source"]["nodeType"]]

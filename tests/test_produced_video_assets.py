@@ -188,7 +188,7 @@ def test_returned_input_sources_need_no_produced_asset_vault(
 def test_unverified_asset_inputs_do_not_need_produced_asset_adoption() -> None:
     wire = _unverified_wire()
     input_value = Value(
-        "dinkster.asset", "unverified-local:local-source", ValueMeta(wire), PyObjPayload(wire)
+        "ASSET", "unverified-local:local-source", ValueMeta(wire), PyObjPayload(wire)
     )
     output_value = Value(
         "custom.asset",
@@ -231,7 +231,7 @@ def test_asset_provenance_omits_unverified_refs_and_preserves_verified_refs(
 def test_asset_provenance_rejects_malformed_wire_refs(wire: dict[str, object]) -> None:
     blobs = [default_encode({"asset_refs": [wire]})]
     value = Value("custom.asset", "source", ValueMeta({"asset_refs": [wire]}), PyObjPayload({}))
-    asset_input = Value("dinkster.asset", "source", ValueMeta(wire), PyObjPayload(wire))
+    asset_input = Value("ASSET", "source", ValueMeta(wire), PyObjPayload(wire))
 
     with pytest.raises(AssetError):
         result_asset_digests({"outputs": {"video": {"metaBlob": 0}}}, blobs)
@@ -265,7 +265,7 @@ def test_source_pins_include_list_children_and_parent_metadata(type_id: str) -> 
 def producer_manifest(tmp_path: Path) -> Path:
     manifest = tmp_path / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname = "vproducer"\nnamespaces = ["vproducer"]\n'
+        '[pack]\nname = "vproducer"\npublisher = "dinkster"\nnamespaces = ["vproducer"]\n'
         '[pack.entry]\nnodes = "produced_video_nodes:NODES"\n'
         'types = "produced_video_nodes:register_types"\n'
     )

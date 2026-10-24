@@ -51,9 +51,14 @@ from dinkster_assets import (
 from dinkster_assets.audio import register_audio_value_type
 from dinkster_server import PackInfo
 from dinkster_values import (
+    AUDIO_TYPE,
     IMAGE_BATCH_MERGER_ID,
     IMAGE_FILE_DECODER_ID,
+    IMAGE_TYPE,
+    LATENT_TYPE,
+    MASK_TYPE,
     PNG_CONTAINER_VERSION,
+    VIDEO_TYPE,
     TypeRegistry,
     decode_image_array,
     decode_image_file,
@@ -72,7 +77,6 @@ from dinkster_values import (
     validate_image_encoded,
     validate_latent_encoded,
 )
-from dinkster_values.builtin_types import AUDIO_TYPE, VIDEO_TYPE
 from dinkster_workers import (
     SingleJobMultiGpuConfig,
     load_manifest,
@@ -87,8 +91,10 @@ from .compose import CompositionError, PackSpec, cuda_vram_budgets, default_pack
 from .packs import blueprint_assets, pack_info_from_presentation, template_assets
 
 __all__ = [
+    "COMFY_AUDIO_TYPE",
     "COMFY_IMAGE_TYPE",
     "COMFY_MASK_TYPE",
+    "COMFY_VIDEO_TYPE",
     "ComfyModelRoot",
     "comfy_compat_specs",
     "comfy_model_roots",
@@ -103,13 +109,15 @@ COMFY_PACK_ID = "comfy"
 _CORE_START_TIMEOUT = 180.0  # first torch + ComfyUI import is slow
 _LEGACY_START_TIMEOUT = 300.0  # torch + ComfyUI + every legacy pack
 
-COMFY_IMAGE_TYPE = "IMAGE"
+COMFY_IMAGE_TYPE = IMAGE_TYPE
 """The exact host and worker image value type."""
 
-COMFY_MASK_TYPE = "MASK"
+COMFY_MASK_TYPE = MASK_TYPE
 """The exact mask value type sharing IMAGE's byte contract."""
 
-COMFY_LATENT_TYPE = "LATENT"
+COMFY_AUDIO_TYPE = AUDIO_TYPE
+COMFY_VIDEO_TYPE = VIDEO_TYPE
+COMFY_LATENT_TYPE = LATENT_TYPE
 
 
 class ComfyModelRoot(NamedTuple):
@@ -198,10 +206,10 @@ def register_comfy_host_types(registry: TypeRegistry) -> None:
             render=render_mask_png,
             version=PNG_CONTAINER_VERSION,
         )
-    if AUDIO_TYPE not in registry:
-        register_audio_value_type(registry, AUDIO_TYPE, resolver_from_env())
-    if VIDEO_TYPE not in registry:
-        register_video_value_type(registry, VIDEO_TYPE, resolver_from_env())
+    if COMFY_AUDIO_TYPE not in registry:
+        register_audio_value_type(registry, COMFY_AUDIO_TYPE, resolver_from_env())
+    if COMFY_VIDEO_TYPE not in registry:
+        register_video_value_type(registry, COMFY_VIDEO_TYPE, resolver_from_env())
     if COMFY_LATENT_TYPE not in registry:
         registry.register(
             COMFY_LATENT_TYPE,

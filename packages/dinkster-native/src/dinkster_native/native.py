@@ -14,8 +14,25 @@ from dinkster_assets import (
 from dinkster_inference_wire import register_inference_types
 from dinkster_inference_wire.sampling_wire import register_sampling_type
 from dinkster_schema import Node
-from dinkster_values import TypeRegistry, register_curve_type, register_model3d_type
-from dinkster_values.builtin_types import AUDIO_TYPE, MODEL_PATCH_TYPE
+from dinkster_values import (
+    AUDIO_TYPE,
+    CLIP_TYPE,
+    IMAGE_TYPE,
+    INFERENCE_LATENT_OPERATION_TYPE,
+    LATENT_TYPE,
+    MASK_TYPE,
+    MODEL3D_TYPE,
+    MODEL_PATCH_TYPE,
+    MODEL_TYPE,
+    NOISE_TYPE,
+    SAMPLER_TYPE,
+    SIGMAS_TYPE,
+    VAE_TYPE,
+    VIDEO_TYPE,
+    TypeRegistry,
+    register_curve_type,
+    register_model3d_type,
+)
 
 from .audio import register_audio_type
 from .devices import comfy_resident_meta
@@ -119,31 +136,31 @@ def register_native_types(registry: TypeRegistry) -> None:
         register_save_target_type(registry)
 
     for type_id in (
-        "MODEL",
-        "CLIP",
-        "VAE",
+        MODEL_TYPE,
+        CLIP_TYPE,
+        VAE_TYPE,
         MODEL_PATCH_TYPE,
-        "LATENT_OPERATION",
+        INFERENCE_LATENT_OPERATION_TYPE,
     ):
         _register_resident(registry, type_id)
 
-    if "LATENT" not in registry:
-        register_latent_type(registry, "LATENT")
+    if LATENT_TYPE not in registry:
+        register_latent_type(registry, LATENT_TYPE)
 
-    for type_id in ("SAMPLER", "SIGMAS", "NOISE"):
+    for type_id in (SAMPLER_TYPE, SIGMAS_TYPE, NOISE_TYPE):
         register_sampling_type(registry, type_id)
 
     register_inference_types(registry)
     register_curve_type(registry)
-    register_model3d_type(registry, "dinkster.model3d")
+    register_model3d_type(registry, MODEL3D_TYPE)
 
-    for type_id in ("IMAGE", "MASK"):
+    for type_id in (IMAGE_TYPE, MASK_TYPE):
         if type_id not in registry:
             register_image_type(registry, type_id)
-    if registry.asset_decoder_for("IMAGE") is None:
-        register_image_asset_providers(registry, "IMAGE")
+    if registry.asset_decoder_for(IMAGE_TYPE) is None:
+        register_image_asset_providers(registry, IMAGE_TYPE)
 
     if AUDIO_TYPE not in registry:
         register_audio_type(registry, AUDIO_TYPE)
-    if "dinkster.video" not in registry:
-        register_video_type(registry, "dinkster.video")
+    if VIDEO_TYPE not in registry:
+        register_video_type(registry, VIDEO_TYPE)

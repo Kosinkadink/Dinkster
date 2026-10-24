@@ -150,6 +150,7 @@ from .manifest import (
     generation_provider_to_wire,
     load_manifest,
     resolve_entry,
+    validate_registration_claims,
     vision_provider_to_wire,
 )
 from .produced_assets import source_asset_files
@@ -354,6 +355,7 @@ def load_pack(
     list[type[Node]],
     dict[str, InProcessWorker],
 ]:
+    validate_registration_claims(manifest)
     has_native_arm = any(arm == "native" for arm, _node_types in manifest.arms)
     attention_runtime, attention_capabilities, attention_route_token = (
         _discover_attention_runtime() if has_native_arm else (None, None, None)
@@ -421,12 +423,27 @@ def load_pack(
         if registry is None:
             registry = TypeRegistry()
             register_core_types(registry)
-        if manifest.types_entry is not None:
-            register = resolve_pack_entry(manifest.types_entry)
-            if not callable(register):
-                raise ManifestError(f"entry '{manifest.types_entry}' is not callable")
-            register(registry)
+        previous_types = frozenset(registry.type_ids())
+        with registry.registering_pack(
+            manifest.name,
+            manifest.type_namespaces,
+            allow_bare=manifest.publisher == "dinkster",
+        ):
+            if manifest.types_entry is not None:
+                register = resolve_pack_entry(manifest.types_entry)
+                if not callable(register):
+                    raise ManifestError(f"entry '{manifest.types_entry}' is not callable")
+                register(registry)
         node_classes = _node_classes(manifest.nodes_entry, resolve_pack_entry(manifest.nodes_entry))
+        default_schemas = build_schemas(node_classes)
+        if manifest.publisher != "dinkster":
+            for node_type in default_schemas:
+                if node_type not in manifest.executes and not claim_covers(
+                    manifest.name, node_type
+                ):
+                    raise ManifestError(
+                        f"{manifest.path}: node {node_type!r} must use the pack-name prefix"
+                    )
         # The same startup enumeration as the isolated worker path: static
         # lists are validated now, lazy providers are held uninvoked and
         # served per fetch by the in-process worker itself.
@@ -442,8 +459,8 @@ def load_pack(
             combo_choices=choices.static,
             lazy_choices=choices.lazy,
             memory_consumers=consumers,
+            registered_types=tuple(tid for tid in registry.type_ids() if tid not in previous_types),
         )
-        default_schemas = build_schemas(node_classes)
         if manifest.comfy_aliases is not None:
             for record in manifest.comfy_aliases.records:
                 if not any(claim_covers(claim, record.carrier) for claim in manifest.namespaces):
@@ -1143,6 +1160,7 @@ async def serve_connection(
         "type": "hello",
         "pack": pack_name,
         "schemas": {t: schema_to_wire(s) for t, s in schemas.items()},
+        "registeredTypes": list(worker.registered_types),
         "lazyStatus": True,
         # This process lifetime's identity: the same token resident codecs
         # stamp as RESOURCE_OWNER_META_KEY on the envelopes they produce, so

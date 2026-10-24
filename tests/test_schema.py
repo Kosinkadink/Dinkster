@@ -98,9 +98,9 @@ def test_current_schema_features_roundtrip() -> None:
 @pytest.mark.parametrize(
     ("type_id", "widget", "expected"),
     [
-        ("dinkster.asset", AssetWidget(("image/png",)), {"type": "ASSET", "accept": ["image/png"]}),
+        ("ASSET", AssetWidget(("image/png",)), {"type": "ASSET", "accept": ["image/png"]}),
         (
-            "dinkster.save_target",
+            "SAVE_TARGET",
             SaveTargetWidget(".png"),
             {"type": "SAVE_TARGET", "suffix": ".png"},
         ),
@@ -117,8 +117,8 @@ def test_current_schema_features_roundtrip() -> None:
         ),
         ("STRING", StringWidget(multiline=True), {"type": "STRING", "multiline": True}),
         ("STRING", ColorWidget(), {"type": "COLOR"}),
-        ("dinkster.curve", CurveWidget(), {"type": "CURVE"}),
-        ("dinkster.compositor", CompositorWidget(), {"type": "COMPOSITOR"}),
+        ("CURVE", CurveWidget(), {"type": "CURVE"}),
+        ("COMPOSITOR", CompositorWidget(), {"type": "COMPOSITOR"}),
     ],
 )
 def test_widget_roundtrip(type_id: str, widget: object, expected: dict[str, object]) -> None:

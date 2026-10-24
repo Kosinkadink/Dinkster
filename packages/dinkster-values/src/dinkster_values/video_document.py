@@ -228,7 +228,7 @@ def document(value: object) -> dict[str, Any]:
             source_video(ref)
         elif set(ref) == {"type", "asset"} and ref["type"] in MEDIA_TYPES:
             asset_reference(ref["asset"])
-        elif set(ref) == {"type", "asset", "resources"} and ref["type"] == "dinkster.layers":
+        elif set(ref) == {"type", "asset", "resources"} and ref["type"] == LAYERS_TYPE:
             asset_reference(ref["asset"])
             if not isinstance(ref["resources"], list):
                 raise TimelineError("invalid_source", key, "resources must be declared assets")

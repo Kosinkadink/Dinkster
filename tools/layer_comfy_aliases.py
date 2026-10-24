@@ -8,18 +8,30 @@ from pathlib import Path
 
 from dinkster_schema import InputSpec, NodeSchema, OutputSpec, TypeExpr, schema_to_wire
 from dinkster_schema.replace import rule_from_wire, rule_to_wire
-from dinkster_values.builtin_types import BOUNDING_BOX_TYPE
+from dinkster_values import (
+    BOUNDING_BOX_TYPE,
+    COMFY_ARRAY_TYPE,
+    CORE_BOOLEAN,
+    CORE_COMBO,
+    CORE_FLOAT,
+    CORE_INT,
+    CORE_STRING,
+)
 
 REFERENCE = "f00bfd610cb001381603669e2cc01160ae37aaf3"
+SOURCE_IMAGE = "comfy.IMAGE"
+SOURCE_MASK = "comfy.MASK"
+SOURCE_LAYERS = "comfy.LAYERS"
+SOURCE_COMPOSITOR = "comfy.COMPOSITOR"
 
 
 def layer_alias_data() -> tuple[list[NodeSchema], list[dict[str, object]]]:
     def port(name: str, type_id: str, default: object = None) -> InputSpec:
         return InputSpec(name, TypeExpr.concrete(type_id), required=False, default=default)
 
-    image = InputSpec("image", TypeExpr.concrete("comfy.IMAGE"))
-    layers = port("layers", "comfy.LAYERS")
-    mask = port("mask", "comfy.MASK")
+    image = InputSpec("image", TypeExpr.concrete(SOURCE_IMAGE))
+    layers = port("layers", SOURCE_LAYERS)
+    mask = port("mask", SOURCE_MASK)
     definitions = [
         (
             "AddLayer",
@@ -28,44 +40,47 @@ def layer_alias_data() -> tuple[list[NodeSchema], list[dict[str, object]]]:
                 layers,
                 image,
                 mask,
-                port("name", "STRING", ""),
-                port("x", "INT", 0),
-                port("y", "INT", 0),
-                port("opacity", "FLOAT", 1.0),
-                port("blend_mode", "COMBO", "normal"),
-                port("rotation", "FLOAT", 0.0),
-                port("width", "INT", 0),
-                port("height", "INT", 0),
-                port("z_index", "INT", 0),
-                port("flip_h", "BOOLEAN", False),
-                port("flip_v", "BOOLEAN", False),
+                port("name", CORE_STRING, ""),
+                port("x", CORE_INT, 0),
+                port("y", CORE_INT, 0),
+                port("opacity", CORE_FLOAT, 1.0),
+                port("blend_mode", CORE_COMBO, "normal"),
+                port("rotation", CORE_FLOAT, 0.0),
+                port("width", CORE_INT, 0),
+                port("height", CORE_INT, 0),
+                port("z_index", CORE_INT, 0),
+                port("flip_h", CORE_BOOLEAN, False),
+                port("flip_v", CORE_BOOLEAN, False),
             ),
-            (OutputSpec("layers", TypeExpr.concrete("comfy.LAYERS")),),
+            (OutputSpec("layers", TypeExpr.concrete(SOURCE_LAYERS)),),
         ),
         (
             "LayersFromBoundingBoxes",
             "dinkster.layers.from_bounding_boxes",
             (
                 image,
-                InputSpec("bboxes", TypeExpr.union(BOUNDING_BOX_TYPE, "comfy.ARRAY", "STRING")),
+                InputSpec(
+                    "bboxes",
+                    TypeExpr.union(BOUNDING_BOX_TYPE, COMFY_ARRAY_TYPE, CORE_STRING),
+                ),
                 mask,
                 layers,
-                port("crop_to_content", "BOOLEAN", True),
-                port("canvas_width", "INT", 0),
-                port("canvas_height", "INT", 0),
+                port("crop_to_content", CORE_BOOLEAN, True),
+                port("canvas_width", CORE_INT, 0),
+                port("canvas_height", CORE_INT, 0),
             ),
-            (OutputSpec("layers", TypeExpr.concrete("comfy.LAYERS")),),
+            (OutputSpec("layers", TypeExpr.concrete(SOURCE_LAYERS)),),
         ),
         (
             "ImageCompositor",
             "dinkster.image.create_layered",
             (
-                InputSpec("layers", TypeExpr.concrete("comfy.LAYERS")),
-                port("compositor", "comfy.COMPOSITOR", {}),
+                InputSpec("layers", TypeExpr.concrete(SOURCE_LAYERS)),
+                port("compositor", SOURCE_COMPOSITOR, {}),
             ),
             (
-                OutputSpec("image", TypeExpr.concrete("comfy.IMAGE")),
-                OutputSpec("mask", TypeExpr.concrete("comfy.MASK")),
+                OutputSpec("image", TypeExpr.concrete(SOURCE_IMAGE)),
+                OutputSpec("mask", TypeExpr.concrete(SOURCE_MASK)),
             ),
         ),
     ]

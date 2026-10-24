@@ -22,13 +22,13 @@ from dinkster_graph import (
 from dinkster_nodes_dev import PACK_NODES, register_dev_types
 from dinkster_schema import TypeExpr, build_node_types, build_schemas
 from dinkster_server import value_descriptor
-from dinkster_values import TypeRegistry, list_children, register_core_types
+from dinkster_values import CORE_INT, TypeRegistry, list_children, register_core_types
 from dinkster_workers import InProcessWorker
 
 GOLDEN_PATH = (
     Path(__file__).resolve().parent.parent / "tests" / "goldens" / "preview_partial_execution.json"
 )
-INT = TypeExpr.concrete("INT")
+INT = TypeExpr.concrete(CORE_INT)
 
 
 def _canonical(value: object) -> bytes:
@@ -359,7 +359,7 @@ async def _preview_terminal_case() -> dict[str, object]:
     phase["finalRenditionSha256"] = hashlib.sha256(rendition.data).hexdigest()
     phase["fallbackRenditions"] = [
         {"kind": spec.kind, "mime": spec.mime, "default": spec.default}
-        for spec in engine.registry.renditions_of("INT")
+        for spec in engine.registry.renditions_of(CORE_INT)
     ]
 
     events.clear()

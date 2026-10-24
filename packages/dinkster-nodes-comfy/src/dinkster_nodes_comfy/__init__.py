@@ -17,6 +17,7 @@ from .image_transform import IMAGE_TRANSFORM_NODES
 from .inpaint import INPAINT_NODES
 from .latent import LATENT_NODES
 from .latent_advanced import LATENT_ADVANCED_NODES
+from .latent_model_specific import MODEL_LATENT_NODES
 from .latent_operations import LATENT_OPERATION_NODES
 from .logic import LOGIC_NODES
 from .mask import MASK_NODES
@@ -34,6 +35,7 @@ from .primitive import (
     PrimitiveStringMultiline,
 )
 from .reference_conditioning import REFERENCE_CONDITIONING_NODES
+from .rope_and_mask import ROPE_AND_MASK_NODES
 from .stable_cascade import STABLE_CASCADE_NODES
 from .text import TEXT_NODES
 from .utilities import ComfyNumberConvert, SeedNode
@@ -55,9 +57,11 @@ COMFY_NODES = (
     *MODEL_MERGE_NODES,
     *MODEL_SPECIFIC_MERGE_NODES,
     *FREEU_NODES,
+    *ROPE_AND_MASK_NODES,
     *LATENT_NODES,
     *LATENT_ADVANCED_NODES,
     *LATENT_OPERATION_NODES,
+    *MODEL_LATENT_NODES,
     *CLIP_NODES,
     *CLIP_SDXL_NODES,
     *MODEL_TEXT_ENCODER_NODES,

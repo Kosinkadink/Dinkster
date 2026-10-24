@@ -777,8 +777,8 @@ def test_onset_curve_tracks_impulses_and_silent_audio() -> None:
 
     registry = TypeRegistry()
     register_media_types(registry)
-    encoded = registry.spec("dinkster.curve").encode(curve)
-    assert registry.spec("dinkster.curve").decode(encoded) == curve
+    encoded = registry.spec("CURVE").encode(curve)
+    assert registry.spec("CURVE").decode(encoded) == curve
     assert json.loads(encoded)["points"][0] == {"position": 0.0, "value": 0.0}
     assert max(curve.points, key=lambda point: point[1])[0] == 0.25
     assert curve.evaluate(0.75) > 0.5

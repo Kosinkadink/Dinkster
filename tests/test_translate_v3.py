@@ -295,7 +295,7 @@ def test_v3_upload_type_and_folder_translate_to_source_filename_assets() -> None
         ),
         CompatTranslation(),
     ).inputs
-    assert scalar.type == TypeExpr.concrete("dinkster.asset")
+    assert scalar.type == TypeExpr.concrete("ASSET")
     assert scalar.source_filename is not None
     assert (scalar.source_filename.kind, scalar.source_filename.category) == (
         "media/image",
@@ -306,7 +306,7 @@ def test_v3_upload_type_and_folder_translate_to_source_filename_assets() -> None
         kind="media/image",
         allow_upload=True,
     )
-    assert audio.type == TypeExpr.concrete("dinkster.asset")
+    assert audio.type == TypeExpr.concrete("ASSET")
     assert audio.source_filename is not None
     assert (audio.source_filename.kind, audio.source_filename.category) == (
         "media/audio",

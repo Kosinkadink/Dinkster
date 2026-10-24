@@ -16,7 +16,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "required": true,
@@ -1098,7 +1098,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "required": true,
@@ -1157,7 +1157,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "required": true,
@@ -1227,7 +1227,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "required": true,
@@ -1579,7 +1579,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.model3d"
+              "MODEL3D"
             ]
           },
           "required": true
@@ -1640,7 +1640,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.model3d"
+              "MODEL3D"
             ]
           }
         }
@@ -1664,7 +1664,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.model3d"
+              "MODEL3D"
             ]
           },
           "required": true
@@ -1741,7 +1741,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.model3d"
+              "MODEL3D"
             ]
           }
         }
@@ -2265,7 +2265,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "required": true,

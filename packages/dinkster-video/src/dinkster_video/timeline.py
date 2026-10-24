@@ -11,8 +11,10 @@ from typing import Any, Protocol, cast
 
 import numpy as np
 from dinkster_values import (
+    CURVE_TYPE,
     TIMELINE_ACTIVE_FRAME_LIMIT_BYTES,
     TIMELINE_AUDIO_WINDOW_LIMIT_BYTES,
+    VIDEO_TYPE,
     coerce_video,
     edit_video,
 )
@@ -75,7 +77,7 @@ class TimelineKernels(Protocol):
 def scalar(value: Any, time: Fraction, kernels: TimelineKernels) -> float:
     if isinstance(value, dict):
         value = cast(dict[str, Any], value)
-        if value.get("type") != "dinkster.curve":
+        if value.get("type") != CURVE_TYPE:
             raise TimelineError("invalid_curve", "$", "expected type dinkster.curve")
         return kernels.curve(value["value"], float(time))
     return float(seconds(value, "scalar"))
@@ -86,7 +88,7 @@ def parameters(
 ) -> dict[str, Any]:
     return {
         key: scalar(item, time, kernels)
-        if isinstance(item, dict) and cast(dict[str, Any], item).get("type") == "dinkster.curve"
+        if isinstance(item, dict) and cast(dict[str, Any], item).get("type") == CURVE_TYPE
         else item
         for key, item in value.items()
     }

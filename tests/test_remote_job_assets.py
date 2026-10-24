@@ -42,7 +42,7 @@ def write_assetpack_manifest(tmp_path: Path) -> Path:
     manifest = tmp_path / "dinkster-pack.toml"
     manifest.write_text(
         "[pack]\n"
-        'name = "assetpack"\n'
+        'name = "assetpack"\npublisher = "dinkster"\n'
         'namespaces = ["apack"]\n'
         "[pack.entry]\n"
         'nodes = "assetpack_nodes:NODES"\n'
@@ -286,7 +286,7 @@ def test_unverified_local_asset_refuses_remote_dispatch(tmp_path: Path) -> None:
         invocation_id="local-only",
         node_id="r",
         node_type="apack.read",
-        inputs={"data": registry.wrap("dinkster.asset", reference)},
+        inputs={"data": registry.wrap("ASSET", reference)},
         effective_schema=ReadAssetInput.define_schema(),
     )
 
