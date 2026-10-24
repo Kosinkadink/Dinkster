@@ -22,6 +22,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     RunExecutionContext,
+    StringWidget,
     TypeExpr,
     report_progress,
 )
@@ -33,7 +34,9 @@ ANY = TypeExpr.wildcard()
 ITEM = TypeExpr.variable("list_item")
 CARRY = TypeExpr.variable("carried_value")
 OUTPUT = TypeExpr.variable("output_value")
-DEPENDENCIES = InputFamilySpec("dependencies", ANY, member_prefix="dependency")
+DEPENDENCIES = InputFamilySpec(
+    "dependencies", (InputSpec("dependency", ANY, hidden=True),), member_prefix="dependency"
+)
 
 
 def _outputs() -> tuple[OutputSpec, ...]:
@@ -92,7 +95,6 @@ class StartLoop(Node):
                         ),
                         DynamicComboOption("List", (InputSpec("list", TypeExpr.list_of(ITEM)),)),
                     ),
-                    default="simple",
                 ),
             ),
             outputs=_outputs(),
@@ -279,6 +281,7 @@ class LoopIteration(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             "LoopIteration",
+            category="sd",
             inputs=(
                 InputSpec("iteration_index", INT),
                 InputSpec("is_first", BOOL),
@@ -304,11 +307,12 @@ class LoopProgress(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             "LoopProgress",
+            category="sd",
             inputs=(
-                InputSpec("start_id", STRING),
+                InputSpec("start_id", STRING, widget=StringWidget(multiline=False)),
                 InputSpec("position", INT),
                 InputSpec("total", INT),
-                InputSpec("previous_progress", INT, required=False),
+                InputSpec("previous_progress", INT, required=False, hidden=True),
             ),
             input_families=(DEPENDENCIES,),
             outputs=(OutputSpec("INT", INT),),
@@ -329,10 +333,11 @@ class LoopResult(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             "LoopResult",
+            category="sd",
             inputs=(
-                InputSpec("close_id", STRING),
-                InputSpec("result", TypeExpr.list_of(ANY)),
-                InputSpec("progress", INT, required=False),
+                InputSpec("close_id", STRING, widget=StringWidget(multiline=False)),
+                InputSpec("result", TypeExpr.list_of(ANY), hidden=True),
+                InputSpec("progress", INT, required=False, hidden=True),
             ),
             input_families=(DEPENDENCIES,),
             outputs=(),
@@ -365,7 +370,11 @@ class EndLoop(Node):
             ),
             input_families=(
                 InputFamilySpec(
-                    "terminations", ANY, max_members=50, member_prefix="termination", required=False
+                    "terminations",
+                    (InputSpec("termination", ANY),),
+                    max_members=50,
+                    member_prefix="termination",
+                    required=False,
                 ),
             ),
             outputs=(OutputSpec("outputs", TypeExpr.list_of(OUTPUT)),),
