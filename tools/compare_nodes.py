@@ -8,7 +8,9 @@ count only when the reference declares RETURN_NAMES (or explicit V3 output
 labels); dumps must leave return_names null when names are synthesized.
 Unnamed outputs compare by type and position. A reference wildcard
 socket matches an unrestricted native type-template socket, not a concrete
-type. INPUT_IS_LIST and OUTPUT_IS_LIST do not change declared socket types.
+type. List flags never wrap the reference declaration. On a list-flagged
+port only, the native type may be the declared type or one list wrapper
+around it. Unflagged and nested-list differences remain differences.
 
 Usage: python tools/compare_nodes.py COMFY_JSON REGISTRY_JSON OUT_CSV OUT_JSON
 """
@@ -64,7 +66,7 @@ def _type(expr: dict[str, Any]) -> Any:
     return {"unknown_type": expr}
 
 
-def _reference_inputs(groups: dict[str, Any]) -> list[dict[str, Any]]:
+def _reference_inputs(groups: dict[str, Any], list_inputs: bool = False) -> list[dict[str, Any]]:
     result = []
     for group in ("required", "optional"):
         for name, spec in groups.get(group, {}).items():
@@ -82,14 +84,14 @@ def _reference_inputs(groups: dict[str, Any]) -> list[dict[str, Any]]:
                 entry["options"] = [
                     {
                         "key": option["key"],
-                        "inputs": _reference_inputs(option["inputs"]),
+                        "inputs": _reference_inputs(option["inputs"], list_inputs),
                     }
                     for option in options["options"]
                 ]
             elif value_type == "COMFY_AUTOGROW_V3":
                 template = options["template"]
                 entry["type"] = "inputFamily"
-                entry["template"] = _reference_inputs(template["input"])
+                entry["template"] = _reference_inputs(template["input"], list_inputs)
                 entry["min"] = template.get("min", 1)
                 if "names" in template:
                     entry["names"] = template["names"]
@@ -99,7 +101,7 @@ def _reference_inputs(groups: dict[str, Any]) -> list[dict[str, Any]]:
             elif value_type == "COMFY_DYNAMICGROUP_V3":
                 entry.update(
                     type="inputFamily",
-                    template=_reference_inputs(options["template"]),
+                    template=_reference_inputs(options["template"], list_inputs),
                     min=options["min"],
                     max=options["max"],
                     prefix=None,
@@ -120,6 +122,8 @@ def _reference_inputs(groups: dict[str, Any]) -> list[dict[str, Any]]:
                 entry.setdefault("default", entry["options"][0])
             if entry["type"] == "inputFamily" and not entry["template"]:
                 continue
+            if list_inputs and entry["type"] not in ("inputFamily", "dynamicCombo"):
+                entry["_list_flag"] = True
             result.append(entry)
     return result
 
@@ -201,6 +205,16 @@ def _differences(expected: Any, actual: Any, path: str) -> list[str]:
         return []
     if isinstance(expected, dict) and isinstance(actual, dict):
         expected, actual = dict(expected), dict(actual)
+        list_flag = expected.pop("_list_flag", False)
+        native_type = actual.get("type")
+        if (
+            list_flag
+            and isinstance(native_type, dict)
+            and set(native_type) == {"list"}
+            and not (isinstance(native_type["list"], dict) and "list" in native_type["list"])
+            and not (isinstance(expected.get("type"), dict) and "list" in expected["type"])
+        ):
+            actual["type"] = native_type["list"]
         file_input = expected.pop("file_input", False)
         if actual.pop("file_picker", False):
             if not file_input or expected.get("type") not in ("COMBO", {"list": "COMBO"}):
@@ -239,7 +253,7 @@ def compare(row: dict[str, Any], schema: dict[str, Any]) -> list[str]:
         return ["native interface missing"]
     if any(item.get("role") not in INPUT_ROLES | {"output"} for item in schema["interface"]):
         return ["native interface contains an unsupported role or a variable output family"]
-    expected = _reference_inputs(row["input_types"])
+    expected = _reference_inputs(row["input_types"], bool(row.get("input_is_list")))
     actual = _native_inputs(schema.get("interface", []))
     differences = []
     save_node = row["class_name"].startswith("Save") and any(
@@ -261,11 +275,14 @@ def compare(row: dict[str, Any], schema: dict[str, Any]) -> list[str]:
     expected_outputs = []
     names = row.get("return_names")
     output_metadata = row.get("v3_outputs") or []
+    output_list_flags = row.get("output_is_list") or []
     for index, output_type in enumerate(row.get("return_types") or []):
         if output_type == "COMFY_MATCHTYPE_V3":
             metadata = output_metadata[index] if index < len(output_metadata) else {}
             output_type = metadata.get("template", {"missing_output_template": True})
         output = {"type": output_type}
+        if index < len(output_list_flags) and output_list_flags[index]:
+            output["_list_flag"] = True
         if names is not None and names[index] is not None:
             output["name"] = names[index]
         expected_outputs.append(output)

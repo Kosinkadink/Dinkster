@@ -223,6 +223,8 @@ def test_exact_ids_and_file_widget_exemption(list_inputs: bool) -> None:
         "kind": "list",
         "element": {"kind": "concrete", "types": ["MODEL"]},
     }
+    assert compare_registry(reference, registry)["passed"]
+    reference["nodes"][0]["output_is_list"] = [False]
     assert not compare_registry(reference, registry)["passed"]
 
     del registry["nodes"]["LoadExample"]
@@ -346,7 +348,9 @@ def test_wildcard_accepts_template_but_not_concrete_or_restricted_type(
     assert compare(reference, native)
 
 
-@pytest.mark.parametrize("input_list,output_list", [(False, True), (True, False), (True, True)])
+@pytest.mark.parametrize(
+    "input_list,output_list", [(False, False), (False, True), (True, False), (True, True)]
+)
 def test_list_execution_flags_do_not_change_declared_socket_types(
     example_contract: tuple[dict, dict], input_list: bool, output_list: bool
 ) -> None:
@@ -360,6 +364,32 @@ def test_list_execution_flags_do_not_change_declared_socket_types(
     native["interface"][index]["type"] = {
         "kind": "list",
         "element": {"kind": "concrete", "types": ["INT"]},
+    }
+    assert bool(compare(reference, native)) is not (input_list or output_list)
+    native["interface"][index]["type"]["element"] = {
+        "kind": "list",
+        "element": {"kind": "concrete", "types": ["INT"]},
+    }
+    assert compare(reference, native)
+
+
+def test_list_flags_do_not_hide_element_type_or_unflagged_output_drift(
+    example_contract: tuple[dict, dict],
+) -> None:
+    from tools.compare_nodes import compare
+
+    reference, native = example_contract
+    reference["output_is_list"] = [True, False]
+    native["interface"][1]["type"] = {
+        "kind": "list",
+        "element": {"kind": "concrete", "types": ["FLOAT"]},
+    }
+    assert compare(reference, native)
+    native["interface"][1]["type"]["element"]["types"] = ["INT"]
+    assert compare(reference, native) == []
+    native["interface"][2]["type"] = {
+        "kind": "list",
+        "element": {"kind": "concrete", "types": ["FLOAT"]},
     }
     assert compare(reference, native)
 
