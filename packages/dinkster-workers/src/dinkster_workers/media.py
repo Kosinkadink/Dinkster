@@ -53,9 +53,7 @@ def media_input_value(obj: object, type_id: str, original: Value) -> Value:
 def coercion_drops_alpha(value: Value, result: object) -> bool:
     """Inspect source headers only; unknown formats never block a custom decoder."""
     sources = [
-        child
-        for child in iter_value_tree(value)
-        if parse_asset_type_id(child.type_id) == "IMAGE"
+        child for child in iter_value_tree(value) if parse_asset_type_id(child.type_id) == "IMAGE"
     ]
     if not sources:
         return False

@@ -182,9 +182,7 @@ def test_restamped_encoded_buffer_keeps_shared_memory_alive() -> None:
 
 
 def test_graph_validation_uses_exact_image_and_mask_atoms() -> None:
-    source = NodeSchema(
-        "source", outputs=(OutputSpec("image", TypeExpr.concrete(IMAGE)),)
-    )
+    source = NodeSchema("source", outputs=(OutputSpec("image", TypeExpr.concrete(IMAGE)),))
     sink = NodeSchema(
         "sink",
         inputs=(

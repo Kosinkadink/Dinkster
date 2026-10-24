@@ -221,9 +221,7 @@ def test_registry_retypes_equivalent_stream_with_an_independent_lease() -> None:
     registry = TypeRegistry()
     registry.register("IMAGE")
     registry.register("IMAGE")
-    registry.register_type_equivalence(
-        "IMAGE", "IMAGE", provider_id="test.image-equivalence@1"
-    )
+    registry.register_type_equivalence("IMAGE", "IMAGE", provider_id="test.image-equivalence@1")
     original = stream(closed=events)
     source_fingerprint = registry.wrap("stream<comfy.IMAGE>", original).fingerprint
     wrapped = registry.wrap("stream<dinkster.image>", original)

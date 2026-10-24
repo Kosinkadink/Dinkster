@@ -228,9 +228,9 @@ def test_canvas_background_is_the_blend_backdrop() -> None:
 def test_node_build_edit_split_selectors_and_api_flatten_match() -> None:
     source = np.array([[[[1, 0, 0], [0, 1, 0]]]], dtype=np.float32)
     expected_value = AddLayer.execute(image=source)["layers"]
-    value = execute_graph_node(
-        AddLayer, {"image": TypedLiteral("IMAGE", source.tolist())}
-    )["layers"]
+    value = execute_graph_node(AddLayer, {"image": TypedLiteral("IMAGE", source.tolist())})[
+        "layers"
+    ]
     assert isinstance(value, ImageDocument)
     assert isinstance(expected_value, ImageDocument)
     assert value.data == expected_value.data

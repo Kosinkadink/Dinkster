@@ -97,9 +97,7 @@ def test_bind_respects_allowlist() -> None:
 
 def test_bind_allowlist_requires_exact_atom() -> None:
     constrained = TypeExpr.variable("T", allowed=("IMAGE", "MASK"))
-    assert bind_type_variables((InputSpec("a", constrained),), {"a": "IMAGE"}) == {
-        "T": "IMAGE"
-    }
+    assert bind_type_variables((InputSpec("a", constrained),), {"a": "IMAGE"}) == {"T": "IMAGE"}
     with pytest.raises(TypeSolveError, match="allowlist"):
         bind_type_variables((InputSpec("a", constrained),), {"a": "IMAGE"})
 

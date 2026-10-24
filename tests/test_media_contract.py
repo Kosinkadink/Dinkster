@@ -285,9 +285,7 @@ def test_default_semantics_do_not_change_legacy_bytes_or_identity() -> None:
     legacy = io.BytesIO()
     np.save(legacy, array, allow_pickle=False)
     assert encode_image_array(annotated) == encode_image_array(array) == legacy.getvalue()
-    assert image_array_fingerprint("IMAGE")(annotated) == image_array_fingerprint(
-        "IMAGE"
-    )(array)
+    assert image_array_fingerprint("IMAGE")(annotated) == image_array_fingerprint("IMAGE")(array)
     assert media_semantics(array) == {}
 
 

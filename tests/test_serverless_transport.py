@@ -283,9 +283,7 @@ def test_fresh_handlers_and_durable_cas(harness: Harness, reuse_cache: bool) -> 
         )
         result = await fresh_client.invoke(harness.invocation())
         assert result.outputs is not None
-        expected = harness.registry.wrap(
-            "IMAGE", Transform.execute(**Generate.execute())["image"]
-        )
+        expected = harness.registry.wrap("IMAGE", Transform.execute(**Generate.execute())["image"])
         assert result.outputs["image"].fingerprint == expected.fingerprint
         actual_meta = dict(result.outputs["image"].meta.entries)
         expected_meta = dict(expected.meta.entries)

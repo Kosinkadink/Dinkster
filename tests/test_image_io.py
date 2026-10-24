@@ -117,9 +117,7 @@ def test_image_io_schemas_use_typed_assets_and_mounted_targets() -> None:
     assert mask.inputs[0].type == TypeExpr.asset_of(TypeExpr.concrete("MASK"))
     assert save.inputs[1].widget == SaveTargetWidget()
     assert [item.id for item in save.outputs] == ["images", "assets"]
-    assert save.outputs[1].type == TypeExpr.list_of(
-        TypeExpr.asset_of(TypeExpr.concrete("IMAGE"))
-    )
+    assert save.outputs[1].type == TypeExpr.list_of(TypeExpr.asset_of(TypeExpr.concrete("IMAGE")))
     assert load.aliases == ("LoadImage",)
     assert save.aliases == ("SaveImage",)
     assert PreviewImage.schema().outputs[0].preview is True
