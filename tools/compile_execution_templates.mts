@@ -19,13 +19,13 @@ function stubSchema(node: JsonObject): NodeSchema {
     if (typeof input !== 'object' || input === null) continue
     const item = input as JsonObject
     if (typeof item.name !== 'string') continue
-    items.push({ kind: 'input', id: item.name, type: { kind: 'wildcard' }, optional: true })
+    items.push({ kind: 'input', id: item.name, type: { kind: 'concrete', name: 'core.value' }, optional: true })
   }
   for (const output of node.outputs ?? []) {
     if (typeof output !== 'object' || output === null) continue
     const item = output as JsonObject
     if (typeof item.name !== 'string') continue
-    items.push({ kind: 'output', id: item.name, type: { kind: 'wildcard' } })
+    items.push({ kind: 'output', id: item.name, type: { kind: 'concrete', name: 'core.value' } })
   }
   return {
     type: String(node.type),
