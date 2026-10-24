@@ -11,13 +11,16 @@ from typing import Any, cast
 
 import pytest
 from dinkster_api.v1 import (
+    CLIP_TYPE,
     CORE_STRING,
     MODEL_TYPE,
+    VAE_TYPE,
     InputSpec,
     Node,
     NodeSchema,
     OutputSpec,
     TypeExpr,
+    initialize_inference_process,
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.device_routing import (
@@ -204,12 +207,40 @@ class Source(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
-            node_type="device-routing-fixture.source", outputs=(OutputSpec("model", _MODEL),)
+            node_type="device-routing-fixture.source",
+            outputs=(
+                OutputSpec("model", _MODEL),
+                OutputSpec("clip", TypeExpr.concrete(CLIP_TYPE)),
+                OutputSpec("vae", TypeExpr.concrete(VAE_TYPE)),
+            ),
         )
 
     @classmethod
     def execute(cls) -> dict[str, object]:
-        return dict(cls.outputs(model=Patcher(Device("cpu"), Device("cpu"))))
+        initialize_inference_process()
+        import torch
+        from dinkster_inference.model_patcher import ModelPatcher
+        from dinkster_inference.sd import CLIP, VAE
+
+        def patcher() -> Any:
+            model = torch.nn.Linear(2, 1)
+            model.weight = torch.nn.Parameter(torch.tensor([[2.0, -3.0]]))
+            model.bias = torch.nn.Parameter(torch.tensor([0.25]))
+            return ModelPatcher(model, torch.device("cpu"), torch.device("cpu"))
+
+        clip = CLIP(no_init=True)
+        clip.patcher = patcher()
+        clip.cond_stage_model = clip.patcher.model
+        clip.tokenizer = None
+        clip.layer_idx = None
+        clip.tokenizer_options = {}
+        clip.use_clip_schedule = False
+        clip.apply_hooks_to_conds = None
+        vae = VAE.__new__(VAE)
+        vae.patcher = patcher()
+        vae.device = torch.device("cpu")
+        vae.first_stage_model = vae.patcher.model
+        return dict(cls.outputs(model=patcher(), clip=clip, vae=vae))
 
 
 class Consumer(Node):
@@ -217,18 +248,58 @@ class Consumer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="device-routing-fixture.consumer",
-            inputs=(InputSpec("model", _MODEL),),
+            inputs=tuple(
+                InputSpec(name, TypeExpr.concrete(type_id))
+                for name, type_id in (
+                    ("model", MODEL_TYPE),
+                    ("original_model", MODEL_TYPE),
+                    ("clip", CLIP_TYPE),
+                    ("original_clip", CLIP_TYPE),
+                    ("vae", VAE_TYPE),
+                    ("original_vae", VAE_TYPE),
+                )
+            ),
             outputs=(OutputSpec("result", TypeExpr.concrete(CORE_STRING)),),
         )
 
     @classmethod
-    def execute(cls, *, model: Any) -> dict[str, object]:
-        assert model.load_device.type == "cpu" and model.offload_device.type == "cpu"
+    def execute(
+        cls,
+        *,
+        model: Any,
+        original_model: Any,
+        clip: Any,
+        original_clip: Any,
+        vae: Any,
+        original_vae: Any,
+    ) -> dict[str, object]:
+        import torch
+        from dinkster_inference.model_patcher import ModelPatcher
+        from dinkster_inference.sd import CLIP, VAE
+
+        assert type(model) is ModelPatcher
+        assert type(clip) is CLIP
+        assert type(vae) is VAE
+        assert model is not original_model
+        assert clip is not original_clip and clip.patcher is not original_clip.patcher
+        assert vae is not original_vae and vae.patcher is not original_vae.patcher
+        assert vae.first_stage_model is vae.patcher.model
+        assert vae.device.type == original_vae.device.type == "cpu"
+        for routed, source in (
+            (model, original_model),
+            (clip.patcher, original_clip.patcher),
+            (vae.patcher, original_vae.patcher),
+        ):
+            assert routed.load_device.type == routed.offload_device.type == "cpu"
+            assert source.load_device.type == source.offload_device.type == "cpu"
+            assert torch.equal(source.model.weight, torch.tensor([[2.0, -3.0]]))
+            assert routed.model(torch.tensor([[1.5, -2.0]])).tolist() == [[9.25]]
+        assert model.get_additional_models_with_key("multigpu") == []
         return dict(cls.outputs(result="routed"))
 
 
 @pytest.mark.parametrize("in_process", (True, False))
-def test_select_model_device_runs_twice_through_both_production_hosts(
+def test_all_device_nodes_run_twice_through_both_production_hosts(
     tmp_path: Path, in_process: bool
 ) -> None:
     async def scenario() -> None:
@@ -283,11 +354,28 @@ def test_select_model_device_runs_twice_through_both_production_hosts(
             graph = Graph(
                 nodes={
                     "source": GraphNode("device-routing-fixture.source"),
+                    "split": GraphNode(
+                        "MultiGPU_WorkUnits", {"model": Link("source", "model"), "max_gpus": 3}
+                    ),
                     "route": GraphNode(
-                        "SelectModelDevice", {"model": Link("source", "model"), "device": "cpu"}
+                        "SelectModelDevice", {"model": Link("split", "MODEL"), "device": "cpu"}
+                    ),
+                    "clip": GraphNode(
+                        "SelectCLIPDevice", {"clip": Link("source", "clip"), "device": "cpu"}
+                    ),
+                    "vae": GraphNode(
+                        "SelectVAEDevice", {"vae": Link("source", "vae"), "device": "default"}
                     ),
                     "consumer": GraphNode(
-                        "device-routing-fixture.consumer", {"model": Link("route", "MODEL")}
+                        "device-routing-fixture.consumer",
+                        {
+                            "model": Link("route", "MODEL"),
+                            "original_model": Link("source", "model"),
+                            "clip": Link("clip", "CLIP"),
+                            "original_clip": Link("source", "clip"),
+                            "vae": Link("vae", "VAE"),
+                            "original_vae": Link("source", "vae"),
+                        },
                     ),
                 }
             )
@@ -296,7 +384,7 @@ def test_select_model_device_runs_twice_through_both_production_hosts(
             assert first.outputs["consumer"]["result"].resolve() == "routed"
             second = await engine.run(graph, ["consumer"])
             assert second.outputs["consumer"]["result"].resolve() == "routed"
-            assert second.cached == ("source", "route", "consumer")
+            assert set(second.cached) == set(graph.nodes)
         finally:
             await composer.close()
 

@@ -46,7 +46,6 @@ def _device_input(options: tuple[str, ...]) -> InputSpec:
     return InputSpec(
         "device",
         _COMBO,
-        required=False,
         default="default",
         widget=ComboWidget(tuple(ComboOption(option) for option in options)),
     )
@@ -139,7 +138,6 @@ class MultiGPUWorkUnits(Node):
                 InputSpec(
                     "max_gpus",
                     _INT,
-                    required=False,
                     default=2,
                     widget=NumberWidget(min=1, step=1),
                 ),
