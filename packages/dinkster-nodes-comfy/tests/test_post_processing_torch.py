@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 import torch
 from dinkster_inference.cli_args import args
+from kornia import color
 
 args.cpu = True
 
@@ -111,25 +112,86 @@ def test_mkl_lab_shared_statistics_preserve_reference_operation_order(
     generator = torch.Generator().manual_seed(511)
     target = torch.rand((2, 7, 11, 3), generator=generator)
     reference = torch.rand((1, 5, 9, 3), generator=generator)
-    device = torch.device("cpu")
+    target_before = target.clone()
     epsilon = 1e-6
     channels, pixels = target.shape[-1], target.shape[1] * target.shape[2]
-    reference_mean, reference_scale = ColorTransfer._pool_stats(reference, device, False, epsilon)
+
+    def to_lab(images: torch.Tensor, index: int) -> torch.Tensor:
+        return color.rgb_to_lab(
+            images[index : index + 1].to(dtype=torch.float32).permute(0, 3, 1, 2)
+        )
+
+    def pooled_statistics(images: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        frame_count = images.shape[0]
+        frame_pixels = images.shape[1] * images.shape[2]
+        mean = torch.zeros((channels, 1), dtype=torch.float32)
+        for index in range(frame_count):
+            mean += to_lab(images, index).view(channels, -1).mean(dim=-1, keepdim=True)
+        mean /= frame_count
+        covariance = torch.zeros((channels, channels), dtype=torch.float32)
+        for index in range(frame_count):
+            centered = to_lab(images, index).view(channels, -1) - mean
+            covariance += centered @ centered.T / frame_pixels
+        return mean, covariance / frame_count
+
+    def frame_statistics(lab: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        mean = lab.mean(dim=-1, keepdim=True)
+        centered = lab - mean
+        return mean, centered @ centered.T / pixels
+
+    def mkl_matrix(source: torch.Tensor, reference: torch.Tensor) -> torch.Tensor:
+        source_values, source_vectors = torch.linalg.eigh(source)
+        source_root = torch.sqrt(source_values.clamp_min(0)).clamp_min(epsilon)
+        scaled_vectors = source_vectors * source_root.unsqueeze(0)
+        middle_values, middle_vectors = torch.linalg.eigh(
+            scaled_vectors.T @ reference @ scaled_vectors
+        )
+        middle_root = torch.sqrt(middle_values.clamp_min(0))
+        inverse_scaled = source_vectors * (1.0 / source_root).unsqueeze(0)
+        return (
+            inverse_scaled
+            @ ((middle_vectors * middle_root.unsqueeze(0)) @ middle_vectors.T)
+            @ inverse_scaled.T
+        )
+
+    reference_mean, reference_covariance = pooled_statistics(reference)
     if stats == "uniform":
-        source_mean, source_scale = ColorTransfer._pool_stats(target, device, False, epsilon)
+        source_mean, source_covariance = pooled_statistics(target)
     else:
-        source_lab = ColorTransfer._to_lab(target, target_index, device).view(channels, -1)
-        source_mean, source_scale = ColorTransfer._frame_stats(source_lab, pixels, False, epsilon)
-    matrix = ColorTransfer._mkl_matrix(source_scale, reference_scale, epsilon)
-    source = ColorTransfer._to_lab(target, 0, device).view(channels, -1)
-    expected = matrix @ source + (reference_mean - matrix @ source_mean)
-    legacy = matrix @ source + reference_mean - matrix @ source_mean
-    actual = ColorTransfer._lab_transform(target, reference, device, stats, target_index, False)(
-        source, 0
-    )
+        source_mean, source_covariance = frame_statistics(
+            to_lab(target, target_index).view(channels, -1)
+        )
+    transform = mkl_matrix(source_covariance, reference_covariance)
+    offset = reference_mean - transform @ source_mean
+
+    def render(*, legacy_association: bool) -> torch.Tensor:
+        frames = []
+        for index in range(target.shape[0]):
+            source = to_lab(target, index)
+            flattened = source.view(channels, -1)
+            corrected = (
+                transform @ flattened + reference_mean - transform @ source_mean
+                if legacy_association
+                else transform @ flattened + offset
+            )
+            frames.append(
+                color.lab_to_rgb(corrected.view_as(source)).squeeze(0).permute(1, 2, 0).clamp(0, 1)
+            )
+        return torch.stack(frames)
+
+    expected = render(legacy_association=False)
+    legacy = render(legacy_association=True)
+    actual = ColorTransfer.execute(
+        image_target=target,
+        image_ref=reference,
+        method="mkl_lab",
+        source_stats={"source_stats": stats, "target_index": target_index},
+        strength=1.0,
+    )["image"]
 
     assert not torch.equal(expected, legacy)
     assert torch.equal(actual, expected)
+    assert torch.equal(target, target_before)
 
 
 class PostProcessingSource(Node):
