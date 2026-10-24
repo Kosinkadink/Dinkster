@@ -61,8 +61,9 @@ class _EmptyNoise:
         samples = source.get("samples")
         if samples is None:
             raise ValueError("latent is missing samples")
-        torch = importlib.import_module("torch")
-        return torch.zeros_like(samples)
+        initialize_inference_process()
+        sample = importlib.import_module("dinkster_inference.sample")
+        return sample.prepare_empty_noise(samples)
 
 
 class RandomNoise(Node):

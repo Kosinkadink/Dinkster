@@ -26,6 +26,21 @@ def test_random_noise_uses_seeded_batch_indices_and_disable_noise_preserves_layo
     assert torch.equal(disabled, torch.zeros_like(latent["samples"]))
 
 
+def test_disable_noise_uses_pinned_cpu_nested_noise_preparation() -> None:
+    from dinkster_api.v1 import initialize_inference_process
+
+    initialize_inference_process()
+    from dinkster_inference.nested_tensor import NestedTensor
+
+    samples = NestedTensor([torch.ones((1, 1, 2, 2), dtype=torch.float64)])
+    disabled = DisableNoise.execute()["NOISE"].generate_noise({"samples": samples})
+    assert disabled.is_nested
+    tensor = disabled.unbind()[0]
+    assert tensor.device.type == "cpu"
+    assert tensor.dtype == torch.float64
+    assert torch.equal(tensor, torch.zeros_like(tensor))
+
+
 class _Sampling:
     def noise_scaling(
         self, scale: torch.Tensor, noise: torch.Tensor, latent: torch.Tensor
@@ -61,3 +76,21 @@ def test_add_noise_preserves_metadata_skips_empty_input_and_uses_sigma_endpoints
         )["LATENT"]
         is latent
     )
+
+
+def test_add_noise_uses_absolute_endpoint_delta_and_transforms_nonzero_latents() -> None:
+    latent = {"samples": torch.tensor([[[[1.0, -2.0]]]]), "note": "kept"}
+
+    class Noise:
+        def generate_noise(self, _: object) -> torch.Tensor:
+            return torch.tensor([[[[2.0, -3.0]]]])
+
+    value = AddNoise.execute(
+        model=_Model(), noise=Noise(), sigmas=torch.tensor([1.0, 4.0]), latent_image=latent
+    )["LATENT"]
+    assert value["note"] == "kept"
+    assert torch.equal(value["samples"], torch.tensor([[[[34.0, -2.0]]]]))
+    one_sigma = AddNoise.execute(
+        model=_Model(), noise=Noise(), sigmas=torch.tensor([3.0]), latent_image=latent
+    )["LATENT"]
+    assert torch.equal(one_sigma["samples"], torch.tensor([[[[34.0, -2.0]]]]))
