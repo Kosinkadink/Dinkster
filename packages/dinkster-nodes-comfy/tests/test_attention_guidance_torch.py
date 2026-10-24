@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 import torch
+import torch.nn.functional as functional
 from dinkster_api.v1 import (
     CORE_FLOAT,
     MODEL_TYPE,
@@ -17,6 +18,7 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
+    initialize_inference_process,
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.attention_guidance import (
@@ -68,145 +70,159 @@ class Patcher:
         self.calc = callback
 
 
-class FakeAttention:
-    @staticmethod
-    def optimized_attention_for_device(device: torch.device) -> Any:
-        def optimized(
-            q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, **kwargs: object
-        ) -> torch.Tensor:
-            return v + 2
+def _runtime() -> tuple[Any, Any, Any]:
+    initialize_inference_process()
+    from dinkster_inference import model_patcher, samplers
+    from dinkster_inference.ldm.modules import attention
 
-        return optimized
+    return attention, model_patcher, samplers
 
 
-class FakeModelPatcher:
-    calls: list[tuple[str, str, int]] = []
-
-    @classmethod
-    def set_model_options_patch_replace(
-        cls, options: dict[str, Any], patch: Any, name: str, block: str, layer: int
-    ) -> dict[str, Any]:
-        result = options.copy()
-        result.setdefault("patches", []).append((patch, name, block, layer))
-        cls.calls.append((name, block, layer))
-        return result
+def _asymmetric(shape: tuple[int, ...], start: float) -> torch.Tensor:
+    return torch.arange(
+        start, start + torch.tensor(shape).prod().item(), dtype=torch.float32
+    ).reshape(shape)
 
 
-class FakeSamplers:
-    calls: list[tuple[Any, list[Any], dict[str, Any]]] = []
-
-    @classmethod
-    def calc_cond_batch(
-        cls,
-        model: Any,
-        conds: list[Any],
-        x: torch.Tensor,
-        sigma: torch.Tensor,
-        options: dict[str, Any],
-    ) -> list[torch.Tensor]:
-        cls.calls.append((model, conds, options))
-        if conds == ["uncond"]:
-            return [x - 4]
-        if conds == ["cond"]:
-            return [torch.full_like(x, 4.0)]
-        if conds == ["cond", None]:
-            return [torch.full_like(x, 7.0), torch.zeros_like(x)]
-        if conds == [None, "uncond"]:
-            return [torch.zeros_like(x), torch.full_like(x, -3.0)]
-        return [torch.full_like(x, 2.0), torch.full_like(x, -2.0)]
+def _blur(image: torch.Tensor, sigma: float) -> torch.Tensor:
+    coordinate = torch.linspace(-4, 4, steps=9)
+    density = torch.exp(-0.5 * (coordinate / sigma).pow(2))
+    kernel = density / density.sum()
+    kernel = torch.mm(kernel[:, None], kernel[None, :]).expand(image.shape[1], 1, 9, 9)
+    return functional.conv2d(
+        functional.pad(image, [4, 4, 4, 4], mode="reflect"), kernel, groups=image.shape[1]
+    )
 
 
-def fake_modules() -> tuple[Any, Any, Any, Any]:
-    return torch, FakeAttention, FakeModelPatcher, FakeSamplers
+def _sag_blur(image: torch.Tensor, q: torch.Tensor, k: torch.Tensor, sigma: float) -> torch.Tensor:
+    scores = (q[1] @ k[1].transpose(0, 1) / q.shape[-1] ** 0.5).softmax(dim=-1)
+    mask = (scores.sum(dim=0) > 1.0).reshape(1, 1, 2, 2).to(image.dtype)
+    mask = functional.interpolate(mask, image.shape[-2:])
+    return _blur(image, sigma) * mask + image * (1 - mask)
 
 
-@pytest.fixture(autouse=True)
-def use_fake_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
-    import dinkster_nodes_comfy.attention_guidance as guidance
-
-    FakeModelPatcher.calls.clear()
-    FakeSamplers.calls.clear()
-    monkeypatch.setattr(guidance, "_inference_modules", fake_modules)
-
-
-def _post_args(result: torch.Tensor, sigma: float = 5.0) -> dict[str, Any]:
+def _post_args(denoised: torch.Tensor, sigma: float) -> dict[str, Any]:
     return {
         "model": "runtime-model",
         "model_options": {"transformer_options": {}},
         "cond": "cond",
         "uncond": "uncond",
-        "input": torch.full_like(result, 8.0),
+        "input": _asymmetric(tuple(denoised.shape), 20.0),
         "sigma": torch.tensor([sigma]),
-        "cond_denoised": torch.full_like(result, 9.0),
-        "uncond_denoised": torch.full_like(result, 2.0),
-        "denoised": result,
+        "cond_denoised": _asymmetric(tuple(denoised.shape), -7.0),
+        "uncond_denoised": _asymmetric(tuple(denoised.shape), 2.0),
+        "denoised": denoised,
     }
 
 
-def test_attention_guidance_callbacks_preserve_source_and_cover_conditional_routes() -> None:
+def _controlled_calc(
+    model: Any, conds: list[Any], x: torch.Tensor, sigma: torch.Tensor, options: dict[str, Any]
+) -> list[torch.Tensor]:
+    if conds == ["uncond"]:
+        return [x * 0.25 - 3.0]
+    if conds == ["cond"]:
+        patches = options["transformer_options"]["patches_replace"]
+        if "attn1" not in patches:
+            return [x * 0.5 + 4.0]
+        patch = patches["attn1"][("middle", 0)]
+        value = patch(
+            torch.ones((1, 4, 2)), torch.ones((1, 4, 2)), x.flatten(2).transpose(1, 2), {}
+        )
+        return [value.transpose(1, 2).reshape_as(x)]
+    if conds == ["cond", None]:
+        return [x * 0.5 + 4.0, torch.zeros_like(x)]
+    if conds == [None, "uncond"]:
+        return [torch.zeros_like(x), x * -0.25 - 2.0]
+    return [x * 0.1 + 1.0, x * -0.1 - 1.0]
+
+
+def test_active_callbacks_use_pinned_runtime_modules_and_preserve_sources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attention, model_patcher, samplers = _runtime()
+    original_calc = samplers.calc_cond_batch
+    monkeypatch.setattr(samplers, "calc_cond_batch", _controlled_calc)
     source = Patcher()
-    sag = SelfAttentionGuidance.execute(model=source, scale=0.5, blur_sigma=2.0)["MODEL"]
-    assert sag is not source
-    assert source.attention is None and source.post == []
-    q = torch.tensor([[[1.0, -1.0]], [[2.0, 3.0]]])
-    k = torch.tensor([[[1.0, 0.0]], [[0.0, 1.0]]])
-    v = torch.tensor([[[3.0, 5.0]], [[7.0, 11.0]]])
-    recorded = sag.attention(
+    source_options = {"transformer_options": {"keep": object()}}
+    x0 = _asymmetric((1, 1, 5, 8), 2.0)
+    q = _asymmetric((2, 4, 2), -2.0)
+    k = _asymmetric((2, 4, 2), 4.0)
+    v = _asymmetric((2, 4, 2), 11.0)
+
+    sag = SelfAttentionGuidance.execute(model=source, scale=0.3, blur_sigma=1.5)["MODEL"]
+    assert sag is not source and source.attention is None and source.post == []
+    captured = sag.attention(
         q, k, v, {"n_heads": 1, "cond_or_uncond": [0, 1], "attn_precision": None}
     )
-    assert recorded.shape == v.shape
-    uncond_only = sag.attention(
-        q, k, v, {"n_heads": 1, "cond_or_uncond": [0], "attn_precision": None}
+    assert captured.shape == v.shape
+    args = _post_args(x0, 5.0)
+    args["model_options"] = source_options.copy()
+    before_x0, before_options = x0.clone(), source_options.copy()
+    actual = sag.post[0](args)
+    degraded = _sag_blur(args["uncond_denoised"], q, k, 1.5)
+    noised = degraded + args["input"] - args["uncond_denoised"]
+    expected = args["denoised"] + (degraded - (noised * 0.25 - 3.0)) * 0.3
+    torch.testing.assert_close(actual, expected)
+    assert not torch.equal(degraded, args["uncond_denoised"])
+    assert torch.equal(x0, before_x0) and source_options == before_options
+    optimized = sag.attention(
+        q[:1], k[:1], v[:1], {"n_heads": 1, "cond_or_uncond": [0], "attn_precision": None}
     )
-    assert torch.equal(uncond_only, v + 2)
-    result = torch.full((1, 1, 5, 5), 3.0)
-    torch.testing.assert_close(sag.post[0](_post_args(result)), torch.full_like(result, 2.0))
-    small = torch.ones((1, 1, 4, 4))
-    assert sag.post[0](_post_args(small)) is small
+    expected_optimized = attention.optimized_attention_for_device(q.device)(q[:1], k[:1], v[:1], 1)
+    torch.testing.assert_close(optimized, expected_optimized)
+    small = _asymmetric((1, 1, 4, 8), 1.0)
+    assert sag.post[0](_post_args(small, 5.0)) is small
 
-    pag = PerturbedAttentionGuidance.execute(model=source, scale=2.0)["MODEL"]
-    pag_result = pag.post[0](_post_args(torch.full((1, 1, 5, 5), 3.0)))
-    torch.testing.assert_close(pag_result, torch.full_like(pag_result, 13.0))
-    patch = FakeSamplers.calls[-1][2]["patches"][0]
-    assert torch.equal(patch[0](q, k, v, {}), v)
+    pag = PerturbedAttentionGuidance.execute(model=source, scale=1.7)["MODEL"]
+    pag_args = _post_args(x0, 5.0)
+    pag_args["model_options"] = {"transformer_options": {"existing": "preserved"}}
+    pag_options = pag_args["model_options"].copy()
+    pag_result = pag.post[0](pag_args)
+    expected_pag = pag_args["denoised"] + (pag_args["cond_denoised"] - pag_args["input"]) * 1.7
+    torch.testing.assert_close(pag_result, expected_pag)
+    assert pag_args["model_options"] == pag_options
     zero = PerturbedAttentionGuidance.execute(model=source, scale=0.0)["MODEL"]
-    original = torch.full((1, 1, 5, 5), 3.0)
-    assert zero.post[0](_post_args(original)) is original
+    assert zero.post[0](pag_args) is pag_args["denoised"]
+
+    assert callable(model_patcher.set_model_options_patch_replace)
+    assert original_calc is not _controlled_calc
 
 
-def test_skip_layer_callbacks_parse_layers_include_sigma_boundaries_and_keep_empty_identity() -> (
-    None
-):
+def test_skip_layer_callbacks_cover_windows_rescaling_and_missing_uncond(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, _, samplers = _runtime()
+    monkeypatch.setattr(samplers, "calc_cond_batch", _controlled_calc)
     source = Patcher()
-    identity = SkipLayerGuidanceDiT.execute(
-        model=source,
-        double_layers="",
-        single_layers="not-a-layer",
-        scale=3.0,
-        start_percent=0.1,
-        end_percent=0.9,
-        rescaling_scale=0.0,
-    )["MODEL"]
-    assert identity is source
+    value = _asymmetric((1, 1, 5, 8), -4.0)
     slg = SkipLayerGuidanceDiT.execute(
         model=source,
-        double_layers="7, nine 9",
+        double_layers="7, 9",
         single_layers="2",
-        scale=2.0,
+        scale=1.25,
         start_percent=0.0,
         end_percent=1.0,
-        rescaling_scale=0.0,
+        rescaling_scale=0.4,
     )["MODEL"]
-    result = torch.full((1, 1, 5, 5), 3.0)
-    torch.testing.assert_close(
-        slg.post[0](_post_args(result, sigma=10.0)), torch.full_like(result, 13.0)
-    )
-    assert FakeModelPatcher.calls == [
-        ("dit", "double_block", 7),
-        ("dit", "double_block", 9),
-        ("dit", "single_block", 2),
-    ]
-    assert slg.post[0](_post_args(result, sigma=11.0)) is result
+    for sigma in (0.0, 10.0):
+        args = _post_args(value, sigma)
+        result = slg.post[0](args)
+        skipped = args["input"] * 0.5 + 4.0
+        guided = args["denoised"] + (args["cond_denoised"] - skipped) * 1.25
+        expected = guided * (0.4 * args["cond_denoised"].std() / guided.std() + 0.6)
+        torch.testing.assert_close(result, expected)
+    out_of_window = _post_args(value, 11.0)
+    assert slg.post[0](out_of_window) is value
+    inactive = SkipLayerGuidanceDiT.execute(
+        model=source,
+        double_layers="1",
+        single_layers="",
+        scale=0.0,
+        start_percent=0.0,
+        end_percent=1.0,
+        rescaling_scale=0.5,
+    )["MODEL"]
+    assert inactive.post[0](_post_args(value, 5.0)) is value
 
     simple = SkipLayerGuidanceDiTSimple.execute(
         model=source,
@@ -215,35 +231,27 @@ def test_skip_layer_callbacks_parse_layers_include_sigma_boundaries_and_keep_emp
         start_percent=0.0,
         end_percent=1.0,
     )["MODEL"]
-    routed = simple.calc(
-        {
-            "model": "runtime-model",
-            "conds": ["cond", "uncond"],
-            "input": result,
-            "sigma": torch.tensor([10.0]),
-            "model_options": {},
-        }
-    )
-    torch.testing.assert_close(routed[0], torch.full_like(result, 7.0))
-    torch.testing.assert_close(routed[1], torch.full_like(result, -3.0))
-    fallback = simple.calc(
-        {
-            "model": "runtime-model",
-            "conds": ["cond", "uncond"],
-            "input": result,
-            "sigma": torch.tensor([11.0]),
-            "model_options": {},
-        }
-    )
-    torch.testing.assert_close(fallback[0], torch.full_like(result, 2.0))
-    torch.testing.assert_close(fallback[1], torch.full_like(result, -2.0))
+    active_args = {
+        "model": "runtime-model",
+        "conds": ["cond", "uncond"],
+        "input": value,
+        "sigma": torch.tensor([10.0]),
+        "model_options": {"transformer_options": {}},
+    }
+    active = simple.calc(active_args)
+    torch.testing.assert_close(active[0], value * 0.5 + 4.0)
+    torch.testing.assert_close(active[1], value * -0.25 - 2.0)
+    out = simple.calc({**active_args, "sigma": torch.tensor([11.0])})
+    torch.testing.assert_close(out[0], value * 0.1 + 1.0)
+    missing = simple.calc({**active_args, "conds": ["cond", None]})
+    torch.testing.assert_close(missing[1], torch.zeros_like(value))
 
 
 class ModelSource(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
-            node_type="attention-guidance-fixture.source",
+            "attention-guidance-fixture.source",
             outputs=(OutputSpec("MODEL", TypeExpr.concrete(MODEL_TYPE)),),
         )
 
@@ -256,35 +264,74 @@ class ModelConsumer(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
-            node_type="attention-guidance-fixture.consumer",
+            "attention-guidance-fixture.consumer",
             inputs=(InputSpec("model", TypeExpr.concrete(MODEL_TYPE)),),
             outputs=(OutputSpec("value", TypeExpr.concrete(CORE_FLOAT)),),
         )
 
     @classmethod
     def execute(cls, *, model: Patcher) -> Mapping[str, object]:
-        assert len(model.post) == 3
-        assert model.attention is not None and model.calc is not None
-        return cls.outputs(value=float(len(model.post) + bool(model.attention) + bool(model.calc)))
+        value = _asymmetric((1, 1, 5, 8), 3.0)
+        q = _asymmetric((2, 4, 2), 1.0)
+        k = _asymmetric((2, 4, 2), 20.0)
+        v = _asymmetric((2, 4, 2), -3.0)
+        model.attention(q, k, v, {"n_heads": 1, "cond_or_uncond": [0, 1], "attn_precision": None})
+        sag_args = _post_args(value, 5.0)
+        sag = model.post[0](sag_args)
+        degraded = _sag_blur(sag_args["uncond_denoised"], q, k, 1.5)
+        sag_expected = (
+            value
+            + (
+                degraded
+                - ((degraded + sag_args["input"] - sag_args["uncond_denoised"]) * 0.25 - 3.0)
+            )
+            * 0.3
+        )
+        torch.testing.assert_close(sag, sag_expected)
+        pag_args = _post_args(value, 5.0)
+        pag = model.post[1](pag_args)
+        pag_expected = value + (pag_args["cond_denoised"] - pag_args["input"]) * 1.7
+        torch.testing.assert_close(pag, pag_expected)
+        slg_args = _post_args(value, 10.0)
+        slg = model.post[2](slg_args)
+        skipped = slg_args["input"] * 0.5 + 4.0
+        slg_guided = value + (slg_args["cond_denoised"] - skipped) * 1.25
+        slg_expected = slg_guided * (0.4 * slg_args["cond_denoised"].std() / slg_guided.std() + 0.6)
+        torch.testing.assert_close(slg, slg_expected)
+        simple_args = {
+            "model": "runtime-model",
+            "conds": ["cond", "uncond"],
+            "input": value,
+            "sigma": torch.tensor([10.0]),
+            "model_options": {"transformer_options": {}},
+        }
+        simple = model.calc(simple_args)
+        torch.testing.assert_close(simple[0], value * 0.5 + 4.0)
+        torch.testing.assert_close(simple[1], value * -0.25 - 2.0)
+        return cls.outputs(value=float(sag.sum() + pag.sum() + slg.sum() + simple[1].sum()))
 
 
 FIXTURE_NODES = (ModelSource, ModelConsumer)
 
 
 @pytest.mark.parametrize("in_process", (True, False))
-def test_ordinary_manifest_runs_all_attention_guidance_model_patches_twice(
+def test_ordinary_manifest_executes_active_attention_guidance_callbacks_twice(
     tmp_path: Path, in_process: bool
 ) -> None:
     async def scenario() -> None:
-        composer = ServingComposer(worker_env={"PYTHONPATH": str(Path(__file__).parent)})
+        composer = ServingComposer(
+            worker_env={"PYTHONPATH": str(Path(__file__).parent), "DINKSTER_ACCELERATOR": "cpu"}
+        )
         try:
             manifest = Path(__file__).parents[1] / "dinkster-pack.toml"
             module = f"attention_guidance_fixture_{in_process}"
             (tmp_path / f"{module}.py").write_text(
-                "import dinkster_nodes_comfy.attention_guidance as guidance\n"
-                "from test_attention_guidance_torch import FIXTURE_NODES, fake_modules\n"
+                "from dinkster_api.v1 import initialize_inference_process\n"
+                "initialize_inference_process()\n"
+                "from dinkster_inference import samplers\n"
+                "from test_attention_guidance_torch import FIXTURE_NODES, _controlled_calc\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "guidance._inference_modules = fake_modules\n"
+                "samplers.calc_cond_batch = _controlled_calc\n"
                 "NODES = (*COMFY_NODES, *FIXTURE_NODES)\n",
                 encoding="ascii",
             )
@@ -303,11 +350,35 @@ def test_ordinary_manifest_runs_all_attention_guidance_model_patches_twice(
             graph = Graph(
                 nodes={
                     "source": GraphNode("attention-guidance-fixture.source"),
-                    "sag": GraphNode("SelfAttentionGuidance", {"model": Link("source", "MODEL")}),
-                    "pag": GraphNode("PerturbedAttentionGuidance", {"model": Link("sag", "MODEL")}),
-                    "slg": GraphNode("SkipLayerGuidanceDiT", {"model": Link("pag", "MODEL")}),
+                    "sag": GraphNode(
+                        "SelfAttentionGuidance",
+                        {"model": Link("source", "MODEL"), "scale": 0.3, "blur_sigma": 1.5},
+                    ),
+                    "pag": GraphNode(
+                        "PerturbedAttentionGuidance",
+                        {"model": Link("sag", "MODEL"), "scale": 1.7},
+                    ),
+                    "slg": GraphNode(
+                        "SkipLayerGuidanceDiT",
+                        {
+                            "model": Link("pag", "MODEL"),
+                            "double_layers": "7",
+                            "single_layers": "2",
+                            "scale": 1.25,
+                            "start_percent": 0.0,
+                            "end_percent": 1.0,
+                            "rescaling_scale": 0.4,
+                        },
+                    ),
                     "simple": GraphNode(
-                        "SkipLayerGuidanceDiTSimple", {"model": Link("slg", "MODEL")}
+                        "SkipLayerGuidanceDiTSimple",
+                        {
+                            "model": Link("slg", "MODEL"),
+                            "double_layers": "1",
+                            "single_layers": "3",
+                            "start_percent": 0.0,
+                            "end_percent": 1.0,
+                        },
                     ),
                     "consumer": GraphNode(
                         "attention-guidance-fixture.consumer", {"model": Link("simple", "MODEL")}
@@ -315,9 +386,12 @@ def test_ordinary_manifest_runs_all_attention_guidance_model_patches_twice(
                 }
             )
             engine = composer.composition.make_engine(lambda _event: None)
+            results = []
             for _ in range(2):
-                result = await engine.run(graph, ["consumer"])
-                assert result.outputs["consumer"]["value"].resolve() == 5.0
+                results.append(
+                    (await engine.run(graph, ["consumer"])).outputs["consumer"]["value"].resolve()
+                )
+            assert results[0] == results[1] and results[0] != 0.0
         finally:
             await composer.close()
 
