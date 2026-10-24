@@ -666,7 +666,7 @@ class NumberWidget:
     max: int | float | None = None
     step: int | float | None = None
     control_after_generate: ControlAfterGenerate | None = None
-    display: Literal["number", "slider", "knob", "gradientslider"] | None = None
+    display: Literal["number", "slider", "knob", "gradientslider", "color"] | None = None
     round: int | float | None = None
 
     def __post_init__(self) -> None:
@@ -724,11 +724,11 @@ class NumberWidget:
             )
         if self.display is not None and (
             type(self.display) is not str
-            or self.display not in {"number", "slider", "knob", "gradientslider"}
+            or self.display not in {"number", "slider", "knob", "gradientslider", "color"}
         ):
             raise ValueError(
                 "number widget display must be one of "
-                "['gradientslider', 'knob', 'number', 'slider'], "
+                "['color', 'gradientslider', 'knob', 'number', 'slider'], "
                 f"got {self.display!r}"
             )
 

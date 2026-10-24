@@ -807,6 +807,32 @@ def test_number_widget_wire_roundtrip_and_signature_exclusion() -> None:
     assert schema_from_wire(controller_wire) == controller_only
     assert schema_signature(controller_only) == schema_signature(full)
 
+    color = NodeSchema(
+        node_type="test.packed-color",
+        inputs=(
+            InputSpec(
+                "color",
+                TypeExpr.concrete("INT"),
+                default=0x1234AB,
+                widget=NumberWidget(min=0, max=0xFFFFFF, step=1, display="color"),
+            ),
+        ),
+    )
+    color_wire = schema_to_wire(color)
+    color_interface = cast("list[dict[str, Any]]", color_wire["interface"])
+    assert color_interface[0]["type"] == {"kind": "concrete", "types": ["INT"]}
+    assert color_interface[0]["widget"] == {
+        "type": "NUMBER",
+        "min": 0,
+        "max": 0xFFFFFF,
+        "step": 1,
+        "display": "color",
+    }
+    assert schema_from_wire(color_wire) == color
+    assert schema_signature(color) == schema_signature(
+        dataclasses.replace(color, inputs=(dataclasses.replace(color.inputs[0], widget=None),))
+    )
+
 
 def test_number_widget_validated() -> None:
     with pytest.raises(ValueError, match="at least one constraint"):
