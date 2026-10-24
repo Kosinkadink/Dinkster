@@ -5,6 +5,7 @@ from dinkster_api.v1 import register_inference_types
 from .clip import CLIP_NODES
 from .compositing import COMPOSITING_NODES
 from .conditioning import CONDITIONING_NODES
+from .dataset_text import DATASET_TEXT_NODES
 from .image_core import IMAGE_CORE_NODES
 from .image_filters import IMAGE_FILTER_NODES
 from .image_transform import IMAGE_TRANSFORM_NODES
@@ -29,6 +30,7 @@ from .utilities import ComfyNumberConvert, SeedNode
 
 COMFY_NODES = (
     *TEXT_NODES,
+    *DATASET_TEXT_NODES,
     PrimitiveString,
     PrimitiveStringMultiline,
     PrimitiveInt,
