@@ -217,11 +217,17 @@ def test_run_control_wait_and_reply_survive_same_daemon_reconnect(
         composer = ServingComposer()
         entered = asyncio.Event()
         continue_dispatch = asyncio.Event()
+        operations: list[str] = []
         import dinkster_workers.session as session_module
 
         async def pause_first_control(*args: Any, **kwargs: Any) -> None:
-            entered.set()
-            await continue_dispatch.wait()
+            header = args[2]
+            operation = header["operation"]
+            assert type(operation) is str
+            operations.append(operation)
+            if operation == "awaitRunValue":
+                entered.set()
+                await continue_dispatch.wait()
             await dispatch_run_control(*args, **kwargs)
 
         monkeypatch.setattr(session_module, "dispatch_run_control", pause_first_control)
@@ -248,9 +254,31 @@ def test_run_control_wait_and_reply_survive_same_daemon_reconnect(
             await wait_for_connected(composer, "control", False)
             outcome = await composer.reattach_remote(spec)
             assert outcome.same_instance is True
+            send = session.send
+            reply_lost = asyncio.Event()
+
+            async def lose_first_control_reply(
+                header: dict[str, object],
+                blobs: Sequence[bytes],
+                segments: Sequence[SharedMemory] = (),
+            ) -> None:
+                if header.get("type") == "runControlResult" and not reply_lost.is_set():
+                    assert session._writer is not None
+                    session._writer.transport.abort()
+                    reply_lost.set()
+                    raise WorkerDied()
+                await send(header, blobs, segments)
+
+            session.send = lose_first_control_reply  # type: ignore[method-assign]
             continue_dispatch.set()
+            await asyncio.wait_for(reply_lost.wait(), 10)
+            await wait_for_connected(composer, "control", False)
+            outcome = await composer.reattach_remote(spec)
+            assert outcome.same_instance is True
             result = await asyncio.wait_for(run, 10)
             assert result.outputs["waiter"]["value"].resolve() == 23
+            assert operations.count("awaitRunValue") == 1
+            assert operations.count("publishRunValue") == 3
         finally:
             continue_dispatch.set()
             await composer.close()
