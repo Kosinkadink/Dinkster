@@ -34,6 +34,10 @@ namespaces = [
     "ComfyNumberConvert",
     "SeedNode",
     "ComfyMathExpression",
+    "UNetSelfAttentionMultiply",
+    "UNetCrossAttentionMultiply",
+    "CLIPAttentionMultiply",
+    "UNetTemporalAttentionMultiply",
     "ModelMergeSimple",
     "ModelMergeSubtract",
     "ModelMergeAdd",
@@ -112,6 +116,10 @@ namespaces = [
     "ReferenceLatent",
     "VAEEncodeForInpaint",
     "InpaintModelConditioning",
+    "ControlNetApply",
+    "ControlNetApplyAdvanced",
+    "SetUnionControlNetType",
+    "ControlNetInpaintingAliMamaApply",
     "LatentCompositeMasked",
     "ImageCompositeMasked",
     "MaskToImage",
@@ -159,6 +167,7 @@ namespaces = [
     "BatchMasksNode",
     "BatchLatentsNode",
     "ColorTransfer",
+    "EmptyMochiLatentVideo",
 ]
 
 [pack.sandbox]
