@@ -17,7 +17,6 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
-    initialize_inference_process,
     materialize_latent,
 )
 
@@ -59,6 +58,8 @@ class EmptyHunyuanImageLatent(Node):
 
     @classmethod
     def execute(cls, *, width: int, height: int, batch_size: int = 1) -> Mapping[str, object]:
+        from dinkster_api.v1 import initialize_inference_process
+
         initialize_inference_process()
         torch = importlib.import_module("torch")
         management = importlib.import_module("dinkster_inference.model_management")
@@ -109,6 +110,8 @@ class HunyuanRefinerLatent(Node):
     ) -> Mapping[str, object]:
         source = materialize_latent(latent)
         samples = source["samples"]
+        from dinkster_api.v1 import initialize_inference_process
+
         initialize_inference_process()
         torch = importlib.import_module("torch")
         management = importlib.import_module("dinkster_inference.model_management")
