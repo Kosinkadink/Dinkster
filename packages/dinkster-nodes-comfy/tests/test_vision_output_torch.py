@@ -9,12 +9,15 @@ import os
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 import torch
 from dinkster_api.v1 import (
     CLIP_VISION_OUTPUT_TYPE,
+    CLIP_VISION_TYPE,
     CORE_INT,
     CORE_STRING,
+    IMAGE_TYPE,
     InputSpec,
     Node,
     NodeSchema,
@@ -25,6 +28,7 @@ from dinkster_api.v1 import (
     register_inference_types,
 )
 from dinkster_graph import Graph, GraphNode, Link
+from dinkster_nodes_comfy.clip import CLIPVisionEncode
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -45,6 +49,37 @@ def _source(variant: int) -> Any:
             {"layer": 4, "label": "last", "flag": True, "weight": 0.25, "empty": None},
         )
     return materialize_clip_vision_output(attributes)
+
+
+class VisionEncoder:
+    def __init__(self) -> None:
+        self.image: Any = None
+        self.crop: bool | None = None
+
+    def encode_image(self, image: Any, *, crop: bool) -> Any:
+        self.image = image
+        self.crop = crop
+        return _source(int(crop))
+
+
+@pytest.mark.parametrize(("crop", "expected_crop"), (("none", False), ("center", True)))
+def test_clip_vision_encode_materializes_image_and_selects_crop(
+    crop: str, expected_crop: bool
+) -> None:
+    image = np.arange(24, dtype=np.float32).reshape(1, 2, 4, 3)
+    encoder = VisionEncoder()
+
+    output = CLIPVisionEncode.execute(clip_vision=encoder, image=image, crop=crop)[
+        "CLIP_VISION_OUTPUT"
+    ]
+
+    assert isinstance(encoder.image, torch.Tensor)
+    assert torch.equal(encoder.image, torch.from_numpy(image))
+    assert encoder.crop is expected_crop
+    assert (
+        type(materialize_clip_vision_output(output))
+        is importlib.import_module("dinkster_inference.clip_vision").Output
+    )
 
 
 def _inspect(value: Any) -> dict[str, Any]:
@@ -104,6 +139,25 @@ class VisionSource(Node):
         return cls.outputs(vision=_source(variant))
 
 
+class VisionEncodeSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="vision-fixture.encode-source",
+            outputs=(
+                OutputSpec("clip_vision", TypeExpr.concrete(CLIP_VISION_TYPE)),
+                OutputSpec("image", TypeExpr.concrete(IMAGE_TYPE)),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        return cls.outputs(
+            clip_vision=VisionEncoder(),
+            image=np.arange(24, dtype=np.float32).reshape(1, 2, 4, 3),
+        )
+
+
 class VisionInspect(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -118,7 +172,7 @@ class VisionInspect(Node):
         return cls.outputs(text=json.dumps(_inspect(vision), sort_keys=True))
 
 
-FIXTURES = (VisionSource, VisionInspect)
+FIXTURES = (VisionSource, VisionEncodeSource, VisionInspect)
 
 
 @pytest.mark.parametrize("in_process", (True, False))
@@ -131,8 +185,9 @@ def test_vision_output_ordinary_manifest(tmp_path: Path, in_process: bool) -> No
         try:
             manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
             (tmp_path / "vision_fixture.py").write_text(
-                "from test_vision_output_torch import FIXTURES as NODES\n"
-                "from dinkster_api.v1 import register_inference_types\n",
+                "from test_vision_output_torch import FIXTURES\n"
+                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "NODES = (*COMFY_NODES, *FIXTURES)\n",
                 encoding="ascii",
             )
             fixture_manifest = tmp_path / "dinkster-pack.toml"
@@ -195,6 +250,32 @@ def test_vision_output_ordinary_manifest(tmp_path: Path, in_process: bool) -> No
                         }
                     else:
                         assert "all_hidden_states" not in value
+
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("vision-fixture.encode-source"),
+                    "encode": GraphNode(
+                        "CLIPVisionEncode",
+                        {
+                            "clip_vision": Link("source", "clip_vision"),
+                            "image": Link("source", "image"),
+                            "crop": "none",
+                        },
+                    ),
+                    "inspect": GraphNode(
+                        "vision-fixture.inspect",
+                        {"vision": Link("encode", "CLIP_VISION_OUTPUT")},
+                    ),
+                }
+            )
+            for _ in range(2):
+                result = await engine.run(graph, ["inspect"])
+                value = json.loads(result.outputs["inspect"]["text"].resolve())
+                assert value["image_sizes"] == [
+                    {"tuple": [224, 336, 3]},
+                    {"tuple": [448, 224, 3]},
+                ]
+                assert "all_hidden_states" not in value
         finally:
             await composer.close()
 

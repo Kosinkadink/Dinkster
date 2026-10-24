@@ -261,6 +261,83 @@ class ConditioningSetAreaPercentage(Node):
         )
 
 
+class ConditioningSetAreaPercentageVideo(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return _schema(
+            "ConditioningSetAreaPercentageVideo",
+            "Conditioning (Set Area with Percentage for Video)",
+            (
+                InputSpec("conditioning", _CONDITIONING),
+                _number("width", _FLOAT, 1.0, 0.0, 1.0, 0.01),
+                _number("height", _FLOAT, 1.0, 0.0, 1.0, 0.01),
+                _number("temporal", _FLOAT, 1.0, 0.0, 1.0, 0.01),
+                _number("x", _FLOAT, 0.0, 0.0, 1.0, 0.01),
+                _number("y", _FLOAT, 0.0, 0.0, 1.0, 0.01),
+                _number("z", _FLOAT, 0.0, 0.0, 1.0, 0.01),
+                _number("strength", _FLOAT, 1.0, 0.0, 10.0, 0.01),
+            ),
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        conditioning: Sequence[Sequence[Any]],
+        width: float,
+        height: float,
+        temporal: float,
+        x: float,
+        y: float,
+        z: float,
+        strength: float,
+    ) -> Mapping[str, object]:
+        return cls.outputs(
+            CONDITIONING=conditioning_set_values(
+                conditioning,
+                {
+                    "area": ("percentage", temporal, height, width, z, y, x),
+                    "strength": strength,
+                    "set_area_to_bounds": False,
+                },
+            )
+        )
+
+
+class ConditioningStableAudio(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="ConditioningStableAudio",
+            category="model/conditioning/stable audio",
+            inputs=(
+                InputSpec("positive", _CONDITIONING),
+                InputSpec("negative", _CONDITIONING),
+                _number("seconds_start", _FLOAT, 0.0, 0.0, 1000.0, 0.1),
+                _number("seconds_total", _FLOAT, 47.0, 0.0, 1000.0, 0.1),
+            ),
+            outputs=(
+                OutputSpec("positive", _CONDITIONING),
+                OutputSpec("negative", _CONDITIONING),
+            ),
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        positive: Sequence[Sequence[Any]],
+        negative: Sequence[Sequence[Any]],
+        seconds_start: float,
+        seconds_total: float,
+    ) -> Mapping[str, object]:
+        values = {"seconds_start": seconds_start, "seconds_total": seconds_total}
+        return cls.outputs(
+            positive=conditioning_set_values(positive, values),
+            negative=conditioning_set_values(negative, values),
+        )
+
+
 class ConditioningSetAreaStrength(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -371,8 +448,10 @@ CONDITIONING_NODES = (
     ConditioningMultiply,
     ConditioningSetArea,
     ConditioningSetAreaPercentage,
+    ConditioningSetAreaPercentageVideo,
     ConditioningSetAreaStrength,
     ConditioningSetMask,
     ConditioningZeroOut,
     ConditioningSetTimestepRange,
+    ConditioningStableAudio,
 )
