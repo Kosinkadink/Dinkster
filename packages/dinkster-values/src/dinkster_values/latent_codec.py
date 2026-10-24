@@ -459,7 +459,7 @@ def decode_latent(
         sparse_support_factory,
         sparse_latent_factory,
     )
-    if not isinstance(value, Mapping) or "samples" not in value:
+    if not isinstance(value, Mapping) or (value and "samples" not in value):
         raise ValueError("latent frame must contain a samples mapping entry")
     return cast("object", value)
 

@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 import torch
 from dinkster_api.v1 import (
+    CLIP_TYPE,
     CORE_STRING,
     FLOATS_TYPE,
     HOOK_KEYFRAMES_TYPE,
@@ -71,6 +72,7 @@ class HookSource(Node):
             outputs=(
                 OutputSpec("hooks", TypeExpr.concrete(HOOKS_TYPE)),
                 OutputSpec("keyframes", TypeExpr.concrete(HOOK_KEYFRAMES_TYPE)),
+                OutputSpec("clip", TypeExpr.concrete(CLIP_TYPE)),
             ),
         )
 
@@ -78,6 +80,8 @@ class HookSource(Node):
     def execute(cls) -> dict[str, object]:
         initialize_inference_process()
         from dinkster_inference import hooks
+        from dinkster_inference.model_patcher import ModelPatcher
+        from dinkster_inference.sd import CLIP
 
         keyframes = hooks.HookKeyframeGroup()
         keyframes.add(hooks.HookKeyframe(strength=0.625, start_percent=0.25))
@@ -85,7 +89,16 @@ class HookSource(Node):
         hook.hook_keyframe = keyframes
         group = hooks.HookGroup()
         group.add(hook)
-        return cls.outputs(hooks=group, keyframes=keyframes)
+        clip = CLIP(no_init=True)
+        clip.patcher = ModelPatcher(torch.nn.Linear(2, 3), "cpu", "cpu")
+        clip.cond_stage_model = clip.patcher.model
+        clip.tokenizer = object()
+        clip.layer_idx = None
+        clip.tokenizer_options = {}
+        clip.use_clip_schedule = True
+        clip.apply_hooks_to_conds = group
+        clip.patcher.forced_hooks = group
+        return cls.outputs(hooks=group, keyframes=keyframes, clip=clip)
 
 
 class HookConsumer(Node):
@@ -96,12 +109,13 @@ class HookConsumer(Node):
             inputs=(
                 InputSpec("hooks", TypeExpr.concrete(HOOKS_TYPE)),
                 InputSpec("keyframes", TypeExpr.concrete(HOOK_KEYFRAMES_TYPE)),
+                InputSpec("clip", TypeExpr.concrete(CLIP_TYPE)),
             ),
             outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
         )
 
     @classmethod
-    def execute(cls, *, hooks: Any, keyframes: Any) -> dict[str, object]:
+    def execute(cls, *, hooks: Any, keyframes: Any, clip: Any) -> dict[str, object]:
         initialize_inference_process()
         from dinkster_inference import hooks as inference_hooks
 
@@ -114,6 +128,12 @@ class HookConsumer(Node):
         assert clone is not hooks
         assert clone.hooks[0] is not hook
         assert clone.hooks[0].hook_keyframe is keyframes
+        assert clip.apply_hooks_to_conds is hooks
+        assert clip.patcher.forced_hooks is hooks
+        clip_clone = clip.clone(disable_dynamic=True)
+        assert clip_clone.apply_hooks_to_conds is hooks
+        assert clip_clone.patcher.forced_hooks is not hooks
+        assert clip_clone.patcher.forced_hooks.hooks[0].hook_keyframe is keyframes
         keyframe = keyframes.keyframes[0]
         return cls.outputs(
             summary=(
@@ -193,6 +213,7 @@ def test_ordinary_manifest_transports_float_strengths_twice(
                         {
                             "hooks": Link("hook-source", "hooks"),
                             "keyframes": Link("hook-source", "keyframes"),
+                            "clip": Link("hook-source", "clip"),
                         },
                     ),
                 }
@@ -218,6 +239,158 @@ def test_ordinary_manifest_transports_float_strengths_twice(
             await composer.close()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("native_first", (False, True))
+@pytest.mark.parametrize("field", ("conditioning", "schedule", "both"))
+@pytest.mark.parametrize("release", ("group", "keyframes", "group-owner", "group-ref"))
+def test_clip_retained_hooks_invalidate_cached_outputs(
+    monkeypatch: pytest.MonkeyPatch, native_first: bool, field: str, release: str
+) -> None:
+    from dinkster_api.v1 import CLIP_TYPE
+    from dinkster_caches import MemoryLRUCache
+    from dinkster_memory.resident import ResidentPool
+    from dinkster_native.native import register_native_types
+    from dinkster_protocol import CacheKey
+    from dinkster_values import ResidentLookupError
+
+    initialize_inference_process()
+    from dinkster_inference import hooks
+    from dinkster_inference.model_patcher import ModelPatcher
+    from dinkster_inference.sd import CLIP
+
+    async def scenario() -> None:
+        pool = ResidentPool(terminal_release=lambda _: True)
+        monkeypatch.setattr("dinkster_inference_wire.types.default_pool", lambda: pool)
+        monkeypatch.setattr("dinkster_native.native.default_pool", lambda: pool)
+        registry = TypeRegistry()
+        first, second = (
+            (register_native_types, register_inference_types)
+            if native_first
+            else (register_inference_types, register_native_types)
+        )
+        first(registry)
+        spec = registry.spec(CLIP_TYPE)
+        second(registry)
+        assert registry.spec(CLIP_TYPE) is spec
+        cache = MemoryLRUCache(max_bytes=16384)
+        pool.register_invalidator(cache.drop_referencing)
+        keyframes = hooks.HookKeyframeGroup()
+        keyframes.add(hooks.HookKeyframe(strength=-0.375, start_percent=0.25))
+        hook = hooks.WeightHook()
+        hook.hook_keyframe = keyframes
+        group = hooks.HookGroup()
+        group.add(hook)
+        group_owner, group_ref = object(), object()
+        if release == "group-owner":
+            group._dinkster_resident_owner = group_owner
+        group._dinkster_resident_refs = (group_ref,)
+
+        def clip_with(retained: Any) -> Any:
+            clip = CLIP(no_init=True)
+            clip.patcher = ModelPatcher(torch.nn.Linear(2, 3), "cpu", "cpu")
+            clip.cond_stage_model = clip.patcher.model
+            clip.tokenizer = object()
+            clip.layer_idx = None
+            clip.tokenizer_options = {}
+            clip.use_clip_schedule = field != "conditioning"
+            clip.apply_hooks_to_conds = retained if field != "schedule" else None
+            clip.patcher.forced_hooks = retained if field != "conditioning" else None
+            return clip
+
+        clips = {"first": clip_with(group), "second": clip_with(group), "other": clip_with(None)}
+        encoded = {}
+        for name, clip in clips.items():
+            value = registry.wrap(CLIP_TYPE, clip)
+            assert registry.wrap(CLIP_TYPE, clip).meta == value.meta
+            encoded[name] = spec.encode(value.resolve())
+            await cache.put(CacheKey(name), {"clip": value})
+        registry.wrap(HOOKS_TYPE, group)
+        registry.wrap(HOOK_KEYFRAMES_TYPE, keyframes)
+        released = {
+            "group": group,
+            "keyframes": keyframes,
+            "group-owner": group_owner,
+            "group-ref": group_ref,
+        }[release]
+        assert pool.release_resident(released)
+        for name in ("first", "second"):
+            assert await cache.get(CacheKey(name)) is None
+            with pytest.raises(ResidentLookupError):
+                spec.decode(encoded[name])
+        assert await cache.get(CacheKey("other")) is not None
+        assert spec.decode(encoded["other"]) is clips["other"]
+        assert hook.hook_keyframe is keyframes
+        assert keyframes.keyframes[0].strength == -0.375
+
+        foreign = TypeRegistry()
+        monkeypatch.setattr("dinkster_inference_wire.types.default_pool", lambda: ResidentPool())
+        register_inference_types(foreign)
+        with pytest.raises(ResidentLookupError):
+            foreign.spec(CLIP_TYPE).decode(encoded["other"])
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("native_first", (False, True))
+def test_clip_clone_retains_actual_schedule_clone_not_source_group(
+    monkeypatch: pytest.MonkeyPatch, native_first: bool
+) -> None:
+    from dinkster_memory.resident import ResidentPool
+    from dinkster_native.native import register_native_types
+    from dinkster_values import RESOURCE_REFS_META_KEY, ResidentLookupError, resident_resource_id
+
+    initialize_inference_process()
+    from dinkster_inference import hooks
+    from dinkster_inference.model_patcher import ModelPatcher
+    from dinkster_inference.sd import CLIP
+
+    pool = ResidentPool(terminal_release=lambda _: True)
+    monkeypatch.setattr("dinkster_inference_wire.types.default_pool", lambda: pool)
+    monkeypatch.setattr("dinkster_native.native.default_pool", lambda: pool)
+    registry = TypeRegistry()
+    if native_first:
+        register_native_types(registry)
+    register_inference_types(registry)
+    spec = registry.spec(CLIP_TYPE)
+    coerce = spec.coerce
+    assert coerce is not None
+    group = hooks.HookGroup()
+    group.add(hooks.WeightHook())
+    keyframes = group.hooks[0].hook_keyframe
+    clip = CLIP(no_init=True)
+    clip.patcher = ModelPatcher(torch.nn.Linear(2, 3), "cpu", "cpu")
+    clip.cond_stage_model = clip.patcher.model
+    clip.tokenizer = object()
+    clip.layer_idx = None
+    clip.tokenizer_options = {}
+    clip.use_clip_schedule = True
+    clip.apply_hooks_to_conds = None
+    clip.patcher.forced_hooks = group
+    clone = clip.clone(disable_dynamic=True)
+    retained = clone.patcher.forced_hooks
+    assert retained is not group
+    assert retained.hooks[0].hook_keyframe is keyframes
+    coerce(clone)
+    cleared = clip.clone(disable_dynamic=True)
+    coerce(cleared)
+    cleared.patcher.forced_hooks = None
+    cleared.use_clip_schedule = False
+    cleared_value = registry.wrap(CLIP_TYPE, cleared)
+    assert cleared_value.meta.get(RESOURCE_REFS_META_KEY) is None
+    clone_value = registry.wrap(CLIP_TYPE, clone)
+    assert clone_value.meta.get(RESOURCE_REFS_META_KEY) == (
+        resident_resource_id(pool.rid_for(retained)),
+        resident_resource_id(pool.rid_for(keyframes)),
+    )
+    encoded = spec.encode(clone_value.resolve())
+    registry.wrap(CLIP_TYPE, clip)
+    assert pool.release_resident(group)
+    assert spec.decode(encoded) is clone
+    assert pool.release_resident(keyframes)
+    with pytest.raises(ResidentLookupError):
+        spec.decode(encoded)
+    assert spec.decode(spec.encode(cleared_value.resolve())) is cleared
 
 
 def test_retained_keyframe_release_invalidates_groups_and_conditioning(

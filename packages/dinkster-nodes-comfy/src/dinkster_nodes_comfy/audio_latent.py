@@ -1,21 +1,25 @@
-"""Native empty audio latents for Stable Audio, ACE-Step and YuE2."""
+"""Native audio latent construction and dimension inspection."""
 
 from __future__ import annotations
 
 import importlib
 from collections.abc import Mapping
+from typing import Any, cast
 
 from dinkster_api.v1 import (
     CORE_FLOAT,
     CORE_INT,
     LATENT_TYPE,
     InputSpec,
+    MultiStreamLatent,
     Node,
     NodeSchema,
     NumberWidget,
     OutputSpec,
     TypeExpr,
     initialize_inference_process,
+    materialize_latent,
+    report_progress,
 )
 
 
@@ -145,6 +149,61 @@ class EmptyYuE2LatentAudio(Node):
         return cls.outputs(
             LATENT={"samples": latent, "type": "audio", "downscale_ratio_temporal": 1920}
         )
+
+
+class GetAudioLatentSize(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="GetAudioLatentSize",
+            display_name="Get Audio Latent Size",
+            search_terms=("dimensions", "audio latent info", "audio latent length"),
+            description=(
+                "Returns the length, audio channel count, and batch size of an audio latent."
+            ),
+            category="model/latent",
+            inputs=(
+                InputSpec(
+                    "latent",
+                    TypeExpr.concrete(LATENT_TYPE),
+                    doc="The audio or audio/video latent to inspect.",
+                ),
+            ),
+            outputs=(
+                OutputSpec("length", TypeExpr.concrete(CORE_INT), doc="The audio latent length."),
+                OutputSpec(
+                    "audio_channels",
+                    TypeExpr.concrete(CORE_INT),
+                    doc="The number of audio channels. Latents without an audio channel dimension "
+                    "have one channel.",
+                ),
+                OutputSpec(
+                    "batch_size",
+                    TypeExpr.concrete(CORE_INT),
+                    doc="The number of latents in the batch.",
+                ),
+            ),
+        )
+
+    @classmethod
+    def execute(cls, *, latent: object) -> Mapping[str, object]:
+        initialize_inference_process()
+        samples = cast("Mapping[str, Any]", materialize_latent(latent))["samples"]
+        if isinstance(samples, MultiStreamLatent):
+            samples = cast("MultiStreamLatent[Any]", samples).streams[-1].payload
+        elif samples.is_nested:
+            samples = samples.unbind()[-1]
+        if samples.ndim == 4:
+            batch_size, _, audio_channels, length = samples.shape
+        else:
+            batch_size, _, length = samples.shape
+            audio_channels = 1
+        report_progress(
+            1,
+            1,
+            text=f"length: {length}, audio channels: {audio_channels}\n batch size: {batch_size}",
+        )
+        return cls.outputs(length=length, audio_channels=audio_channels, batch_size=batch_size)
 
 
 AUDIO_LATENT_NODES = (

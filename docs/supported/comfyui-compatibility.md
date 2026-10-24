@@ -30,6 +30,8 @@
   patchers and install their native frame-wise CFG callbacks under exact core IDs.
 - Ten native conditioning nodes combine, blend, concatenate, multiply, mask,
   zero, and set area or timestep metadata under their exact ComfyUI interfaces.
+- Native hook conditioning preserves paired ordering, default records, mask and
+  timestep metadata, and CLIP hook clone scheduling under exact core interfaces.
 - Native VAE inpainting encoding and model conditioning preserve crop, mask,
   latent, and conditioning metadata behavior under exact ComfyUI interfaces.
 - Fifteen native mask and composite nodes convert, create, invert, crop, combine,
@@ -46,6 +48,8 @@
 - Eight native video latent nodes create Hunyuan Video, Hunyuan Video 1.5, LTXV,
   Cosmos, and autoregressive video samples, trim video frames, freeze LTXV video
   or audio samples, and normalize video latent starts under their exact ComfyUI IDs.
+- Native LTXV image-to-video and frame-rate conditioning nodes encode image starts,
+  replace existing latent starts, and attach frame-rate metadata.
 - Native Hunyuan image latent construction and refiner conditioning retain the
   source latent metadata while preparing refiner noise latents.
 - Portable masks become Torch tensors at native tensor-consuming nodes, without

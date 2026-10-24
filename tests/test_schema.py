@@ -28,6 +28,8 @@ from dinkster_schema import (
     SaveTargetWidget,
     StringWidget,
     TypeExpr,
+    WidgetRepresentation,
+    WidgetRepresentations,
     elaborate,
     schema_from_wire,
     schema_signature,
@@ -136,6 +138,40 @@ def test_widget_roundtrip(type_id: str, widget: object, expected: dict[str, obje
     )
 
 
+@pytest.mark.parametrize("members", [("FLOAT", "INT"), ("INT", "FLOAT")])
+@pytest.mark.parametrize("representations", [False, True])
+@pytest.mark.parametrize("default", [25, 29.97])
+def test_numeric_union_number_widget_preserves_socket_and_default(
+    members: tuple[str, str], representations: bool, default: int | float
+) -> None:
+    widget = NumberWidget(min=1.0, max=1000.0, step=0.01, display="number", round=False)
+    presentation = (
+        WidgetRepresentations(
+            (
+                WidgetRepresentation("number", widget),
+                WidgetRepresentation("slider", NumberWidget(display="slider", round=0.01)),
+            ),
+            default="number",
+            user_switchable=True,
+        )
+        if representations
+        else widget
+    )
+    schema = NodeSchema(
+        "test.numeric-union",
+        inputs=(
+            InputSpec("frame_rate", TypeExpr.union(*members), default=default, widget=presentation),
+        ),
+    )
+    wire = schema_to_wire(schema)
+    item = cast("list[dict[str, Any]]", wire["interface"])[0]
+    assert item["type"] == {"kind": "union", "types": list(members)}
+    assert item["default"] == default and type(item["default"]) is type(default)
+    restored = schema_from_wire(json.loads(json.dumps(wire)))
+    assert restored == schema
+    assert type(restored.inputs[0].default) is type(default)
+
+
 @pytest.mark.parametrize("list_socket", [False, True])
 @pytest.mark.parametrize("precision", [False, 0.01, 1, None])
 def test_float_round_precision_preserves_false_and_absence(
@@ -225,13 +261,18 @@ def test_float_widget_preserves_large_float_bounds_on_the_wire() -> None:
     "field,value",
     [("min", -(2**53)), ("min", 2**53), ("max", -(2**53)), ("max", 2**53), ("step", 2**53)],
 )
-@pytest.mark.parametrize("list_socket", [False, True])
+@pytest.mark.parametrize(
+    "socket",
+    [
+        TypeExpr.concrete("FLOAT"),
+        TypeExpr.list_of(TypeExpr.concrete("FLOAT")),
+        TypeExpr.union("FLOAT", "INT"),
+        TypeExpr.union("INT", "FLOAT"),
+    ],
+)
 def test_float_widget_rejects_unsafe_integer_constraints(
-    field: str, value: int, list_socket: bool
+    field: str, value: int, socket: TypeExpr
 ) -> None:
-    socket = TypeExpr.concrete("FLOAT")
-    if list_socket:
-        socket = TypeExpr.list_of(socket)
     with pytest.raises(ValueError, match="FLOAT input"):
         InputSpec(
             "value",

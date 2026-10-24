@@ -23,6 +23,10 @@
   for explicit no-round presentation, or a positive finite numeric precision.
   Omission leaves precision unspecified; false is distinct from numeric zero.
   This backend schema support does not claim frontend editor support.
+- Backend number descriptors also accept the scalar union of exactly INT and
+  FLOAT, in either order, with FLOAT constraint and rounding semantics. Socket
+  types and numeric defaults remain unchanged, including with named widget
+  representations. This does not claim frontend numeric-union editor support.
 - Node schemas can declare presentation-only editor roles and JSON-safe custom
   widget descriptors. Clients use these declarations without matching node IDs;
   native video trim and crop declare their exact `VIDEO_EDIT` features.
@@ -63,6 +67,11 @@
   and strict numeric schedule parsing
 - Role-labeled multi-stream values inside ordinary `comfy.LATENT`, with generic
   audio/video concat, separate, visual preview, and audio preview nodes
+- Empty LATENT mappings remain present values through host transport and cache;
+  nonempty LATENT mappings still require a samples entry
+- Packs can import `LatentStream` and `MultiStreamLatent` from `dinkster_api.v1`
+  without loading Torch or inference. These are the same ordered, role-labeled
+  values returned by `materialize_latent`, with no wrapper or wire conversion.
 - Asset-backed native Save/Load Latent with deterministic `.latent`
   safetensors, ordered multi-stream roles, VAE provenance hints, and safe
   stock ComfyUI single-latent import; legacy `LoadLatent` prompts resolve

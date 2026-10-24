@@ -23,7 +23,11 @@ IDENTITIES = {
     "comfy.LATENT_UPSCALE_MODEL": "LATENT_UPSCALE_MODEL",
     "comfy.STYLE_MODEL": "STYLE_MODEL",
 }
-CORE_SCHEMA_IDENTITIES = {**IDENTITIES, "comfy.CONTROL_NET": "CONTROL_NET"}
+CORE_SCHEMA_IDENTITIES = {
+    **IDENTITIES,
+    "comfy.CONTROL_NET": "CONTROL_NET",
+    "comfy.GLIGEN": "GLIGEN",
+}
 CORE_SCHEMA_PATH = "packages/dinkster-compat-comfy/src/dinkster_compat_comfy/core_schemas.json"
 ARTIFACT_PATHS = (
     CORE_SCHEMA_PATH,
@@ -109,3 +113,25 @@ def test_core_schema_control_net_leaves_are_canonical_and_retained_metadata_is_u
             actual_leaves[node_id] = ids
 
     assert actual_leaves == expected_leaves
+
+
+def test_core_schema_gligen_leaves_are_canonical_and_retained_metadata_is_unchanged() -> None:
+    core_schema = json.loads((ROOT / CORE_SCHEMA_PATH).read_text(encoding="utf-8"))
+
+    assert core_schema["sourceRepository"] == "https://github.com/Comfy-Org/ComfyUI"
+    assert core_schema["sourceCommit"] == "15eb748b3ec5f8a0a2d470b7fb280e2d7579f916"
+    assert core_schema["opaqueTypes"].count("GLIGEN") == 1
+    assert "comfy.GLIGEN" not in core_schema["opaqueTypes"]
+
+    actual_leaves = {
+        node_id: tuple(
+            item["id"]
+            for item in schema["interface"]
+            if item.get("type", {}).get("types") == ["GLIGEN"]
+        )
+        for node_id, schema in core_schema["schemas"].items()
+    }
+    assert {node_id: inputs for node_id, inputs in actual_leaves.items() if inputs} == {
+        "comfy.GLIGENLoader": ("gligen",),
+        "comfy.GLIGENTextBoxApply": ("gligen_textbox_model",),
+    }
