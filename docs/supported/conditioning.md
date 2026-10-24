@@ -25,4 +25,6 @@
   attaches image conditioning to both prompt streams, and returns a zero latent.
 - Native `ReferenceLatent` appends a guiding latent to conditioning while
   preserving existing references; an unconnected latent leaves conditioning unchanged.
+- Hook-bearing native conditioning retains its runtime hook groups across node
+  links. Releasing a referenced hook invalidates dependent conditioning and caches.
 - Other model-family conditioning surfaces are unsupported.
