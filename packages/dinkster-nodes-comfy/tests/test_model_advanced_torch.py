@@ -268,6 +268,8 @@ def test_attention_backend_installs_runtime_callback(monkeypatch: pytest.MonkeyP
         )
     )
     actual_import = advanced.importlib.import_module
+    initialized: list[bool] = []
+    monkeypatch.setattr(advanced, "initialize_inference_process", lambda: initialized.append(True))
     monkeypatch.setattr(
         advanced.importlib,
         "import_module",
@@ -284,6 +286,7 @@ def test_attention_backend_installs_runtime_callback(monkeypatch: pytest.MonkeyP
     assert patched.attention(query, key, value) is not None
     assert torch.equal(patched.attention(query, key, value), query + key - value)
     assert original.attention is None
+    assert initialized == [True]
 
 
 class AdvancedModelSource(Node):
