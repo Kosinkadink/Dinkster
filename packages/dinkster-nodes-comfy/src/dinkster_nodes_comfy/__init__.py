@@ -2,9 +2,11 @@
 
 from dinkster_api.v1 import register_inference_types
 
+from .attention_guidance import ATTENTION_GUIDANCE_NODES
 from .attention_multiply import ATTENTION_MULTIPLY_NODES
 from .audio_combine import AUDIO_COMBINE_NODES
 from .audio_effects import AUDIO_EFFECT_NODES
+from .audio_generators import AUDIO_GENERATOR_NODES
 from .audio_latent import AUDIO_LATENT_NODES
 from .audio_transform import AUDIO_TRANSFORM_NODES
 from .cache import CACHE_NODES
@@ -50,6 +52,7 @@ from .reference_conditioning import REFERENCE_CONDITIONING_NODES
 from .rope_and_mask import ROPE_AND_MASK_NODES
 from .sigma_operations import SIGMA_OPERATION_NODES
 from .sigma_schedulers import SIGMA_SCHEDULER_NODES
+from .spatial_model_patches import SPATIAL_MODEL_PATCH_NODES
 from .stable3d import STABLE3D_NODES
 from .stable_cascade import STABLE_CASCADE_NODES
 from .text import TEXT_NODES
@@ -74,6 +77,7 @@ COMFY_NODES = (
     SeedNode,
     ComfyMathExpression,
     *ATTENTION_MULTIPLY_NODES,
+    *ATTENTION_GUIDANCE_NODES,
     *CACHE_NODES,
     *MODEL_MERGE_NODES,
     *MODEL_SPECIFIC_MERGE_NODES,
@@ -82,6 +86,7 @@ COMFY_NODES = (
     *CFG_GUIDANCE_NODES,
     *VIDEO_GUIDANCE_NODES,
     *FREEU_NODES,
+    *SPATIAL_MODEL_PATCH_NODES,
     *ROPE_AND_MASK_NODES,
     *SIGMA_OPERATION_NODES,
     *LATENT_NODES,
@@ -113,6 +118,7 @@ COMFY_NODES = (
     EmptyMochiLatentVideo,
     *AUDIO_COMBINE_NODES,
     *AUDIO_EFFECT_NODES,
+    *AUDIO_GENERATOR_NODES,
     *AUDIO_LATENT_NODES,
     *AUDIO_TRANSFORM_NODES,
     *DATASET_IMAGE_NODES,
