@@ -216,12 +216,21 @@ def test_normalize_video_latent_start_matches_tensor_contract_and_preserves_sour
 
 
 def test_normalize_video_latent_start_uses_nondefault_counts() -> None:
-    samples = torch.arange(2 * 2 * 6 * 3 * 5, dtype=torch.float64).reshape(2, 2, 6, 3, 5)
+    samples = torch.tensor([[-1, 0, 1, 2, 3, 7], [1, 2, 3, 4, 5, 9]], dtype=torch.float64).reshape(
+        1, 2, 6, 1, 1
+    )
     result = NormalizeVideoLatentStart.execute(
         latent={"samples": samples}, start_frame_count=4, reference_frame_count=1
     )["latent"]
-    assert not torch.equal(result["samples"][:, :, :4], samples[:, :, :4])
-    assert torch.equal(result["samples"][:, :, 4:], samples[:, :, 4:])
+    deviation = math.sqrt(2) / (math.sqrt(2) + 1e-8)
+    expected = torch.tensor(
+        [
+            [0.35 - deviation, 1.35 - deviation, 2.35 - deviation, 3.35 - deviation, 3, 7],
+            [0.35 + deviation, 1.35 + deviation, 2.35 + deviation, 3.35 + deviation, 5, 9],
+        ],
+        dtype=torch.float64,
+    ).reshape(1, 2, 6, 1, 1)
+    torch.testing.assert_close(result["samples"], expected)
 
 
 def test_normalize_video_latent_start_returns_single_frame_mapping_unchanged() -> None:
