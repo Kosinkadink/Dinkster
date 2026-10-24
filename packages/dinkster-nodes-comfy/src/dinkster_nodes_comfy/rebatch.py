@@ -23,12 +23,10 @@ from dinkster_api.v1 import (
 _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 _LATENT = TypeExpr.concrete(LATENT_TYPE)
 _INT = TypeExpr.concrete(CORE_INT)
-_IMAGE_LIST = TypeExpr.list_of(_IMAGE)
-_LATENT_LIST = TypeExpr.list_of(_LATENT)
 
 
 def _batch_size() -> InputSpec:
-    return InputSpec("batch_size", _INT, default=1, widget=NumberWidget(min=1, max=4096, step=1))
+    return InputSpec("batch_size", _INT, default=1, widget=NumberWidget(min=1, max=4096))
 
 
 class RebatchLatents(Node):
@@ -38,8 +36,8 @@ class RebatchLatents(Node):
             node_type="RebatchLatents",
             display_name="Rebatch Latents",
             category="model/latent/batch",
-            inputs=(InputSpec("latents", _LATENT_LIST), _batch_size()),
-            outputs=(OutputSpec("LATENT", _LATENT_LIST),),
+            inputs=(InputSpec("latents", _LATENT), _batch_size()),
+            outputs=(OutputSpec("LATENT", _LATENT),),
         )
 
     @staticmethod
@@ -49,8 +47,10 @@ class RebatchLatents(Node):
         samples = latents[index]["samples"]
         shape = samples.shape
         torch = importlib.import_module("torch")
-        mask = latents[index].get(
-            "noise_mask", torch.ones((shape[0], 1, shape[2] * 8, shape[3] * 8), device="cpu")
+        mask = (
+            latents[index]["noise_mask"]
+            if "noise_mask" in latents[index]
+            else torch.ones((shape[0], 1, shape[2] * 8, shape[3] * 8), device="cpu")
         )
         if mask.shape[-1] != shape[-1] * 8 or mask.shape[-2] != shape[-2]:
             torch.nn.functional.interpolate(
@@ -75,13 +75,12 @@ class RebatchLatents(Node):
         ) else None
 
     @classmethod
-    def execute(cls, *, latents: Any, batch_size: int = 1) -> Mapping[str, object]:
-        if batch_size < 1:
-            raise ValueError(f"batch_size must be positive, got {batch_size}")
+    def execute(cls, *, latents: Any, batch_size: list[int]) -> Mapping[str, object]:
+        size = batch_size[0]
         torch = importlib.import_module("torch")
         latents = [materialize_latent(latent) for latent in latents]
         output_list: list[dict[str, Any]] = []
-        current: tuple[Any, Any, list[int]] = (None, None, None)
+        current: tuple[Any, ...] = (None, None, None)
         processed = 0
         for index in range(len(latents)):
             next_batch = cls._batch(latents, index, processed)
@@ -92,9 +91,9 @@ class RebatchLatents(Node):
                 next_batch[0].shape[-1] != current[0].shape[-1]
                 or next_batch[0].shape[-2] != current[0].shape[-2]
             ):
-                samples, _ = cls._slices(current[0], 1, batch_size)
-                masks, _ = cls._slices(current[1], 1, batch_size)
-                indices, _ = cls._slices(current[2], 1, batch_size)
+                samples, _ = cls._slices(current[0], 1, size)
+                masks, _ = cls._slices(current[1], 1, size)
+                indices, _ = cls._slices(current[2], 1, size)
                 output_list.append(
                     {"samples": samples[0], "noise_mask": masks[0], "batch_index": indices[0]}
                 )
@@ -104,11 +103,11 @@ class RebatchLatents(Node):
                     torch.cat((left, right)) if torch.is_tensor(left) else left + right
                     for left, right in zip(current, next_batch, strict=True)
                 )
-            if current[0].shape[0] > batch_size:
-                count = current[0].shape[0] // batch_size
-                sample_slices, sample_remainder = cls._slices(current[0], count, batch_size)
-                mask_slices, mask_remainder = cls._slices(current[1], count, batch_size)
-                index_slices, index_remainder = cls._slices(current[2], count, batch_size)
+            if current[0].shape[0] > size:
+                count = current[0].shape[0] // size
+                sample_slices, sample_remainder = cls._slices(current[0], count, size)
+                mask_slices, mask_remainder = cls._slices(current[1], count, size)
+                index_slices, index_remainder = cls._slices(current[2], count, size)
                 output_list.extend(
                     {
                         "samples": sample_slices[item],
@@ -119,9 +118,9 @@ class RebatchLatents(Node):
                 )
                 current = (sample_remainder, mask_remainder, index_remainder)
         if current[0] is not None:
-            samples, _ = cls._slices(current[0], 1, batch_size)
-            masks, _ = cls._slices(current[1], 1, batch_size)
-            indices, _ = cls._slices(current[2], 1, batch_size)
+            samples, _ = cls._slices(current[0], 1, size)
+            masks, _ = cls._slices(current[1], 1, size)
+            indices, _ = cls._slices(current[2], 1, size)
             output_list.append(
                 {"samples": samples[0], "noise_mask": masks[0], "batch_index": indices[0]}
             )
@@ -138,14 +137,13 @@ class RebatchImages(Node):
             node_type="RebatchImages",
             display_name="Rebatch Images",
             category="image/batch",
-            inputs=(InputSpec("images", _IMAGE_LIST), _batch_size()),
-            outputs=(OutputSpec("IMAGE", _IMAGE_LIST),),
+            inputs=(InputSpec("images", _IMAGE), _batch_size()),
+            outputs=(OutputSpec("IMAGE", _IMAGE),),
         )
 
     @classmethod
-    def execute(cls, *, images: Any, batch_size: int = 1) -> Mapping[str, object]:
-        if batch_size < 1:
-            raise ValueError(f"batch_size must be positive, got {batch_size}")
+    def execute(cls, *, images: Any, batch_size: list[int]) -> Mapping[str, object]:
+        size = batch_size[0]
         torch = importlib.import_module("torch")
         frames = [
             image[index : index + 1]
@@ -155,8 +153,8 @@ class RebatchImages(Node):
         ]
         return cls.outputs(
             IMAGE=[
-                torch.cat(frames[index : index + batch_size], dim=0)
-                for index in range(0, len(frames), batch_size)
+                torch.cat(frames[index : index + size], dim=0)
+                for index in range(0, len(frames), size)
             ]
         )
 
