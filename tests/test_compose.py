@@ -1056,19 +1056,19 @@ def test_compose_serving_default_resolution_is_atomic(
     [
         (
             "dinkster-nodes-foundation",
-            "blake3:9ac4935ed2fb460f09f38875afdd7b65b83c3a86e56b29084f8c80c5fa69e6e3",
+            "blake3:32cea75be3ac296391962b09cd6ff04f197a42e4002523c73e2bbf548f4aefe5",
         ),
         (
             "dinkster-nodes-media-io",
-            "blake3:0eb7ecfb456171afdeb488cc3f81d168a1d716ac09c9e0448b3a6c81248e5a5c",
+            "blake3:a5fc9c2f4806f4ad77f3c86e60c0d32159adac1bfad07bcc7739f4addf2d7077",
         ),
         (
             "dinkster-nodes-image",
-            "blake3:193eba9a096ce415066c01784fc4c043ceb4f59af1a7221a5b751e114de4b0b0",
+            "blake3:a180405873344dee9917988731061852d48f017894d709edc505c709c2159535",
         ),
         (
             "dinkster-nodes-remote",
-            "blake3:db56d16df9059930093ac30166558e96a90644d0fc754a58ef7bc8c37baca6b4",
+            "blake3:f0ce94b80269b35e0532fd16d987c867102db1c3c721c44fe64458ab5c6dc48a",
         ),
     ],
 )
@@ -3200,7 +3200,7 @@ def test_comfy_host_types_register_save_target_runtime_values() -> None:
     explicit = {"mount": "comfy-output", "prefix": "renders/scene"}
     wrapped = registry.wrap(SAVE_TARGET_TYPE, explicit)
     assert wrapped.resolve() == SaveTarget(**explicit)
-    assert wrapped.fingerprint == "dinkster.save_target:comfy-output/renders/scene"
+    assert wrapped.fingerprint == "SAVE_TARGET:comfy-output/renders/scene"
     encoded = registry.spec(SAVE_TARGET_TYPE).encode(explicit)
     assert registry.spec(SAVE_TARGET_TYPE).decode(encoded) == SaveTarget(**explicit)
 

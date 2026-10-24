@@ -6081,7 +6081,7 @@ def test_values_endpoint_image_png_rendition() -> None:
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("type_id", ["dinkster.layers", "comfy.LAYERS"])
+@pytest.mark.parametrize("type_id", ["LAYERS", "comfy.LAYERS"])
 def test_values_endpoint_layer_document_rendition(
     type_id: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -6108,13 +6108,13 @@ def test_values_endpoint_layer_document_rendition(
         def execute(cls) -> Mapping[str, object]:
             return AddLayer.execute(image=pixels)
 
-    nodes: list[type[Node]] = [AddLayer] if type_id == "dinkster.layers" else [CompatLayers]
+    nodes: list[type[Node]] = [AddLayer] if type_id == "LAYERS" else [CompatLayers]
     schemas = build_schemas(nodes)
 
     def factory(on_event: EventListener) -> Engine:
         registry = TypeRegistry()
         register_core_types(registry)
-        if type_id == "dinkster.layers":
+        if type_id == "LAYERS":
             register_image_types(registry)
         else:
             register_comfy_host_types(registry)
@@ -6138,7 +6138,7 @@ def test_values_endpoint_layer_document_rendition(
                     "dinkster.layers.add",
                     {"image": TypedLiteral("IMAGE", pixels.tolist())},
                 )
-                if type_id == "dinkster.layers"
+                if type_id == "LAYERS"
                 else GraphNode("test.compat_layers", {})
             )
             await finish_job(client, Graph(nodes={"layers": node}), ["layers"])
@@ -6159,7 +6159,7 @@ def test_values_endpoint_layer_document_rendition(
                     "cacheKey": "image",
                 }
             ]
-            assert data["renditions"] == (renditions if type_id == "dinkster.layers" else []) + [
+            assert data["renditions"] == (renditions if type_id == "LAYERS" else []) + [
                 {
                     "kind": "document",
                     "mime": IMAGE_DOCUMENT_MEDIA_TYPE,

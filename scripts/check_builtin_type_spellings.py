@@ -33,7 +33,9 @@ REGISTRY_CALLS = frozenset(
 
 def type_test(node: ast.AST) -> bool:
     if isinstance(node, ast.Name):
-        return node.id.endswith(("type_id", "type_ids", "registry"))
+        return not node.id.endswith("_IO_TYPE") and node.id.endswith(
+            ("type_id", "type_ids", "registry", "_TYPE", "_TYPE_ID")
+        )
     return isinstance(node, ast.Attribute) and node.attr in {"type_id", "type_ids"}
 
 
@@ -69,6 +71,12 @@ def violations(root: Path) -> list[str]:
                     operands = [node.left, *node.comparators]
                     if any(type_test(operand) for operand in operands):
                         values = operands
+                elif isinstance(node, ast.Assign) and any(
+                    type_test(target) for target in node.targets
+                ):
+                    values = [node.value]
+                elif isinstance(node, ast.AnnAssign) and type_test(node.target):
+                    values = [] if node.value is None else [node.value]
                 for value in values:
                     literals = (value,) if concrete else ast.walk(value)
                     for literal in literals:

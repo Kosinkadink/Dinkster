@@ -28,10 +28,13 @@ def test_builtin_type_guard_rejects_literals_but_not_protocol_tags(tmp_path: Pat
     assert "example.py:1: import the type constant" in refused.stdout
     source.write_text('registry.wrap("INT", 3)\n', encoding="utf-8")
     assert check().returncode == 1
+    source.write_text('MY_TYPE = "INT"\n', encoding="utf-8")
+    assert check().returncode == 1
     source.write_text(
         "from dinkster_values import CORE_INT\n"
         "socket = TypeExpr.concrete(CORE_INT)\n"
-        'widget = {"type": "INT"}\n',
+        'widget = {"type": "INT"}\n'
+        'COMBO_IO_TYPE = "INT"\n',
         encoding="utf-8",
     )
     assert check().returncode == 0

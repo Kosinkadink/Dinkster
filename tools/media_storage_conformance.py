@@ -22,7 +22,7 @@ from dinkster_schema import (
     build_node_types,
     build_schemas,
 )
-from dinkster_values import TypeRegistry, Value, register_core_types
+from dinkster_values import CORE_INT, IMAGE_TYPE, TypeRegistry, Value, register_core_types
 from dinkster_values.image_codec import image_array_fingerprint, image_array_meta
 from dinkster_values.storage import image_input
 from dinkster_workers import InProcessWorker
@@ -52,8 +52,8 @@ def _peak_rss() -> int:
 async def measure(frames: int, height: int, width: int) -> dict[str, int]:
     shape = (frames, height, width, 3)
     batch_bytes = frames * height * width * 3
-    image_type = TypeExpr.concrete("comfy.IMAGE")
-    integer_type = TypeExpr.concrete("INT")
+    image_type = TypeExpr.concrete(IMAGE_TYPE)
+    integer_type = TypeExpr.concrete(CORE_INT)
 
     class Source(Node):
         @classmethod
@@ -104,8 +104,8 @@ async def measure(frames: int, height: int, width: int) -> dict[str, int]:
     registry = TypeRegistry()
     register_core_types(registry)
     registry.register(
-        "comfy.IMAGE",
-        fingerprint=image_array_fingerprint("comfy.IMAGE"),
+        IMAGE_TYPE,
+        fingerprint=image_array_fingerprint(IMAGE_TYPE),
         meta=image_array_meta,
         input_convert=image_input,
     )

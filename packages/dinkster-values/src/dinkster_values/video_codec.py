@@ -17,6 +17,7 @@ from .audio_codec import (
     effective_audio_facts,
     encode_audio,
 )
+from .builtin_types import VIDEO_TYPE
 from .image_codec import (
     decode_image_array,
     encode_image_array,
@@ -101,7 +102,7 @@ def video_reference(value: object) -> dict[str, object]:
     wire = _pack_video(value, chunks)
     if chunks:
         raise ValueError("publish VIDEO source before binding timeline")
-    return {"type": "comfy.VIDEO", "video": json.loads(_json(wire))}
+    return {"type": VIDEO_TYPE, "video": json.loads(_json(wire))}
 
 
 def source_video(reference: Mapping[str, object]) -> dict[str, object]:

@@ -476,9 +476,7 @@ def test_asset_widget_wire_roundtrip_and_signature_exclusion() -> None:
     accept = ("image/png", "image/jpeg", "image/webp")
     schema = dataclasses.replace(
         SCHEMA,
-        inputs=(
-            InputSpec("asset", TypeExpr.concrete("dinkster.asset"), widget=AssetWidget(accept)),
-        )
+        inputs=(InputSpec("asset", TypeExpr.concrete("ASSET"), widget=AssetWidget(accept)),)
         + SCHEMA.inputs[1:],
     )
     wire = schema_to_wire(schema)
@@ -495,7 +493,7 @@ def test_asset_widget_wire_roundtrip_and_signature_exclusion() -> None:
 
 def test_save_target_widget_wire_roundtrip_and_signature_exclusion() -> None:
     """SAVE_TARGET is a closed widget kind: a
-    save-destination picker whose value is a structured dinkster.save_target
+    save-destination picker whose value is a structured SAVE_TARGET
     mapping, never a raw path string. Same rule as ASSET: presentation
     metadata rides the wire but never joins execution identity."""
     schema = dataclasses.replace(
@@ -503,7 +501,7 @@ def test_save_target_widget_wire_roundtrip_and_signature_exclusion() -> None:
         inputs=(
             InputSpec(
                 "target",
-                TypeExpr.concrete("dinkster.save_target"),
+                TypeExpr.concrete("SAVE_TARGET"),
                 widget=SaveTargetWidget(".png"),
             ),
         )
@@ -526,7 +524,7 @@ def test_save_target_widget_wire_roundtrip_and_signature_exclusion() -> None:
         inputs=(
             InputSpec(
                 "target",
-                TypeExpr.concrete("dinkster.save_target"),
+                TypeExpr.concrete("SAVE_TARGET"),
                 widget=SaveTargetWidget(),
             ),
         )

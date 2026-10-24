@@ -45,7 +45,7 @@ def register_types(registry: TypeRegistry) -> None:
     # The fallback codec preserves arrays independently of media codec policy.
     registry.register("test.image", input_convert=image_input)
     registry.register("test.audio", input_convert=audio_input)
-    registry.register("dinkster.asset")
+    registry.register("ASSET")
     registry.register_asset_decoder(
         "test.image", provider_id="test.storage-decode", decode=lambda obj: obj
     )

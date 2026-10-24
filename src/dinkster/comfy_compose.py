@@ -51,9 +51,14 @@ from dinkster_assets import (
 from dinkster_assets.audio import register_audio_value_type
 from dinkster_server import PackInfo
 from dinkster_values import (
+    AUDIO_TYPE,
     IMAGE_BATCH_MERGER_ID,
     IMAGE_FILE_DECODER_ID,
+    IMAGE_TYPE,
+    LATENT_TYPE,
+    MASK_TYPE,
     PNG_CONTAINER_VERSION,
+    VIDEO_TYPE,
     TypeRegistry,
     decode_image_array,
     decode_image_file,
@@ -104,15 +109,15 @@ COMFY_PACK_ID = "comfy"
 _CORE_START_TIMEOUT = 180.0  # first torch + ComfyUI import is slow
 _LEGACY_START_TIMEOUT = 300.0  # torch + ComfyUI + every legacy pack
 
-COMFY_IMAGE_TYPE = "IMAGE"
+COMFY_IMAGE_TYPE = IMAGE_TYPE
 """The exact host and worker image value type."""
 
-COMFY_MASK_TYPE = "MASK"
+COMFY_MASK_TYPE = MASK_TYPE
 """The exact mask value type sharing IMAGE's byte contract."""
 
-COMFY_AUDIO_TYPE = "comfy.AUDIO"
-COMFY_VIDEO_TYPE = "comfy.VIDEO"
-COMFY_LATENT_TYPE = "LATENT"
+COMFY_AUDIO_TYPE = AUDIO_TYPE
+COMFY_VIDEO_TYPE = VIDEO_TYPE
+COMFY_LATENT_TYPE = LATENT_TYPE
 
 
 class ComfyModelRoot(NamedTuple):
