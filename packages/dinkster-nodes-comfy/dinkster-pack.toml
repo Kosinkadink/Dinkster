@@ -233,6 +233,8 @@ namespaces = [
     "HunyuanRefinerLatent",
     "CLIPTextEncodeHunyuanDiT",
     "TextEncodeHunyuanVideo_ImageToVideo",
+    "HunyuanImageToVideo",
+    "HunyuanVideo15ImageToVideo",
     "SVD_img2vid_Conditioning",
     "CosmosImageToVideoLatent",
     "CosmosPredict2ImageToVideoLatent",
