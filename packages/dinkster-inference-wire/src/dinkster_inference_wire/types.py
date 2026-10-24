@@ -6,10 +6,13 @@ from dinkster_memory.resident import default_pool
 from dinkster_values import (
     CLIP_TYPE,
     CLIP_VISION_TYPE,
+    COLOR_TYPE,
+    COLORS_TYPE,
     GUIDER_TYPE,
     INFERENCE_LATENT_OPERATION_TYPE,
     MODEL_TYPE,
     NOISE_TYPE,
+    RESOLUTION_PREVIEW_TYPE,
     SAMPLER_TYPE,
     SIGMAS_TYPE,
     VAE_TYPE,
@@ -61,6 +64,10 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
             registry.spec(type_id)
             if type_id in registry
             else register_sampling_type(registry, type_id)
+        )
+    for type_id in (COLOR_TYPE, COLORS_TYPE, RESOLUTION_PREVIEW_TYPE):
+        registered.append(
+            registry.spec(type_id) if type_id in registry else registry.register(type_id)
         )
     registered.extend(register_media_types(registry))
     return tuple(registered)

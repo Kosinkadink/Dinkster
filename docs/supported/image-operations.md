@@ -1,5 +1,7 @@
 ## Image operations
 
+- Color strings, ordered color palettes, and optional resolution-preview
+  metadata pass between node packs without rewriting their values.
 - Native Stable Cascade stage C/B latent creation, stage C VAE encoding,
   stage B prior conditioning, and super-resolution control inputs
 - Typed `dinkster.region` rectangle values for shared crop and placement geometry
