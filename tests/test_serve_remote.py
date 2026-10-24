@@ -132,7 +132,10 @@ def write_composed_iso_manifest(root: Path, name: str) -> Path:
     manifest = write_iso_manifest(root, name=name)
     text = manifest.read_text(encoding="utf-8")
     manifest.write_text(
-        text.replace(f'name = "{name}"', f'name = "{name}"\nnamespaces = ["iso"]'),
+        text.replace(
+            f'name = "{name}"',
+            f'name = "{name}"\nnamespaces = ["iso"]',
+        ),
         encoding="utf-8",
     )
     return manifest
@@ -880,7 +883,7 @@ def test_remote_surface_survives_pack_reload(tmp_path: Path) -> None:
         try:
             composer = ServingComposer()
             try:
-                await composer.add_pack(DEV_MANIFEST)
+                await composer.add_pack(PackSpec(DEV_MANIFEST, trust_reserved=True))
                 await composer.add_remote(remote_spec(host, port, tmp_path))
                 await composer.reload_pack("dinkster-nodes-dev")
                 composition = composer.composition
@@ -909,9 +912,11 @@ def test_matching_node_types_compose_as_placement_targets(tmp_path: Path) -> Non
         try:
             composer = ServingComposer()
             try:
-                await composer.add_pack(DEV_MANIFEST)
+                await composer.add_pack(PackSpec(DEV_MANIFEST, trust_reserved=True))
                 before_schemas = dict(composer.composition.schemas)
-                delta = await composer.add_remote(remote_spec(host, port, tmp_path))
+                delta = await composer.add_remote(
+                    remote_spec(host, port, tmp_path, trust_reserved=True)
+                )
                 assert delta.schemas == {}
                 assert composer.composition.schemas == before_schemas
                 assert composer.composition.node_packs["dev.gallery.widgets"] == (
@@ -939,7 +944,8 @@ def test_remote_resident_producer_and_consumer_on_the_same_remote(tmp_path: Path
     async def scenario() -> None:
         manifest = tmp_path / "dinkster-pack.toml"
         manifest.write_text(
-            '[pack]\nname = "respack"\n\n[pack.entry]\n'
+            '[pack]\nname = "respack"\npublisher = "dinkster"\n'
+            'type-namespaces = ["res"]\n\n[pack.entry]\n'
             'nodes = "respack_nodes:NODES"\ntypes = "respack_nodes:register_types"\n'
         )
         proc, host, port = await start_service(manifest, tmp_path)
@@ -1114,7 +1120,13 @@ def test_remote_composes_comfy_registries_for_selected_owned_nodes(tmp_path: Pat
             composer = ServingComposer()
             try:
                 delta = await composer.add_remote(
-                    remote_spec(host, port, tmp_path, nodes=("dev.image.invert",))
+                    remote_spec(
+                        host,
+                        port,
+                        tmp_path,
+                        nodes=("dev.image.invert",),
+                        trust_reserved=True,
+                    )
                 )
                 assert delta.packs["box1"].comfy_aliases == aliases
                 assert delta.packs["box1"].comfy_groups == groups
@@ -1126,7 +1138,13 @@ def test_remote_composes_comfy_registries_for_selected_owned_nodes(tmp_path: Pat
             composer = ServingComposer()
             try:
                 delta = await composer.add_remote(
-                    remote_spec(host, port, tmp_path, nodes=("dev.image.gradient",))
+                    remote_spec(
+                        host,
+                        port,
+                        tmp_path,
+                        nodes=("dev.image.gradient",),
+                        trust_reserved=True,
+                    )
                 )
                 assert delta.packs["box1"].comfy_aliases is None
                 assert delta.packs["box1"].comfy_groups is None
@@ -1156,9 +1174,11 @@ def test_presentation_divergent_matching_type_composes_by_signature(tmp_path: Pa
         try:
             composer = ServingComposer()
             try:
-                await composer.add_pack(DEV_MANIFEST)
+                await composer.add_pack(PackSpec(DEV_MANIFEST, trust_reserved=True))
                 before_schemas = dict(composer.composition.schemas)
-                delta = await composer.add_remote(remote_spec(host, port, tmp_path))
+                delta = await composer.add_remote(
+                    remote_spec(host, port, tmp_path, trust_reserved=True)
+                )
                 assert delta.schemas == {}
                 assert composer.composition.schemas == before_schemas
                 assert [arm.name for arm in composer._topology["dev.gallery.widgets"]] == [
@@ -1188,10 +1208,12 @@ def test_computationally_divergent_matching_type_is_refused(tmp_path: Path) -> N
         try:
             composer = ServingComposer()
             try:
-                await composer.add_pack(DEV_MANIFEST)
+                await composer.add_pack(PackSpec(DEV_MANIFEST, trust_reserved=True))
                 before = composition_snapshot(composer)
                 with pytest.raises(CompositionError, match="does not match the schema signature"):
-                    await composer.add_remote(remote_spec(host, port, tmp_path))
+                    await composer.add_remote(
+                        remote_spec(host, port, tmp_path, trust_reserved=True)
+                    )
                 assert composition_snapshot(composer) == before
                 await daemon_accepts_a_client(host, port)
             finally:
@@ -1210,9 +1232,15 @@ def test_remote_over_local_pack_updates_arms(
         try:
             composer = ServingComposer(dev=True)
             try:
-                await composer.add_pack(DEV_MANIFEST)
+                await composer.add_pack(PackSpec(DEV_MANIFEST, trust_reserved=True))
                 await composer.add_remote(
-                    remote_spec(host, port, tmp_path, nodes=("dev.gallery.widgets",))
+                    remote_spec(
+                        host,
+                        port,
+                        tmp_path,
+                        nodes=("dev.gallery.widgets",),
+                        trust_reserved=True,
+                    )
                 )
                 assert [arm.name for arm in composer._topology["dev.gallery.widgets"]] == [
                     "dinkster-nodes-dev",
@@ -1233,8 +1261,8 @@ def test_remote_provider_routes_an_unrouted_schema_owner(tmp_path: Path) -> None
         owner_manifest = owner_root / DEV_MANIFEST.name
         owner_manifest.write_text(
             owner_manifest.read_text(encoding="utf-8").replace(
-                'namespaces = ["dev"]\n',
-                'namespaces = ["dev"]\nschema-only = ["dev.gallery.widgets"]\n',
+                '\nnamespaces = ["dev"]\n',
+                '\nnamespaces = ["dev"]\nschema-only = ["dev.gallery.widgets"]\n',
             ),
             encoding="utf-8",
         )
@@ -1242,11 +1270,17 @@ def test_remote_provider_routes_an_unrouted_schema_owner(tmp_path: Path) -> None
         try:
             composer = ServingComposer()
             try:
-                await composer.add_pack(owner_manifest)
+                await composer.add_pack(PackSpec(owner_manifest, trust_reserved=True))
                 assert not composer._routing.has_route("dev.gallery.widgets")
 
                 delta = await composer.add_remote(
-                    remote_spec(host, port, tmp_path, nodes=("dev.gallery.widgets",))
+                    remote_spec(
+                        host,
+                        port,
+                        tmp_path,
+                        nodes=("dev.gallery.widgets",),
+                        trust_reserved=True,
+                    )
                 )
                 assert delta.schemas == {
                     "dev.gallery.widgets": composer.composition.schemas["dev.gallery.widgets"]
@@ -1271,7 +1305,13 @@ def test_nodes_allowlist_filters_announced_types(tmp_path: Path) -> None:
             composer = ServingComposer()
             try:
                 await composer.add_remote(
-                    remote_spec(host, port, tmp_path, nodes=("dev.image.invert",))
+                    remote_spec(
+                        host,
+                        port,
+                        tmp_path,
+                        nodes=("dev.image.invert",),
+                        trust_reserved=True,
+                    )
                 )
                 composition = composer.composition
                 assert "dev.image.invert" in composition.schemas
@@ -1346,7 +1386,8 @@ async def start_reserved_service(
     (tmp_path / "reservedpack_nodes.py").write_text(RESERVED_NODES_MODULE, encoding="utf-8")
     manifest = tmp_path / "reserved-pack.toml"
     manifest.write_text(
-        '[pack]\nname = "reservedpack"\n\n[pack.entry]\nnodes = "reservedpack_nodes:NODES"\n',
+        '[pack]\nname = "reservedpack"\npublisher = "dinkster"\n\n'
+        '[pack.entry]\nnodes = "reservedpack_nodes:NODES"\n',
         encoding="utf-8",
     )
     token_file = tmp_path / "remote-token.txt"
@@ -1479,7 +1520,8 @@ def write_armed_manifest(root: Path) -> Path:
     (root / "armedpack_nodes.py").write_text(ARMED_NODES_MODULE, encoding="utf-8")
     manifest = root / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname = "armedpack"\nnamespaces = ["armed"]\n\n'
+        '[pack]\nname = "armedpack"\npublisher = "dinkster"\n'
+        'namespaces = ["armed"]\n\n'
         '[pack.arms]\nnative = ["armed.echo"]\n\n'
         '[pack.entry]\nnodes = "armedpack_nodes:NODES"\n'
         'types = "armedpack_nodes:register_types"\n'

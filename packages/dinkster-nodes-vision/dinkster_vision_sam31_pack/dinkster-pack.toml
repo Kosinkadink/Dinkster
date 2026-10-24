@@ -1,5 +1,6 @@
 [pack]
 name = "dinkster-vision-sam31"
+publisher = "dinkster"
 namespaces = []
 executes = [
     "dinkster.detection.detect",

@@ -10,6 +10,7 @@ from dinkster_api.v1 import (
     SAVE_TARGET_TYPE,
     SPLAT_FILE_DECODER_ID,
     SPLAT_PLY_MIME,
+    VIDEO_EDIT_TYPE,
     TypeRegistry,
     decode_image_array,
     decode_splat,
@@ -158,9 +159,9 @@ def register_media_types(registry: TypeRegistry) -> None:
             fingerprint=document_codec.document_fingerprint,
             meta=document_codec.document_meta,
         )
-    if "comfy.VIDEO_EDIT" not in registry:
+    if VIDEO_EDIT_TYPE not in registry:
         registry.register(
-            "comfy.VIDEO_EDIT",
+            VIDEO_EDIT_TYPE,
             encode=lambda obj: json.dumps(obj, sort_keys=True, allow_nan=False).encode(),
             decode=json.loads,
         )

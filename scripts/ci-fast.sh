@@ -4,6 +4,7 @@ set -euo pipefail
 uv run --locked python tools/gen_extension_contribution_kinds.py --check
 uv run --locked python scripts/check_extension_factories.py \
   --baseline-ref "origin/${GITHUB_BASE_REF:-main}"
+uv run --locked python scripts/check_builtin_type_spellings.py
 uv run --locked ruff format --check .
 uv run --locked ruff check .
 uv run --locked pyright
@@ -11,6 +12,7 @@ uv run --locked python -m pytest -q \
   tests/test_disabled_features.py \
   tests/test_settings.py \
   tests/test_extension_factory_guard.py \
+  tests/test_builtin_type_spellings.py \
   tests/test_pinned_inference.py \
   tests/test_run_scripts.py \
   tests/test_launch.py \

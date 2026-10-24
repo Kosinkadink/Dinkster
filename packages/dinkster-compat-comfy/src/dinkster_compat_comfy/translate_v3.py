@@ -71,7 +71,7 @@ from dinkster_schema import (
     TypeExpr,
     Widget,
 )
-from dinkster_values import CORE_COMBO, CORE_INT, CORE_STRING
+from dinkster_values import ASSET_TYPE, CORE_BOOLEAN, CORE_COMBO, CORE_INT, CORE_STRING
 
 from .translate import (
     CUSTOM_COMBO_FAMILY_ID,
@@ -330,7 +330,7 @@ def _ordinary_v3_input(
             cast("Any", source_kinds[upload_value]),
             cast("Any", category),
         )
-        type_expr = TypeExpr.concrete("dinkster.asset")
+        type_expr = TypeExpr.concrete(ASSET_TYPE)
         translation.require_asset_type()
     elif image_folder is not None:
         raise CompatError(f"V3 input {input_id!r} image_folder has no UploadType")
@@ -400,7 +400,7 @@ def _ordinary_v3_input(
             pair = boolean_combo(options)
             if pair is not None:
                 on_string, off_string = pair
-                type_expr = TypeExpr.concrete(PRIMITIVES["BOOLEAN"])
+                type_expr = TypeExpr.concrete(CORE_BOOLEAN)
                 widget = BooleanWidget(label_on=on_string, label_off=off_string)
                 if isinstance(default, str):
                     default = default == on_string

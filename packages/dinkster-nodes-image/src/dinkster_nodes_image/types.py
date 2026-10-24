@@ -9,7 +9,12 @@ from dataclasses import dataclass
 from typing import cast
 
 from dinkster_api.v1 import (
+    ASSET_TYPE,
+    BOUNDING_BOX_TYPE,
+    COMFY_ARRAY_TYPE,
     DETECTION_TYPE,
+    IMAGE_TYPE,
+    MASK_TYPE,
     POSE_TYPE,
     REGION_TYPE,
     SEGMENTATION_TYPE,
@@ -299,7 +304,6 @@ def _pose_meta(obj: object) -> Mapping[str, object]:
 
 def register_image_types(registry: TypeRegistry) -> None:
     from dinkster_api.v1 import (
-        ASSET_TYPE,
         PNG_CONTAINER_VERSION,
         SAVE_TARGET_TYPE,
         AssetRef,
@@ -328,8 +332,8 @@ def register_image_types(registry: TypeRegistry) -> None:
     if SAVE_TARGET_TYPE not in registry:
         register_save_target_type(registry)
     for type_id, renderer in (
-        ("IMAGE", render_image_png),
-        ("MASK", render_mask_png),
+        (IMAGE_TYPE, render_image_png),
+        (MASK_TYPE, render_mask_png),
     ):
         if type_id not in registry:
             registry.register(
@@ -338,7 +342,7 @@ def register_image_types(registry: TypeRegistry) -> None:
                 decode=decode_image_array,
                 prepare_buffer_encoding=prepare_image_array_encoding,
                 fingerprint=image_array_fingerprint(type_id),
-                meta=mask_array_meta if type_id == "MASK" else image_array_meta,
+                meta=mask_array_meta if type_id == MASK_TYPE else image_array_meta,
                 validate_encoded=validate_image_encoded,
                 validate_encoded_buffer=validate_image_encoded,
             )
@@ -351,7 +355,7 @@ def register_image_types(registry: TypeRegistry) -> None:
             )
 
     def bind(wire: dict[str, object]) -> AssetRef:
-        coerce = registry.spec("dinkster.asset").coerce if "dinkster.asset" in registry else None
+        coerce = registry.spec(ASSET_TYPE).coerce if ASSET_TYPE in registry else None
         return (
             cast(AssetRef, coerce(wire))
             if coerce
@@ -416,7 +420,7 @@ def register_image_types(registry: TypeRegistry) -> None:
         )
     register_comfy_layers(registry)
     register_comfy_compositor(registry)
-    for type_id in ("comfy.BOUNDING_BOX", "comfy.ARRAY"):
+    for type_id in (BOUNDING_BOX_TYPE, COMFY_ARRAY_TYPE):
         if type_id not in registry:
             registry.register(type_id)
 

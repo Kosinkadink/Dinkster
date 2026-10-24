@@ -43,7 +43,7 @@ ALLOWED: dict[str, set[str]] = {
     # owned by dinkster_values (type ids are registry namespace) and schema's
     # TypeExpr must use the same one (DESIGN 3.13).
     "dinkster_schema": {"dinkster_values"},
-    "dinkster_graph": {"dinkster_schema"},
+    "dinkster_graph": {"dinkster_schema", "dinkster_values"},
     # Shared inference codecs use the Torch-free governed resident pool.
     "dinkster_inference_wire": {
         "dinkster_schema",
