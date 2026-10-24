@@ -9,6 +9,7 @@ from .freeu import FREEU_NODES
 from .image_core import IMAGE_CORE_NODES
 from .image_filters import IMAGE_FILTER_NODES
 from .image_transform import IMAGE_TRANSFORM_NODES
+from .inpaint import INPAINT_NODES
 from .latent import LATENT_NODES
 from .latent_advanced import LATENT_ADVANCED_NODES
 from .latent_operations import LATENT_OPERATION_NODES
@@ -50,6 +51,7 @@ COMFY_NODES = (
     *CLIP_NODES,
     *VAE_NODES,
     *CONDITIONING_NODES,
+    *INPAINT_NODES,
     *MASK_NODES,
     *COMPOSITING_NODES,
     *IMAGE_CORE_NODES,
