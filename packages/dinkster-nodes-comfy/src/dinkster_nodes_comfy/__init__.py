@@ -43,6 +43,7 @@ from .primitive import (
 )
 from .reference_conditioning import REFERENCE_CONDITIONING_NODES
 from .rope_and_mask import ROPE_AND_MASK_NODES
+from .sampler_factories import SAMPLER_FACTORY_NODES
 from .sigma_operations import SIGMA_OPERATION_NODES
 from .sigma_schedulers import SIGMA_SCHEDULER_NODES
 from .stable3d import STABLE3D_NODES
@@ -101,6 +102,7 @@ COMFY_NODES = (
     *VIDEO_LATENT_NODES,
     *VIDEO_LATENT_OPERATION_NODES,
     *POST_PROCESSING_NODES,
+    *SAMPLER_FACTORY_NODES,
     EmptyMochiLatentVideo,
     *AUDIO_LATENT_NODES,
     *DATASET_IMAGE_NODES,
