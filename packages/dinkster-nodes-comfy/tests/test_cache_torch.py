@@ -162,6 +162,9 @@ class CacheModel:
             latent_channels = 2
 
         latent_format = LatentFormat()
+        model_sampling = type(
+            "Sampling", (), {"percent_to_sigma": staticmethod(lambda value: value)}
+        )()
 
     model = Inner()
 
@@ -212,6 +215,67 @@ class ModelConsumer(Node):
             ("outer_sample", "lazycache"),
             ("predict_noise", "lazycache"),
         ]
+        callbacks = {point: wrapper for point, _key, wrapper in model.wrappers}
+        easy_options = model.model_options["transformer_options"].copy()
+        easy_options["easycache"] = EasyCacheHolder(0.2, 0.0, 1.0, 2, False, False, 2)
+        easy_options["easycache"].start_t = torch.tensor(1.0)
+        easy_options["easycache"].end_t = torch.tensor(-1.0)
+        easy_options["sigmas"] = torch.tensor([0.5])
+        easy_options["uuids"] = ["positive", "negative"]
+        video = torch.arange(64, dtype=torch.float32).reshape(2, 2, 4, 4)
+        audio = torch.arange(16, dtype=torch.float32).reshape(2, 2, 2, 2)
+        calls = 0
+
+        def diffusion(value: list[torch.Tensor], _options: dict[str, Any]) -> list[torch.Tensor]:
+            nonlocal calls
+            calls += 1
+            return [value[0] + 2, value[1] + 3]
+
+        first = callbacks["diffusion_model"](
+            diffusion, [video.clone(), audio.clone()], easy_options
+        )
+        warmup = callbacks["diffusion_model"](diffusion, [video + 0.5, audio + 0.5], easy_options)
+        reused = callbacks["diffusion_model"](diffusion, [video + 0.55, audio + 0.55], easy_options)
+        assert calls == 2
+        assert torch.equal(first[0], video + 2)
+        assert torch.equal(warmup[1], audio + 3.5)
+        assert torch.equal(reused[0], video + 2.55)
+        lazy_options = {
+            "transformer_options": {"easycache": LazyCacheHolder(0.2, 0.0, 1.0, 2, False, False, 2)}
+        }
+        lazy_holder = lazy_options["transformer_options"]["easycache"]
+        lazy_holder.start_t = torch.tensor(1.0)
+        lazy_holder.end_t = torch.tensor(-1.0)
+        lazy_calls = 0
+
+        def predict(
+            value: torch.Tensor, _timestep: torch.Tensor, _options: dict[str, Any]
+        ) -> torch.Tensor:
+            nonlocal lazy_calls
+            lazy_calls += 1
+            return value + 4
+
+        callbacks["predict_noise"](predict, video.clone(), torch.tensor([0.5]), lazy_options)
+        callbacks["predict_noise"](predict, video + 0.5, torch.tensor([0.5]), lazy_options)
+        assert torch.equal(
+            callbacks["predict_noise"](predict, video + 0.55, torch.tensor([0.5]), lazy_options),
+            video + 4.55,
+        )
+        assert lazy_calls == 2
+        original_options = model.model_options
+
+        class Guider:
+            model_options = original_options
+            model_patcher = type("ModelPatcher", (), {"model": model.model})()
+
+        class Outer:
+            class_obj = Guider()
+
+            def __call__(self, *_args: object, **_kwargs: object) -> str:
+                return "sampled"
+
+        assert callbacks["outer_sample"](Outer(), None, None, None, [1, 0]) == "sampled"
+        assert Outer.class_obj.model_options is original_options
         return cls.outputs(value=float(len(model.wrappers)))
 
 
