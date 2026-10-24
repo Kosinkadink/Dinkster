@@ -15,3 +15,6 @@ attention callbacks for the native Comfy guidance interfaces.
 Native SIGMAS tensors cross worker boundaries as canonical tensor records,
 preserving their dtype, shape, bytes, and fingerprint. Legacy schedule
 settings remain supported.
+
+Native scheduler nodes provide Basic, Karras, Exponential, Polyexponential,
+Laplace, VP, beta sampling, and SD Turbo sigma schedules.

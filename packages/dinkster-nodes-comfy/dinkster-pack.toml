@@ -230,6 +230,14 @@ namespaces = [
     "NormalizeImages",
     "AdjustBrightness",
     "AdjustContrast",
+    "BasicScheduler",
+    "KarrasScheduler",
+    "ExponentialScheduler",
+    "PolyexponentialScheduler",
+    "LaplaceScheduler",
+    "VPScheduler",
+    "BetaSamplingScheduler",
+    "SDTurboScheduler",
 ]
 
 [pack.sandbox]
