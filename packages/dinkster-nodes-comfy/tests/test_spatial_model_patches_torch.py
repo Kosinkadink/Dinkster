@@ -193,8 +193,16 @@ class ModelResult(Node):
         assert original.attn_input is None
         assert original.attn_output is None
         query = torch.arange(30, dtype=torch.float32).reshape(1, 15, 2) + 1
+        torch.manual_seed(7)
         merged, _, _ = model.attn_input(query, query, query, {"original_shape": (1, 2, 3, 5)})
         restored = model.attn_output(merged, {})
+        assert merged.shape == (1, 11, 2)
+        assert torch.equal(
+            merged[0, -4:], torch.tensor([[3.0, 4.0], [1.0, 2.0], [5.0, 6.0], [15.0, 16.0]])
+        )
+        assert torch.equal(
+            restored[0, 5:10], torch.full((5, 2), 15.0).add(torch.tensor([0.0, 1.0]))
+        )
         return cls.outputs(value=float(restored.sum()))
 
 
@@ -216,7 +224,10 @@ class HyperTileResult(Node):
         assert original.attn_output is None
         query = torch.arange(192, dtype=torch.float32).reshape(1, 96, 2)
         tiled, _, _ = model.attn_input(query, query, query, {"original_shape": (1, 2, 8, 12)})
-        return cls.outputs(value=float(model.attn_output(tiled, {}).sum()))
+        restored = model.attn_output(tiled, {})
+        assert tiled.shape == (6, 16, 2)
+        assert torch.equal(restored, query)
+        return cls.outputs(value=float(restored.sum()))
 
 
 class DownscaleResult(Node):
@@ -241,6 +252,27 @@ class DownscaleResult(Node):
             hidden, {"block": ("input", 3), "sigmas": [torch.tensor(1.0)]}
         )
         restored, _ = model.output_patch(reduced, hidden, {})
+        assert reduced.shape == (1, 1, 2, 4)
+        assert torch.equal(
+            reduced, torch.tensor([[[[7.0, 9.0, 11.0, 13.0], [21.0, 23.0, 25.0, 27.0]]]])
+        )
+        assert restored.shape == hidden.shape
+        assert torch.equal(
+            restored,
+            torch.tensor(
+                [
+                    [
+                        [
+                            [7.0, 7.0, 9.0, 11.0, 11.0, 13.0, 13.0],
+                            [7.0, 7.0, 9.0, 11.0, 11.0, 13.0, 13.0],
+                            [21.0, 21.0, 23.0, 25.0, 25.0, 27.0, 27.0],
+                            [21.0, 21.0, 23.0, 25.0, 25.0, 27.0, 27.0],
+                            [21.0, 21.0, 23.0, 25.0, 25.0, 27.0, 27.0],
+                        ]
+                    ]
+                ]
+            ),
+        )
         return cls.outputs(value=float(restored.sum()))
 
 
