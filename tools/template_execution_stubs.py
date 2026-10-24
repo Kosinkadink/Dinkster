@@ -202,6 +202,23 @@ def _stub(row: Mapping[str, Any]) -> type[Node]:
                 value = NoiseSelection(1)
             elif atom == "SAMPLER":
                 value = BuiltinSamplerSelection("euler", ())
+            elif node_type == "CreateBoundingBoxes" and atom == "ARRAY":
+                value = [
+                    {
+                        "bbox": [column, row, column + 1, row + 1],
+                        "desc": f"CPU fixture cell {row},{column}",
+                        "text": "",
+                        "color_palette": ["#000000"],
+                    }
+                    for row in range(4)
+                    for column in range(4)
+                ]
+            elif node_type == "BuildJsonPromptIdeogram" and atom == "DICT":
+                value = {
+                    **values,
+                    "color_palette": ["#000000"],
+                    "art_style": values.get("style.art_style", "CPU fixture"),
+                }
             else:
                 value = matching if matching is not None else {"fixtureType": atom}
             result[output.id] = value
