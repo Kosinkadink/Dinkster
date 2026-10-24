@@ -38,10 +38,6 @@ _STRING = TypeExpr.concrete(CORE_STRING)
 _CATEGORY = "model/sampling/sigmas"
 
 
-def _sigmas(value: object) -> Any:
-    return materialize_latent(value)
-
-
 class SplitSigmas(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -57,7 +53,7 @@ class SplitSigmas(Node):
 
     @classmethod
     def execute(cls, *, sigmas: object, step: int) -> Mapping[str, object]:
-        materialized: Any = _sigmas(sigmas)
+        materialized: Any = materialize_latent(sigmas)
         return cls.outputs(high_sigmas=materialized[: step + 1], low_sigmas=materialized[step:])
 
 
@@ -78,7 +74,7 @@ class SplitSigmasDenoise(Node):
 
     @classmethod
     def execute(cls, *, sigmas: object, denoise: float) -> Mapping[str, object]:
-        materialized: Any = _sigmas(sigmas)
+        materialized: Any = materialize_latent(sigmas)
         total_steps = round(max(materialized.shape[-1] - 1, 0) * denoise)
         return cls.outputs(
             high_sigmas=materialized[:-total_steps], low_sigmas=materialized[-(total_steps + 1) :]
@@ -97,7 +93,7 @@ class FlipSigmas(Node):
 
     @classmethod
     def execute(cls, *, sigmas: object) -> Mapping[str, object]:
-        materialized: Any = _sigmas(sigmas)
+        materialized: Any = materialize_latent(sigmas)
         if len(materialized) == 0:
             return cls.outputs(sigmas=materialized)
         result: Any = materialized.flip(0)
@@ -126,7 +122,7 @@ class SetFirstSigma(Node):
 
     @classmethod
     def execute(cls, *, sigmas: object, sigma: float) -> Mapping[str, object]:
-        result = _sigmas(sigmas).clone()
+        result = materialize_latent(sigmas).clone()
         result[0] = sigma
         return cls.outputs(sigmas=result)
 
@@ -174,7 +170,7 @@ class ExtendIntermediateSigmas(Node):
         end_at_sigma: float,
         spacing: str,
     ) -> Mapping[str, object]:
-        materialized: Any = _sigmas(sigmas)
+        materialized: Any = materialize_latent(sigmas)
         torch: Any = importlib.import_module("torch")
         if start_at_sigma < 0:
             start_at_sigma = float("inf")
