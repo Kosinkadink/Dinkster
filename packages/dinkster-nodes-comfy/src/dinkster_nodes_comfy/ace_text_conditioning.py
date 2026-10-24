@@ -159,7 +159,7 @@ class TextEncodeAceStepAudio15(Node):
                     _INT,
                     default=0,
                     widget=NumberWidget(
-                        min=0, max=0xFFFFFFFFFFFFFFFF, control_after_generate="randomize"
+                        min=0, max=0xFFFFFFFFFFFFFFFF, control_after_generate="fixed"
                     ),
                 ),
                 InputSpec("bpm", _INT, default=120, widget=NumberWidget(min=10, max=300)),
