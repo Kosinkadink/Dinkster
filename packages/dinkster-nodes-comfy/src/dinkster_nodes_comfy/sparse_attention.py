@@ -541,10 +541,23 @@ def _number(
     return InputSpec(
         name,
         _FLOAT,
-        required=False,
         default=default,
         advanced=advanced,
         widget=NumberWidget(min=minimum, max=maximum, step=step),
+    )
+
+
+def _method_input(name: str, default: float, doc: str) -> InputSpec:
+    return InputSpec(
+        name,
+        _FLOAT,
+        default=default,
+        doc=doc,
+        widget=NumberWidget(
+            min=0.0 if name == "tau" else 0.5,
+            max=4.0 if name == "tau" else 95.0,
+            step=0.05 if name == "tau" else 0.5,
+        ),
     )
 
 
@@ -552,68 +565,96 @@ class BlockSparseAttention(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
-            node_type="comfy.BlockSparseAttention",
+            node_type="BlockSparseAttention",
             display_name="Model Sparse Attention",
             category="model/patch",
             description=(
-                "Applies block-sparse attention to eligible model attention layers. "
-                "Dense attention remains active outside the selected schedule "
-                "and unsupported calls."
+                "Applies block-sparse attention to eligible layers. "
+                "The dense model attention backend is used outside the schedule, "
+                "for dense blocks, and below min_tokens."
             ),
             search_terms=("Block Sparse Attention", "sol-attn", "SLA", "FastVideo"),
             inputs=(
-                InputSpec("model", _MODEL, doc="The model to patch."),
+                InputSpec("model", _MODEL, display_name="model", doc="The model to patch."),
                 _number("start_percent", 0.2, 0.0, 1.0, 0.01),
                 _number("end_percent", 1.0, 0.0, 1.0, 0.01),
-                InputSpec("dense_blocks", _STRING, required=False, default="", advanced=True),
+                InputSpec(
+                    "dense_blocks",
+                    _STRING,
+                    default="",
+                    advanced=True,
+                    doc="Transformer blocks that always run dense, e.g. '0, 1, 47-49'.",
+                ),
                 InputSpec(
                     "min_tokens",
                     _INT,
-                    required=False,
                     default=12288,
                     advanced=True,
+                    doc="Sequences shorter than this stay dense.",
                     widget=NumberWidget(min=0, max=1 << 20, step=512),
                 ),
                 InputSpec(
                     "extra_tokens",
                     _INT,
-                    required=False,
                     default=256,
                     advanced=True,
+                    doc="Extra top-scoring tokens beyond selected blocks. Ignored for VSA.",
                     widget=NumberWidget(min=0, max=256, step=64),
                 ),
                 InputSpec(
                     "sink_conditioning",
                     _COMBO,
-                    required=False,
                     default="exact_kv_and_rows",
                     advanced=True,
+                    doc="MiniMax-H3 conditioning rows kept exact.",
                     widget=ComboWidget(
                         tuple(
                             ComboOption(value) for value in ("exact_kv", "exact_kv_and_rows", "off")
                         )
                     ),
                 ),
-                InputSpec("verbose", _BOOLEAN, required=False, default=False, advanced=True),
+                InputSpec(
+                    "verbose",
+                    _BOOLEAN,
+                    default=False,
+                    advanced=True,
+                    doc="Log sparse or dense routing.",
+                ),
             ),
             combos=(
                 DynamicComboSpec(
                     "selection",
+                    display_name="method",
+                    doc="Method used to choose key blocks for exact token-level attention.",
                     options=(
                         DynamicComboOption(
-                            "Sol-Attn (adaptive tau)", (_number("tau", 1.3, 0.0, 4.0, 0.05),)
+                            "sol-attn",
+                            (
+                                _method_input(
+                                    "tau", 1.3, "Adaptive threshold in score-distribution sigmas."
+                                ),
+                            ),
                         ),
                         DynamicComboOption(
-                            "top-k (SLA)", (_number("keep_percent", 10.0, 0.5, 95.0, 0.5),)
+                            "sla",
+                            (
+                                _method_input(
+                                    "keep_percent", 10.0, "Percent of key blocks to keep exactly."
+                                ),
+                            ),
                         ),
                         DynamicComboOption(
-                            "VSA (FastVideo)", (_number("keep_percent", 10.0, 0.5, 95.0, 0.5),)
+                            "vsa",
+                            (
+                                _method_input(
+                                    "keep_percent", 10.0, "Percent of video cubes to keep exactly."
+                                ),
+                            ),
                         ),
                     ),
                 ),
             ),
             outputs=(OutputSpec("MODEL", _MODEL, display_name="model"),),
-            aliases=("BlockSparseAttention",),
         )
 
     @classmethod
@@ -626,7 +667,7 @@ class BlockSparseAttention(Node):
         end_percent: float = 1.0,
         dense_blocks: str = "",
         min_tokens: int = 12288,
-        extra_tokens: int = 256,
+        extra_tokens: int = 0,
         sink_conditioning: str = "exact_kv_and_rows",
         verbose: bool = False,
     ) -> Mapping[str, object]:
@@ -635,10 +676,8 @@ class BlockSparseAttention(Node):
             MODEL=apply_block_sparse_attention(
                 model,
                 tau=float(selection.get("tau", 1.3)),
-                topk_ratio=0.0
-                if mode == "Sol-Attn (adaptive tau)"
-                else float(selection["keep_percent"]) / 100.0,
-                vsa=mode == "VSA (FastVideo)",
+                topk_ratio=0.0 if mode == "sol-attn" else float(selection["keep_percent"]) / 100.0,
+                vsa=mode == "vsa",
                 start_percent=start_percent,
                 end_percent=end_percent,
                 min_tokens=min_tokens,
