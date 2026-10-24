@@ -291,6 +291,8 @@ class ResumableConversation:
         elif record is not None and kind == "memoryRelease":
             body = self._with_key(body, record.key)
             record.release = (body, payloads)
+        elif record is not None and kind == "runControl":
+            body = self._with_key(body, record.key)
         elif record is not None and kind == "result":
             body = self._with_key(body, record.key)
             retained = _retained_frame_bytes(body, payloads)

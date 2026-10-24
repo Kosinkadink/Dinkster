@@ -110,6 +110,7 @@ from dinkster_values import (
     InvalidRenditionRequest,
     RenditionUnavailable,
     TypeRegistry,
+    Value,
     default_decode,
     process_instance_token,
     register_core_types,
@@ -975,6 +976,7 @@ async def serve_connection(
     # a stub it has not decoded yet, so this side must hold the resident until
     # the parent vouches for it (DESIGN 3.10: the in-flight half of the gate).
     inflight_result_refs: dict[str, frozenset[str]] = {}
+    inflight_control_refs: dict[str, set[str]] = {}
     full_release_operations: set[str] = set()
     full_release_commits: set[str] = set()
     connection_token = object()
@@ -1014,6 +1016,8 @@ async def serve_connection(
     def held_resource_ids() -> set[str]:
         held: set[str] = set()
         for refs in inflight_result_refs.values():
+            held.update(refs)
+        for refs in inflight_control_refs.values():
             held.update(refs)
         return held
 
@@ -1364,15 +1368,6 @@ async def serve_connection(
         try:
             consumed: list[str] = []
             invocation = decode_invocation(codec, header, blobs, consumed)
-            run_context = BoundaryRunContext(
-                invocation_id,
-                invocation.node_id,
-                invocation.inputs,
-                codec,
-                send,
-            )
-            run_contexts[invocation_id] = run_context
-            invocation = replace(invocation, run_control=run_context)
             if consumed:
                 await send({"type": "shmAck", "segments": consumed})
             # Memory lease (DESIGN 3.10): the pack's planner names what this
@@ -1415,7 +1410,11 @@ async def serve_connection(
                 if planner is not None
                 else ()
             )
-            if requests:
+
+            async def reserve_memory() -> str | None:
+                nonlocal reserve_sent
+                if not requests:
+                    return None
                 grant: asyncio.Future[str | None] = asyncio.get_running_loop().create_future()
                 pending_grants[invocation_id] = grant
                 reserve_sent = True
@@ -1429,12 +1428,50 @@ async def serve_connection(
                     }
                 )
                 try:
-                    denial = await grant
+                    return await grant
                 finally:
                     pending_grants.pop(invocation_id, None)
+
+            async def suspend_memory() -> None:
+                if requests:
+                    await send({"type": "memoryRelease", "requestId": invocation_id})
+
+            async def resume_memory() -> None:
+                denial = await reserve_memory()
                 if denial is not None:
-                    await send_error(invocation_id, header, f"memory admission failed: {denial}")
-                    return
+                    raise RuntimeError(f"memory admission failed: {denial}")
+
+            async def prepare_control_values(values: Mapping[str, Value]) -> Mapping[str, Value]:
+                arm = pack_name if invocation.arm is None else f"{pack_name}@{invocation.arm}"
+                values = {
+                    name: stamp_resource_producer_arm(value, process_instance_token(), arm)
+                    for name, value in values.items()
+                }
+                refs = inflight_control_refs.setdefault(invocation_id, set())
+                for value in values.values():
+                    refs.update(value_resource_ids(value))
+                if blob_transfer is not None:
+                    files = source_asset_files(values, resolver_from_env())
+                    if files:
+                        await ensure_peer_holds(files)
+                return values
+
+            denial = await reserve_memory()
+            if denial is not None:
+                await send_error(invocation_id, header, f"memory admission failed: {denial}")
+                return
+            run_context = BoundaryRunContext(
+                invocation_id,
+                invocation.node_id,
+                invocation.inputs,
+                codec,
+                send,
+                suspend_memory,
+                resume_memory,
+                prepare_control_values,
+            )
+            run_contexts[invocation_id] = run_context
+            invocation = replace(invocation, run_control=run_context)
             started = time.perf_counter()
             workgroup_cancelled = getattr(workgroup_handler, "invocation_cancelled", None)
             with use_execution_context(
@@ -1612,6 +1649,7 @@ async def serve_connection(
             context = run_contexts.pop(invocation_id, None)
             if context is not None:
                 context.close()
+            inflight_control_refs.pop(invocation_id, None)
             if result_send_locked:
                 result_transfer_lock.release()
             # Refuse late calls synchronously before cleanup can suspend. A

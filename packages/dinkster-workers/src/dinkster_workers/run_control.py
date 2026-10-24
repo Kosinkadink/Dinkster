@@ -8,16 +8,33 @@ cannot address a later run which happens to reuse a node id.
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from multiprocessing.shared_memory import SharedMemory
+from types import MappingProxyType
 from typing import Any, cast
 
+from dinkster_protocol import InvocationResult
 from dinkster_schema import RunExecutionContext
-from dinkster_values import Value, default_decode, default_encode
+from dinkster_values import Value
 
-from .boundary import BoundaryError, ValueCodec
+from .boundary import BoundaryError, ValueCodec, encode_result, release_segment
 
-Send = Callable[[dict[str, object], Sequence[bytes]], Awaitable[None]]
+Send = Callable[[dict[str, object], Sequence[bytes], Sequence[SharedMemory]], Awaitable[None]]
+
+
+def _document(value: Mapping[str, object]) -> bytes:
+    return json.dumps(value, default=dict, separators=(",", ":")).encode("utf-8")
+
+
+def _freeze(value: object) -> object:
+    if isinstance(value, dict):
+        return MappingProxyType(
+            {key: _freeze(item) for key, item in cast("dict[str, object]", value).items()}
+        )
+    if isinstance(value, list):
+        return tuple(_freeze(item) for item in cast("list[object]", value))
+    return value
 
 
 class BoundaryRunContext:
@@ -30,12 +47,19 @@ class BoundaryRunContext:
         inputs: Mapping[str, Value],
         codec: ValueCodec,
         send: Send,
+        suspend: Callable[[], Awaitable[None]],
+        resume: Callable[[], Awaitable[None]],
+        prepare_values: Callable[[Mapping[str, Value]], Awaitable[Mapping[str, Value]]],
     ) -> None:
         self._invocation_id = invocation_id
         self._node_id = node_id
         self._inputs = inputs
         self._codec = codec
         self._send = send
+        self._suspend = suspend
+        self._resume = resume
+        self._prepare_values = prepare_values
+        self._wait_lock = asyncio.Lock()
         self._pending: dict[str, asyncio.Future[tuple[dict[str, Any], list[bytes]]]] = {}
         self._index = 0
         self._closed = False
@@ -66,9 +90,15 @@ class BoundaryRunContext:
         return True
 
     async def _request(
-        self, operation: str, fields: Mapping[str, object] = {}, blobs: Sequence[bytes] = ()
+        self,
+        operation: str,
+        fields: Mapping[str, object] = {},
+        blobs: Sequence[bytes] = (),
+        segments: Sequence[SharedMemory] = (),
     ) -> tuple[dict[str, Any], list[bytes]]:
         if self._closed:
+            for segment in segments:
+                release_segment(segment)
             raise RuntimeError("execution context is no longer active")
         request_id = f"{self._invocation_id}:control:{self._index}"
         self._index += 1
@@ -86,12 +116,15 @@ class BoundaryRunContext:
                     **fields,
                 },
                 blobs,
+                segments,
             )
             header, reply_blobs = await future
         finally:
             self._pending.pop(request_id, None)
         error = header.get("error")
         if type(error) is str:
+            if header.get("errorType") == "ValueError":
+                raise ValueError(error)
             raise RuntimeError(error)
         return header, reply_blobs
 
@@ -99,13 +132,25 @@ class BoundaryRunContext:
         _, blobs = await self._request("getGraph")
         if len(blobs) != 1:
             raise BoundaryError("run control graph response is malformed")
-        graph = default_decode(blobs[0])
+        graph = json.loads(blobs[0])
         if not isinstance(graph, Mapping):
             raise BoundaryError("run control graph response is not a mapping")
-        return cast("Mapping[str, object]", graph)
+        return cast("Mapping[str, object]", _freeze(cast("Mapping[str, object]", graph)))
 
     async def await_run_value(self, node_id: str) -> Mapping[str, Value]:
-        header, blobs = await self._request("awaitRunValue", {"nodeId": node_id})
+        async with self._wait_lock:
+            await self._suspend()
+            try:
+                header, blobs = await self._request("awaitRunValue", {"nodeId": node_id})
+            except asyncio.CancelledError:
+                raise
+            except BaseException:
+                if not self._closed:
+                    await self._resume()
+                raise
+            if self._closed:
+                raise RuntimeError("execution context is no longer active")
+            await self._resume()
         values = header.get("values")
         if not isinstance(values, Mapping):
             raise BoundaryError("run control value response is malformed")
@@ -118,24 +163,30 @@ class BoundaryRunContext:
         }
         if len(result) != len(typed_values):
             raise BoundaryError("run control value response is malformed")
+        if consumed:
+            await self._send({"type": "shmAck", "segments": consumed}, [], [])
         return result
 
     async def publish_run_value(self, node_id: str, value: Mapping[str, Value]) -> None:
-        blobs: list[bytes] = []
-        segments: list[SharedMemory] = []
-        values = {
-            name: self._codec.encode(item, blobs, segments)[0]
-            for name, item in value.items()
-        }
-        if segments:
-            raise BoundaryError("run control values cannot use shared memory")
-        await self._request("publishRunValue", {"nodeId": node_id, "values": values}, blobs)
+        if self._closed:
+            raise RuntimeError("execution context is no longer active")
+        value = await self._prepare_values(value)
+        with self._codec.suspend_persistent_cas():
+            encoded, blobs, segments = encode_result(
+                self._codec,
+                InvocationResult(outputs=value),
+                self._invocation_id,
+                0,
+            )
+        await self._request(
+            "publishRunValue", {"nodeId": node_id, "values": encoded["outputs"]}, blobs, segments
+        )
 
     async def inhibit(self, node_ids: Sequence[str]) -> None:
         await self._request("inhibit", {"nodeIds": list(node_ids)})
 
     async def override_node(self, node_id: str, inputs: Mapping[str, object]) -> None:
-        await self._request("overrideNode", {"nodeId": node_id}, [default_encode(dict(inputs))])
+        await self._request("overrideNode", {"nodeId": node_id}, [_document(inputs)])
 
 
 async def dispatch_run_control(
@@ -144,6 +195,8 @@ async def dispatch_run_control(
     header: Mapping[str, Any],
     blobs: list[bytes],
     send: Send,
+    publish: Callable[[str, Mapping[str, Value]], Awaitable[None]],
+    prepare_values: Callable[[Mapping[str, Value]], Awaitable[None]],
 ) -> None:
     """Run one parent-side request and send a single reply."""
     request_id = header.get("requestId")
@@ -156,25 +209,32 @@ async def dispatch_run_control(
         "requestId": request_id,
     }
     reply_blobs: list[bytes] = []
+    segments: list[SharedMemory] = []
+    consumed: list[str] = []
     try:
         operation = header.get("operation")
         if operation == "getGraph":
-            reply_blobs.append(default_encode(dict(await context.get_graph())))
+            reply_blobs.append(_document(await context.get_graph()))
         elif operation == "awaitRunValue":
             node_id = header.get("nodeId")
             if type(node_id) is not str:
                 raise BoundaryError("run control node id is malformed")
-            reply_values: dict[str, object] = {}
-            for name, value in (await context.await_run_value(node_id)).items():
-                reply_values[name] = codec.encode(value, reply_blobs, [])[0]
-            reply["values"] = reply_values
+            published = await context.await_run_value(node_id)
+            await prepare_values(published)
+            with codec.suspend_persistent_cas():
+                encoded, reply_blobs, segments = encode_result(
+                    codec,
+                    InvocationResult(outputs=published),
+                    invocation_id,
+                    0,
+                )
+            reply["values"] = encoded["outputs"]
         elif operation == "publishRunValue":
             raw_values = header.get("values")
             node_id = header.get("nodeId")
             if type(node_id) is not str or not isinstance(raw_values, Mapping):
                 raise BoundaryError("run control publish request is malformed")
             typed_values = cast("Mapping[object, object]", raw_values)
-            consumed: list[str] = []
             values: dict[str, Value] = {
                 name: codec.decode(cast("Mapping[str, Any]", wire), blobs, consumed)[0]
                 for name, wire in typed_values.items()
@@ -182,7 +242,7 @@ async def dispatch_run_control(
             }
             if len(values) != len(typed_values):
                 raise BoundaryError("run control publish request is malformed")
-            await context.publish_run_value(node_id, values)
+            await publish(node_id, values)
         elif operation == "inhibit":
             node_ids_raw = header.get("nodeIds")
             if not isinstance(node_ids_raw, list):
@@ -196,7 +256,7 @@ async def dispatch_run_control(
             node_id = header.get("nodeId")
             if type(node_id) is not str or len(blobs) != 1:
                 raise BoundaryError("run control override request is malformed")
-            inputs = default_decode(blobs[0])
+            inputs = json.loads(blobs[0])
             if not isinstance(inputs, Mapping):
                 raise BoundaryError("run control override inputs are malformed")
             await context.override_node(node_id, cast("Mapping[str, object]", inputs))
@@ -204,4 +264,7 @@ async def dispatch_run_control(
             raise BoundaryError("unknown run control operation")
     except Exception as exc:  # node-facing failures retain their normal messages
         reply["error"] = str(exc)
-    await send(reply, reply_blobs)
+        reply["errorType"] = "ValueError" if isinstance(exc, ValueError) else "RuntimeError"
+    if consumed:
+        await send({"type": "shmAck", "segments": consumed}, [], [])
+    await send(reply, reply_blobs, segments)

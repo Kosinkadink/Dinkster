@@ -105,7 +105,7 @@ from .manifest import (
     generation_providers_from_wire,
     vision_providers_from_wire,
 )
-from .produced_assets import ProducedAssetAuthority, result_asset_digests
+from .produced_assets import ProducedAssetAuthority, result_asset_digests, source_asset_files
 from .relay import MemoryRelay, ReleaseGuard, WorkerFullReleaseResult
 from .resume import InvocationKey
 from .run_control import dispatch_run_control
@@ -486,8 +486,9 @@ class BoundarySession:
         # Events for an id with no sink (caller passed none, or the result
         # already landed) are dropped - they are chatter by contract.
         self._event_sinks: dict[str, OnInvocationEvent] = {}
-        self._run_controls: dict[str, object] = {}
+        self._run_controls: dict[str, Invocation] = {}
         self._run_control_requests: set[tuple[str, str]] = set()
+        self._run_control_tasks: dict[tuple[str, str], asyncio.Task[None]] = {}
         # Memory leases (DESIGN 3.10): the peer names what it is about to
         # materialize; this side holds the governor-backed reservation until
         # the peer releases it. None means grant-without-accounting - the
@@ -1385,6 +1386,44 @@ class BoundarySession:
             self._staging_pending.pop(request_id, None)
             self._stage_event_sinks.pop(request_id, None)
 
+    async def _publish_control_value(
+        self, invocation: Invocation, node_id: str, values: Mapping[str, Value]
+    ) -> None:
+        if self._device_map is not None:
+            values = {name: self._device_map.value(value) for name, value in values.items()}
+        handoff: list[str] = []
+        if self._release_guard is not None:
+            handoff = [
+                rid
+                for value in values.values()
+                for rid in value_resource_ids(value)
+                if self._release_guard.pins.pin(rid)
+            ]
+        try:
+            adoption = asyncio.create_task(
+                asyncio.to_thread(
+                    self._produced_assets.capture,
+                    values,
+                    self._blob_store,
+                    invocation.inputs,
+                )
+            )
+            self._asset_adoptions.add(adoption)
+            adoption.add_done_callback(self._asset_adoptions.discard)
+            await await_file_operation(adoption)
+            assert invocation.run_control is not None
+            await invocation.run_control.publish_run_value(node_id, values)
+        finally:
+            if self._release_guard is not None:
+                for rid in handoff:
+                    self._release_guard.pins.unpin(rid)
+
+    async def _prepare_control_values(self, values: Mapping[str, Value]) -> None:
+        if self._blob_transfer is not None:
+            files = source_asset_files(values, resolver_from_env())
+            if files:
+                await self._blob_transfer.ensure_peer_holds(files)
+
     async def invoke(
         self,
         invocation: Invocation,
@@ -1419,7 +1458,7 @@ class BoundarySession:
             future.add_done_callback(_retrieve_future_exception)
         self._pending[invocation.invocation_id] = future
         if invocation.run_control is not None:
-            self._run_controls[invocation.invocation_id] = invocation.run_control
+            self._run_controls[invocation.invocation_id] = invocation
         if on_event is not None:
             self._event_sinks[invocation.invocation_id] = on_event
         started_at_ns = time.time_ns()
@@ -1464,6 +1503,15 @@ class BoundarySession:
         finally:
             self._event_sinks.pop(invocation.invocation_id, None)
             self._run_controls.pop(invocation.invocation_id, None)
+            control_tasks = [
+                task
+                for key, task in self._run_control_tasks.items()
+                if key[0] == invocation.invocation_id
+            ]
+            for task in control_tasks:
+                task.cancel()
+            if control_tasks:
+                await asyncio.gather(*control_tasks, return_exceptions=True)
             self._run_control_requests = {
                 item for item in self._run_control_requests if item[0] != invocation.invocation_id
             }
@@ -1766,6 +1814,12 @@ class BoundarySession:
         self._stage_event_sinks.clear()
         self._event_sinks.clear()
         self._run_controls.clear()
+        control_tasks = list(self._run_control_tasks.values())
+        for task in control_tasks:
+            task.cancel()
+        if control_tasks:
+            await asyncio.gather(*control_tasks, return_exceptions=True)
+        self._run_control_tasks.clear()
         self._run_control_requests.clear()
         self._invocation_keys.clear()
         self._last_event_sequences.clear()
@@ -2044,29 +2098,55 @@ class BoundarySession:
                     if type(invocation_id) is not str or type(request_id) is not str:
                         raise BoundaryError("run control request identity is malformed")
                     context = self._run_controls.get(invocation_id)
+                    if self._resumable:
+                        key = InvocationKey.from_header(header)
+                        if self._invocation_keys.get(invocation_id) != key:
+                            raise BoundaryError("run control request names no invocation")
+                    if invocation_id in self._cancelled_invocations:
+                        consumed: list[str] = []
+                        decode_result(
+                            self._codec, {"outputs": header.get("values", {})}, blobs, consumed
+                        )
+                        if consumed:
+                            await self.send({"type": "shmAck", "segments": consumed}, [])
+                        continue
                     control_key = (invocation_id, request_id)
                     if context is None or control_key in self._run_control_requests:
                         raise BoundaryError("run control request names no active invocation")
                     self._run_control_requests.add(control_key)
+                    asset_owner = object()
+                    if self._blob_store is not None:
+                        digests = result_asset_digests({"outputs": header.get("values", {})}, blobs)
+                        self._blob_store.pin(asset_owner, digests)
 
                     async def run_control_request(
-                        request_context: object = context,
+                        request_invocation: Invocation = context,
                         request_header: dict[str, Any] = header,
                         request_blobs: list[bytes] = blobs,
                         request_key: tuple[str, str] = control_key,
+                        request_asset_owner: object = asset_owner,
                     ) -> None:
+                        async def publish(node_id: str, values: Mapping[str, Value]) -> None:
+                            await self._publish_control_value(request_invocation, node_id, values)
+
                         try:
+                            assert request_invocation.run_control is not None
                             await dispatch_run_control(
-                                cast("Any", request_context),
+                                request_invocation.run_control,
                                 self._codec,
                                 request_header,
                                 request_blobs,
                                 self.send,
+                                publish,
+                                self._prepare_control_values,
                             )
                         finally:
-                            self._run_control_requests.discard(request_key)
+                            self._run_control_tasks.pop(request_key, None)
+                            if self._blob_store is not None:
+                                self._blob_store.unpin(request_asset_owner)
 
                     task = asyncio.create_task(run_control_request())
+                    self._run_control_tasks[control_key] = task
                     task.add_done_callback(_retrieve_future_exception)
                 elif kind == "schemaReloadRequest":
                     if not self._schema_reload or blobs:
@@ -2120,6 +2200,9 @@ class BoundarySession:
                     lease = self._leases.get(str(header.get("requestId")))
                     if lease is not None:
                         lease[1].set()
+                        decision = self._lease_decisions.get(str(header.get("requestId")))
+                        if decision is not None and decision.get("type") == "memoryGrant":
+                            await lease[0]
                     self._lease_decisions.pop(str(header.get("requestId")), None)
                 elif kind == "memoryReport":
                     consumers = header.get("consumers")
@@ -2164,7 +2247,10 @@ class BoundarySession:
                     future.set_result(header)
                 elif kind == "cancelAck":
                     key = InvocationKey.from_header(header)
-                    if self._invocation_keys.get(key.invocation_id) != key:
+                    registered = self._invocation_keys.get(key.invocation_id)
+                    if registered is None:
+                        continue
+                    if registered != key:
                         raise BoundaryError("cancel acknowledgement names no invocation")
                     pending = self._pending.pop(key.invocation_id, None)
                     if pending is not None and not pending.done():
