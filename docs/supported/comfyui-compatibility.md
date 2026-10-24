@@ -23,6 +23,8 @@
   clones the encoder without changing the source under exact core interfaces.
 - FreeU and FreeU_V2 clone models and patch UNet output blocks under their
   exact core interfaces, including CPU Fourier fallback.
+- Video Linear CFG Guidance and Video Triangle CFG Guidance clone model
+  patchers and install their native frame-wise CFG callbacks under exact core IDs.
 - Ten native conditioning nodes combine, blend, concatenate, multiply, mask,
   zero, and set area or timestep metadata under their exact ComfyUI interfaces.
 - Native VAE inpainting encoding and model conditioning preserve crop, mask,
@@ -38,8 +40,11 @@
   stitch, resize with padding, rotate, flip, and scale to a maximum dimension.
 - Native morphology applies erosion, dilation, opening, closing, gradients and
   top/bottom hats; RGB/YUV conversion splits and joins three image channels.
-- Five native video latent nodes create Hunyuan Video, Hunyuan Video 1.5, LTXV,
-  Cosmos, and autoregressive video samples under their exact ComfyUI IDs.
+- Eight native video latent nodes create Hunyuan Video, Hunyuan Video 1.5, LTXV,
+  Cosmos, and autoregressive video samples, trim video frames, freeze LTXV video
+  or audio samples, and normalize video latent starts under their exact ComfyUI IDs.
+- Native Hunyuan image latent construction and refiner conditioning retain the
+  source latent metadata while preparing refiner noise latents.
 - Portable masks become Torch tensors at native tensor-consuming nodes, without
   moving already-live tensors or loading Torch in the host decoder.
 - `dinkster-serve --comfy-root ... --legacy-pack PATH` runs unmodified v1 and

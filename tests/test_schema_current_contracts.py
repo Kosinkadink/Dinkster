@@ -926,19 +926,31 @@ def test_widget_representations_authoring_is_closed_and_domain_preserving() -> N
 
 
 def test_widget_socket_binding_enforced() -> None:
-    """Scalar widget constraints use the socket's concrete value domain."""
+    """Scalar widget constraints use the socket's numeric value domain."""
     # NUMBER on a non-numeric concrete socket.
     with pytest.raises(ValueError, match="number widget requires a concrete"):
         InputSpec("s", TypeExpr.concrete("STRING"), widget=NumberWidget(min=0))
-    # NUMBER on non-concrete sockets (union / wildcard).
-    with pytest.raises(ValueError, match="number widget requires a concrete"):
-        InputSpec(
-            "u",
-            TypeExpr.union("INT", "FLOAT"),
-            widget=NumberWidget(min=0),
-        )
-    with pytest.raises(ValueError, match="number widget requires a concrete"):
-        InputSpec("w", TypeExpr.wildcard(), widget=NumberWidget(min=0))
+    for socket in (
+        TypeExpr.union("INT", "STRING"),
+        TypeExpr.union("FLOAT", "INT", "BOOLEAN"),
+        TypeExpr.union("STRING", "BOOLEAN"),
+        TypeExpr.wildcard(),
+        TypeExpr.variable("N", ("FLOAT", "INT")),
+        TypeExpr.list_of(TypeExpr.union("FLOAT", "INT")),
+        TypeExpr.asset_of(TypeExpr.union("FLOAT", "INT")),
+        TypeExpr.stream_of(TypeExpr.union("FLOAT", "INT")),
+        TypeExpr.list_of(TypeExpr.list_of(TypeExpr.concrete("FLOAT"))),
+    ):
+        for widget in (
+            NumberWidget(min=0),
+            WidgetRepresentations(
+                (WidgetRepresentation("number", NumberWidget(min=0)),),
+                default="number",
+                user_switchable=False,
+            ),
+        ):
+            with pytest.raises(ValueError, match="number widget requires a concrete"):
+                InputSpec("value", socket, widget=widget)
     # Fractional constraints are malformed in an int socket's domain.
     with pytest.raises(ValueError, match="step must be integral"):
         InputSpec("i", TypeExpr.concrete("INT"), widget=NumberWidget(step=0.1))

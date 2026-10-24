@@ -220,8 +220,11 @@ from dinkster_values import (
     DETECTION_TYPE,
     DICT_TYPE,
     ENCODED_MEDIA_LIMIT_BYTES,
+    FLOATS_TYPE,
     GIBIBYTE,
     GUIDER_TYPE,
+    HOOK_KEYFRAMES_TYPE,
+    HOOKS_TYPE,
     IMAGE_BATCH_MERGER_ID,
     IMAGE_TYPE,
     IMAGE_WORKING_SET_LIMIT_BYTES,
@@ -258,6 +261,8 @@ from dinkster_values import (
     SPLAT_FILE_DECODER_ID,
     SPLAT_PLY_MIME,
     SPLAT_TYPE,
+    STYLE_MODEL_TYPE,
+    TIMESTEPS_RANGE_TYPE,
     VAE_TYPE,
     VECTOR_TYPE,
     VIDEO_AUDIO_WORKING_SET_LIMIT_BYTES,
@@ -378,6 +383,7 @@ def __getattr__(name: str) -> object:
         value = getattr(dinkster_video, name)
     elif name in {
         "register_inference_types",
+        "materialize_audio",
         "materialize_image",
         "materialize_latent",
         "materialize_clip_vision_output",
@@ -401,6 +407,7 @@ def __dir__() -> list[str]:
         | _VIDEO_MODULE_EXPORTS
         | {
             "register_inference_types",
+            "materialize_audio",
             "materialize_image",
             "materialize_latent",
             "materialize_clip_vision_output",
@@ -412,6 +419,7 @@ def __dir__() -> list[str]:
 if TYPE_CHECKING:
     from dinkster_inference_wire.process import initialize_inference_process
     from dinkster_inference_wire.types import (
+        materialize_audio,
         materialize_clip_vision_output,
         materialize_image,
         materialize_latent,
@@ -428,6 +436,7 @@ __all__ = [
     "ExpansionNode",
     "ExpansionOutput",
     "initialize_inference_process",
+    "materialize_audio",
     "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
@@ -573,7 +582,10 @@ __all__ = [
     "CURVE_TYPE",
     "DETECTION_TYPE",
     "DICT_TYPE",
+    "FLOATS_TYPE",
     "GUIDER_TYPE",
+    "HOOK_KEYFRAMES_TYPE",
+    "HOOKS_TYPE",
     "IMAGE_TYPE",
     "IMPACT_BASIC_PIPE_TYPE",
     "INFERENCE_LATENT_OPERATION_TYPE",
@@ -600,6 +612,8 @@ __all__ = [
     "SEGMENTATION_TYPE",
     "SIGMAS_TYPE",
     "SPLAT_TYPE",
+    "STYLE_MODEL_TYPE",
+    "TIMESTEPS_RANGE_TYPE",
     "VAE_TYPE",
     "VECTOR_TYPE",
     "VIDEO_DOCUMENT_TYPE",

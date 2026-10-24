@@ -13,6 +13,24 @@ import pytest
 
 
 def test_comparison_cli(tmp_path: Path) -> None:
+    from dinkster_schema import InputSpec, NodeSchema, StringWidget, TypeExpr, schema_to_wire
+
+    wire = schema_to_wire(
+        NodeSchema(
+            node_type="SaveExample",
+            inputs=(
+                InputSpec(
+                    "mount",
+                    TypeExpr.concrete("STRING"),
+                    required=False,
+                    default=None,
+                    widget=StringWidget(multiline=False),
+                ),
+            ),
+        )
+    )
+    mount = json.loads(json.dumps(wire))["interface"][0]
+    assert "default" not in mount
     reference = {
         "nodes": [
             {
@@ -60,13 +78,7 @@ def test_comparison_cli(tmp_path: Path) -> None:
                     ],
                 },
             },
-            {
-                "role": "input",
-                "id": "mount",
-                "required": False,
-                "type": {"kind": "concrete", "types": ["STRING"]},
-                "default": "output",
-            },
+            mount,
             {"role": "output", "id": "image", "type": {"kind": "concrete", "types": ["IMAGE"]}},
             {"role": "output", "id": "mask", "type": {"kind": "concrete", "types": ["MASK"]}},
         ],
@@ -101,6 +113,17 @@ def test_comparison_cli(tmp_path: Path) -> None:
     assert code == 0
     assert summary["counts"] == {"identical": 1, "excluded": 1}
     assert [row["status"] for row in rows] == ["identical", "excluded"]
+
+    native["interface"][2]["default"] = None
+    assert run(native)[0] == 0
+    del native["interface"][0]["default"]
+    code, _, rows = run(native)
+    assert code == 1 and "inputs[0].default" in rows[0]["differences"]
+    native["interface"][0]["default"] = "Example"
+    native["interface"][0]["widget"] = {"type": "STRING", "multiline": False}
+    code, _, rows = run(native)
+    assert code == 1 and "inputs[0].multiline" in rows[0]["differences"]
+    del native["interface"][0]["widget"]
 
     native["interface"][1]["widget"]["options"].reverse()
     code, summary, rows = run(native)
@@ -137,7 +160,17 @@ def test_comparison_cli(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "field,value",
-    [("required", True), ("default", None), ("type", {"kind": "concrete", "types": ["INT"]})],
+    [
+        ("required", True),
+        ("default", "output"),
+        ("default", "another-grant"),
+        ("default", 0),
+        ("default", False),
+        ("type", {"kind": "concrete", "types": ["INT"]}),
+        ("widget", {"type": "STRING", "multiline": True}),
+        ("widget", {"type": "STRING", "multiline": 0}),
+        ("widget", {"type": "STRING", "min": 0}),
+    ],
 )
 def test_save_mount_is_not_an_arbitrary_extra_input(field: str, value: object) -> None:
     from tools.compare_nodes import compare_registry
@@ -146,7 +179,7 @@ def test_save_mount_is_not_an_arbitrary_extra_input(field: str, value: object) -
         "role": "input",
         "id": "mount",
         "required": False,
-        "default": "output",
+        "default": None,
         "type": {"kind": "concrete", "types": ["STRING"]},
     }
     mount[field] = value

@@ -100,6 +100,50 @@ class ReferenceSource(Node):
         )
 
 
+class MediaConditioningInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="reference-fixture.media-inspect",
+            inputs=tuple(
+                InputSpec(name, TypeExpr.concrete(CONDITIONING_TYPE))
+                for name in ("positive", "negative", "area", "source_positive", "source_negative")
+            ),
+            outputs=(OutputSpec("strength", TypeExpr.concrete(CORE_FLOAT)),),
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        positive: Any,
+        negative: Any,
+        area: Any,
+        source_positive: Any,
+        source_negative: Any,
+    ) -> dict[str, object]:
+        for result, source, strength, value in (
+            (positive, source_positive, 0.7, 1.0),
+            (negative, source_negative, 0.2, -1.0),
+        ):
+            assert torch.equal(torch.as_tensor(result[0][0]), torch.tensor([value]))
+            assert result[0][1] == {
+                "strength": strength,
+                "seconds_start": 2.25,
+                "seconds_total": 37.5,
+            }
+            assert source[0][1] == {"strength": strength}
+        assert torch.equal(torch.as_tensor(area[0][0]), torch.tensor([1.0]))
+        assert area[0][1] == {
+            "seconds_start": 2.25,
+            "seconds_total": 37.5,
+            "strength": 2.5,
+            "area": ("percentage", 0.25, 0.5, 0.75, 0.625, 0.375, 0.125),
+            "set_area_to_bounds": False,
+        }
+        return cls.outputs(strength=area[0][1]["strength"])
+
+
 class ReferenceInspect(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -136,8 +180,10 @@ def test_ordinary_manifest_links_image_edit_and_reference_nodes(
         try:
             (tmp_path / "reference_fixture.py").write_text(
                 "from test_reference_conditioning_torch import ReferenceSource, ReferenceInspect\n"
+                "from test_reference_conditioning_torch import MediaConditioningInspect\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "NODES = (*COMFY_NODES, ReferenceSource, ReferenceInspect)\n",
+                "NODES = (*COMFY_NODES, ReferenceSource, ReferenceInspect,\n"
+                "         MediaConditioningInspect)\n",
                 encoding="ascii",
             )
             manifest = tmp_path / "dinkster-pack.toml"
@@ -156,6 +202,38 @@ def test_ordinary_manifest_links_image_edit_and_reference_nodes(
             graph = Graph(
                 nodes={
                     "source": GraphNode("reference-fixture.source"),
+                    "timed": GraphNode(
+                        "ConditioningStableAudio",
+                        {
+                            "positive": Link("source", "positive"),
+                            "negative": Link("source", "negative"),
+                            "seconds_start": 2.25,
+                            "seconds_total": 37.5,
+                        },
+                    ),
+                    "area": GraphNode(
+                        "ConditioningSetAreaPercentageVideo",
+                        {
+                            "conditioning": Link("timed", "positive"),
+                            "width": 0.75,
+                            "height": 0.5,
+                            "temporal": 0.25,
+                            "x": 0.125,
+                            "y": 0.375,
+                            "z": 0.625,
+                            "strength": 2.5,
+                        },
+                    ),
+                    "media_inspect": GraphNode(
+                        "reference-fixture.media-inspect",
+                        {
+                            "positive": Link("timed", "positive"),
+                            "negative": Link("timed", "negative"),
+                            "area": Link("area", "CONDITIONING"),
+                            "source_positive": Link("source", "positive"),
+                            "source_negative": Link("source", "negative"),
+                        },
+                    ),
                     "edit": GraphNode(
                         "InstructPixToPixConditioning",
                         {
@@ -182,8 +260,9 @@ def test_ordinary_manifest_links_image_edit_and_reference_nodes(
             )
             engine = composer.composition.make_engine(lambda _event: None)
             for _ in range(2):
-                result = await engine.run(graph, ["inspect"])
+                result = await engine.run(graph, ["inspect", "media_inspect"])
                 assert result.outputs["inspect"]["pixel"].resolve() == -105 / 128
+                assert result.outputs["media_inspect"]["strength"].resolve() == 2.5
         finally:
             await composer.close()
 

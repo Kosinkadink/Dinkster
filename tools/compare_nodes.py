@@ -261,9 +261,13 @@ def compare(row: dict[str, Any], schema: dict[str, Any]) -> list[str]:
     )
     if actual and actual[-1]["name"] == "mount" and save_node:
         mount = actual.pop()
+        if mount.get("multiline") is False:
+            mount.pop("multiline")
+        # The production serializer omits the configured-output None sentinel.
+        mount.setdefault("default", None)
         differences.extend(
             _differences(
-                {"name": "mount", "group": "optional", "type": "STRING", "default": "output"},
+                {"name": "mount", "group": "optional", "type": "STRING", "default": None},
                 mount,
                 "mount",
             )

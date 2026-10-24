@@ -87,12 +87,20 @@
 - Native audio saving through PyAV: FLAC, MP3 with V0/128k/320k quality, and
   Opus with 64k-320k bit rates and 48 kHz coercion of unsupported rates; one
   ordered published asset per batch element under a mounted save target
-- Value-level audio operations on AUDIO values: duration trimming with
+- Native ComfyUI audio nodes include Trim Audio Duration, Split Audio Channels,
+  Adjust Audio Volume, Audio Equalizer (3-Band), Empty Audio with rounded sample
+  counts, Empty MiniMax Music3 Latent Audio with frame-aligned duration and batching,
+  VAE Encode Audio, VAE Decode Audio, tiled VAE Decode Audio, LTXV Audio VAE Encode,
+  and LTXV Audio VAE Decode.
+  Value-level audio operations on AUDIO values include duration trimming with
   negative-from-end starts, stereo channel split and mono join, before/after
   concatenation, add/subtract/multiply/mean merging with peak normalization,
   decibel gain, fade in/out with linear or cosine curves, and a three-band
   shelf/peaking equalizer; mixed sample rates are matched through
-  libswresample
+  libswresample. Native ComfyUI join, concatenate, and merge nodes
+  materialize bounded AUDIO values, match the lower sample rate to the higher
+  rate, and preserve ComfyUI channel, trimming, padding, and normalization
+  behavior
 - Audio amplitude-envelope extraction to a per-video-frame float list and
   editable time-aligned CURVE (the audio-reactive replacement path):
   band-limited FFT magnitude with avg/max/sum aggregation at a chosen frame

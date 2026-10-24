@@ -30,6 +30,7 @@ from dinkster_workers import InProcessWorker
 
 GOLDEN_V1_SURFACE = (
     "initialize_inference_process",
+    "materialize_audio",
     "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
@@ -166,7 +167,10 @@ GOLDEN_V1_SURFACE = (
     "CONTEXT_WINDOWS_TYPE",
     "CONTROL_NET_TYPE",
     "DICT_TYPE",
+    "FLOATS_TYPE",
     "GUIDER_TYPE",
+    "HOOK_KEYFRAMES_TYPE",
+    "HOOKS_TYPE",
     "IMAGE_TYPE",
     "IMPACT_BASIC_PIPE_TYPE",
     "INFERENCE_LATENT_OPERATION_TYPE",
@@ -190,6 +194,8 @@ GOLDEN_V1_SURFACE = (
     "SHAPE_SUBDIVIDES_TYPE",
     "SIGMAS_TYPE",
     "SPLAT_TYPE",
+    "STYLE_MODEL_TYPE",
+    "TIMESTEPS_RANGE_TYPE",
     "VAE_TYPE",
     "VECTOR_TYPE",
     "VIDEO_DOCUMENT_TYPE",
@@ -403,8 +409,9 @@ loaded = {
     if name.split(".")[0] in {"dinkster_inference_wire", "torch"}
 }
 assert not loaded, sorted(loaded)
-from dinkster_api.v1 import initialize_inference_process
+from dinkster_api.v1 import initialize_inference_process, materialize_audio
 assert callable(initialize_inference_process)
+assert callable(materialize_audio)
 assert not any(name.split('.')[0] in {'torch', 'dinkster_inference'} for name in sys.modules)
 """
     result = subprocess.run(
