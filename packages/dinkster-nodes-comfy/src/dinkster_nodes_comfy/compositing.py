@@ -165,6 +165,7 @@ class PorterDuffImageComposite(Node):
             node_type="PorterDuffImageComposite",
             display_name="Porter-Duff Image Composite",
             category="image/compositing",
+            search_terms=("alpha composite", "blend modes", "layer blend", "transparency blend"),
             inputs=(
                 InputSpec("source", _IMAGE),
                 InputSpec("source_alpha", _MASK),
@@ -193,6 +194,8 @@ class PorterDuffImageComposite(Node):
         torch = importlib.import_module("torch")
         utils = importlib.import_module("dinkster_inference.utils")
         source, destination = materialize_image(source), materialize_image(destination)
+        source_alpha = materialize_image(source_alpha)
+        destination_alpha = materialize_image(destination_alpha)
         batch_size = min(len(source), len(source_alpha), len(destination), len(destination_alpha))
         output_images: list[Any] = []
         output_alphas: list[Any] = []
@@ -262,6 +265,7 @@ class SplitImageWithAlpha(Node):
             node_type="SplitImageWithAlpha",
             display_name="Split Image with Alpha",
             category="image/compositing",
+            search_terms=("extract alpha", "separate transparency", "remove alpha"),
             inputs=(InputSpec("image", _IMAGE),),
             outputs=(OutputSpec("IMAGE", _IMAGE), OutputSpec("MASK", _MASK)),
         )
@@ -284,6 +288,7 @@ class JoinImageWithAlpha(Node):
             node_type="JoinImageWithAlpha",
             display_name="Join Image with Alpha",
             category="image/compositing",
+            search_terms=("add transparency", "apply alpha", "composite alpha", "RGBA"),
             inputs=(InputSpec("image", _IMAGE), InputSpec("alpha", _MASK)),
             outputs=(OutputSpec("IMAGE", _IMAGE),),
         )
@@ -293,6 +298,7 @@ class JoinImageWithAlpha(Node):
         torch = importlib.import_module("torch")
         utils = importlib.import_module("dinkster_inference.utils")
         image = materialize_image(image)
+        alpha = materialize_image(alpha)
         batch_size = max(len(image), len(alpha))
         alpha = 1.0 - _resize_mask(alpha.to(image), image.shape[1:3])
         alpha = utils.repeat_to_batch_size(alpha, batch_size)
