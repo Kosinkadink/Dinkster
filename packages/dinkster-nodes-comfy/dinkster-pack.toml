@@ -213,6 +213,7 @@ namespaces = [
     "EmptyAceStepLatentAudio",
     "EmptyAceStep1.5LatentAudio",
     "EmptyYuE2LatentAudio",
+<<<<<<< HEAD
     "ResizeImagesByShorterEdge",
     "ResizeImagesByLongerEdge",
     "CenterCropImages",
@@ -220,6 +221,14 @@ namespaces = [
     "NormalizeImages",
     "AdjustBrightness",
     "AdjustContrast",
+    "BasicScheduler",
+    "KarrasScheduler",
+    "ExponentialScheduler",
+    "PolyexponentialScheduler",
+    "LaplaceScheduler",
+    "VPScheduler",
+    "BetaSamplingScheduler",
+    "SDTurboScheduler",
 ]
 
 [pack.sandbox]
