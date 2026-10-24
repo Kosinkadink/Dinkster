@@ -278,6 +278,43 @@ def test_custom_is_changed(cache_enabled: bool) -> None:
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
+def test_is_changed_with_outputs(cache_enabled: bool) -> None:
+    """Port of ComfyUI test_is_changed_with_outputs through input fingerprints.
+
+    Native cache identity has no V1 ``IS_CHANGED`` callback: a linked output
+    and a literal are ordinary input fingerprints. Reusing the same linked
+    value therefore caches the consumer, while changing that value reruns it.
+    """
+
+    async def scenario() -> None:
+        engine = make_engine()
+
+        def graph(value: int) -> Graph:
+            return Graph(
+                {
+                    "source": GraphNode("dev.execution.value", {"value": value}),
+                    "consumer": GraphNode(
+                        "dev.execution.add",
+                        {"value": Link("source", "value"), "amount": 2},
+                    ),
+                }
+            )
+
+        first = await engine.run(graph(40), ["consumer"], cache_enabled=cache_enabled)
+        second = await engine.run(graph(40), ["consumer"], cache_enabled=cache_enabled)
+        changed = await engine.run(graph(41), ["consumer"], cache_enabled=cache_enabled)
+
+        assert first.outputs["consumer"]["value"].resolve() == 42
+        assert second.outputs["consumer"]["value"].resolve() == 42
+        assert changed.outputs["consumer"]["value"].resolve() == 43
+        assert ("consumer" in second.cached) is cache_enabled
+        assert ("consumer" in changed.cached) is False
+        assert "consumer" in changed.executed
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("cache_enabled", [False, True])
 def test_blocked_output_reports_once(cache_enabled: bool) -> None:
     """Native blocked-output coverage; per-element list broadcast is excluded."""
 
