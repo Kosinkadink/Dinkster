@@ -21,6 +21,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
+    initialize_inference_process,
     materialize_image,
 )
 from PIL import Image
@@ -331,4 +332,47 @@ class ImageScaleToTotalPixels(Node):
         return cls.outputs(IMAGE=output.movedim(1, -1))
 
 
-IMAGE_FILTER_NODES = (ImageBlend, ImageBlur, ImageQuantize, ImageSharpen, ImageScaleToTotalPixels)
+class Canny(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="Canny",
+            display_name="Detect Edges (Canny)",
+            category="image/filters",
+            search_terms=("edge detection", "outline", "contour detection", "line art"),
+            inputs=(
+                InputSpec("image", _IMAGE),
+                _number("low_threshold", _FLOAT, 0.4, 0.01, 0.99, 0.01),
+                _number("high_threshold", _FLOAT, 0.8, 0.01, 0.99, 0.01),
+            ),
+            outputs=(OutputSpec("IMAGE", _IMAGE),),
+        )
+
+    @classmethod
+    def execute(
+        cls, *, image: Any, low_threshold: float, high_threshold: float
+    ) -> Mapping[str, object]:
+        initialize_inference_process()
+        torch = importlib.import_module("torch")
+        management = importlib.import_module("dinkster_inference.model_management")
+        filters = importlib.import_module("kornia.filters")
+        image = materialize_image(image)[..., :3].to(
+            device=management.get_torch_device(), dtype=torch.float32
+        )
+        _, edges = filters.canny(image.movedim(-1, 1), low_threshold, high_threshold)
+        output = (
+            edges.to(device=management.intermediate_device(), dtype=management.intermediate_dtype())
+            .repeat(1, 3, 1, 1)
+            .movedim(1, -1)
+        )
+        return cls.outputs(IMAGE=output)
+
+
+IMAGE_FILTER_NODES = (
+    ImageBlend,
+    ImageBlur,
+    ImageQuantize,
+    ImageSharpen,
+    ImageScaleToTotalPixels,
+    Canny,
+)
