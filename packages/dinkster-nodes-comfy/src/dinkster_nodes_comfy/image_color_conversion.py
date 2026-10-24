@@ -21,6 +21,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
+    initialize_inference_process,
     materialize_image,
 )
 
@@ -221,19 +222,26 @@ class ImageSDRToHDR(Node):
         )
 
     @classmethod
-    def execute(cls, *, image: Any, algorithm: Mapping[str, Any]) -> Mapping[str, object]:
-        if algorithm["algorithm"] != "lottes":
-            raise ValueError(f"Unsupported HDR algorithm: {algorithm['algorithm']}")
+    def execute(cls, *, image: Any, algorithm: str, **inputs: Any) -> Mapping[str, object]:
+        if algorithm != "lottes":
+            raise ValueError(f"Unsupported HDR algorithm: {algorithm}")
+        target_luminance = inputs["algorithm.target_luminance"] or None
+        initialize_inference_process()
         torch = importlib.import_module("torch")
+        management = importlib.import_module("dinkster_inference.model_management")
         image = materialize_image(image)
         if image.shape[-1] == 1:
             image = image.expand(*image.shape[:-1], 3)
-        rgb = _sdr_to_hdr_lottes(
-            image[..., :3].to(dtype=torch.float32), algorithm["target_luminance"] or None, torch
+        output = torch.empty_like(
+            image, device=management.intermediate_device(), dtype=management.intermediate_dtype()
         )
+        device = management.get_torch_device()
+        for index, frame in enumerate(image):
+            rgb = frame[..., :3].to(device=device, dtype=torch.float32)
+            output[index, ..., :3] = _sdr_to_hdr_lottes(rgb, target_luminance, torch)
         if image.shape[-1] == 4:
-            rgb = torch.cat((rgb, image[..., 3:]), dim=-1)
-        return cls.outputs(IMAGE=rgb.to(dtype=image.dtype, device=image.device))
+            output[..., 3:] = image[..., 3:]
+        return cls.outputs(IMAGE=output)
 
 
 class ImageColorSpace(Node):
@@ -258,10 +266,16 @@ class ImageColorSpace(Node):
 
     @classmethod
     def execute(cls, *, image: Any, source: str, destination: str) -> Mapping[str, object]:
+        initialize_inference_process()
         torch = importlib.import_module("torch")
+        management = importlib.import_module("dinkster_inference.model_management")
         image = materialize_image(image)
         if source == destination:
-            return cls.outputs(IMAGE=image)
+            return cls.outputs(
+                IMAGE=image.to(
+                    device=management.intermediate_device(), dtype=management.intermediate_dtype()
+                )
+            )
         rgb = image[..., :3].float()
         if source == "sRGB":
             rgb = (
@@ -358,7 +372,11 @@ class ImageColorSpace(Node):
             raise ValueError(f"Unsupported destination color space: {destination}")
         if image.shape[-1] == 4:
             rgb = torch.cat((rgb, image[..., 3:]), dim=-1)
-        return cls.outputs(IMAGE=rgb.to(dtype=image.dtype, device=image.device))
+        return cls.outputs(
+            IMAGE=rgb.to(
+                device=management.intermediate_device(), dtype=management.intermediate_dtype()
+            )
+        )
 
 
 IMAGE_COLOR_CONVERSION_NODES = (ImageSDRToHDR, ImageColorSpace)
