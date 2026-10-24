@@ -324,7 +324,7 @@ class ImageScaleToTotalPixels(Node):
     ) -> Mapping[str, object]:
         utils = importlib.import_module("dinkster_inference.utils")
         samples = materialize_image(image).movedim(-1, 1)
-        scale = math.sqrt(megapixels * 1024 * 1024 / (samples.shape[3] * samples.shape[2]))
+        scale = math.sqrt(megapixels * 1024.0 * 1024.0 / (samples.shape[3] * samples.shape[2]))
         width = round(samples.shape[3] * scale / resolution_steps) * resolution_steps
         height = round(samples.shape[2] * scale / resolution_steps) * resolution_steps
         output = utils.common_upscale(samples, int(width), int(height), upscale_method, "disabled")
