@@ -30,6 +30,7 @@ from dinkster_workers import InProcessWorker
 
 GOLDEN_V1_SURFACE = (
     "initialize_inference_process",
+    "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
     "register_inference_types",
@@ -151,6 +152,7 @@ GOLDEN_V1_SURFACE = (
     "BACKGROUND_REMOVAL_TYPE",
     "BOUNDING_BOX_TYPE",
     "CLIP_TYPE",
+    "CLIP_VISION_OUTPUT_TYPE",
     "CLIP_VISION_TYPE",
     "COLORS_TYPE",
     "COLOR_TYPE",
