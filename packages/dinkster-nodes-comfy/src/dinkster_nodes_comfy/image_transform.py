@@ -7,6 +7,11 @@ from collections.abc import Mapping
 from typing import Any
 
 from dinkster_api.v1 import (
+    CORE_BOOLEAN,
+    CORE_COMBO,
+    CORE_FLOAT,
+    CORE_INT,
+    IMAGE_TYPE,
     ComboOption,
     ComboWidget,
     InputSpec,
@@ -18,11 +23,11 @@ from dinkster_api.v1 import (
     materialize_image,
 )
 
-_BOOLEAN = TypeExpr.concrete("BOOLEAN")
-_COMBO = TypeExpr.concrete("COMBO")
-_FLOAT = TypeExpr.concrete("FLOAT")
-_IMAGE = TypeExpr.concrete("IMAGE")
-_INT = TypeExpr.concrete("INT")
+_BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
+_COMBO = TypeExpr.concrete(CORE_COMBO)
+_FLOAT = TypeExpr.concrete(CORE_FLOAT)
+_IMAGE = TypeExpr.concrete(IMAGE_TYPE)
+_INT = TypeExpr.concrete(CORE_INT)
 _MAX_RESOLUTION = 16384
 
 

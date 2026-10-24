@@ -8,6 +8,10 @@ from collections.abc import Mapping
 from typing import Any
 
 from dinkster_api.v1 import (
+    CORE_COMBO,
+    CORE_FLOAT,
+    CORE_INT,
+    LATENT_TYPE,
     ComboOption,
     ComboWidget,
     Deprecation,
@@ -20,10 +24,10 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 
-_LATENT = TypeExpr.concrete("LATENT")
-_INT = TypeExpr.concrete("INT")
-_FLOAT = TypeExpr.concrete("FLOAT")
-_COMBO = TypeExpr.concrete("COMBO")
+_LATENT = TypeExpr.concrete(LATENT_TYPE)
+_INT = TypeExpr.concrete(CORE_INT)
+_FLOAT = TypeExpr.concrete(CORE_FLOAT)
+_COMBO = TypeExpr.concrete(CORE_COMBO)
 _MAX_RESOLUTION = 16384
 
 

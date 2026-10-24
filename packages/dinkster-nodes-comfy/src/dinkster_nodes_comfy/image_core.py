@@ -7,6 +7,11 @@ from collections.abc import Mapping
 from typing import Any
 
 from dinkster_api.v1 import (
+    CORE_COMBO,
+    CORE_FLOAT,
+    CORE_INT,
+    IMAGE_TYPE,
+    MASK_TYPE,
     ComboOption,
     ComboWidget,
     InputSpec,
@@ -18,7 +23,7 @@ from dinkster_api.v1 import (
     materialize_image,
 )
 
-_IMAGE = TypeExpr.concrete("IMAGE")
+_IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 _UPSCALE_METHODS = ("nearest-exact", "bilinear", "area", "bicubic", "lanczos")
 
 
@@ -33,7 +38,7 @@ def _integer(
 ) -> InputSpec:
     return InputSpec(
         name,
-        TypeExpr.concrete("INT"),
+        TypeExpr.concrete(CORE_INT),
         default=default,
         advanced=advanced,
         widget=NumberWidget(min=minimum, max=maximum, step=step),
@@ -43,7 +48,7 @@ def _integer(
 def _combo(name: str, options: tuple[str, ...]) -> InputSpec:
     return InputSpec(
         name,
-        TypeExpr.concrete("COMBO"),
+        TypeExpr.concrete(CORE_COMBO),
         widget=ComboWidget(tuple(ComboOption(value) for value in options)),
     )
 
@@ -104,7 +109,7 @@ class ImageScaleBy(Node):
                 _combo("upscale_method", _UPSCALE_METHODS),
                 InputSpec(
                     "scale_by",
-                    TypeExpr.concrete("FLOAT"),
+                    TypeExpr.concrete(CORE_FLOAT),
                     default=1.0,
                     widget=NumberWidget(min=0.01, max=8.0, step=0.01),
                 ),
@@ -177,7 +182,7 @@ class EmptyImage(Node):
                 _integer("batch_size", 1, 1, 4096),
                 InputSpec(
                     "color",
-                    TypeExpr.concrete("INT"),
+                    TypeExpr.concrete(CORE_INT),
                     default=0,
                     widget=NumberWidget(min=0, max=0xFFFFFF, step=1, display="color"),
                 ),
@@ -215,7 +220,7 @@ class ImagePadForOutpaint(Node):
                 *(_integer(side, 0, 0, 16384, 8) for side in ("left", "top", "right", "bottom")),
                 _integer("feathering", 40, 0, 16384, 1, advanced=True),
             ),
-            outputs=(OutputSpec("IMAGE", _IMAGE), OutputSpec("MASK", TypeExpr.concrete("MASK"))),
+            outputs=(OutputSpec("IMAGE", _IMAGE), OutputSpec("MASK", TypeExpr.concrete(MASK_TYPE))),
         )
 
     @classmethod

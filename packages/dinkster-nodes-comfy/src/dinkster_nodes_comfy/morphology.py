@@ -7,6 +7,9 @@ from collections.abc import Mapping
 from typing import Any
 
 from dinkster_api.v1 import (
+    CORE_COMBO,
+    CORE_INT,
+    IMAGE_TYPE,
     ComboOption,
     ComboWidget,
     InputSpec,
@@ -18,7 +21,7 @@ from dinkster_api.v1 import (
     materialize_image,
 )
 
-_IMAGE = TypeExpr.concrete("IMAGE")
+_IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 _OPERATIONS = ("erode", "dilate", "open", "close", "gradient", "bottom_hat", "top_hat")
 
 
@@ -34,12 +37,12 @@ class Morphology(Node):
                 InputSpec("image", _IMAGE),
                 InputSpec(
                     "operation",
-                    TypeExpr.concrete("COMBO"),
+                    TypeExpr.concrete(CORE_COMBO),
                     widget=ComboWidget(tuple(ComboOption(value) for value in _OPERATIONS)),
                 ),
                 InputSpec(
                     "kernel_size",
-                    TypeExpr.concrete("INT"),
+                    TypeExpr.concrete(CORE_INT),
                     default=3,
                     widget=NumberWidget(min=3, max=999, step=1),
                 ),

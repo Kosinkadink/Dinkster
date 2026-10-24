@@ -7,6 +7,7 @@ from typing import Any
 
 from dinkster_api.v1 import (
     CORE_FLOAT,
+    MODEL_TYPE,
     InputSpec,
     Node,
     NodeSchema,
@@ -128,11 +129,11 @@ def block_merge_schema(
         category=category,
         description=description,
         inputs=(
-            InputSpec("model1", TypeExpr.concrete("MODEL")),
-            InputSpec("model2", TypeExpr.concrete("MODEL")),
+            InputSpec("model1", TypeExpr.concrete(MODEL_TYPE)),
+            InputSpec("model2", TypeExpr.concrete(MODEL_TYPE)),
             *(_coefficient(name) for name in block_names),
         ),
-        outputs=(OutputSpec("MODEL", TypeExpr.concrete("MODEL")),),
+        outputs=(OutputSpec("MODEL", TypeExpr.concrete(MODEL_TYPE)),),
     )
 
 

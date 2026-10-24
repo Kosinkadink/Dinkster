@@ -14,6 +14,7 @@ from dinkster_api.v1 import (
     CORE_BOOLEAN,
     CORE_FLOAT,
     CORE_STRING,
+    IMAGE_TYPE,
     MEBIBYTE,
     InputSpec,
     Node,
@@ -35,7 +36,7 @@ from .types import (
     validate_pose_json_nesting,
 )
 
-IMAGE = TypeExpr.concrete("IMAGE")
+IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
 FLOAT = TypeExpr.concrete(CORE_FLOAT)
 STRING = TypeExpr.concrete(CORE_STRING)

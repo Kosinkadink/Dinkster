@@ -12,6 +12,8 @@ from dinkster_api.v1 import (
     CORE_FLOAT,
     CORE_INT,
     CORE_STRING,
+    IMAGE_TYPE,
+    MASK_TYPE,
     ColorWidget,
     DynamicComboOption,
     DynamicComboSpec,
@@ -61,8 +63,8 @@ from .types import REGION_TYPE, Region
 overlay_rgba = image_math.overlay_rgba
 text_coverage = image_math.text_coverage
 
-IMAGE = TypeExpr.concrete("IMAGE")
-MASK = TypeExpr.concrete("MASK")
+IMAGE = TypeExpr.concrete(IMAGE_TYPE)
+MASK = TypeExpr.concrete(MASK_TYPE)
 REGION = TypeExpr.concrete(REGION_TYPE)
 BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
 INT = TypeExpr.concrete(CORE_INT)

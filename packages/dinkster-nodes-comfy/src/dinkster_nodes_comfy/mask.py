@@ -7,6 +7,13 @@ from collections.abc import Mapping
 from typing import Any
 
 from dinkster_api.v1 import (
+    CORE_BOOLEAN,
+    CORE_COMBO,
+    CORE_FLOAT,
+    CORE_INT,
+    IMAGE_TYPE,
+    LATENT_TYPE,
+    MASK_TYPE,
     ComboOption,
     ComboWidget,
     InputSpec,
@@ -19,13 +26,13 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 
-_BOOLEAN = TypeExpr.concrete("BOOLEAN")
-_COMBO = TypeExpr.concrete("COMBO")
-_FLOAT = TypeExpr.concrete("FLOAT")
-_IMAGE = TypeExpr.concrete("IMAGE")
-_INT = TypeExpr.concrete("INT")
-_LATENT = TypeExpr.concrete("LATENT")
-_MASK = TypeExpr.concrete("MASK")
+_BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
+_COMBO = TypeExpr.concrete(CORE_COMBO)
+_FLOAT = TypeExpr.concrete(CORE_FLOAT)
+_IMAGE = TypeExpr.concrete(IMAGE_TYPE)
+_INT = TypeExpr.concrete(CORE_INT)
+_LATENT = TypeExpr.concrete(LATENT_TYPE)
+_MASK = TypeExpr.concrete(MASK_TYPE)
 _MAX_RESOLUTION = 16384
 _MASK_CATEGORY = "image/mask"
 

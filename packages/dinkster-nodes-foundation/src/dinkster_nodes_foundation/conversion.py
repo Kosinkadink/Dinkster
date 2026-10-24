@@ -10,6 +10,7 @@ from typing import cast
 from dinkster_api.v1 import (
     ABSENT,
     CORE_BOOLEAN,
+    CORE_COMBO,
     CORE_FLOAT,
     CORE_INT,
     CORE_STRING,
@@ -175,7 +176,7 @@ class ValueConvert(Node):
                 InputSpec("value", SCALAR, force_input=True),
                 InputSpec(
                     "target",
-                    TypeExpr.concrete("COMBO"),
+                    TypeExpr.concrete(CORE_COMBO),
                     default="float",
                     widget=ComboWidget(options=("int", "float", "number", "string", "boolean")),
                 ),

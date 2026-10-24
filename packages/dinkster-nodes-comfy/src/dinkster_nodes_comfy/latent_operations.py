@@ -8,6 +8,11 @@ from collections.abc import Mapping
 from typing import Any
 
 from dinkster_api.v1 import (
+    CORE_FLOAT,
+    CORE_INT,
+    INFERENCE_LATENT_OPERATION_TYPE,
+    LATENT_TYPE,
+    MODEL_TYPE,
     InputSpec,
     Node,
     NodeSchema,
@@ -17,9 +22,9 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 
-_LATENT = TypeExpr.concrete("LATENT")
-_OPERATION = TypeExpr.concrete("LATENT_OPERATION")
-_MODEL = TypeExpr.concrete("MODEL")
+_LATENT = TypeExpr.concrete(LATENT_TYPE)
+_OPERATION = TypeExpr.concrete(INFERENCE_LATENT_OPERATION_TYPE)
+_MODEL = TypeExpr.concrete(MODEL_TYPE)
 _CATEGORY = "model/latent/advanced/operations"
 
 
@@ -35,7 +40,7 @@ def _float(
 ) -> InputSpec:
     return InputSpec(
         name,
-        TypeExpr.concrete("FLOAT"),
+        TypeExpr.concrete(CORE_FLOAT),
         default=default,
         required=not optional,
         advanced=advanced,
@@ -168,7 +173,7 @@ class LatentOperationSharpen(Node):
             inputs=(
                 InputSpec(
                     "sharpen_radius",
-                    TypeExpr.concrete("INT"),
+                    TypeExpr.concrete(CORE_INT),
                     default=9,
                     advanced=True,
                     widget=NumberWidget(min=1, max=31, step=1),
@@ -221,7 +226,7 @@ class ReplaceVideoLatentFrames(Node):
                 InputSpec("destination", _LATENT),
                 InputSpec(
                     "index",
-                    TypeExpr.concrete("INT"),
+                    TypeExpr.concrete(CORE_INT),
                     default=0,
                     widget=NumberWidget(min=-16384, max=16384, step=1),
                 ),

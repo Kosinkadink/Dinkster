@@ -9,10 +9,12 @@ from collections.abc import Mapping
 from typing import cast
 
 from dinkster_api.v1 import (
+    ARRAY_TYPE,
     CORE_BOOLEAN,
     CORE_COMBO,
     CORE_INT,
     CORE_STRING,
+    DICT_TYPE,
     ComboWidget,
     InputFamilySpec,
     InputSpec,
@@ -433,7 +435,7 @@ class ConvertDictionaryToString(Node):
             display_name="Convert Dictionary to String",
             category="text",
             inputs=(
-                InputSpec("dictionary", TypeExpr.concrete("DICT")),
+                InputSpec("dictionary", TypeExpr.concrete(DICT_TYPE)),
                 InputSpec("indent", INT, default=2, widget=NumberWidget(min=0, max=8)),
             ),
             outputs=(OutputSpec("STRING", STRING),),
@@ -452,7 +454,7 @@ class ConvertArrayToString(Node):
             display_name="Convert Array to String",
             category="text",
             inputs=(
-                InputSpec("array", TypeExpr.concrete("ARRAY")),
+                InputSpec("array", TypeExpr.concrete(ARRAY_TYPE)),
                 InputSpec("indent", INT, default=2, widget=NumberWidget(min=0, max=8)),
             ),
             outputs=(OutputSpec("STRING", STRING),),

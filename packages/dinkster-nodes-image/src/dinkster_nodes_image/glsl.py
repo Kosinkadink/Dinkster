@@ -17,6 +17,8 @@ from dinkster_api.v1 import (
     CORE_FLOAT,
     CORE_INT,
     CORE_STRING,
+    CURVE_TYPE,
+    IMAGE_TYPE,
     CurveWidget,
     DynamicComboOption,
     DynamicComboSpec,
@@ -35,8 +37,8 @@ from dinkster_api.v1 import (
 
 from .support import MAX_DIMENSION, check_output_size, image_array, resize_array
 
-IMAGE = TypeExpr.concrete("IMAGE")
-CURVE = TypeExpr.concrete("dinkster.curve")
+IMAGE = TypeExpr.concrete(IMAGE_TYPE)
+CURVE = TypeExpr.concrete(CURVE_TYPE)
 FLOAT = TypeExpr.concrete(CORE_FLOAT)
 INT = TypeExpr.concrete(CORE_INT)
 BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)

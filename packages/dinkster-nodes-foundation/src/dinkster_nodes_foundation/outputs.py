@@ -6,6 +6,9 @@ import string
 from collections.abc import Mapping, Sequence
 
 from dinkster_api.v1 import (
+    CORE_BOOLEAN,
+    CORE_FLOAT,
+    CORE_INT,
     InputFamilySpec,
     InputSpec,
     Node,
@@ -46,7 +49,7 @@ class MathExpressions(Node):
             input_families=(
                 InputFamilySpec(
                     "values",
-                    TypeExpr.union("FLOAT", "INT", "BOOLEAN"),
+                    TypeExpr.union(CORE_FLOAT, CORE_INT, CORE_BOOLEAN),
                     member_names=tuple(string.ascii_lowercase),
                 ),
             ),

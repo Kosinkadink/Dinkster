@@ -7,6 +7,11 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from dinkster_api.v1 import (
+    CONDITIONING_TYPE,
+    CORE_COMBO,
+    CORE_FLOAT,
+    CORE_INT,
+    MASK_TYPE,
     ComboWidget,
     InputSpec,
     Node,
@@ -18,11 +23,11 @@ from dinkster_api.v1 import (
 )
 
 _CATEGORY = "model/conditioning/transform"
-_CONDITIONING = TypeExpr.concrete("CONDITIONING")
-_MASK = TypeExpr.concrete("MASK")
-_FLOAT = TypeExpr.concrete("FLOAT")
-_INT = TypeExpr.concrete("INT")
-_COMBO = TypeExpr.concrete("COMBO")
+_CONDITIONING = TypeExpr.concrete(CONDITIONING_TYPE)
+_MASK = TypeExpr.concrete(MASK_TYPE)
+_FLOAT = TypeExpr.concrete(CORE_FLOAT)
+_INT = TypeExpr.concrete(CORE_INT)
+_COMBO = TypeExpr.concrete(CORE_COMBO)
 
 
 def _number(

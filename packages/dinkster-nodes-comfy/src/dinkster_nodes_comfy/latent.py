@@ -8,6 +8,11 @@ from collections.abc import Mapping
 from typing import Any
 
 from dinkster_api.v1 import (
+    CORE_COMBO,
+    CORE_FLOAT,
+    CORE_INT,
+    LATENT_TYPE,
+    MASK_TYPE,
     ComboOption,
     ComboWidget,
     InputSpec,
@@ -20,7 +25,7 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 
-_LATENT = TypeExpr.concrete("LATENT")
+_LATENT = TypeExpr.concrete(LATENT_TYPE)
 _SAMPLES = InputSpec("samples", _LATENT)
 _UPSCALE_METHODS = ("nearest-exact", "bilinear", "area", "bicubic", "bislerp")
 
@@ -30,7 +35,7 @@ def _integer(
 ) -> InputSpec:
     return InputSpec(
         name,
-        TypeExpr.concrete("INT"),
+        TypeExpr.concrete(CORE_INT),
         default=default,
         widget=NumberWidget(min=minimum, max=maximum, step=step),
     )
@@ -39,7 +44,7 @@ def _integer(
 def _combo(name: str, options: tuple[str, ...]) -> InputSpec:
     return InputSpec(
         name,
-        TypeExpr.concrete("COMBO"),
+        TypeExpr.concrete(CORE_COMBO),
         widget=ComboWidget(tuple(ComboOption(value) for value in options)),
     )
 
@@ -198,7 +203,7 @@ class LatentUpscaleBy(Node):
                 _combo("upscale_method", _UPSCALE_METHODS),
                 InputSpec(
                     "scale_by",
-                    TypeExpr.concrete("FLOAT"),
+                    TypeExpr.concrete(CORE_FLOAT),
                     default=1.5,
                     widget=NumberWidget(min=0.01, max=8.0, step=0.01),
                 ),
@@ -275,7 +280,7 @@ class SetLatentNoiseMask(Node):
         return _schema(
             "SetLatentNoiseMask",
             "Set Latent Noise Mask",
-            (_SAMPLES, InputSpec("mask", TypeExpr.concrete("MASK"))),
+            (_SAMPLES, InputSpec("mask", TypeExpr.concrete(MASK_TYPE))),
         )
 
     @classmethod
@@ -353,7 +358,7 @@ class LatentBlend(Node):
                 InputSpec("samples2", _LATENT),
                 InputSpec(
                     "blend_factor",
-                    TypeExpr.concrete("FLOAT"),
+                    TypeExpr.concrete(CORE_FLOAT),
                     default=0.5,
                     widget=NumberWidget(min=0, max=1, step=0.01),
                 ),

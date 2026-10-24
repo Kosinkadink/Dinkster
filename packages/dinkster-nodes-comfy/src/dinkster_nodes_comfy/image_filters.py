@@ -9,6 +9,10 @@ from typing import Any
 
 import numpy as np
 from dinkster_api.v1 import (
+    CORE_COMBO,
+    CORE_FLOAT,
+    CORE_INT,
+    IMAGE_TYPE,
     ComboOption,
     ComboWidget,
     InputSpec,
@@ -21,10 +25,10 @@ from dinkster_api.v1 import (
 )
 from PIL import Image
 
-_IMAGE = TypeExpr.concrete("IMAGE")
-_FLOAT = TypeExpr.concrete("FLOAT")
-_INT = TypeExpr.concrete("INT")
-_COMBO = TypeExpr.concrete("COMBO")
+_IMAGE = TypeExpr.concrete(IMAGE_TYPE)
+_FLOAT = TypeExpr.concrete(CORE_FLOAT)
+_INT = TypeExpr.concrete(CORE_INT)
+_COMBO = TypeExpr.concrete(CORE_COMBO)
 _UPSCALE_METHODS = ("nearest-exact", "bilinear", "area", "bicubic", "lanczos")
 _BLEND_MODES = ("normal", "multiply", "screen", "overlay", "soft_light", "difference")
 _DITHER_MODES = ("none", "floyd-steinberg", "bayer-2", "bayer-4", "bayer-8", "bayer-16")

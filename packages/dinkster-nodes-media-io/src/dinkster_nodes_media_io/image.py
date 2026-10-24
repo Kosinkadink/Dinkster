@@ -14,6 +14,7 @@ from typing import Any, BinaryIO, cast
 
 import numpy as np
 from dinkster_api.v1 import (
+    CORE_BOOLEAN,
     CORE_COMBO,
     CORE_FLOAT,
     CORE_INT,
@@ -850,7 +851,9 @@ class SaveImage(Node):
                     default=4,
                     widget=NumberWidget(min=0, max=9, step=1),
                 ),
-                InputSpec("lossless", TypeExpr.concrete("BOOLEAN"), required=False, default=True),
+                InputSpec(
+                    "lossless", TypeExpr.concrete(CORE_BOOLEAN), required=False, default=True
+                ),
                 InputSpec(
                     "metadata_json",
                     STRING,
@@ -1049,7 +1052,9 @@ class SaveAnimatedImage(Node):
                     default=0,
                     widget=NumberWidget(min=0, max=65535, step=1),
                 ),
-                InputSpec("lossless", TypeExpr.concrete("BOOLEAN"), required=False, default=True),
+                InputSpec(
+                    "lossless", TypeExpr.concrete(CORE_BOOLEAN), required=False, default=True
+                ),
                 InputSpec(
                     "quality",
                     INT,

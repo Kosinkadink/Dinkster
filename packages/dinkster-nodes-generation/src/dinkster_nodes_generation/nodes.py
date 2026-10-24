@@ -9,15 +9,18 @@ from dinkster_api.v1 import (
     AUDIO_TYPE,
     CLIP_TYPE,
     CONDITIONING_TYPE,
+    CONTEXT_WINDOWS_TYPE,
     CONTROL_NET_TYPE,
     CORE_BOOLEAN,
     CORE_COMBO,
     CORE_FLOAT,
     CORE_INT,
     CORE_STRING,
+    CURVE_TYPE,
     GUIDER_TYPE,
     IMAGE_TYPE,
     IMPACT_BASIC_PIPE_TYPE,
+    INPAINT_CONDITIONING_TYPE,
     LATENT_OPERATION_TYPE,
     LATENT_TYPE,
     LATENT_UPSCALE_MODEL_TYPE,
@@ -57,15 +60,15 @@ CONDITIONING = TypeExpr.concrete(CONDITIONING_TYPE)
 LATENT = TypeExpr.concrete(LATENT_TYPE)
 IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 MASK = TypeExpr.concrete(MASK_TYPE)
-INPAINT_CONDITIONING = TypeExpr.concrete("dinkster.inpaint-conditioning")
-CONTEXT_WINDOWS = TypeExpr.concrete("dinkster.context-windows")
+INPAINT_CONDITIONING = TypeExpr.concrete(INPAINT_CONDITIONING_TYPE)
+CONTEXT_WINDOWS = TypeExpr.concrete(CONTEXT_WINDOWS_TYPE)
 SAMPLER = TypeExpr.concrete(SAMPLER_TYPE)
 SIGMAS = TypeExpr.concrete(SIGMAS_TYPE)
 GUIDER = TypeExpr.concrete(GUIDER_TYPE)
 NOISE = TypeExpr.concrete(NOISE_TYPE)
 LATENT_OPERATION = TypeExpr.concrete(LATENT_OPERATION_TYPE)
 CONTROL_NET = TypeExpr.concrete(CONTROL_NET_TYPE)
-CURVE = TypeExpr.concrete("dinkster.curve")
+CURVE = TypeExpr.concrete(CURVE_TYPE)
 AUDIO = TypeExpr.concrete(AUDIO_TYPE)
 IMPACT_BASIC_PIPE = TypeExpr.concrete(IMPACT_BASIC_PIPE_TYPE)
 MODEL_PATCH = TypeExpr.concrete(MODEL_PATCH_TYPE)
