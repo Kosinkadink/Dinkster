@@ -7,7 +7,7 @@ advisory warnings.
 
 from __future__ import annotations
 
-from collections.abc import Container, Mapping, Sequence
+from collections.abc import Container, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Literal
 
@@ -53,6 +53,127 @@ class Diagnostic:
     """The consumer-side input (or region port) the diagnostic anchors to,
     when it anchors to one - so frontends map diagnostics onto per-port
     affordances structurally instead of parsing messages."""
+
+
+@dataclass(frozen=True)
+class LoopPair:
+    end_id: str
+    body: tuple[str, ...]
+
+
+def validate_loops(
+    graph: Graph, targets: Sequence[str]
+) -> tuple[dict[str, LoopPair], list[Diagnostic]]:
+    """Pair nested loop boundaries and reject escaping bodies before execution."""
+    starts = {
+        key
+        for key, node in graph.nodes.items()
+        if isinstance(node, GraphNode) and node.node_type == "StartLoop"
+    }
+    ends = {
+        key
+        for key, node in graph.nodes.items()
+        if isinstance(node, GraphNode) and node.node_type == "EndLoop"
+    }
+    if not starts and not ends:
+        return {}, []
+    parents = {
+        key: {
+            value.node_id
+            for value in node.inputs.values()
+            if isinstance(value, Link) and value.node_id in graph.nodes
+        }
+        for key, node in graph.nodes.items()
+    }
+    children: dict[str, set[str]] = {key: set() for key in graph.nodes}
+    for key, dependencies in parents.items():
+        for dependency in dependencies:
+            children[dependency].add(key)
+
+    def walk(
+        seeds: Iterable[str],
+        edges: Mapping[str, set[str]],
+        stops: Container[str] = (),
+        *,
+        boundaries: bool = False,
+    ) -> set[str]:
+        pending = list(seeds)
+        visited: set[str] = set()
+        reached: set[str] = set()
+        while pending:
+            key = pending.pop()
+            if key in visited:
+                continue
+            visited.add(key)
+            if key in stops:
+                reached.add(key)
+            else:
+                pending.extend(edges.get(key, ()))
+        return reached if boundaries else visited
+
+    terminal = {key for key in targets if key in children and not children[key]}
+    start_edges = {key: walk(children[key], children, starts, boundaries=True) for key in starts}
+    descendants = {key: walk(start_edges[key], start_edges) for key in starts}
+    end_edges = {key: walk(parents[key], parents, ends, boundaries=True) for key in ends}
+    available = set(starts)
+    remaining = set(ends)
+    paired: dict[str, str] = {}
+
+    def error(
+        code: str, message: str, node_id: str
+    ) -> tuple[dict[str, LoopPair], list[Diagnostic]]:
+        return {}, [Diagnostic("error", f"loop.{code}", message, node_id)]
+
+    while remaining:
+        leaves = sorted(key for key in remaining if not (end_edges[key] & remaining))
+        if not leaves:
+            # Ordinary cycle validation reports the path; there is no pairing in a cycle.
+            return {}, []
+        end = leaves[0]
+        candidates = walk(parents[end], parents, available, boundaries=True)
+        if not candidates:
+            return error("unmatchedEnd", f"End Loop {end} has no available Start Loop", end)
+        closest = {
+            candidate
+            for candidate in candidates
+            if all(other == candidate or candidate in descendants[other] for other in candidates)
+        }
+        if len(closest) != 1:
+            return error(
+                "ambiguousNesting",
+                f"End Loop {end} can close unrelated Start Loops: {', '.join(sorted(candidates))}",
+                end,
+            )
+        start = closest.pop()
+        available.remove(start)
+        remaining.remove(end)
+        escapes = walk(children[start], children, remaining | terminal | {end}, boundaries=True)
+        escapes.discard(end)
+        if escapes:
+            return error(
+                "bodyEscape",
+                f"Start Loop {start} reaches {', '.join(sorted(escapes))} without End Loop {end}",
+                start,
+            )
+        paired[start] = end
+    if available:
+        return error(
+            "unmatchedStart",
+            f"Start Loops without End Loops: {', '.join(sorted(available))}",
+            min(available),
+        )
+    result: dict[str, LoopPair] = {}
+    for start, end in paired.items():
+        body = walk(children[start], children, {end}) - {end}
+        accumulate = graph.nodes[end].inputs.get("accumulate")
+        if isinstance(accumulate, Link) and accumulate.node_id in body | {start}:
+            return error(
+                "accumulateFromBody",
+                f"End Loop {end} accumulate depends on loop body node {accumulate.node_id}",
+                end,
+            )
+        result[start] = LoopPair(end, tuple(sorted(body)))
+    return result, []
 
 
 def elaborate_graph(
@@ -737,6 +858,9 @@ def validate(
         known_types=known_types,
     )
     _validate_level(level, diags)
+    if not any(diag.code == "cycle" for diag in diags):
+        _, loop_diags = validate_loops(graph, targets)
+        diags.extend(loop_diags)
     return diags
 
 
@@ -1058,6 +1182,17 @@ def _validate_region(
         known_types=level.known_types,
     )
     _validate_level(body_level, diags)
+    if not find_cycle(region.body):
+        targets = [output.source.node_id for output in region.outputs.values()]
+        if region.continue_source is not None:
+            targets.append(region.continue_source.node_id)
+        _, loop_diags = validate_loops(region.body, targets)
+        diags.extend(
+            replace(diag, node_id=body_level.prefix + diag.node_id)
+            if diag.node_id is not None
+            else diag
+            for diag in loop_diags
+        )
 
 
 def _validate_graph_node(

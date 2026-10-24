@@ -17,10 +17,12 @@ from .model import (
 from .plan import GraphCycleError, dependency_map, plan
 from .validate import (
     Diagnostic,
+    LoopPair,
     elaborate_graph,
     has_errors,
     region_interface,
     validate,
+    validate_loops,
 )
 from .wire import GraphWireError, graph_from_wire, graph_to_wire
 
@@ -37,6 +39,7 @@ __all__ = [
     "Link",
     "LoweringProblem",
     "LoweringResult",
+    "LoopPair",
     "RegionNode",
     "RegionOutput",
     "TypedLiteral",
@@ -52,4 +55,5 @@ __all__ = [
     "snapshot_graph",
     "top_level_node_id",
     "validate",
+    "validate_loops",
 ]

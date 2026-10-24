@@ -33,6 +33,9 @@
 - Native `ComfySwitchNode` uses ComfyUI's `switch`, `on_false`, and `on_true`
   inputs. Only the selected branch executes; an unconnected selected input
   produces an absent output. The two arms share one type template.
+- Loop boundary validation rejects unmatched starts or ends, ambiguous nesting,
+  body escape paths, and accumulation controls fed from their own body,
+  including boundaries inside region bodies.
 - User-declared expression outputs with stable IDs, editable names, and
   independently selected integer, float, boolean, or string outputs
 - Entry-list fan-out with edit-time output count and types. Each entry carries
