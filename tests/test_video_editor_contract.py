@@ -33,7 +33,14 @@ from dinkster_values import (
 )
 from dinkster_values.audio_codec import audio_window
 from dinkster_video import disassemble_video
-from dinkster_workers import BoundaryDiagnostic, InProcessWorker, IsolatedWorker, RemoteWorker
+from dinkster_workers import (
+    BoundaryDiagnostic,
+    InProcessWorker,
+    IsolatedWorker,
+    RemoteWorker,
+    load_manifest,
+)
+from dinkster_workers.host import load_pack
 from test_remote import TOKEN, start_service, stop_service
 
 MEDIA_MANIFEST = (
@@ -372,7 +379,7 @@ def test_media_manifest_executes_audio_video_and_video_edit_in_process_and_isola
     edit = {"vendor": {"preserve": True}, "trim": {"start_time": 0.5, "duration": 1.0}}
 
     async def scenario() -> None:
-        registry = _registry()
+        local_worker, registry, _, _ = load_pack(load_manifest(MEDIA_MANIFEST))
         assert (
             registry.spec(VIDEO_EDIT_TYPE).decode(registry.spec(VIDEO_EDIT_TYPE).encode(edit))
             == edit
@@ -413,9 +420,7 @@ def test_media_manifest_executes_audio_video_and_video_edit_in_process_and_isola
                 "video"
             ].resolve()
 
-        local_audio, local_video = await run(
-            InProcessWorker(build_node_types(MEDIA_IO_NODES), registry)
-        )
+        local_audio, local_video = await run(local_worker)
         isolated = IsolatedWorker(MEDIA_MANIFEST, registry, shm_threshold=64)
         await isolated.start()
         try:
