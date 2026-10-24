@@ -14,6 +14,7 @@ from dinkster_api.v1 import (
     CONDITIONING_TYPE,
     CORE_FLOAT,
     IMAGE_TYPE,
+    LATENT_TYPE,
     VAE_TYPE,
     InputSpec,
     Node,
@@ -323,7 +324,7 @@ class ReferenceMultiInspect(Node):
                 for name, type_id in (
                     ("resized", CONDITIONING_TYPE),
                     ("resized_negative", CONDITIONING_TYPE),
-                    ("resized_empty", "core.latent"),
+                    ("resized_empty", LATENT_TYPE),
                     ("kept", CONDITIONING_TYPE),
                     ("source_positive", CONDITIONING_TYPE),
                     ("source_negative", CONDITIONING_TYPE),
