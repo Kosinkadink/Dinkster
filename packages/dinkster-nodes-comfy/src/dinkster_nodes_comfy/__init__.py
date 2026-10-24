@@ -2,12 +2,14 @@
 
 from dinkster_api.v1 import register_inference_types
 
+from .attention_multiply import ATTENTION_MULTIPLY_NODES
 from .audio_latent import AUDIO_LATENT_NODES
 from .clip import CLIP_NODES
 from .clip_model_specific import MODEL_TEXT_ENCODER_NODES
 from .clip_sdxl import CLIP_SDXL_NODES
 from .compositing import COMPOSITING_NODES
 from .conditioning import CONDITIONING_NODES
+from .controlnet import CONTROLNET_NODES
 from .dataset_text import DATASET_TEXT_NODES
 from .freeu import FREEU_NODES
 from .image_core import IMAGE_CORE_NODES
@@ -50,6 +52,7 @@ COMFY_NODES = (
     ComfyNumberConvert,
     SeedNode,
     ComfyMathExpression,
+    *ATTENTION_MULTIPLY_NODES,
     *MODEL_MERGE_NODES,
     *MODEL_SPECIFIC_MERGE_NODES,
     *FREEU_NODES,
@@ -63,6 +66,7 @@ COMFY_NODES = (
     *CONDITIONING_NODES,
     *REFERENCE_CONDITIONING_NODES,
     *INPAINT_NODES,
+    *CONTROLNET_NODES,
     *MASK_NODES,
     *COMPOSITING_NODES,
     *IMAGE_CORE_NODES,
