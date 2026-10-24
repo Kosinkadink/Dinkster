@@ -281,6 +281,8 @@ namespaces = [
     "LTXVAudioVAEEncode",
     "LTXVAudioVAEDecode",
     "LTXVEmptyLatentAudio",
+    "ModelSamplingLTXV",
+    "LTXVScheduler",
     "ResizeImagesByShorterEdge",
     "ResizeImagesByLongerEdge",
     "CenterCropImages",

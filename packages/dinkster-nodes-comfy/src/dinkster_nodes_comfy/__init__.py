@@ -40,6 +40,7 @@ from .latent_model_specific import MODEL_LATENT_NODES
 from .latent_operations import LATENT_OPERATION_NODES
 from .logic import LOGIC_NODES
 from .ltx_audio import LTX_AUDIO_NODES
+from .ltx_sampling import LTX_SAMPLING_NODES
 from .mask import MASK_NODES
 from .math import ComfyMathExpression
 from .mochi import EmptyMochiLatentVideo
@@ -144,6 +145,7 @@ COMFY_NODES = (
     *AUDIO_VAE_NODES,
     GetAudioLatentSize,
     *LTX_AUDIO_NODES,
+    *LTX_SAMPLING_NODES,
     *DATASET_IMAGE_NODES,
     *SIGMA_SCHEDULER_NODES,
     *SAMPLER_FACTORY_NODES,
