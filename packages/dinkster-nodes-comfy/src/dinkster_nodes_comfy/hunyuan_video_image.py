@@ -25,6 +25,7 @@ from dinkster_api.v1 import (
     initialize_inference_process,
     materialize_clip_vision_output,
     materialize_image,
+    materialize_latent,
 )
 
 from .conditioning import conditioning_set_values
@@ -247,7 +248,7 @@ class HunyuanVideo15SuperResolution(Node):
         initialize_inference_process()
         torch = importlib.import_module("torch")
         management = importlib.import_module("dinkster_inference.model_management")
-        samples = latent["samples"]
+        samples = materialize_latent(latent)["samples"]
         channels = samples.shape[1]
         conditioning_latent = torch.zeros(
             (samples.shape[0], channels * 2 + 2, *samples.shape[-3:]),
