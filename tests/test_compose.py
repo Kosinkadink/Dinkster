@@ -556,20 +556,16 @@ def write_contract_manifest(
     declarations: str = "",
     *,
     namespace: str = "iso",
-    nodes_entry: str = "isopack_nodes:NODES",
+    nodes_entry: str = "empty_pack_nodes:NODES",
 ) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     manifest = directory / "dinkster-pack.toml"
-    types_entry = (
-        'types = "isopack_nodes:register_types"\n' if nodes_entry == "isopack_nodes:NODES" else ""
-    )
     manifest.write_text(
         f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
-        f'type-namespaces = ["iso"]\nnamespaces = ["{namespace}"]\n'
+        f'namespaces = ["{namespace}"]\n'
         '[pack.contracts]\nhost = "dinkster-pack-host/1"\napi = "dinkster-api/v1"\n'
         f"{declarations}"
-        f'[pack.entry]\nnodes = "{nodes_entry}"\n'
-        f"{types_entry}",
+        f'[pack.entry]\nnodes = "{nodes_entry}"\n',
         encoding="utf-8",
     )
     return manifest
@@ -1401,7 +1397,7 @@ def test_vision_pack_license_checkout_endings_do_not_change_digest(tmp_path: Pat
     manifest = copied / "dinkster_vision_hed_pack/dinkster-pack.toml"
     module = copied / "src/dinkster_nodes_vision/hed"
     expected = compose._installed_pack_digest(manifest, module)
-    assert expected == ("blake3:b89f948d6ce1607ade7afe66afa556b7bc67d26b75e603378babfe5553001df2")
+    assert expected == ("blake3:bf77bad675bff0dd1e33d78af78ade49dc764a23d49f246808157a391a28aa8c")
     license_file = manifest.parent / "MLSD_LICENSE"
     license_bytes = license_file.read_bytes().replace(b"\r\n", b"\n")
     license_file.write_bytes(license_bytes.replace(b"\n", b"\r\n"))
@@ -1788,6 +1784,11 @@ def test_compose_rejects_namespace_collision(tmp_path: Path) -> None:
     async def scenario() -> None:
         first = write_iso_manifest(tmp_path / "a", name="isopack", presentation=False)
         second = write_iso_manifest(tmp_path / "b", name="isopack2", presentation=False)
+        second.write_text(
+            second.read_text()
+            .replace('type-namespaces = ["iso"]\n', "")
+            .replace('types = "isopack_nodes:register_types"\n', "")
+        )
         with pytest.raises(
             CompositionError,
             match="'iso' claimed by 'isopack2' overlaps 'iso' claimed by 'isopack'",
@@ -2759,6 +2760,11 @@ def test_serving_composer_failed_add_pack_reaps_on_close(
         try:
             await composer.add_pack(write_iso_manifest(tmp_path / "a"))
             bad = write_iso_manifest(tmp_path / "b", name="isopack2", namespaces=None)
+            bad.write_text(
+                bad.read_text()
+                .replace('type-namespaces = ["iso"]\n', "")
+                .replace('types = "isopack_nodes:register_types"\n', "")
+            )
             with pytest.raises(CompositionError, match="outside the pack's declared namespaces"):
                 await composer.add_pack(bad)
         finally:
@@ -2902,7 +2908,12 @@ def test_failed_start_reaps_started_workers(
             presentation=False,
             namespaces=("zzbad",),
         )
-        bad.write_text(bad.read_text().replace("isopack_nodes:NODES", "missing_nodes:NODES"))
+        bad.write_text(
+            bad.read_text()
+            .replace("isopack_nodes:NODES", "missing_nodes:NODES")
+            .replace('type-namespaces = ["iso"]\n', "")
+            .replace('types = "isopack_nodes:register_types"\n', "")
+        )
         with pytest.raises(RuntimeError, match="failed to start"):
             await compose_serving([good, bad], worker_env=WORKER_ENV)
         assert len(started) == 1
