@@ -18,6 +18,18 @@ _SPECS = {
     "PreviewAny": ((("source", "IMAGE"),), (("STRING", "STRING"),)),
     "CLIPLoader": ((("clip_name", "COMBO"),), (("CLIP", "CLIP"),)),
     "VAELoader": ((("vae_name", "COMBO"),), (("VAE", "VAE"),)),
+    "CLIPTextEncode": (
+        (("clip", "CLIP"), ("text", "STRING")),
+        (("CONDITIONING", "CONDITIONING"),),
+    ),
+    "ConditioningZeroOut": (
+        (("conditioning", "CONDITIONING"),),
+        (("CONDITIONING", "CONDITIONING"),),
+    ),
+    "EmptySD3LatentImage": (
+        (("width", "INT"), ("height", "INT")),
+        (("LATENT", "LATENT"),),
+    ),
     "KSampler": (
         (
             ("model", "MODEL"),
@@ -28,6 +40,7 @@ _SPECS = {
         (("LATENT", "LATENT"),),
     ),
     "ModelSamplingAuraFlow": ((("model", "MODEL"),), (("MODEL", "MODEL"),)),
+    "VAEDecode": ((("samples", "LATENT"), ("vae", "VAE")), (("IMAGE", "IMAGE"),)),
 }
 
 
