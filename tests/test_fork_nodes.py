@@ -11,6 +11,7 @@ from typing import Any, cast
 
 import numpy as np
 import pytest
+from dinkster_api.v1 import MODEL_PATCH_TYPE
 from dinkster_assets import AssetRef, LocalAssetRef, MountDef, MountTable, digest_file
 from dinkster_compat_comfy.translate import CompatTranslation
 from dinkster_inference_wire import (
@@ -146,7 +147,7 @@ def test_native_types_register_resident_model_patches() -> None:
     register_native_types(registry)
     model_patch = object()
 
-    spec = registry.spec("comfy.MODEL_PATCH")
+    spec = registry.spec(MODEL_PATCH_TYPE)
 
     assert spec.decode(spec.encode(model_patch)) is model_patch
 

@@ -11,6 +11,7 @@ from typing import cast
 import numpy as np
 import opentimelineio as otio
 import pytest
+from dinkster_api.v1 import VIDEO_TYPE
 from dinkster_assets import AssetRef, AssetVault, digest_bytes
 from dinkster_nodes_image.drawing import DrawText
 from dinkster_nodes_media_io import register_media_types
@@ -98,8 +99,8 @@ def test_real_otio_structural_equivalence(name):
 def test_document_rejects_inline_media_paths_and_nonfinite():
     base = make()
     for reference in (
-        {"type": "comfy.VIDEO", "bytes": "pixels"},
-        {"type": "comfy.VIDEO", "asset": {"path": "/etc/passwd"}},
+        {"type": VIDEO_TYPE, "bytes": "pixels"},
+        {"type": VIDEO_TYPE, "asset": {"path": "/etc/passwd"}},
     ):
         with pytest.raises(ValueError):
             mutate(base, "bind_source", {"source": "a", "reference": reference})
@@ -111,6 +112,16 @@ def test_document_rejects_inline_media_paths_and_nonfinite():
         document({**base, "timeline": {**base["timeline"], "metadata": {"huge": "x" * 1048576}}})
     with pytest.raises(TimelineError, match="Timeline.1 root"):
         document({**base, "timeline": base["timeline"]["tracks"]})
+
+
+def test_timeline_rejects_legacy_video_source_tag_without_a_bridge(bound_video):
+    value, _, _ = bound_video
+    legacy_reference = {
+        "type": "comfy.VIDEO",
+        "asset": cast(AssetRef, value["source"]).to_wire(),
+    }
+    with pytest.raises(ValueError):
+        mutate(make(), "bind_source", {"source": "video", "reference": legacy_reference})
 
 
 def test_opaque_otio_url_never_reaches_resolver():
@@ -184,7 +195,7 @@ def test_strict_widget_sibling_and_safe_packet_copy(bound_video):
 
 def test_v3_wire_is_source_only_and_v2_stable(bound_video):
     value, factory, _ = bound_video
-    before, identity = encode_video(value), video_fingerprint("comfy.VIDEO")(value)
+    before, identity = encode_video(value), video_fingerprint(VIDEO_TYPE)(value)
     doc = timeline_for(value)
     doc = mutate(doc, "add_track", {"name": "overlay"})
     video = TimelineVideo(doc, factory)
@@ -200,7 +211,7 @@ def test_v3_wire_is_source_only_and_v2_stable(bound_video):
     with pytest.raises(ValueError, match="asset_refs"):
         validate_video_encoded(encoded, bad_meta)
     assert encode_video(value) == before
-    assert video_fingerprint("comfy.VIDEO")(value) == identity
+    assert video_fingerprint(VIDEO_TYPE)(value) == identity
 
 
 def test_node_command_enumeration_and_codec_registration():
@@ -564,7 +575,7 @@ def test_loopback_remote_sink_stages_sources_and_returns_only_encoded_asset(
                                 node_id="save",
                                 node_type="dinkster.save_video_value",
                                 inputs={
-                                    "video": registry.wrap("comfy.VIDEO", lazy),
+                                    "video": registry.wrap(VIDEO_TYPE, lazy),
                                     "target": registry.wrap(
                                         SAVE_TARGET_TYPE,
                                         {"mount": "comfy-output", "prefix": "timeline"},
@@ -621,7 +632,7 @@ def test_timeline_compositor_converts_premultiplied_video_pixels_once(bound_vide
     pixels[..., 0] = pixels[..., 3] = 0.5
     video = assemble_video(annotate_image(pixels, alpha="premultiplied"), fps=10)
     reference = {
-        "type": "comfy.VIDEO",
+        "type": VIDEO_TYPE,
         "asset": cast(AssetRef, source["source"]).to_wire(),
     }
     doc = make(width=64, height=32, rate=10, clips=[clip("video", duration=2)])
@@ -642,7 +653,7 @@ def test_split_preserves_negative_otio_source_coordinate_origin():
 
 def test_asset_only_video_binding_cannot_hold_last_frame_past_eof(bound_video):
     value, factory, _ = bound_video
-    reference = {"type": "comfy.VIDEO", "asset": cast(AssetRef, value["source"]).to_wire()}
+    reference = {"type": VIDEO_TYPE, "asset": cast(AssetRef, value["source"]).to_wire()}
     obj = make(width=64, height=32, rate=10, clips=[clip("video", duration=3)])
     obj = mutate(obj, "bind_source", {"source": "video", "reference": reference})
     with pytest.raises(TimelineError, match="source_range_unavailable"):

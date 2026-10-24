@@ -1,12 +1,12 @@
 {
   "opaqueTypes": [
     "comfy.ARRAY",
-    "comfy.AUDIO",
+    "AUDIO",
     "comfy.AUDIO_ENCODER",
     "comfy.AUDIO_ENCODER_OUTPUT",
     "comfy.AUDIO_RECORD",
-    "comfy.BACKGROUND_REMOVAL",
-    "comfy.BOUNDING_BOX",
+    "BACKGROUND_REMOVAL",
+    "BOUNDING_BOX",
     "comfy.BOUNDING_BOXES",
     "comfy.CLIP",
     "comfy.CLIP_VISION",
@@ -47,7 +47,7 @@
     "comfy.KIMODO_POSE_DATA",
     "comfy.LATENT",
     "comfy.LATENT_OPERATION",
-    "comfy.LATENT_UPSCALE_MODEL",
+    "LATENT_UPSCALE_MODEL",
     "comfy.LAYERS",
     "comfy.LOAD3D_CAMERA",
     "comfy.LOAD3D_MODEL_INFO",
@@ -55,12 +55,12 @@
     "comfy.LORA_MODEL",
     "comfy.LOSS_MAP",
     "comfy.MASK",
-    "comfy.MESH",
+    "MESH",
     "comfy.MHR_POSE_DATA",
     "comfy.MODEL",
-    "comfy.MODEL_PATCH",
-    "comfy.MOGE_GEOMETRY",
-    "comfy.MOGE_MODEL",
+    "MODEL_PATCH",
+    "MOGE_GEOMETRY",
+    "MOGE_MODEL",
     "comfy.NOISE",
     "comfy.OPTICAL_FLOW",
     "comfy.PHOTOMAKER",
@@ -69,7 +69,7 @@
     "comfy.SAM3D_BODY_MODEL",
     "comfy.SAM3_TRACK_DATA",
     "comfy.SAMPLER",
-    "comfy.SHAPE_SUBDIVIDES",
+    "SHAPE_SUBDIVIDES",
     "comfy.SIGMAS",
     "comfy.SPLAT",
     "comfy.STYLE_MODEL",
@@ -78,9 +78,9 @@
     "comfy.TRACKS",
     "comfy.UPSCALE_MODEL",
     "comfy.VAE",
-    "comfy.VIDEO",
-    "comfy.VIDEO_EDIT",
-    "comfy.VOXEL",
+    "VIDEO",
+    "VIDEO_EDIT",
+    "VOXEL",
     "comfy.WAN_CAMERA_EMBEDDING",
     "comfy.WEBCAM"
   ],
@@ -999,7 +999,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MODEL_PATCH"
+              "MODEL_PATCH"
             ]
           }
         },
@@ -1113,7 +1113,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         },
@@ -1178,7 +1178,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         }
@@ -1203,7 +1203,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         },
@@ -1231,7 +1231,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -1256,7 +1256,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         },
@@ -1267,7 +1267,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         },
@@ -1297,7 +1297,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -1333,7 +1333,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         },
@@ -1410,7 +1410,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         },
@@ -1550,7 +1550,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -1575,7 +1575,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         },
@@ -1586,7 +1586,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         },
@@ -1618,7 +1618,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -1643,7 +1643,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         },
@@ -1654,7 +1654,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         },
@@ -1783,7 +1783,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         },
@@ -1794,7 +1794,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         },
@@ -1880,7 +1880,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         },
@@ -1891,7 +1891,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VOXEL"
+              "VOXEL"
             ]
           }
         },
@@ -1922,7 +1922,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         },
@@ -9487,7 +9487,7 @@
           "type": {
             "kind": "union",
             "types": [
-              "comfy.BOUNDING_BOX",
+              "BOUNDING_BOX",
               "comfy.ARRAY",
               "STRING"
             ]
@@ -9522,7 +9522,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.BOUNDING_BOX"
+              "BOUNDING_BOX"
             ]
           }
         },
@@ -10703,7 +10703,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         },
@@ -10755,7 +10755,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VIDEO"
+              "VIDEO"
             ]
           }
         }
@@ -10798,7 +10798,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.BOUNDING_BOX"
+              "BOUNDING_BOX"
             ]
           }
         },
@@ -11364,7 +11364,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         }
@@ -11690,7 +11690,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         },
@@ -11806,7 +11806,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         }
@@ -12029,7 +12029,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.BOUNDING_BOX"
+              "BOUNDING_BOX"
             ]
           }
         },
@@ -12788,7 +12788,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -14634,7 +14634,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         },
@@ -14711,7 +14711,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         }
@@ -16294,7 +16294,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         }
@@ -16413,7 +16413,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         },
@@ -16423,7 +16423,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         },
@@ -16504,7 +16504,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VIDEO"
+              "VIDEO"
             ]
           }
         },
@@ -16524,7 +16524,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         },
@@ -17534,7 +17534,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.LATENT_UPSCALE_MODEL"
+              "LATENT_UPSCALE_MODEL"
             ]
           }
         },
@@ -18885,7 +18885,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.BOUNDING_BOX"
+              "BOUNDING_BOX"
             ]
           }
         },
@@ -20837,7 +20837,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         },
@@ -20848,7 +20848,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         },
@@ -20858,7 +20858,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -22130,7 +22130,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -22159,7 +22159,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         },
@@ -22764,7 +22764,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MODEL_PATCH"
+              "MODEL_PATCH"
             ]
           }
         },
@@ -23239,7 +23239,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.LATENT_UPSCALE_MODEL"
+              "LATENT_UPSCALE_MODEL"
             ]
           }
         },
@@ -23470,7 +23470,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         },
@@ -25516,7 +25516,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.LATENT_UPSCALE_MODEL"
+              "LATENT_UPSCALE_MODEL"
             ]
           }
         }
@@ -25554,7 +25554,7 @@
           "type": {
             "kind": "union",
             "types": [
-              "comfy.BOUNDING_BOX",
+              "BOUNDING_BOX",
               "comfy.ARRAY",
               "STRING"
             ]
@@ -25804,7 +25804,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -25847,7 +25847,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.BACKGROUND_REMOVAL"
+              "BACKGROUND_REMOVAL"
             ]
           }
         }
@@ -26323,7 +26323,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MOGE_MODEL"
+              "MOGE_MODEL"
             ]
           }
         }
@@ -26423,7 +26423,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VIDEO"
+              "VIDEO"
             ]
           }
         }
@@ -26467,7 +26467,7 @@
             "element": {
               "kind": "concrete",
               "types": [
-                "comfy.VIDEO"
+                "VIDEO"
               ]
             },
             "kind": "list"
@@ -26513,7 +26513,7 @@
             "element": {
               "kind": "concrete",
               "types": [
-                "comfy.VIDEO"
+                "VIDEO"
               ]
             },
             "kind": "list"
@@ -27654,7 +27654,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.BOUNDING_BOX"
+              "BOUNDING_BOX"
             ]
           }
         }
@@ -28084,7 +28084,7 @@
               "type": {
                 "kind": "concrete",
                 "types": [
-                  "comfy.MESH"
+                  "MESH"
                 ]
               }
             }
@@ -28096,7 +28096,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         }
@@ -28205,7 +28205,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         },
@@ -28234,7 +28234,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         }
@@ -28259,7 +28259,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         },
@@ -28334,7 +28334,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         },
@@ -28446,7 +28446,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         },
@@ -28495,7 +28495,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MODEL_PATCH"
+              "MODEL_PATCH"
             ]
           }
         },
@@ -28963,7 +28963,7 @@
               "type": {
                 "kind": "concrete",
                 "types": [
-                  "comfy.AUDIO"
+                  "AUDIO"
                 ]
               }
             }
@@ -28984,7 +28984,7 @@
               "type": {
                 "kind": "concrete",
                 "types": [
-                  "comfy.AUDIO"
+                  "AUDIO"
                 ]
               }
             }
@@ -29262,7 +29262,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MOGE_GEOMETRY"
+              "MOGE_GEOMETRY"
             ]
           }
         },
@@ -29348,7 +29348,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MOGE_MODEL"
+              "MOGE_MODEL"
             ]
           }
         },
@@ -29452,7 +29452,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MOGE_GEOMETRY"
+              "MOGE_GEOMETRY"
             ]
           }
         }
@@ -29480,7 +29480,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MOGE_MODEL"
+              "MOGE_MODEL"
             ]
           }
         },
@@ -29574,7 +29574,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MOGE_GEOMETRY"
+              "MOGE_GEOMETRY"
             ]
           }
         }
@@ -29602,7 +29602,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MOGE_GEOMETRY"
+              "MOGE_GEOMETRY"
             ]
           }
         },
@@ -29680,7 +29680,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         }
@@ -29705,7 +29705,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MOGE_GEOMETRY"
+              "MOGE_GEOMETRY"
             ]
           }
         },
@@ -42723,7 +42723,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MODEL_PATCH"
+              "MODEL_PATCH"
             ]
           }
         }
@@ -43916,7 +43916,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         },
@@ -43927,7 +43927,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VOXEL"
+              "VOXEL"
             ]
           }
         },
@@ -43937,7 +43937,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         }
@@ -45552,7 +45552,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         },
@@ -45562,7 +45562,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -46027,7 +46027,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.BOUNDING_BOX"
+              "BOUNDING_BOX"
             ]
           }
         }
@@ -46311,7 +46311,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MODEL_PATCH"
+              "MODEL_PATCH"
             ]
           }
         },
@@ -46549,7 +46549,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.BOUNDING_BOX"
+              "BOUNDING_BOX"
             ]
           }
         }
@@ -46833,7 +46833,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -47303,7 +47303,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         },
@@ -47529,7 +47529,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         }
@@ -47555,7 +47555,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.BACKGROUND_REMOVAL"
+              "BACKGROUND_REMOVAL"
             ]
           }
         },
@@ -47605,7 +47605,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         },
@@ -47988,7 +47988,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         },
@@ -49160,7 +49160,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         },
@@ -49316,7 +49316,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         }
@@ -49640,7 +49640,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.BOUNDING_BOX"
+              "BOUNDING_BOX"
             ]
           }
         },
@@ -50474,7 +50474,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.BOUNDING_BOX"
+              "BOUNDING_BOX"
             ]
           }
         },
@@ -50530,7 +50530,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.BOUNDING_BOX"
+              "BOUNDING_BOX"
             ]
           }
         }
@@ -51126,7 +51126,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.BOUNDING_BOX"
+              "BOUNDING_BOX"
             ]
           }
         }
@@ -51210,7 +51210,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.BOUNDING_BOX"
+              "BOUNDING_BOX"
             ]
           }
         },
@@ -51446,7 +51446,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MODEL_PATCH"
+              "MODEL_PATCH"
             ]
           }
         },
@@ -53959,7 +53959,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         },
@@ -53985,7 +53985,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -54012,7 +54012,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         },
@@ -54103,7 +54103,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -54129,7 +54129,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         },
@@ -54175,7 +54175,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -54201,7 +54201,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         },
@@ -54249,7 +54249,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -54276,7 +54276,7 @@
           "type": {
             "kind": "union",
             "types": [
-              "comfy.MESH",
+              "MESH",
               "comfy.FILE_3D_GLB",
               "comfy.FILE_3D_GLTF",
               "comfy.FILE_3D_OBJ",
@@ -55492,7 +55492,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VIDEO"
+              "VIDEO"
             ]
           }
         },
@@ -55985,7 +55985,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VIDEO"
+              "VIDEO"
             ]
           }
         }
@@ -57373,7 +57373,7 @@
             "element": {
               "kind": "concrete",
               "types": [
-                "comfy.VIDEO"
+                "VIDEO"
               ]
             },
             "kind": "list"
@@ -57404,7 +57404,7 @@
             "element": {
               "kind": "concrete",
               "types": [
-                "comfy.VIDEO"
+                "VIDEO"
               ]
             },
             "kind": "list"
@@ -57433,7 +57433,7 @@
             "element": {
               "kind": "concrete",
               "types": [
-                "comfy.VIDEO"
+                "VIDEO"
               ]
             },
             "kind": "list"
@@ -57479,7 +57479,7 @@
             "element": {
               "kind": "concrete",
               "types": [
-                "comfy.VIDEO"
+                "VIDEO"
               ]
             },
             "kind": "list"
@@ -58164,7 +58164,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         }
@@ -58189,7 +58189,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         },
@@ -58199,7 +58199,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         },
@@ -58209,7 +58209,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -61388,7 +61388,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         },
@@ -61661,7 +61661,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         },
@@ -62947,7 +62947,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VOXEL"
+              "VOXEL"
             ]
           }
         },
@@ -63190,7 +63190,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         },
@@ -63235,7 +63235,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -64169,7 +64169,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MODEL_PATCH"
+              "MODEL_PATCH"
             ]
           }
         },
@@ -64218,7 +64218,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         },
@@ -64304,7 +64304,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         }
@@ -64443,7 +64443,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -64528,7 +64528,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -64613,7 +64613,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VOXEL"
+              "VOXEL"
             ]
           }
         }
@@ -64903,7 +64903,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         },
@@ -65769,7 +65769,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         },
@@ -65779,7 +65779,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.SHAPE_SUBDIVIDES"
+              "SHAPE_SUBDIVIDES"
             ]
           }
         }
@@ -65847,7 +65847,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VOXEL"
+              "VOXEL"
             ]
           }
         }
@@ -65898,7 +65898,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.SHAPE_SUBDIVIDES"
+              "SHAPE_SUBDIVIDES"
             ]
           }
         },
@@ -65908,7 +65908,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VOXEL"
+              "VOXEL"
             ]
           }
         }
@@ -65936,7 +65936,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VIDEO"
+              "VIDEO"
             ]
           }
         },
@@ -65996,7 +65996,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VIDEO"
+              "VIDEO"
             ]
           }
         }
@@ -66021,7 +66021,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VIDEO"
+              "VIDEO"
             ]
           }
         },
@@ -66041,7 +66041,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VIDEO_EDIT"
+              "VIDEO_EDIT"
             ]
           }
         },
@@ -66051,7 +66051,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VIDEO"
+              "VIDEO"
             ]
           }
         }
@@ -66078,7 +66078,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VIDEO"
+              "VIDEO"
             ]
           }
         },
@@ -66145,7 +66145,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VIDEO"
+              "VIDEO"
             ]
           }
         }
@@ -66229,7 +66229,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VIDEO"
+              "VIDEO"
             ]
           }
         },
@@ -66274,7 +66274,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VIDEO"
+              "VIDEO"
             ]
           }
         }
@@ -66300,7 +66300,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VIDEO"
+              "VIDEO"
             ]
           }
         },
@@ -66346,7 +66346,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VIDEO"
+              "VIDEO"
             ]
           }
         }
@@ -66429,7 +66429,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VIDEO"
+              "VIDEO"
             ]
           }
         },
@@ -66447,7 +66447,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VIDEO_EDIT"
+              "VIDEO_EDIT"
             ]
           }
         },
@@ -66471,7 +66471,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VIDEO"
+              "VIDEO"
             ]
           }
         }
@@ -66497,7 +66497,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VOXEL"
+              "VOXEL"
             ]
           }
         },
@@ -66544,7 +66544,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         }
@@ -66569,7 +66569,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VOXEL"
+              "VOXEL"
             ]
           }
         },
@@ -66597,7 +66597,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         }
@@ -68245,7 +68245,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         },
@@ -68375,7 +68375,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         },
@@ -68405,7 +68405,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -68478,7 +68478,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         },
@@ -68515,7 +68515,7 @@
             "element": {
               "kind": "concrete",
               "types": [
-                "comfy.AUDIO"
+                "AUDIO"
               ]
             },
             "kind": "list"
@@ -69656,7 +69656,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MODEL_PATCH"
+              "MODEL_PATCH"
             ]
           }
         },
@@ -71469,7 +71469,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MODEL_PATCH"
+              "MODEL_PATCH"
             ]
           }
         },
@@ -71879,7 +71879,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         },
@@ -71925,7 +71925,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MESH"
+              "MESH"
             ]
           }
         }
@@ -71961,7 +71961,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.MODEL_PATCH"
+              "MODEL_PATCH"
             ]
           }
         },
