@@ -32,6 +32,7 @@ from .types import (
     Pose,
     PoseKeypoint,
     PoseSkeleton,
+    validate_pose_json_nesting,
 )
 
 IMAGE = TypeExpr.concrete("IMAGE")
@@ -330,6 +331,10 @@ def poses_from_json(text: str) -> list[Pose]:
     try:
         raw = cast("object", json.loads(text, parse_constant=reject_constant))
     except (json.JSONDecodeError, RecursionError) as exc:
+        raise ValueError("invalid pose JSON") from exc
+    try:
+        validate_pose_json_nesting(raw)
+    except ValueError as exc:
         raise ValueError("invalid pose JSON") from exc
     frames: list[object] = list(cast("list[object]", raw)) if isinstance(raw, list) else [raw]
     if not frames:

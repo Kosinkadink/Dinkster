@@ -36,6 +36,7 @@ MAX_POSE_SKELETONS = 1_024
 MAX_SKELETON_KEYPOINTS = 4_096
 MAX_SKELETON_EDGES = 8_192
 MAX_KEYPOINT_COORDINATE = 32_767.0
+MAX_POSE_JSON_DEPTH = 1_000
 POSE_KINDS = frozenset(("person", "face", "left_hand", "right_hand", "animal"))
 
 # Reserved for Dinkster#682; this pack intentionally provides no vector runtime.
@@ -56,6 +57,21 @@ def _finite_number(value: object, subject: str) -> float:
     if not math.isfinite(result):
         raise ValueError(f"{subject} must be finite")
     return result
+
+
+def validate_pose_json_nesting(value: object) -> None:
+    pending: list[tuple[object, int]] = [(value, 0)]
+    while pending:
+        current, depth = pending.pop()
+        if isinstance(current, dict):
+            children = cast("dict[str, object]", current).values()
+        elif isinstance(current, list):
+            children = cast("list[object]", current)
+        else:
+            continue
+        if depth >= MAX_POSE_JSON_DEPTH:
+            raise ValueError("pose JSON exceeds nesting bound")
+        pending.extend((child, depth + 1) for child in children)
 
 
 @dataclass(frozen=True)
@@ -264,6 +280,10 @@ def _decode_pose(data: bytes) -> object:
     try:
         record = json.loads(data)
     except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
+        raise ValueError(f"invalid {POSE_TYPE} payload") from exc
+    try:
+        validate_pose_json_nesting(record)
+    except ValueError as exc:
         raise ValueError(f"invalid {POSE_TYPE} payload") from exc
     return _coerce_pose(record)
 
