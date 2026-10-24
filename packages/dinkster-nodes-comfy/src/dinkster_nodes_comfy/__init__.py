@@ -24,6 +24,7 @@ from .dataset_collections import DATASET_COLLECTION_NODES
 from .dataset_images import DATASET_IMAGE_NODES
 from .dataset_text import DATASET_TEXT_NODES
 from .freeu import FREEU_NODES
+from .hook_scheduling import HOOK_SCHEDULING_NODES
 from .hunyuan_latent import HUNYUAN_LATENT_NODES
 from .hunyuan_text import HUNYUAN_TEXT_NODES
 from .image_core import IMAGE_CORE_NODES
@@ -95,6 +96,7 @@ COMFY_NODES = (
     *SPATIAL_MODEL_PATCH_NODES,
     *ROPE_AND_MASK_NODES,
     *NOISE_GUIDANCE_NODES,
+    *HOOK_SCHEDULING_NODES,
     *SIGMA_OPERATION_NODES,
     *LATENT_NODES,
     *LATENT_ADVANCED_NODES,
