@@ -418,7 +418,7 @@ class CFGOverride(Node):
         return NodeSchema(
             node_type="CFGOverride",
             display_name="CFG Override",
-            category="sampling/custom_sampling",
+            category="model/sampling/guiders",
             description=(
                 "Override cfg to a fixed value over a [start, end] percent (sigma) range. "
                 "With multiple overrides, the one nearest the sampler wins on overlap."

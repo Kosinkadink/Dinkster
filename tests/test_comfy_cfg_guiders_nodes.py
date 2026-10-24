@@ -36,6 +36,7 @@ def test_cfg_guider_schemas_are_cold_and_registered_in_source_order() -> None:
     for node in CFG_GUIDER_NODES[:-1]:
         assert node.schema().inputs[0].type == TypeExpr.concrete(MODEL_TYPE)
         assert node.schema().outputs[0].type == TypeExpr.concrete(GUIDER_TYPE)
+    assert CFG_GUIDER_NODES[-1].schema().category == "model/sampling/guiders"
     assert CFG_GUIDER_NODES[-1].schema().outputs[0].type == TypeExpr.concrete(MODEL_TYPE)
     assert CFG_GUIDER_NODES[0].schema().inputs[1].type == TypeExpr.concrete(CONDITIONING_TYPE)
 
