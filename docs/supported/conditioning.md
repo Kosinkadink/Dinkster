@@ -36,6 +36,8 @@
   unconnected latent leaves conditioning unchanged.
 - `TextEncodeAceStepAudio` and `TextEncodeAceStepAudio1.5` encode ACE Step
   audio tags and lyrics with their native generation controls.
+- `CLIPTextEncodeKandinsky5` combines its CLIP-L and Qwen prompt streams for
+  Kandinsky 5 conditioning.
 - Hook-bearing native conditioning retains its runtime hook groups across node
   links. Releasing a referenced hook invalidates dependent conditioning and caches.
 - Other model-family conditioning surfaces are unsupported.

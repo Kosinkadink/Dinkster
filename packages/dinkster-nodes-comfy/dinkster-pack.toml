@@ -161,6 +161,7 @@ namespaces = [
     "CLIPTextEncodePixArtAlpha",
     "CLIPTextEncodeLumina2",
     "CLIPTextEncodeHiDream",
+    "CLIPTextEncodeKandinsky5",
     "CLIPTextEncodeControlnet",
     "T5TokenizerOptions",
     "VAEDecode",
