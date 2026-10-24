@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Container, Mapping
+from collections.abc import Container, Mapping, Sequence
 
 from dinkster_graph import (
     Graph,
@@ -11,6 +11,7 @@ from dinkster_graph import (
     LoopPair,
     RegionNode,
     elaborate_graph,
+    graph_from_wire,
     region_interface,
     snapshot_graph,
     validate,
@@ -71,6 +72,7 @@ def admit_expansion(
     ports: Mapping[str, TypeExpr] | None = None,
     expansion_demands: Mapping[str, set[str]] | None = None,
     loop_pairs: Mapping[str, LoopPair] | None = None,
+    targets: Sequence[str] = (),
 ) -> tuple[Graph, dict[str, NodeSchema], dict[str, str], dict[str, tuple[str, str]]]:
     """Validate the overlay before exposing any node or changing the scheduler.
 
@@ -101,7 +103,17 @@ def admit_expansion(
         inputs: dict[str, object] = {}
         for name, binding in node.inputs:
             if isinstance(binding, LiteralInput):
-                inputs[name] = _literal(binding.value)
+                literal_node = graph_from_wire(
+                    {
+                        "nodes": {
+                            "literal": {
+                                "nodeType": node.node_type,
+                                "inputs": {name: _literal(binding.value)},
+                            }
+                        }
+                    }
+                ).nodes["literal"]
+                inputs[name] = literal_node.inputs[name]
             elif isinstance(binding, CurrentOutputRef):
                 inputs[name] = Link(parent_id, binding.output_id)
             elif isinstance(binding, ExternalOutputRef):
@@ -145,7 +157,14 @@ def admit_expansion(
     diagnostics += validate(
         overlay,
         schemas,
-        (),
+        (
+            *targets,
+            *(
+                ids[node.local_id]
+                for node in expansion.expansion.nodes
+                if effective[ids[node.local_id]].output_node
+            ),
+        ),
         effective,
         known_types=known_types,
         ports=ports,

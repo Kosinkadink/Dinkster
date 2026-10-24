@@ -28,13 +28,18 @@ def _identifier(value: object, name: str) -> None:
         raise ValueError(f"{name} is not a valid identifier")
 
 
-def _pairs(value: object, name: str) -> tuple[tuple[str, object], ...]:
+def _pairs(
+    value: object, name: str, *, literal_keys: bool = False
+) -> tuple[tuple[str, object], ...]:
     if type(value) is not tuple or len(value) > RESULT_ALGEBRA_MAX_COUNT:
         raise ValueError(f"{name} must be a bounded tuple")
     for item in value:
         if type(item) is not tuple or len(item) != 2:
             raise ValueError(f"{name} entries must be pairs")
-        _identifier(item[0], f"{name} key")
+        if literal_keys:
+            _text(item[0], f"{name} key")
+        else:
+            _identifier(item[0], f"{name} key")
     result = value
     keys = tuple(item[0] for item in result)
     if keys != tuple(sorted(keys)) or len(keys) != len(set(keys)):
@@ -47,7 +52,7 @@ class JsonObject:
     fields: tuple[tuple[str, JsonLiteral], ...]
 
     def __post_init__(self) -> None:
-        pairs = _pairs(self.fields, "literal object fields")
+        pairs = _pairs(self.fields, "literal object fields", literal_keys=True)
         for _, value in pairs:
             _literal(value)
 
@@ -84,7 +89,7 @@ def _literal(value: object, depth: int = 0, budget: list[int] | None = None) -> 
             raise ValueError("literal float must be finite and not negative zero")
         return value
     if isinstance(value, JsonObject):
-        fields = _pairs(value.fields, "literal object fields")
+        fields = _pairs(value.fields, "literal object fields", literal_keys=True)
         return JsonObject(tuple((key, _literal(item, depth + 1, budget)) for key, item in fields))
     if type(value) is tuple:
         return tuple(_literal(item, depth + 1, budget) for item in value)

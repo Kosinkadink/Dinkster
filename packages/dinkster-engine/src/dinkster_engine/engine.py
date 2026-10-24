@@ -2089,7 +2089,14 @@ class Engine:
                 signatures = {key: schema_signature(schema) for key, schema in admitted.items()}
 
             return EngineRunContext(
-                node_id, inputs, controls, lambda: graph, publish, inhibit, override
+                node_id,
+                inputs,
+                controls,
+                lambda: graph,
+                publish,
+                inhibit,
+                override,
+                self._schemas_for(run_id),
             )
 
         async def resolve_expansion(parent_id: str, entry: CachedResult) -> Mapping[str, Value]:
@@ -2112,6 +2119,7 @@ class Engine:
                     region_ports,
                     expansion_demands,
                     controls.loop_pairs,
+                    initial_targets,
                 )
             except (KeyError, TypeError, ValueError) as exc:
                 message = f"invalid expansion: {exc}"

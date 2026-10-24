@@ -358,6 +358,9 @@ def _resolve_linked_output_types(
                 input_spec = schema.input(input_id)
                 if input_spec is None or not contains_variable(input_spec.type):
                     continue
+                if isinstance(value, TypedLiteral):
+                    input_types[input_id] = value.type_id
+                    continue
                 if not isinstance(value, Link):
                     all_generic_inputs_resolved = False
                     break
@@ -384,6 +387,24 @@ def _resolve_linked_output_types(
         if not changed:
             break
     return resolved
+
+
+def graph_output_types(
+    graph: Graph, schemas: Mapping[str, NodeSchema]
+) -> dict[str, dict[str, TypeExpr]]:
+    """Resolve output declarations, including linked template bindings."""
+    effective, regions, _ = _interface_pass(graph, schemas, "", include_elab=False)
+    resolved = _resolve_linked_output_types(graph, {}, effective, regions)
+    return {
+        node_id: {
+            output.id: resolved.get(node_id, {}).get(output.id, output.type)
+            for output in schema.outputs
+        }
+        for node_id, schema in effective.items()
+    } | {
+        node_id: {name: expr for name, expr in data.interface.items() if expr is not None}
+        for node_id, data in regions.items()
+    }
 
 
 def region_interface(

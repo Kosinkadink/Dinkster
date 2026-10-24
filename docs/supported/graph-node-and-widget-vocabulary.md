@@ -36,6 +36,9 @@
 - Loop boundary validation rejects unmatched starts or ends, ambiguous nesting,
   body escape paths, and accumulation controls fed from their own body,
   including boundaries inside region bodies.
+- Native loop boundaries expand simple counts, For ranges, and typed lists
+  into run-local body occurrences. They carry values between iterations,
+  collect final or accumulated results, and preserve nested occurrence identity.
 - User-declared expression outputs with stable IDs, editable names, and
   independently selected integer, float, boolean, or string outputs
 - Entry-list fan-out with edit-time output count and types. Each entry carries

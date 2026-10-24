@@ -10,6 +10,7 @@ from .latent import LATENT_NODES
 from .latent_advanced import LATENT_ADVANCED_NODES
 from .latent_operations import LATENT_OPERATION_NODES
 from .logic import LOGIC_NODES
+from .loops import LOOP_NODES
 from .mask import MASK_NODES
 from .math import ComfyMathExpression
 from .model_merging import MODEL_MERGE_NODES
@@ -34,6 +35,7 @@ COMFY_NODES = (
     PrimitiveFloat,
     PrimitiveBoolean,
     *LOGIC_NODES,
+    *LOOP_NODES,
     ComfySwitchNode,
     ComfyNumberConvert,
     SeedNode,

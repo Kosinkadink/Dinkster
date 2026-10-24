@@ -171,6 +171,7 @@ def test_construction_is_frozen_and_preserves_silent_blocker_state() -> None:
         JsonObject(()),
         (("a", "b"),),
         JsonObject((("array", (JsonObject(()), (), (1, 2))),)),
+        JsonObject((("$typed", JsonObject((("type", "list<INT>"), ("value", ())))),)),
     ],
 )
 def test_json_array_and_object_literals_round_trip_without_ambiguity(literal: object) -> None:

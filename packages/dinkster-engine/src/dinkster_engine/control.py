@@ -7,7 +7,8 @@ from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
 from typing import cast
 
-from dinkster_graph import Graph, LoopPair, graph_to_wire
+from dinkster_graph import Graph, LoopPair, graph_output_types, graph_to_wire
+from dinkster_schema import NodeSchema
 from dinkster_values import Value
 
 
@@ -55,6 +56,7 @@ class EngineRunContext:
         publish: Callable[[str, Mapping[str, Value]], None],
         inhibit: Callable[[Sequence[str]], None],
         override: Callable[[str, Mapping[str, object]], None],
+        schemas: Mapping[str, NodeSchema],
     ) -> None:
         self.node_id = node_id
         self.inputs = MappingProxyType(dict(inputs))
@@ -63,6 +65,7 @@ class EngineRunContext:
         self._publish = publish
         self._inhibit = inhibit
         self._override = override
+        self._schemas = schemas
 
     def _check_target(self, node_id: str) -> None:
         self._state.check_active()
@@ -72,6 +75,10 @@ class EngineRunContext:
     async def get_graph(self) -> Mapping[str, object]:
         self._state.check_active()
         document = graph_to_wire(self._graph())
+        document["outputTypes"] = {
+            node_id: {name: expr.runtime_type_id() for name, expr in outputs.items()}
+            for node_id, outputs in graph_output_types(self._graph(), self._schemas).items()
+        }
         document["loops"] = {
             start: {"end": pair.end_id, "body": list(pair.body)}
             for start, pair in self._state.loop_pairs.items()

@@ -1,0 +1,201 @@
+"""Native loop expansion executes body occurrences through the engine."""
+
+import asyncio
+from pathlib import Path
+
+import pytest
+from dinkster_caches import MemoryLRUCache
+from dinkster_engine import Engine
+from dinkster_graph import Graph, GraphNode, Link, TypedLiteral
+from dinkster_memory import GovernorReservationService, MemoryGovernor, ReservationRequest
+from dinkster_nodes_comfy.loops import LOOP_NODES
+from dinkster_nodes_comfy.math import ComfyMathExpression
+from dinkster_nodes_comfy.primitive import PrimitiveInt
+from dinkster_nodes_foundation.lists import ListElement, MakeList
+from dinkster_schema import build_node_types, build_schemas
+from dinkster_values import TypeRegistry, register_core_types
+from dinkster_workers import GovernedWorker, InProcessWorker, IsolatedWorker
+
+NODES = (*LOOP_NODES, ComfyMathExpression, PrimitiveInt, MakeList, ListElement)
+
+
+def make_engine() -> Engine:
+    registry = TypeRegistry()
+    register_core_types(registry)
+    return Engine(
+        schemas=build_schemas(NODES),
+        registry=registry,
+        worker=InProcessWorker(build_node_types(NODES), registry),
+        cache=MemoryLRUCache(),
+    )
+
+
+@pytest.mark.parametrize("cache_enabled", [False, True])
+@pytest.mark.parametrize(
+    ("count", "accumulate", "expected"),
+    [
+        (0, False, []),
+        (4, False, [10]),
+        (4, True, [1, 3, 6, 10]),
+    ],
+)
+def test_carried_value_and_empty_loop(
+    cache_enabled: bool, count: int, accumulate: bool, expected: list[int]
+) -> None:
+    graph = Graph(
+        {
+            "start": GraphNode(
+                "StartLoop",
+                {
+                    "mode.num_iterations": count,
+                    "initial_iteration_value": TypedLiteral("INT", 0),
+                },
+                slot_variants={"mode": "simple"},
+            ),
+            "body": GraphNode(
+                "ComfyMathExpression",
+                {
+                    "expression": "a + b + 1",
+                    "values.a": Link("start", "current_iteration_value"),
+                    "values.b": Link("start", "iteration_index"),
+                },
+            ),
+            "end": GraphNode(
+                "EndLoop",
+                {
+                    "output_value": Link("body", "INT"),
+                    "next_iteration_value": Link("body", "INT"),
+                    "accumulate": accumulate,
+                },
+            ),
+        }
+    )
+
+    async def scenario() -> None:
+        engine = make_engine()
+        for _ in range(2):
+            result = await asyncio.wait_for(
+                engine.run(graph, ["end"], cache_enabled=cache_enabled), 10
+            )
+            assert result.outputs["end"]["outputs"].resolve() == expected
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("mode", ["For", "List"])
+def test_loop_modes(mode: str) -> None:
+    options = (
+        {"mode.start_iteration_index": 3, "mode.max_iteration": 10, "mode.step": 3}
+        if mode == "For"
+        else {"mode.list": TypedLiteral("list<INT>", [9, 2, 5])}
+    )
+    output = "iteration_index" if mode == "For" else "list_item"
+    graph = Graph(
+        {
+            "start": GraphNode("StartLoop", options, slot_variants={"mode": mode}),
+            "body": GraphNode(
+                "ComfyMathExpression",
+                {
+                    "expression": "a * 2",
+                    "values.a": Link("start", output),
+                },
+            ),
+            "end": GraphNode("EndLoop", {"output_value": Link("body", "INT"), "accumulate": True}),
+        }
+    )
+    result = asyncio.run(asyncio.wait_for(make_engine().run(graph, ["end"]), 10))
+    assert result.outputs["end"]["outputs"].resolve() == (
+        [6, 12, 18] if mode == "For" else [18, 4, 10]
+    )
+
+
+def test_nested_loop_keeps_each_occurrences_results() -> None:
+    graph = Graph(
+        {
+            "outer": GraphNode(
+                "StartLoop", {"mode.num_iterations": 2}, slot_variants={"mode": "simple"}
+            ),
+            "inner": GraphNode(
+                "StartLoop",
+                {"mode.num_iterations": 3, "parent_iteration": Link("outer", "iteration_index")},
+                slot_variants={"mode": "simple"},
+            ),
+            "body": GraphNode(
+                "ComfyMathExpression",
+                {
+                    "expression": "a * 10 + b",
+                    "values.a": Link("outer", "iteration_index"),
+                    "values.b": Link("inner", "iteration_index"),
+                },
+            ),
+            "inner_end": GraphNode(
+                "EndLoop", {"output_value": Link("body", "INT"), "accumulate": True}
+            ),
+            "outer_end": GraphNode(
+                "EndLoop", {"output_value": Link("inner_end", "outputs"), "accumulate": True}
+            ),
+        }
+    )
+    result = asyncio.run(asyncio.wait_for(make_engine().run(graph, ["outer_end"]), 10))
+    assert result.outputs["outer_end"]["outputs"].resolve() == [[0, 1, 2], [10, 11, 12]]
+
+
+@pytest.mark.parametrize("worker_kind", ["isolated", "governed"])
+def test_loop_expansion_and_publication_across_worker_boundary(
+    tmp_path: Path, worker_kind: str
+) -> None:
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        manifest = tmp_path / "dinkster-pack.toml"
+        manifest.write_text(
+            '[pack]\nname="loop-test"\nnamespaces=["StartLoop","EndLoop",'
+            '"LoopIteration","LoopProgress","LoopResult","ComfyMathExpression",'
+            '"PrimitiveInt","std"]\n[pack.entry]\n'
+            'nodes="tests.test_comfy_loops:NODES"\n',
+            encoding="ascii",
+        )
+        boundary = IsolatedWorker(
+            manifest,
+            registry,
+            use_shm=True,
+            shm_threshold=1,
+            extra_env={"PYTHONPATH": str(Path(__file__).resolve().parent.parent)},
+        )
+        worker = (
+            GovernedWorker(
+                boundary,
+                planner=lambda _: (ReservationRequest("ram", 1),),
+                reservations=GovernorReservationService(MemoryGovernor({"ram": 1})),
+            )
+            if worker_kind == "governed"
+            else boundary
+        )
+        try:
+            await boundary.start()
+            engine = Engine(
+                schemas=build_schemas(NODES),
+                registry=registry,
+                worker=worker,
+                cache=MemoryLRUCache(),
+            )
+            graph = Graph(
+                {
+                    "start": GraphNode(
+                        "StartLoop", {"mode.num_iterations": 3}, slot_variants={"mode": "simple"}
+                    ),
+                    "body": GraphNode(
+                        "ComfyMathExpression",
+                        {"expression": "a + 7", "values.a": Link("start", "iteration_index")},
+                    ),
+                    "end": GraphNode(
+                        "EndLoop", {"output_value": Link("body", "INT"), "accumulate": True}
+                    ),
+                }
+            )
+            result = await asyncio.wait_for(engine.run(graph, ["end"]), 20)
+            assert result.outputs["end"]["outputs"].resolve() == [7, 8, 9]
+        finally:
+            await boundary.close()
+
+    asyncio.run(scenario())
