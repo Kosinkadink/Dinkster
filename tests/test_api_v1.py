@@ -119,6 +119,7 @@ GOLDEN_V1_SURFACE = (
     "ReplacementNode",
     "ReplacementPredicate",
     "ReplacementRule",
+    "RunExecutionContext",
     "SearchVisibility",
     "SelectorSpec",
     "SlotValue",
