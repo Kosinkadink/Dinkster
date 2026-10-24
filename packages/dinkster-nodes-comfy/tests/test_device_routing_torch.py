@@ -1,4 +1,4 @@
-"""CPU behavior for native model, CLIP, and VAE device routing."""
+"""CPU behavior for Comfy model, CLIP, and VAE device routing."""
 # pyright: standard
 
 from __future__ import annotations
@@ -6,7 +6,6 @@ from __future__ import annotations
 import asyncio
 import copy
 import os
-import re
 from pathlib import Path
 from typing import Any, cast
 
@@ -21,7 +20,7 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_native.device_routing import (
+from dinkster_nodes_comfy.device_routing import (
     DEVICE_ROUTING_NODES,
     MultiGPUWorkUnits,
     SelectCLIPDevice,
@@ -142,7 +141,7 @@ def test_schemas_are_torch_free_and_accept_portable_gpu_values() -> None:
 def test_device_routing_preserves_sources_restores_defaults_and_syncs_wrappers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import dinkster_native.device_routing as routing
+    import dinkster_nodes_comfy.device_routing as routing
 
     monkeypatch.setattr(routing, "_model_management", DeviceManagement)
     gpu0 = Device("meta")
@@ -182,7 +181,7 @@ def test_device_routing_preserves_sources_restores_defaults_and_syncs_wrappers(
 def test_unavailable_devices_and_multigpu_work_units_use_runtime_seams(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    import dinkster_native.device_routing as routing
+    import dinkster_nodes_comfy.device_routing as routing
 
     class MultiGPU:
         def create_multigpu_deepclones(
@@ -235,45 +234,24 @@ def test_select_model_device_runs_twice_through_both_production_hosts(
     async def scenario() -> None:
         source_root = Path(__file__).resolve().parents[1] / "src"
         manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
-        (tmp_path / "device_routing_fixture.py").write_text(
+        module = "device_routing_fixture_" + str(int(in_process))
+        (tmp_path / f"{module}.py").write_text(
             "from test_device_routing_torch import Consumer, Source\n"
-            "from dinkster_native.device_routing import DEVICE_ROUTING_NODES\n"
-            "from dinkster_native.native import register_native_types\n"
-            "NODES = (*DEVICE_ROUTING_NODES, Source, Consumer)\n",
+            "NODES = (Source, Consumer)\n"
+            "from dinkster_api.v1 import register_inference_types\n"
+            "\ndef register_types(registry):\n"
+            "    register_inference_types(registry)\n",
             encoding="ascii",
         )
         fixture = tmp_path / "dinkster-pack.toml"
-        fixture_manifest = manifest.read_text(encoding="ascii")
-        fixture_manifest = re.sub(
-            r"executes = \[\n.*?\n\]",
-            "",
-            fixture_manifest,
-            count=1,
-            flags=re.DOTALL,
-        )
-        fixture_manifest = re.sub(
-            r"\[pack.arms\]\n.*?(?=\n\[pack.entry\])",
-            "",
-            fixture_manifest,
-            count=1,
-            flags=re.DOTALL,
-        )
         fixture.write_text(
-            fixture_manifest.replace("namespaces = [", 'namespaces = ["device-routing-fixture",')
-            .replace("dinkster_native.device_routing:NATIVE_NODES", "device_routing_fixture:NODES")
-            .replace(
-                "dinkster_native.entry:register_types",
-                "device_routing_fixture:register_native_types",
-            )
-            .replace(
-                '[pack.dependencies]\ndinkster-nodes-generation = ">=0.0.1,<1"\n\n'
-                "[pack.requirements.capabilities]\n"
-                '"dinkster.generation.schemas" = ">=1.0.0,<2"\n\n',
-                "",
-            )
-            .replace('reservations = "dinkster_native.memory:plan_reservations"\n', "")
-            .replace('consumers = "dinkster_native.pool:memory_consumers"\n', "")
-            .replace('arm_nodes = "dinkster_native.device_routing:ARM_NODES"\n', ""),
+            "[pack]\n"
+            'name = "device-routing-fixture"\n'
+            'publisher = "dinkster"\n'
+            'namespaces = ["device-routing-fixture"]\n\n'
+            "[pack.entry]\n"
+            f'nodes = "{module}:NODES"\n'
+            f'types = "{module}:register_types"\n',
             encoding="ascii",
         )
         composer = ServingComposer(
@@ -284,8 +262,23 @@ def test_select_model_device_runs_twice_through_both_production_hosts(
             }
         )
         try:
+            manifests = (manifest, fixture)
+            worker_group = "device-routing" if not in_process else None
             await composer.add_pack(
-                PackSpec(manifest=fixture, in_process=in_process, trust_reserved=True)
+                PackSpec(
+                    manifest=manifest,
+                    in_process=in_process,
+                    worker_group=worker_group,
+                    group_manifests=manifests if worker_group else (),
+                )
+            )
+            await composer.add_pack(
+                PackSpec(
+                    manifest=fixture,
+                    in_process=in_process,
+                    worker_group=worker_group,
+                    group_manifests=manifests if worker_group else (),
+                )
             )
             graph = Graph(
                 nodes={
@@ -299,10 +292,11 @@ def test_select_model_device_runs_twice_through_both_production_hosts(
                 }
             )
             engine = composer.composition.make_engine(lambda _event: None)
-            for _ in range(2):
-                assert (await engine.run(graph, ["consumer"])).outputs["consumer"][
-                    "result"
-                ].resolve() == "routed"
+            first = await engine.run(graph, ["consumer"])
+            assert first.outputs["consumer"]["result"].resolve() == "routed"
+            second = await engine.run(graph, ["consumer"])
+            assert second.outputs["consumer"]["result"].resolve() == "routed"
+            assert second.cached == ("source", "route", "consumer")
         finally:
             await composer.close()
 

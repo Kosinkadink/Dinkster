@@ -25,8 +25,6 @@ from dinkster_api.v1 import (
     initialize_inference_process,
 )
 
-from .native import NATIVE_NODES as _NATIVE_NODES
-
 _MODEL = TypeExpr.concrete(MODEL_TYPE)
 _CLIP = TypeExpr.concrete(CLIP_TYPE)
 _VAE = TypeExpr.concrete(VAE_TYPE)
@@ -279,7 +277,5 @@ DEVICE_ROUTING_NODES: tuple[type[Node], ...] = (
     SelectVAEDevice,
 )
 
-NATIVE_NODES = (*_NATIVE_NODES, *DEVICE_ROUTING_NODES)
-ARM_NODES = {"native": NATIVE_NODES}
 
-__all__ = ["ARM_NODES", "DEVICE_ROUTING_NODES", "NATIVE_NODES"]
+__all__ = ["DEVICE_ROUTING_NODES"]
