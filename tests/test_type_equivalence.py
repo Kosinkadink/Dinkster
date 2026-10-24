@@ -9,7 +9,14 @@ from pathlib import Path
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral, validate
-from dinkster_schema import InputSpec, NodeSchema, OutputSpec, TypeExpr, schema_to_wire
+from dinkster_schema import (
+    InputSpec,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+    plan_type_equivalence,
+    schema_to_wire,
+)
 from dinkster_values import (
     EncodedPayload,
     TypeRegistry,
@@ -179,6 +186,39 @@ def test_restamped_encoded_buffer_keeps_shared_memory_alive() -> None:
     del bridged
     gc.collect()
     assert released == [True]
+
+
+def test_type_equivalence_planning_preserves_exact_spelling_and_is_explicit() -> None:
+    registry = TypeRegistry()
+    registry.register("compat.value")
+    registry.register("native.value")
+    registry.register_type_equivalence(
+        "compat.value", "native.value", provider_id="test.compat-wire@1"
+    )
+    native = TypeExpr.concrete("native.value")
+    assert plan_type_equivalence("compat.value", native, registry) == "native.value"
+    assert plan_type_equivalence("native.value", native, registry) is None
+
+
+def test_graph_validation_uses_registered_generic_equivalence_for_links_and_literals() -> None:
+    registry = TypeRegistry()
+    registry.register("compat.value")
+    registry.register("native.value")
+    registry.register_type_equivalence(
+        "compat.value", "native.value", provider_id="test.compat-wire@1"
+    )
+    source = NodeSchema("source", outputs=(OutputSpec("value", TypeExpr.concrete("compat.value")),))
+    sink = NodeSchema("sink", inputs=(InputSpec("value", TypeExpr.concrete("native.value")),))
+    schemas = {source.node_type: source, sink.node_type: sink}
+    linked = Graph(
+        {
+            "source": GraphNode("source", {}),
+            "sink": GraphNode("sink", {"value": Link("source", "value")}),
+        }
+    )
+    stamped = Graph({"sink": GraphNode("sink", {"value": TypedLiteral("compat.value", "value")})})
+    assert validate(linked, schemas, ["sink"], known_types=registry) == []
+    assert validate(stamped, schemas, ["sink"], known_types=registry) == []
 
 
 def test_graph_validation_uses_exact_image_and_mask_atoms() -> None:

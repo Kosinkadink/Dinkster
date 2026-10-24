@@ -389,7 +389,7 @@ def test_worker_policies_preserve_require_and_create_only_when_declared(list_val
 
     rgb = np.ones((1, 2, 3, 3), dtype=np.float32)
     obj = [rgb] if list_value else rgb
-    type_id = "list<comfy.IMAGE>" if list_value else "IMAGE"
+    type_id = "list<IMAGE>" if list_value else "IMAGE"
     with pytest.raises(ValueError, match="requires an alpha"):
         apply_alpha_policy(obj, type_id, "require")
     unchanged = cast("Any", apply_alpha_policy(obj, type_id, "preserve"))
@@ -469,7 +469,7 @@ def test_asset_coercion_loss_is_reported_and_cached_without_manufacturing_loss(
         graph = Graph(
             nodes={
                 "node": GraphNode(
-                    "test.alpha-drop", {"image": TypedLiteral("asset<comfy.IMAGE>", ref.to_wire())}
+                    "test.alpha-drop", {"image": TypedLiteral("asset<IMAGE>", ref.to_wire())}
                 )
             }
         )
