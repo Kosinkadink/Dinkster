@@ -458,7 +458,7 @@ def test_loop_boundary_diagnostics_are_structural(nodes, targets, expected, insi
                     "fold",
                     graph,
                     ports={"item": TypeExpr.concrete("INT")},
-                    inputs={"item": TypedLiteral("list<INT>", [1])},
+                    inputs={"item": [1]},
                     element_ports=("item",),
                     outputs={
                         target: RegionOutput(Link(target, "value"), "last") for target in targets
