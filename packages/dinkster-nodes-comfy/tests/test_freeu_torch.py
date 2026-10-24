@@ -19,7 +19,6 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy import freeu
 from dinkster_nodes_comfy.freeu import FreeU, FreeU_V2
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -85,35 +84,41 @@ def test_freeu_v2_normalizes_each_batch_before_scaling() -> None:
     assert torch.equal(result[:, 4:], torch.full((1, 4, 2, 2), 7.0))
 
 
-def test_fourier_fallback_marks_an_unsupported_device_after_its_first_failure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_freeu_uses_cpu_fourier_fallback_for_repeated_unsupported_skips() -> None:
     class Skip:
-        device = "unsupported"
+        device = torch.device("cpu")
 
-        def cpu(self) -> CpuResult:
-            return cpu_skip
+        def __init__(self, cpu_value: torch.Tensor) -> None:
+            self.cpu_value = cpu_value
 
-    class CpuResult:
-        def to(self, device: object) -> CpuResult:
-            assert device == "unsupported"
-            return self
-
-    calls: list[object] = []
-
-    def filter_skip(value: object, threshold: int, scale: float) -> object:
-        calls.append(value)
-        if value is skip:
+        def float(self) -> torch.Tensor:
             raise RuntimeError("fft unavailable")
-        return value
 
-    skip = Skip()
-    cpu_skip = CpuResult()
-    monkeypatch.setattr(freeu, "fourier_filter", filter_skip)
-    cpu_devices: set[object] = set()
-    assert freeu._filter_skip(skip, 0.5, cpu_devices) is cpu_skip
-    assert freeu._filter_skip(skip, 0.5, cpu_devices) is cpu_skip
-    assert calls == [skip, cpu_skip, cpu_skip]
+        def cpu(self) -> torch.Tensor:
+            return self.cpu_value
+
+    def expected_filter(value: torch.Tensor, scale: float) -> torch.Tensor:
+        frequency = torch.fft.fftshift(torch.fft.fftn(value.float(), dim=(-2, -1)), dim=(-2, -1))
+        mask = torch.ones_like(frequency)
+        height, width = frequency.shape[-2:]
+        row, column = height // 2, width // 2
+        mask[..., row - 1 : row + 1, column - 1 : column + 1] = scale
+        return torch.fft.ifftn(
+            torch.fft.ifftshift(frequency * mask, dim=(-2, -1)), dim=(-2, -1)
+        ).real
+
+    source = Patcher()
+    patched = FreeU.execute(model=source, b1=2.0, b2=3.0, s1=0.25, s2=0.5)["MODEL"]
+    cpu_skip = torch.tensor(
+        [[[[0.0, 1.0, 2.0], [3.0, 5.0, 8.0], [13.0, 21.0, 34.0]]]], dtype=torch.float32
+    )
+    expected_skip = expected_filter(cpu_skip, 0.25)
+    expected_hidden = torch.cat((torch.full((1, 4, 3, 3), 2.0), torch.ones((1, 4, 3, 3))), dim=1)
+    for _ in range(2):
+        hidden, result_skip = patched.patch(torch.ones((1, 8, 3, 3)), Skip(cpu_skip), {})
+        assert torch.equal(hidden, expected_hidden)
+        assert torch.allclose(result_skip, expected_skip)
+    assert source.patch is None
 
 
 class ModelSource(Node):
