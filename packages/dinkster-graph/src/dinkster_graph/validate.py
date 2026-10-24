@@ -28,6 +28,7 @@ from dinkster_schema import (
     plan_type_equivalence,
     resolved_type_expr,
 )
+from dinkster_values import ASSET_TYPE, CORE_BOOLEAN
 
 from .model import (
     NODE_ID_FORBIDDEN_CHARS,
@@ -1016,8 +1017,8 @@ def _validate_region(
         else:
             cont_type = _body_output_type(region, data, region.continue_source)
             cont_runtime = None if cont_type is None else cont_type.runtime_type_id()
-            if cont_runtime is not None and cont_runtime != "BOOLEAN":
-                expected_boolean = TypeExpr.concrete("BOOLEAN")
+            if cont_runtime is not None and cont_runtime != CORE_BOOLEAN:
+                expected_boolean = TypeExpr.concrete(CORE_BOOLEAN)
                 diags.append(
                     Diagnostic(
                         (
@@ -1156,7 +1157,7 @@ def _validate_graph_node(
                     )
                 )
                 and spec.type.kind == "concrete"
-                and spec.type != TypeExpr.concrete("dinkster.asset")
+                and spec.type != TypeExpr.concrete(ASSET_TYPE)
             ),
         )
 

@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 from dinkster_api.v1 import Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_graph import Graph, GraphNode, Link
+from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.latent import (
     LATENT_NODES,
     LatentBlend,
@@ -22,15 +23,73 @@ from dinkster_nodes_comfy.latent import (
     RepeatLatentBatch,
     SetLatentNoiseMask,
 )
+from dinkster_nodes_comfy.latent_model_specific import MODEL_LATENT_NODES
+from dinkster_nodes_comfy.mochi import EmptyMochiLatentVideo
 from dinkster_values import EncodedLatentTensor, decode_latent, encode_latent
 
 from dinkster.compose import PackSpec, ServingComposer
+
+
+def test_mochi_interface_is_registered_with_temporal_widget_defaults() -> None:
+    schema = EmptyMochiLatentVideo.schema()
+    assert EmptyMochiLatentVideo in COMFY_NODES
+    assert schema.node_type == "EmptyMochiLatentVideo"
+    assert schema.category == "model/latent/mochi"
+    assert [(spec.id, spec.default) for spec in schema.inputs] == [
+        ("width", 848),
+        ("height", 480),
+        ("length", 25),
+        ("batch_size", 1),
+    ]
+    assert [(spec.id, spec.type.types) for spec in schema.outputs] == [("LATENT", ("LATENT",))]
 
 
 @pytest.mark.parametrize(
     ("node_id", "display", "category", "inputs"),
     [
         ("EmptyLatentImage", "Empty Latent Image", "", ("width", "height", "batch_size")),
+        (
+            "EmptySD3LatentImage",
+            "EmptySD3LatentImage",
+            "/stable diffusion",
+            ("width", "height", "batch_size"),
+        ),
+        (
+            "EmptyFlux2LatentImage",
+            "Empty Flux 2 Latent",
+            "/flux",
+            ("width", "height", "batch_size"),
+        ),
+        (
+            "EmptyChromaRadianceLatentImage",
+            "EmptyChromaRadianceLatentImage",
+            "/chroma radiance",
+            ("width", "height", "batch_size"),
+        ),
+        (
+            "EmptyHiDreamO1LatentImage",
+            "Empty HiDream-O1 Latent Image",
+            "/hidream",
+            ("width", "height", "batch_size"),
+        ),
+        (
+            "EmptyQwenImageLayeredLatentImage",
+            "Empty Qwen Image Layered Latent",
+            "/qwen",
+            ("width", "height", "layers", "batch_size"),
+        ),
+        (
+            "EmptyLatentHunyuan3Dv2",
+            "Empty Hunyuan 3D v2 Latent",
+            "/hunyuan 3d",
+            ("resolution", "batch_size"),
+        ),
+        (
+            "EmptyTrellis2LatentStructure",
+            "Empty Trellis2 Latent Structure",
+            "/trellis",
+            ("batch_size",),
+        ),
         (
             "LatentFromBatch",
             "Get Latent From Batch",
@@ -61,7 +120,9 @@ from dinkster.compose import PackSpec, ServingComposer
 def test_latent_schemas_use_exact_core_interfaces(
     node_id: str, display: str, category: str, inputs: tuple[str, ...]
 ) -> None:
-    node = next(node for node in LATENT_NODES if node.schema().node_type == node_id)
+    node = next(
+        node for node in (*LATENT_NODES, *MODEL_LATENT_NODES) if node.schema().node_type == node_id
+    )
     schema = node.schema()
     assert schema.display_name == display
     assert schema.category == (

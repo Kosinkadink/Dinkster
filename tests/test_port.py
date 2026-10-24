@@ -450,11 +450,11 @@ def test_generated_pack_imports_and_schemas_survive(
     # Choices that became widgets need no prose reminder.
     assert "source combo choices" not in text
 
-    # register_types registers exactly the opaque types the schemas use.
+    # Shared types must come from their owner, not the generated pack.
     registry = TypeRegistry()
     module.register_types(registry)
-    assert registry.spec("comfy.MODEL") is not None
-    assert registry.spec("IMAGE") is not None
+    assert "comfy.MODEL" not in registry
+    assert "IMAGE" not in registry
 
 
 def test_type_expr_codegen_reads_wire15_variable_spelling() -> None:
@@ -551,13 +551,34 @@ def test_generated_scalar_pack_is_doctor_clean_with_no_warnings(
 def test_generated_opaque_pack_is_doctor_clean_with_honest_warnings(
     port_probe_report: dict[str, object], tmp_path: Path
 ) -> None:
+    payloads = cast("list[dict[str, object]]", port_probe_report["nodes"])
+    schema = cast("dict[str, object]", payloads[0]["schema"])
+    interface = cast("list[dict[str, object]]", schema["interface"])
+    interface.append(
+        {
+            "role": "output",
+            "id": "owned",
+            "type": {"kind": "concrete", "types": ["fancy-pack.result"]},
+        }
+    )
+    port_probe_report["opaqueTypes"] = [
+        *cast("list[str]", port_probe_report["opaqueTypes"]),
+        "fancy-pack.result",
+    ]
     out = tmp_path / "out"
     generate_pack(cast("dict[str, object]", port_probe_report), "fancy-pack", out)
     report = diagnose(out / "dinkster-pack.toml")
     assert report.ok, render_text(report)
-    # The only findings are the honest ones: opaque comfy.* types still
-    # need declared codecs - exactly what the README checklist says.
-    assert {f.code for f in report.findings} == {"types.fallback-codec"}
+    assert {f.code for f in report.findings} == {
+        "types.fallback-codec",
+        "types.unregistered",
+    }
+    module = load_pack_module(out, "fancy_pack_nodes.py")
+    registry = TypeRegistry()
+    module.register_types(registry)
+    assert "fancy-pack.result" in registry
+    assert "comfy.MODEL" not in registry
+    assert "IMAGE" not in registry
 
 
 def test_generated_v3_pack_is_doctor_clean(tmp_path: Path) -> None:

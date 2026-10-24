@@ -1,4 +1,5 @@
 import dataclasses
+import json
 from typing import Any, cast
 
 import pytest
@@ -98,9 +99,9 @@ def test_current_schema_features_roundtrip() -> None:
 @pytest.mark.parametrize(
     ("type_id", "widget", "expected"),
     [
-        ("dinkster.asset", AssetWidget(("image/png",)), {"type": "ASSET", "accept": ["image/png"]}),
+        ("ASSET", AssetWidget(("image/png",)), {"type": "ASSET", "accept": ["image/png"]}),
         (
-            "dinkster.save_target",
+            "SAVE_TARGET",
             SaveTargetWidget(".png"),
             {"type": "SAVE_TARGET", "suffix": ".png"},
         ),
@@ -115,10 +116,11 @@ def test_current_schema_features_roundtrip() -> None:
             NumberWidget(min=0, max=10, step=1),
             {"type": "NUMBER", "min": 0, "max": 10, "step": 1},
         ),
+        ("FLOAT", NumberWidget(round=False), {"type": "NUMBER", "round": False}),
         ("STRING", StringWidget(multiline=True), {"type": "STRING", "multiline": True}),
         ("STRING", ColorWidget(), {"type": "COLOR"}),
-        ("dinkster.curve", CurveWidget(), {"type": "CURVE"}),
-        ("dinkster.compositor", CompositorWidget(), {"type": "COMPOSITOR"}),
+        ("CURVE", CurveWidget(), {"type": "CURVE"}),
+        ("COMPOSITOR", CompositorWidget(), {"type": "COMPOSITOR"}),
     ],
 )
 def test_widget_roundtrip(type_id: str, widget: object, expected: dict[str, object]) -> None:
@@ -134,14 +136,73 @@ def test_widget_roundtrip(type_id: str, widget: object, expected: dict[str, obje
     )
 
 
-def test_float_widget_preserves_large_integral_bounds_on_the_wire() -> None:
+@pytest.mark.parametrize("list_socket", [False, True])
+@pytest.mark.parametrize("precision", [False, 0.01, 1, None])
+def test_float_round_precision_preserves_false_and_absence(
+    list_socket: bool, precision: Any
+) -> None:
+    socket = TypeExpr.concrete("FLOAT")
+    if list_socket:
+        socket = TypeExpr.list_of(socket)
+    schema = NodeSchema(
+        "test.float-round",
+        inputs=(
+            InputSpec("value", socket, widget=NumberWidget(display="number", round=precision)),
+        ),
+    )
+    wire = schema_to_wire(schema)
+    widget = cast("list[dict[str, Any]]", wire["interface"])[0]["widget"]
+    if precision is None:
+        assert "round" not in widget
+        widget["round"] = None
+        with pytest.raises(ValueError, match="round must be"):
+            schema_from_wire(wire)
+        del widget["round"]
+    else:
+        assert widget["round"] == precision
+        assert type(widget["round"]) is type(precision)
+    restored = schema_from_wire(json.loads(json.dumps(wire)))
+    assert restored == schema
+    assert isinstance(restored.inputs[0].widget, NumberWidget)
+    assert type(restored.inputs[0].widget.round) is type(precision)
+    wire_widget = cast("list[dict[str, Any]]", wire["interface"])[0]
+    wire_widget["type"] = (
+        {"kind": "list", "element": {"kind": "concrete", "types": ["INT"]}}
+        if list_socket
+        else {"kind": "concrete", "types": ["INT"]}
+    )
+    if precision is not None:
+        integer = TypeExpr.concrete("INT")
+        if list_socket:
+            integer = TypeExpr.list_of(integer)
+        with pytest.raises(ValueError, match="round requires"):
+            InputSpec("value", integer, widget=NumberWidget(round=precision))
+        with pytest.raises(ValueError, match="round requires"):
+            schema_from_wire(wire)
+
+
+@pytest.mark.parametrize("precision", [True, 0, 0.0, -1, float("nan"), float("inf"), -float("inf")])
+def test_float_round_rejects_nonpositive_and_nonfinite_precision(precision: Any) -> None:
+    with pytest.raises(ValueError, match="round must be"):
+        NumberWidget(round=precision)
+    schema = NodeSchema(
+        "test.float-round",
+        inputs=(InputSpec("value", TypeExpr.concrete("FLOAT"), widget=NumberWidget(round=0.1)),),
+    )
+    wire = schema_to_wire(schema)
+    cast("list[dict[str, Any]]", wire["interface"])[0]["widget"]["round"] = precision
+    with pytest.raises(ValueError, match="round must be"):
+        schema_from_wire(wire)
+
+
+def test_float_widget_preserves_large_float_bounds_on_the_wire() -> None:
     schema = NodeSchema(
         "test.float-bounds",
         inputs=(
             InputSpec(
                 "value",
                 TypeExpr.concrete("FLOAT"),
-                widget=NumberWidget(min=-(2**63) + 37, max=2**63 + 19, step=0.25),
+                widget=NumberWidget(min=-float(2**63), max=float(2**63), step=0.25),
             ),
         ),
     )
@@ -150,11 +211,38 @@ def test_float_widget_preserves_large_integral_bounds_on_the_wire() -> None:
     widget = cast("list[dict[str, object]]", wire["interface"])[0]["widget"]
     assert widget == {
         "type": "NUMBER",
-        "min": "-9223372036854775771",
-        "max": "9223372036854775827",
+        "min": -9.223372036854776e18,
+        "max": 9.223372036854776e18,
         "step": 0.25,
     }
+    assert isinstance(widget, dict)
+    assert type(widget["min"]) is float
+    assert type(widget["max"]) is float
     assert schema_from_wire(wire) == schema
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("min", -(2**53)), ("min", 2**53), ("max", -(2**53)), ("max", 2**53), ("step", 2**53)],
+)
+@pytest.mark.parametrize("list_socket", [False, True])
+def test_float_widget_rejects_unsafe_integer_constraints(
+    field: str, value: int, list_socket: bool
+) -> None:
+    socket = TypeExpr.concrete("FLOAT")
+    if list_socket:
+        socket = TypeExpr.list_of(socket)
+    with pytest.raises(ValueError, match="FLOAT input"):
+        InputSpec(
+            "value",
+            socket,
+            widget=NumberWidget(**{field: value}),  # type: ignore[arg-type]
+        )
+    InputSpec(
+        "value",
+        socket,
+        widget=NumberWidget(**{field: value - (1 if value > 0 else -1)}),  # type: ignore[arg-type]
+    )
 
 
 def test_multi_combo_roundtrip() -> None:

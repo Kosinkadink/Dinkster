@@ -1368,7 +1368,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -5611,7 +5611,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -5888,7 +5888,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -9013,7 +9013,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -10305,7 +10305,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -10394,7 +10394,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -10465,7 +10465,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -10554,7 +10554,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -11842,7 +11842,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -12203,7 +12203,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -12221,7 +12221,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -15131,7 +15131,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -15577,7 +15577,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -17905,7 +17905,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -19417,7 +19417,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -21863,7 +21863,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -21881,7 +21881,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -22211,7 +22211,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -25499,7 +25499,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -25781,7 +25781,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -25830,7 +25830,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -25872,7 +25872,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -25939,7 +25939,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -26044,7 +26044,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -26114,7 +26114,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -26264,7 +26264,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -26306,7 +26306,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -26404,7 +26404,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -26689,7 +26689,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -26793,7 +26793,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -42706,7 +42706,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -43795,7 +43795,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -44884,7 +44884,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -46204,7 +46204,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -46222,7 +46222,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -46240,7 +46240,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -46258,7 +46258,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -59841,7 +59841,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -63312,7 +63312,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -63330,7 +63330,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -63348,7 +63348,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -64329,7 +64329,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {
@@ -72061,7 +72061,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "widget": {

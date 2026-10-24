@@ -1,5 +1,6 @@
 [pack]
 name = "dinkster-vision-hed"
+publisher = "dinkster"
 namespaces = []
 executes = [
     "dinkster.preprocess.model_edges",

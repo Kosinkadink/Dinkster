@@ -1,7 +1,7 @@
 """Structured save targets + the mount-scoped AssetWriter.
 
 The write half of filesystem mounts: a save destination is a
-``dinkster.save_target`` ({mount, prefix}) - never a raw host path - and the
+``SAVE_TARGET`` ({mount, prefix}) - never a raw host path - and the
 one gate to disk is AssetWriter, which checks the mount is currently
 granted readwrite, lands bytes atomically under collision-free counter
 names, and records every write in the sidecar so the digest resolves
@@ -81,15 +81,15 @@ def test_save_target_wire_is_strict() -> None:
 def test_save_target_type_registration_round_trip() -> None:
     registry = TypeRegistry()
     register_save_target_type(registry)
-    spec = registry.spec("dinkster.save_target")
+    spec = registry.spec("SAVE_TARGET")
     target = SaveTarget(mount="out", prefix="renders/scene")
     encoded = spec.encode(target)
     assert spec.decode(encoded) == target
     # Graph literals arrive as plain mappings; coercion applies one rule,
     # so the mapping and the dataclass are the same value (same
     # fingerprint, same bytes).
-    as_wire = registry.wrap("dinkster.save_target", {"mount": "out", "prefix": "renders/scene"})
-    as_object = registry.wrap("dinkster.save_target", target)
+    as_wire = registry.wrap("SAVE_TARGET", {"mount": "out", "prefix": "renders/scene"})
+    as_object = registry.wrap("SAVE_TARGET", target)
     assert as_wire.fingerprint == as_object.fingerprint
     assert spec.encode({"mount": "out", "prefix": "renders/scene"}) == encoded
     with pytest.raises(AssetError):
@@ -186,6 +186,32 @@ def make_writer(tmp_path: Path) -> tuple[AssetWriter, Path]:
     root.mkdir()
     snapshot = one_mount_snapshot(tmp_path, root)
     return AssetWriter(MountSnapshotWriter(snapshot)), root
+
+
+def test_separate_prefix_and_mount_write_to_selected_grant(tmp_path: Path) -> None:
+    roots = {name: tmp_path / name for name in ("default", "selected", "readonly")}
+    for root in roots.values():
+        root.mkdir()
+    snapshot = tmp_path / "mounts.json"
+    mounts = [
+        {"id": name, "root": str(root), "mode": "read" if name == "readonly" else "readwrite"}
+        for name, root in roots.items()
+    ]
+    snapshot.write_text(json.dumps({"mounts": mounts, "outputMount": "default"}), "utf-8")
+    writer = AssetWriter(MountSnapshotWriter(snapshot))
+    default = writer.save_bytes(writer.output_target("renders/default"), b"default", suffix=".png")
+    selected_target = writer.output_target("other/selected", mount="selected")
+    selected = writer.save_bytes(selected_target, b"selected", suffix=".png")
+    assert default.virtual_path == "mounts/default/renders/default_00001.png"
+    assert selected.virtual_path == "mounts/selected/other/selected_00001.png"
+    assert (roots["default"] / "renders/default_00001.png").read_bytes() == b"default"
+    assert (roots["selected"] / "other/selected_00001.png").read_bytes() == b"selected"
+    with pytest.raises(AssetError, match="read-only"):
+        writer.save_bytes(writer.output_target("blocked", "readonly"), b"no", suffix=".png")
+    snapshot.write_text(json.dumps({"mounts": mounts[:1], "outputMount": "default"}), "utf-8")
+    with pytest.raises(AssetError, match="no ready mount"):
+        writer.save_bytes(selected_target, b"revoked", suffix=".png")
+    assert len(list(roots["selected"].rglob("*.png"))) == 1
 
 
 def test_save_bytes_lands_counter_named_files(tmp_path: Path) -> None:
