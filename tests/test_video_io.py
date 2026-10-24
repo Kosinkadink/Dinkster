@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 from av.codec import Codec as AvCodec
 from av.error import InvalidDataError
-from dinkster_api.v1 import image_input
+from dinkster_api.v1 import VIDEO_TYPE, image_input
 from dinkster_assets import AssetRef, AssetVault, MountSnapshotResolver, digest_bytes
 from dinkster_nodes_media_io.video import LoadVideo, LoadVideoValue, SaveVideo, SaveVideoValue
 from dinkster_schema import (
@@ -152,7 +152,7 @@ def test_save_video_schema_migrates_frame_inputs_and_asset_output_links() -> Non
         "metadata",
         "format",
     ]
-    assert schema.inputs[0].type.types == ("comfy.VIDEO",)
+    assert schema.inputs[0].type.types == (VIDEO_TYPE,)
     assert [output.id for output in schema.outputs] == ["video", "asset"]
     wire = schema_to_wire(schema)
     interface = {
@@ -577,7 +577,7 @@ def test_video_schemas_preserve_preview_and_asset_contracts() -> None:
     assert load.aliases == ()
     assert save.aliases == ("SaveVideo",)
     assert load.inputs[0].type.element is not None
-    assert load.inputs[0].type.element.types == ("comfy.VIDEO",)
+    assert load.inputs[0].type.element.types == (VIDEO_TYPE,)
     assert load.inputs[0].type.kind == "asset"
     assert [(output.id, output.preview, output.optional) for output in load.outputs] == [
         ("images", True, False),
@@ -586,14 +586,14 @@ def test_video_schemas_preserve_preview_and_asset_contracts() -> None:
         ("fps", False, False),
         ("duration", False, False),
     ]
-    assert save.outputs[0].type.types == ("comfy.VIDEO",)
+    assert save.outputs[0].type.types == (VIDEO_TYPE,)
     assert save.outputs[1].id == "asset"
     assert save.outputs[1].type.kind == "asset"
     assert save.outputs[1].preview is True
     assert save.output_node is True
     assert save.idempotent is False
-    assert load_value.outputs[0].type.types == ("comfy.VIDEO",)
-    assert save_value.inputs[0].type.types == ("comfy.VIDEO",)
+    assert load_value.outputs[0].type.types == (VIDEO_TYPE,)
+    assert save_value.inputs[0].type.types == (VIDEO_TYPE,)
     assert save_value.outputs[0].type.kind == "asset"
     assert save_value.output_node is True
     assert save_value.idempotent is False

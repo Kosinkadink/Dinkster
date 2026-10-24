@@ -13,6 +13,7 @@ from collections.abc import Mapping, Sequence
 from typing import Literal, cast
 
 import pytest
+from dinkster_api.v1 import AUDIO_TYPE, VIDEO_TYPE
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EngineEvent, ExecutionError
 from dinkster_graph import (
@@ -1024,13 +1025,13 @@ def test_map_region_executes_per_element() -> None:
         ("CONDITIONING", [{"tokens": [1, 4], "weight": 0.75}, {"tokens": [9]}]),
         ("MASK", [[[0.0, 1.0], [0.25, 0.75]], [[1.0]]]),
         (
-            "comfy.AUDIO",
+            AUDIO_TYPE,
             [
                 {"waveform": [[0.0, -0.5, 0.5]], "sample_rate": 48000},
                 {"waveform": [[1.0]], "sample_rate": 44100},
             ],
         ),
-        ("comfy.VIDEO", [{"frames": ["a", "b"], "fps": 24.0}, {"frames": ["c"], "fps": 30.0}]),
+        (VIDEO_TYPE, [{"frames": ["a", "b"], "fps": 24.0}, {"frames": ["c"], "fps": 30.0}]),
         (
             "ASSET",
             [
