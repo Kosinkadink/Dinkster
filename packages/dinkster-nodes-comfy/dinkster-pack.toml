@@ -279,6 +279,8 @@ namespaces = [
     "LTXVAudioVAEEncode",
     "LTXVAudioVAEDecode",
     "LTXVEmptyLatentAudio",
+    "LTXVConcatAVLatent",
+    "LTXVSeparateAVLatent",
     "ResizeImagesByShorterEdge",
     "ResizeImagesByLongerEdge",
     "CenterCropImages",
