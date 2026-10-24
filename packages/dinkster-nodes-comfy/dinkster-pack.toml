@@ -78,6 +78,10 @@ namespaces = [
     "ReplaceVideoLatentFrames",
     "CLIPTextEncode",
     "CLIPSetLastLayer",
+    "VAEDecode",
+    "VAEEncode",
+    "VAEDecodeTiled",
+    "VAEEncodeTiled",
     "ConditioningAverage",
     "ConditioningCombine",
     "ConditioningConcat",
@@ -126,6 +130,11 @@ namespaces = [
     "Morphology",
     "ImageRGBToYUV",
     "ImageYUVToRGB",
+    "ResizeImageMaskNode",
+    "BatchImagesNode",
+    "BatchMasksNode",
+    "BatchLatentsNode",
+    "ColorTransfer",
 ]
 
 [pack.sandbox]
