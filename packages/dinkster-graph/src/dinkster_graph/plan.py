@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 
 from dinkster_schema import NodeSchema
 
-from .model import Graph, GraphNode, Link, RegionNode
+from .model import Graph, Link, RegionNode
 
 
 class GraphCycleError(Exception):
@@ -20,7 +20,7 @@ def output_node_targets(graph: Graph, schemas: Mapping[str, NodeSchema]) -> list
         if isinstance(node, RegionNode):
             if output_node_targets(node.body, schemas):
                 targets.append(node_id)
-        elif isinstance(node, GraphNode):
+        else:
             schema = schemas.get(node.node_type)
             if schema is not None and schema.output_node:
                 targets.append(node_id)
