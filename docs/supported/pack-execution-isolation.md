@@ -3,6 +3,10 @@
 - Value type ownership is discoverable for live and cold-catalog packs without
   activating cold workers. Removing or replacing a pack retracts its old type
   identities; a rejected replacement preserves the active owners.
+- Non-dinkster publishers' node schemas and type claims require the pack-name
+  prefix at loading and catalog preparation. Declared type claims remain
+  exclusive even when the pack has no codec callback. Dependent packs can
+  reference an owner's type without registering or claiming it themselves.
 - All supported platforms can run packs in separate worker processes and
   virtual environments for dependency and crash isolation. That alone is not
   a host security boundary. Each manifest directory is on its worker's import

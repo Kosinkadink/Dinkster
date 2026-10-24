@@ -218,7 +218,7 @@ def probe(manifest_path: str) -> dict[str, Any]:
     report["threads_started"] = max(threading.active_count() - threads_before, 0)
     report["cuda_initialized_on_import"] = _cuda_initialized()
 
-    from dinkster_schema import Node, NodeSchema, validate_replacement_references
+    from dinkster_schema import Node, NodeSchema, claim_covers, validate_replacement_references
 
     if not isinstance(nodes_obj, (list, tuple)):
         report["nodes_entry_problem"] = (
@@ -242,6 +242,14 @@ def probe(manifest_path: str) -> dict[str, Any]:
         except BaseException as exc:  # noqa: BLE001
             report["schema_errors"].append(f"{cls_name}: {_exception_detail(exc)}")
             continue
+        if (
+            manifest.publisher != "dinkster"
+            and schema.node_type not in manifest.executes
+            and not claim_covers(manifest.name, schema.node_type)
+        ):
+            report["schema_errors"].append(
+                f"node {schema.node_type!r} must use the pack-name prefix"
+            )
         if schema.node_type in seen_types:
             report["duplicate_node_types"].append(
                 f"{schema.node_type} (classes {seen_types[schema.node_type]} and {cls_name})"

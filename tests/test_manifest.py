@@ -32,6 +32,7 @@ from dinkster_workers import (
     VisionProvider,
     load_manifest,
 )
+from dinkster_workers.doctor import prepare_catalog
 from dinkster_workers.host import load_pack
 from dinkster_workers.manifest import (
     COMFY_ALIASES_MAX_BYTES,
@@ -122,13 +123,14 @@ def test_manifest_type_claims_accept_exact_ids_and_reject_overlaps(tmp_path: Pat
         load_manifest(path)
 
 
-def test_pack_registration_refuses_duplicate_type_owner(tmp_path: Path) -> None:
+@pytest.mark.parametrize("with_codec", [False, True])
+def test_pack_registration_refuses_duplicate_type_owner(tmp_path: Path, with_codec: bool) -> None:
     registry = TypeRegistry()
     register_core_types(registry)
     for name in ("first-owner", "second-owner"):
         root = tmp_path / name
         root.mkdir()
-        module = name.replace("-", "_")
+        module = name.replace("-", "_") + f"_{int(with_codec)}"
         (root / f"{module}.py").write_text(
             'NODES = []\ndef register_types(registry):\n    registry.register("SHARED")\n'
         )
@@ -136,7 +138,8 @@ def test_pack_registration_refuses_duplicate_type_owner(tmp_path: Path) -> None:
         path.write_text(
             f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
             'type-namespaces = ["SHARED"]\n[pack.entry]\n'
-            f'nodes = "{module}:NODES"\ntypes = "{module}:register_types"\n'
+            f'nodes = "{module}:NODES"\n'
+            + (f'types = "{module}:register_types"\n' if with_codec else "")
         )
         if name == "first-owner":
             load_pack(load_manifest(path), registry=registry, import_from_pack_root=True)
@@ -155,6 +158,25 @@ def test_pack_registration_rejects_bare_claim_before_importing_entries(tmp_path:
     )
     with pytest.raises(ManifestError, match="only publisher 'dinkster'"):
         load_pack(load_manifest(path))
+
+
+def test_pack_registration_rejects_bare_node_under_a_prefixed_claim(tmp_path: Path) -> None:
+    (tmp_path / "bare_node_pack.py").write_text(
+        "from dinkster_api.v1 import Node, NodeSchema\n"
+        "class BareNode(Node):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema(node_type='bare_node')\n"
+        "NODES = [BareNode]\n"
+    )
+    path = tmp_path / "dinkster-pack.toml"
+    path.write_text(
+        '[pack]\nname = "mypack"\npublisher = "someone"\n'
+        '[pack.entry]\nnodes = "bare_node_pack:NODES"\n'
+    )
+    with pytest.raises(ManifestError, match="node.*bare_node.*pack-name prefix"):
+        load_pack(load_manifest(path), import_from_pack_root=True)
+    assert not prepare_catalog(path).ok
 
 
 def write_alias_registry(path: Path, *, carrier: str = "test.native") -> None:

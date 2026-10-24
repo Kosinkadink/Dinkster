@@ -424,17 +424,26 @@ def load_pack(
             registry = TypeRegistry()
             register_core_types(registry)
         previous_types = frozenset(registry.type_ids())
-        if manifest.types_entry is not None:
-            register = resolve_pack_entry(manifest.types_entry)
-            if not callable(register):
-                raise ManifestError(f"entry '{manifest.types_entry}' is not callable")
-            with registry.registering_pack(
-                manifest.name,
-                manifest.type_namespaces,
-                allow_bare=manifest.publisher == "dinkster",
-            ):
+        with registry.registering_pack(
+            manifest.name,
+            manifest.type_namespaces,
+            allow_bare=manifest.publisher == "dinkster",
+        ):
+            if manifest.types_entry is not None:
+                register = resolve_pack_entry(manifest.types_entry)
+                if not callable(register):
+                    raise ManifestError(f"entry '{manifest.types_entry}' is not callable")
                 register(registry)
         node_classes = _node_classes(manifest.nodes_entry, resolve_pack_entry(manifest.nodes_entry))
+        default_schemas = build_schemas(node_classes)
+        if manifest.publisher != "dinkster":
+            for node_type in default_schemas:
+                if node_type not in manifest.executes and not claim_covers(
+                    manifest.name, node_type
+                ):
+                    raise ManifestError(
+                        f"{manifest.path}: node {node_type!r} must use the pack-name prefix"
+                    )
         # The same startup enumeration as the isolated worker path: static
         # lists are validated now, lazy providers are held uninvoked and
         # served per fetch by the in-process worker itself.
@@ -452,7 +461,6 @@ def load_pack(
             memory_consumers=consumers,
             registered_types=tuple(tid for tid in registry.type_ids() if tid not in previous_types),
         )
-        default_schemas = build_schemas(node_classes)
         if manifest.comfy_aliases is not None:
             for record in manifest.comfy_aliases.records:
                 if not any(claim_covers(claim, record.carrier) for claim in manifest.namespaces):

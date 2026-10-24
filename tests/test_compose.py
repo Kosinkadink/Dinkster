@@ -2058,6 +2058,85 @@ def test_pack_type_owners_are_discovered_without_activation_and_retracted(
     asyncio.run(scenario())
 
 
+def test_dependent_pack_references_shared_type_without_claiming_it(tmp_path: Path) -> None:
+    owner = tmp_path / "owner"
+    consumer = tmp_path / "consumer"
+    owner.mkdir()
+    consumer.mkdir()
+    (owner / "shared_type_owner.py").write_text(
+        "from dinkster_api.v1 import Node, NodeSchema, OutputSpec, TypeExpr\n"
+        "def register_types(registry):\n"
+        "    registry.register('owner.thing')\n"
+        "class Produce(Node):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema(node_type='owner.produce', outputs=(\n"
+        "            OutputSpec('thing', TypeExpr.concrete('owner.thing')),))\n"
+        "    @classmethod\n"
+        "    def execute(cls):\n"
+        "        return cls.outputs(thing={'width': 11, 'height': 29})\n"
+        "NODES = [Produce]\n"
+    )
+    (consumer / "shared_type_consumer.py").write_text(
+        "from dinkster_api.v1 import Node, NodeSchema, InputSpec, OutputSpec, TypeExpr\n"
+        "from dinkster_values import CORE_INT\n"
+        "class Consume(Node):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema(node_type='consumer.consume', inputs=(\n"
+        "            InputSpec('thing', TypeExpr.concrete('owner.thing')),), outputs=(\n"
+        "            OutputSpec('difference', TypeExpr.concrete(CORE_INT)),))\n"
+        "    @classmethod\n"
+        "    def execute(cls, *, thing):\n"
+        "        return cls.outputs(difference=thing['height'] - thing['width'])\n"
+        "NODES = [Consume]\n"
+    )
+    owner_manifest = owner / "dinkster-pack.toml"
+    owner_manifest.write_text(
+        '[pack]\nname = "owner"\npublisher = "owner-author"\n'
+        '[pack.entry]\nnodes = "shared_type_owner:NODES"\n'
+        'types = "shared_type_owner:register_types"\n'
+    )
+    consumer_manifest = consumer / "dinkster-pack.toml"
+    consumer_manifest.write_text(
+        '[pack]\nname = "consumer"\npublisher = "consumer-author"\n'
+        '[pack.dependencies]\nowner = ">=1,<2"\n'
+        '[pack.entry]\nnodes = "shared_type_consumer:NODES"\n'
+    )
+
+    async def scenario() -> None:
+        composer = ServingComposer()
+        try:
+            with pytest.raises(CompositionError, match="requires pack 'owner'.*not composed"):
+                await composer.add_pack(PackSpec(consumer_manifest, in_process=True))
+            await composer.add_pack(
+                PackSpec(
+                    owner_manifest,
+                    in_process=True,
+                    packs={"owner": PackInfo(display_name="Owner", version="1.0.0")},
+                )
+            )
+            await composer.add_pack(PackSpec(consumer_manifest, in_process=True))
+            engine = composer.composition.make_engine(lambda _event: None)
+            result = await engine.run(
+                Graph(
+                    nodes={
+                        "produce": GraphNode("owner.produce"),
+                        "consume": GraphNode(
+                            "consumer.consume", {"thing": Link("produce", "thing")}
+                        ),
+                    }
+                ),
+                ["consume"],
+            )
+            assert result.outputs["consume"]["difference"].resolve() == 18
+            assert composer.composition._registry.type_owners()["owner.thing"] == "owner"
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
 def test_serving_composer_replaces_and_retracts_pack_renditions(tmp_path: Path) -> None:
     async def scenario() -> None:
         composer = ServingComposer(worker_env=WORKER_ENV)
