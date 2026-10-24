@@ -12,6 +12,7 @@ import sys
 from collections.abc import Mapping
 from decimal import Decimal
 from fractions import Fraction
+from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
@@ -346,6 +347,49 @@ def test_translate_type_keeps_native_media_and_model_labels_bare(
 def test_translate_type_keeps_unmigrated_audio_labels_prefixed(raw_type: str) -> None:
     expected = f"comfy.{raw_type}"
     assert translate_type(raw_type) == (TypeExpr.concrete(expected), (expected,))
+
+
+def test_compat_worker_type_ownership_preserves_image_dependency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_compat_comfy.schema_snapshot import core_schema_snapshot
+    from dinkster_workers import load_manifest
+    from dinkster_workers import host
+
+    root = Path(__file__).parents[1] / "packages"
+    manifest = load_manifest(root / "dinkster-compat-comfy/dinkster-pack.toml")
+    translation = CompatTranslation()
+    translation.opaque_types.update(core_schema_snapshot()["opaqueTypes"])
+    manifest = dataclasses.replace(
+        manifest,
+        nodes_entry="fixture:nodes",
+        types_entry="fixture:types",
+        choices_entry=None,
+        consumers_entry=None,
+        arms=(),
+        arm_nodes_entry=None,
+    )
+    entries = {"fixture:nodes": [], "fixture:types": translation.register_types}
+    monkeypatch.setattr(host, "resolve_entry", entries.__getitem__)
+    worker, registry, _, _ = host.load_pack(manifest)
+    assert "comfy.AUDIO_ENCODER" in registry
+    assert registry.owner_of("comfy.AUDIO_ENCODER") == manifest.name
+    assert registry.owner_of("comfy.LAYERS") == "dinkster-nodes-image"
+    assert registry.owner_of("comfy.COMPOSITOR") == "dinkster-nodes-image"
+
+    published = TypeRegistry()
+    register_core_types(published)
+    image = load_manifest(root / "dinkster-nodes-image/dinkster-pack.toml")
+    published.claim_types(image.name, image.type_namespaces)
+    published.declare_types(
+        manifest.name, manifest.type_namespaces, worker.registered_types, allow_bare=True
+    )
+    assert published.owner_of("comfy.AUDIO_ENCODER") == manifest.name
+    assert published.owner_of("comfy.LAYERS") == image.name
+    assert published.owner_of("comfy.COMPOSITOR") == image.name
+    with registry.registering_pack(manifest.name, manifest.type_namespaces, allow_bare=True):
+        with pytest.raises(ValueError, match="outside its declared type claims"):
+            registry.register("comfy.UNDECLARED")
 
 
 def test_translate_type_comma_unions() -> None:
