@@ -181,7 +181,7 @@ def test_loop_expansion_and_publication_across_worker_boundary(
         register_core_types(registry)
         manifest = tmp_path / "dinkster-pack.toml"
         manifest.write_text(
-            '[pack]\nname="loop-test"\nnamespaces=["StartLoop","EndLoop",'
+            '[pack]\nname="loop-test"\npublisher="dinkster"\nnamespaces=["StartLoop","EndLoop",'
             '"LoopIteration","LoopProgress","LoopResult","ComfyMathExpression",'
             '"PrimitiveInt","PrimitiveBoolean","ComfySwitchNode","std"]\n[pack.entry]\n'
             'nodes="tests.test_comfy_loops:NODES"\n',
