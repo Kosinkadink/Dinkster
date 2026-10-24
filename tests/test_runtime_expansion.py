@@ -10,6 +10,8 @@ from typing import Any
 
 import pytest
 from dinkster_caches import DiskCacheStore, LayeredCache, MemoryLRUCache
+from dinkster_engine import Engine, EngineEvent, ExecutionError
+from dinkster_graph import Graph, GraphNode, Link, RegionNode, RegionOutput
 from dinkster_memory import (
     GovernorReservationService,
     MemoryGovernor,
@@ -29,13 +31,22 @@ from dinkster_protocol import (
     PresentOutput,
     Worker,
 )
-from dinkster_schema import Node, NodeSchema, OutputSpec, TypeExpr, build_node_types
+from dinkster_schema import (
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+    build_node_types,
+    build_schemas,
+)
 from dinkster_values import (
     COST_META_KEY,
     RESOURCE_ID_META_KEY,
     TypeRegistry,
     Value,
     ValueMeta,
+    list_children,
     register_core_types,
 )
 from dinkster_workers import GovernedWorker, InProcessWorker, IsolatedWorker, RemoteWorker
@@ -68,7 +79,133 @@ class WireExpansionNode(Node):
         )
 
 
-PACK_NODES = [WireExpansionNode]
+class ExpansionChild(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "expansion.child",
+            inputs=(InputSpec("value", TypeExpr.concrete("core.int")),),
+            outputs=(OutputSpec("value", TypeExpr.concrete("core.int")),),
+        )
+
+    @classmethod
+    def execute(cls, value: int) -> Any:
+        return cls.outputs(value=value * 3 + 2)
+
+
+class ExpansionOutput(ExpansionChild):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return replace(
+            super().define_schema(),
+            node_type="expansion.output",
+            output_node=True,
+            idempotent=False,
+        )
+
+
+class UnusedExpansionChild(ExpansionChild):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return replace(super().define_schema(), node_type="expansion.unused")
+
+    @classmethod
+    def execute(cls, value: int) -> Any:
+        raise AssertionError("an undemanded expansion child must not execute")
+
+
+class GraphExpansionNode(WireExpansionNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return replace(super().define_schema(), node_type="expansion.graph")
+
+    @classmethod
+    def execute(cls) -> Any:
+        original = super().execute()
+        return ExpandedReturn(
+            LocalExpansion(
+                (
+                    *original.expansion.nodes,
+                    LocalNode(
+                        "output", "expansion.output", (("value", LocalOutputRef("child", "value")),)
+                    ),
+                    LocalNode("unused", "expansion.unused", (("value", CurrentOutputRef("seed")),)),
+                )
+            ),
+            original.bindings,
+        )
+
+
+class NestedExpansionNode(GraphExpansionNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return replace(super().define_schema(), node_type="expansion.nested")
+
+    @classmethod
+    def execute(cls) -> Any:
+        return ExpandedReturn(
+            LocalExpansion((LocalNode("nested", "expansion.graph"),)),
+            (
+                ("result", LocalOutputRef("nested", "result")),
+                ("seed", LocalOutputRef("nested", "seed")),
+            ),
+        )
+
+
+class NonIdempotentExpansionNode(GraphExpansionNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return replace(super().define_schema(), node_type="expansion.repeat", idempotent=False)
+
+
+class InvalidExpansionNode(WireExpansionNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return replace(
+            super().define_schema(),
+            node_type="expansion.invalid",
+            inputs=(InputSpec("problem", TypeExpr.concrete("core.string")),),
+        )
+
+    @classmethod
+    def execute(cls, problem: str = "missing") -> Any:
+        original = super().execute()
+        if problem == "cycle":
+            nodes = (
+                LocalNode(
+                    "child", "expansion.child", (("value", LocalOutputRef("child", "value")),)
+                ),
+            )
+        elif problem == "type":
+            nodes = (
+                LocalNode("child", "expansion.string", (("value", CurrentOutputRef("seed")),)),
+            )
+        else:
+            nodes = (LocalNode("child", "expansion.missing"),)
+        return ExpandedReturn(LocalExpansion(nodes), original.bindings)
+
+
+class StringExpansionChild(ExpansionChild):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return replace(
+            super().define_schema(),
+            node_type="expansion.string",
+            inputs=(InputSpec("value", TypeExpr.concrete("core.string")),),
+        )
+
+
+PACK_NODES = [
+    WireExpansionNode,
+    ExpansionChild,
+    ExpansionOutput,
+    UnusedExpansionChild,
+    GraphExpansionNode,
+    NestedExpansionNode,
+    NonIdempotentExpansionNode,
+    InvalidExpansionNode,
+    StringExpansionChild,
+]
 
 
 @pytest.mark.parametrize(
@@ -295,5 +432,278 @@ def test_cached_expansion_accounts_and_invalidates_present_values_once(tmp_path:
         assert await disk.get("parent") is None
         assert cache.drop_referencing("resident") == 1
         assert await cache.get("parent") is None
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("worker_kind", ["in-process", "governed", "isolated", "remote"])
+@pytest.mark.parametrize("cache_enabled", [True, False])
+def test_expansion_executes_children_through_each_worker(
+    tmp_path: Path, worker_kind: str, cache_enabled: bool
+) -> None:
+    from test_remote import TOKEN, start_service, stop_service
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        boundary: IsolatedWorker | RemoteWorker | None = None
+        service: asyncio.subprocess.Process | None = None
+        worker: Worker = InProcessWorker(build_node_types(PACK_NODES), registry)
+        if worker_kind == "governed":
+            worker = GovernedWorker(
+                worker,
+                planner=lambda _: (ReservationRequest("ram", 1),),
+                reservations=GovernorReservationService(MemoryGovernor({"ram": 16})),
+            )
+        elif worker_kind in ("isolated", "remote"):
+            manifest = tmp_path / "dinkster-pack.toml"
+            manifest.write_text(
+                '[pack]\nname = "expansion"\nnamespaces = ["expansion"]\n'
+                '[pack.entry]\nnodes = "tests.test_runtime_expansion:PACK_NODES"\n',
+                encoding="ascii",
+            )
+            root = Path(__file__).resolve().parent.parent
+            if worker_kind == "remote":
+                service, host, port = await start_service(manifest, tmp_path, pythonpath=(root,))
+                boundary = RemoteWorker(host, port, TOKEN, registry, name="expansion")
+            else:
+                boundary = IsolatedWorker(
+                    manifest,
+                    registry,
+                    extra_env={"PYTHONPATH": str(root)},
+                )
+            await boundary.start()
+            worker = boundary
+        events: list[EngineEvent] = []
+        engine = Engine(
+            schemas=build_schemas(PACK_NODES),
+            registry=registry,
+            worker=worker,
+            cache=MemoryLRUCache(),
+            on_event=events.append,
+        )
+        graph = Graph(
+            {
+                "parent": GraphNode("expansion.graph"),
+                "consumer": GraphNode("expansion.child", {"value": Link("parent", "result")}),
+            }
+        )
+        try:
+            for index in range(2):
+                events.clear()
+                result = await asyncio.wait_for(
+                    engine.run(graph, ["consumer"], cache_enabled=cache_enabled),
+                    10,
+                )
+                assert result.outputs["consumer"]["value"].resolve() == 161
+                assert "parent.0.0.output" in result.executed
+                assert not any("unused" in node_id for node_id in result.executed)
+                if index and cache_enabled:
+                    assert "parent" in result.cached and "parent" not in result.executed
+                else:
+                    assert "parent" in result.executed
+                expanded = [event for event in events if event.kind == "node_expanded"]
+                assert [(e.node_id, e.detail["childCount"]) for e in expanded] == [("parent", 3)]
+                child = next(
+                    e
+                    for e in events
+                    if e.kind == "node_started" and e.node_id == "parent.0.0.output"
+                )
+                assert child.detail["displayNodeId"] == "parent"
+                assert child.detail["parentId"] == "parent"
+            assert set(graph.nodes) == {"parent", "consumer"}
+        finally:
+            try:
+                if boundary is not None:
+                    await boundary.close()
+            finally:
+                if service is not None:
+                    await stop_service(service)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("cache_kind", ["memory", "disk", "layered"])
+@pytest.mark.parametrize("node_type", ["expansion.graph", "expansion.nested", "expansion.repeat"])
+def test_engine_replays_cached_expansion_declarations(
+    tmp_path: Path, cache_kind: str, node_type: str
+) -> None:
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        memory = MemoryLRUCache()
+        cache = memory if cache_kind == "memory" else DiskCacheStore(tmp_path, registry)
+        engine = Engine(
+            schemas=build_schemas(PACK_NODES),
+            registry=registry,
+            worker=InProcessWorker(build_node_types(PACK_NODES), registry),
+            cache=cache,
+        )
+        graph = Graph({"parent": GraphNode(node_type)})
+        first = await engine.run(graph, ["parent"])
+        assert first.outputs["parent"]["result"].resolve() == 53
+        if cache_kind != "memory":
+            disk = DiskCacheStore(tmp_path, registry)
+            engine = Engine(
+                schemas=build_schemas(PACK_NODES),
+                registry=registry,
+                worker=InProcessWorker(build_node_types(PACK_NODES), registry),
+                cache=LayeredCache(MemoryLRUCache(), disk) if cache_kind == "layered" else disk,
+            )
+        second = await engine.run(graph, ["parent"])
+        assert second.outputs["parent"]["seed"].resolve() == 17
+        assert second.outputs["parent"]["result"].resolve() == 53
+        assert any(node_id.endswith(".output") for node_id in second.executed)
+        if node_type == "expansion.repeat":
+            assert "parent" in second.executed
+        else:
+            assert "parent" in second.cached and "parent" not in second.executed
+        if node_type == "expansion.nested":
+            assert "parent.0.0.nested" in second.cached
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("problem", ["cycle", "type", "missing"])
+def test_invalid_expansion_names_its_parent(problem: str) -> None:
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        engine = Engine(
+            schemas=build_schemas(PACK_NODES),
+            registry=registry,
+            worker=InProcessWorker(build_node_types(PACK_NODES), registry),
+            cache=MemoryLRUCache(),
+        )
+        graph = Graph({"parent": GraphNode("expansion.invalid", {"problem": problem})})
+        with pytest.raises(ExecutionError) as error:
+            await engine.run(graph, ["parent"])
+        assert error.value.error.node_id == "parent"
+        expected = "cycle" if problem == "cycle" else "invalid expansion"
+        assert expected in error.value.error.message
+
+    asyncio.run(scenario())
+
+
+def test_coalesced_expansion_parents_have_independent_children() -> None:
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        calls: list[str] = []
+
+        class CountingWorker(InProcessWorker):
+            async def invoke(self, invocation: Invocation, on_event: Any = None) -> Any:
+                calls.append(invocation.node_type)
+                await asyncio.sleep(0)
+                return await super().invoke(invocation, on_event=on_event)
+
+        events: list[EngineEvent] = []
+        engine = Engine(
+            schemas=build_schemas(PACK_NODES),
+            registry=registry,
+            worker=CountingWorker(build_node_types(PACK_NODES), registry),
+            cache=MemoryLRUCache(),
+            on_event=events.append,
+        )
+        graph = Graph({name: GraphNode("expansion.graph") for name in ("left", "right")})
+        result = await asyncio.wait_for(engine.run(graph, ["left", "right"]), 5)
+        assert calls.count("expansion.graph") == 1
+        assert calls.count("expansion.output") == 2
+        assert calls.count("expansion.child") == 2
+        assert result.outputs["left"]["result"].resolve() == 53
+        assert result.outputs["right"]["result"].resolve() == 53
+        assert {event.node_id for event in events if event.kind == "node_expanded"} == {
+            "left",
+            "right",
+        }
+        for parent in ("left", "right"):
+            child = next(
+                event
+                for event in events
+                if event.kind == "node_started" and event.node_id == f"{parent}.0.0.output"
+            )
+            assert child.detail["parentId"] == parent
+            assert child.detail["displayNodeId"] == parent
+
+    asyncio.run(scenario())
+
+
+def test_cancelled_expansion_releases_children_and_can_run_again() -> None:
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        started = asyncio.Event()
+        stopped = asyncio.Event()
+        pause = True
+
+        class PausingWorker(InProcessWorker):
+            async def invoke(self, invocation: Invocation, on_event: Any = None) -> Any:
+                if invocation.node_type == "expansion.output" and pause:
+                    started.set()
+                    try:
+                        await asyncio.Event().wait()
+                    finally:
+                        stopped.set()
+                return await super().invoke(invocation, on_event=on_event)
+
+        engine = Engine(
+            schemas=build_schemas(PACK_NODES),
+            registry=registry,
+            worker=PausingWorker(build_node_types(PACK_NODES), registry),
+            cache=MemoryLRUCache(),
+        )
+        graph = Graph({"parent": GraphNode("expansion.graph")})
+        pending = asyncio.create_task(engine.run(graph, ["parent"]))
+        await asyncio.wait_for(started.wait(), 5)
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(pending, 5)
+        assert stopped.is_set()
+        pause = False
+        result = await asyncio.wait_for(engine.run(graph, ["parent"]), 5)
+        assert result.outputs["parent"]["result"].resolve() == 53
+        assert "parent.0.0.output" in result.executed
+
+    asyncio.run(scenario())
+
+
+def test_expansion_preserves_enclosing_region_ports() -> None:
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        engine = Engine(
+            schemas=build_schemas(PACK_NODES),
+            registry=registry,
+            worker=InProcessWorker(build_node_types(PACK_NODES), registry),
+            cache=MemoryLRUCache(),
+        )
+        body = Graph(
+            {
+                "parent": GraphNode("expansion.graph"),
+                "port": GraphNode("expansion.child", {"value": Link("$region", "value")}),
+            }
+        )
+        graph = Graph(
+            {
+                "region": RegionNode(
+                    kind="map",
+                    body=body,
+                    ports={"value": TypeExpr.concrete("core.int")},
+                    inputs={"value": [4, 9]},
+                    element_ports=("value",),
+                    outputs={
+                        "expanded": RegionOutput(Link("parent", "result"), "gather"),
+                        "port": RegionOutput(Link("port", "value"), "gather"),
+                    },
+                )
+            }
+        )
+        for _ in range(2):
+            result = await asyncio.wait_for(engine.run(graph, ["region"]), 5)
+            expanded = list_children(result.outputs["region"]["expanded"])
+            ports = list_children(result.outputs["region"]["port"])
+            assert expanded is not None and ports is not None
+            assert [v.resolve() for v in expanded] == [53, 53]
+            assert [v.resolve() for v in ports] == [14, 29]
 
     asyncio.run(scenario())

@@ -53,7 +53,10 @@ from dinkster_protocol import (
     AttentionPolicy,
     AttentionPolicyConfig,
     AttentionRouteToken,
+    BlockedOutput,
+    CachedResult,
     CacheStore,
+    CurrentOutputRef,
     ExportSnapshot,
     ExtensionSnapshot,
     GraphCompilerRegistrySnapshot,
@@ -63,6 +66,7 @@ from dinkster_protocol import (
     LazyStatusInvocation,
     LazyStatusResult,
     LazyStatusWorker,
+    LocalOutputRef,
     MediaSourceAuthority,
     NodeError,
     PreviewPolicy,
@@ -113,6 +117,7 @@ from .compile import (
     compile_graph,
 )
 from .events import EngineEvent, EventListener
+from .expansion import admit_expansion
 
 logger = logging.getLogger(__name__)
 
@@ -383,6 +388,14 @@ class _ProducedReferences:
             for dependency in dependencies:
                 self._uses[dependency] += 1
 
+    def extend(self, deps: Mapping[str, set[str]]) -> None:
+        for node_id, dependencies in deps.items():
+            self._uses.setdefault(node_id, 0)
+            previous = self._deps.setdefault(node_id, set())
+            for dependency in dependencies - previous:
+                self._uses[dependency] = self._uses.get(dependency, 0) + 1
+            previous.update(dependencies)
+
     def finished(self, node_id: str) -> None:
         retired = [node_id]
         while retired:
@@ -450,7 +463,7 @@ class Engine:
         # Shared across runs, so two workflows needing the same computation
         # execute it once. Non-idempotent nodes have unique keys, so they are
         # never coalesced - by construction, not special-casing.
-        self._inflight: dict[str, asyncio.Future[Mapping[str, Value]]] = {}
+        self._inflight: dict[str, asyncio.Future[CachedResult]] = {}
         # Resource pins (DESIGN 3.10): every resource-referencing envelope a run
         # routes is pinned for the run's lifetime, so a ram-lane release in
         # another process can see references that live only in this run's
@@ -509,6 +522,7 @@ class Engine:
         self._run_prepared_types: dict[str, set[str]] = {}
         self._run_prepare_locks: dict[str, asyncio.Lock] = {}
         self._run_blocked_origins: dict[str, set[str]] = {}
+        self._run_expansion_origins: dict[str, dict[str, tuple[str, str]]] = {}
         self._compiling_run_ids: set[str] = set()
 
     def announce_schemas(self, schemas: Mapping[str, NodeSchema]) -> None:
@@ -587,6 +601,13 @@ class Engine:
                 prepared.update(missing)
 
     def _emit(self, event: EngineEvent) -> None:
+        origins = self._run_expansion_origins.get(event.run_id, {})
+        if event.node_id in origins:
+            parent_id, display_id = origins[event.node_id]
+            event = replace(
+                event,
+                detail={**event.detail, "parentId": parent_id, "displayNodeId": display_id},
+            )
         if self._on_event is not None:
             try:
                 self._on_event(event)
@@ -1198,9 +1219,15 @@ class Engine:
         elaborated output ids, and concrete declared types match the stored
         Value's type_id. An invalid entry (corrupt/foreign cache) is treated
         as a miss and overwritten, never handed downstream."""
-        if set(hit) != {out.id for out in schema.outputs}:
+        expansion = hit.expansion if isinstance(hit, CachedResult) else None
+        names = {name for name, _ in expansion.bindings} if expansion is not None else set(hit)
+        if expansion is not None and not schema.may_expand_graph:
+            return False
+        if names != {out.id for out in schema.outputs}:
             return False
         for out in schema.outputs:
+            if out.id not in hit:
+                continue
             expected = out.type.runtime_type_id()
             if expected is not None and hit[out.id].type_id != expected:
                 # Blocking can make even a required output absent. The worker
@@ -1213,11 +1240,11 @@ class Engine:
     @staticmethod
     def _cached_output_origins(
         label: str, schema: NodeSchema, outputs: Mapping[str, Value]
-    ) -> Mapping[str, Value]:
+    ) -> CachedResult:
         # Content-identical producers share cache entries, not diagnostic
         # identities. Selectors forward an input's provenance unchanged.
         if schema.selector is not None:
-            return outputs
+            return CachedResult(outputs)
         rebound = dict(outputs)
         for output_id, value in outputs.items():
             if is_absent(value):
@@ -1229,7 +1256,9 @@ class Engine:
                 rebound[output_id] = replace(
                     current, meta=ValueMeta({**value.meta.entries, **current.meta.entries})
                 )
-        return rebound
+        return CachedResult(
+            rebound, outputs.expansion if isinstance(outputs, CachedResult) else None
+        )
 
     def _pin_outputs(self, outputs: Mapping[str, Value], pinned: list[str]) -> bool:
         """Pin every resource reference in one node's outputs for the run's
@@ -1319,6 +1348,8 @@ class Engine:
         ensure_node: Callable[[str], Awaitable[None]] | None = None,
         cache_enabled: bool = True,
         cache_scope: str | None = None,
+        resolve_expansion: Callable[[str, CachedResult], Awaitable[Mapping[str, Value]]]
+        | None = None,
     ) -> None:
         """Produce one node's outputs: coalesce, hit cache, or invoke.
 
@@ -1583,9 +1614,13 @@ class Engine:
                 # dangle, so recompute instead.
                 await asyncio.sleep(0)
                 continue
-            produced[node_id] = outputs
+            produced[node_id] = (
+                await resolve_expansion(node_id, outputs)
+                if outputs.expansion is not None and resolve_expansion is not None
+                else outputs
+            )
             cached.append(label)
-            self._emit_media_diagnostics(run_id, label, schema, inputs, outputs)
+            self._emit_media_diagnostics(run_id, label, schema, inputs, produced[node_id])
             self._emit(
                 EngineEvent(
                     "node_cached",
@@ -1596,13 +1631,13 @@ class Engine:
                         selection,
                         cache_key=key,
                         coalesced=True,
-                        outputs=output_summary(outputs, self._registry),
+                        outputs=output_summary(produced[node_id], self._registry),
                     ),
                 )
             )
             return
 
-        future: asyncio.Future[Mapping[str, Value]] = asyncio.get_running_loop().create_future()
+        future: asyncio.Future[CachedResult] = asyncio.get_running_loop().create_future()
         if use_cache:
             self._inflight[key] = future
         try:
@@ -1615,9 +1650,7 @@ class Engine:
                     if isinstance(reported_layer, str):
                         cache_layer = reported_layer
             entry_problem: str | None = None
-            if hit is not None and (
-                hit.expansion is not None or not self._cache_hit_valid(schema, hit)
-            ):
+            if hit is not None and not self._cache_hit_valid(schema, hit):
                 entry_problem = "invalid-entry"
                 hit = None
             # A hit referencing a dead worker lifetime can never resolve
@@ -1636,10 +1669,14 @@ class Engine:
                 hit = None
             if hit is not None:
                 hit = self._cached_output_origins(label, schema, hit)
-                produced[node_id] = hit
+                produced[node_id] = (
+                    await resolve_expansion(node_id, hit)
+                    if hit.expansion is not None and resolve_expansion is not None
+                    else hit
+                )
                 cached.append(label)
                 future.set_result(hit)
-                self._emit_media_diagnostics(run_id, label, schema, inputs, hit)
+                self._emit_media_diagnostics(run_id, label, schema, inputs, produced[node_id])
                 cache_detail: dict[str, object] = {}
                 if cache_layer is not None:
                     cache_detail["cacheLayer"] = cache_layer
@@ -1653,7 +1690,7 @@ class Engine:
                             selection,
                             **cache_detail,
                             cache_key=key,
-                            outputs=output_summary(hit, self._registry),
+                            outputs=output_summary(produced[node_id], self._registry),
                         ),
                     )
                 )
@@ -1770,10 +1807,6 @@ class Engine:
                     )
                 )
                 raise ExecutionError(NodeError(label, node.node_type, message))
-            if result.expansion is not None:
-                raise ExecutionError(
-                    NodeError(label, node.node_type, "runtime expansion requires graph admission")
-                )
             assert result.outputs is not None
             # A fresh result must never reference a resident whose owning
             # worker lifetime already ended - the producing side stamps its
@@ -1818,12 +1851,26 @@ class Engine:
                 )
                 raise ExecutionError(NodeError(label, node.node_type, message))
             self._run_artifacts[run_id].extend(result.artifacts)
-            produced[node_id] = result.outputs
+            entry = CachedResult(result.outputs, result.expansion)
+            if entry.expansion is not None:
+                if not self._cache_hit_valid(schema, entry):
+                    raise ExecutionError(
+                        NodeError(
+                            label, node.node_type, "expansion violates the declared output contract"
+                        )
+                    )
+                if resolve_expansion is None:
+                    raise ExecutionError(
+                        NodeError(label, node.node_type, "expansion requires the demand scheduler")
+                    )
+                produced[node_id] = await resolve_expansion(node_id, entry)
+            else:
+                produced[node_id] = result.outputs
             executed.append(label)
             if use_cache:
-                await self._cache.put(key, result.outputs)
-            future.set_result(result.outputs)
-            self._emit_media_diagnostics(run_id, label, schema, inputs, result.outputs)
+                await self._cache.put(key, entry)
+            future.set_result(entry)
+            self._emit_media_diagnostics(run_id, label, schema, inputs, produced[node_id])
             self._emit(
                 EngineEvent(
                     "node_finished",
@@ -1834,7 +1881,7 @@ class Engine:
                         selection,
                         duration_ms=round(duration_ms, 3),
                         cache_key=key,
-                        outputs=output_summary(result.outputs, self._registry),
+                        outputs=output_summary(produced[node_id], self._registry),
                     ),
                 )
             )
@@ -1871,6 +1918,7 @@ class Engine:
         cache_enabled: bool = True,
         cache_scope: str | None = None,
         run_cache_enabled: bool | None = None,
+        region_ports: Mapping[str, TypeExpr] | None = None,
     ) -> None:
         """Ready-set scheduler over one DAG level (hazard H12): dispatch
         every node whose dependencies are satisfied; completions release
@@ -1904,7 +1952,8 @@ class Engine:
             )
             for node_id in order
         )
-        if not has_connected_lazy:
+        has_expansion = any(schema.may_expand_graph for schema in effective.values())
+        if not has_connected_lazy and not has_expansion:
             try:
                 await self._execute_static_dag(
                     run_id,
@@ -1934,6 +1983,103 @@ class Engine:
         references = _ProducedReferences(
             dependency_map(graph, initial_targets), initial_targets, produced
         )
+        expansion_calls: dict[str, int] = {}
+        expansion_scopes: dict[str, str] = {}
+        current_dependencies: dict[str, set[str]] = {}
+
+        async def resolve_expansion(parent_id: str, entry: CachedResult) -> Mapping[str, Value]:
+            nonlocal graph, effective, signatures
+            expansion = entry.expansion
+            assert expansion is not None
+            label = prefix + parent_id
+            parent = graph.nodes[parent_id]
+            assert isinstance(parent, GraphNode)
+            call = expansion_calls.get(parent_id, 0)
+            known_types = self._runtime().known_types
+            try:
+                overlay, admitted, ids, origins = admit_expansion(
+                    graph,
+                    parent_id,
+                    call,
+                    entry,
+                    self._schemas_for(run_id),
+                    known_types if known_types is not None else self._registry,
+                    region_ports,
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                message = f"invalid expansion: {exc}"
+                self._emit(EngineEvent("node_failed", run_id, label, {"message": message}))
+                raise ExecutionError(NodeError(label, parent.node_type, message)) from exc
+            graph = overlay
+            effective = admitted
+            signatures = {node_id: schema_signature(s) for node_id, s in effective.items()}
+            expansion_calls[parent_id] = call + 1
+            produced[parent_id] = entry.outputs
+            children = set(ids.values())
+            child_deps = {
+                node_id: {
+                    value.node_id
+                    for value in graph.nodes[node_id].inputs.values()
+                    if isinstance(value, Link)
+                }
+                for node_id in children
+            }
+            references.extend(child_deps)
+            references.extend({parent_id: children})
+            for node in expansion.expansion.nodes:
+                current_dependencies[ids[node.local_id]] = (
+                    {parent_id}
+                    if any(isinstance(value, CurrentOutputRef) for _, value in node.inputs)
+                    else set()
+                )
+            for node_id, (declared_parent, display) in origins.items():
+                expansion_scopes[node_id] = f"{cache_scope or ''}/{label}.{call}"
+                while display in origins:
+                    display = origins[display][1]
+                parent_display = self._run_expansion_origins[run_id].get(
+                    prefix + display, (label, prefix + display)
+                )[1]
+                self._run_expansion_origins[run_id][prefix + node_id] = (
+                    prefix + declared_parent,
+                    parent_display,
+                )
+            self._emit(
+                EngineEvent(
+                    "node_expanded",
+                    run_id,
+                    label,
+                    {
+                        "children": [prefix + node_id for node_id in sorted(children)],
+                        "childCount": len(children),
+                    },
+                )
+            )
+            targets = {
+                ids[binding.local_node_id]
+                for _, binding in expansion.bindings
+                if isinstance(binding, LocalOutputRef)
+            }
+            targets.update(node_id for node_id in children if effective[node_id].output_node)
+            await asyncio.gather(*(ensure_node(node_id) for node_id in sorted(targets)))
+            outputs = dict(entry.outputs)
+            for name, binding in expansion.bindings:
+                if isinstance(binding, LocalOutputRef):
+                    outputs[name] = produced[ids[binding.local_node_id]][binding.output_id]
+                elif isinstance(binding, CurrentOutputRef):
+                    outputs[name] = entry[binding.output_id]
+                elif isinstance(binding, BlockedOutput):
+                    output = effective[parent_id].output(name)
+                    assert output is not None
+                    outputs[name] = make_absent_value(
+                        origin=f"{label}/{name}",
+                        reason=binding.message or "",
+                        stands_for=output.type.runtime_type_id(),
+                    )
+            if not self._cache_hit_valid(effective[parent_id], outputs):
+                raise ExecutionError(
+                    NodeError(label, parent.node_type, "expanded output contract mismatch")
+                )
+            return outputs
 
         def ordinary_dependencies(node_id: str) -> set[str]:
             node = graph.nodes[node_id]
@@ -1947,11 +2093,21 @@ class Engine:
             return {
                 value.node_id
                 for name, value in node.inputs.items()
-                if (isinstance(value, Link) and name not in lazy and value.node_id in graph.nodes)
+                if (
+                    isinstance(value, Link)
+                    and name not in lazy
+                    and value.node_id in graph.nodes
+                    and value.node_id not in current_dependencies.get(node_id, set())
+                )
             }
 
         async def run_one(node_id: str) -> None:
             node = graph.nodes[node_id]
+
+            async def ensure_input(dependency: str) -> None:
+                if dependency not in current_dependencies.get(node_id, set()):
+                    await ensure_node(dependency)
+
             if isinstance(node, GraphNode) and node_id not in planned:
                 await self._prepare_node_types(run_id, (node.node_type,))
             await asyncio.gather(
@@ -1985,9 +2141,10 @@ class Engine:
                     pinned,
                     export_snapshot,
                     prefix,
-                    ensure_node,
+                    ensure_input,
                     cache_enabled,
-                    cache_scope,
+                    expansion_scopes.get(node_id, cache_scope),
+                    resolve_expansion,
                 )
             references.finished(node_id)
 
@@ -2290,6 +2447,7 @@ class Engine:
                     cache_enabled=cache_enabled and region.cache_policy == "reuse",
                     cache_scope=f"{label}[{index}]",
                     run_cache_enabled=cache_enabled,
+                    region_ports=region.ports,
                 )
             except BaseException:
                 body_produced.clear()
@@ -2696,6 +2854,7 @@ class Engine:
         self._run_prepared_types[run_id] = set()
         self._run_prepare_locks[run_id] = asyncio.Lock()
         self._run_blocked_origins[run_id] = set()
+        self._run_expansion_origins[run_id] = {}
         if preview_policy is not None:
             self._run_preview_policy[run_id] = preview_policy
         if attention_config is not None:
@@ -2803,6 +2962,7 @@ class Engine:
             self._run_prepared_types.pop(run_id, None)
             self._run_prepare_locks.pop(run_id, None)
             self._run_blocked_origins.pop(run_id, None)
+            self._run_expansion_origins.pop(run_id, None)
             _execution_runtime.reset(runtime_token)
             if runtime.run_finished is not None:
                 runtime.run_finished(run_id)

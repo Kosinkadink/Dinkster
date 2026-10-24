@@ -30,6 +30,12 @@
   memory retention, disk restart, deferred spill and peer promotion. Incomplete
   persisted declarations are whole-entry misses; resident resources remain
   memory-only and invalidate the entire entry when released.
+- Runtime-expanding nodes can return nested child graphs. The engine validates
+  each fragment before execution, runs demanded children and generated output
+  nodes, and attributes child events to their declared parent and display node.
+  Cached parents replay their declarations without invoking the parent again;
+  generated output nodes still run. Expansion also works inside existing graph
+  regions without changing their port bindings or iteration isolation.
 - Model-backed vision provider packs can implement stable owner node schemas.
   Ordinary node cards hide implementation pack ids. A missing selection is
   resolved deterministically from the requested semantic model and compatible

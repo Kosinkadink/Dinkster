@@ -694,6 +694,7 @@ def validate(
     targets: Sequence[str],
     effective: Mapping[str, NodeSchema] | None = None,
     known_types: Container[str] | None = None,
+    ports: Mapping[str, TypeExpr] | None = None,
 ) -> list[Diagnostic]:
     """Structural validation over the elaborated document.
 
@@ -711,6 +712,8 @@ def validate(
 
     Region bodies validate recursively; their diagnostics carry hierarchical
     node ids (``region/bodyNode``, nested as ``outer/inner/node``).
+    ``ports`` supplies the enclosing region interface when validating a
+    runtime-expanded body independently of its containing document.
     """
     top_effective, regions, diags = _interface_pass(
         graph, schemas, "", include_elab=effective is None
@@ -729,7 +732,7 @@ def validate(
         schemas,
         top_effective,
         regions,
-        ports=None,
+        ports=ports,
         prefix="",
         known_types=known_types,
     )
