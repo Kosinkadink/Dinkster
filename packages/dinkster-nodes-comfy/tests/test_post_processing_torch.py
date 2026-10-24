@@ -63,6 +63,12 @@ def test_post_processing_uses_real_cpu_inference_utilities_at_asymmetric_boundar
     assert resized_mask.shape == (1, 4, 7)
     torch.testing.assert_close(image, image_before)
     torch.testing.assert_close(mask, mask_before)
+    total_pixels = ResizeImageMaskNode.execute(
+        input=torch.zeros((1, 7, 11, 3)),
+        scale_method="nearest-exact",
+        resize_type={"resize_type": "scale total pixels", "megapixels": 0.013746166229248047},
+    )["resized"]
+    assert total_pixels.shape == (1, 96, 150, 3)
 
     images = BatchImagesNode.execute(
         images={"image0": torch.zeros((1, 2, 3, 3)), "image1": torch.ones((2, 4, 5, 4))}

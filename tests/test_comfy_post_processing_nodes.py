@@ -48,15 +48,16 @@ def test_post_processing_schemas_use_exact_core_ids_and_dynamic_interfaces() -> 
         "match size",
         "scale to multiple",
     ]
-    for node_type, family, prefix, value_type in (
-        ("BatchImagesNode", "images", "image", "IMAGE"),
-        ("BatchMasksNode", "masks", "mask", "MASK"),
-        ("BatchLatentsNode", "latents", "latent", "LATENT"),
+    for node_type, family, prefix, template_name, value_type in (
+        ("BatchImagesNode", "images", "image", "image", "IMAGE"),
+        ("BatchMasksNode", "masks", "mask", "mask", "MASK"),
+        ("BatchLatentsNode", "latents", "latent", "latent", "LATENT"),
     ):
         interface = schemas[node_type]["interface"]
         assert interface[0]["id"] == family
         assert interface[0]["memberPrefix"] == prefix
         assert interface[0]["minMembers"] == 1 and interface[0]["maxMembers"] == 50
+        assert interface[0]["template"][0]["id"] == template_name
         assert interface[0]["template"][0]["type"]["types"] == [value_type]
         assert interface[1]["type"]["types"] == [value_type]
     color = schemas["ColorTransfer"]
