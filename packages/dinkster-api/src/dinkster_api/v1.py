@@ -377,6 +377,10 @@ def __getattr__(name: str) -> object:
         from dinkster_inference_wire import types
 
         value = getattr(types, name)
+    elif name == "initialize_inference_process":
+        from dinkster_inference_wire.process import initialize_inference_process
+
+        value = initialize_inference_process
     else:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     globals()[name] = value
@@ -392,11 +396,13 @@ def __dir__() -> list[str]:
             "materialize_image",
             "materialize_latent",
             "materialize_clip_vision_output",
+            "initialize_inference_process",
         }
     )
 
 
 if TYPE_CHECKING:
+    from dinkster_inference_wire.process import initialize_inference_process
     from dinkster_inference_wire.types import (
         materialize_clip_vision_output,
         materialize_image,
@@ -408,6 +414,7 @@ if TYPE_CHECKING:
     from dinkster_video import timeline as timeline_render
 
 __all__ = [
+    "initialize_inference_process",
     "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",

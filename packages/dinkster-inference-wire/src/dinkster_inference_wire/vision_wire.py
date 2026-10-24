@@ -9,6 +9,7 @@ from typing import Any, cast
 from dinkster_values import CLIP_VISION_OUTPUT_TYPE, decode_latent, encode_latent, stable_hash
 
 from .media_wire import materialize_latent
+from .process import initialize_inference_process
 
 
 def _attributes(value: object) -> Mapping[str, object]:
@@ -44,8 +45,7 @@ def clip_vision_output_fingerprint(value: object) -> str:
 
 def materialize_clip_vision_output(value: object) -> Any:
     """Reconstruct the reset runtime Output only at an inference consumer."""
-    process = importlib.import_module("dinkster_inference_wire.process")
-    process.initialize_inference_process()
+    initialize_inference_process()
     vision = importlib.import_module("dinkster_inference.clip_vision")
     result = vision.Output()
     for name, item in _attributes(value).items():
