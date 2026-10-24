@@ -13,6 +13,7 @@ import torch
 from dinkster_api.v1 import (
     CONDITIONING_TYPE,
     CORE_BOOLEAN,
+    CORE_STRING,
     IMAGE_TYPE,
     LATENT_TYPE,
     InputSpec,
@@ -23,7 +24,7 @@ from dinkster_api.v1 import (
     materialize_image,
     materialize_latent,
 )
-from dinkster_graph import Graph, GraphNode, Link
+from dinkster_graph import PORTS_NODE_ID, Graph, GraphNode, Link, RegionNode, RegionOutput
 from dinkster_nodes_comfy.dataset_groups import MergeImageLists, ResolutionBucket
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -31,6 +32,7 @@ from dinkster.compose import PackSpec, ServingComposer
 _IMAGES = TypeExpr.list_of(TypeExpr.concrete(IMAGE_TYPE))
 _LATENTS = TypeExpr.list_of(TypeExpr.concrete(LATENT_TYPE))
 _CONDITIONS = TypeExpr.list_of(TypeExpr.concrete(CONDITIONING_TYPE))
+_STRINGS = TypeExpr.list_of(TypeExpr.concrete(CORE_STRING))
 
 
 def test_merge_images_flattens_batches_without_resizing_or_reordering() -> None:
@@ -118,6 +120,31 @@ class DatasetGroupSource(Node):
         )
 
 
+class DatasetBucketInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dataset-group-fixture.bucket-inspect",
+            inputs=(
+                InputSpec("latent", TypeExpr.concrete(LATENT_TYPE)),
+                InputSpec("conditioning", TypeExpr.concrete(CONDITIONING_TYPE)),
+            ),
+            outputs=(OutputSpec("pairs", _STRINGS),),
+        )
+
+    @classmethod
+    def execute(cls, *, latent: Any, conditioning: Any) -> Any:
+        samples = materialize_latent(latent)["samples"]
+        assert samples.shape[0] == len(conditioning)
+        pairs = []
+        for sample, (embedding, metadata) in zip(samples, conditioning, strict=True):
+            value = int(sample[0, 0, 0])
+            assert torch.all(sample == value)
+            assert torch.all(embedding == value)
+            pairs.append(f"{metadata['label']}:{value}")
+        return cls.outputs(pairs=pairs)
+
+
 class DatasetGroupInspect(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -127,12 +154,16 @@ class DatasetGroupInspect(Node):
                 InputSpec("images", _IMAGES),
                 InputSpec("latents", _LATENTS),
                 InputSpec("conditioning", _CONDITIONS),
+                InputSpec("inverted_images", _IMAGES),
+                InputSpec("pairs", _STRINGS),
             ),
             outputs=(OutputSpec("valid", TypeExpr.concrete(CORE_BOOLEAN)),),
         )
 
     @classmethod
-    def execute(cls, *, images: Any, latents: Any, conditioning: Any) -> Any:
+    def execute(
+        cls, *, images: Any, latents: Any, conditioning: Any, inverted_images: Any, pairs: Any
+    ) -> Any:
         assert [tuple(materialize_image(image).shape) for image in images] == [
             (1, 2, 3, 3),
             (1, 2, 3, 3),
@@ -150,6 +181,15 @@ class DatasetGroupInspect(Node):
             ["third"],
         ]
         assert [entry[0].flatten()[0].item() for entry in conditioning[0]] == [11, 12, 31]
+        assert len(inverted_images) == 3
+        for original, inverted in zip(images, inverted_images, strict=True):
+            original = materialize_image(original)
+            inverted = materialize_image(inverted)
+            assert inverted.shape == original.shape
+            assert torch.equal(inverted[..., :3], 1.0 - original[..., :3])
+            if original.shape[-1] == 4:
+                assert torch.equal(inverted[..., 3], original[..., 3])
+        assert pairs == ["first:11", "second:12", "fourth:31", "third:21"]
         return cls.outputs(valid=True)
 
 
@@ -164,9 +204,13 @@ def test_dataset_groups_ordinary_manifest_twice(tmp_path: Path, in_process: bool
         try:
             manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
             (tmp_path / "dataset_group_fixture.py").write_text(
-                "from test_dataset_groups_torch import DatasetGroupSource, DatasetGroupInspect\n"
+                "from test_dataset_groups_torch import (\n"
+                "    DatasetGroupSource, DatasetGroupInspect, DatasetBucketInspect,\n"
+                ")\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "NODES = (*COMFY_NODES, DatasetGroupSource, DatasetGroupInspect)\n",
+                "NODES = (\n"
+                "    *COMFY_NODES, DatasetGroupSource, DatasetGroupInspect, DatasetBucketInspect,\n"
+                ")\n",
                 encoding="ascii",
             )
             fixture_manifest = tmp_path / "dinkster-pack.toml"
@@ -192,12 +236,53 @@ def test_dataset_groups_ordinary_manifest_twice(tmp_path: Path, in_process: bool
                             "conditioning": Link("source", "conditioning"),
                         },
                     ),
+                    "per_image": RegionNode(
+                        kind="map",
+                        body=Graph(
+                            nodes={
+                                "invert": GraphNode(
+                                    "ImageInvert", {"image": Link(PORTS_NODE_ID, "image")}
+                                )
+                            }
+                        ),
+                        ports={"image": TypeExpr.concrete(IMAGE_TYPE)},
+                        inputs={"image": Link("merge", "images")},
+                        element_ports=("image",),
+                        outputs={"images": RegionOutput(Link("invert", "IMAGE"))},
+                    ),
+                    "per_bucket": RegionNode(
+                        kind="map",
+                        binding="zip",
+                        body=Graph(
+                            nodes={
+                                "inspect": GraphNode(
+                                    "dataset-group-fixture.bucket-inspect",
+                                    {
+                                        "latent": Link(PORTS_NODE_ID, "latent"),
+                                        "conditioning": Link(PORTS_NODE_ID, "conditioning"),
+                                    },
+                                )
+                            }
+                        ),
+                        ports={
+                            "latent": TypeExpr.concrete(LATENT_TYPE),
+                            "conditioning": TypeExpr.concrete(CONDITIONING_TYPE),
+                        },
+                        inputs={
+                            "latent": Link("bucket", "latents"),
+                            "conditioning": Link("bucket", "conditioning"),
+                        },
+                        element_ports=("latent", "conditioning"),
+                        outputs={"pairs": RegionOutput(Link("inspect", "pairs"), mode="flatten")},
+                    ),
                     "inspect": GraphNode(
                         "dataset-group-fixture.inspect",
                         {
                             "images": Link("merge", "images"),
                             "latents": Link("bucket", "latents"),
                             "conditioning": Link("bucket", "conditioning"),
+                            "inverted_images": Link("per_image", "images"),
+                            "pairs": Link("per_bucket", "pairs"),
                         },
                     ),
                 }
