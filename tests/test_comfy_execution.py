@@ -265,6 +265,106 @@ def test_validation_error_edge_rejects_before_producer(cache_enabled: bool) -> N
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
+def test_validation_error_edge1(cache_enabled: bool) -> None:
+    """Port of ComfyUI test_validation_error_edge1."""
+
+    async def scenario() -> None:
+        graph = Graph(
+            {
+                "source": GraphNode("dev.execution.admission_source", {"value": 5}),
+                "validation": GraphNode(
+                    "dev.execution.admission", {"value": Link("source", "value")}
+                ),
+            }
+        )
+        with pytest.raises(GraphValidationError, match="value must be linked from FLOAT"):
+            await make_engine().run(graph, ["validation"], cache_enabled=cache_enabled)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("cache_enabled", [False, True])
+@pytest.mark.parametrize(
+    ("node_type", "value", "error"),
+    [
+        ("dev.execution.admission_source", 5, True),
+        ("dev.execution.value", 5, True),
+    ],
+)
+def test_validation_error_edge2(
+    cache_enabled: bool, node_type: str, value: int, error: bool
+) -> None:
+    """Port of ComfyUI test_validation_error_edge2 declared-link checks."""
+
+    async def scenario() -> None:
+        graph = Graph(
+            {
+                "source": GraphNode(node_type, {"value": value}),
+                "validation": GraphNode(
+                    "dev.execution.admission", {"value": Link("source", "value")}
+                ),
+            }
+        )
+        if error:
+            with pytest.raises(GraphValidationError, match="value must be linked from FLOAT"):
+                await make_engine().run(graph, ["validation"], cache_enabled=cache_enabled)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("cache_enabled", [False, True])
+def test_validation_error_edge3(cache_enabled: bool) -> None:
+    """Port of ComfyUI test_validation_error_edge3 literal validation."""
+
+    async def scenario() -> None:
+        with pytest.raises(GraphValidationError, match="value must be a float literal"):
+            await make_engine().run(
+                Graph({"validation": GraphNode("dev.execution.admission", {"value": 5})}),
+                ["validation"],
+                cache_enabled=cache_enabled,
+            )
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("cache_enabled", [False, True])
+def test_validation_error_edge4(cache_enabled: bool) -> None:
+    """Port of ComfyUI test_validation_error_edge4 opted-in type validation."""
+
+    async def scenario() -> None:
+        with pytest.raises(GraphValidationError, match="value must be linked from FLOAT"):
+            await make_engine().run(
+                Graph(
+                    {
+                        "source": GraphNode("dev.execution.value", {"value": 3}),
+                        "validation": GraphNode(
+                            "dev.execution.admission", {"value": Link("source", "value")}
+                        ),
+                    }
+                ),
+                ["validation"],
+                cache_enabled=cache_enabled,
+            )
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("cache_enabled", [False, True])
+def test_validation_error_kwargs(cache_enabled: bool) -> None:
+    """Port of ComfyUI's kwargs validator through plain literal inputs."""
+
+    async def scenario() -> None:
+        result = await make_engine().run(
+            Graph({"validation": GraphNode("dev.execution.admission", {"value": 7.0})}),
+            ["validation"],
+            cache_enabled=cache_enabled,
+        )
+        assert result.outputs["validation"]["value"].resolve() == 7.0
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("cache_enabled", [False, True])
 def test_mixed_expansion_returns(cache_enabled: bool) -> None:
     """Port of ComfyUI test_mixed_expansion_returns."""
 
