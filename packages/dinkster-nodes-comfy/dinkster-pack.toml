@@ -217,6 +217,7 @@ namespaces = [
     "EmptyARVideoLatent",
     "TrimVideoLatent",
     "LTXVFreezeLatent",
+    "NormalizeVideoLatentStart",
     "ResizeImageMaskNode",
     "BatchImagesNode",
     "BatchMasksNode",
