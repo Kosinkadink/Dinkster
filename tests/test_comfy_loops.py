@@ -295,11 +295,18 @@ def test_loop_collection_preserves_child_envelopes() -> None:
             ),
         }
     )
-    result = asyncio.run(asyncio.wait_for(engine.run(graph, ["end"]), 10))
-    children = list_children(result.outputs["end"]["outputs"])
-    assert children is not None and len(children) == 1
-    assert children[0].meta == value.meta
-    assert children[0].fingerprint == value.fingerprint
+
+    async def scenario() -> None:
+        for replay in (False, True):
+            result = await asyncio.wait_for(engine.run(graph, ["end"]), 10)
+            children = list_children(result.outputs["end"]["outputs"])
+            assert children is not None and len(children) == 1
+            assert children[0].meta == value.meta
+            assert children[0].fingerprint == value.fingerprint
+            if replay:
+                assert "items" in result.cached
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])

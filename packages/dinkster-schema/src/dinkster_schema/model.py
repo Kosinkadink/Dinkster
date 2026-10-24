@@ -1296,11 +1296,11 @@ class OutputSpec:
             raise ValueError(f"output {self.id}: known_value must be an OutputKnownValue")
 
 
-RESERVED_INPUT_IDS = frozenset({"output_spec", "execution_context"})
+RESERVED_INPUT_IDS = frozenset({"output_spec", "execution_context", "input_values"})
 """Framework-reserved execute() parameter names. ``output_spec`` carries the
 elaborated output interface (an OutputInterface) to nodes that declare output
-families; ``execution_context`` carries live run control. Neither is an input
-id or input family id."""
+families; ``execution_context`` carries live run control; ``input_values``
+provides read-only input envelopes. These are not input or family ids."""
 
 SearchVisibility = Literal["normal", "deprecated", "hidden"]
 """How node search lists a type. Presentation/lifecycle metadata, never
@@ -2157,6 +2157,9 @@ class NodeSchema:
     execution_context: bool = False
     """Inject the hidden run-scoped execution_context parameter. Such nodes
     observe live run state and therefore never use invocation-result caches."""
+    input_values: bool = False
+    """Inject read-only input envelopes without live run-control access.
+    Pure forwarding nodes retain ordinary invocation-result caching."""
     mirror: MirrorSpec | None = None
     """Optional frontend-renderable mirror of this node's transform (see
     MirrorSpec). Presentation metadata only: the engine never reads it,
@@ -2182,6 +2185,8 @@ class NodeSchema:
             raise ValueError("node_type is required")
         if type(self.execution_context) is not bool:
             raise ValueError("execution_context must be a bool")
+        if type(self.input_values) is not bool:
+            raise ValueError("input_values must be a bool")
         if self.editor_role is not None and (
             not isinstance(cast("object", self.editor_role), str) or not self.editor_role
         ):

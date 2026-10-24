@@ -191,6 +191,12 @@ unassessed meaning; its timing-outlier flag is not a spill verdict either.
 
 ## Learn more
 
+Nodes declaring `input_values=True` receive a read-only `input_values`
+mapping of input envelopes alongside ordinary decoded arguments. This permits
+metadata-preserving forwarding without live run-control access and retains
+ordinary result caching. `execution_context=True` remains the separate opt-in
+for live run controls and disables result caching.
+
 See DESIGN 3.3 for the worker boundary, DESIGN 3.6 for pack manifests,
 DESIGN 3.9 for doctor and diagnostics, DESIGN 3.10 for placement and memory,
 and DESIGN 3.11 for sandboxing. Boundary and authoring invariants are in

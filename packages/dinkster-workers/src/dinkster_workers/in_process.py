@@ -16,6 +16,7 @@ import time
 import traceback
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
+from types import MappingProxyType
 from typing import cast
 
 from dinkster_memory import FullReleaseConsumer, Shedder
@@ -1014,6 +1015,8 @@ class InProcessWorker:
             if invocation.run_control is None:
                 raise InputCoercionError("node requires a live run execution context")
             kwargs["execution_context"] = invocation.run_control
+        if base_schema.input_values:
+            kwargs["input_values"] = MappingProxyType(dict(invocation.inputs))
         return kwargs
 
     def _wrap_outputs(

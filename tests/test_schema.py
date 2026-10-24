@@ -53,11 +53,13 @@ def test_schema_reexports_custom_widget_descriptor() -> None:
     assert CustomWidgetDescriptor is ValuesCustomWidgetDescriptor
 
 
-def test_wire_roundtrip_uses_only_version_one() -> None:
-    wire = schema_to_wire(SCHEMA)
+@pytest.mark.parametrize("input_values", [False, True])
+def test_wire_roundtrip_uses_only_version_one(input_values: bool) -> None:
+    schema = dataclasses.replace(SCHEMA, input_values=input_values)
+    wire = schema_to_wire(schema)
     assert SCHEMA_WIRE_VERSION == 1
     assert wire["schemaVersion"] == 1
-    assert schema_from_wire(wire) == SCHEMA
+    assert schema_from_wire(wire) == schema
 
     for unsupported in (0, 2, 44, 1.0, "1", None):
         mislabeled = dict(wire)

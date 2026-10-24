@@ -1020,6 +1020,8 @@ def schema_to_wire(
         wire["admissionValidation"] = True
     if schema.execution_context:
         wire["executionContext"] = True
+    if schema.input_values:
+        wire["inputValues"] = True
     if schema.widget_groups:
         groups: list[dict[str, object]] = []
         for group in schema.widget_groups:
@@ -1708,6 +1710,7 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
             wire.get("admissionValidation", False), "admissionValidation"
         ),
         execution_context=_expect_bool(wire.get("executionContext", False), "executionContext"),
+        input_values=_expect_bool(wire.get("inputValues", False), "inputValues"),
         mirror=_mirror_from_wire(wire.get("mirror"), wire_version),
         selector=selector,
         widget_groups=widget_groups,

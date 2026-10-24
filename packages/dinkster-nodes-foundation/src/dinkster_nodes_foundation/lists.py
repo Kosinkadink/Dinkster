@@ -25,8 +25,8 @@ from dinkster_api.v1 import (
     Node,
     NodeSchema,
     OutputSpec,
-    RunExecutionContext,
     TypeExpr,
+    Value,
     list_children,
 )
 
@@ -47,14 +47,14 @@ class MakeList(Node):
             input_families=(InputFamilySpec("items", T, min_members=1),),
             outputs=(OutputSpec("list", LIST_T),),
             aliases=("CreateList",),
-            execution_context=True,
+            input_values=True,
         )
 
     @classmethod
     def execute(
-        cls, *, items: Mapping[str, object], execution_context: RunExecutionContext
+        cls, *, items: Mapping[str, object], input_values: Mapping[str, Value]
     ) -> Mapping[str, object]:
-        return cls.outputs(list=[execution_context.inputs[f"items.{name}"] for name in items])
+        return cls.outputs(list=[input_values[f"items.{name}"] for name in items])
 
 
 class AppendToList(Node):
@@ -106,14 +106,14 @@ class ListElement(Node):
             category="list",
             inputs=(InputSpec("list", LIST_T), InputSpec("index", INT, default=0)),
             outputs=(OutputSpec("item", T),),
-            execution_context=True,
+            input_values=True,
         )
 
     @classmethod
     def execute(
-        cls, *, list: Sequence[object], index: int, execution_context: RunExecutionContext
+        cls, *, list: Sequence[object], index: int, input_values: Mapping[str, Value]
     ) -> Mapping[str, object]:
-        children = list_children(execution_context.inputs["list"])
+        children = list_children(input_values["list"])
         assert children is not None
         try:
             item = children[index]
