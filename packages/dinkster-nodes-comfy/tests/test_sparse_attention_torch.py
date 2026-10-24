@@ -5,9 +5,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
-import re
-import sys
-import types
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -22,6 +19,7 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
+    initialize_inference_process,
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy import COMFY_NODES
@@ -121,9 +119,11 @@ class ManifestReader(Node):
         installed = options["transformer_options"]["optimized_attention_override"]
         prepare(patched, 0, options)
         assert options["transformer_options"]["optimized_attention_override"] is installed
-        q = torch.zeros((1, 5, 128), dtype=torch.float32)
-        result = installed(lambda *args, **kwargs: args[0] + args[1] + args[2], q, q, q, 1)
-        assert torch.equal(result, torch.zeros_like(q))
+        q = torch.full((1, 5, 128), 1.0, dtype=torch.float32)
+        k = torch.full((1, 5, 128), 2.0, dtype=torch.float32)
+        v = torch.full((1, 5, 128), 3.0, dtype=torch.float32)
+        result = installed(lambda q, k, v, *_args, **_kwargs: q + 2 * k + 3 * v, q, k, v, 1)
+        torch.testing.assert_close(result, torch.full_like(q, 14.0))
         assert replacement_calls == ["replacement"]
         patch = next(
             value.cell_contents
@@ -134,36 +134,18 @@ class ManifestReader(Node):
         patch.vsa_plans[(1,)] = {}
         cleanup(patched)
         assert not patch.pooled and not patch.vsa_plans and patch.vsa_rope is None
+        options["transformer_options"]["optimized_attention_override"] = replacement
+        prepare(patched, 1, options)
+        reinstalled = options["transformer_options"]["optimized_attention_override"]
+        torch.testing.assert_close(
+            reinstalled(lambda q, k, v, *_args, **_kwargs: q + 2 * k + 3 * v, q, k, v, 1),
+            torch.full_like(q, 14.0),
+        )
+        assert replacement_calls == ["replacement", "replacement"]
         return cls.outputs(verified=1.0)
 
 
 MANIFEST_NODES = (ManifestSource, ManifestReader)
-
-
-def install_runtime_fakes() -> None:
-    package = types.ModuleType("dinkster_inference")
-    package.__path__ = []
-    cli_args = types.ModuleType("dinkster_inference.cli_args")
-    cli_args.args = SimpleNamespace(cpu=False)
-    management = types.ModuleType("dinkster_inference.model_management")
-    extension = types.ModuleType("dinkster_inference.patcher_extension")
-    extension.CallbacksMP = SimpleNamespace(ON_PREPARE_STATE="prepare", ON_CLEANUP="cleanup")
-    minimax = types.ModuleType("dinkster_inference.ldm.minimax.model")
-
-    class MiniMaxH3Model:
-        pass
-
-    minimax.MiniMaxH3Model = MiniMaxH3Model
-    modules = {
-        "dinkster_inference": package,
-        "dinkster_inference.cli_args": cli_args,
-        "dinkster_inference.model_management": management,
-        "dinkster_inference.patcher_extension": extension,
-        "dinkster_inference.ldm": types.ModuleType("dinkster_inference.ldm"),
-        "dinkster_inference.ldm.minimax": types.ModuleType("dinkster_inference.ldm.minimax"),
-        "dinkster_inference.ldm.minimax.model": minimax,
-    }
-    sys.modules.update(modules)
 
 
 def _patch(*, minimum: int = 0) -> SparseAttnPatch:
@@ -216,12 +198,11 @@ def test_dense_fallback_preserves_previous_override_and_all_gates(
 
 def test_vsa_plan_inverse_rope_cache_and_reset(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("dinkster_nodes_comfy.sparse_attention._runtime", lambda: (torch, object()))
+    monkeypatch.setenv("DINKSTER_ACCELERATOR", "cpu")
+    initialize_inference_process()
+    minimax = __import__("dinkster_inference.ldm.minimax.model", fromlist=["PackedLayout"])
     patch = _patch()
-    layout = SimpleNamespace(
-        signature=(0, 2, 4, 4, 0),
-        segments=((0, 3, "text"), (3, 11, "video")),
-        seq_len=11,
-    )
+    layout = minimax.PackedLayout(3, 2, 4, 4, 0)
     plan = patch.vsa_plan(layout, torch.device("cpu"))
     assert plan["src"][plan["inv"]].tolist() == list(range(layout.seq_len))
     freqs = torch.randn((1, layout.seq_len, 2))
@@ -257,18 +238,20 @@ def test_h3_chunked_producer_uses_kernel_seam_and_block_patch_keeps_cpu_dense(
             Kitchen.calls.append(
                 {"tokens": tokens, "heads": heads, "freqs": freqs, "weights": weights, **kwargs}
             )
-            assert len(chunks) == 1 and chunks[0].shape == (5, 3)
+            assert [chunk.shape for chunk in chunks] == [(4096, 3), (5, 3)]
             return (
                 torch.ones((tokens, heads, 128)),
                 torch.full((heads, 128), 2.0),
                 torch.full((heads, 128), 3.0),
             )
 
-    management = types.SimpleNamespace(cast_to=lambda weight, **_kwargs: weight)
-    prefetch = types.SimpleNamespace(pause_malloc_graph=contextlib.nullcontext)
     monkeypatch.setattr("dinkster_nodes_comfy.sparse_attention._runtime", lambda: (torch, Kitchen))
-    monkeypatch.setitem(sys.modules, "dinkster_inference.model_management", management)
-    monkeypatch.setitem(sys.modules, "dinkster_inference.model_prefetch", prefetch)
+    monkeypatch.setenv("DINKSTER_ACCELERATOR", "cpu")
+    initialize_inference_process()
+    management = __import__("dinkster_inference.model_management", fromlist=["cast_to"])
+    prefetch = __import__("dinkster_inference.model_prefetch", fromlist=["pause_malloc_graph"])
+    monkeypatch.setattr(management, "cast_to", lambda weight, **_kwargs: weight)
+    monkeypatch.setattr(prefetch, "pause_malloc_graph", contextlib.nullcontext)
     attn = SimpleNamespace(
         heads=1,
         head_dim=128,
@@ -279,15 +262,17 @@ def test_h3_chunked_producer_uses_kernel_seam_and_block_patch_keeps_cpu_dense(
         to_gate_compress=None,
     )
     patch = _patch()
-    x = torch.arange(5 * 1, dtype=torch.bfloat16).reshape(5, 1)
-    freqs = torch.zeros((1, 5, 2))
+    x = torch.arange(4101, dtype=torch.bfloat16).reshape(4101, 1)
+    freqs = torch.zeros((1, 4101, 2))
     options = {"uuids": ("conditioning",)}
-    assert h3_sparse_attention(attn, x, freqs, options, patch, 3).shape == (5, 128)
-    assert h3_sparse_attention(attn, x, freqs, options, patch, 3).shape == (5, 128)
+    assert h3_sparse_attention(attn, x, freqs, options, patch, 3).shape == (4101, 128)
+    assert h3_sparse_attention(attn, x, freqs, options, patch, 3).shape == (4101, 128)
     assert (
         Kitchen.calls[0]["kmean"] is None
-        and Kitchen.calls[1]["kmean"] is patch.pooled[(3, 5, ("conditioning",))][0]
+        and Kitchen.calls[1]["kmean"] is patch.pooled[(3, 4101, ("conditioning",))][0]
     )
+    patch.reset()
+    assert not patch.pooled
     original_calls: list[dict[str, Any]] = []
     block = SimpleNamespace(attn=attn)
     block_patch = make_h3_block_patch(block, 3, patch)
@@ -306,40 +291,52 @@ def test_complete_manifest_runs_sparse_attention_callbacks_twice_each_host(
     async def scenario() -> None:
         root = Path(__file__).resolve().parents[1]
         source_root = root / "src"
-        install_runtime_fakes()
         composer = ServingComposer(
             worker_env={
+                "DINKSTER_ACCELERATOR": "cpu",
                 "PYTHONPATH": os.pathsep.join(
                     (str(tmp_path), str(Path(__file__).parent), str(source_root))
-                )
+                ),
             }
         )
         try:
             manifest = root / "dinkster-pack.toml"
             (tmp_path / "sparse_attention_fixture_sources.py").write_text(
-                "from test_sparse_attention_torch import MANIFEST_NODES, install_runtime_fakes\n"
-                "install_runtime_fakes()\n"
+                "from test_sparse_attention_torch import MANIFEST_NODES\n"
                 "from dinkster_api.v1 import register_inference_types\n"
-                "from dinkster_nodes_comfy.sparse_attention import BlockSparseAttention\n"
-                "NODES = (BlockSparseAttention, *MANIFEST_NODES)\n",
+                "NODES = MANIFEST_NODES\n",
                 encoding="ascii",
             )
             fixture_manifest = tmp_path / "dinkster-pack.toml"
-            contents = re.sub(
-                r"namespaces = \[.*?\]",
-                'namespaces = ["BlockSparseAttention", "sparse-attention-fixture"]',
-                manifest.read_text(encoding="ascii"),
-                count=1,
-                flags=re.DOTALL,
+            fixture_manifest.write_text(
+                "[pack]\n"
+                'name = "sparse-attention-fixture"\n'
+                'publisher = "dinkster"\n'
+                'namespaces = ["sparse-attention-fixture"]\n'
+                "\n[pack.entry]\n"
+                'nodes = "sparse_attention_fixture_sources:NODES"\n'
+                'types = "sparse_attention_fixture_sources:register_inference_types"\n',
+                encoding="ascii",
             )
-            contents = contents.replace(
-                "dinkster_nodes_comfy:COMFY_NODES", "sparse_attention_fixture_sources:NODES"
-            ).replace(
-                "dinkster_nodes_comfy:register_inference_types",
-                "sparse_attention_fixture_sources:register_inference_types",
-            )
-            fixture_manifest.write_text(contents, encoding="ascii")
-            await composer.add_pack(PackSpec(manifest=fixture_manifest, in_process=in_process))
+            if in_process:
+                await composer.add_pack(PackSpec(manifest=manifest, in_process=True))
+                await composer.add_pack(PackSpec(manifest=fixture_manifest, in_process=True))
+            else:
+                group_manifests = (manifest, fixture_manifest)
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=manifest,
+                        worker_group="sparse-attention-fixture",
+                        group_manifests=group_manifests,
+                    )
+                )
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=fixture_manifest,
+                        worker_group="sparse-attention-fixture",
+                        group_manifests=group_manifests,
+                    )
+                )
             graph = Graph(
                 nodes={
                     "source": GraphNode("sparse-attention-fixture.source"),
@@ -365,9 +362,13 @@ def test_complete_manifest_runs_sparse_attention_callbacks_twice_each_host(
                 }
             )
             engine = composer.composition.make_engine(lambda _event: None)
-            for _ in range(2):
+            for iteration in range(2):
                 result = await engine.run(graph, ["reader"])
                 assert result.outputs["reader"]["verified"].resolve() == 1.0
+                if iteration == 0:
+                    assert set(result.executed) == {"source", "patch", "reader"}
+                else:
+                    assert set(result.cached) == {"source", "patch", "reader"}
         finally:
             await composer.close()
 
