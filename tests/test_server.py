@@ -2370,7 +2370,7 @@ def test_nodes_envelope_lists_mergeable_types_sorted() -> None:
             assert resp.status == 200
             data = await resp.json()
             assert data["dinkster"]["mergeableTypes"] == []
-            assert data["typeOwners"]["core.int"] == "dinkster-nodes-foundation"
+            assert data["typeOwners"]["INT"] == "dinkster-nodes-foundation"
             with registry.registering_pack("mypack", ("mypack",)):
                 registry.register("mypack.thing")
             # Post-startup registration, deliberately in non-sorted order

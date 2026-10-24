@@ -147,7 +147,8 @@ def write_iso_manifest(
 ) -> Path:
     manifest = tmp_path / "dinkster-pack.toml"
     manifest.write_text(
-        f'[pack]\nname = "{name}"\n\n[pack.entry]\n'
+        f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
+        'type-namespaces = ["iso"]\n\n[pack.entry]\n'
         f'nodes = "{module_name}:NODES"\ntypes = "{module_name}:register_types"\n'
     )
     return manifest
@@ -291,7 +292,8 @@ def test_isolated_worker_uses_interpreter_entry_for_split_package(tmp_path: Path
     (pack_root / "isopack_nodes" / "__init__.py").write_text("\n")
     manifest = pack_root / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname = "isopack"\n\n[pack.entry]\n'
+        '[pack]\nname = "isopack"\npublisher = "dinkster"\n'
+        'type-namespaces = ["iso"]\n\n[pack.entry]\n'
         'nodes = "isopack_nodes.entries:NODES"\n'
         'types = "isopack_nodes.entries:register_types"\n'
     )

@@ -74,6 +74,17 @@ def test_type_registration_enforces_exact_claim_and_pack_prefix() -> None:
         registry.claim_types("another-official", ("THING",))
 
 
+def test_host_codec_does_not_claim_a_pack_type_before_its_owner_announces() -> None:
+    registry = make_registry()
+    registry.register("mypack.thing")
+    assert registry.owner_of("mypack.thing") is None
+    registry.declare_types("mypack", ("mypack",), ("mypack.thing",))
+    assert registry.type_owners()["mypack.thing"] == "mypack"
+    assert registry.wrap("mypack.thing", 19).payload.load() == 19
+    with pytest.raises(ValueError, match="overlaps"):
+        registry.claim_types("other", ("mypack",))
+
+
 def test_declared_type_can_activate_and_release_its_codec_and_providers() -> None:
     registry = make_registry()
     registry.declare_types("mypack", ("mypack",), ("mypack.thing",))

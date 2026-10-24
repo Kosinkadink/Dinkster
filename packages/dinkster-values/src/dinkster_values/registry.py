@@ -459,23 +459,24 @@ class TypeRegistry:
             raise ValueError(f"type ids must not contain '<' or '>': {type_id}")
         if type_id in self._types:
             raise ValueError(f"type already registered: {type_id}")
-        owner = self._registering_pack or "dinkster-nodes-foundation"
+        owner = self._registering_pack or self.owner_of(type_id)
         builtin = type_id in BUILTIN_TYPE_IDS
         if self._registering_pack is not None and not self._allow_bare:
-            if not claim_covers(owner, type_id):
+            if not claim_covers(self._registering_pack, type_id):
                 raise ValueError(f"{owner}: type {type_id!r} must be prefixed by its pack name")
         if (
             self._registering_pack is not None
             and not (builtin and self._allow_bare)
             and not any(
-                type_id == claim or claim_covers(claim, type_id) for claim in self._claims[owner]
+                type_id == claim or claim_covers(claim, type_id)
+                for claim in self._claims[self._registering_pack]
             )
         ):
             raise ValueError(f"{owner}: type {type_id!r} is outside its declared type claims")
         if builtin:
             owner = "dinkster-nodes-foundation"
         held_owner = self.owner_of(type_id)
-        if held_owner is not None and held_owner != owner:
+        if owner is not None and held_owner is not None and held_owner != owner:
             raise ValueError(f"type {type_id!r} is owned by {held_owner!r}, not {owner!r}")
         spec = TypeSpec(
             type_id=type_id,
@@ -492,7 +493,8 @@ class TypeRegistry:
             validate_encoded_buffer=validate_encoded_buffer,
         )
         self._types[type_id] = spec
-        self._owners[type_id] = owner
+        if owner is not None:
+            self._owners[type_id] = owner
         return spec
 
     def register_rendition(

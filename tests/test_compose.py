@@ -537,7 +537,8 @@ def write_iso_manifest(
         else "namespaces = [" + ", ".join(f'"{c}"' for c in namespaces) + "]\n"
     )
     body = (
-        f'[pack]\nname = "{name}"\n{claims}\n[pack.entry]\n'
+        f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
+        f'type-namespaces = ["iso"]\n{claims}\n[pack.entry]\n'
         'nodes = "isopack_nodes:NODES"\ntypes = "isopack_nodes:register_types"\n'
     )
     if presentation:
@@ -563,7 +564,8 @@ def write_contract_manifest(
         'types = "isopack_nodes:register_types"\n' if nodes_entry == "isopack_nodes:NODES" else ""
     )
     manifest.write_text(
-        f'[pack]\nname = "{name}"\nnamespaces = ["{namespace}"]\n'
+        f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
+        f'type-namespaces = ["iso"]\nnamespaces = ["{namespace}"]\n'
         '[pack.contracts]\nhost = "dinkster-pack-host/1"\napi = "dinkster-api/v1"\n'
         f"{declarations}"
         f'[pack.entry]\nnodes = "{nodes_entry}"\n'
@@ -1540,7 +1542,7 @@ def test_compose_dev_pack_adds_scaffold_nodes() -> None:
     from dinkster_nodes_dev import PACK_NODES
 
     async def scenario() -> None:
-        composition = await compose_serving([DEV_PACK_MANIFEST])
+        composition = await compose_serving([PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)])
         try:
             expected = set(build_schemas(DEFAULT_NODES)) | set(build_schemas(PACK_NODES))
             assert set(composition.schemas) == expected
@@ -1558,7 +1560,7 @@ def test_conformance_proof_nodes_follow_explicit_dev_pack_composition() -> None:
     """Conformance probes appear only when the development pack is composed."""
 
     async def scenario() -> None:
-        dev = await compose_serving([DEV_PACK_MANIFEST])
+        dev = await compose_serving([PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)])
         try:
             assert "dev.conformance.preview" in dev.schemas
             assert "dev.conformance.cancellable" in dev.schemas
@@ -1576,7 +1578,9 @@ def test_conformance_proof_nodes_follow_explicit_dev_pack_composition() -> None:
         finally:
             await production.close()
 
-        manifest_composition = await compose_serving([DEV_PACK_MANIFEST])
+        manifest_composition = await compose_serving(
+            [PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)]
+        )
         try:
             assert "dev.image.gradient" in manifest_composition.schemas
             assert "dev.conformance.preview" in manifest_composition.schemas
@@ -1591,7 +1595,9 @@ def test_compose_dev_mode(caplog: pytest.LogCaptureFixture) -> None:
     render as one structured log line per crossing."""
 
     async def scenario() -> None:
-        composition = await compose_serving([DEV_PACK_MANIFEST], dev=True)
+        composition = await compose_serving(
+            [PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)], dev=True
+        )
         try:
             events: list[object] = []
             engine = composition.make_engine(events.append)
@@ -1633,7 +1639,7 @@ def test_composed_layered_cache_reuses_disk_then_promotes_to_memory(tmp_path: Pa
 
         async def compose():
             return await compose_serving(
-                [DEV_PACK_MANIFEST],
+                [PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)],
                 include_default_packs=False,
                 dev=True,
                 cache_mode="layered",
@@ -1683,7 +1689,7 @@ def test_full_free_clears_memory_execution_cache_but_preserves_disk(
             cache_disk_budget=1024**2,
         )
         try:
-            await composer.add_pack(DEV_PACK_MANIFEST)
+            await composer.add_pack(PackSpec(DEV_PACK_MANIFEST, trust_reserved=True))
             events: list[EngineEvent] = []
             engine = composer.composition.make_engine(events.append)
             graph = Graph(nodes={"g": GraphNode("dev.image.gradient", {"width": 8, "height": 4})})
@@ -1692,7 +1698,7 @@ def test_full_free_clears_memory_execution_cache_but_preserves_disk(
             events.clear()
 
             staged = composer.spawn_empty()
-            await staged.add_pack(DEV_PACK_MANIFEST)
+            await staged.add_pack(PackSpec(DEV_PACK_MANIFEST, trust_reserved=True))
             old = composer.adopt(staged)
             await old.close()
             assert isinstance(engine.cache, LayeredCache)
@@ -2539,7 +2545,8 @@ def test_broken_default_pack_leaves_zero_node_host_and_registry_healthy(tmp_path
     )
     manifest = tmp_path / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname = "dinkster-nodes-media-io"\nnamespaces = ["dinkster"]\n'
+        '[pack]\nname = "dinkster-nodes-media-io"\npublisher = "dinkster"\n'
+        'type-namespaces = ["dinkster"]\nnamespaces = ["dinkster"]\n'
         '[pack.entry]\nnodes = "broken_media:NODES"\n'
         'types = "broken_media:register_types"\n',
         encoding="utf-8",
@@ -3282,7 +3289,8 @@ def test_compose_serving_relays_pack_consumers_to_governor(tmp_path: Path) -> No
         governor = MemoryGovernor()
         manifest = tmp_path / "dinkster-pack.toml"
         manifest.write_text(
-            '[pack]\nname = "memorypack"\nnamespaces = ["mem"]\n\n[pack.entry]\n'
+            '[pack]\nname = "memorypack"\npublisher = "dinkster"\n'
+            'type-namespaces = ["mem"]\nnamespaces = ["mem"]\n\n[pack.entry]\n'
             'nodes = "memorypack_nodes:NODES"\ntypes = "memorypack_nodes:register_types"\n'
             'consumers = "memorypack_nodes:memory_consumers"\n'
         )
@@ -3324,7 +3332,8 @@ def test_serving_composer_full_free_releases_live_worker_without_startup_guard(
         governor = MemoryGovernor({"ram": 1000})
         manifest = tmp_path / "dinkster-pack.toml"
         manifest.write_text(
-            '[pack]\nname = "memorypack"\nnamespaces = ["mem"]\n\n[pack.entry]\n'
+            '[pack]\nname = "memorypack"\npublisher = "dinkster"\n'
+            'type-namespaces = ["mem"]\nnamespaces = ["mem"]\n\n[pack.entry]\n'
             'nodes = "memorypack_nodes:NODES"\ntypes = "memorypack_nodes:register_types"\n'
             'consumers = "memorypack_nodes:memory_consumers"\n'
         )
@@ -3336,7 +3345,7 @@ def test_serving_composer_full_free_releases_live_worker_without_startup_guard(
             cache_dir=tmp_path / "execution-cache",
         )
         try:
-            await composer.add_pack(DEV_PACK_MANIFEST)
+            await composer.add_pack(PackSpec(DEV_PACK_MANIFEST, trust_reserved=True))
             await composer.add_pack(manifest)
             events: list[EngineEvent] = []
             engine = composer.composition.make_engine(events.append)
@@ -3498,7 +3507,8 @@ def test_compose_serving_delivers_pack_telemetry(tmp_path: Path) -> None:
         governor = MemoryGovernor(telemetry=reported.probe, telemetry_devices=reported.devices)
         manifest = tmp_path / "dinkster-pack.toml"
         manifest.write_text(
-            '[pack]\nname = "memorypack"\nnamespaces = ["mem"]\n\n[pack.entry]\n'
+            '[pack]\nname = "memorypack"\npublisher = "dinkster"\n'
+            'type-namespaces = ["mem"]\nnamespaces = ["mem"]\n\n[pack.entry]\n'
             'nodes = "memorypack_nodes:NODES"\ntypes = "memorypack_nodes:register_types"\n'
             'consumers = "memorypack_nodes:memory_consumers"\n'
             'telemetry = "memorypack_nodes:memory_telemetry"\n'
@@ -3534,7 +3544,8 @@ def test_compose_serving_wires_worker_reservations(tmp_path: Path) -> None:
         governor = MemoryGovernor({"ram": 100})
         manifest = tmp_path / "dinkster-pack.toml"
         manifest.write_text(
-            '[pack]\nname = "isopack"\nnamespaces = ["iso"]\n\n[pack.entry]\n'
+            '[pack]\nname = "isopack"\npublisher = "dinkster"\n'
+            'type-namespaces = ["iso"]\nnamespaces = ["iso"]\n\n[pack.entry]\n'
             'nodes = "isopack_nodes:NODES"\ntypes = "isopack_nodes:register_types"\n'
             'reservations = "isopack_nodes:plan_reservations"\n'
         )

@@ -127,7 +127,8 @@ def _manifest(directory: Path, *, extra: str = "") -> Path:
     directory.mkdir()
     path = directory / "dinkster-pack.toml"
     path.write_text(
-        '[pack]\nname = "isopack"\nnamespaces = ["iso"]\n'
+        '[pack]\nname = "isopack"\npublisher = "dinkster"\n'
+        'type-namespaces = ["iso"]\nnamespaces = ["iso"]\n'
         f"{extra}\n[pack.entry]\n"
         'nodes = "isopack_nodes:NODES"\ntypes = "isopack_nodes:register_types"\n'
     )
@@ -161,7 +162,8 @@ def _placement_manifest(directory: Path) -> Path:
     )
     manifest = directory / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname = "h31-placement"\nnamespaces = ["h31"]\n[pack.entry]\n'
+        '[pack]\nname = "h31-placement"\npublisher = "dinkster"\n'
+        'namespaces = ["h31"]\n[pack.entry]\n'
         'nodes = "h31_placement_nodes:NODES"\n'
     )
     return manifest
@@ -230,7 +232,8 @@ def test_in_process_placement_is_byte_identical_for_schema_provenance_and_invoca
             )
             second = second_root / "dinkster-pack.toml"
             second.write_text(
-                '[pack]\nname = "h31-second"\nnamespaces = ["h32"]\n'
+                '[pack]\nname = "h31-second"\npublisher = "dinkster"\n'
+                'namespaces = ["h32"]\n'
                 '[pack.entry]\nnodes = "h31_second_nodes:NODES"\n'
             )
             await composer.add_pack(PackSpec(second, in_process=True, runtime_pins=PINS))
@@ -250,7 +253,8 @@ def test_in_process_placement_is_byte_identical_for_schema_provenance_and_invoca
             )
             conflicting = conflicting_root / "dinkster-pack.toml"
             conflicting.write_text(
-                '[pack]\nname = "h31-conflicting"\nnamespaces = ["h33"]\n'
+                '[pack]\nname = "h31-conflicting"\npublisher = "dinkster"\n'
+                'namespaces = ["h33"]\n'
                 '[pack.entry]\nnodes = "h31_second_nodes:NODES"\n'
             )
             with pytest.raises(ManifestError, match="already loaded from outside the pack root"):

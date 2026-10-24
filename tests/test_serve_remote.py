@@ -880,7 +880,7 @@ def test_remote_surface_survives_pack_reload(tmp_path: Path) -> None:
         try:
             composer = ServingComposer()
             try:
-                await composer.add_pack(DEV_MANIFEST)
+                await composer.add_pack(PackSpec(DEV_MANIFEST, trust_reserved=True))
                 await composer.add_remote(remote_spec(host, port, tmp_path))
                 await composer.reload_pack("dinkster-nodes-dev")
                 composition = composer.composition
@@ -909,7 +909,7 @@ def test_matching_node_types_compose_as_placement_targets(tmp_path: Path) -> Non
         try:
             composer = ServingComposer()
             try:
-                await composer.add_pack(DEV_MANIFEST)
+                await composer.add_pack(PackSpec(DEV_MANIFEST, trust_reserved=True))
                 before_schemas = dict(composer.composition.schemas)
                 delta = await composer.add_remote(remote_spec(host, port, tmp_path))
                 assert delta.schemas == {}
@@ -1156,7 +1156,7 @@ def test_presentation_divergent_matching_type_composes_by_signature(tmp_path: Pa
         try:
             composer = ServingComposer()
             try:
-                await composer.add_pack(DEV_MANIFEST)
+                await composer.add_pack(PackSpec(DEV_MANIFEST, trust_reserved=True))
                 before_schemas = dict(composer.composition.schemas)
                 delta = await composer.add_remote(remote_spec(host, port, tmp_path))
                 assert delta.schemas == {}
@@ -1188,7 +1188,7 @@ def test_computationally_divergent_matching_type_is_refused(tmp_path: Path) -> N
         try:
             composer = ServingComposer()
             try:
-                await composer.add_pack(DEV_MANIFEST)
+                await composer.add_pack(PackSpec(DEV_MANIFEST, trust_reserved=True))
                 before = composition_snapshot(composer)
                 with pytest.raises(CompositionError, match="does not match the schema signature"):
                     await composer.add_remote(remote_spec(host, port, tmp_path))
@@ -1210,7 +1210,7 @@ def test_remote_over_local_pack_updates_arms(
         try:
             composer = ServingComposer(dev=True)
             try:
-                await composer.add_pack(DEV_MANIFEST)
+                await composer.add_pack(PackSpec(DEV_MANIFEST, trust_reserved=True))
                 await composer.add_remote(
                     remote_spec(host, port, tmp_path, nodes=("dev.gallery.widgets",))
                 )
