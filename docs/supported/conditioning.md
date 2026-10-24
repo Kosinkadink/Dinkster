@@ -11,6 +11,8 @@
   guide conditioning are unsupported.
 - Stable Zero123 and Stable Video 3D image conditioning execute through the pinned
   `dinkster_inference` runtime.
+- Stable Video image conditioning attaches motion, frame rate, augmentation, and
+  concatenated image latents to positive and negative prompt streams.
 - Native Stable Audio conditioning attaches start and total seconds to both prompt
   streams. Video percentage-area conditioning preserves temporal and spatial bounds.
 - Typed absence remains a Dinkster engine contract: `core.absent` values,

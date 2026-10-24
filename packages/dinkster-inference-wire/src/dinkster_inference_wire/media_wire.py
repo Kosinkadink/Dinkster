@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+from collections.abc import Mapping
 from typing import Any, cast
 
 from dinkster_values import (
@@ -16,6 +17,7 @@ from dinkster_values import (
     EncodedMultiStreamLatent,
     TypeRegistry,
     TypeSpec,
+    audio_input,
     decode_image_array,
     decode_image_file,
     decode_latent,
@@ -33,6 +35,8 @@ from dinkster_values import (
     validate_image_encoded,
     validate_latent_encoded,
 )
+from dinkster_values.audio_codec import audio_window, effective_audio_facts
+from dinkster_values.audio_lazy import AUDIO_WINDOW_LIMIT
 
 from .latents import MultiStreamLatent
 
@@ -75,6 +79,30 @@ def materialize_latent(value: object) -> Any:
             return sequence
         return tuple(converted) if isinstance(value, tuple) else converted
     return value
+
+
+def materialize_audio(value: object) -> Mapping[str, object]:
+    """Materialize a complete bounded AUDIO waveform for a Torch consumer."""
+    if not isinstance(value, Mapping):
+        raise TypeError("audio value must be a mapping")
+    audio = cast("Mapping[str, object]", value)
+    if "waveform" in audio:
+        normalized = cast("Mapping[str, object]", audio_input(audio))
+        waveform = normalized["waveform"]
+        if hasattr(waveform, "detach"):
+            return normalized
+        torch = importlib.import_module("torch")
+        return {**normalized, "waveform": torch.as_tensor(waveform)}
+
+    facts = effective_audio_facts(audio)
+    frames = facts["frames"]
+    if frames is None:
+        raise ValueError("AUDIO has unknown extent and cannot be fully materialized")
+    if frames * facts["batch"] * facts["channels"] * 4 > AUDIO_WINDOW_LIMIT:
+        raise ValueError("AUDIO whole waveform exceeds the 32 MiB allocation budget")
+    window = audio_window(audio, 0, frames)
+    torch = importlib.import_module("torch")
+    return {**window, "waveform": torch.as_tensor(window["waveform"])}
 
 
 def register_media_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
@@ -121,4 +149,4 @@ def register_media_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
     return tuple(registered)
 
 
-__all__ = ["materialize_image", "materialize_latent", "register_media_types"]
+__all__ = ["materialize_audio", "materialize_image", "materialize_latent", "register_media_types"]

@@ -1,4 +1,4 @@
-"""Portable sampling settings; model-bearing guiders remain resident handles."""
+"""Portable sampling settings and governed process-resident runtime objects."""
 
 from __future__ import annotations
 
@@ -8,12 +8,15 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, TypeAlias, cast
 
+from dinkster_memory.resident import default_pool
 from dinkster_values import (
     LATENT_CODEC_MAGIC,
     NOISE_TYPE,
     SAMPLER_TYPE,
     SIGMAS_TYPE,
     EncodedLatentTensor,
+    ResidencyTable,
+    ResidentCodec,
     TypeRegistry,
     TypeSpec,
     decode_latent,
@@ -198,25 +201,79 @@ def register_sampling_type(
     type_id: str,
     *,
     sampler_coerce: Callable[[object], object] | None = None,
+    resident_table: ResidencyTable | None = None,
 ) -> TypeSpec:
     if type_id not in (SAMPLER_TYPE, SIGMAS_TYPE, NOISE_TYPE):
         raise ValueError(f"unknown sampling type: {type_id}")
     if type_id in registry:
         return registry.spec(type_id)
 
-    def encode(obj: object) -> bytes:
+    table = resident_table if resident_table is not None else default_pool()
+    resident = ResidentCodec(table)
+    resident_format = type_id + ".resident.v1"
+    resident_magic = resident_format.encode("ascii") + b"\x00"
+
+    def normalize(obj: object) -> object:
         if type_id == SAMPLER_TYPE and sampler_coerce is not None:
-            obj = sampler_coerce(obj)
+            return sampler_coerce(obj)
+        return obj
+
+    def is_runtime(obj: object) -> bool:
+        if type_id == SIGMAS_TYPE:
+            return False
+        if type(obj) in (BuiltinSamplerSelection, SamplerSelection, NoiseSelection):
+            return False
+        method = "sample" if type_id == SAMPLER_TYPE else "generate_noise"
+        if not callable(getattr(obj, method, None)):
+            raise TypeError(f"invalid {type_id} runtime object: expected callable {method}")
+        return True
+
+    def encode(obj: object) -> bytes:
+        obj = normalize(obj)
+        if is_runtime(obj):
+            return resident_magic + resident.encode(obj)
         return _encode(type_id, obj)
 
+    def decode(data: bytes) -> object:
+        if type_id != SIGMAS_TYPE and data.startswith(resident_magic):
+            payload = data[len(resident_magic) :]
+            resident.validate_encoded(payload)
+            obj = resident.decode(payload)
+            if not is_runtime(obj):
+                raise TypeError(f"invalid {type_id} resident object")
+            return obj
+        return _decode(type_id, data)
+
+    def fingerprint(obj: object) -> str:
+        obj = normalize(obj)
+        if is_runtime(obj):
+            return resident.fingerprint(obj)
+        return stable_hash([_encode(type_id, obj)])
+
+    def metadata(obj: object) -> Mapping[str, object]:
+        obj = normalize(obj)
+        if is_runtime(obj):
+            return {**resident.metadata(obj), "format": resident_format}
+        return {}
+
     def validate(data: bytes, meta: Mapping[str, object]) -> None:
-        del meta
+        if type_id != SIGMAS_TYPE and data.startswith(resident_magic):
+            if meta.get("format") != resident_format:
+                raise ValueError(f"invalid {type_id} resident metadata format")
+            resident.validate_encoded(data[len(resident_magic) :])
+            return
+        if meta.get("format") == resident_format:
+            raise ValueError(f"invalid {type_id} resident envelope")
         _decode(type_id, data)
 
-    return registry.register(
+    spec = registry.register(
         type_id,
         encode=encode,
-        decode=lambda data: _decode(type_id, data),
-        fingerprint=lambda obj: stable_hash([encode(obj)]),
+        decode=decode,
+        fingerprint=fingerprint,
+        meta=metadata if type_id != SIGMAS_TYPE else None,
         validate_encoded=validate,
     )
+    if type_id != SIGMAS_TYPE:
+        registry.register_resident_table(table)
+    return spec
