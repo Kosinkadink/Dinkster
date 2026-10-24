@@ -43,6 +43,8 @@
 - Eight native video latent nodes create Hunyuan Video, Hunyuan Video 1.5, LTXV,
   Cosmos, and autoregressive video samples, trim video frames, freeze LTXV video
   or audio samples, and normalize video latent starts under their exact ComfyUI IDs.
+- Native LTXV preprocessing applies the model's optional per-frame H.264 image
+  compression before encoding video starts.
 - Native Hunyuan image latent construction and refiner conditioning retain the
   source latent metadata while preparing refiner noise latents.
 - Portable masks become Torch tensors at native tensor-consuming nodes, without
