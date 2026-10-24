@@ -162,22 +162,27 @@ def test_sampling_nodes_compose_twice_in_both_ordinary_hosts(
             manifest = Path(__file__).parents[1] / "dinkster-pack.toml"
             (tmp_path / "ltx_sampling_fixture.py").write_text(
                 "from test_ltx_sampling_torch import SamplingSource, SamplingConsumer\n"
-                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "NODES = (*COMFY_NODES, SamplingSource, SamplingConsumer)\n",
+                "from dinkster_nodes_comfy import register_inference_types\n"
+                "NODES = (SamplingSource, SamplingConsumer)\n",
                 encoding="ascii",
             )
             fixture = tmp_path / "dinkster-pack.toml"
             fixture.write_text(
-                manifest.read_text(encoding="ascii")
-                .replace("namespaces = [", 'namespaces = ["ltx-sampling-fixture",')
-                .replace("dinkster_nodes_comfy:COMFY_NODES", "ltx_sampling_fixture:NODES")
-                .replace(
-                    "dinkster_nodes_comfy:register_inference_types",
-                    "ltx_sampling_fixture:register_inference_types",
-                ),
+                '[pack]\nname = "ltx-sampling-fixture"\npublisher = "dinkster"\n'
+                'namespaces = ["ltx-sampling-fixture"]\n'
+                '[pack.entry]\nnodes = "ltx_sampling_fixture:NODES"\n'
+                'types = "ltx_sampling_fixture:register_inference_types"\n',
                 encoding="ascii",
             )
-            await composer.add_pack(PackSpec(manifest=fixture, in_process=in_process))
+            for path in (manifest, fixture):
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=path,
+                        in_process=in_process,
+                        worker_group=None if in_process else "ltx-sampling-fixture",
+                        group_manifests=() if in_process else (manifest, fixture),
+                    )
+                )
             graph = Graph(
                 nodes={
                     "source": GraphNode("ltx-sampling-fixture.source"),
