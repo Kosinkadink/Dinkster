@@ -132,7 +132,10 @@ def write_composed_iso_manifest(root: Path, name: str) -> Path:
     manifest = write_iso_manifest(root, name=name)
     text = manifest.read_text(encoding="utf-8")
     manifest.write_text(
-        text.replace(f'name = "{name}"', f'name = "{name}"\nnamespaces = ["iso"]'),
+        text.replace(
+            f'name = "{name}"',
+            f'name = "{name}"\nnamespaces = ["iso"]',
+        ),
         encoding="utf-8",
     )
     return manifest
@@ -939,7 +942,8 @@ def test_remote_resident_producer_and_consumer_on_the_same_remote(tmp_path: Path
     async def scenario() -> None:
         manifest = tmp_path / "dinkster-pack.toml"
         manifest.write_text(
-            '[pack]\nname = "respack"\n\n[pack.entry]\n'
+            '[pack]\nname = "respack"\npublisher = "dinkster"\n'
+            'type-namespaces = ["res"]\n\n[pack.entry]\n'
             'nodes = "respack_nodes:NODES"\ntypes = "respack_nodes:register_types"\n'
         )
         proc, host, port = await start_service(manifest, tmp_path)
@@ -1479,7 +1483,8 @@ def write_armed_manifest(root: Path) -> Path:
     (root / "armedpack_nodes.py").write_text(ARMED_NODES_MODULE, encoding="utf-8")
     manifest = root / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname = "armedpack"\nnamespaces = ["armed"]\n\n'
+        '[pack]\nname = "armedpack"\npublisher = "dinkster"\n'
+        'namespaces = ["armed"]\n\n'
         '[pack.arms]\nnative = ["armed.echo"]\n\n'
         '[pack.entry]\nnodes = "armedpack_nodes:NODES"\n'
         'types = "armedpack_nodes:register_types"\n'

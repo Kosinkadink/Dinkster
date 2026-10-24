@@ -1010,9 +1010,11 @@ equivalents: MatchType templates become type variables, Autogrow inputs
 become input families, `is_api_node` becomes `io_bound`,
 `is_deprecated`/`is_dev_only` become deprecation metadata and hidden
 search visibility, and per-socket tooltips become doc strings. Opaque
-`comfy.*` types the schemas reference are registered in a generated
-`register_types` (doctor warns until you declare codecs - that warning
-is honest, not noise).
+types are registered by the generated `register_types` only when their ids
+are prefixed by the generated pack's name. Shared types retain their ids
+and must come from built-ins or an owning pack dependency. Doctor reports
+unresolved shared types and missing codecs for owned types as warnings
+until the port declares those dependencies and codecs.
 
 What you do NOT get is behavior: every generated `execute()` raises
 `NotImplementedError` with a `TODO(port)` marker and carries the source

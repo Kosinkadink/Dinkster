@@ -2557,7 +2557,7 @@ def write_shutdown_pack(directory: Path, index: int, *, startup_delay: float = 0
     )
     manifest = directory / "dinkster-pack.toml"
     manifest.write_text(
-        f'[pack]\nname = "shutdown-pack-{index}"\n'
+        f'[pack]\nname = "shutdown-pack-{index}"\npublisher = "dinkster"\n'
         f'namespaces = ["{namespace}"]\n\n'
         f'[pack.entry]\nnodes = "{module}:NODES"\n',
         encoding="utf-8",
@@ -2909,7 +2909,8 @@ def test_degraded_default_ordering_composes_media_io_before_image(
     broken = tmp_path / "ordering-probe"
     broken.mkdir()
     (broken / "dinkster-pack.toml").write_text(
-        '[pack]\nname = "dinkster-ordering-probe"\nnamespaces = ["probe"]\n'
+        '[pack]\nname = "dinkster-ordering-probe"\npublisher = "dinkster"\n'
+        'namespaces = ["probe"]\n'
         "[pack.requirements.capabilities]\n"
         '"dinkster.ordering.probe" = ">=1.0.0,<2.0.0"\n'
         '[pack.entry]\nnodes = "probe_ordering_nodes:NODES"\n',
@@ -2965,7 +2966,8 @@ def test_degraded_default_ordering_retains_generation_pack(tmp_path: Path) -> No
     broken = tmp_path / "ordering-probe"
     broken.mkdir()
     (broken / "dinkster-pack.toml").write_text(
-        '[pack]\nname = "dinkster-ordering-probe"\nnamespaces = ["probe"]\n'
+        '[pack]\nname = "dinkster-ordering-probe"\npublisher = "dinkster"\n'
+        'namespaces = ["probe"]\n'
         "[pack.requirements.capabilities]\n"
         '"dinkster.ordering.probe" = ">=1.0.0,<2.0.0"\n'
         '[pack.entry]\nnodes = "probe_ordering_nodes:NODES"\n',

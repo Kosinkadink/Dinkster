@@ -144,9 +144,16 @@ def worker_declarations(worker: Any) -> dict[str, Any]:
 
 
 def worker_declarations_match_catalog(worker: Any, catalog: PackCatalog) -> bool:
-    """Compare pack declarations while allowing shared host renderer extras."""
+    """Compare declarations while allowing codecs and renderers supplied by the host."""
     actual = worker_declarations(worker)
     expected = worker_declarations(catalog)
+    registry = getattr(worker, "registry", None)
+    if registry is not None:
+        # Idempotent pack registration leaves existing host codecs untouched.
+        actual["registeredTypes"] = sorted(
+            set(actual["registeredTypes"])
+            | {type_id for type_id in expected["registeredTypes"] if type_id in registry}
+        )
     actual_renditions = cast("list[dict[str, object]]", actual.pop("renditions"))
     expected_renditions = cast("list[dict[str, object]]", expected.pop("renditions"))
     return actual == expected and all(item in actual_renditions for item in expected_renditions)

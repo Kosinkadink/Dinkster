@@ -470,7 +470,8 @@ def test_in_process_tenant_registers_on_invocation_unregisters_on_remove_and_ref
     )
     manifest = tmp_path / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname = "tenantpack"\nnamespaces = ["tenant"]\n[pack.entry]\n'
+        '[pack]\nname = "tenantpack"\npublisher = "dinkster"\n'
+        'namespaces = ["tenant"]\n[pack.entry]\n'
         'nodes = "tenant_nodes:NODES"\nconsumers = "tenant_nodes:unused"\n'
     )
     monkeypatch.syspath_prepend(str(tmp_path))

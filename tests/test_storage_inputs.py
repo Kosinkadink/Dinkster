@@ -268,7 +268,8 @@ def test_invocation_storage_contract_crosses_worker_boundary(
         if isolated:
             manifest = tmp_path / "dinkster-pack.toml"
             manifest.write_text(
-                '[pack]\nname = "storage-test"\n[pack.entry]\n'
+                '[pack]\nname = "storage-test"\npublisher = "dinkster"\n'
+                'type-namespaces = ["test"]\n[pack.entry]\n'
                 'nodes = "tests.test_storage_inputs:NODES"\n'
                 'types = "tests.test_storage_inputs:register_types"\n'
             )

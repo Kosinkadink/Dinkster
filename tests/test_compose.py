@@ -1805,7 +1805,8 @@ def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(tmp_pa
     assert load_manifest(manifest).namespaces == claims
     other_manifest = tmp_path / "dinkster-pack.toml"
     other_manifest.write_text(
-        '[pack]\nname = "other-owner"\nnamespaces = ["StringLength"]\n'
+        '[pack]\nname = "other-owner"\npublisher = "dinkster"\n'
+        'namespaces = ["StringLength"]\n'
         '[pack.entry]\nnodes = "other_owner_fixture:NODES"\n'
     )
     (tmp_path / "other_owner_fixture.py").write_text(
@@ -2546,7 +2547,7 @@ def test_broken_default_pack_leaves_zero_node_host_and_registry_healthy(tmp_path
     manifest = tmp_path / "dinkster-pack.toml"
     manifest.write_text(
         '[pack]\nname = "dinkster-nodes-media-io"\npublisher = "dinkster"\n'
-        'type-namespaces = ["dinkster"]\nnamespaces = ["dinkster"]\n'
+        'type-namespaces = ["dinkster", "broken"]\nnamespaces = ["dinkster"]\n'
         '[pack.entry]\nnodes = "broken_media:NODES"\n'
         'types = "broken_media:register_types"\n',
         encoding="utf-8",

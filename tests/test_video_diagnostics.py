@@ -64,7 +64,8 @@ def worker_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytes
     register_media_types(registry)
     manifest = tmp_path / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname="video-diagnostics"\n[pack.entry]\n'
+        '[pack]\nname="video-diagnostics"\npublisher="dinkster"\n'
+        "[pack.entry]\n"
         'nodes="tests.test_video_diagnostics:DIAGNOSTIC_NODES"\n'
         'types="dinkster_nodes_media_io:register_media_types"\n'
     )

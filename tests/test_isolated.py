@@ -2122,7 +2122,8 @@ def test_group_isolated_close_is_idempotent(tmp_path: Path) -> None:
             directory.mkdir()
             manifest = directory / "dinkster-pack.toml"
             manifest.write_text(
-                f'[pack]\nname = "{name}"\nnamespaces = ["iso"]\n\n'
+                f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
+                'type-namespaces = ["iso"]\nnamespaces = ["iso"]\n\n'
                 '[pack.entry]\nnodes = "isopack_nodes:NODES"\n'
                 'types = "isopack_nodes:register_types"\n',
                 encoding="utf-8",
