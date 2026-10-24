@@ -118,6 +118,8 @@ def _reference_inputs(groups: dict[str, Any]) -> list[dict[str, Any]]:
                 entry["file_input"] = True
             if "options" in entry and entry["type"] == "COMBO" and entry["options"]:
                 entry.setdefault("default", entry["options"][0])
+            if entry["type"] == "inputFamily" and not entry["template"]:
+                continue
             result.append(entry)
     return result
 
@@ -180,6 +182,8 @@ def _native_inputs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 entry["max"] = item.get("maxMembers")
         else:
             entry.update(type=role, dynamic=item)
+        if entry["type"] == "inputFamily" and not entry["template"]:
+            continue
         result.append(entry)
     return result
 

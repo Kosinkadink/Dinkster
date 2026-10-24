@@ -275,6 +275,25 @@ def test_hidden_inputs_do_not_hide_public_input_drift(example_contract: tuple[di
     assert any("name" in difference for difference in compare(reference, native))
 
 
+def test_hidden_family_members_do_not_create_public_inputs(
+    example_contract: tuple[dict, dict],
+) -> None:
+    from tools.compare_nodes import compare
+
+    reference, native = example_contract
+    family = {
+        "role": "inputFamily",
+        "id": "dependencies",
+        "template": [
+            {"role": "input", "id": "dependency", "hidden": True, "type": {"kind": "wildcard"}}
+        ],
+    }
+    native["interface"].append(family)
+    assert compare(reference, native) == []
+    family["template"][0]["hidden"] = False
+    assert any("inputs: length" in difference for difference in compare(reference, native))
+
+
 def test_unnamed_outputs_still_compare_type_position_and_explicit_names(
     example_contract: tuple[dict, dict],
 ) -> None:
