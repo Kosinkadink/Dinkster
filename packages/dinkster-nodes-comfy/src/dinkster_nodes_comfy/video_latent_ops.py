@@ -84,4 +84,59 @@ class LTXVFreezeLatent(Node):
         return cls.outputs(latent=result)
 
 
-VIDEO_LATENT_OPERATION_NODES = (TrimVideoLatent, LTXVFreezeLatent)
+class NormalizeVideoLatentStart(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="NormalizeVideoLatentStart",
+            display_name="NormalizeVideoLatentStart",
+            category="model/conditioning",
+            inputs=(
+                InputSpec("latent", _LATENT),
+                InputSpec(
+                    "start_frame_count",
+                    TypeExpr.concrete(CORE_INT),
+                    default=4,
+                    widget=NumberWidget(min=1, max=16384, step=1),
+                ),
+                InputSpec(
+                    "reference_frame_count",
+                    TypeExpr.concrete(CORE_INT),
+                    default=5,
+                    widget=NumberWidget(min=1, max=16384, step=1),
+                ),
+            ),
+            outputs=(OutputSpec("latent", _LATENT),),
+        )
+
+    @classmethod
+    def execute(
+        cls, *, latent: dict[str, Any], start_frame_count: int, reference_frame_count: int
+    ) -> Mapping[str, object]:
+        latent = materialize_latent(latent)
+        samples = latent["samples"]
+        if samples.shape[2] <= 1:
+            return cls.outputs(latent=latent)
+
+        torch = importlib.import_module("torch")
+        result = latent.copy()
+        normalized_samples = samples.clone()
+        source = normalized_samples[:, :, :start_frame_count]
+        reference = normalized_samples[
+            :,
+            :,
+            start_frame_count : start_frame_count
+            + min(reference_frame_count, samples.shape[2] - 1),
+        ]
+        source_mean = source.mean(dim=(1, 3, 4), keepdim=True)
+        source_std = source.std(dim=(1, 3, 4), keepdim=True)
+        reference_mean = torch.clamp(reference.mean(), source_mean - 0.3, source_mean + 0.35)
+        reference_std = torch.clamp(reference.std(), source_std - 0.35, source_std + 0.5)
+        normalized_samples[:, :, :start_frame_count] = (source - source_mean) / (
+            source_std + 1e-8
+        ) * reference_std + reference_mean
+        result["samples"] = normalized_samples
+        return cls.outputs(latent=result)
+
+
+VIDEO_LATENT_OPERATION_NODES = (TrimVideoLatent, LTXVFreezeLatent, NormalizeVideoLatentStart)
