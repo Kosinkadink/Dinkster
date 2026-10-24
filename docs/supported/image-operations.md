@@ -1,5 +1,7 @@
 ## Image operations
 
+- Native Stable Cascade stage C/B latent creation, stage C VAE encoding,
+  stage B prior conditioning, and super-resolution control inputs
 - Typed `dinkster.region` rectangle values for shared crop and placement geometry
 - Typed per-frame `dinkster.pose` keypoint and skeleton values, including
   OpenPose/controlnet_aux JSON import and export and human/AP10K rendering
@@ -39,6 +41,8 @@
   controls; mask polarity inversion and RGBA premultiply/unpremultiply nodes
 - ComfyUI BatchImagesNode, ResizeAndPadImage, and ImageCompare translations;
   paired comparison previews accept either, both, or neither image
+- ComfyUI ResizeImageMaskNode, BatchImagesNode, BatchMasksNode, BatchLatentsNode,
+  and ColorTransfer native nodes
 - Alpha premultiply/unpremultiply and mask polarity conversion are native-only
   operations without fabricated ComfyUI aliases
 - Image operations declare alpha preservation, required alpha, creation, or
