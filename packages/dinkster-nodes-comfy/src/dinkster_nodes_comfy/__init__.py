@@ -41,8 +41,8 @@ from .primitive import (
 )
 from .reference_conditioning import REFERENCE_CONDITIONING_NODES
 from .rope_and_mask import ROPE_AND_MASK_NODES
-from .stable3d import STABLE3D_NODES
 from .sigma_schedulers import SIGMA_SCHEDULER_NODES
+from .stable3d import STABLE3D_NODES
 from .stable_cascade import STABLE_CASCADE_NODES
 from .text import TEXT_NODES
 from .utilities import ComfyNumberConvert, SeedNode

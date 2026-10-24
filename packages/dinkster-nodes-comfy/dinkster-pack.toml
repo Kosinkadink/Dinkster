@@ -213,7 +213,6 @@ namespaces = [
     "EmptyAceStepLatentAudio",
     "EmptyAceStep1.5LatentAudio",
     "EmptyYuE2LatentAudio",
-<<<<<<< HEAD
     "ResizeImagesByShorterEdge",
     "ResizeImagesByLongerEdge",
     "CenterCropImages",
