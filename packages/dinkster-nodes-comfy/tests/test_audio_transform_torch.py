@@ -40,7 +40,9 @@ def _audio() -> dict[str, object]:
 
 def test_split_and_volume_preserve_audio_contracts() -> None:
     audio = _audio()
-    waveform = audio["waveform"]
+    waveform = audio["waveform"].to(torch.float64)
+    audio["waveform"] = waveform
+    original = waveform.clone()
     left, right = (SplitAudioChannels.execute(audio=audio)[name] for name in ("left", "right"))
     assert set(left) == set(right) == {"waveform", "sample_rate"}
     assert left["sample_rate"] == right["sample_rate"] == 44100
@@ -56,6 +58,8 @@ def test_split_and_volume_preserve_audio_contracts() -> None:
 
     assert AudioAdjustVolume.execute(audio=None, volume=6) == {"AUDIO": None}
     assert AudioAdjustVolume.execute(audio=audio, volume=0)["AUDIO"] is audio
+    opaque = object()
+    assert AudioAdjustVolume.execute(audio=opaque, volume=0)["AUDIO"] is opaque
     for decibels in (6, -6):
         output = AudioAdjustVolume.execute(audio=audio, volume=decibels)["AUDIO"]
         assert set(output) == {"waveform", "sample_rate"}
@@ -64,6 +68,7 @@ def test_split_and_volume_preserve_audio_contracts() -> None:
         assert output["waveform"].device == waveform.device
         assert torch.allclose(output["waveform"], waveform * 10 ** (decibels / 20))
     assert audio["waveform"] is waveform
+    assert torch.equal(waveform, original)
     assert audio["extra"] == "not-output"
 
 
@@ -105,9 +110,23 @@ class AudioInspect(Node):
         assert tuple(adjusted["waveform"].shape) == (2, 2, 4)
         assert all(audio["waveform"].dtype == torch.float32 for audio in (left, right, adjusted))
         assert all(audio["waveform"].device.type == "cpu" for audio in (left, right, adjusted))
-        assert torch.allclose(
+        torch.testing.assert_close(
+            left["waveform"],
+            torch.tensor([[[1.0, -2.0, 3.0, -4.0]], [[-9.0, 10.0, -11.0, 12.0]]]),
+        )
+        torch.testing.assert_close(
+            right["waveform"],
+            torch.tensor([[[5.0, -6.0, 7.0, -8.0]], [[13.0, -14.0, 15.0, -16.0]]]),
+        )
+        torch.testing.assert_close(
             adjusted["waveform"],
-            torch.cat((left["waveform"], right["waveform"]), dim=1) * 10 ** (6 / 20),
+            torch.tensor(
+                [
+                    [[1.0, -2.0, 3.0, -4.0], [5.0, -6.0, 7.0, -8.0]],
+                    [[-9.0, 10.0, -11.0, 12.0], [13.0, -14.0, 15.0, -16.0]],
+                ]
+            )
+            * 10 ** (6 / 20),
         )
         return cls.outputs(summary="ok")
 

@@ -20,6 +20,7 @@ def test_audio_transform_interfaces_match_comfy_schemas() -> None:
         "audio",
     )
     assert tuple((item.id, item.type.types) for item in split.inputs) == (("audio", (AUDIO_TYPE,)),)
+    assert split.inputs[0].required
     assert tuple((item.id, item.type.types) for item in split.outputs) == (
         ("left", (AUDIO_TYPE,)),
         ("right", (AUDIO_TYPE,)),
@@ -33,6 +34,7 @@ def test_audio_transform_interfaces_match_comfy_schemas() -> None:
         ("audio", (AUDIO_TYPE,)),
         ("volume", (CORE_INT,)),
     )
+    assert all(item.required for item in volume.inputs)
     setting = volume.inputs[1]
     assert setting.default == 1
     assert isinstance(setting.widget, NumberWidget)
