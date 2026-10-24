@@ -2175,6 +2175,7 @@ class Engine:
                 raise ExecutionError(NodeError(label, parent.node_type, message)) from exc
             graph = overlay
             effective = admitted
+            await self._validate_admission(graph, effective)
             controls.loop_pairs.update(
                 validate_loops(graph, initial_targets, controls.loop_pairs)[0]
             )
