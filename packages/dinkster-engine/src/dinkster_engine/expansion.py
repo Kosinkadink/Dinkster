@@ -8,6 +8,7 @@ from dinkster_graph import (
     Graph,
     GraphNode,
     Link,
+    LoopPair,
     RegionNode,
     elaborate_graph,
     region_interface,
@@ -69,6 +70,7 @@ def admit_expansion(
     known_types: Container[str],
     ports: Mapping[str, TypeExpr] | None = None,
     expansion_demands: Mapping[str, set[str]] | None = None,
+    loop_pairs: Mapping[str, LoopPair] | None = None,
 ) -> tuple[Graph, dict[str, NodeSchema], dict[str, str], dict[str, tuple[str, str]]]:
     """Validate the overlay before exposing any node or changing the scheduler.
 
@@ -130,7 +132,15 @@ def admit_expansion(
         nodes[node_id] = GraphNode(node.node_type, inputs)
     overlay = snapshot_graph(Graph(nodes))
     effective, diagnostics = elaborate_graph(overlay, schemas)
-    diagnostics += validate(overlay, schemas, (), effective, known_types=known_types, ports=ports)
+    diagnostics += validate(
+        overlay,
+        schemas,
+        (),
+        effective,
+        known_types=known_types,
+        ports=ports,
+        loop_pairs=loop_pairs,
+    )
     added = set(ids.values())
     failures = [
         diagnostic

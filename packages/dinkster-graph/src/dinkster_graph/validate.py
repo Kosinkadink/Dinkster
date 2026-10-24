@@ -62,18 +62,26 @@ class LoopPair:
 
 
 def validate_loops(
-    graph: Graph, targets: Sequence[str]
+    graph: Graph,
+    targets: Sequence[str],
+    paired: Mapping[str, LoopPair] | None = None,
 ) -> tuple[dict[str, LoopPair], list[Diagnostic]]:
-    """Pair nested loop boundaries and reject escaping bodies before execution."""
+    """Pair boundaries not already admitted in this executing graph scope.
+
+    Admitted pairs keep their original body after a control node drops the
+    end's body-linked inputs. Newly added boundaries still validate normally.
+    """
+    known = paired or {}
     starts = {
         key
         for key, node in graph.nodes.items()
-        if isinstance(node, GraphNode) and node.node_type == "StartLoop"
+        if isinstance(node, GraphNode) and node.node_type == "StartLoop" and key not in known
     }
+    known_ends = {pair.end_id for pair in known.values()}
     ends = {
         key
         for key, node in graph.nodes.items()
-        if isinstance(node, GraphNode) and node.node_type == "EndLoop"
+        if isinstance(node, GraphNode) and node.node_type == "EndLoop" and key not in known_ends
     }
     if not starts and not ends:
         return {}, []
@@ -117,7 +125,7 @@ def validate_loops(
     end_edges = {key: walk(parents[key], parents, ends, boundaries=True) for key in ends}
     available = set(starts)
     remaining = set(ends)
-    paired: dict[str, str] = {}
+    matched: dict[str, str] = {}
 
     def error(
         code: str, message: str, node_id: str
@@ -155,7 +163,7 @@ def validate_loops(
                 f"Start Loop {start} reaches {', '.join(sorted(escapes))} without End Loop {end}",
                 start,
             )
-        paired[start] = end
+        matched[start] = end
     if available:
         return error(
             "unmatchedStart",
@@ -163,7 +171,7 @@ def validate_loops(
             min(available),
         )
     result: dict[str, LoopPair] = {}
-    for start, end in paired.items():
+    for start, end in matched.items():
         body = walk(children[start], children, {end}) - {end}
         accumulate = graph.nodes[end].inputs.get("accumulate")
         if isinstance(accumulate, Link) and accumulate.node_id in body | {start}:
@@ -816,6 +824,7 @@ def validate(
     effective: Mapping[str, NodeSchema] | None = None,
     known_types: Container[str] | None = None,
     ports: Mapping[str, TypeExpr] | None = None,
+    loop_pairs: Mapping[str, LoopPair] | None = None,
 ) -> list[Diagnostic]:
     """Structural validation over the elaborated document.
 
@@ -859,7 +868,7 @@ def validate(
     )
     _validate_level(level, diags)
     if not any(diag.code == "cycle" for diag in diags):
-        _, loop_diags = validate_loops(graph, targets)
+        _, loop_diags = validate_loops(graph, targets, loop_pairs)
         diags.extend(loop_diags)
     return diags
 

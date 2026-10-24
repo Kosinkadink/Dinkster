@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
 from typing import cast
 
-from dinkster_graph import Graph, graph_to_wire
+from dinkster_graph import Graph, LoopPair, graph_to_wire
 from dinkster_values import Value
 
 
@@ -24,6 +24,7 @@ def _freeze(value: object) -> object:
 class RunControlState:
     def __init__(self) -> None:
         self._values: dict[str, asyncio.Future[Mapping[str, Value]]] = {}
+        self.loop_pairs: dict[str, LoopPair] = {}
         self.active = True
 
     def check_active(self) -> None:
@@ -70,7 +71,12 @@ class EngineRunContext:
 
     async def get_graph(self) -> Mapping[str, object]:
         self._state.check_active()
-        return cast("Mapping[str, object]", _freeze(graph_to_wire(self._graph())))
+        document = graph_to_wire(self._graph())
+        document["loops"] = {
+            start: {"end": pair.end_id, "body": list(pair.body)}
+            for start, pair in self._state.loop_pairs.items()
+        }
+        return cast("Mapping[str, object]", _freeze(document))
 
     async def await_run_value(self, node_id: str) -> Mapping[str, Value]:
         self._check_target(node_id)

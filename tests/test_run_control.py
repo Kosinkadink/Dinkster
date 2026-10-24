@@ -209,3 +209,65 @@ def test_execution_context_schema_is_explicit_and_not_a_socket() -> None:
     assert schema_from_wire(schema_to_wire(schema)) == schema
     with pytest.raises(ValueError, match="reserved input"):
         NodeSchema("bad", inputs=(InputSpec("execution_context", INT),))
+
+
+def test_loop_pair_metadata_survives_end_rewrite_without_changing_the_document() -> None:
+    class Start(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                "StartLoop",
+                outputs=(OutputSpec("value", INT),),
+                execution_context=True,
+                may_expand_graph=True,
+            )
+
+        @classmethod
+        async def execute(cls, execution_context: RunExecutionContext) -> dict[str, object]:
+            before = cast(Any, await execution_context.get_graph())
+            assert before["loops"]["start"] == {"end": "end", "body": ("body",)}
+            with pytest.raises(TypeError):
+                before["loops"]["start"]["end"] = "other"
+            await execution_context.inhibit(["body"])
+            await execution_context.override_node("end", {})
+            after = cast(Any, await execution_context.get_graph())
+            assert before["loops"] == after["loops"]
+            assert before["nodes"]["end"]["inputs"] != after["nodes"]["end"]["inputs"]
+            return {"value": 17}
+
+    class End(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                "EndLoop",
+                inputs=(InputSpec("value", INT, required=False),),
+                outputs=(OutputSpec("value", INT),),
+            )
+
+        @classmethod
+        def execute(cls, value: int = 91) -> dict[str, object]:
+            return {"value": value}
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        nodes = [Start, End, Passthrough]
+        engine = Engine(
+            schemas=build_schemas(nodes),
+            worker=InProcessWorker(build_node_types(nodes), registry),
+            cache=MemoryLRUCache(),
+            registry=registry,
+        )
+        graph = Graph(
+            {
+                "start": GraphNode("StartLoop"),
+                "body": GraphNode("control.pass", {"value": Link("start", "value")}),
+                "end": GraphNode("EndLoop", {"value": Link("body", "value")}),
+            }
+        )
+        for _ in range(2):
+            result = await asyncio.wait_for(engine.run(graph, ["end"]), 3)
+            assert result.outputs["end"]["value"].resolve() == 91
+            assert graph.nodes["end"].inputs["value"] == Link("body", "value")
+
+    asyncio.run(scenario())

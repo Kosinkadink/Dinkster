@@ -494,3 +494,20 @@ def test_nested_loop_pairing_consumes_inner_ends_before_outer_ends() -> None:
         "second": LoopPair("second_end", ()),
         "outer": LoopPair("outer_end", ("first", "first_end", "second", "second_end")),
     }
+    rewritten = Graph(
+        {
+            **graph.nodes,
+            "outer_end": GraphNode("EndLoop"),
+            "first_end": GraphNode("EndLoop"),
+            "second_end": GraphNode("EndLoop"),
+            "new_start": GraphNode("StartLoop"),
+            "new_end": GraphNode("EndLoop", {"x": Link("new_start", "value")}),
+        }
+    )
+    new_pairs, diagnostics = validate_loops(rewritten, ["outer_end", "new_end"], pairs)
+    assert diagnostics == []
+    assert new_pairs == {"new_start": LoopPair("new_end", ())}
+    _, diagnostics = validate_loops(
+        Graph({**rewritten.nodes, "orphan": GraphNode("EndLoop")}), ["orphan"], pairs
+    )
+    assert [diag.code for diag in diagnostics] == ["loop.unmatchedEnd"]

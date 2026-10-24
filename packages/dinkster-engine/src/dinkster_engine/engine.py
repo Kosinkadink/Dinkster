@@ -48,6 +48,7 @@ from dinkster_graph import (
     region_interface,
     snapshot_graph,
     validate,
+    validate_loops,
 )
 from dinkster_protocol import (
     GRAPH_COMPILE_ERROR_GENERATION_MISMATCH,
@@ -2010,6 +2011,7 @@ class Engine:
         current_dependencies: dict[str, set[str]] = {}
         expansion_demands: dict[str, set[str]] = {}
         controls = RunControlState()
+        controls.loop_pairs.update(validate_loops(graph, initial_targets)[0])
         inhibited: set[str] = set()
         invoking: set[str] = set()
 
@@ -2056,6 +2058,7 @@ class Engine:
                     initial_targets,
                     admitted,
                     known_types=self._runtime().known_types or self._registry,
+                    loop_pairs=controls.loop_pairs,
                 )
                 if has_errors(diagnostics):
                     raise ValueError(f"invalid run override for {target!r}: {diagnostics}")
@@ -2107,6 +2110,7 @@ class Engine:
                     known_types if known_types is not None else self._registry,
                     region_ports,
                     expansion_demands,
+                    controls.loop_pairs,
                 )
             except (KeyError, TypeError, ValueError) as exc:
                 message = f"invalid expansion: {exc}"
@@ -2114,6 +2118,9 @@ class Engine:
                 raise ExecutionError(NodeError(label, parent.node_type, message)) from exc
             graph = overlay
             effective = admitted
+            controls.loop_pairs.update(
+                validate_loops(graph, initial_targets, controls.loop_pairs)[0]
+            )
             signatures = {node_id: schema_signature(s) for node_id, s in effective.items()}
             expansion_calls[parent_id] = call + 1
             produced[parent_id] = entry.outputs
