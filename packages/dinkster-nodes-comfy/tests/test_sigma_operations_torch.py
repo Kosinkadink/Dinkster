@@ -9,6 +9,7 @@ import pytest
 import torch
 from dinkster_api.v1 import (
     CORE_FLOAT,
+    MODEL_TYPE,
     SIGMAS_TYPE,
     InputSpec,
     Node,
@@ -153,20 +154,74 @@ class SigmaInspect(Node):
         return NodeSchema(
             node_type="sigma-fixture.inspect",
             inputs=(
+                InputSpec("source", TypeExpr.concrete(SIGMAS_TYPE)),
+                InputSpec("set_first", TypeExpr.concrete(SIGMAS_TYPE)),
+                InputSpec("extended", TypeExpr.concrete(SIGMAS_TYPE)),
+                InputSpec("flipped", TypeExpr.concrete(SIGMAS_TYPE)),
                 InputSpec("high", TypeExpr.concrete(SIGMAS_TYPE)),
                 InputSpec("low", TypeExpr.concrete(SIGMAS_TYPE)),
+                InputSpec("denoise_high", TypeExpr.concrete(SIGMAS_TYPE)),
+                InputSpec("denoise_low", TypeExpr.concrete(SIGMAS_TYPE)),
+                InputSpec("endpoint", TypeExpr.concrete(CORE_FLOAT)),
             ),
             outputs=(OutputSpec("value", TypeExpr.concrete(CORE_FLOAT)),),
         )
 
     @classmethod
-    def execute(cls, *, high: object, low: object) -> dict[str, object]:
-        high = materialize_latent(high)
-        low = materialize_latent(low)
-        assert torch.equal(high, torch.tensor([3.5, -1.0], dtype=torch.float32))
-        assert torch.equal(low, torch.tensor([-1.0, 0.0], dtype=torch.float32))
-        assert high.dtype == low.dtype == torch.float32
-        return cls.outputs(value=float(high[0] + low[0]))
+    def execute(
+        cls,
+        *,
+        source: object,
+        set_first: object,
+        extended: object,
+        flipped: object,
+        high: object,
+        low: object,
+        denoise_high: object,
+        denoise_low: object,
+        endpoint: float,
+    ) -> dict[str, object]:
+        values = {
+            name: materialize_latent(value)
+            for name, value in {
+                "source": source,
+                "set_first": set_first,
+                "extended": extended,
+                "flipped": flipped,
+                "high": high,
+                "low": low,
+                "denoise_high": denoise_high,
+                "denoise_low": denoise_low,
+            }.items()
+        }
+        expected = {
+            "source": [7.0, 4.0, 1.0, 0.0],
+            "set_first": [9.0, 4.0, 1.0, 0.0],
+            "extended": [9.0, 6.5, 4.0, 2.5, 1.0, 0.5, 0.0],
+            "flipped": [0.0001, 0.5, 1.0, 2.5, 4.0, 6.5, 9.0],
+            "high": [0.0001, 0.5, 1.0, 2.5],
+            "low": [2.5, 4.0, 6.5, 9.0],
+            "denoise_high": [7.0, 4.0],
+            "denoise_low": [4.0, 1.0, 0.0],
+        }
+        for name, tensor in values.items():
+            assert tensor.dtype == torch.float32
+            assert torch.allclose(tensor, torch.tensor(expected[name], dtype=torch.float32))
+        assert endpoint == 14.0
+        return cls.outputs(value=float(values["high"][0] + values["low"][0]))
+
+
+class SigmaModelSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="sigma-fixture.model",
+            outputs=(OutputSpec("model", TypeExpr.concrete(MODEL_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        return cls.outputs(model=_Model())
 
 
 @pytest.mark.parametrize("in_process", (True, False))
@@ -177,8 +232,9 @@ def test_sigma_operations_cross_both_manifest_hosts_twice(tmp_path: Path, in_pro
         try:
             (tmp_path / "sigma_fixture.py").write_text(
                 "from test_sigma_operations_torch import SigmaInspect\n"
+                "from test_sigma_operations_torch import SigmaModelSource\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "NODES = (*COMFY_NODES, SigmaInspect)\n",
+                "NODES = (*COMFY_NODES, SigmaModelSource, SigmaInspect)\n",
                 encoding="ascii",
             )
             manifest = tmp_path / "dinkster-pack.toml"
@@ -197,22 +253,56 @@ def test_sigma_operations_cross_both_manifest_hosts_twice(tmp_path: Path, in_pro
             engine = composer.composition.make_engine(lambda _event: None)
             graph = Graph(
                 nodes={
-                    "manual": GraphNode("ManualSigmas", {"sigmas": "3.5, -1, 0"}),
+                    "model": GraphNode("sigma-fixture.model", {}),
+                    "manual": GraphNode("ManualSigmas", {"sigmas": "7, 4, 1, 0"}),
+                    "set_first": GraphNode(
+                        "SetFirstSigma", {"sigmas": Link("manual", "sigmas"), "sigma": 9.0}
+                    ),
+                    "extend": GraphNode(
+                        "ExtendIntermediateSigmas",
+                        {
+                            "sigmas": Link("set_first", "sigmas"),
+                            "steps": 2,
+                            "start_at_sigma": -1.0,
+                            "end_at_sigma": 0.0,
+                            "spacing": "linear",
+                        },
+                    ),
+                    "flip": GraphNode("FlipSigmas", {"sigmas": Link("extend", "sigmas")}),
                     "split": GraphNode(
-                        "SplitSigmas", {"sigmas": Link("manual", "sigmas"), "step": 1}
+                        "SplitSigmas", {"sigmas": Link("flip", "sigmas"), "step": 3}
+                    ),
+                    "denoise": GraphNode(
+                        "SplitSigmasDenoise", {"sigmas": Link("manual", "sigmas"), "denoise": 0.5}
+                    ),
+                    "percent": GraphNode(
+                        "SamplingPercentToSigma",
+                        {
+                            "model": Link("model", "model"),
+                            "sampling_percent": 0.0,
+                            "return_actual_sigma": True,
+                        },
                     ),
                     "inspect": GraphNode(
                         "sigma-fixture.inspect",
                         {
+                            "source": Link("manual", "sigmas"),
+                            "set_first": Link("set_first", "sigmas"),
+                            "extended": Link("extend", "sigmas"),
+                            "flipped": Link("flip", "sigmas"),
                             "high": Link("split", "high_sigmas"),
                             "low": Link("split", "low_sigmas"),
+                            "denoise_high": Link("denoise", "high_sigmas"),
+                            "denoise_low": Link("denoise", "low_sigmas"),
+                            "endpoint": Link("percent", "sigma_value"),
                         },
                     ),
                 }
             )
             for _ in range(2):
                 result = await engine.run(graph, ["inspect"])
-                assert result.outputs["inspect"]["value"].resolve() == 2.5
+                expected_value = float(torch.tensor(0.0001) + torch.tensor(2.5))
+                assert result.outputs["inspect"]["value"].resolve() == expected_value
         finally:
             await composer.close()
 
