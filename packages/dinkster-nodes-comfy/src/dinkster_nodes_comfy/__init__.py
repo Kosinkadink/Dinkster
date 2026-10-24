@@ -49,6 +49,7 @@ from .stable_cascade import STABLE_CASCADE_NODES
 from .text import TEXT_NODES
 from .utilities import ComfyNumberConvert, SeedNode
 from .vae import VAE_NODES
+from .video_guidance import VIDEO_GUIDANCE_NODES
 from .video_latent import VIDEO_LATENT_NODES
 
 COMFY_NODES = (
@@ -69,6 +70,7 @@ COMFY_NODES = (
     *MODEL_SPECIFIC_MERGE_NODES,
     *MODEL_ADVANCED_NODES,
     *CFG_GUIDANCE_NODES,
+    *VIDEO_GUIDANCE_NODES,
     *FREEU_NODES,
     *ROPE_AND_MASK_NODES,
     *SIGMA_OPERATION_NODES,

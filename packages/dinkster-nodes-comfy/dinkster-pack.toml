@@ -84,6 +84,8 @@ namespaces = [
     "TCFG",
     "Mahiro",
     "NAGuidance",
+    "VideoLinearCFGGuidance",
+    "VideoTriangleCFGGuidance",
     "FreeU",
     "FreeU_V2",
     "ScaleROPE",
