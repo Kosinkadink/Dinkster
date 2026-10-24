@@ -8,6 +8,7 @@ without importing ComfyUI's V1 API or its test pack.
 from __future__ import annotations
 
 import asyncio
+import math
 from collections.abc import Mapping
 
 from dinkster_api.v1 import (
@@ -108,6 +109,41 @@ class ExecutionLazySelect(Node):
         if value is None:
             raise ValueError("selected lazy input is unavailable")
         return cls.outputs(value=value)
+
+
+class ExecutionLazyMix(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dev.execution.lazy_mix",
+            inputs=(
+                InputSpec("weight", FLOAT),
+                InputSpec("black", INT, lazy=True),
+                InputSpec("white", INT, lazy=True),
+            ),
+            outputs=(OutputSpec("value", INT),),
+        )
+
+    @classmethod
+    def check_lazy_status(
+        cls, *, weight: float, black: object | None, white: object | None
+    ) -> tuple[str, ...]:
+        requested: list[str] = []
+        if weight < 1.0 and black is None:
+            requested.append("black")
+        if weight > 0.0 and white is None:
+            requested.append("white")
+        return tuple(requested)
+
+    @classmethod
+    def execute(
+        cls, *, weight: float, black: int | None, white: int | None
+    ) -> Mapping[str, object]:
+        if black is None and weight < 1.0:
+            raise ValueError("black branch was not demanded")
+        if white is None and weight > 0.0:
+            raise ValueError("white branch was not demanded")
+        return cls.outputs(value=math.floor((black or 0) * (1.0 - weight) + (white or 0) * weight))
 
 
 class ExecutionBlock(Node):
@@ -317,6 +353,7 @@ EXECUTION_NODES: tuple[type[Node], ...] = (
     ExecutionVolatile,
     ExecutionOutput,
     ExecutionLazySelect,
+    ExecutionLazyMix,
     ExecutionBlock,
     ExecutionExpand,
     ExecutionDynamicCycle,

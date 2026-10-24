@@ -14,9 +14,17 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EventListener, ExecutionError, GraphValidationError
-from dinkster_graph import Graph, GraphNode, Link, graph_to_wire
+from dinkster_graph import (
+    PORTS_NODE_ID,
+    Graph,
+    GraphNode,
+    Link,
+    RegionNode,
+    RegionOutput,
+    graph_to_wire,
+)
 from dinkster_nodes_dev.execution import EXECUTION_NODES
-from dinkster_schema import build_node_types, build_schemas
+from dinkster_schema import TypeExpr, build_node_types, build_schemas
 from dinkster_server import create_app
 from dinkster_values import TypeRegistry, is_absent, register_core_types
 from dinkster_workers import InProcessWorker
@@ -90,6 +98,44 @@ def test_lazy_input(cache_enabled: bool) -> None:
         assert result.outputs["select"]["value"].resolve() == 29
         assert "left" not in result.executed
         assert "right" in result.executed
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("cache_enabled", [False, True])
+def test_mixed_lazy_results(cache_enabled: bool) -> None:
+    """Port of ComfyUI test_mixed_lazy_results with an explicit map region."""
+
+    async def scenario() -> None:
+        weight = Link(PORTS_NODE_ID, "weight")
+        region = RegionNode(
+            kind="map",
+            body=Graph(
+                {
+                    "black": GraphNode("dev.execution.value", {"value": 0}),
+                    "white": GraphNode("dev.execution.value", {"value": 255}),
+                    "mix": GraphNode(
+                        "dev.execution.lazy_mix",
+                        {
+                            "weight": weight,
+                            "black": Link("black", "value"),
+                            "white": Link("white", "value"),
+                        },
+                    ),
+                }
+            ),
+            ports={"weight": TypeExpr.concrete("FLOAT")},
+            inputs={"weight": [0.0, 0.5, 1.0]},
+            element_ports=("weight",),
+            outputs={"results": RegionOutput(Link("mix", "value"))},
+        )
+        result = await make_engine().run(
+            Graph({"mixed": region}), ["mixed"], cache_enabled=cache_enabled
+        )
+        assert result.outputs["mixed"]["results"].resolve() == [0, 127, 255]
+        assert "mixed[0]/white" not in result.executed
+        assert "mixed[2]/black" not in result.executed
+        assert {"mixed[1]/black", "mixed[1]/white"}.issubset(result.executed)
 
     asyncio.run(scenario())
 
