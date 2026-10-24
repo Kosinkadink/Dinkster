@@ -7,6 +7,7 @@ from .clip_model_specific import MODEL_TEXT_ENCODER_NODES
 from .compositing import COMPOSITING_NODES
 from .conditioning import CONDITIONING_NODES
 from .dataset_groups import DATASET_GROUP_NODES
+from .dataset_text import DATASET_TEXT_NODES
 from .freeu import FREEU_NODES
 from .image_core import IMAGE_CORE_NODES
 from .image_filters import IMAGE_FILTER_NODES
@@ -29,12 +30,14 @@ from .primitive import (
     PrimitiveString,
     PrimitiveStringMultiline,
 )
+from .stable_cascade import STABLE_CASCADE_NODES
 from .text import TEXT_NODES
 from .utilities import ComfyNumberConvert, SeedNode
 from .vae import VAE_NODES
 
 COMFY_NODES = (
     *TEXT_NODES,
+    *DATASET_TEXT_NODES,
     PrimitiveString,
     PrimitiveStringMultiline,
     PrimitiveInt,
@@ -61,6 +64,7 @@ COMFY_NODES = (
     *IMAGE_FILTER_NODES,
     *IMAGE_TRANSFORM_NODES,
     *MORPHOLOGY_NODES,
+    *STABLE_CASCADE_NODES,
     *POST_PROCESSING_NODES,
     *DATASET_GROUP_NODES,
 )

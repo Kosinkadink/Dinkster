@@ -1,5 +1,8 @@
 ## ComfyUI compatibility
 
+- Seven native dataset text nodes lowercase, uppercase, truncate, prefix,
+  suffix, replace, and strip text under exact core IDs, retaining the fixed
+  reference's one-element list payloads on scalar STRING outputs.
 - The native core pack exposes eleven latent creation, batch, transform, resize,
   blend, composite, crop, and noise-mask nodes under their exact ComfyUI IDs.
   IMAGE, MASK, and LATENT values cross ordinary pack boundaries without host type
