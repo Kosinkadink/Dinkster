@@ -125,11 +125,13 @@ def _recorder(
     observation: str,
     inputs: tuple[InputSpec, ...],
     output: TypeExpr,
+    *,
+    effect: bool = True,
 ):
     class Recorder(Node):
         @classmethod
         def define_schema(cls) -> NodeSchema:
-            return _schema(node_type, inputs, output, effect=True)
+            return _schema(node_type, inputs, output, effect=effect)
 
         @classmethod
         def execute(cls, **values: object) -> Mapping[str, object]:
@@ -171,7 +173,11 @@ class Capture(Node):
 
 
 Passthrough = _recorder(
-    "Issue408CapturePassthrough", "passthrough_values", (InputSpec("value", INT),), INT
+    "Issue408CapturePassthrough",
+    "passthrough_values",
+    (InputSpec("value", INT),),
+    INT,
+    effect=False,
 )
 First = _recorder(
     "Issue408CapturePassthroughFirst", "first_values", (InputSpec("value", INT),), INT
