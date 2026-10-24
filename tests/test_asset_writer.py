@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import io
 import json
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -212,6 +213,36 @@ def test_separate_prefix_and_mount_write_to_selected_grant(tmp_path: Path) -> No
     with pytest.raises(AssetError, match="no ready mount"):
         writer.save_bytes(selected_target, b"revoked", suffix=".png")
     assert len(list(roots["selected"].rglob("*.png"))) == 1
+
+
+@pytest.mark.parametrize(
+    ("dimensions", "expected"),
+    [(None, "0x0"), ((1, 1), "1x1"), ((640, 360), "640x360")],
+)
+def test_output_prefix_variables_are_expanded_before_writing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    dimensions: tuple[int, int] | None,
+    expected: str,
+) -> None:
+    monkeypatch.setattr(
+        time, "localtime", lambda: time.struct_time((2026, 2, 3, 4, 5, 6, 1, 34, -1))
+    )
+    writer, root = make_writer(tmp_path)
+    prefix = "%year%/%month%%day%/%hour%%minute%%second%-%width%x%height%-%custom%"
+    target = (
+        writer.output_target(prefix, "out")
+        if dimensions is None
+        else writer.output_target(
+            prefix, "out", image_width=dimensions[0], image_height=dimensions[1]
+        )
+    )
+    ref = writer.save_bytes(target, b"dimensions\n", suffix=".txt")
+    relative = f"2026/0203/040506-{expected}-%custom%_00001.txt"
+    assert ref.virtual_path == f"mounts/out/{relative}"
+    assert (root / relative).read_bytes() == b"dimensions\n"
+    with pytest.raises(AssetError):
+        writer.save_bytes(writer.output_target("../%width%/escape", "out"), b"no", suffix=".txt")
 
 
 def test_save_bytes_lands_counter_named_files(tmp_path: Path) -> None:

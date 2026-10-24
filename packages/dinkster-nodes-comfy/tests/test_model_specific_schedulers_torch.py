@@ -129,6 +129,7 @@ class SigmaConsumer(Node):
         tensors = [
             materialize_latent(kwargs[name]) for name in ("ays", "gits", "optimal", "ideogram")
         ]
+        assert all(tensor.dtype == torch.float32 for tensor in tensors)
         return cls.outputs(
             **{
                 name: json.dumps(tensor.tolist())

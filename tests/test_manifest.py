@@ -46,8 +46,11 @@ from dinkster_workers.manifest import (
 
 
 def test_extension_contract_fixture_uses_current_public_pack_surfaces() -> None:
+    from dinkster.extension_assets import resolve_frontend_modules
+
     manifest = load_manifest(Path("tests/fixtures/extension-contract-pack/dinkster-pack.toml"))
     _worker, _registry, nodes, arms = load_pack(manifest, import_from_pack_root=True)
+    modules = resolve_frontend_modules(manifest)
 
     assert manifest.contracts is not None
     assert manifest.contracts.inference is None
@@ -56,9 +59,7 @@ def test_extension_contract_fixture_uses_current_public_pack_surfaces() -> None:
     assert [event.name for event in manifest.extension.events] == [
         "fixture.extension-contract.executed"
     ]
-    assert [module.id for module in manifest.extension.frontend_modules] == [
-        "dinkster-extension-contract-fixture.frontend"
-    ]
+    assert [module.id for module in modules] == ["fixture.frontend"]
     assert {node.schema().node_type for node in nodes} == {
         "fixture.extension.contract",
         "fixture.extension.value",

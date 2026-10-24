@@ -2782,6 +2782,24 @@ def test_memory_budget_failure_retains_server_output(tmp_path: Path) -> None:
     process.wait.assert_called_once_with(timeout=30)
 
 
+def test_serve_development_pack_is_explicitly_trusted(tmp_path: Path) -> None:
+    port = free_port()
+    process, log = start_logged_serve(
+        serve_command(port, "--no-default-packs", "--development-pack"), tmp_path
+    )
+    pending_error: BaseException | None = None
+    try:
+        report = wait_for_composition(process, port)
+        packs = report["packs"]
+        assert isinstance(packs, dict)
+        assert packs["dinkster-nodes-dev"]["state"] == "announced"
+    except BaseException as error:
+        pending_error = error
+        raise
+    finally:
+        stop_logged_serve(process, log, pending_error)
+
+
 def test_serve_loads_memory_budgets_from_library_config(tmp_path: Path) -> None:
     (tmp_path / "memory.toml").write_text(
         '[budgets]\nram = "64M"\n"vram:cuda:0" = 33554432\n', "utf-8"
