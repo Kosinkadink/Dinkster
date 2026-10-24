@@ -3,6 +3,9 @@
 - Native EmptyMochiLatentVideo creates video latents with the core interface.
   Empty image and Mochi latents honor CPU-only process policy without requiring
   attention discovery or command-line initialization first.
+- Seven native dataset text nodes lowercase, uppercase, truncate, prefix,
+  suffix, replace, and strip text under exact core IDs, retaining the fixed
+  reference's one-element list payloads on scalar STRING outputs.
 - The native core pack exposes eleven latent creation, batch, transform, resize,
   blend, composite, crop, and noise-mask nodes under their exact ComfyUI IDs.
   IMAGE, MASK, and LATENT values cross ordinary pack boundaries without host type
