@@ -106,6 +106,7 @@ namespaces = [
     "Epsilon Scaling",
     "TemporalScoreRescaling",
     "FreSca",
+    "BlockSparseAttention",
     "SplitSigmas",
     "SplitSigmasDenoise",
     "FlipSigmas",
