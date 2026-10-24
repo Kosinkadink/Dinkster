@@ -2419,19 +2419,25 @@ types = "preview_source:register_types"
     (source / "preview_source.py").write_text("""
 from pathlib import Path
 from dinkster_api.v1 import (
-    Node, NodeSchema, OutputSpec, TypeExpr, register_video_value_type, video_from_source,
+    VIDEO_TYPE,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+    register_video_value_type,
+    video_from_source,
 )
 class Source(Node):
     @classmethod
     def define_schema(cls):
         return NodeSchema(node_type="preview-source.clip",
-                          outputs=(OutputSpec("video", TypeExpr.concrete("comfy.VIDEO")),))
+                          outputs=(OutputSpec("video", TypeExpr.concrete(VIDEO_TYPE)),))
     @classmethod
     def execute(cls):
         source = Path(__file__).with_name("clip.mp4").read_bytes()
         return cls.outputs(video=video_from_source(source))
 def register_types(registry):
-    register_video_value_type(registry, "comfy.VIDEO")
+    register_video_value_type(registry, VIDEO_TYPE)
 NODES = [Source]
 """)
     port = free_port()

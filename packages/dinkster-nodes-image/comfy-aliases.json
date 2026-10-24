@@ -3939,7 +3939,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.BOUNDING_BOX"
+              "BOUNDING_BOX"
             ]
           }
         }
@@ -4686,7 +4686,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.BOUNDING_BOX"
+              "BOUNDING_BOX"
             ]
           },
           "required": false,
@@ -7662,7 +7662,7 @@
             "kind": "union",
             "types": [
               "comfy.BBOX",
-              "comfy.BOUNDING_BOX"
+              "BOUNDING_BOX"
             ]
           },
           "required": true
@@ -10536,7 +10536,7 @@
           "type": {
             "kind": "union",
             "types": [
-              "comfy.BOUNDING_BOX",
+              "BOUNDING_BOX",
               "comfy.ARRAY",
               "STRING"
             ]
