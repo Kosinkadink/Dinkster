@@ -322,6 +322,8 @@ def _resolve_linked_output_types(
     ports: Mapping[str, TypeExpr],
     effective: Mapping[str, NodeSchema],
     regions: Mapping[str, _RegionData],
+    *,
+    include_typed_literals: bool = False,
 ) -> dict[str, dict[str, TypeExpr]]:
     """Resolve generic node outputs from linked concrete input declarations."""
     resolved: dict[str, dict[str, TypeExpr]] = {}
@@ -358,7 +360,7 @@ def _resolve_linked_output_types(
                 input_spec = schema.input(input_id)
                 if input_spec is None or not contains_variable(input_spec.type):
                     continue
-                if isinstance(value, TypedLiteral):
+                if include_typed_literals and isinstance(value, TypedLiteral):
                     input_types[input_id] = value.type_id
                     continue
                 if not isinstance(value, Link):
@@ -394,7 +396,9 @@ def graph_output_types(
 ) -> dict[str, dict[str, TypeExpr]]:
     """Resolve output declarations, including linked template bindings."""
     effective, regions, _ = _interface_pass(graph, schemas, "", include_elab=False)
-    resolved = _resolve_linked_output_types(graph, {}, effective, regions)
+    resolved = _resolve_linked_output_types(
+        graph, {}, effective, regions, include_typed_literals=True
+    )
     return {
         node_id: {
             output.id: resolved.get(node_id, {}).get(output.id, output.type)
