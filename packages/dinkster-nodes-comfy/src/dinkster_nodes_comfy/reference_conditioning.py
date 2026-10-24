@@ -213,7 +213,7 @@ class ReferenceMultiLatent(Node):
                 image = materialize_image(pixels)
                 if resolution["resolution"] == "resize":
                     height, width = image.shape[1:3]
-                    scale = math.sqrt(resolution["megapixels"] * 1024 * 1024 / (width * height))
+                    scale = math.sqrt(resolution["megapixels"] * 1024.0 * 1024.0 / (width * height))
                     image = (
                         importlib.import_module("dinkster_inference.utils")
                         .common_upscale(
@@ -234,7 +234,7 @@ class ReferenceMultiLatent(Node):
 
             size = 1024
             if resolution["resolution"] == "resize":
-                size = round(math.sqrt(resolution["megapixels"] * 1024 * 1024))
+                size = round(math.sqrt(resolution["megapixels"] * 1024.0 * 1024.0))
             empty_latent = materialize_latent(
                 EmptyLatentImage.execute(width=size, height=size, batch_size=1)["LATENT"]
             )
