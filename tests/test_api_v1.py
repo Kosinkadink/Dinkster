@@ -30,6 +30,7 @@ from dinkster_workers import InProcessWorker
 
 GOLDEN_V1_SURFACE = (
     "initialize_inference_process",
+    "materialize_audio",
     "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
