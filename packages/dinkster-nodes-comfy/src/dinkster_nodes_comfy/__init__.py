@@ -33,6 +33,7 @@ from .mochi import EmptyMochiLatentVideo
 from .model_advanced import MODEL_ADVANCED_NODES
 from .model_merging import MODEL_MERGE_NODES
 from .model_merging_specific import MODEL_SPECIFIC_MERGE_NODES
+from .model_specific_schedulers import MODEL_SPECIFIC_SCHEDULER_NODES
 from .morphology import MORPHOLOGY_NODES
 from .post_processing import POST_PROCESSING_NODES
 from .primitive import (
@@ -51,6 +52,7 @@ from .stable_cascade import STABLE_CASCADE_NODES
 from .text import TEXT_NODES
 from .utilities import ComfyNumberConvert, SeedNode
 from .vae import VAE_NODES
+from .video_conditioning import VIDEO_CONDITIONING_NODES
 from .video_guidance import VIDEO_GUIDANCE_NODES
 from .video_latent import VIDEO_LATENT_NODES
 from .video_latent_ops import VIDEO_LATENT_OPERATION_NODES
@@ -73,6 +75,7 @@ COMFY_NODES = (
     *MODEL_MERGE_NODES,
     *MODEL_SPECIFIC_MERGE_NODES,
     *MODEL_ADVANCED_NODES,
+    *MODEL_SPECIFIC_SCHEDULER_NODES,
     *CFG_GUIDANCE_NODES,
     *VIDEO_GUIDANCE_NODES,
     *FREEU_NODES,
@@ -99,6 +102,7 @@ COMFY_NODES = (
     *STABLE_CASCADE_NODES,
     *STABLE3D_NODES,
     *HUNYUAN_LATENT_NODES,
+    *VIDEO_CONDITIONING_NODES,
     *VIDEO_LATENT_NODES,
     *VIDEO_LATENT_OPERATION_NODES,
     *POST_PROCESSING_NODES,
