@@ -171,6 +171,18 @@ def test_missing_node_error(cache_enabled: bool) -> None:
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
+def test_undeclared_inputs(cache_enabled: bool) -> None:
+    """Port of ComfyUI test_undeclared_inputs through native graph admission."""
+
+    async def scenario() -> None:
+        graph = Graph({"value": GraphNode("dev.execution.value", {"value": 3, "extra": 5})})
+        with pytest.raises(GraphValidationError, match="unknown-input"):
+            await make_engine().run(graph, ["value"], cache_enabled=cache_enabled)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("cache_enabled", [False, True])
 def test_mixed_expansion_returns(cache_enabled: bool) -> None:
     """Port of ComfyUI test_mixed_expansion_returns."""
 
@@ -371,6 +383,23 @@ def test_partial_execution_multiple_output_nodes(cache_enabled: bool) -> None:
         assert result.outputs["second"]["value"].resolve() == 3
         assert "first" in result.executed
         assert "other" not in result.outputs
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("cache_enabled", [False, True])
+def test_partial_execution_empty_list(cache_enabled: bool) -> None:
+    """Port of ComfyUI test_partial_execution_empty_list."""
+
+    async def scenario() -> None:
+        result = await make_engine().run(
+            Graph({"output": GraphNode("dev.execution.output", {"value": 3})}),
+            [],
+            cache_enabled=cache_enabled,
+        )
+        assert result.outputs == {}
+        assert result.executed == ()
+        assert result.cached == ()
 
     asyncio.run(scenario())
 
