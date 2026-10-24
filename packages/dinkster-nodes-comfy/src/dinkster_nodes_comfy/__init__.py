@@ -57,6 +57,7 @@ from .sigma_schedulers import SIGMA_SCHEDULER_NODES
 from .spatial_model_patches import SPATIAL_MODEL_PATCH_NODES
 from .stable3d import STABLE3D_NODES
 from .stable_cascade import STABLE_CASCADE_NODES
+from .style_model import STYLE_MODEL_NODES
 from .text import TEXT_NODES
 from .utilities import ComfyNumberConvert, SeedNode
 from .vae import VAE_NODES
@@ -97,6 +98,7 @@ COMFY_NODES = (
     *LATENT_OPERATION_NODES,
     *MODEL_LATENT_NODES,
     *CLIP_NODES,
+    *STYLE_MODEL_NODES,
     *CLIP_SDXL_NODES,
     *MODEL_TEXT_ENCODER_NODES,
     *VAE_NODES,
