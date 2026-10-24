@@ -106,7 +106,7 @@ class ConditioningSetProperties(Node):
         timesteps: tuple[float, float] | None = None,
     ) -> Mapping[str, object]:
         return cls.outputs(
-            conditioning=_properties(cond_NEW, strength, set_cond_area, mask, hooks, timesteps)
+            conditioning=_properties([cond_NEW], strength, set_cond_area, mask, hooks, timesteps)[0]
         )
 
 
