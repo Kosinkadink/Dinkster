@@ -591,7 +591,7 @@ class BlockSparseAttention(Node):
                     default=12288,
                     advanced=True,
                     doc="Sequences shorter than this stay dense.",
-                    widget=NumberWidget(min=0, max=1 << 20, step=512),
+                    widget=NumberWidget(min=0, max=1_048_576, step=512),
                 ),
                 InputSpec(
                     "extra_tokens",
