@@ -2142,10 +2142,10 @@ class NodeSchema:
     unambiguous at use, a search term is free-form discovery data."""
     output_node: bool = False
     """This node acts as a sink/output of a workflow (v1 OUTPUT_NODE, a
-    save/preview node). A hint for submission formats that carry no explicit
-    targets (they target every output_node in the document) and for
-    frontend default-target affordances. Never scheduling, never validity,
-    never part of the schema signature."""
+    save/preview node). Submission formats without explicit targets select
+    these nodes. Region bodies also select them each iteration, and may omit
+    exported outputs when they contain a declared sink. Not part of the
+    schema signature."""
     emits_previews: bool = False
     """This node's execution emits live previews (report_preview during
     sampling or other long-running work). One declaration, two consumers:
