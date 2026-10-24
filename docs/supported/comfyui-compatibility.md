@@ -1,5 +1,7 @@
 ## ComfyUI compatibility
 
+- Native LTXV sampling patches cloned models and constructs shifted sigma
+  schedules from latent token counts, with optional terminal stretching.
 - Four native audio latent constructors preserve Stable Audio, ACE-Step 1.0,
   ACE-Step 1.5 and YuE2 duration rounding, tensor layouts and audio metadata.
 - Native EmptyMochiLatentVideo creates video latents with the core interface.
