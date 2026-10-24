@@ -74,6 +74,18 @@ def _combo(
     )
 
 
+def _combo_values(
+    combo_id: str, selected: str | Mapping[str, Any], values: Mapping[str, Any]
+) -> Mapping[str, Any]:
+    if isinstance(selected, Mapping):
+        return selected
+    prefix = f"{combo_id}."
+    return {
+        combo_id: selected,
+        **{input_id.removeprefix(prefix): value for input_id, value in values.items()},
+    }
+
+
 def _image_or_mask(value: Any) -> Any:
     return materialize_image(value)
 
@@ -132,7 +144,7 @@ def _scale_edge(value: Any, size: int, method: str, *, longer: bool) -> Any:
 
 def _scale_total_pixels(value: Any, megapixels: float, method: str) -> Any:
     value, is_image = _as_channels(value)
-    scale = math.sqrt(int(megapixels * 1024 * 1024) / (value.shape[-1] * value.shape[-2]))
+    scale = math.sqrt(megapixels * 1024 * 1024 / (value.shape[-1] * value.shape[-2]))
     result = _common_upscale(
         value, round(value.shape[-1] * scale), round(value.shape[-2] * scale), method, "disabled"
     )
@@ -257,9 +269,10 @@ class ResizeImageMaskNode(Node):
 
     @classmethod
     def execute(
-        cls, *, input: Any, scale_method: str, resize_type: Mapping[str, Any]
+        cls, *, input: Any, scale_method: str, resize_type: str | Mapping[str, Any], **values: Any
     ) -> Mapping[str, object]:
         value = _image_or_mask(input)
+        resize_type = _combo_values("resize_type", resize_type, values)
         selected = resize_type["resize_type"]
         if selected == "scale by multiplier":
             result = _scale_by(value, resize_type["multiplier"], scale_method)
@@ -345,6 +358,8 @@ def _batch_latents(latents: list[dict[str, Any]]) -> dict[str, Any] | None:
     result["batch_index"] = result_batch_indices
     for latent in latents:
         samples = latent["samples"]
+        if not hasattr(samples, "detach"):
+            samples = torch.as_tensor(samples)
         if samples.shape[1:] != first.shape[1:]:
             samples = _common_upscale(
                 samples, first.shape[-1], first.shape[-2], "bilinear", "center"
@@ -609,8 +624,9 @@ class ColorTransfer(Node):
         image_target: Any,
         image_ref: Any,
         method: str,
-        source_stats: Mapping[str, Any],
+        source_stats: str | Mapping[str, Any],
         strength: float = 1.0,
+        **values: Any,
     ) -> Mapping[str, object]:
         target = materialize_image(image_target)
         if strength == 0 or image_ref is None:
@@ -628,6 +644,7 @@ class ColorTransfer(Node):
         output = torch.empty(
             frames, height, width, channels, device=output_device, dtype=output_dtype
         )
+        source_stats = _combo_values("source_stats", source_stats, values)
         stats, target_index = source_stats["source_stats"], source_stats.get("target_index", 0)
         if method == "histogram":
             uniform = cls._histogram_transform(target, reference, device, stats, target_index)
