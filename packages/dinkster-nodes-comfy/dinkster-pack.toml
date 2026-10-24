@@ -176,6 +176,7 @@ namespaces = [
     "ConditioningStableAudio",
     "InstructPixToPixConditioning",
     "ReferenceLatent",
+    "ReferenceMultiLatent",
     "VAEEncodeForInpaint",
     "InpaintModelConditioning",
     "ControlNetApply",
