@@ -1266,7 +1266,8 @@ Path({str(observed)!r}).write_text("proxied", encoding="utf-8")
         pack = tmp_path / "probe-pack"
         pack.mkdir()
         (pack / "dinkster-pack.toml").write_text(
-            '[pack]\nname = "sandbox-probe"\nnamespaces = ["sandboxprobe"]\n'
+            '[pack]\nname = "sandbox-probe"\npublisher = "dinkster"\n'
+            'namespaces = ["sandboxprobe"]\n'
             "[pack.sandbox]\nwritable-mounts = true\n"
             '[pack.entry]\nnodes = "probe_nodes:NODES"\n',
             encoding="utf-8",

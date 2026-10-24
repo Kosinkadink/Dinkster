@@ -75,6 +75,11 @@ publishes bounded seekable sources atomically without buffering the complete
 file. `parse_latent_asset` strictly validates native and ComfyUI latent
 safetensors headers before tensor data is materialized.
 
+`AssetWriter.output_target(filename_prefix, mount=None)` combines separate save
+inputs into the writer's target. Omitting `mount` uses the snapshot's configured
+output mount; an explicit mount selects that grant instead. Both forms retain
+the writer's prefix validation, live write permissions and containment checks.
+
 ## Catalog schema
 
 `LibraryStore` upgrades its SQLite catalog to the Alembic head before serving

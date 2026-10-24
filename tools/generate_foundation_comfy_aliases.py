@@ -64,9 +64,12 @@ BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
 COMBO = TypeExpr.concrete(CORE_COMBO)
 STRING = TypeExpr.concrete(CORE_STRING)
 ANY = TypeExpr.wildcard()
-NUMBER = TypeExpr.concrete("comfy.NUMBER")
-DICT = TypeExpr.concrete("comfy.DICT")
-ARRAY = TypeExpr.concrete("comfy.ARRAY")
+SOURCE_NUMBER = "comfy.NUMBER"
+SOURCE_DICT = "comfy.DICT"
+SOURCE_ARRAY = "comfy.ARRAY"
+NUMBER = TypeExpr.concrete(SOURCE_NUMBER)
+DICT = TypeExpr.concrete(SOURCE_DICT)
+ARRAY = TypeExpr.concrete(SOURCE_ARRAY)
 
 COMFY_REVISION = "b78cec87"
 TRELLIS2_REVISION = "8a33128f"

@@ -109,7 +109,8 @@ def write_pack(
     manifest = directory / "dinkster-pack.toml"
     schema_only_entry = f'schema-only = ["rl.echo", "{extra_type}"]\n' if schema_only else ""
     manifest.write_text(
-        f'[pack]\nname = "{name}"\nnamespaces = ["rl"]\n{schema_only_entry}\n'
+        f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
+        f'namespaces = ["rl"]\n{schema_only_entry}\n'
         '[pack.entry]\nnodes = "rlpack_nodes:NODES"\n'
         'types = "rlpack_nodes:register_types"\n\n'
         "[pack.presentation]\n"

@@ -1,5 +1,6 @@
 [pack]
 name = "dinkster-native"
+publisher = "dinkster"
 namespaces = ["comfy", "dinkster"]
 executes = [
     "dinkster.load_checkpoint",

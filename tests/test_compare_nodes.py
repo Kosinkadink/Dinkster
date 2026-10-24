@@ -7,6 +7,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -209,21 +210,21 @@ def test_exact_ids_and_file_widget_exemption(list_inputs: bool) -> None:
             {
                 "role": "output",
                 "id": "model",
-                "type": {"kind": "list", "element": {"kind": "concrete", "types": ["MODEL"]}},
+                "type": {"kind": "concrete", "types": ["MODEL"]},
             },
         ],
     }
     registry = {"nodes": {"LoadExample": schema, "Extra": {"nodeType": "Extra", "interface": []}}}
-    if list_inputs:
-        schema["interface"][0]["type"] = {
-            "kind": "list",
-            "element": {"kind": "concrete", "types": ["COMBO"]},
-        }
     summary = compare_registry(reference, registry)
     assert summary["passed"]
     assert summary["counts"] == {"identical": 1, "Dinkster-only": 1}
 
-    schema["interface"][1]["type"] = {"kind": "concrete", "types": ["MODEL"]}
+    schema["interface"][1]["type"] = {
+        "kind": "list",
+        "element": {"kind": "concrete", "types": ["MODEL"]},
+    }
+    assert compare_registry(reference, registry)["passed"]
+    reference["nodes"][0]["output_is_list"] = [False]
     assert not compare_registry(reference, registry)["passed"]
 
     del registry["nodes"]["LoadExample"]
@@ -231,6 +232,166 @@ def test_exact_ids_and_file_widget_exemption(list_inputs: bool) -> None:
     summary = compare_registry(reference, registry)
     assert not summary["passed"]
     assert summary["counts"] == {"absent": 1, "Dinkster-only": 1}
+
+
+@pytest.fixture
+def example_contract() -> tuple[dict, dict]:
+    return (
+        {
+            "class_name": "Example",
+            "input_types": {"required": {"value": ["INT"]}},
+            "return_types": ["INT", "FLOAT"],
+            "return_names": None,
+        },
+        {
+            "nodeType": "Example",
+            "interface": [
+                {"role": "input", "id": "value", "type": {"kind": "concrete", "types": ["INT"]}},
+                {"role": "output", "id": "first", "type": {"kind": "concrete", "types": ["INT"]}},
+                {
+                    "role": "output",
+                    "id": "second",
+                    "type": {"kind": "concrete", "types": ["FLOAT"]},
+                },
+            ],
+        },
+    )
+
+
+def test_hidden_inputs_do_not_hide_public_input_drift(example_contract: tuple[dict, dict]) -> None:
+    from tools.compare_nodes import compare
+
+    reference, native = example_contract
+    reference["input_types"]["hidden"] = {"dynprompt": ["DYNPROMPT"]}
+    native["interface"].insert(
+        0,
+        {
+            "role": "input",
+            "id": "execution_context",
+            "hidden": True,
+            "type": {"kind": "wildcard"},
+        },
+    )
+    assert compare(reference, native) == []
+    native["interface"][1]["id"] = "renamed"
+    assert any("name" in difference for difference in compare(reference, native))
+
+
+def test_hidden_family_members_do_not_create_public_inputs(
+    example_contract: tuple[dict, dict],
+) -> None:
+    from tools.compare_nodes import compare
+
+    reference, native = example_contract
+    family = {
+        "role": "inputFamily",
+        "id": "dependencies",
+        "template": [
+            {"role": "input", "id": "dependency", "hidden": True, "type": {"kind": "wildcard"}}
+        ],
+    }
+    native["interface"].append(family)
+    assert compare(reference, native) == []
+    family["template"][0]["hidden"] = False
+    assert any("inputs: length" in difference for difference in compare(reference, native))
+
+
+def test_unnamed_outputs_still_compare_type_position_and_explicit_names(
+    example_contract: tuple[dict, dict],
+) -> None:
+    from tools.compare_nodes import compare
+
+    reference, native = example_contract
+    assert compare(reference, native) == []
+    native["interface"][1:3] = reversed(native["interface"][1:3])
+    assert any("outputs[0].type" in difference for difference in compare(reference, native))
+    native["interface"][1:3] = reversed(native["interface"][1:3])
+    reference["return_names"] = ["INT", "FLOAT"]
+    assert any("outputs[0].name" in difference for difference in compare(reference, native))
+
+
+def test_v3_output_dump_preserves_only_declared_names(
+    example_contract: tuple[dict, dict],
+) -> None:
+    from tools.compare_nodes import compare
+    from tools.dump_comfy_nodes import output_contract
+
+    reference, native = example_contract
+    schema = SimpleNamespace(
+        outputs=[SimpleNamespace(display_name=None), SimpleNamespace(display_name="second")]
+    )
+    reference.update(output_contract(schema))
+    assert reference["return_names"] == [None, "second"]
+    assert compare(reference, native) == []
+    native["interface"][1]["id"] = "another_unnamed_output"
+    assert compare(reference, native) == []
+    native["interface"][2]["id"] = "renamed"
+    assert any("outputs[1].name" in difference for difference in compare(reference, native))
+
+
+@pytest.mark.parametrize("direction,index", [("input", 0), ("output", 1)])
+def test_wildcard_accepts_template_but_not_concrete_or_restricted_type(
+    example_contract: tuple[dict, dict], direction: str, index: int
+) -> None:
+    from tools.compare_nodes import compare
+
+    reference, native = example_contract
+    if direction == "input":
+        reference["input_types"]["required"]["value"] = ["*"]
+    else:
+        reference["return_types"][0] = "*"
+    native["interface"][index]["type"] = {"kind": "variable", "templateId": "carry"}
+    assert compare(reference, native) == []
+    native["interface"][index]["type"]["allowed"] = ["INT"]
+    assert compare(reference, native)
+    native["interface"][index]["type"] = {"kind": "concrete", "types": ["INT"]}
+    assert compare(reference, native)
+
+
+@pytest.mark.parametrize(
+    "input_list,output_list", [(False, False), (False, True), (True, False), (True, True)]
+)
+def test_list_execution_flags_do_not_change_declared_socket_types(
+    example_contract: tuple[dict, dict], input_list: bool, output_list: bool
+) -> None:
+    from tools.compare_nodes import compare
+
+    reference, native = example_contract
+    reference["input_is_list"] = input_list
+    reference["output_is_list"] = [output_list, False]
+    assert compare(reference, native) == []
+    index = 0 if input_list else 1
+    native["interface"][index]["type"] = {
+        "kind": "list",
+        "element": {"kind": "concrete", "types": ["INT"]},
+    }
+    assert bool(compare(reference, native)) is not (input_list or output_list)
+    native["interface"][index]["type"]["element"] = {
+        "kind": "list",
+        "element": {"kind": "concrete", "types": ["INT"]},
+    }
+    assert compare(reference, native)
+
+
+def test_list_flags_do_not_hide_element_type_or_unflagged_output_drift(
+    example_contract: tuple[dict, dict],
+) -> None:
+    from tools.compare_nodes import compare
+
+    reference, native = example_contract
+    reference["output_is_list"] = [True, False]
+    native["interface"][1]["type"] = {
+        "kind": "list",
+        "element": {"kind": "concrete", "types": ["FLOAT"]},
+    }
+    assert compare(reference, native)
+    native["interface"][1]["type"]["element"]["types"] = ["INT"]
+    assert compare(reference, native) == []
+    native["interface"][2]["type"] = {
+        "kind": "list",
+        "element": {"kind": "concrete", "types": ["FLOAT"]},
+    }
+    assert compare(reference, native)
 
 
 @pytest.mark.parametrize("kind", ["autogrow", "group", "combo"])

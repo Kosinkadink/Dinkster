@@ -1,5 +1,6 @@
 [pack]
 name = "dinkster-vision-upscale"
+publisher = "dinkster"
 namespaces = []
 executes = ["dinkster.image.upscale_model"]
 requires = [
