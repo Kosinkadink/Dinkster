@@ -45,6 +45,8 @@ from dinkster_values import (
     ResourceHandle,
     TypeRegistry,
     Value,
+    ValueMeta,
+    list_children,
     register_core_types,
     register_resource_handle_type,
 )
@@ -1400,6 +1402,77 @@ def InProcessWorkerFactoryFor(nodes: tuple[type[Node], ...], registry: TypeRegis
     from dinkster_workers import InProcessWorker
 
     return InProcessWorker(build_node_types(nodes), registry)
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_envelope_observer_cache_tracks_input_metadata(nested: bool) -> None:
+    registry = TypeRegistry()
+    register_core_types(registry)
+    value_type = TypeExpr.concrete("INT")
+    if nested:
+        value_type = TypeExpr.list_of(value_type)
+
+    class Source(Node):
+        calls = 0
+
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                "test.meta_source", outputs=(OutputSpec("value", value_type),), idempotent=False
+            )
+
+        @classmethod
+        def execute(cls):
+            cls.calls += 1
+            child = replace(
+                registry.wrap("INT", 7),
+                meta=ValueMeta({"resourceProducerArm": f"producer-{min(cls.calls, 2)}"}),
+            )
+            value = registry.wrap("list<INT>", [child]) if nested else child
+            return cls.outputs(value=value)
+
+    class Observe(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                "test.meta_observer",
+                inputs=(InputSpec("value", value_type),),
+                outputs=(OutputSpec("arm", TypeExpr.concrete("STRING")),),
+                input_values=True,
+            )
+
+        @classmethod
+        def execute(cls, value: object, input_values: Mapping[str, Value]):
+            envelope = input_values["value"]
+            children = list_children(envelope)
+            if children is not None:
+                envelope = children[0]
+            return cls.outputs(arm=envelope.meta.get("resourceProducerArm"))
+
+    async def scenario() -> None:
+        nodes = (Source, Observe)
+        engine = Engine(
+            schemas=build_schemas(nodes),
+            registry=registry,
+            worker=InProcessWorkerFactoryFor(nodes, registry),
+            cache=MemoryLRUCache(),
+        )
+        graph = Graph(
+            {
+                "source": GraphNode("test.meta_source", {}),
+                "observe": GraphNode("test.meta_observer", {"value": Link("source", "value")}),
+            }
+        )
+        for expected, cached in (
+            ("producer-1", False),
+            ("producer-2", False),
+            ("producer-2", True),
+        ):
+            result = await engine.run(graph, ["observe"])
+            assert result.outputs["observe"]["arm"].resolve() == expected
+            assert ("observe" in result.cached) is cached
+
+    asyncio.run(scenario())
 
 
 def test_node_exception_becomes_execution_error() -> None:

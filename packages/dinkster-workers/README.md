@@ -194,7 +194,8 @@ unassessed meaning; its timing-outlier flag is not a spill verdict either.
 Nodes declaring `input_values=True` receive a read-only `input_values`
 mapping of input envelopes alongside ordinary decoded arguments. This permits
 metadata-preserving forwarding without live run-control access and retains
-ordinary result caching. `execution_context=True` remains the separate opt-in
+result caching keyed by input metadata as well as payload fingerprints.
+`execution_context=True` remains the separate opt-in
 for live run controls and disables result caching.
 
 See DESIGN 3.3 for the worker boundary, DESIGN 3.6 for pack manifests,

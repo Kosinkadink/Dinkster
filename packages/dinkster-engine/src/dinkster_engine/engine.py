@@ -106,6 +106,7 @@ from dinkster_values import (
     TypeRegistry,
     Value,
     ValueMeta,
+    default_encode,
     is_absent,
     iter_value_tree,
     list_children,
@@ -1040,6 +1041,13 @@ class Engine:
             # stamps) differently, so it must never share a cache entry.
             parts.append(value.type_id.encode("utf-8"))
             parts.append(value.fingerprint.encode("utf-8"))
+            if schema.input_values:
+                # Envelope observers can distinguish metadata even when payload
+                # fingerprints match, including facts on nested list children.
+                parts.append(b"input-envelope-metadata")
+                parts.extend(
+                    default_encode(dict(child.meta.entries)) for child in iter_value_tree(value)
+                )
         if not schema.idempotent:
             # Never cacheable: a unique component makes every key distinct.
             parts.append(uuid.uuid4().bytes)

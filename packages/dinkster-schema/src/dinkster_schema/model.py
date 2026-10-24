@@ -2159,7 +2159,7 @@ class NodeSchema:
     observe live run state and therefore never use invocation-result caches."""
     input_values: bool = False
     """Inject read-only input envelopes without live run-control access.
-    Pure forwarding nodes retain ordinary invocation-result caching."""
+    Caching includes metadata throughout each input value tree."""
     mirror: MirrorSpec | None = None
     """Optional frontend-renderable mirror of this node's transform (see
     MirrorSpec). Presentation metadata only: the engine never reads it,
