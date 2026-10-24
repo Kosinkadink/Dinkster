@@ -1365,11 +1365,6 @@ def _installed_pack_spec(
     )
 
 
-def development_pack_spec() -> PackSpec:
-    """Resolve the explicitly selected installed development scaffold pack."""
-    return _installed_pack_spec("dinkster-nodes-dev", "dinkster_nodes_dev", in_process=False)
-
-
 def default_pack_spec(pack_id: str) -> PackSpec:
     """Resolve one installed first-party pack and its exact provenance."""
     module_name = _FIRST_PARTY_PACK_MODULES.get(pack_id)

@@ -21,12 +21,14 @@ from dinkster_api.v1 import (
     AUDIO_TYPE,
     BACKGROUND_REMOVAL_TYPE,
     BOUNDING_BOX_TYPE,
+    CONTROL_NET_TYPE,
     LATENT_UPSCALE_MODEL_TYPE,
     MESH_TYPE,
     MODEL_PATCH_TYPE,
     MOGE_GEOMETRY_TYPE,
     MOGE_MODEL_TYPE,
     SHAPE_SUBDIVIDES_TYPE,
+    STYLE_MODEL_TYPE,
     VIDEO_EDIT_TYPE,
     VIDEO_TYPE,
     VOXEL_TYPE,
@@ -333,8 +335,10 @@ def test_translate_type_rules() -> None:
         ("MESH", MESH_TYPE),
         ("SHAPE_SUBDIVIDES", SHAPE_SUBDIVIDES_TYPE),
         ("BOUNDING_BOX", BOUNDING_BOX_TYPE),
+        ("CONTROL_NET", CONTROL_NET_TYPE),
         ("MODEL_PATCH", MODEL_PATCH_TYPE),
         ("LATENT_UPSCALE_MODEL", LATENT_UPSCALE_MODEL_TYPE),
+        ("STYLE_MODEL", STYLE_MODEL_TYPE),
     ],
 )
 def test_translate_type_keeps_native_media_and_model_labels_bare(
@@ -357,6 +361,7 @@ def test_compat_worker_type_ownership_preserves_image_dependency(
 
     root = Path(__file__).parents[1] / "packages"
     manifest = load_manifest(root / "dinkster-compat-comfy/dinkster-pack.toml")
+    assert "comfy.CONTROL_NET" not in manifest.type_namespaces
     translation = CompatTranslation()
     translation.opaque_types.update(core_schema_snapshot()["opaqueTypes"])
     manifest = dataclasses.replace(
@@ -386,6 +391,7 @@ def test_compat_worker_type_ownership_preserves_image_dependency(
     assert published.owner_of("comfy.AUDIO_ENCODER") == manifest.name
     assert published.owner_of("comfy.LAYERS") == image.name
     assert published.owner_of("comfy.COMPOSITOR") == image.name
+    assert published.owner_of(CONTROL_NET_TYPE) == "dinkster-nodes-foundation"
     with registry.registering_pack(manifest.name, manifest.type_namespaces, allow_bare=True):
         with pytest.raises(ValueError, match="outside its declared type claims"):
             registry.register("comfy.UNDECLARED")

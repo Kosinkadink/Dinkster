@@ -17,6 +17,7 @@ from dinkster_values import (
     ResidentLookupError,
     TypeRegistry,
     TypeSpec,
+    resident_owners,
     stable_hash,
 )
 
@@ -38,6 +39,7 @@ from .conditioning import (
     TokenSegmentDescriptor,
     canonical_conditioning_set,
 )
+from .hook_values import normalize_hook_owners
 
 CONDITIONING_TYPE_ID = CONDITIONING_TYPE
 CONDITIONING_CARRIER_FORMAT = "dinkster-conditioning-carrier-v1"
@@ -254,6 +256,27 @@ class ConditioningCarrier:
         return tuple(owners)
 
 
+def _conditioning_hooks(payload: object) -> tuple[object, ...]:
+    if type(payload) is not list:
+        return ()
+    hooks: list[object] = []
+    for entry in cast("list[object]", payload):
+        if not isinstance(entry, (list, tuple)):
+            continue
+        pair = cast("Sequence[object]", entry)
+        if len(pair) != 2:
+            continue
+        metadata = pair[1]
+        if isinstance(metadata, Mapping):
+            hook = cast("Mapping[str, object]", metadata).get("hooks")
+            if hook is not None:
+                normalize_hook_owners(hook)
+                for owner in (hook, *resident_owners(hook)):
+                    if not any(owner is existing for existing in hooks):
+                        hooks.append(owner)
+    return tuple(hooks)
+
+
 @dataclass(frozen=True, slots=True)
 class ResidentConditioningCarrier:
     """Typed conditioning whose opaque payload remains in its worker process."""
@@ -281,10 +304,12 @@ class ResidentConditioningCarrier:
         refs = getattr(self.payload, "_dinkster_resident_refs", ())
         if not isinstance(refs, tuple):
             raise TypeError("resident conditioning payload references must be a tuple")
-        return cast("tuple[object, ...]", refs)
+        return (*cast("tuple[object, ...]", refs), *_conditioning_hooks(self.payload))
 
     @property
-    def _dinkster_resident_fingerprint(self) -> str:
+    def _dinkster_resident_fingerprint(self) -> str | None:
+        if type(self.payload) is list:
+            return None
         fingerprint = getattr(self.payload, "_dinkster_resident_fingerprint", None)
         if not isinstance(fingerprint, str) or not fingerprint:
             raise TypeError("resident conditioning payload requires a stable fingerprint")
@@ -991,7 +1016,8 @@ def register_conditioning_type(
 
     def coerce(obj: object) -> object:
         if type(obj) is list:
-            return cast(object, obj)
+            payload = cast("list[object]", obj)
+            return ResidentConditioningCarrier(payload) if _conditioning_hooks(payload) else payload
         if (
             not isinstance(obj, ConditioningCarrier)
             and type(obj) is not ResidentConditioningCarrier
@@ -1005,6 +1031,13 @@ def register_conditioning_type(
         if type(obj) is list:
             return resident_codec.fingerprint(cast(object, obj))
         if type(obj) is ResidentConditioningCarrier:
+            if type(obj.payload) is list:
+                return stable_hash(
+                    [
+                        resident_codec.fingerprint(owner).encode("utf-8")
+                        for owner in resident_owners(obj)
+                    ]
+                )
             return resident_codec.fingerprint(obj)
         carrier = cast("ConditioningCarrier", obj)
         if carrier.has_resident_payloads:
