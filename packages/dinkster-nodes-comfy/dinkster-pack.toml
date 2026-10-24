@@ -162,6 +162,8 @@ namespaces = [
     "ImageBatch",
     "EmptyImage",
     "ImagePadForOutpaint",
+    "ImageSDRToHDR",
+    "ImageColorSpace",
     "ImageBlend",
     "ImageBlur",
     "ImageQuantize",

@@ -14,6 +14,7 @@ from .controlnet import CONTROLNET_NODES
 from .dataset_collections import DATASET_COLLECTION_NODES
 from .dataset_text import DATASET_TEXT_NODES
 from .freeu import FREEU_NODES
+from .image_color_conversion import IMAGE_COLOR_CONVERSION_NODES
 from .image_core import IMAGE_CORE_NODES
 from .image_filters import IMAGE_FILTER_NODES
 from .image_transform import IMAGE_TRANSFORM_NODES
@@ -79,6 +80,7 @@ COMFY_NODES = (
     *MASK_NODES,
     *COMPOSITING_NODES,
     *IMAGE_CORE_NODES,
+    *IMAGE_COLOR_CONVERSION_NODES,
     *IMAGE_FILTER_NODES,
     *IMAGE_TRANSFORM_NODES,
     *MORPHOLOGY_NODES,
