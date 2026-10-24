@@ -164,16 +164,22 @@ def test_float_widget_preserves_large_float_bounds_on_the_wire() -> None:
     "field,value",
     [("min", -(2**53)), ("min", 2**53), ("max", -(2**53)), ("max", 2**53), ("step", 2**53)],
 )
-def test_float_widget_rejects_unsafe_integer_constraints(field: str, value: int) -> None:
+@pytest.mark.parametrize("list_socket", [False, True])
+def test_float_widget_rejects_unsafe_integer_constraints(
+    field: str, value: int, list_socket: bool
+) -> None:
+    socket = TypeExpr.concrete("FLOAT")
+    if list_socket:
+        socket = TypeExpr.list_of(socket)
     with pytest.raises(ValueError, match="FLOAT input"):
         InputSpec(
             "value",
-            TypeExpr.concrete("FLOAT"),
+            socket,
             widget=NumberWidget(**{field: value}),  # type: ignore[arg-type]
         )
     InputSpec(
         "value",
-        TypeExpr.concrete("FLOAT"),
+        socket,
         widget=NumberWidget(**{field: value - (1 if value > 0 else -1)}),  # type: ignore[arg-type]
     )
 

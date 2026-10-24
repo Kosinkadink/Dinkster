@@ -40,6 +40,13 @@ from dinkster_values import (
 from dinkster_values import (
     runtime_type_atom as _runtime_type_atom,
 )
+from dinkster_values.builtin_types import (
+    CORE_BOOLEAN,
+    CORE_COMBO,
+    CORE_FLOAT,
+    CORE_INT,
+    CORE_STRING,
+)
 from dinkster_values.streams import parse_stream_type_id, stream_type_id
 
 from .names import validate_name
@@ -969,15 +976,18 @@ Widget = WidgetDescriptor | WidgetRepresentations
 def _validate_widget_binding(input_id: str, input_type: TypeExpr, widget: WidgetDescriptor) -> None:
     """Bind one descriptor to the canonical socket/value domain."""
 
+    primitive_type = (
+        cast("TypeExpr", input_type.element) if input_type.kind == "list" else input_type
+    )
     if isinstance(widget, NumberWidget):
-        socket = input_type.types[0] if input_type.kind == "concrete" else None
-        if socket not in ("INT", "FLOAT"):
+        socket = primitive_type.types[0] if primitive_type.kind == "concrete" else None
+        if socket not in (CORE_INT, CORE_FLOAT):
             raise ValueError(
                 f"input {input_id}: number widget requires a concrete "
                 f"INT or FLOAT input, got {input_type.kind} "
                 f"{socket or ''}".rstrip()
             )
-        if socket == "INT":
+        if socket == CORE_INT:
             for name in ("min", "max", "step"):
                 bound = getattr(widget, name)
                 if bound is not None and bound != int(bound):
@@ -990,7 +1000,7 @@ def _validate_widget_binding(input_id: str, input_type: TypeExpr, widget: Widget
                         f"input {input_id}: number widget {name} must be exactly representable "
                         f"on a INT input, got {bound}"
                     )
-        if socket == "FLOAT":
+        if socket == CORE_FLOAT:
             for name in ("min", "max", "step"):
                 bound = getattr(widget, name)
                 if isinstance(bound, int) and abs(bound) > _JSON_SAFE_INT:
@@ -998,11 +1008,11 @@ def _validate_widget_binding(input_id: str, input_type: TypeExpr, widget: Widget
                         f"input {input_id}: number widget {name} must use a float "
                         f"outside the safe integer range on a FLOAT input, got {bound}"
                     )
-        if widget.round is not None and socket != "FLOAT":
+        if widget.round is not None and socket != CORE_FLOAT:
             raise ValueError(
                 f"input {input_id}: number widget round requires a concrete FLOAT input"
             )
-    if isinstance(widget, StringWidget) and input_type != TypeExpr.concrete("STRING"):
+    if isinstance(widget, StringWidget) and primitive_type != TypeExpr.concrete(CORE_STRING):
         raise ValueError(f"input {input_id}: string widget requires a concrete STRING input")
     if isinstance(widget, ColorWidget) and input_type != TypeExpr.concrete("STRING"):
         raise ValueError(f"input {input_id}: color widget requires a concrete STRING input")
@@ -1014,9 +1024,9 @@ def _validate_widget_binding(input_id: str, input_type: TypeExpr, widget: Widget
         raise ValueError(
             f"input {input_id}: compositor widget requires a concrete dinkster.compositor input"
         )
-    if isinstance(widget, BooleanWidget) and input_type != TypeExpr.concrete("BOOLEAN"):
+    if isinstance(widget, BooleanWidget) and primitive_type != TypeExpr.concrete(CORE_BOOLEAN):
         raise ValueError(f"input {input_id}: boolean widget requires a concrete BOOLEAN input")
-    if isinstance(widget, ComboWidget) and input_type != TypeExpr.concrete("COMBO"):
+    if isinstance(widget, ComboWidget) and primitive_type != TypeExpr.concrete(CORE_COMBO):
         raise ValueError(f"input {input_id}: combo widget requires a concrete COMBO input")
     if isinstance(widget, MultiComboWidget) and input_type != TypeExpr.list_of(
         TypeExpr.concrete("COMBO")

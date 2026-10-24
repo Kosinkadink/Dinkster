@@ -15,6 +15,10 @@
   visibility groups for top-level widgets;
   after-generate modes fixed/increment/decrement/randomize;
   exact integer bounds from signed 64-bit minimum through unsigned 64-bit maximum
+- Backend schemas accept number, string, boolean, and combo widgets on one-level
+  lists of their matching primitive type, retaining numeric constraints and wire
+  defaults unchanged. This schema support does not provide frontend list-value
+  submission or scalar-to-list execution coercion.
 - Node schemas can declare presentation-only editor roles and JSON-safe custom
   widget descriptors. Clients use these declarations without matching node IDs;
   native video trim and crop declare their exact `VIDEO_EDIT` features.
