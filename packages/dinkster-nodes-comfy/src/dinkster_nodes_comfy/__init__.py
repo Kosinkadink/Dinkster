@@ -26,6 +26,7 @@ from .primitive import (
 )
 from .text import TEXT_NODES
 from .utilities import ComfyNumberConvert, SeedNode
+from .vae import VAE_NODES
 
 COMFY_NODES = (
     *TEXT_NODES,
@@ -44,6 +45,7 @@ COMFY_NODES = (
     *LATENT_ADVANCED_NODES,
     *LATENT_OPERATION_NODES,
     *CLIP_NODES,
+    *VAE_NODES,
     *CONDITIONING_NODES,
     *MASK_NODES,
     *COMPOSITING_NODES,
