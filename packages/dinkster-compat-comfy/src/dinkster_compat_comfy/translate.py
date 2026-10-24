@@ -2557,9 +2557,8 @@ class CompatTranslation:
                 register_resident_type(registry, type_id, table=table, meta=resident_meta)
             elif v1_name in (IMAGE_V1_NAME, MASK_V1_NAME):
                 # Images and masks cross as npy bytes, not pickle, so the
-                # torchless engine can decode and render them, and the two
-                # spellings of each (comfy.IMAGE/dinkster.image, comfy.MASK/
-                # dinkster.mask) stay one value type (image.py has the story).
+                # torchless engine can decode and render their exact type
+                # atoms without compatibility bridges.
                 register_image_type(registry, type_id)
             elif v1_name == AUDIO_V1_NAME:
                 register_audio_type(registry, type_id)
