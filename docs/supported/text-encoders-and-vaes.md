@@ -1,5 +1,9 @@
 ## Text encoders and VAEs
 
+- Native PixArt Alpha, Lumina 2, and HiDream prompt nodes preserve resolution,
+  system prompts, and per-encoder text when supplied a matching CLIP model.
+  Controlnet text conditioning keeps existing embeddings and metadata; T5
+  tokenizer options clone the source CLIP.
 - Native VAEEncode, VAEDecode and their tiled variants preserve the core
   interfaces, including image/video batches and spatial/temporal tile settings.
 - SD1.5 CLIP-L and image VAE components execute through the pinned

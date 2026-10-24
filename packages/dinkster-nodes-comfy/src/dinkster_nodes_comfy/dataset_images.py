@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from dinkster_api.v1 import (
     CORE_FLOAT,
     CORE_INT,
     IMAGE_TYPE,
+    Deprecation,
     InputSpec,
     Node,
     NodeSchema,
@@ -38,7 +39,7 @@ def _integer(
         _INT,
         default=default,
         doc=doc,
-        widget=NumberWidget(min=minimum, max=maximum, step=1),
+        widget=NumberWidget(min=minimum, max=maximum),
     )
 
 
@@ -53,15 +54,29 @@ def _float(name: str, default: float, minimum: float, maximum: float, *, doc: st
 
 
 def _schema(
-    node_type: str, display_name: str, category: str, inputs: tuple[InputSpec, ...]
+    node_type: str,
+    display_name: str,
+    category: str,
+    inputs: tuple[InputSpec, ...],
+    *,
+    deprecated: bool = False,
 ) -> NodeSchema:
     return NodeSchema(
         node_type=node_type,
         display_name=display_name,
         category=category,
+        deprecation=Deprecation("Deprecated in ComfyUI.") if deprecated else None,
+        search_visibility="deprecated" if deprecated else "normal",
         inputs=(InputSpec("images", _IMAGE, doc="Image to process."), *inputs),
-        outputs=(OutputSpec("images", _IMAGE),),
+        outputs=(OutputSpec("images", _IMAGE, doc="Processed images"),),
     )
+
+
+def _parameter(value: Any) -> Any:
+    if isinstance(value, list):
+        items = cast(list[Any], value)
+        return items[0] if len(items) == 1 else items
+    return value
 
 
 def _pil_from_tensor(image: Any) -> Any:
@@ -81,6 +96,8 @@ def _tensor_from_pil(image: Any) -> Any:
 def _spatial_transform(images: Any, transform: Any) -> Any:
     torch = importlib.import_module("torch")
     images = materialize_image(images)
+    if images.shape[0] <= 1:
+        return transform(images)
     return torch.cat(
         [transform(images[index : index + 1]) for index in range(images.shape[0])], dim=0
     )
@@ -94,11 +111,13 @@ class ResizeImagesByShorterEdge(Node):
             "Resize Images by Shorter Edge (DEPRECATED)",
             "image/transform",
             (_integer("shorter_edge", 512, doc="Target dimension for the shorter edge."),),
+            deprecated=True,
         )
 
     @classmethod
     def execute(cls, *, images: Any, shorter_edge: int) -> Mapping[str, object]:
         image_module = importlib.import_module("PIL.Image")
+        shorter_edge = _parameter(shorter_edge)
 
         def resize(image: Any) -> Any:
             pil = _pil_from_tensor(image)
@@ -120,11 +139,13 @@ class ResizeImagesByLongerEdge(Node):
             "Resize Images by Longer Edge (DEPRECATED)",
             "image/transform",
             (_integer("longer_edge", 1024, doc="Target dimension for the longer edge."),),
+            deprecated=True,
         )
 
     @classmethod
     def execute(cls, *, images: Any, longer_edge: int) -> Mapping[str, object]:
         image_module = importlib.import_module("PIL.Image")
+        longer_edge = _parameter(longer_edge)
 
         def resize(image: Any) -> Any:
             pil = _pil_from_tensor(image)
@@ -153,6 +174,8 @@ class CenterCropImages(Node):
 
     @classmethod
     def execute(cls, *, images: Any, width: int, height: int) -> Mapping[str, object]:
+        width, height = _parameter(width), _parameter(height)
+
         def crop(image: Any) -> Any:
             pil = _pil_from_tensor(image)
             left = max(0, (pil.width - width) // 2)
@@ -181,6 +204,7 @@ class RandomCropImages(Node):
     @classmethod
     def execute(cls, *, images: Any, width: int, height: int, seed: int) -> Mapping[str, object]:
         numpy = importlib.import_module("numpy")
+        width, height, seed = _parameter(width), _parameter(height), _parameter(seed)
 
         def crop(image: Any) -> Any:
             numpy.random.seed(seed % (2**32 - 1))
@@ -211,6 +235,7 @@ class NormalizeImages(Node):
     @classmethod
     def execute(cls, *, images: Any, mean: float, std: float) -> Mapping[str, object]:
         images = materialize_image(images)
+        mean, std = _parameter(mean), _parameter(std)
         result = (images - mean) / std
         if images.shape[-1] == 4:
             result[..., 3] = images[..., 3]
@@ -238,6 +263,7 @@ class AdjustBrightness(Node):
     @classmethod
     def execute(cls, *, images: Any, factor: float) -> Mapping[str, object]:
         images = materialize_image(images)
+        factor = _parameter(factor)
         result = (images * factor).clamp(0.0, 1.0)
         if images.shape[-1] == 4:
             result[..., 3] = images[..., 3]
@@ -268,6 +294,7 @@ class AdjustContrast(Node):
     @classmethod
     def execute(cls, *, images: Any, factor: float) -> Mapping[str, object]:
         images = materialize_image(images)
+        factor = _parameter(factor)
         result = ((images - 0.5) * factor + 0.5).clamp(0.0, 1.0)
         if images.shape[-1] == 4:
             result[..., 3] = images[..., 3]

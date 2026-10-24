@@ -1,5 +1,7 @@
 """Dataset image transform schemas preserve the ComfyUI workflow contract."""
 
+from typing import Any, cast
+
 from dinkster_api.v1 import schema_to_wire
 from dinkster_nodes_comfy.dataset_images import DATASET_IMAGE_NODES
 
@@ -43,11 +45,11 @@ def test_dataset_image_nodes_have_exact_core_schemas() -> None:
         assert tuple(output_spec.type.types for output_spec in schema.outputs) == (("IMAGE",),)
 
     random_crop = schema_to_wire(DATASET_IMAGE_NODES[3].schema())
-    seed = next(item for item in random_crop["interface"] if item["id"] == "seed")
+    interface = cast(list[dict[str, Any]], random_crop["interface"])
+    seed = next(item for item in interface if item["id"] == "seed")
     assert seed["default"] == 0
     assert seed["widget"] == {
         "type": "NUMBER",
         "min": 0,
         "max": str(0xFFFFFFFFFFFFFFFF),
-        "step": 1,
     }
