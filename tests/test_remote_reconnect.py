@@ -22,6 +22,7 @@ from dinkster_caches import BudgetedDiskCAS
 from dinkster_graph import Graph, GraphNode, Link, graph_to_wire
 from dinkster_server import STATE_KEY, create_app
 from dinkster_workers import TransportError
+from dinkster_workers.run_control import dispatch_run_control
 from dinkster_workers.session import WorkerDied
 from test_isolated import write_iso_manifest
 from test_remote import start_service, stop_service
@@ -191,6 +192,86 @@ def test_inflight_invocation_resumes_after_same_daemon_network_cut(tmp_path: Pat
             result = await asyncio.wait_for(run, 10.0)
             assert result.outputs["slow"]["value"].resolve() == "survived"
         finally:
+            await composer.close()
+            await stop_service(proc)
+
+    asyncio.run(scenario())
+
+
+def test_run_control_wait_and_reply_survive_same_daemon_reconnect(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    async def scenario() -> None:
+        manifest = tmp_path / "dinkster-pack.toml"
+        manifest.write_text(
+            '[pack]\nname = "control"\nnamespaces = ["control"]\n'
+            '[pack.entry]\nnodes = "test_run_control_boundary:PACK_NODES"\n'
+            'reservations = "test_run_control_boundary:reserve"\n',
+            encoding="ascii",
+        )
+        proc, host, port = await start_service(
+            manifest,
+            tmp_path,
+            pythonpath=(Path(__file__).parent,),
+        )
+        composer = ServingComposer()
+        entered = asyncio.Event()
+        continue_dispatch = asyncio.Event()
+        import dinkster_workers.session as session_module
+
+        async def pause_first_control(*args: Any, **kwargs: Any) -> None:
+            entered.set()
+            await continue_dispatch.wait()
+            await dispatch_run_control(*args, **kwargs)
+
+        monkeypatch.setattr(session_module, "dispatch_run_control", pause_first_control)
+        try:
+            spec = remote_spec(host, port, tmp_path, name="control")
+            await composer.add_remote(spec)
+            engine = composer.composition.make_engine(lambda event: None)
+            run = asyncio.create_task(
+                engine.run(
+                    Graph(
+                        {
+                            "waiter": GraphNode("control.wait"),
+                            "publisher": GraphNode("control.publish", {"value": 23}),
+                        }
+                    ),
+                    ["waiter", "publisher"],
+                    run_id="control-reconnect",
+                )
+            )
+            await asyncio.wait_for(entered.wait(), 10)
+            session = composer._remotes["control"].worker._session
+            assert session._writer is not None
+            session._writer.transport.abort()
+            await wait_for_connected(composer, "control", False)
+            outcome = await composer.reattach_remote(spec)
+            assert outcome.same_instance is True
+            send = session.send
+            reply_cut = asyncio.Event()
+
+            async def cut_control_reply(
+                header: dict[str, object],
+                blobs: Sequence[bytes],
+                segments: Sequence[SharedMemory] = (),
+            ) -> None:
+                if header.get("type") == "runControlResult" and not reply_cut.is_set():
+                    assert session._writer is not None
+                    session._writer.transport.abort()
+                    reply_cut.set()
+                await send(header, blobs, segments)
+
+            session.send = cut_control_reply  # type: ignore[method-assign]
+            continue_dispatch.set()
+            await asyncio.wait_for(reply_cut.wait(), 10)
+            await wait_for_connected(composer, "control", False)
+            outcome = await composer.reattach_remote(spec)
+            assert outcome.same_instance is True
+            result = await asyncio.wait_for(run, 10)
+            assert result.outputs["waiter"]["value"].resolve() == 23
+        finally:
+            continue_dispatch.set()
             await composer.close()
             await stop_service(proc)
 

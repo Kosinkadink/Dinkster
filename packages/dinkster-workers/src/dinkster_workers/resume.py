@@ -7,7 +7,7 @@ import contextlib
 import json
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, cast
 
 from dinkster_values import RESUMABLE_EVENT_RETENTION_BYTES, RESUMABLE_RESULT_RETENTION_BYTES
@@ -67,6 +67,9 @@ class _Record:
     state: str = "running"
     event_seq: int = 0
     latest_event: tuple[dict[str, object], list[bytes]] | None = None
+    controls: dict[str, tuple[dict[str, object], list[bytes]]] = field(
+        default_factory=lambda: cast("dict[str, tuple[dict[str, object], list[bytes]]]", {})
+    )
     reserve: tuple[dict[str, object], list[bytes]] | None = None
     result: tuple[dict[str, object], list[bytes]] | None = None
     release: tuple[dict[str, object], list[bytes]] | None = None
@@ -195,6 +198,8 @@ class ResumableConversation:
                     return
                 if frame[0].get("type") == "invoke":
                     self.register(frame[0])
+                elif frame[0].get("type") == "runControlResult":
+                    self.run_control_result_received(frame[0])
                 await self._incoming.put((epoch, frame))
         except BoundaryError:
             return
@@ -293,6 +298,10 @@ class ResumableConversation:
             record.release = (body, payloads)
         elif record is not None and kind == "runControl":
             body = self._with_key(body, record.key)
+            request_id = body.get("requestId")
+            if type(request_id) is not str or not request_id:
+                raise BoundaryError("run control request identity is malformed")
+            record.controls[request_id] = (body, payloads)
         elif record is not None and kind == "result":
             body = self._with_key(body, record.key)
             retained = _retained_frame_bytes(body, payloads)
@@ -322,6 +331,12 @@ class ResumableConversation:
         record = self._record_for_frame({"requestId": invocation_id})
         if record is not None:
             record.reserve = None
+
+    def run_control_result_received(self, header: Mapping[str, object]) -> None:
+        record = self._record_for_frame(header)
+        request_id = header.get("requestId")
+        if record is not None and type(request_id) is str:
+            record.controls.pop(request_id, None)
 
     def acknowledge_result(self, header: Mapping[str, object]) -> None:
         key = InvocationKey.from_header(header)
@@ -434,6 +449,8 @@ class ResumableConversation:
                         continue
                     if record.reserve is not None:
                         await write_frame(writer, record.reserve[0], record.reserve[1])
+                    for control in record.controls.values():
+                        await write_frame(writer, control[0], control[1])
                     if record.latest_event is not None and record.event_seq > (
                         last_event_sequences.get(key, 0)
                     ):

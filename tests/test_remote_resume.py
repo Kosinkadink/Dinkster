@@ -261,3 +261,41 @@ def test_replayed_memory_reserve_resends_the_retained_decision(
         assert sent == [{"type": "memoryGrant", "requestId": "invoke-1"}]
 
     asyncio.run(scenario())
+
+
+def test_run_control_requests_are_retained_until_their_reply_arrives() -> None:
+    async def scenario() -> None:
+        conversation = ResumableConversation("engine-1", "engine", "worker-1")
+        key = conversation.register(_key().to_wire())
+        await conversation.send(
+            {
+                "type": "runControl",
+                "invocationId": key.invocation_id,
+                "requestId": f"{key.invocation_id}:control:0",
+                "operation": "awaitRunValue",
+                "nodeId": "publisher",
+            }
+        )
+        record = conversation._records[key]
+        assert record.controls == {
+            f"{key.invocation_id}:control:0": (
+                {
+                    "type": "runControl",
+                    **key.to_wire(),
+                    "requestId": f"{key.invocation_id}:control:0",
+                    "operation": "awaitRunValue",
+                    "nodeId": "publisher",
+                },
+                [],
+            )
+        }
+        conversation.run_control_result_received(
+            {
+                "type": "runControlResult",
+                "invocationId": key.invocation_id,
+                "requestId": f"{key.invocation_id}:control:0",
+            }
+        )
+        assert record.controls == {}
+
+    asyncio.run(scenario())

@@ -489,6 +489,7 @@ class BoundarySession:
         self._run_controls: dict[str, Invocation] = {}
         self._run_control_requests: set[tuple[str, str]] = set()
         self._run_control_tasks: dict[tuple[str, str], asyncio.Task[None]] = {}
+        self._run_control_replies: dict[tuple[str, str], tuple[dict[str, object], list[bytes]]] = {}
         # Memory leases (DESIGN 3.10): the peer names what it is about to
         # materialize; this side holds the governor-backed reservation until
         # the peer releases it. None means grant-without-accounting - the
@@ -1515,6 +1516,11 @@ class BoundarySession:
             self._run_control_requests = {
                 item for item in self._run_control_requests if item[0] != invocation.invocation_id
             }
+            self._run_control_replies = {
+                item: reply
+                for item, reply in self._run_control_replies.items()
+                if item[0] != invocation.invocation_id
+            }
         round_trip_ms = (time.perf_counter() - started) * 1000.0
         execute_ms = float(reply_header.get("executeMs", 0.0))
         error_wire = reply_header.get("error")
@@ -1821,6 +1827,7 @@ class BoundarySession:
             await asyncio.gather(*control_tasks, return_exceptions=True)
         self._run_control_tasks.clear()
         self._run_control_requests.clear()
+        self._run_control_replies.clear()
         self._invocation_keys.clear()
         self._last_event_sequences.clear()
         self._cancelled_invocations.clear()
@@ -1889,9 +1896,12 @@ class BoundarySession:
     ) -> None:
         body = dict(header)
         kind = body.get("type")
-        resumable_control = kind in ("memoryGrant", "memoryDeny")
+        resumable_control = kind in ("memoryGrant", "memoryDeny", "runControlResult")
         if resumable_control:
-            key = self._invocation_keys.get(str(body.get("requestId")))
+            invocation_id = (
+                body.get("invocationId") if kind == "runControlResult" else body.get("requestId")
+            )
+            key = self._invocation_keys.get(str(invocation_id))
             if key is not None:
                 body.update(key.to_wire())
         if resumable_control and (self._writer is None or self._rebinding):
@@ -2111,8 +2121,13 @@ class BoundarySession:
                             await self.send({"type": "shmAck", "segments": consumed}, [])
                         continue
                     control_key = (invocation_id, request_id)
-                    if context is None or control_key in self._run_control_requests:
+                    if context is None:
                         raise BoundaryError("run control request names no active invocation")
+                    if control_key in self._run_control_requests:
+                        cached_reply = self._run_control_replies.get(control_key)
+                        if cached_reply is not None:
+                            await self.send(cached_reply[0], cached_reply[1])
+                        continue
                     self._run_control_requests.add(control_key)
                     asset_owner = object()
                     if self._blob_store is not None:
@@ -2129,6 +2144,22 @@ class BoundarySession:
                         async def publish(node_id: str, values: Mapping[str, Value]) -> None:
                             await self._publish_control_value(request_invocation, node_id, values)
 
+                        async def send_control_reply(
+                            response: dict[str, object],
+                            reply_blobs: Sequence[bytes],
+                            reply_segments: Sequence[SharedMemory],
+                        ) -> None:
+                            if self._resumable and response.get("type") == "runControlResult":
+                                if reply_segments:
+                                    raise BoundaryError(
+                                        "resumable run control replies cannot use shared memory"
+                                    )
+                                self._run_control_replies[request_key] = (
+                                    response,
+                                    list(reply_blobs),
+                                )
+                            await self.send(response, reply_blobs, reply_segments)
+
                         try:
                             assert request_invocation.run_control is not None
                             await dispatch_run_control(
@@ -2136,7 +2167,7 @@ class BoundarySession:
                                 self._codec,
                                 request_header,
                                 request_blobs,
-                                self.send,
+                                send_control_reply,
                                 publish,
                                 self._prepare_control_values,
                             )

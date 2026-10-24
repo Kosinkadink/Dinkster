@@ -61,6 +61,7 @@ class BoundaryRunContext:
         self._prepare_values = prepare_values
         self._wait_lock = asyncio.Lock()
         self._pending: dict[str, asyncio.Future[tuple[dict[str, Any], list[bytes]]]] = {}
+        self._completed: set[str] = set()
         self._index = 0
         self._closed = False
 
@@ -78,15 +79,19 @@ class BoundaryRunContext:
             if not future.done():
                 future.cancel()
         self._pending.clear()
+        self._completed.clear()
 
     def accept(self, header: dict[str, Any], blobs: list[bytes]) -> bool:
         request_id = header.get("requestId")
         if type(request_id) is not str or header.get("invocationId") != self._invocation_id:
             return False
         future = self._pending.pop(request_id, None)
-        if future is None or future.done():
+        if future is None:
+            return request_id in self._completed
+        if future.done():
             return False
         future.set_result((header, blobs))
+        self._completed.add(request_id)
         return True
 
     async def _request(
