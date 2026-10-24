@@ -140,7 +140,7 @@ def _recorder(
                     values["index"],
                     values["is_first"],
                     values["is_last"],
-                    values["item"],
+                    values.get("item"),
                 ]
                 result = values["index"]
             else:
@@ -199,7 +199,7 @@ LoopState = _recorder(
         InputSpec("index", INT),
         InputSpec("is_first", BOOLEAN),
         InputSpec("is_last", BOOLEAN),
-        InputSpec("item", VALUE),
+        InputSpec("item", VALUE, required=False, on_absent="omit"),
     ),
     INT,
 )

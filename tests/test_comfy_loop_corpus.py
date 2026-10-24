@@ -28,7 +28,7 @@ def test_recorded_prompts_compile_to_native_loop_nodes() -> None:
 
 def test_native_loop_compiler_runs_carried_value_fixtures() -> None:
     async def scenario() -> None:
-        for name in ("carry-only", "heterogeneous-carry", "list-backed-carry"):
+        for name in ("carry-only", "heterogeneous-carry", "list-backed-carry", "for-state"):
             workflow = json.loads((CORPUS / f"workflows/{name}.json").read_text(encoding="utf-8"))
             issue408 = workflow["extra"]["issue408"]
             Observations.reset()
