@@ -31,15 +31,17 @@ class Expansion:
 
     Values are ordinary node outputs or references from ``node.out()``.
     The worker owns wrapping present values and validating declarations.
+    Cache policy inherits the enclosing expansion unless explicitly set;
+    reuse allows a nested cached loop inside a rerunning outer loop.
     """
 
     nodes: tuple[ExpansionNodeDeclaration, ...]
     outputs: Mapping[str, object]
-    cache_policy: Literal["reuse", "rerun"] = "reuse"
+    cache_policy: Literal["inherit", "reuse", "rerun"] = "inherit"
 
     def __post_init__(self) -> None:
-        if self.cache_policy not in ("reuse", "rerun"):
-            raise ValueError("expansion cache_policy must be reuse or rerun")
+        if self.cache_policy not in ("inherit", "reuse", "rerun"):
+            raise ValueError("expansion cache_policy must be inherit, reuse or rerun")
         object.__setattr__(self, "outputs", MappingProxyType(dict(self.outputs)))
 
 
@@ -73,10 +75,10 @@ class ExpansionNode:
 class ExpansionBuilder:
     """Build a run-local graph without assigning process-global prefixes."""
 
-    def __init__(self, *, cache_policy: Literal["reuse", "rerun"] = "reuse") -> None:
+    def __init__(self, *, cache_policy: Literal["inherit", "reuse", "rerun"] = "inherit") -> None:
         self.nodes: dict[str, ExpansionNode] = {}
         self._next_id = 1
-        self.cache_policy: Literal["reuse", "rerun"] = cache_policy
+        self.cache_policy: Literal["inherit", "reuse", "rerun"] = cache_policy
 
     def node(self, node_type: str, local_id: str | None = None, **inputs: object) -> ExpansionNode:
         if local_id is None:

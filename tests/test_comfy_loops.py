@@ -119,7 +119,8 @@ def test_loop_modes(mode: str) -> None:
     )
 
 
-def test_nested_loop_keeps_each_occurrences_results() -> None:
+@pytest.mark.parametrize("inner_cache", [False, True])
+def test_nested_loop_keeps_each_occurrences_results(inner_cache: bool) -> None:
     graph = Graph(
         {
             "outer": GraphNode(
@@ -127,7 +128,11 @@ def test_nested_loop_keeps_each_occurrences_results() -> None:
             ),
             "inner": GraphNode(
                 "StartLoop",
-                {"mode.num_iterations": 3, "parent_iteration": Link("outer", "iteration_index")},
+                {
+                    "mode.num_iterations": 3,
+                    "parent_iteration": Link("outer", "iteration_index"),
+                    "cache_iterations": inner_cache,
+                },
                 slot_variants={"mode": "simple"},
             ),
             "body": GraphNode(
@@ -146,8 +151,16 @@ def test_nested_loop_keeps_each_occurrences_results() -> None:
             ),
         }
     )
-    result = asyncio.run(asyncio.wait_for(make_engine().run(graph, ["outer_end"]), 10))
-    assert result.outputs["outer_end"]["outputs"].resolve() == [[0, 1, 2], [10, 11, 12]]
+
+    async def scenario() -> None:
+        engine = make_engine()
+        for run in range(2):
+            result = await asyncio.wait_for(engine.run(graph, ["outer_end"]), 10)
+            assert result.outputs["outer_end"]["outputs"].resolve() == [[0, 1, 2], [10, 11, 12]]
+            executed_body = [node for node in result.executed if node.endswith("_body")]
+            assert len(executed_body) == (0 if run and inner_cache else 6)
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("worker_kind", ["isolated", "governed"])

@@ -66,7 +66,8 @@
 - Runtime expansion preserves child dynamic choices and ordered output
   membership across local, isolated and remote workers and cache replay.
   Expansions may request child reruns without cache hits or coalescing;
-  the policy includes nested expansions and survives persistent cache replay.
+  nested expansions inherit that policy unless they explicitly request reuse
+  or rerun. The policy survives persistent cache replay.
 - Native loop list selection and result collection preserve child value
   metadata, including resource ownership and producer execution arms.
 - Memory governance: budgets, headroom, reservations with renewal,

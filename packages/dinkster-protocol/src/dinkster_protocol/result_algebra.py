@@ -231,11 +231,11 @@ def _local_refs(value: object) -> Sequence[str]:
 @dataclass(frozen=True)
 class LocalExpansion:
     nodes: tuple[LocalNode, ...]
-    cache_policy: Literal["reuse", "rerun"] = "reuse"
+    cache_policy: Literal["inherit", "reuse", "rerun"] = "inherit"
 
     def __post_init__(self) -> None:
-        if self.cache_policy not in ("reuse", "rerun"):
-            raise ValueError("expansion cache_policy must be reuse or rerun")
+        if self.cache_policy not in ("inherit", "reuse", "rerun"):
+            raise ValueError("expansion cache_policy must be inherit, reuse or rerun")
         if (
             type(self.nodes) is not tuple
             or not self.nodes

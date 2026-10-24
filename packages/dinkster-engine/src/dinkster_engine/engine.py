@@ -2134,7 +2134,8 @@ class Engine:
             expansion_calls[parent_id] = call + 1
             produced[parent_id] = entry.outputs
             children = set(ids.values())
-            if parent_id in rerun_nodes or expansion.expansion.cache_policy == "rerun":
+            policy = expansion.expansion.cache_policy
+            if policy == "rerun" or (policy == "inherit" and parent_id in rerun_nodes):
                 rerun_nodes.update(children)
             for node in expansion.expansion.nodes:
                 current_dependencies[ids[node.local_id]] = (
