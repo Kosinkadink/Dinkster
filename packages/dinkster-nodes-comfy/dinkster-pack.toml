@@ -217,6 +217,8 @@ namespaces = [
     "EmptyLTXVLatentVideo",
     "EmptyCosmosLatentVideo",
     "EmptyARVideoLatent",
+    "TrimVideoLatent",
+    "LTXVFreezeLatent",
     "ResizeImageMaskNode",
     "BatchImagesNode",
     "BatchMasksNode",

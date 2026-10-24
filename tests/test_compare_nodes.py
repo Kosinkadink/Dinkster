@@ -65,7 +65,7 @@ def test_comparison_cli(tmp_path: Path) -> None:
                 "id": "mount",
                 "required": False,
                 "type": {"kind": "concrete", "types": ["STRING"]},
-                "default": "output",
+                "default": None,
             },
             {"role": "output", "id": "image", "type": {"kind": "concrete", "types": ["IMAGE"]}},
             {"role": "output", "id": "mask", "type": {"kind": "concrete", "types": ["MASK"]}},
@@ -102,6 +102,13 @@ def test_comparison_cli(tmp_path: Path) -> None:
     assert summary["counts"] == {"identical": 1, "excluded": 1}
     assert [row["status"] for row in rows] == ["identical", "excluded"]
 
+    native["interface"][2]["widget"] = {"type": "STRING", "multiline": False}
+    assert run(native)[0] == 0
+    native["interface"][0]["widget"] = {"type": "STRING", "multiline": False}
+    code, _, rows = run(native)
+    assert code == 1 and "inputs[0].multiline" in rows[0]["differences"]
+    del native["interface"][0]["widget"]
+
     native["interface"][1]["widget"]["options"].reverse()
     code, summary, rows = run(native)
     assert code == 1 and summary["counts"]["differs"] == 1
@@ -137,7 +144,15 @@ def test_comparison_cli(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "field,value",
-    [("required", True), ("default", None), ("type", {"kind": "concrete", "types": ["INT"]})],
+    [
+        ("required", True),
+        ("default", "output"),
+        ("default", "another-grant"),
+        ("type", {"kind": "concrete", "types": ["INT"]}),
+        ("widget", {"type": "STRING", "multiline": True}),
+        ("widget", {"type": "STRING", "multiline": 0}),
+        ("widget", {"type": "STRING", "min": 0}),
+    ],
 )
 def test_save_mount_is_not_an_arbitrary_extra_input(field: str, value: object) -> None:
     from tools.compare_nodes import compare_registry
@@ -146,7 +161,7 @@ def test_save_mount_is_not_an_arbitrary_extra_input(field: str, value: object) -
         "role": "input",
         "id": "mount",
         "required": False,
-        "default": "output",
+        "default": None,
         "type": {"kind": "concrete", "types": ["STRING"]},
     }
     mount[field] = value
