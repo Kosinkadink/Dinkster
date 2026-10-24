@@ -64,6 +64,7 @@ class StartLoop(Node):
                 InputSpec("parent_iteration", INT, required=False, force_input=True),
                 InputSpec("initial_iteration_value", CARRY, required=False),
             ),
+            input_order=("mode", "cache_iterations", "parent_iteration", "initial_iteration_value"),
             combos=(
                 DynamicComboSpec(
                     "mode",
@@ -282,9 +283,9 @@ class LoopIteration(Node):
                 InputSpec("iteration_index", INT),
                 InputSpec("is_first", BOOL),
                 InputSpec("is_last", BOOL),
+                InputSpec("reuse_cache", BOOL),
                 InputSpec("list_item", ITEM, required=False),
                 InputSpec("current_iteration_value", CARRY, required=False),
-                InputSpec("reuse_cache", BOOL),
             ),
             input_families=(DEPENDENCIES,),
             outputs=_outputs(),
@@ -358,9 +359,9 @@ class EndLoop(Node):
             display_name="End Loop",
             category="utilities/looping",
             inputs=(
+                InputSpec("accumulate", BOOL, default=False),
                 InputSpec("output_value", OUTPUT, required=False),
                 InputSpec("next_iteration_value", CARRY, required=False),
-                InputSpec("accumulate", BOOL, default=False),
             ),
             input_families=(
                 InputFamilySpec(
