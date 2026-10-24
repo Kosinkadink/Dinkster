@@ -93,7 +93,10 @@
   concatenation, add/subtract/multiply/mean merging with peak normalization,
   decibel gain, fade in/out with linear or cosine curves, and a three-band
   shelf/peaking equalizer; mixed sample rates are matched through
-  libswresample
+  libswresample. Native ComfyUI join, concatenate, and merge nodes
+  materialize bounded AUDIO values, match the lower sample rate to the higher
+  rate, and preserve ComfyUI channel, trimming, padding, and normalization
+  behavior
 - Audio amplitude-envelope extraction to a per-video-frame float list and
   editable time-aligned CURVE (the audio-reactive replacement path):
   band-limited FFT magnitude with avg/max/sum aggregation at a chosen frame
