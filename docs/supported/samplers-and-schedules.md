@@ -9,6 +9,10 @@ pinned runtime. Layered window plans and RES4LYF samplers are unsupported.
 Align Your Steps, GITS, Optimal Steps, and Ideogram 4 scheduler nodes produce
 native SIGMAS tensors for model-specific schedule selection.
 
+Basic, CFG, dual-CFG, and dual-model CFG guiders produce native GUIDER values
+for custom sampling. CFG Override patches CFG over an inclusive sampling
+percentage range.
+
 Sigma schedules can be entered, split, flipped, adjusted, extended and derived
 from a model sampling percentage through the native ComfyUI sigma nodes.
 
