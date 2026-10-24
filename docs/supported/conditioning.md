@@ -13,6 +13,8 @@
   `dinkster_inference` runtime.
 - Typed absence remains a Dinkster engine contract: `core.absent` values,
   optional outputs, per-input absence policies, and skip propagation.
+- Native ControlNet application supports both legacy and scheduled positive/negative
+  conditioning, prior-control chaining, union type selection, and AliMama masked hints.
 - Native `InstructPixToPixConditioning` crops and encodes the input image,
   attaches image conditioning to both prompt streams, and returns a zero latent.
 - Native `ReferenceLatent` appends a guiding latent to conditioning while

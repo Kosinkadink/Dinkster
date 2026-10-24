@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from dinkster_api.v1 import (
+    CLIP_TYPE,
     CORE_FLOAT,
     MODEL_TYPE,
     InputSpec,
@@ -29,11 +30,11 @@ def _coefficient(name: str, *, subtract: bool = False) -> InputSpec:
 
 
 def _merge_schema(node_type: str, *, clip: bool = False, coefficient: str = "") -> NodeSchema:
-    atom = "CLIP" if clip else "MODEL"
+    type_id = CLIP_TYPE if clip else MODEL_TYPE
     prefix = "clip" if clip else "model"
     inputs = (
-        InputSpec(prefix + "1", TypeExpr.concrete(atom)),
-        InputSpec(prefix + "2", TypeExpr.concrete(atom)),
+        InputSpec(prefix + "1", TypeExpr.concrete(type_id)),
+        InputSpec(prefix + "2", TypeExpr.concrete(type_id)),
     )
     if coefficient:
         inputs += (_coefficient(coefficient, subtract=coefficient == "multiplier"),)
@@ -41,7 +42,7 @@ def _merge_schema(node_type: str, *, clip: bool = False, coefficient: str = "") 
         node_type=node_type,
         category="model/merging",
         inputs=inputs,
-        outputs=(OutputSpec(atom, TypeExpr.concrete(atom)),),
+        outputs=(OutputSpec("CLIP" if clip else "MODEL", TypeExpr.concrete(type_id)),),
     )
 
 

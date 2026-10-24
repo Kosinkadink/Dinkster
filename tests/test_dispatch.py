@@ -39,6 +39,7 @@ from dinkster_values import (
     RESOURCE_OWNER_META_KEY,
     RESOURCE_PRODUCER_ARM_META_KEY,
     RESOURCE_REFS_META_KEY,
+    EncodedLatentTensor,
     ResourceHandle,
     TypeRegistry,
     Value,
@@ -830,6 +831,34 @@ def test_sampling_settings_cross_domains_but_guider_remains_affine(
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("use_shm", [False, True])
+def test_sigma_tensor_crosses_domains_as_an_encoded_tensor(
+    use_shm: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_inference_wire import register_inference_types
+
+    monkeypatch.setattr(
+        "dinkster_workers.boundary._attach_segment", lambda name: SharedMemory(name=name)
+    )
+    raw = EncodedLatentTensor("float64", (2,), b"\x00" * 8 + b"\x00\x00\x00\x00\x00\x00\xf0?")
+    registry = TypeRegistry()
+    register_inference_types(registry)
+    sender = ValueCodec(registry, shm_threshold=1, use_shm=use_shm, accept_shm=use_shm)
+    receiver = ValueCodec(registry, use_shm=use_shm, accept_shm=use_shm)
+    value = registry.wrap("SIGMAS", raw)
+    blobs: list[bytes] = []
+    segments: list[SharedMemory] = []
+    try:
+        wire, sent = sender.encode(value, blobs, segments)
+        received, received_stat = receiver.decode(wire, blobs, [])
+        assert received.resolve() == raw
+        assert received.fingerprint == value.fingerprint
+        assert sent.transport == received_stat.transport == ("shm" if use_shm else "inline")
+    finally:
+        for segment in segments:
+            release_segment(segment)
+
+
 def test_inference_wire_registers_comfy_type_ids_without_legacy_aliases() -> None:
     from dinkster_inference_wire import ResidentConditioningCarrier, register_inference_types
     from dinkster_inference_wire.sampling_wire import (
@@ -848,6 +877,7 @@ def test_inference_wire_registers_comfy_type_ids_without_legacy_aliases() -> Non
         "MODEL",
         "CLIP",
         "CLIP_VISION",
+        "CONTROL_NET",
         "VAE",
         "CONDITIONING",
         "SAMPLER",

@@ -484,9 +484,7 @@ def test_asset_widget_wire_roundtrip_and_signature_exclusion() -> None:
     accept = ("image/png", "image/jpeg", "image/webp")
     schema = dataclasses.replace(
         SCHEMA,
-        inputs=(
-            InputSpec("asset", TypeExpr.concrete("dinkster.asset"), widget=AssetWidget(accept)),
-        )
+        inputs=(InputSpec("asset", TypeExpr.concrete("ASSET"), widget=AssetWidget(accept)),)
         + SCHEMA.inputs[1:],
     )
     wire = schema_to_wire(schema)
@@ -503,7 +501,7 @@ def test_asset_widget_wire_roundtrip_and_signature_exclusion() -> None:
 
 def test_save_target_widget_wire_roundtrip_and_signature_exclusion() -> None:
     """SAVE_TARGET is a closed widget kind: a
-    save-destination picker whose value is a structured dinkster.save_target
+    save-destination picker whose value is a structured SAVE_TARGET
     mapping, never a raw path string. Same rule as ASSET: presentation
     metadata rides the wire but never joins execution identity."""
     schema = dataclasses.replace(
@@ -511,7 +509,7 @@ def test_save_target_widget_wire_roundtrip_and_signature_exclusion() -> None:
         inputs=(
             InputSpec(
                 "target",
-                TypeExpr.concrete("dinkster.save_target"),
+                TypeExpr.concrete("SAVE_TARGET"),
                 widget=SaveTargetWidget(".png"),
             ),
         )
@@ -534,7 +532,7 @@ def test_save_target_widget_wire_roundtrip_and_signature_exclusion() -> None:
         inputs=(
             InputSpec(
                 "target",
-                TypeExpr.concrete("dinkster.save_target"),
+                TypeExpr.concrete("SAVE_TARGET"),
                 widget=SaveTargetWidget(),
             ),
         )
@@ -855,6 +853,10 @@ def test_number_widget_validated() -> None:
         NumberWidget(min=float("nan"))
     with pytest.raises(ValueError, match="must be finite"):
         NumberWidget(max=float("inf"))
+    for name in ("min", "max", "step"):
+        for boolean in (False, True):
+            with pytest.raises(ValueError, match="must be a number"):
+                NumberWidget(**{name: boolean})  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="control_after_generate"):
         NumberWidget(control_after_generate="rand")  # type: ignore[arg-type]
 
@@ -999,6 +1001,7 @@ def test_combo_widget_binding_is_enforced_during_wire_decode() -> None:
     (
         (CORE_INT, NumberWidget(min=0, max=2**64 - 1, step=1), 1),
         (CORE_FLOAT, NumberWidget(min=0, max=1, step=0.1, round=0.01), 0.95),
+        (CORE_FLOAT, NumberWidget(round=False), [1.23456789, -0.123456789]),
         (CORE_STRING, StringWidget(multiline=True), ""),
         (CORE_BOOLEAN, BooleanWidget(label_on="yes"), True),
         (CORE_COMBO, ComboWidget(options=("first", "second")), "first"),
@@ -1047,6 +1050,7 @@ def test_primitive_widget_lists_preserve_numeric_and_specialized_rules() -> None
         NumberWidget(step=0.25),
         NumberWidget(min=float(2**54)),
         NumberWidget(round=0.1),
+        NumberWidget(round=False),
     ):
         with pytest.raises(ValueError, match="integral|exactly representable|round requires"):
             InputSpec("value", integer, widget=widget)

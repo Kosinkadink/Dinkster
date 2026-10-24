@@ -105,9 +105,9 @@ def test_pose_codec_rejects_malformed_payloads() -> None:
         spec.coerce([])
     with pytest.raises(ValueError, match="requires exactly"):
         spec.coerce({"canvas_width": 1, "canvas_height": 1})
-    with pytest.raises(ValueError, match="invalid dinkster.pose payload"):
+    with pytest.raises(ValueError, match="invalid POSE payload"):
         spec.decode(b"not json")
-    with pytest.raises(ValueError, match="invalid dinkster.pose payload"):
+    with pytest.raises(ValueError, match="invalid POSE payload"):
         spec.decode(b"[" * 10_000 + b"]" * 10_000)
 
 

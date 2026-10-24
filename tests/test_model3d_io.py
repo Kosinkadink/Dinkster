@@ -137,8 +137,8 @@ def test_preview_validates_and_passes_the_value_through() -> None:
 
 
 def test_worker_hands_load_the_asset_and_decodes_it_for_preview(tmp_path: Path) -> None:
-    """Both worker input routes: a declared asset<dinkster.model3d> input receives
-    the AssetRef itself (no coercion), while a concrete dinkster.model3d input fed
+    """Both worker input routes: a declared asset<MODEL3D> input receives
+    the AssetRef itself (no coercion), while a concrete MODEL3D input fed
     the same asset literal decodes through the registered asset decoder."""
 
     class DirResolver:
@@ -165,7 +165,7 @@ def test_worker_hands_load_the_asset_and_decodes_it_for_preview(tmp_path: Path) 
             cache=MemoryLRUCache(),
         )
         literal = TypedLiteral(
-            "asset<dinkster.model3d>", {"digest": digest, "name": "model.glb", "size": len(data)}
+            "asset<MODEL3D>", {"digest": digest, "name": "model.glb", "size": len(data)}
         )
         graph = Graph(
             nodes={

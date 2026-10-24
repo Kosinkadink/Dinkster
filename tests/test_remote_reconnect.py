@@ -57,7 +57,8 @@ def write_variant_manifest(root: Path, dropped: str) -> Path:
     )
     manifest = root / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname = "isopack"\n\n[pack.entry]\n'
+        '[pack]\nname = "isopack"\npublisher = "dinkster"\n'
+        'type-namespaces = ["iso"]\n\n[pack.entry]\n'
         'nodes = "isopack_nodes_variant:NODES"\ntypes = "isopack_nodes_variant:register_types"\n'
     )
     return manifest
