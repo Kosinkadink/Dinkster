@@ -10,7 +10,7 @@ import socket
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import dataclass, fields, is_dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TypeGuard, cast
@@ -898,7 +898,9 @@ def build_node_classes(runtime: RemoteRuntime) -> list[type[Node]]:
 
             @classmethod
             def define_schema(cls) -> NodeSchema:
-                return cls._remote.schema
+                # The gateway owns envelope injection; the local adapter sends
+                # only public inputs and retains the original remote signature.
+                return replace(cls._remote.schema, input_values=False)
 
             @classmethod
             async def execute(cls, **inputs: object) -> Mapping[str, object]:

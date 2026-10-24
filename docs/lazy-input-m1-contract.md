@@ -390,11 +390,11 @@ remain outside this contract.
 | declared whole-list lazy input | implemented | V1 `INPUT_IS_LIST` / V3 `is_input_list` static contract |
 | lazy input in explicit region body | implemented | occurrence-local map/fold/while demand |
 | lazy input in implicit per-element list mapping | loud refusal | mapped-input conformance |
-| raw `ExecutionBlocker`, including list member | existing loud refusal | M3 isolated compat representation |
+| whole-output blocker | implemented as native `BLOCKED(message)` | [absence and report-once behavior](supported/server-api-and-execution.md); per-element blockers remain unsupported |
 | idempotent scalar lazy consumer cache | implemented | M2A demand-aware identity after final hook demand |
 | non-idempotent lazy consumer / compat `IS_CHANGED` | cache bypass | explicit `IS_CHANGED` parity contract |
-| rawLink / accept-all | existing loud refusal | M3 separate contracts; never implied by lazy |
-| dynamic graph expansion | existing loud refusal | M4 expansion contract |
+| rawLink / accept-all | unsupported | not implied by lazy inputs or native expansion |
+| dynamic graph expansion | implemented with native `ExpansionBuilder` | [worker handoff, graph admission and cache replay](../packages/dinkster-engine/README.md) |
 | native control-flow IR, prediction, speculation | no M1 surface | M5 after parity and trusted M2 evidence |
 
 M2A preserves the pre-execution state classes already decided: static, valid

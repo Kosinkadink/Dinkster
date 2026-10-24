@@ -117,6 +117,7 @@ from dinkster_protocol.pack_surfaces import (
 )
 from dinkster_schema import (
     ABSENT,
+    BLOCKED,
     LOG_EVENT,
     PREVIEW_EVENT,
     PROGRESS_EVENT,
@@ -137,6 +138,10 @@ from dinkster_schema import (
     DynamicComboOption,
     DynamicComboSpec,
     DynamicSlotSpec,
+    Expansion,
+    ExpansionBuilder,
+    ExpansionNode,
+    ExpansionOutput,
     InputFamilyMapping,
     InputFamilyMember,
     InputFamilyOptionSource,
@@ -166,6 +171,7 @@ from dinkster_schema import (
     ReplacementNode,
     ReplacementPredicate,
     ReplacementRule,
+    RunExecutionContext,
     SaveTargetWidget,
     SearchVisibility,
     SelectorSpec,
@@ -271,6 +277,7 @@ from dinkster_values import (
     TypeId,
     TypeRegistry,
     TypeSpec,
+    Value,
     annotate_image,
     annotate_mask,
     array_storage_meta,
@@ -306,6 +313,7 @@ from dinkster_values import (
     image_array_fingerprint,
     image_array_meta,
     image_input,
+    list_children,
     mask_array_meta,
     media_semantics,
     merge_image_batches,
@@ -414,6 +422,11 @@ if TYPE_CHECKING:
     from dinkster_video import timeline as timeline_render
 
 __all__ = [
+    "RunExecutionContext",
+    "Expansion",
+    "ExpansionBuilder",
+    "ExpansionNode",
+    "ExpansionOutput",
     "initialize_inference_process",
     "materialize_clip_vision_output",
     "materialize_image",
@@ -467,6 +480,7 @@ __all__ = [
     "TrainingSessionHandle",
     # -- node authoring (dinkster-schema)
     "ABSENT",
+    "BLOCKED",
     "AbsentOutput",
     "AbsentPolicy",
     "BooleanWidget",
@@ -653,6 +667,8 @@ __all__ = [
     "image_array_fingerprint",
     "image_array_meta",
     "image_input",
+    "list_children",
+    "Value",
     "annotate_image",
     "annotate_mask",
     "copy_media_semantics",

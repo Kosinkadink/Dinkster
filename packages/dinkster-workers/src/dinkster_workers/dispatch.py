@@ -28,6 +28,9 @@ from dataclasses import dataclass, replace
 from typing import cast
 
 from dinkster_protocol import (
+    AdmissionInvocation,
+    AdmissionResult,
+    AdmissionWorker,
     Invocation,
     InvocationResult,
     LazyStatusInvocation,
@@ -278,5 +281,17 @@ class DispatchWorker:
                 )
             )
         return await cast("LazyStatusWorker", worker).check_lazy_status(
+            invocation, on_event=on_event
+        )
+
+    async def validate_admission(
+        self, invocation: AdmissionInvocation, on_event: OnInvocationEvent | None = None
+    ) -> AdmissionResult:
+        worker = self._arms[self._owner_arm]
+        if not callable(getattr(worker, "validate_admission", None)):
+            return AdmissionResult(
+                "admission-protocol-skew: dispatch owner does not support admission validation"
+            )
+        return await cast("AdmissionWorker", worker).validate_admission(
             invocation, on_event=on_event
         )

@@ -1,4 +1,4 @@
-"""Immutable declarations for the dormant invocation result algebra."""
+"""Immutable declarations for invocation results and runtime graph expansions."""
 # pyright: reportUnknownArgumentType=false, reportUnknownVariableType=false
 # pyright: reportUnnecessaryIsInstance=false
 
@@ -14,8 +14,6 @@ from dinkster_values import MEBIBYTE, Value
 
 from . import ErrorHint, NodeError
 
-RESULT_ALGEBRA_CAPABILITY = "dinkster.invocation-result-algebra.v1"
-RESULT_ALGEBRA_VERSION = 1
 RESULT_ALGEBRA_MAX_COUNT = 4096
 RESULT_ALGEBRA_MAX_LITERAL_DEPTH = 32
 RESULT_ALGEBRA_MAX_LITERAL_ITEMS = 16384
@@ -30,13 +28,18 @@ def _identifier(value: object, name: str) -> None:
         raise ValueError(f"{name} is not a valid identifier")
 
 
-def _pairs(value: object, name: str) -> tuple[tuple[str, object], ...]:
+def _pairs(
+    value: object, name: str, *, literal_keys: bool = False
+) -> tuple[tuple[str, object], ...]:
     if type(value) is not tuple or len(value) > RESULT_ALGEBRA_MAX_COUNT:
         raise ValueError(f"{name} must be a bounded tuple")
     for item in value:
         if type(item) is not tuple or len(item) != 2:
             raise ValueError(f"{name} entries must be pairs")
-        _identifier(item[0], f"{name} key")
+        if literal_keys:
+            _text(item[0], f"{name} key")
+        else:
+            _identifier(item[0], f"{name} key")
     result = value
     keys = tuple(item[0] for item in result)
     if keys != tuple(sorted(keys)) or len(keys) != len(set(keys)):
@@ -49,7 +52,7 @@ class JsonObject:
     fields: tuple[tuple[str, JsonLiteral], ...]
 
     def __post_init__(self) -> None:
-        pairs = _pairs(self.fields, "literal object fields")
+        pairs = _pairs(self.fields, "literal object fields", literal_keys=True)
         for _, value in pairs:
             _literal(value)
 
@@ -86,7 +89,7 @@ def _literal(value: object, depth: int = 0, budget: list[int] | None = None) -> 
             raise ValueError("literal float must be finite and not negative zero")
         return value
     if isinstance(value, JsonObject):
-        fields = _pairs(value.fields, "literal object fields")
+        fields = _pairs(value.fields, "literal object fields", literal_keys=True)
         return JsonObject(tuple((key, _literal(item, depth + 1, budget)) for key, item in fields))
     if type(value) is tuple:
         return tuple(_literal(item, depth + 1, budget) for item in value)
@@ -124,16 +127,38 @@ class CurrentOutputRef:
 @dataclass(frozen=True)
 class LocalOutputRef:
     local_node_id: str
-    output_id: str
+    output_id: str | int
 
     def __post_init__(self) -> None:
         _identifier(self.local_node_id, "local_node_id")
-        _identifier(self.output_id, "output_id")
+        if type(self.output_id) is int:
+            if not 0 <= self.output_id < RESULT_ALGEBRA_MAX_COUNT:
+                raise ValueError("output index is outside the interface limit")
+        else:
+            _identifier(self.output_id, "output_id")
 
 
 @dataclass(frozen=True)
 class CurrentNodeRef:
     pass
+
+
+@dataclass(frozen=True)
+class ExternalOutputRef:
+    node_id: str
+    output_id: str | int
+
+    def __post_init__(self) -> None:
+        _identifier(self.node_id, "node_id")
+        LocalOutputRef(self.node_id, self.output_id)
+
+
+@dataclass(frozen=True)
+class ExternalNodeRef:
+    node_id: str
+
+    def __post_init__(self) -> None:
+        _identifier(self.node_id, "node_id")
 
 
 @dataclass(frozen=True)
@@ -144,7 +169,7 @@ class LocalNodeRef:
         _identifier(self.local_node_id, "local_node_id")
 
 
-NodeMetadataRef: TypeAlias = CurrentNodeRef | LocalNodeRef
+NodeMetadataRef: TypeAlias = CurrentNodeRef | LocalNodeRef | ExternalNodeRef
 
 
 @dataclass(frozen=True)
@@ -155,8 +180,10 @@ class LiteralInput:
         object.__setattr__(self, "value", _literal(self.value))
 
 
-InputBinding: TypeAlias = LiteralInput | CurrentOutputRef | LocalOutputRef
-OutputBinding: TypeAlias = PresentOutput | BlockedOutput | CurrentOutputRef | LocalOutputRef
+InputBinding: TypeAlias = LiteralInput | CurrentOutputRef | LocalOutputRef | ExternalOutputRef
+OutputBinding: TypeAlias = (
+    PresentOutput | BlockedOutput | CurrentOutputRef | LocalOutputRef | ExternalOutputRef
+)
 
 
 @dataclass(frozen=True)
@@ -166,21 +193,33 @@ class LocalNode:
     inputs: tuple[tuple[str, InputBinding], ...] = ()
     parent: NodeMetadataRef | None = None
     display: NodeMetadataRef | None = None
+    output_members: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    slot_variants: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         _identifier(self.local_id, "local_id")
         _identifier(self.node_type, "node_type")
         pairs = _pairs(self.inputs, "inputs")
         if not all(
-            isinstance(item[1], (LiteralInput, CurrentOutputRef, LocalOutputRef)) for item in pairs
+            isinstance(item[1], (LiteralInput, CurrentOutputRef, LocalOutputRef, ExternalOutputRef))
+            for item in pairs
         ):
             raise ValueError("invalid input binding")
-        if self.parent is not None and not isinstance(self.parent, (CurrentNodeRef, LocalNodeRef)):
+        if self.parent is not None and not isinstance(
+            self.parent, (CurrentNodeRef, LocalNodeRef, ExternalNodeRef)
+        ):
             raise ValueError("invalid parent metadata reference")
         if self.display is not None and not isinstance(
-            self.display, (CurrentNodeRef, LocalNodeRef)
+            self.display, (CurrentNodeRef, LocalNodeRef, ExternalNodeRef)
         ):
             raise ValueError("invalid display metadata reference")
+        for _, members in _pairs(self.output_members, "output_members"):
+            if type(members) is not tuple or len(members) != len(set(members)):
+                raise ValueError("output members must be unique tuples")
+            for member in members:
+                _identifier(member, "output member")
+        for _, variant in _pairs(self.slot_variants, "slot_variants"):
+            _identifier(variant, "slot variant")
 
 
 def _local_refs(value: object) -> Sequence[str]:
@@ -192,8 +231,11 @@ def _local_refs(value: object) -> Sequence[str]:
 @dataclass(frozen=True)
 class LocalExpansion:
     nodes: tuple[LocalNode, ...]
+    cache_policy: Literal["inherit", "reuse", "rerun"] = "inherit"
 
     def __post_init__(self) -> None:
+        if self.cache_policy not in ("inherit", "reuse", "rerun"):
+            raise ValueError("expansion cache_policy must be inherit, reuse or rerun")
         if (
             type(self.nodes) is not tuple
             or not self.nodes
@@ -235,7 +277,10 @@ class LocalExpansion:
 def _validate_bindings(bindings: object, *, local_ids: set[str]) -> None:
     pairs = _pairs(bindings, "bindings")
     if not all(
-        isinstance(item[1], (PresentOutput, BlockedOutput, CurrentOutputRef, LocalOutputRef))
+        isinstance(
+            item[1],
+            (PresentOutput, BlockedOutput, CurrentOutputRef, LocalOutputRef, ExternalOutputRef),
+        )
         for item in pairs
     ):
         raise ValueError("invalid output binding")
@@ -253,6 +298,8 @@ class DirectReturn:
 
     def __post_init__(self) -> None:
         _validate_bindings(self.bindings, local_ids=set())
+        if any(isinstance(value, ExternalOutputRef) for _, value in self.bindings):
+            raise ValueError("external return reference requires an expansion")
 
 
 @dataclass(frozen=True)
@@ -331,15 +378,3 @@ class InvocationReturn:
 
 
 InvocationOutcome: TypeAlias = InvocationFailure | InvocationReturn
-
-
-def negotiate_result_capabilities(requested: object) -> frozenset[str]:
-    """Strictly parse an optional hello list and return the supported intersection."""
-    if requested is None:
-        return frozenset()
-    if not isinstance(requested, (list, tuple, set, frozenset)):
-        raise ValueError("result capabilities must be an array or set")
-    items = tuple(requested)
-    if not all(type(item) is str for item in items) or len(items) != len(set(items)):
-        raise ValueError("result capabilities must be unique strings")
-    return frozenset({RESULT_ALGEBRA_CAPABILITY}.intersection(items))

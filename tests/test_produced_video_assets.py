@@ -242,14 +242,17 @@ def test_asset_provenance_rejects_malformed_wire_refs(wire: dict[str, object]) -
 
 
 @pytest.mark.parametrize("type_id", [VIDEO_TYPE, "dinkster.layers", AUDIO_TYPE, "custom.asset"])
-def test_source_pins_include_list_children_and_parent_metadata(type_id: str) -> None:
+@pytest.mark.parametrize("expanded", [False, True])
+def test_source_pins_include_list_children_and_parent_metadata(
+    type_id: str, expanded: bool
+) -> None:
     child = AssetRef(digest_bytes(b"child"), "child", 5)
     parent = AssetRef(digest_bytes(b"parent"), "parent", 6)
     blobs = [
         default_encode({"asset_refs": [child.to_wire()]}),
         default_encode({"asset_refs": [parent.to_wire()]}),
     ]
-    header = {
+    header: dict[str, Any] = {
         "outputs": {
             "values": {
                 "typeId": "dinkster.list",
@@ -258,6 +261,8 @@ def test_source_pins_include_list_children_and_parent_metadata(type_id: str) -> 
             }
         }
     }
+    if expanded:
+        header = {"resultAlgebra": {"values": list(header["outputs"].values())}}
     assert result_asset_digests(header, blobs) == {child.digest, parent.digest}
 
 
@@ -630,7 +635,8 @@ def test_buffered_result_and_eof_retain_source_until_adoption(
     asyncio.run(scenario())
 
 
-def test_source_transfer_accounting_deduplicates_across_edges() -> None:
+@pytest.mark.parametrize("expanded", [False, True])
+def test_source_transfer_accounting_deduplicates_across_edges(expanded: bool) -> None:
     ref = AssetRef(digest_bytes(b"encoded"), "source", 7)
     blobs = [default_encode({"asset_refs": [ref.to_wire()]})]
     wire = {"typeId": VIDEO_TYPE, "metaBlob": 0, "payload": {"transport": "inline"}}
@@ -638,9 +644,19 @@ def test_source_transfer_accounting_deduplicates_across_edges() -> None:
         "outputs": {"first": wire, "second": wire},
         "outputStats": {"first": {"networkBytes": 3}, "second": {"networkBytes": 3}},
     }
+    if expanded:
+        header = {
+            "resultAlgebra": {
+                "values": list(header["outputs"].values()),
+                "valueStats": list(header["outputStats"].values()),
+            }
+        }
     attribute_moved_wire(header, {ref.digest: (7, 1.0)}, blobs)
-    assert header["outputStats"]["first"]["networkBytes"] == 10
-    assert header["outputStats"]["second"]["networkBytes"] == 3
+    stats = (
+        header["resultAlgebra"]["valueStats"] if expanded else list(header["outputStats"].values())
+    )
+    assert stats[0]["networkBytes"] == 10
+    assert stats[1]["networkBytes"] == 3
 
 
 @pytest.mark.parametrize("index", [-1, True, 1, "0", None])

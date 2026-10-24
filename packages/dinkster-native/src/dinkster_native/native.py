@@ -93,7 +93,6 @@ FOUNDATION_CLAIMED_V1_NAMES: tuple[str, ...] = (
     "PrimitiveBoolean",
     "CreateList",
     "ComfyMathExpression",
-    "ComfySwitchNode",
 )
 MEDIA_IO_CLAIMED_V1_NAMES: tuple[str, ...] = (
     "LoadImage",

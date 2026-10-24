@@ -1,0 +1,73 @@
+{
+  "nested-carry": {
+    "api_prompt": {
+      "capture": {"class_type": "Issue408Capture", "inputs": {"value": ["outer_close", 0]}},
+      "constant": {"class_type": "Issue408Constant", "inputs": {"value": 0}},
+      "increment": {"class_type": "Issue408Increment", "inputs": {"value": ["inner", 4]}},
+      "inner": {"class_type": "StartLoop", "inputs": {"initial_iteration_value": ["outer", 4], "mode": "simple", "mode.num_iterations": 2, "parent_iteration": ["outer", 0]}},
+      "inner_close": {"class_type": "EndLoop", "inputs": {"accumulate": false, "next_iteration_value": ["increment", 0], "output_value": ["increment", 0]}},
+      "outer": {"class_type": "StartLoop", "inputs": {"initial_iteration_value": ["constant", 0], "mode": "simple", "mode.num_iterations": 2}},
+      "outer_close": {"class_type": "EndLoop", "inputs": {"accumulate": false, "next_iteration_value": ["inner_close", 0], "output_value": ["inner_close", 0]}}
+    },
+    "outputs": ["capture"],
+    "observed": {"capture_values": [4], "increment_calls": [1, 2, 3, 4]}
+  },
+  "accumulate-list-output": {
+    "api_prompt": {
+      "capture": {"class_type": "Issue408Capture", "inputs": {"value": ["close", 0]}},
+      "close": {"class_type": "EndLoop", "inputs": {"accumulate": true, "output_value": ["pair", 0]}},
+      "loop": {"class_type": "StartLoop", "inputs": {"mode": "simple", "mode.num_iterations": 2}},
+      "pair": {"class_type": "Issue408Pair", "inputs": {"value": ["loop", 0]}}
+    },
+    "outputs": ["capture"],
+    "observed": {"capture_values": [0, "0", 1, "1"]}
+  },
+  "carry-only": {
+    "api_prompt": {
+      "close": {"class_type": "EndLoop", "inputs": {"accumulate": false, "next_iteration_value": ["increment", 0]}},
+      "increment": {"class_type": "Issue408Increment", "inputs": {"value": ["loop", 0]}},
+      "loop": {"class_type": "StartLoop", "inputs": {"mode": "simple", "mode.num_iterations": 2}}
+    },
+    "outputs": ["close"],
+    "observed": {"increment_calls": [1, 2]}
+  },
+  "heterogeneous-carry": {
+    "api_prompt": {
+      "close": {"class_type": "EndLoop", "inputs": {"accumulate": false, "next_iteration_value": ["record", 0], "output_value": ["record", 0]}},
+      "loop": {"class_type": "StartLoop", "inputs": {"initial_iteration_value": ["pair", 0], "mode": "simple", "mode.num_iterations": 2}},
+      "pair": {"class_type": "Issue408Pair", "inputs": {"value": 7}},
+      "record": {"class_type": "Issue408RecordCarried", "inputs": {"value": ["loop", 4]}}
+    },
+    "outputs": ["close"],
+    "observed": {"record_carried_values": [[7, "7"], [7, "7"]]}
+  },
+  "list-backed-carry": {
+    "api_prompt": {
+      "append": {"class_type": "Issue408AppendIndex", "inputs": {"index": ["loop", 0], "value": ["loop", 4]}},
+      "close": {"class_type": "EndLoop", "inputs": {"accumulate": false, "next_iteration_value": ["append", 0], "output_value": ["append", 0]}},
+      "initial": {"class_type": "Issue408ListBackedScalar", "inputs": {"value": 7}},
+      "loop": {"class_type": "StartLoop", "inputs": {"initial_iteration_value": ["initial", 0], "mode": "simple", "mode.num_iterations": 2}}
+    },
+    "outputs": ["close"],
+    "observed": {"append_values": [[[7], 0], [[7], 0, 1]]}
+  },
+  "for-state": {
+    "api_prompt": {
+      "close": {"class_type": "EndLoop", "inputs": {"accumulate": true, "output_value": ["state", 0]}},
+      "items": {"class_type": "Issue408IntegerList", "inputs": {}},
+      "loop": {"class_type": "StartLoop", "inputs": {"mode": "For", "mode.max_iteration": 8, "mode.start_iteration_index": 2, "mode.step": 3}},
+      "state": {"class_type": "Issue408CaptureLoopState", "inputs": {"index": ["loop", 0], "is_first": ["loop", 1], "is_last": ["loop", 2], "item": ["loop", 3]}}
+    },
+    "outputs": ["close"],
+    "observed": {"loop_state_values": [[2, true, false, null], [5, false, true, null]]}
+  },
+  "runtime-expanded-descendant": {
+    "api_prompt": {
+      "close": {"class_type": "EndLoop", "inputs": {"accumulate": true, "output_value": ["expand", 0]}},
+      "expand": {"class_type": "Issue408ExpandIncrement", "inputs": {"value": ["loop", 0]}},
+      "loop": {"class_type": "StartLoop", "inputs": {"mode": "simple", "mode.num_iterations": 3}}
+    },
+    "outputs": ["close"],
+    "observed": {"increment_calls": [1, 2, 3]}
+  }
+}
