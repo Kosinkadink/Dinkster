@@ -353,8 +353,7 @@ def test_compat_worker_type_ownership_preserves_image_dependency(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dinkster_compat_comfy.schema_snapshot import core_schema_snapshot
-    from dinkster_workers import load_manifest
-    from dinkster_workers import host
+    from dinkster_workers import host, load_manifest
 
     root = Path(__file__).parents[1] / "packages"
     manifest = load_manifest(root / "dinkster-compat-comfy/dinkster-pack.toml")
