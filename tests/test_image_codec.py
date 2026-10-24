@@ -488,7 +488,7 @@ def test_large_comfy_image_shm_does_not_materialize_encoded_bytes(
 def test_comfy_host_types_registration_is_idempotent() -> None:
     registry = make_host_registry()
     register_comfy_host_types(registry)  # second spec / reload: no raise
-    assert "dinkster.asset" in registry
+    assert "ASSET" in registry
     assert len(registry.renditions_of(COMFY_IMAGE_TYPE)) == 1
 
 
@@ -497,7 +497,7 @@ def test_comfy_host_base_asset_registration_is_independent_of_image() -> None:
     registry.register(COMFY_IMAGE_TYPE)
     register_comfy_host_types(registry)
     register_comfy_host_types(registry)
-    assert "dinkster.asset" in registry
+    assert "ASSET" in registry
 
 
 def test_comfy_host_types_wrap_typed_image_asset_without_manual_base_registration() -> None:

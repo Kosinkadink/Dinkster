@@ -48,7 +48,7 @@ def test_asset_widget_binding_matrix_accepts_assets_and_concrete_scalars() -> No
     decode/merge destinations, but never list destinations or unresolved
     asset variables."""
     image_asset = TypeExpr.asset_of(TypeExpr.concrete("IMAGE"))
-    InputSpec("bare", TypeExpr.concrete("dinkster.asset"), widget=AssetWidget())
+    InputSpec("bare", TypeExpr.concrete("ASSET"), widget=AssetWidget())
     InputSpec("typed", image_asset, widget=AssetWidget())
     InputSpec("scalar", TypeExpr.concrete("IMAGE"), widget=AssetWidget())
     InputSpec(

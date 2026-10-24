@@ -31,6 +31,15 @@ from typing import Literal, cast
 # reaches sideways in the bottom layer, so expression-level types and
 # runtime type ids can never drift apart.
 from dinkster_values import (
+    ASSET_TYPE,
+    COMPOSITOR_TYPE,
+    CORE_BOOLEAN,
+    CORE_COMBO,
+    CORE_FLOAT,
+    CORE_INT,
+    CORE_STRING,
+    CURVE_TYPE,
+    SAVE_TARGET_TYPE,
     CustomWidgetDescriptor,
     asset_type_id,
     list_type_id,
@@ -39,13 +48,6 @@ from dinkster_values import (
 )
 from dinkster_values import (
     runtime_type_atom as _runtime_type_atom,
-)
-from dinkster_values.builtin_types import (
-    CORE_BOOLEAN,
-    CORE_COMBO,
-    CORE_FLOAT,
-    CORE_INT,
-    CORE_STRING,
 )
 from dinkster_values.streams import parse_stream_type_id, stream_type_id
 
@@ -1014,50 +1016,43 @@ def _validate_widget_binding(input_id: str, input_type: TypeExpr, widget: Widget
             )
     if isinstance(widget, StringWidget) and primitive_type != TypeExpr.concrete(CORE_STRING):
         raise ValueError(f"input {input_id}: string widget requires a concrete STRING input")
-    if isinstance(widget, ColorWidget) and input_type != TypeExpr.concrete("STRING"):
+    if isinstance(widget, ColorWidget) and input_type != TypeExpr.concrete(CORE_STRING):
         raise ValueError(f"input {input_id}: color widget requires a concrete STRING input")
-    if isinstance(widget, CurveWidget) and input_type != TypeExpr.concrete("dinkster.curve"):
-        raise ValueError(f"input {input_id}: curve widget requires a concrete dinkster.curve input")
-    if isinstance(widget, CompositorWidget) and input_type != TypeExpr.concrete(
-        "dinkster.compositor"
-    ):
+    if isinstance(widget, CurveWidget) and input_type != TypeExpr.concrete(CURVE_TYPE):
+        raise ValueError(f"input {input_id}: curve widget requires a concrete {CURVE_TYPE} input")
+    if isinstance(widget, CompositorWidget) and input_type != TypeExpr.concrete(COMPOSITOR_TYPE):
         raise ValueError(
-            f"input {input_id}: compositor widget requires a concrete dinkster.compositor input"
+            f"input {input_id}: compositor widget requires a concrete {COMPOSITOR_TYPE} input"
         )
     if isinstance(widget, BooleanWidget) and primitive_type != TypeExpr.concrete(CORE_BOOLEAN):
         raise ValueError(f"input {input_id}: boolean widget requires a concrete BOOLEAN input")
     if isinstance(widget, ComboWidget) and primitive_type != TypeExpr.concrete(CORE_COMBO):
         raise ValueError(f"input {input_id}: combo widget requires a concrete COMBO input")
     if isinstance(widget, MultiComboWidget) and input_type != TypeExpr.list_of(
-        TypeExpr.concrete("COMBO")
+        TypeExpr.concrete(CORE_COMBO)
     ):
         raise ValueError(f"input {input_id}: multi combo widget requires a list<COMBO> input")
     if isinstance(widget, AssetWidget) and not (
-        input_type == TypeExpr.concrete("dinkster.asset")
+        input_type == TypeExpr.concrete(ASSET_TYPE)
         or (input_type.kind == "asset" and input_type.runtime_type_id() is not None)
         or input_type.kind == "concrete"
-        or (
-            widget.allow_upload
-            and input_type == TypeExpr.list_of(TypeExpr.concrete("dinkster.asset"))
-        )
+        or (widget.allow_upload and input_type == TypeExpr.list_of(TypeExpr.concrete(ASSET_TYPE)))
     ):
         # Asset destinations receive one ref directly. Concrete scalar
         # destinations receive an asset-stamped literal that the worker
         # decodes (or a stamped list that it terminally merges). The exact
-        # upload-enabled list<dinkster.asset> spelling supports ordered source
+        # upload-enabled list<ASSET> spelling supports ordered source
         # uploads; other lists and unresolved asset variables cannot determine
         # a contract.
         raise ValueError(
             f"input {input_id}: asset widget requires a concrete "
-            "scalar, bare dinkster.asset, upload-enabled list<dinkster.asset>, or "
+            f"scalar, bare {ASSET_TYPE}, upload-enabled list<{ASSET_TYPE}>, or "
             "fully-concrete asset<...> input; other list inputs and "
             "asset<variable> are not supported"
         )
-    if isinstance(widget, SaveTargetWidget) and input_type != TypeExpr.concrete(
-        "dinkster.save_target"
-    ):
+    if isinstance(widget, SaveTargetWidget) and input_type != TypeExpr.concrete(SAVE_TARGET_TYPE):
         raise ValueError(
-            f"input {input_id}: save target widget requires a concrete dinkster.save_target input"
+            f"input {input_id}: save target widget requires a concrete {SAVE_TARGET_TYPE} input"
         )
 
 
@@ -1123,7 +1118,7 @@ class InputSpec:
             else (self.widget,)
         )
         if self.source_filename is not None:
-            source_type = TypeExpr.concrete("dinkster.asset")
+            source_type = TypeExpr.concrete(ASSET_TYPE)
             typed_asset = self.type.kind == "asset" and self.type.runtime_type_id() is not None
             if not typed_asset and self.type not in (source_type, TypeExpr.list_of(source_type)):
                 raise ValueError(
@@ -2295,7 +2290,7 @@ class NodeSchema:
             ):
                 raise ValueError(f"{self.node_type}: selector schemas require exactly one output")
             selector_input = inputs_by_id.get(selector.input)
-            if selector_input is None or selector_input.type != TypeExpr.concrete("BOOLEAN"):
+            if selector_input is None or selector_input.type != TypeExpr.concrete(CORE_BOOLEAN):
                 raise ValueError(
                     f"{self.node_type}: selector input must name a stored BOOLEAN input"
                 )
@@ -2428,7 +2423,7 @@ class NodeSchema:
             if (
                 descriptor_input is None
                 or not descriptor_input.required
-                or descriptor_input.type != TypeExpr.concrete("STRING")
+                or descriptor_input.type != TypeExpr.concrete(CORE_STRING)
             ):
                 raise ValueError(
                     f"{self.node_type}: output descriptors require a required top-level "
@@ -2440,10 +2435,10 @@ class NodeSchema:
                 if (
                     asset_input is None
                     or not asset_input.required
-                    or asset_input.type != TypeExpr.concrete("dinkster.asset")
+                    or asset_input.type != TypeExpr.concrete(ASSET_TYPE)
                 ):
                     raise ValueError(
-                        "output probe requires a required top-level dinkster.asset input"
+                        f"output probe requires a required top-level {ASSET_TYPE} input"
                     )
         for output in self.outputs:
             known_value = output.known_value
@@ -2455,10 +2450,10 @@ class NodeSchema:
                         f"{known_value.input!r} is not a declared top-level input"
                     )
                 primitive_types = {
-                    TypeExpr.concrete("INT"),
-                    TypeExpr.concrete("FLOAT"),
-                    TypeExpr.concrete("STRING"),
-                    TypeExpr.concrete("BOOLEAN"),
+                    TypeExpr.concrete(CORE_INT),
+                    TypeExpr.concrete(CORE_FLOAT),
+                    TypeExpr.concrete(CORE_STRING),
+                    TypeExpr.concrete(CORE_BOOLEAN),
                 }
                 if known_input.type != output.type or output.type not in primitive_types:
                     raise ValueError(
@@ -2501,7 +2496,7 @@ class NodeSchema:
             if (
                 count_input is None
                 or not count_input.required
-                or count_input.type != TypeExpr.concrete("INT")
+                or count_input.type != TypeExpr.concrete(CORE_INT)
             ):
                 raise ValueError(
                     f"{self.node_type}: output family count must reference a required "

@@ -107,7 +107,7 @@ def test_siblings_do_not_conflict() -> None:
 
 
 def test_reserved_roots() -> None:
-    assert RESERVED_NAMESPACES == {"std", "comfy", "core", "dinkster"}
+    assert RESERVED_NAMESPACES == {"std", "comfy", "core", "dinkster", "dev"}
     assert reserved_root("std") == "std"
     assert reserved_root("std.magic") == "std"
     assert reserved_root("std-extra") == "std"  # every contesting spelling
