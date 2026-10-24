@@ -3056,7 +3056,7 @@ def _parse_type_namespaces(raw: object, pack_name: str, manifest_path: Path) -> 
         not isinstance(item, str)
         or not item
         or not re.fullmatch(r"[A-Za-z][A-Za-z0-9]*(?:[-_.][A-Za-z0-9]+)*", item)
-        for item in raw
+        for item in cast("list[object]", raw)
     ):
         raise ManifestError(
             f"{manifest_path}: [pack] type-namespaces must be a list of type claims"

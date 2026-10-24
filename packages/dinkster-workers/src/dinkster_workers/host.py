@@ -150,6 +150,7 @@ from .manifest import (
     generation_provider_to_wire,
     load_manifest,
     resolve_entry,
+    validate_registration_claims,
     vision_provider_to_wire,
 )
 from .produced_assets import source_asset_files
@@ -354,6 +355,7 @@ def load_pack(
     list[type[Node]],
     dict[str, InProcessWorker],
 ]:
+    validate_registration_claims(manifest)
     has_native_arm = any(arm == "native" for arm, _node_types in manifest.arms)
     attention_runtime, attention_capabilities, attention_route_token = (
         _discover_attention_runtime() if has_native_arm else (None, None, None)
@@ -425,7 +427,12 @@ def load_pack(
             register = resolve_pack_entry(manifest.types_entry)
             if not callable(register):
                 raise ManifestError(f"entry '{manifest.types_entry}' is not callable")
-            register(registry)
+            with registry.registering_pack(
+                manifest.name,
+                manifest.type_namespaces,
+                allow_bare=manifest.publisher == "dinkster",
+            ):
+                register(registry)
         node_classes = _node_classes(manifest.nodes_entry, resolve_pack_entry(manifest.nodes_entry))
         # The same startup enumeration as the isolated worker path: static
         # lists are validated now, lazy providers are held uninvoked and

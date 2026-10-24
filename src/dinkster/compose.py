@@ -230,6 +230,7 @@ from dinkster_workers.catalog import (
     worker_declarations_match_catalog,
 )
 from dinkster_workers.host import load_pack as load_host_pack
+from dinkster_workers.manifest import validate_registration_claims
 from dinkster_workers.session import WorkerDied
 
 from .extension_assets import read_module, resolve_frontend_modules
@@ -3035,6 +3036,13 @@ class ServingComposer:
     def _resolve_contract_inputs(
         self, entries: Mapping[str, PackContractInput]
     ) -> tuple[tuple[str, ...], CompositionGeneration]:
+        type_claims = self._base_registry.copy()
+        for manifest, _spec in entries.values():
+            validate_registration_claims(manifest)
+            try:
+                type_claims.claim_types(manifest.name, manifest.type_namespaces)
+            except ValueError as exc:
+                raise CompositionError(str(exc)) from exc
         _composition_generation(entries, {}, "development")
         order, receipts = _resolve_pack_contracts(entries)
         return order, _composition_generation(entries, receipts, self._composition_mode)

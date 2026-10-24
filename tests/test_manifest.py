@@ -22,6 +22,7 @@ from dinkster_schema import (
     comfy_alias_registry_to_wire,
     comfy_group_registry_to_wire,
 )
+from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import (
     PACK_AUTHOR_API_CONTRACT,
     PACK_HOST_CONTRACT,
@@ -104,6 +105,41 @@ def test_manifest_type_claims_accept_exact_ids_and_reject_overlaps(tmp_path: Pat
     path.write_text(path.read_text().replace('"mypack.Other"', '"mypack.Thing-child"'))
     with pytest.raises(ManifestError, match="overlapping claims"):
         load_manifest(path)
+
+
+def test_pack_registration_refuses_duplicate_type_owner(tmp_path: Path) -> None:
+    registry = TypeRegistry()
+    register_core_types(registry)
+    for name in ("first-owner", "second-owner"):
+        root = tmp_path / name
+        root.mkdir()
+        module = name.replace("-", "_")
+        (root / f"{module}.py").write_text(
+            'NODES = []\ndef register_types(registry):\n    registry.register("SHARED")\n'
+        )
+        path = root / "dinkster-pack.toml"
+        path.write_text(
+            f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
+            'type-namespaces = ["SHARED"]\n[pack.entry]\n'
+            f'nodes = "{module}:NODES"\ntypes = "{module}:register_types"\n'
+        )
+        if name == "first-owner":
+            load_pack(load_manifest(path), registry=registry, import_from_pack_root=True)
+            assert registry.owner_of("SHARED") == "first-owner"
+        else:
+            with pytest.raises(ValueError, match="overlaps"):
+                load_pack(load_manifest(path), registry=registry, import_from_pack_root=True)
+    assert registry.owner_of("SHARED") == "first-owner"
+
+
+def test_pack_registration_rejects_bare_claim_before_importing_entries(tmp_path: Path) -> None:
+    path = tmp_path / "dinkster-pack.toml"
+    path.write_text(
+        '[pack]\nname = "mypack"\npublisher = "someone"\ntype-namespaces = ["THING"]\n'
+        '[pack.entry]\nnodes = "missing_module:NODES"\n'
+    )
+    with pytest.raises(ManifestError, match="only publisher 'dinkster'"):
+        load_pack(load_manifest(path))
 
 
 def write_alias_registry(path: Path, *, carrier: str = "test.native") -> None:
