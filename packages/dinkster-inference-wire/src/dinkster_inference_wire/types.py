@@ -5,6 +5,7 @@ from __future__ import annotations
 from dinkster_memory.resident import default_pool
 from dinkster_values import (
     CLIP_TYPE,
+    CLIP_VISION_OUTPUT_TYPE,
     CLIP_VISION_TYPE,
     CONTROL_NET_TYPE,
     GUIDER_TYPE,
@@ -22,6 +23,13 @@ from dinkster_values import (
 from .conditioning_wire import CONDITIONING_TYPE_ID, register_conditioning_type
 from .media_wire import materialize_image, materialize_latent, register_media_types
 from .sampling_wire import register_sampling_type
+from .vision_wire import (
+    clip_vision_output_fingerprint,
+    decode_clip_vision_output,
+    encode_clip_vision_output,
+    materialize_clip_vision_output,
+    validate_clip_vision_output,
+)
 
 MODEL_TYPE_ID = MODEL_TYPE
 CLIP_TYPE_ID = CLIP_TYPE
@@ -64,6 +72,15 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
             if type_id in registry
             else register_sampling_type(registry, type_id)
         )
+    if CLIP_VISION_OUTPUT_TYPE not in registry:
+        registry.register(
+            CLIP_VISION_OUTPUT_TYPE,
+            encode=encode_clip_vision_output,
+            decode=decode_clip_vision_output,
+            fingerprint=clip_vision_output_fingerprint,
+            validate_encoded=validate_clip_vision_output,
+        )
+    registered.append(registry.spec(CLIP_VISION_OUTPUT_TYPE))
     registered.extend(register_media_types(registry))
     return tuple(registered)
 
@@ -77,6 +94,7 @@ __all__ = [
     "SAMPLER_TYPE_ID",
     "SIGMAS_TYPE_ID",
     "VAE_TYPE_ID",
+    "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
     "register_inference_types",
