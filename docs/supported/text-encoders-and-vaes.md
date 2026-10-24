@@ -8,6 +8,8 @@
   and optional attributes across worker boundaries.
 - Style models retain their runtime objects and governed owner lifetime
   across node connections within a worker.
+- `StyleModelApply` appends style-model vision tokens with multiply or
+  attention-bias strength behavior.
 - `CLIPVisionEncode` materializes portable image inputs and produces CLIP
   vision outputs with center or no crop selection.
 - Native VAEEncode, VAEDecode and their tiled variants preserve the core
