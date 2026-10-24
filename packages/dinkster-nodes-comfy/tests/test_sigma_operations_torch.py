@@ -2,8 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
+from pathlib import Path
+
 import pytest
 import torch
+from dinkster_api.v1 import (
+    CORE_FLOAT,
+    SIGMAS_TYPE,
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+    materialize_latent,
+)
+from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.sigma_operations import (
     ExtendIntermediateSigmas,
     FlipSigmas,
@@ -13,6 +27,8 @@ from dinkster_nodes_comfy.sigma_operations import (
     SplitSigmas,
     SplitSigmasDenoise,
 )
+
+from dinkster.compose import PackSpec, ServingComposer
 
 
 def test_split_nodes_preserve_boundary_and_zero_denoise_behavior() -> None:
@@ -128,3 +144,75 @@ def test_sampling_percent_to_sigma_keeps_interval_and_actual_endpoint_values() -
         ]
         == 0.125
     )
+
+
+class SigmaInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="sigma-fixture.inspect",
+            inputs=(
+                InputSpec("high", TypeExpr.concrete(SIGMAS_TYPE)),
+                InputSpec("low", TypeExpr.concrete(SIGMAS_TYPE)),
+            ),
+            outputs=(OutputSpec("value", TypeExpr.concrete(CORE_FLOAT)),),
+        )
+
+    @classmethod
+    def execute(cls, *, high: object, low: object) -> dict[str, object]:
+        high = materialize_latent(high)
+        low = materialize_latent(low)
+        assert torch.equal(high, torch.tensor([3.5, -1.0], dtype=torch.float32))
+        assert torch.equal(low, torch.tensor([-1.0, 0.0], dtype=torch.float32))
+        assert high.dtype == low.dtype == torch.float32
+        return cls.outputs(value=float(high[0] + low[0]))
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_sigma_operations_cross_both_manifest_hosts_twice(tmp_path: Path, in_process: bool) -> None:
+    async def scenario() -> None:
+        root = Path(__file__).resolve().parents[1]
+        composer = ServingComposer(worker_env={"PYTHONPATH": str(root / "tests")})
+        try:
+            (tmp_path / "sigma_fixture.py").write_text(
+                "from test_sigma_operations_torch import SigmaInspect\n"
+                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "NODES = (*COMFY_NODES, SigmaInspect)\n",
+                encoding="ascii",
+            )
+            manifest = tmp_path / "dinkster-pack.toml"
+            manifest.write_text(
+                (root / "dinkster-pack.toml")
+                .read_text(encoding="ascii")
+                .replace("namespaces = [", 'namespaces = ["sigma-fixture",')
+                .replace("dinkster_nodes_comfy:COMFY_NODES", "sigma_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy:register_inference_types",
+                    "sigma_fixture:register_inference_types",
+                ),
+                encoding="ascii",
+            )
+            await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
+            engine = composer.composition.make_engine(lambda _event: None)
+            graph = Graph(
+                nodes={
+                    "manual": GraphNode("ManualSigmas", {"sigmas": "3.5, -1, 0"}),
+                    "split": GraphNode(
+                        "SplitSigmas", {"sigmas": Link("manual", "sigmas"), "step": 1}
+                    ),
+                    "inspect": GraphNode(
+                        "sigma-fixture.inspect",
+                        {
+                            "high": Link("split", "high_sigmas"),
+                            "low": Link("split", "low_sigmas"),
+                        },
+                    ),
+                }
+            )
+            for _ in range(2):
+                result = await engine.run(graph, ["inspect"])
+                assert result.outputs["inspect"]["value"].resolve() == 2.5
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
