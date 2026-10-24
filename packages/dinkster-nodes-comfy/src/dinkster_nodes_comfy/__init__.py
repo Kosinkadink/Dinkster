@@ -27,6 +27,7 @@ from .dataset_images import DATASET_IMAGE_NODES
 from .dataset_text import DATASET_TEXT_NODES
 from .device_routing import DEVICE_ROUTING_NODES
 from .freeu import FREEU_NODES
+from .hook_conditioning import HOOK_CONDITIONING_NODES
 from .hunyuan_latent import HUNYUAN_LATENT_NODES
 from .hunyuan_text import HUNYUAN_TEXT_NODES
 from .hunyuan_video_image import HUNYUAN_VIDEO_IMAGE_NODES
@@ -41,6 +42,7 @@ from .latent_operations import LATENT_OPERATION_NODES
 from .logic import LOGIC_NODES
 from .ltx_audio import LTX_AUDIO_NODES
 from .ltx_sampling import LTX_SAMPLING_NODES
+from .ltx_video_conditioning import LTX_VIDEO_CONDITIONING_NODES
 from .mask import MASK_NODES
 from .math import ComfyMathExpression
 from .mochi import EmptyMochiLatentVideo
@@ -115,6 +117,7 @@ COMFY_NODES = (
     *MODEL_TEXT_ENCODER_NODES,
     *VAE_NODES,
     *CONDITIONING_NODES,
+    *HOOK_CONDITIONING_NODES,
     *REFERENCE_CONDITIONING_NODES,
     *INPAINT_NODES,
     *CONTROLNET_NODES,
@@ -129,6 +132,7 @@ COMFY_NODES = (
     *HUNYUAN_LATENT_NODES,
     *HUNYUAN_TEXT_NODES,
     *HUNYUAN_VIDEO_IMAGE_NODES,
+    *LTX_VIDEO_CONDITIONING_NODES,
     *VIDEO_CONDITIONING_NODES,
     *COSMOS_CONDITIONING_NODES,
     *VIDEO_LATENT_NODES,
