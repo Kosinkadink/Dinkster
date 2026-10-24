@@ -11,6 +11,8 @@
   concatenate, cut, split to batches, join batches, and set batch seed behavior.
 - Native CLIP text encoding preserves scheduled conditioning; layer selection
   clones the encoder without changing the source under exact core interfaces.
+- FreeU and FreeU_V2 clone models and patch UNet output blocks under their
+  exact core interfaces, including CPU Fourier fallback.
 - Ten native conditioning nodes combine, blend, concatenate, multiply, mask,
   zero, and set area or timestep metadata under their exact ComfyUI interfaces.
 - Fifteen native mask and composite nodes convert, create, invert, crop, combine,
