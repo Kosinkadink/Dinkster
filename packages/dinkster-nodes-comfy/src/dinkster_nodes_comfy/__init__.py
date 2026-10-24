@@ -22,6 +22,7 @@ from .dataset_collections import DATASET_COLLECTION_NODES
 from .dataset_images import DATASET_IMAGE_NODES
 from .dataset_text import DATASET_TEXT_NODES
 from .freeu import FREEU_NODES
+from .hook_conditioning import HOOK_CONDITIONING_NODES
 from .hunyuan_latent import HUNYUAN_LATENT_NODES
 from .image_core import IMAGE_CORE_NODES
 from .image_filters import IMAGE_FILTER_NODES
@@ -100,6 +101,7 @@ COMFY_NODES = (
     *MODEL_TEXT_ENCODER_NODES,
     *VAE_NODES,
     *CONDITIONING_NODES,
+    *HOOK_CONDITIONING_NODES,
     *REFERENCE_CONDITIONING_NODES,
     *INPAINT_NODES,
     *CONTROLNET_NODES,

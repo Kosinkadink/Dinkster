@@ -27,4 +27,6 @@
   preserving existing references; an unconnected latent leaves conditioning unchanged.
 - Hook-bearing native conditioning retains its runtime hook groups across node
   links. Releasing a referenced hook invalidates dependent conditioning and caches.
+- Nine native hook conditioning nodes set and combine single or paired prompt
+  properties, default prompt records, hook timesteps, and CLIP hook schedules.
 - Other model-family conditioning surfaces are unsupported.
