@@ -87,7 +87,8 @@
 - Native audio saving through PyAV: FLAC, MP3 with V0/128k/320k quality, and
   Opus with 64k-320k bit rates and 48 kHz coercion of unsupported rates; one
   ordered published asset per batch element under a mounted save target
-- Value-level audio operations on AUDIO values: duration trimming with
+- Native ComfyUI audio nodes include Split Audio Channels and Adjust Audio Volume.
+  Value-level audio operations on AUDIO values include duration trimming with
   negative-from-end starts, stereo channel split and mono join, before/after
   concatenation, add/subtract/multiply/mean merging with peak normalization,
   decibel gain, fade in/out with linear or cosine curves, and a three-band

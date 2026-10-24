@@ -13,6 +13,8 @@
   `dinkster_inference` runtime.
 - Stable Video image conditioning attaches motion, frame rate, augmentation, and
   concatenated image latents to positive and negative prompt streams.
+- Cosmos image conditioning encodes optional first and last images into latent
+  video frames for Cosmos and Cosmos Predict2 workflows.
 - Native Stable Audio conditioning attaches start and total seconds to both prompt
   streams. Video percentage-area conditioning preserves temporal and spatial bounds.
 - Typed absence remains a Dinkster engine contract: `core.absent` values,
