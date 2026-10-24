@@ -2008,6 +2008,7 @@ class Engine:
         )
         expansion_calls: dict[str, int] = {}
         expansion_scopes: dict[str, str] = {}
+        rerun_nodes: set[str] = set()
         current_dependencies: dict[str, set[str]] = {}
         expansion_demands: dict[str, set[str]] = {}
         controls = RunControlState()
@@ -2125,6 +2126,8 @@ class Engine:
             expansion_calls[parent_id] = call + 1
             produced[parent_id] = entry.outputs
             children = set(ids.values())
+            if parent_id in rerun_nodes or expansion.expansion.cache_policy == "rerun":
+                rerun_nodes.update(children)
             for node in expansion.expansion.nodes:
                 current_dependencies[ids[node.local_id]] = (
                     {parent_id}
@@ -2257,7 +2260,7 @@ class Engine:
                     pinned,
                     export_snapshot,
                     prefix,
-                    run_cache_enabled,
+                    run_cache_enabled and node_id not in rerun_nodes,
                 )
             else:
                 invoking.add(node_id)
@@ -2275,7 +2278,7 @@ class Engine:
                     export_snapshot,
                     prefix,
                     ensure_input,
-                    cache_enabled,
+                    cache_enabled and node_id not in rerun_nodes,
                     expansion_scopes.get(node_id, cache_scope),
                     resolve_expansion,
                     control_context,

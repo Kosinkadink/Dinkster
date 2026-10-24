@@ -90,6 +90,7 @@ def return_unit_to_document(
     if isinstance(unit, ExpandedReturn):
         result["kind"] = "expanded"
         result["expansion"] = {
+            "cachePolicy": unit.expansion.cache_policy,
             "nodes": [
                 {
                     "display": _metadata_to_document(node.display),
@@ -99,9 +100,11 @@ def return_unit_to_document(
                     "localId": node.local_id,
                     "nodeType": node.node_type,
                     "parent": _metadata_to_document(node.parent),
+                    "outputMembers": {key: list(members) for key, members in node.output_members},
+                    "slotVariants": dict(node.slot_variants),
                 }
                 for node in unit.expansion.nodes
-            ]
+            ],
         }
     return result
 
@@ -192,14 +195,31 @@ def return_unit_from_document(
         return DirectReturn(tuple(bindings))
     if kind != "expanded":
         raise ValueError("unknown return kind")
-    expansion = _exact(unit["expansion"], {"nodes"})
+    expansion = _exact(unit["expansion"], {"nodes", "cachePolicy"})
     if type(expansion["nodes"]) is not list:
         raise ValueError("nodes must be an array")
     nodes: list[LocalNode] = []
     for raw_node in cast("list[object]", expansion["nodes"]):
-        node = _exact(raw_node, {"display", "inputs", "localId", "nodeType", "parent"})
+        node = _exact(
+            raw_node,
+            {
+                "display",
+                "inputs",
+                "localId",
+                "nodeType",
+                "parent",
+                "outputMembers",
+                "slotVariants",
+            },
+        )
         if type(node["inputs"]) is not list:
             raise ValueError("inputs must be an array")
+        if type(node["outputMembers"]) is not dict or type(node["slotVariants"]) is not dict:
+            raise ValueError("node interfaces must be objects")
+        output_members = cast("dict[str, Any]", node["outputMembers"])
+        slot_variants = cast("dict[str, Any]", node["slotVariants"])
+        if not all(type(members) is list for members in output_members.values()):
+            raise ValueError("output members must be arrays")
         inputs: list[tuple[str, InputBinding]] = []
         for raw_input in cast("list[object]", node["inputs"]):
             entry = _exact(raw_input, {"id", "value"})
@@ -217,6 +237,8 @@ def return_unit_from_document(
                 tuple(inputs),
                 _metadata_from_document(node["parent"]),
                 _metadata_from_document(node["display"]),
+                tuple((key, tuple(members)) for key, members in sorted(output_members.items())),
+                tuple(sorted(slot_variants.items())),
             )
         )
-    return ExpandedReturn(LocalExpansion(tuple(nodes)), tuple(bindings))
+    return ExpandedReturn(LocalExpansion(tuple(nodes), expansion["cachePolicy"]), tuple(bindings))

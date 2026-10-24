@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import Literal
 
 
 @dataclass(frozen=True)
@@ -15,6 +16,16 @@ class ExpansionOutput:
 
 
 @dataclass(frozen=True)
+class ExpansionNodeDeclaration:
+    local_id: str
+    node_type: str
+    inputs: tuple[tuple[str, object], ...]
+    display: tuple[str, bool] | None
+    output_members: tuple[tuple[str, tuple[str, ...]], ...]
+    slot_variants: tuple[tuple[str, str], ...]
+
+
+@dataclass(frozen=True)
 class Expansion:
     """A finalized local graph and the expanding node's named return values.
 
@@ -22,10 +33,13 @@ class Expansion:
     The worker owns wrapping present values and validating declarations.
     """
 
-    nodes: tuple[tuple[str, str, tuple[tuple[str, object], ...], tuple[str, bool] | None], ...]
+    nodes: tuple[ExpansionNodeDeclaration, ...]
     outputs: Mapping[str, object]
+    cache_policy: Literal["reuse", "rerun"] = "reuse"
 
     def __post_init__(self) -> None:
+        if self.cache_policy not in ("reuse", "rerun"):
+            raise ValueError("expansion cache_policy must be reuse or rerun")
         object.__setattr__(self, "outputs", MappingProxyType(dict(self.outputs)))
 
 
@@ -37,6 +51,8 @@ class ExpansionNode:
         self.id = local_id
         self.inputs = dict(inputs)
         self.override_display_id: tuple[str, bool] | None = None
+        self.output_members: dict[str, tuple[str, ...]] = {}
+        self.slot_variants: dict[str, str] = {}
 
     def out(self, index: str | int) -> ExpansionOutput:
         return ExpansionOutput(self.id, index)
@@ -57,9 +73,10 @@ class ExpansionNode:
 class ExpansionBuilder:
     """Build a run-local graph without assigning process-global prefixes."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, cache_policy: Literal["reuse", "rerun"] = "reuse") -> None:
         self.nodes: dict[str, ExpansionNode] = {}
         self._next_id = 1
+        self.cache_policy: Literal["reuse", "rerun"] = cache_policy
 
     def node(self, node_type: str, local_id: str | None = None, **inputs: object) -> ExpansionNode:
         if local_id is None:
@@ -89,13 +106,16 @@ class ExpansionBuilder:
     def finalize(self, **outputs: object) -> Expansion:
         return Expansion(
             tuple(
-                (
+                ExpansionNodeDeclaration(
                     node.id,
                     node.node_type,
                     tuple(sorted(node.inputs.items())),
                     node.override_display_id,
+                    tuple(sorted(node.output_members.items())),
+                    tuple(sorted(node.slot_variants.items())),
                 )
                 for _, node in sorted(self.nodes.items())
             ),
             outputs,
+            self.cache_policy,
         )

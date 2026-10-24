@@ -278,6 +278,25 @@ def test_indexed_local_output_references_round_trip() -> None:
 
 
 @pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("outputMembers", []),
+        ("outputMembers", {"results": "not-an-array"}),
+        ("outputMembers", {"results": [13]}),
+        ("outputMembers", {"results": ["a", "a"]}),
+        ("slotVariants", []),
+        ("slotVariants", {"mode": None}),
+    ],
+)
+def test_expansion_node_interface_refuses_malformed_wire(field: str, value: object) -> None:
+    header, blobs = encode(expanded_outcome())
+    document = json.loads(algebra(header)["document"])
+    document["batch"]["units"][0]["expansion"]["nodes"][0][field] = value
+    with pytest.raises(BoundaryError):
+        decode(replace_document(header, document), blobs)
+
+
+@pytest.mark.parametrize(
     "mutation,match",
     [
         (lambda h: algebra(h).update(extra=True), "fields"),

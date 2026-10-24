@@ -159,6 +159,69 @@ class NonIdempotentExpansionNode(GraphExpansionNode):
         return replace(super().define_schema(), node_type="expansion.repeat", idempotent=False)
 
 
+class ExpansionPolicyNode(GraphExpansionNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return replace(
+            super().define_schema(),
+            node_type="expansion.policy",
+            inputs=(InputSpec("reuse", TypeExpr.concrete("BOOLEAN"), default=True),),
+        )
+
+    @classmethod
+    def execute(cls, reuse: bool = True) -> Any:
+        graph = api.ExpansionBuilder(cache_policy="reuse" if reuse else "rerun")
+        first = graph.node("expansion.child", "first", value=17)
+        second = graph.node("expansion.child", "second", value=17)
+        nested = graph.node("expansion.graph", "nested")
+        graph.node("expansion.output", "effect", value=first.out(0))
+        graph.node("expansion.output", "nested_effect", value=nested.out(0))
+        return graph.finalize(result=second.out(0), seed=17)
+
+
+class DynamicInterfaceChild(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "expansion.interface_child",
+            combos=(
+                api.DynamicComboSpec(
+                    "mode",
+                    (
+                        api.DynamicComboOption(
+                            "double", (InputSpec("value", TypeExpr.concrete("INT")),)
+                        ),
+                        api.DynamicComboOption(
+                            "negate", (InputSpec("value", TypeExpr.concrete("INT")),)
+                        ),
+                    ),
+                ),
+            ),
+            output_families=(api.OutputFamilySpec("results", TypeExpr.concrete("INT")),),
+        )
+
+    @classmethod
+    def execute(cls, output_spec: api.OutputInterface, **inputs: Any) -> Any:
+        assert inputs["mode"] == "double"
+        assert output_spec.family("results") == ("z", "a")
+        return {"results": {"z": inputs["mode.value"] * 2 + 3, "a": -175}}
+
+
+class InterfaceExpansionNode(GraphExpansionNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return replace(super().define_schema(), node_type="expansion.interface")
+
+    @classmethod
+    def execute(cls) -> Any:
+        graph = api.ExpansionBuilder()
+        child = graph.node("expansion.interface_child", "child", **{"mode.value": 25})
+        child.output_members["results"] = ("z", "a")
+        child.slot_variants["mode"] = "double"
+        graph.node("expansion.output", "output", value=child.out(0))
+        return graph.finalize(result=child.out(0), seed=17)
+
+
 class TwoOutputChild(ExpansionChild):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -265,6 +328,9 @@ PACK_NODES = [
     GraphExpansionNode,
     NestedExpansionNode,
     NonIdempotentExpansionNode,
+    ExpansionPolicyNode,
+    DynamicInterfaceChild,
+    InterfaceExpansionNode,
     InvalidExpansionNode,
     StringExpansionChild,
     TwoOutputChild,
@@ -507,7 +573,8 @@ def test_cached_expansion_accounts_and_invalidates_present_values_once(tmp_path:
 @pytest.mark.parametrize("worker_kind", ["in-process", "governed", "isolated", "remote"])
 @pytest.mark.parametrize("cache_enabled", [True, False])
 @pytest.mark.parametrize(
-    "node_type", ["expansion.graph", "expansion.indexed", "expansion.external"]
+    "node_type",
+    ["expansion.graph", "expansion.indexed", "expansion.external", "expansion.interface"],
 )
 def test_expansion_executes_children_through_each_worker(
     tmp_path: Path, worker_kind: str, cache_enabled: bool, node_type: str
@@ -609,6 +676,7 @@ def test_expansion_executes_children_through_each_worker(
         "expansion.repeat",
         "expansion.indexed",
         "expansion.external",
+        "expansion.interface",
     ],
 )
 def test_engine_replays_cached_expansion_declarations(
@@ -653,6 +721,95 @@ def test_engine_replays_cached_expansion_declarations(
             assert "parent" in second.cached and "parent" not in second.executed
         if node_type == "expansion.nested":
             assert "parent.0.0.nested" in second.cached
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("cache_kind", ["memory", "disk", "layered"])
+@pytest.mark.parametrize("reuse", [False, True])
+def test_expansion_cache_policy_survives_replay_and_controls_nested_children(
+    tmp_path: Path,
+    cache_kind: str,
+    reuse: bool,
+) -> None:
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        cache = MemoryLRUCache()
+        graph = Graph({"parent": GraphNode("expansion.policy", {"reuse": reuse})})
+        for run in range(2):
+            store = cache if cache_kind == "memory" else DiskCacheStore(tmp_path, registry)
+            if cache_kind == "layered":
+                store = LayeredCache(MemoryLRUCache(), store)
+            engine = Engine(
+                schemas=build_schemas(PACK_NODES),
+                registry=registry,
+                worker=InProcessWorker(build_node_types(PACK_NODES), registry),
+                cache=store,
+            )
+            result = await engine.run(graph, ["parent"])
+            assert result.outputs["parent"]["result"].resolve() == 53
+            if run:
+                assert "parent" in result.cached
+            if not reuse:
+                assert "parent.0.0.first" in result.executed
+                assert "parent.0.0.second" in result.executed
+                assert "parent.0.0.nested.0.0.child" in result.executed
+                assert not any(node != "parent" for node in result.cached)
+            elif run:
+                assert "parent.0.0.first" in result.cached
+                assert "parent.0.0.second" in result.cached
+                assert "parent.0.0.nested.0.0.child" in result.cached
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("output_type", "accepted"),
+    [
+        (TypeExpr.wildcard(), True),
+        (TypeExpr.list_of(TypeExpr.wildcard()), True),
+        (TypeExpr.concrete("STRING"), False),
+        (TypeExpr.list_of(TypeExpr.concrete("STRING")), False),
+    ],
+)
+def test_polymorphic_output_forwards_typed_envelopes_without_losing_ownership(
+    output_type: TypeExpr,
+    accepted: bool,
+) -> None:
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        value = registry.wrap("list<INT>", [17, -9])
+
+        class Forwarder(Node):
+            @classmethod
+            def define_schema(cls) -> NodeSchema:
+                return NodeSchema("expansion.forward", outputs=(OutputSpec("out", output_type),))
+
+            @classmethod
+            def execute(cls) -> Any:
+                return {"out": value}
+
+        worker = InProcessWorker(build_node_types([Forwarder]), registry)
+        result = await worker.invoke(
+            Invocation(
+                "forward",
+                "forward",
+                "expansion.forward",
+                {},
+                Forwarder.schema(),
+                job_ref="run",
+            )
+        )
+        if accepted:
+            assert result.error is None
+            assert result.outputs is not None
+            assert result.outputs["out"] is value
+            assert result.outputs["out"].resolve() == [17, -9]
+        else:
+            assert result.error is not None
+            assert "rejects list<INT>" in result.error.message
 
     asyncio.run(scenario())
 

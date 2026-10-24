@@ -63,6 +63,10 @@
   `node_blocked` event per origin per run, including cache replay. Silent
   blockers skip without a notice. Explicit accept, omit and fail input
   policies retain their normal behavior.
+- Runtime expansion preserves child dynamic choices and ordered output
+  membership across local, isolated and remote workers and cache replay.
+  Expansions may request child reruns without cache hits or coalescing;
+  the policy includes nested expansions and survives persistent cache replay.
 - Memory governance: budgets, headroom, reservations with renewal,
   governed shedding, admission waiting, and item details with Aimdo model-weight
   page residency when the active Aimdo build exposes it

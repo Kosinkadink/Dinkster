@@ -111,7 +111,12 @@ def admit_expansion(
             else:
                 inputs[name] = Link(ids[binding.local_node_id], str(binding.output_id))
         node_id = ids[node.local_id]
-        nodes[node_id] = GraphNode(node.node_type, inputs)
+        nodes[node_id] = GraphNode(
+            node.node_type,
+            inputs,
+            dict(node.output_members),
+            dict(node.slot_variants),
+        )
         origins[node_id] = (metadata(node.parent), metadata(node.display))
     overlay = snapshot_graph(Graph(nodes))
     effective, _ = elaborate_graph(overlay, schemas)
@@ -129,7 +134,12 @@ def admit_expansion(
                 )
                 output_id, _ = referenced_output(binding, source, overlay, effective, schemas)
                 inputs[name] = Link(source, output_id)
-        nodes[node_id] = GraphNode(node.node_type, inputs)
+        nodes[node_id] = GraphNode(
+            node.node_type,
+            inputs,
+            dict(node.output_members),
+            dict(node.slot_variants),
+        )
     overlay = snapshot_graph(Graph(nodes))
     effective, diagnostics = elaborate_graph(overlay, schemas)
     diagnostics += validate(

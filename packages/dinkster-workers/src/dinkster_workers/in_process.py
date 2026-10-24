@@ -1106,18 +1106,21 @@ class InProcessWorker:
                     stands_for=expected,
                 )
                 continue
-            if expected is None:
-                # Workers wrap outputs by declared type: after variable
-                # solving, anything still unresolved (an unmentioned variable,
-                # a wildcard/union output) is a schema bug in the node.
-                return contract_error(
-                    f"output '{out.id}' type could not be resolved from this invocation's inputs"
-                )
             if isinstance(returned_value, Value):
-                if returned_value.type_id != expected:
+                if (
+                    returned_value.type_id != expected
+                    if expected is not None
+                    else not out.type.accepts_concrete(returned_value.type_id)
+                ):
                     return contract_error(f"output '{out.id}' rejects {returned_value.type_id}")
                 outputs[out.id] = returned_value
                 continue
+            if expected is None:
+                # Plain results need a resolved type to wrap. A forwarded
+                # envelope already carries its type and ownership unchanged.
+                return contract_error(
+                    f"output '{out.id}' type could not be resolved from this invocation's inputs"
+                )
             try:
                 output = prepare_media_output(raw[out.id], expected, out, schema, media_inputs)
                 outputs[out.id] = self._registry.wrap(expected, output)
@@ -1174,9 +1177,10 @@ class InProcessWorker:
             raise ValueError("expansion inputs must be JSON literals or output references")
 
         nodes: list[LocalNode] = []
-        for local_id, node_type, inputs, display in declaration.nodes:
+        for node in declaration.nodes:
+            display = node.display
             bindings: list[tuple[str, InputBinding]] = []
-            for name, value in inputs:
+            for name, value in node.inputs:
                 binding = (
                     reference(value)
                     if isinstance(value, ExpansionOutput)
@@ -1185,8 +1189,8 @@ class InProcessWorker:
                 bindings.append((name, binding))
             nodes.append(
                 LocalNode(
-                    local_id,
-                    node_type,
+                    node.local_id,
+                    node.node_type,
                     tuple(bindings),
                     display=(
                         ExternalNodeRef(display[0])
@@ -1197,6 +1201,8 @@ class InProcessWorker:
                     )
                     if display is not None
                     else None,
+                    output_members=node.output_members,
+                    slot_variants=node.slot_variants,
                 )
             )
         present = {
@@ -1224,4 +1230,6 @@ class InProcessWorker:
             else:
                 returned = PresentOutput(result.outputs[name])
             outputs.append((name, returned))
-        return ExpandedReturn(LocalExpansion(tuple(nodes)), tuple(outputs))
+        return ExpandedReturn(
+            LocalExpansion(tuple(nodes), declaration.cache_policy), tuple(outputs)
+        )

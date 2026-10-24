@@ -188,6 +188,8 @@ class LocalNode:
     inputs: tuple[tuple[str, InputBinding], ...] = ()
     parent: NodeMetadataRef | None = None
     display: NodeMetadataRef | None = None
+    output_members: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    slot_variants: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         _identifier(self.local_id, "local_id")
@@ -206,6 +208,13 @@ class LocalNode:
             self.display, (CurrentNodeRef, LocalNodeRef, ExternalNodeRef)
         ):
             raise ValueError("invalid display metadata reference")
+        for _, members in _pairs(self.output_members, "output_members"):
+            if type(members) is not tuple or len(members) != len(set(members)):
+                raise ValueError("output members must be unique tuples")
+            for member in members:
+                _identifier(member, "output member")
+        for _, variant in _pairs(self.slot_variants, "slot_variants"):
+            _identifier(variant, "slot variant")
 
 
 def _local_refs(value: object) -> Sequence[str]:
@@ -217,8 +226,11 @@ def _local_refs(value: object) -> Sequence[str]:
 @dataclass(frozen=True)
 class LocalExpansion:
     nodes: tuple[LocalNode, ...]
+    cache_policy: Literal["reuse", "rerun"] = "reuse"
 
     def __post_init__(self) -> None:
+        if self.cache_policy not in ("reuse", "rerun"):
+            raise ValueError("expansion cache_policy must be reuse or rerun")
         if (
             type(self.nodes) is not tuple
             or not self.nodes
