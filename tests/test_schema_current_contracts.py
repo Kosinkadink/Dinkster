@@ -853,6 +853,10 @@ def test_number_widget_validated() -> None:
         NumberWidget(min=float("nan"))
     with pytest.raises(ValueError, match="must be finite"):
         NumberWidget(max=float("inf"))
+    for name in ("min", "max", "step"):
+        for boolean in (False, True):
+            with pytest.raises(ValueError, match="must be a number"):
+                NumberWidget(**{name: boolean})  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="control_after_generate"):
         NumberWidget(control_after_generate="rand")  # type: ignore[arg-type]
 
@@ -997,6 +1001,7 @@ def test_combo_widget_binding_is_enforced_during_wire_decode() -> None:
     (
         (CORE_INT, NumberWidget(min=0, max=2**64 - 1, step=1), 1),
         (CORE_FLOAT, NumberWidget(min=0, max=1, step=0.1, round=0.01), 0.95),
+        (CORE_FLOAT, NumberWidget(round=False), [1.23456789, -0.123456789]),
         (CORE_STRING, StringWidget(multiline=True), ""),
         (CORE_BOOLEAN, BooleanWidget(label_on="yes"), True),
         (CORE_COMBO, ComboWidget(options=("first", "second")), "first"),
@@ -1045,6 +1050,7 @@ def test_primitive_widget_lists_preserve_numeric_and_specialized_rules() -> None
         NumberWidget(step=0.25),
         NumberWidget(min=float(2**54)),
         NumberWidget(round=0.1),
+        NumberWidget(round=False),
     ):
         with pytest.raises(ValueError, match="integral|exactly representable|round requires"):
             InputSpec("value", integer, widget=widget)

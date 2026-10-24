@@ -14,11 +14,13 @@ import av
 import numpy as np
 import pytest
 from aiohttp import web
+from dinkster_api.v1 import AUDIO_TYPE, CORE_FLOAT, VIDEO_EDIT_TYPE, VIDEO_TYPE
 from dinkster_assets import AssetRef, AssetVault, digest_bytes
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link, graph_from_wire, graph_to_wire
 from dinkster_nodes_media_io import MEDIA_IO_NODES, CropVideo, TrimVideo, register_media_types
+from dinkster_protocol import Invocation
 from dinkster_schema import build_node_types
 from dinkster_values import (
     TypeRegistry,
@@ -29,8 +31,16 @@ from dinkster_values import (
     video_from_source,
     video_meta,
 )
+from dinkster_values.audio_codec import audio_window
 from dinkster_video import disassemble_video
-from dinkster_workers import BoundaryDiagnostic, InProcessWorker, IsolatedWorker, RemoteWorker
+from dinkster_workers import (
+    BoundaryDiagnostic,
+    InProcessWorker,
+    IsolatedWorker,
+    RemoteWorker,
+    load_manifest,
+)
+from dinkster_workers.host import load_pack
 from test_remote import TOKEN, start_service, stop_service
 
 MEDIA_MANIFEST = (
@@ -310,7 +320,7 @@ def test_same_saved_editor_graph_in_process_shm_and_loopback_remote(
         assert isolated_result[0] == expected[0]
         np.testing.assert_array_equal(isolated_result[1], expected[1])
         assert any(
-            crossing.type_id == "comfy.VIDEO" and crossing.transport == "shm"
+            crossing.type_id == VIDEO_TYPE and crossing.transport == "shm"
             for diagnostic in diagnostics
             for crossing in (*diagnostic.inputs, *diagnostic.outputs)
         )
@@ -358,5 +368,81 @@ def test_same_saved_editor_graph_in_process_shm_and_loopback_remote(
             await stop_service(proc)
         assert actual[0] == expected[0]
         np.testing.assert_array_equal(actual[1], expected[1])
+
+    asyncio.run(scenario())
+
+
+def test_media_manifest_executes_audio_video_and_video_edit_in_process_and_isolated() -> None:
+    source = video_from_source(_source(frame_count=20))
+    samples = np.arange(32, dtype=np.float32).reshape(1, 1, 32) / 32
+    audio = {"waveform": samples, "sample_rate": 8000}
+    edit = {"vendor": {"preserve": True}, "trim": {"start_time": 0.5, "duration": 1.0}}
+
+    async def scenario() -> None:
+        local_worker, registry, _, _ = load_pack(load_manifest(MEDIA_MANIFEST))
+        assert (
+            registry.spec(VIDEO_EDIT_TYPE).decode(registry.spec(VIDEO_EDIT_TYPE).encode(edit))
+            == edit
+        )
+
+        async def run(worker: InProcessWorker | IsolatedWorker) -> tuple[object, object]:
+            trimmed_audio = await worker.invoke(
+                Invocation(
+                    invocation_id="audio",
+                    node_id="audio",
+                    node_type="dinkster.audio.trim",
+                    inputs={
+                        "audio": registry.wrap(AUDIO_TYPE, audio),
+                        "start": registry.wrap(CORE_FLOAT, 0.001),
+                        "duration": registry.wrap(CORE_FLOAT, 0.002),
+                    },
+                    effective_schema=worker.schemas["dinkster.audio.trim"],
+                )
+            )
+            assert trimmed_audio.error is None and trimmed_audio.outputs is not None
+            assert trimmed_audio.outputs["audio"].type_id == AUDIO_TYPE
+
+            trimmed_video = await worker.invoke(
+                Invocation(
+                    invocation_id="video",
+                    node_id="video",
+                    node_type="dinkster.video.trim",
+                    inputs={
+                        "video": registry.wrap(VIDEO_TYPE, source),
+                        "video_edit": registry.wrap(VIDEO_EDIT_TYPE, edit),
+                    },
+                    effective_schema=worker.schemas["dinkster.video.trim"],
+                )
+            )
+            assert trimmed_video.error is None and trimmed_video.outputs is not None
+            assert trimmed_video.outputs["video"].type_id == VIDEO_TYPE
+            return trimmed_audio.outputs["audio"].resolve(), trimmed_video.outputs[
+                "video"
+            ].resolve()
+
+        local_audio, local_video = await run(local_worker)
+        isolated = IsolatedWorker(MEDIA_MANIFEST, registry, shm_threshold=64)
+        await isolated.start()
+        try:
+            isolated_audio, isolated_video = await run(isolated)
+        finally:
+            await isolated.close()
+
+        for result in (local_audio, isolated_audio):
+            np.testing.assert_array_equal(
+                audio_window(result, 0, 16)["waveform"], samples[..., 8:24]
+            )
+        for result in (local_video, isolated_video):
+            assert decode_video(encode_video(result))["edits"] == [
+                {
+                    "strict_duration": False,
+                    "trim": {"start_time": Fraction(1, 2), "duration": Fraction(1)},
+                }
+            ]
+            frames = cast(np.ndarray, disassemble_video(result)["images"])
+            assert frames.shape == (10, 32, 64, 3)
+        np.testing.assert_array_equal(
+            disassemble_video(local_video)["images"], disassemble_video(isolated_video)["images"]
+        )
 
     asyncio.run(scenario())

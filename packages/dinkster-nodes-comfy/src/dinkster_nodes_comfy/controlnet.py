@@ -30,6 +30,16 @@ _CONTROL_NET = TypeExpr.concrete(CONTROL_NET_TYPE)
 _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 _VAE = TypeExpr.concrete(VAE_TYPE)
 _CATEGORY = "model/conditioning/controlnet"
+_UNION_CONTROLNET_TYPES = {
+    "openpose": 0,
+    "depth": 1,
+    "hed/pidi/scribble/ted": 2,
+    "canny/lineart/anime_lineart/mlsd": 3,
+    "normal": 4,
+    "segment": 5,
+    "tile": 6,
+    "repaint": 7,
+}
 
 
 def _strength() -> InputSpec:
@@ -161,7 +171,6 @@ class ControlNetApplyAdvanced(Node):
 class SetUnionControlNetType(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        types = importlib.import_module("dinkster_inference.cldm.control_types")
         return NodeSchema(
             node_type="SetUnionControlNetType",
             display_name="Set Union ControlNet Type",
@@ -173,7 +182,7 @@ class SetUnionControlNetType(Node):
                     "type",
                     TypeExpr.concrete(CORE_COMBO),
                     widget=ComboWidget(
-                        tuple(ComboOption(name) for name in ("auto", *types.UNION_CONTROLNET_TYPES))
+                        tuple(ComboOption(name) for name in ("auto", *_UNION_CONTROLNET_TYPES))
                     ),
                 ),
             ),
@@ -182,9 +191,8 @@ class SetUnionControlNetType(Node):
 
     @classmethod
     def execute(cls, *, control_net: Any, type: str) -> Mapping[str, object]:
-        types = importlib.import_module("dinkster_inference.cldm.control_types")
         result = control_net.copy()
-        number = types.UNION_CONTROLNET_TYPES.get(type, -1)
+        number = _UNION_CONTROLNET_TYPES.get(type, -1)
         result.set_extra_arg("control_type", [number] if number >= 0 else [])
         return cls.outputs(CONTROL_NET=result)
 
