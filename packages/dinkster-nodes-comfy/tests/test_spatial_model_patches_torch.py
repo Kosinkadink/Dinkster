@@ -181,12 +181,17 @@ class ModelResult(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="spatial-fixture.result",
-            inputs=(InputSpec("model", TypeExpr.concrete(MODEL_TYPE)),),
+            inputs=(
+                InputSpec("original", TypeExpr.concrete(MODEL_TYPE)),
+                InputSpec("model", TypeExpr.concrete(MODEL_TYPE)),
+            ),
             outputs=(OutputSpec("value", TypeExpr.concrete(CORE_FLOAT)),),
         )
 
     @classmethod
-    def execute(cls, *, model: Patcher) -> Mapping[str, object]:
+    def execute(cls, *, original: Patcher, model: Patcher) -> Mapping[str, object]:
+        assert original.attn_input is None
+        assert original.attn_output is None
         query = torch.arange(30, dtype=torch.float32).reshape(1, 15, 2) + 1
         merged, _, _ = model.attn_input(query, query, query, {"original_shape": (1, 2, 3, 5)})
         restored = model.attn_output(merged, {})
@@ -198,12 +203,17 @@ class HyperTileResult(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="spatial-fixture.hypertile-result",
-            inputs=(InputSpec("model", TypeExpr.concrete(MODEL_TYPE)),),
+            inputs=(
+                InputSpec("original", TypeExpr.concrete(MODEL_TYPE)),
+                InputSpec("model", TypeExpr.concrete(MODEL_TYPE)),
+            ),
             outputs=(OutputSpec("value", TypeExpr.concrete(CORE_FLOAT)),),
         )
 
     @classmethod
-    def execute(cls, *, model: Patcher) -> Mapping[str, object]:
+    def execute(cls, *, original: Patcher, model: Patcher) -> Mapping[str, object]:
+        assert original.attn_input is None
+        assert original.attn_output is None
         query = torch.arange(192, dtype=torch.float32).reshape(1, 96, 2)
         tiled, _, _ = model.attn_input(query, query, query, {"original_shape": (1, 2, 8, 12)})
         return cls.outputs(value=float(model.attn_output(tiled, {}).sum()))
@@ -214,12 +224,18 @@ class DownscaleResult(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="spatial-fixture.downscale-result",
-            inputs=(InputSpec("model", TypeExpr.concrete(MODEL_TYPE)),),
+            inputs=(
+                InputSpec("original", TypeExpr.concrete(MODEL_TYPE)),
+                InputSpec("model", TypeExpr.concrete(MODEL_TYPE)),
+            ),
             outputs=(OutputSpec("value", TypeExpr.concrete(CORE_FLOAT)),),
         )
 
     @classmethod
-    def execute(cls, *, model: Patcher) -> Mapping[str, object]:
+    def execute(cls, *, original: Patcher, model: Patcher) -> Mapping[str, object]:
+        assert original.input_patch is None
+        assert original.after_skip_patch is None
+        assert original.output_patch is None
         hidden = torch.arange(35, dtype=torch.float32).reshape(1, 1, 5, 7)
         reduced = model.after_skip_patch(
             hidden, {"block": ("input", 3), "sigmas": [torch.tensor(1.0)]}
@@ -257,54 +273,65 @@ def test_complete_manifest_transports_an_ordinary_tome_model_graph_in_both_hosts
                 encoding="ascii",
             )
             await composer.add_pack(PackSpec(manifest=fixture_manifest, in_process=in_process))
-            result = await composer.composition.make_engine(lambda _event: None).run(
-                Graph(
-                    nodes={
-                        "source": GraphNode("spatial-fixture.model", {}),
-                        "patch": GraphNode(
-                            "TomePatchModel", {"model": Link("source", "MODEL"), "ratio": 0.3}
-                        ),
-                        "result": GraphNode(
-                            "spatial-fixture.result", {"model": Link("patch", "MODEL")}
-                        ),
-                        "hypertile": GraphNode(
-                            "HyperTile",
-                            {
-                                "model": Link("source", "MODEL"),
-                                "tile_size": 32,
-                                "swap_size": 2,
-                                "max_depth": 0,
-                                "scale_depth": False,
-                            },
-                        ),
-                        "hypertile_result": GraphNode(
-                            "spatial-fixture.hypertile-result",
-                            {"model": Link("hypertile", "MODEL")},
-                        ),
-                        "downscale": GraphNode(
-                            "PatchModelAddDownscale",
-                            {
-                                "model": Link("source", "MODEL"),
-                                "block_number": 3,
-                                "downscale_factor": 2.0,
-                                "start_percent": 0.0,
-                                "end_percent": 0.35,
-                                "downscale_after_skip": True,
-                                "downscale_method": "nearest-exact",
-                                "upscale_method": "nearest-exact",
-                            },
-                        ),
-                        "downscale_result": GraphNode(
-                            "spatial-fixture.downscale-result",
-                            {"model": Link("downscale", "MODEL")},
-                        ),
-                    }
-                ),
-                ["result", "hypertile_result", "downscale_result"],
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("spatial-fixture.model", {}),
+                    "patch": GraphNode(
+                        "TomePatchModel", {"model": Link("source", "MODEL"), "ratio": 0.3}
+                    ),
+                    "result": GraphNode(
+                        "spatial-fixture.result",
+                        {
+                            "original": Link("source", "MODEL"),
+                            "model": Link("patch", "MODEL"),
+                        },
+                    ),
+                    "hypertile": GraphNode(
+                        "HyperTile",
+                        {
+                            "model": Link("source", "MODEL"),
+                            "tile_size": 32,
+                            "swap_size": 2,
+                            "max_depth": 0,
+                            "scale_depth": False,
+                        },
+                    ),
+                    "hypertile_result": GraphNode(
+                        "spatial-fixture.hypertile-result",
+                        {
+                            "original": Link("source", "MODEL"),
+                            "model": Link("hypertile", "MODEL"),
+                        },
+                    ),
+                    "downscale": GraphNode(
+                        "PatchModelAddDownscale",
+                        {
+                            "model": Link("source", "MODEL"),
+                            "block_number": 3,
+                            "downscale_factor": 2.0,
+                            "start_percent": 0.0,
+                            "end_percent": 0.35,
+                            "downscale_after_skip": True,
+                            "downscale_method": "nearest-exact",
+                            "upscale_method": "nearest-exact",
+                        },
+                    ),
+                    "downscale_result": GraphNode(
+                        "spatial-fixture.downscale-result",
+                        {
+                            "original": Link("source", "MODEL"),
+                            "model": Link("downscale", "MODEL"),
+                        },
+                    ),
+                }
             )
-            assert result.outputs["result"]["value"].resolve() == 465.0
-            assert result.outputs["hypertile_result"]["value"].resolve() == 18336.0
-            assert result.outputs["downscale_result"]["value"].resolve() == 649.0
+            for _ in range(2):
+                result = await composer.composition.make_engine(lambda _event: None).run(
+                    graph, ["result", "hypertile_result", "downscale_result"]
+                )
+                assert result.outputs["result"]["value"].resolve() == 465.0
+                assert result.outputs["hypertile_result"]["value"].resolve() == 18336.0
+                assert result.outputs["downscale_result"]["value"].resolve() == 649.0
         finally:
             await composer.close()
 
