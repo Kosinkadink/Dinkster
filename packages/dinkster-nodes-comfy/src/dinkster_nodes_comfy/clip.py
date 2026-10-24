@@ -185,21 +185,13 @@ class unCLIPConditioning(Node):
             "strength": strength,
             "noise_augmentation": noise_augmentation,
         }
-        return cls.outputs(
-            CONDITIONING=[
-                [
-                    text,
-                    {
-                        **metadata,
-                        "unclip_conditioning": [
-                            *metadata.get("unclip_conditioning", []),
-                            value,
-                        ],
-                    },
-                ]
-                for text, metadata in conditioning
-            ]
-        )
+        result: list[list[Any]] = []
+        for text, metadata in conditioning:
+            values = metadata.copy()
+            previous = values.get("unclip_conditioning")
+            values["unclip_conditioning"] = [value] if previous is None else previous + [value]
+            result.append([text, values])
+        return cls.outputs(CONDITIONING=result)
 
 
 CLIP_NODES = (CLIPTextEncode, CLIPSetLastLayer, CLIPVisionEncode, unCLIPConditioning)

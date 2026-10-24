@@ -83,6 +83,7 @@ def test_unclip_conditioning_appends_without_mutating_ordered_metadata() -> None
                 ],
             },
         ],
+        [torch.tensor([[6.0]]), {"tag": "third", "unclip_conditioning": None}],
     ]
     source_metadata = [entry[1].copy() for entry in conditioning]
 
@@ -99,14 +100,16 @@ def test_unclip_conditioning_appends_without_mutating_ordered_metadata() -> None
     assert [entry[0] is source[0] for entry, source in zip(result, conditioning, strict=True)] == [
         True,
         True,
+        True,
     ]
-    assert [entry[1]["tag"] for entry in result] == ["first", "second"]
-    assert [len(records) for records in _vision_values(result)] == [2, 3]
+    assert [entry[1]["tag"] for entry in result] == ["first", "second", "third"]
+    assert [len(records) for records in _vision_values(result)] == [2, 3, 1]
     _assert_record(_vision_values(result)[0][0], 1.0, [(224, 336, 3)], None, None)
     _assert_record(_vision_values(result)[0][1], 5.0, [(448, 224, 3)], -2.5, 0.75)
     _assert_record(_vision_values(result)[1][0], 1.0, [(224, 336, 3)], None, None)
     _assert_record(_vision_values(result)[1][1], 2.0, [(224, 336, 3)], None, None)
     _assert_record(_vision_values(result)[1][2], 5.0, [(448, 224, 3)], -2.5, 0.75)
+    _assert_record(_vision_values(result)[2][0], 5.0, [(448, 224, 3)], -2.5, 0.75)
     assert [entry[1] for entry in conditioning] == source_metadata
 
 
