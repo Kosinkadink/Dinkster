@@ -2246,10 +2246,10 @@ class BoundarySession:
                         raise BoundaryError("unexpected rebind result")
                     future.set_result(header)
                 elif kind == "cancelAck":
+                    if not self._resumable:
+                        continue
                     key = InvocationKey.from_header(header)
                     registered = self._invocation_keys.get(key.invocation_id)
-                    if registered is None:
-                        continue
                     if registered != key:
                         raise BoundaryError("cancel acknowledgement names no invocation")
                     pending = self._pending.pop(key.invocation_id, None)
