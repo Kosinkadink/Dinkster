@@ -15,7 +15,7 @@ import pytest
 def test_comparison_cli(tmp_path: Path) -> None:
     from dinkster_schema import InputSpec, NodeSchema, StringWidget, TypeExpr, schema_to_wire
 
-    mount = schema_to_wire(
+    wire = schema_to_wire(
         NodeSchema(
             node_type="SaveExample",
             inputs=(
@@ -28,7 +28,8 @@ def test_comparison_cli(tmp_path: Path) -> None:
                 ),
             ),
         )
-    )["interface"][0]
+    )
+    mount = json.loads(json.dumps(wire))["interface"][0]
     assert "default" not in mount
     reference = {
         "nodes": [
@@ -115,6 +116,10 @@ def test_comparison_cli(tmp_path: Path) -> None:
 
     native["interface"][2]["default"] = None
     assert run(native)[0] == 0
+    del native["interface"][0]["default"]
+    code, _, rows = run(native)
+    assert code == 1 and "inputs[0].default" in rows[0]["differences"]
+    native["interface"][0]["default"] = "Example"
     native["interface"][0]["widget"] = {"type": "STRING", "multiline": False}
     code, _, rows = run(native)
     assert code == 1 and "inputs[0].multiline" in rows[0]["differences"]
@@ -159,6 +164,8 @@ def test_comparison_cli(tmp_path: Path) -> None:
         ("required", True),
         ("default", "output"),
         ("default", "another-grant"),
+        ("default", 0),
+        ("default", False),
         ("type", {"kind": "concrete", "types": ["INT"]}),
         ("widget", {"type": "STRING", "multiline": True}),
         ("widget", {"type": "STRING", "multiline": 0}),
