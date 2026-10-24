@@ -82,7 +82,7 @@ def composite(
     if mask is None:
         resolved_mask: Any = torch.ones_like(source)
     else:
-        resolved_mask = mask.to(destination.device, copy=True)
+        resolved_mask = materialize_image(mask).to(destination.device, copy=True)
         resolved_mask = torch.nn.functional.interpolate(
             resolved_mask.reshape((-1, 1, resolved_mask.shape[-2], resolved_mask.shape[-1])),
             size=(source.shape[-2], source.shape[-1]),

@@ -68,6 +68,18 @@ namespaces = [
     "ConditioningSetMask",
     "ConditioningZeroOut",
     "ConditioningSetTimestepRange",
+    "LatentCompositeMasked",
+    "ImageCompositeMasked",
+    "MaskToImage",
+    "ImageToMask",
+    "ImageColorToMask",
+    "SolidMask",
+    "InvertMask",
+    "CropMask",
+    "MaskComposite",
+    "FeatherMask",
+    "GrowMask",
+    "ThresholdMask",
 ]
 
 [pack.sandbox]

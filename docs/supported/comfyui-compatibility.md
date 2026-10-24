@@ -5,6 +5,8 @@
   values cross ordinary pack boundaries without host type overrides.
 - Ten native conditioning nodes combine, blend, concatenate, multiply, mask,
   zero, and set area or timestep metadata under their exact ComfyUI interfaces.
+- Twelve native mask and composite nodes convert, create, invert, crop, combine,
+  feather, grow, threshold, and composite images or latents under exact core IDs.
 - Portable masks become Torch tensors at native tensor-consuming nodes, without
   moving already-live tensors or loading Torch in the host decoder.
 - `dinkster-serve --comfy-root ... --legacy-pack PATH` runs unmodified v1 and
