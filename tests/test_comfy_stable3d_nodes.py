@@ -1,6 +1,6 @@
 """Torch-free Stable Zero123 and Stable Video 3D public interfaces."""
 
-from dinkster_api.v1 import schema_to_wire
+from dinkster_api.v1 import NumberWidget, schema_to_wire
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.stable3d import STABLE3D_NODES
 
@@ -58,3 +58,17 @@ def test_stable3d_interfaces() -> None:
     batched = STABLE3D_NODES[1].schema()
     assert batched.display_name == ""
     assert batched.inputs[-2].advanced and batched.inputs[-1].advanced
+
+    angle_names = {
+        "elevation",
+        "azimuth",
+        "elevation_batch_increment",
+        "azimuth_batch_increment",
+    }
+    angles = [
+        item for node in STABLE3D_NODES for item in node.schema().inputs if item.id in angle_names
+    ]
+    assert len(angles) == 7
+    assert all(
+        isinstance(item.widget, NumberWidget) and item.widget.round is False for item in angles
+    )

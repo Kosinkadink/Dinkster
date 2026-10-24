@@ -64,7 +64,7 @@ def _angle(name: str, minimum: float, maximum: float, *, advanced: bool = False)
         name,
         _FLOAT,
         default=0.0,
-        widget=NumberWidget(min=minimum, max=maximum, step=0.1),
+        widget=NumberWidget(min=minimum, max=maximum, step=0.1, round=False),
         advanced=advanced,
     )
 
