@@ -351,24 +351,24 @@ def test_manifest_transports_model_sampling_patch_chain_in_both_hosting_modes(
                 encoding="ascii",
             )
             await composer.add_pack(PackSpec(manifest=source_manifest, in_process=in_process))
-            result = await composer.composition.make_engine(lambda _event: None).run(
-                Graph(
-                    nodes={
-                        "source": GraphNode("advanced-model-fixture.source", {}),
-                        "patch": GraphNode(
-                            "ModelSamplingSD3", {"model": Link("source", "MODEL"), "shift": 3.0}
-                        ),
-                        "noise": GraphNode(
-                            "ModelNoiseScale", {"model": Link("patch", "MODEL"), "noise_scale": 2.5}
-                        ),
-                        "result": GraphNode(
-                            "advanced-model-fixture.result", {"model": Link("noise", "MODEL")}
-                        ),
-                    }
-                ),
-                ["result"],
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("advanced-model-fixture.source", {}),
+                    "patch": GraphNode(
+                        "ModelSamplingSD3", {"model": Link("source", "MODEL"), "shift": 3.0}
+                    ),
+                    "noise": GraphNode(
+                        "ModelNoiseScale", {"model": Link("patch", "MODEL"), "noise_scale": 2.5}
+                    ),
+                    "result": GraphNode(
+                        "advanced-model-fixture.result", {"model": Link("noise", "MODEL")}
+                    ),
+                }
             )
-            assert result.outputs["result"]["value"].resolve() == pytest.approx(2.0)
+            engine = composer.composition.make_engine(lambda _event: None)
+            for _ in range(2):
+                result = await engine.run(graph, ["result"])
+                assert result.outputs["result"]["value"].resolve() == pytest.approx(2.0)
         finally:
             await composer.close()
 

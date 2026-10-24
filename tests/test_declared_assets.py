@@ -230,6 +230,7 @@ def write_decl_manifest(tmp_path: Path) -> Path:
     manifest.write_text(
         "[pack]\n"
         'name = "declpack"\n'
+        'publisher = "dinkster"\n'
         'namespaces = ["decl"]\n'
         "[pack.entry]\n"
         'nodes = "declpack_nodes:NODES"\n'

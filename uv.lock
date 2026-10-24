@@ -812,10 +812,14 @@ version = "0.0.1"
 source = { editable = "packages/dinkster-graph" }
 dependencies = [
     { name = "dinkster-schema" },
+    { name = "dinkster-values" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "dinkster-schema", editable = "packages/dinkster-schema" }]
+requires-dist = [
+    { name = "dinkster-schema", editable = "packages/dinkster-schema" },
+    { name = "dinkster-values", editable = "packages/dinkster-values" },
+]
 
 [[package]]
 name = "dinkster-image-document"

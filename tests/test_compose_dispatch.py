@@ -1059,7 +1059,8 @@ NODES = [{nodes}]
     arm_entry = f'arm_nodes = "{module}:ARM_NODES"\n' if body_arm else ""
     manifest = root / "dinkster-pack.toml"
     manifest.write_text(
-        f'[pack]\nname = "{name}"\nnamespaces = ["{namespace}"]\n'
+        f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
+        f'namespaces = ["{namespace}"]\n'
         f"{executes_line}{schema_only_line}{arms_table}\n[pack.entry]\n"
         f'nodes = "{module}:NODES"\ntypes = "{module}:register_types"\n{arm_entry}'
     )
@@ -1134,6 +1135,7 @@ def choices() -> dict[str, tuple[str, ...]]:
     owner_manifest.write_text(
         """[pack]
 name = "vision-owner"
+publisher = "dinkster"
 namespaces = ["vision"]
 [pack.entry]
 nodes = "vision_owner_nodes:NODES"
@@ -1512,6 +1514,7 @@ def choices() -> dict[str, tuple[str, ...]]:
     owner_manifest.write_text(
         """[pack]
 name = "generation-owner"
+publisher = "dinkster"
 namespaces = ["fixture"]
 schema-only = ["fixture.generate"]
 [pack.capabilities]
@@ -2230,6 +2233,7 @@ ARM_NODES = {"alt": [AltResident]}
     manifest.write_text(
         """[pack]
 name = "resident"
+publisher = "dinkster"
 [pack.arms]
 alt = ["resident.make"]
 [pack.entry]
@@ -2254,7 +2258,8 @@ def test_crosspack_resident_models_survive_group_reload(tmp_path: Path, shared_g
             root.mkdir()
             manifest = root / "dinkster-pack.toml"
             manifest.write_text(
-                f'[pack]\nname = "{name}"\nnamespaces = ["{name}"]\n'
+                f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
+                f'namespaces = ["{name}"]\n'
                 f'[pack.entry]\nnodes = "crosspack_nodes:{entry}"\n'
                 'types = "dinkster_inference_wire:register_inference_types"\n'
             )

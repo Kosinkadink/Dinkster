@@ -355,11 +355,9 @@ class ModelSamplingFlux(Node):
     def execute(
         cls, *, model: Any, max_shift: float, base_shift: float, width: int, height: int
     ) -> Mapping[str, object]:
-        shift = (
-            (width * height / 256) * ((max_shift - base_shift) / 3840)
-            + base_shift
-            - ((max_shift - base_shift) / 3840) * 256
-        )
+        slope = (max_shift - base_shift) / 3840
+        intercept = base_shift - slope * 256
+        shift = (width * height / 256) * slope + intercept
         modules = importlib.import_module("dinkster_inference.model_sampling")
         advanced = type("ModelSamplingAdvanced", (modules.ModelSamplingFlux, modules.CONST), {})
         patched = advanced(_model_config(model))
@@ -433,8 +431,8 @@ class RescaleCFG(Node):
             cond, uncond, sigma = args["cond"], args["uncond"], args["sigma"]
             sigma = sigma.view(sigma.shape[:1] + (1,) * (cond.ndim - 1))
             x = x_orig / (sigma * sigma + 1.0)
-            factor = (sigma * sigma + 1.0).sqrt() / sigma
-            cond, uncond = (x - (x_orig - cond)) * factor, (x - (x_orig - uncond)) * factor
+            cond = ((x - (x_orig - cond)) * (sigma**2 + 1.0) ** 0.5) / sigma
+            uncond = ((x - (x_orig - uncond)) * (sigma**2 + 1.0) ** 0.5) / sigma
             cfg = uncond + scale * (cond - uncond)
             rescaled = cfg * (
                 torch.std(cond, dim=(1, 2, 3), keepdim=True)
@@ -444,7 +442,7 @@ class RescaleCFG(Node):
                 x
                 - (multiplier * rescaled + (1.0 - multiplier) * cfg)
                 * sigma
-                / (sigma * sigma + 1.0).sqrt()
+                / (sigma * sigma + 1.0) ** 0.5
             )
 
         result = model.clone()
@@ -512,7 +510,12 @@ class ModelAttentionBackend(Node):
                 ),
             ),
             outputs=(
-                OutputSpec("MODEL", _MODEL, doc="The model with the selected attention backend."),
+                OutputSpec(
+                    "MODEL",
+                    _MODEL,
+                    display_name="model",
+                    doc="The model with the selected attention backend.",
+                ),
             ),
         )
 

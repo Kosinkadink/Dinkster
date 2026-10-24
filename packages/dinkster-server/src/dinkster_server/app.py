@@ -2615,6 +2615,7 @@ async def handle_nodes(request: web.Request) -> web.Response:
             for pack_id, info in state.packs.items()
         },
         "nodes": nodes,
+        "typeOwners": state.engine.registry.type_owners(),
     }
     # Present exactly while the host is still announcing packs: this table
     # is real but not final - expect more epochs, then a
