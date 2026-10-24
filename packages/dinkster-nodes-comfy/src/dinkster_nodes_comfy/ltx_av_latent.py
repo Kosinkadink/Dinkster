@@ -27,7 +27,7 @@ def _streams(value: object) -> tuple[object, object]:
         streams = cast("MultiStreamLatent[object]", value)
         return streams.by_role("video"), streams.by_role("audio")
     if getattr(value, "is_nested", False):
-        streams = value.unbind()
+        streams = cast("Any", value).unbind()
         return streams[0], streams[1]
     raise ValueError("AV latent samples must contain video and audio streams")
 
@@ -56,7 +56,7 @@ class LTXVConcatAVLatent(Node):
 
     @staticmethod
     def fit_audio(
-        reference: object, audio: object, noise_mask: object | None
+        reference: Any, audio: Any, noise_mask: Any | None
     ) -> tuple[object, object | None]:
         dims = [
             index for index in range(reference.ndim) if reference.shape[index] != audio.shape[index]
@@ -101,7 +101,7 @@ class LTXVConcatAVLatent(Node):
         video_mask = video.get("noise_mask")
         audio_mask = audio.get("noise_mask")
         if type(video_samples) is MultiStreamLatent or getattr(video_samples, "is_nested", False):
-            video_samples, prior_audio = _streams(video_samples)
+            video_samples, prior_audio = _streams(cast("Any", video_samples))
             if video_mask is not None:
                 video_mask, _ = _mask_streams(video_mask)
             audio_samples, audio_mask = cls.fit_audio(prior_audio, audio_samples, audio_mask)
