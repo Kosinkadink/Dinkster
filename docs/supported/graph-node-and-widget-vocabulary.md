@@ -11,8 +11,10 @@
   invalidation and device metadata projection inspect every position; persistent
   caches refuse tuples containing live resident references. Foundation tuple
   nodes collect independently typed connected values and select a position with
-  a document-stored integer index, including negative indices. This does not
-  claim complete tuple graph validation, frontend editor, or importer support.
+  a document-stored integer index, including negative indices. Graph validation
+  rejects non-tuple sources and out-of-range indices at any region depth. Host
+  preparation and COMBO checks inspect every position. This does not claim
+  frontend editor or importer support.
 - Required closed dynamic slots can bind their selected variant type to shared
   input and output variables, including list and asset element types
 - Widgets: asset, save-target, combo and multi-combo with optional labels,

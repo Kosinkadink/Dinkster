@@ -1890,6 +1890,9 @@ def _type_variables(expr: TypeExpr) -> Iterable[TypeExpr]:
     elif expr.kind in ("list", "asset", "stream"):
         assert expr.element is not None
         yield from _type_variables(expr.element)
+    elif expr.kind == "tuple":
+        for position in expr.elements:
+            yield from _type_variables(position)
 
 
 @dataclass(frozen=True)

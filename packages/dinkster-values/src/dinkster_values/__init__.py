@@ -11,6 +11,7 @@ from .assets import (
     asset_type_id,
     parse_asset_type_id,
     runtime_type_atom,
+    runtime_type_atoms,
 )
 from .audio_codec import (
     AudioRangeError,
@@ -510,6 +511,7 @@ __all__ = [
     "render_video_original",
     "resident_resource_id",
     "runtime_type_atom",
+    "runtime_type_atoms",
     "splat_fingerprint",
     "splat_meta",
     "storage_dtype",

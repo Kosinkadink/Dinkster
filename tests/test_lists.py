@@ -24,6 +24,7 @@ from dinkster_schema import (
     TypeExpr,
     build_node_types,
     build_schemas,
+    combo_type_mismatch_is_error,
     schema_from_wire,
     schema_to_wire,
 )
@@ -43,6 +44,7 @@ from dinkster_values import (
     parse_list_type_id,
     register_core_types,
     register_resource_handle_type,
+    runtime_type_atoms,
     stamp_resource_producer_arm,
     value_children,
     value_resource_ids,
@@ -187,6 +189,21 @@ def test_make_list_value_rejects_mismatched_children() -> None:
 
 def test_tuple_values_preserve_position_types_and_nested_containers() -> None:
     registry = make_registry()
+    assert runtime_type_atoms("tuple<IMAGE,list<INT>,asset<tuple<INT,STRING>>>") == (
+        "IMAGE",
+        "INT",
+        "STRING",
+    )
+    assert runtime_type_atoms("tuple<>") == ()
+    for malformed in ("tuple<INT,>", "tuple<INT,STRING>>", "list<tuple<INT,>>", "tuple<,INT>"):
+        assert runtime_type_atoms(malformed) is None
+    assert combo_type_mismatch_is_error("tuple<INT,COMBO>", TypeExpr.concrete("STRING"))
+    assert combo_type_mismatch_is_error(
+        "tuple<INT,STRING>", TypeExpr.tuple_of(TypeExpr.concrete("INT"), TypeExpr.concrete("COMBO"))
+    )
+    assert not combo_type_mismatch_is_error(
+        "tuple<INT,STRING>", TypeExpr.tuple_of(TypeExpr.concrete("INT"), TypeExpr.concrete("FLOAT"))
+    )
     value = registry.wrap(
         "tuple<INT,STRING,list<INT>,tuple<STRING,INT>>", (7, "a", [9, 2], ("b", 4))
     )
@@ -417,6 +434,43 @@ def test_engine_runs_independently_typed_tuple_nodes_and_caches() -> None:
             ["first"],
         )
         assert any(d.severity == "error" and "constant INT" in d.message for d in diagnostics)
+        for index in (-3, 2):
+            invalid_selector = replace(
+                graph.nodes["first"], inputs={"tuple": Link("pair", "tuple"), "index": index}
+            )
+            diagnostics = validate(
+                Graph(nodes={**graph.nodes, "first": invalid_selector}),
+                build_schemas(nodes),
+                ["first"],
+            )
+            assert [(d.node_id, d.code) for d in diagnostics if d.severity == "error"] == [
+                ("first", "output-type-invalid")
+            ]
+            assert "out of range" in diagnostics[0].message
+        invalid_source = replace(graph.nodes["first"], inputs={"tuple": Link("integer", "value")})
+        diagnostics = validate(
+            Graph(nodes={**graph.nodes, "first": invalid_source}), build_schemas(nodes), ["first"]
+        )
+        assert any(
+            d.code == "output-type-invalid" and "requires a tuple" in d.message for d in diagnostics
+        )
+        invalid_body = replace(
+            folded,
+            body=Graph(
+                nodes={
+                    **folded.body.nodes,
+                    "label": GraphNode(
+                        "std.tuple.get", {"tuple": Link("$region", "carry"), "index": 2}
+                    ),
+                }
+            ),
+        )
+        diagnostics = validate(
+            Graph(nodes={**graph.nodes, "fold": invalid_body}), build_schemas(nodes), ["fold"]
+        )
+        assert any(
+            d.code == "output-type-invalid" and d.node_id == "fold/label" for d in diagnostics
+        )
 
     asyncio.run(scenario())
 
@@ -436,6 +490,49 @@ def test_bad_list_output_is_contract_error() -> None:
 
         with pytest.raises(ExecutionError, match="values"):
             await engine.run(graph, ["b"])
+
+    asyncio.run(scenario())
+
+
+def test_tuple_positions_prepare_their_host_types_before_output_wrapping() -> None:
+    class TupleSource(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            pair = TypeExpr.tuple_of(
+                TypeExpr.concrete("test.first"), TypeExpr.concrete("test.second")
+            )
+            return NodeSchema(
+                "test.tuple_source",
+                outputs=(OutputSpec("value", pair),),
+            )
+
+        @classmethod
+        def execute(cls) -> Mapping[str, object]:
+            return cls.outputs(value=(7, "label"))
+
+    async def scenario() -> None:
+        registry = make_registry()
+        nodes = (TupleSource,)
+        engine = Engine(
+            schemas=build_schemas(nodes),
+            registry=registry,
+            worker=InProcessWorker(build_node_types(nodes), registry),
+            cache=MemoryLRUCache(),
+        )
+
+        async def prepare(atoms: set[str]) -> None:
+            for type_id in ("test.first", "test.second"):
+                if type_id in atoms and type_id not in registry:
+                    registry.register(type_id)
+
+        runtime = replace(engine.pin_execution(), prepare_host_types=prepare)
+        result = await engine.run(
+            Graph(nodes={"source": GraphNode("test.tuple_source", {})}),
+            ["source"],
+            execution=runtime,
+        )
+        assert result.outputs["source"]["value"].type_id == "tuple<test.first,test.second>"
+        assert result.outputs["source"]["value"].resolve() == (7, "label")
 
     asyncio.run(scenario())
 
