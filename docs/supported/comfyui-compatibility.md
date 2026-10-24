@@ -1,8 +1,9 @@
 ## ComfyUI compatibility
 
-- The native core pack exposes eight latent creation, batch, transform, resize,
-  and noise-mask nodes under their exact ComfyUI IDs. IMAGE, MASK, and LATENT
-  values cross ordinary pack boundaries without host type overrides.
+- The native core pack exposes eleven latent creation, batch, transform, resize,
+  blend, composite, crop, and noise-mask nodes under their exact ComfyUI IDs.
+  IMAGE, MASK, and LATENT values cross ordinary pack boundaries without host type
+  overrides.
 - Ten native conditioning nodes combine, blend, concatenate, multiply, mask,
   zero, and set area or timestep metadata under their exact ComfyUI interfaces.
 - Twelve native mask and composite nodes convert, create, invert, crop, combine,

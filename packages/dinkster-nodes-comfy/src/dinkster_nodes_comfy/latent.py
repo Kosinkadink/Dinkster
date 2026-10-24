@@ -286,6 +286,126 @@ class SetLatentNoiseMask(Node):
         return cls.outputs(LATENT=result)
 
 
+class LatentComposite(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return _schema(
+            "LatentComposite",
+            "Latent Composite",
+            (
+                InputSpec("samples_to", _LATENT),
+                InputSpec("samples_from", _LATENT),
+                _integer("x", 0, 0, 16384, 8),
+                _integer("y", 0, 0, 16384, 8),
+                _integer("feather", 0, 0, 16384, 8),
+            ),
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        samples_to: dict[str, Any],
+        samples_from: dict[str, Any],
+        x: int,
+        y: int,
+        feather: int = 0,
+    ) -> Mapping[str, object]:
+        samples_to = materialize_latent(samples_to)
+        samples_from = materialize_latent(samples_from)
+        x, y, feather = x // 8, y // 8, feather // 8
+        result = samples_to.copy()
+        target = samples_to["samples"]
+        source = samples_from["samples"]
+        output = target.clone()
+        source = source[:, :, : target.shape[2] - y, : target.shape[3] - x]
+        region = output[:, :, y : y + source.shape[2], x : x + source.shape[3]]
+        if feather == 0:
+            output[:, :, y : y + source.shape[2], x : x + source.shape[3]] = source
+        else:
+            torch = importlib.import_module("torch")
+            mask = torch.ones_like(source)
+            for offset in range(feather):
+                strength = (1.0 / feather) * (offset + 1)
+                if y != 0:
+                    mask[:, :, offset : offset + 1, :] *= strength
+                if y + source.shape[2] < target.shape[2]:
+                    mask[:, :, mask.shape[2] - 1 - offset : mask.shape[2] - offset, :] *= strength
+                if x != 0:
+                    mask[:, :, :, offset : offset + 1] *= strength
+                if x + source.shape[3] < target.shape[3]:
+                    mask[:, :, :, mask.shape[3] - 1 - offset : mask.shape[3] - offset] *= strength
+            output[:, :, y : y + source.shape[2], x : x + source.shape[3]] = (
+                source * mask + region * (torch.ones_like(mask) - mask)
+            )
+        result["samples"] = output
+        return cls.outputs(LATENT=result)
+
+
+class LatentBlend(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return _schema(
+            "LatentBlend",
+            "Latent Blend",
+            (
+                InputSpec("samples1", _LATENT),
+                InputSpec("samples2", _LATENT),
+                InputSpec(
+                    "blend_factor",
+                    TypeExpr.concrete("FLOAT"),
+                    default=0.5,
+                    widget=NumberWidget(min=0, max=1, step=0.01),
+                ),
+            ),
+            "experimental",
+        )
+
+    @classmethod
+    def execute(
+        cls, *, samples1: dict[str, Any], samples2: dict[str, Any], blend_factor: float
+    ) -> Mapping[str, object]:
+        samples1 = materialize_latent(samples1)
+        samples2 = materialize_latent(samples2)
+        result = samples1.copy()
+        first, second = samples1["samples"], samples2["samples"]
+        if first.shape != second.shape:
+            utils = importlib.import_module("dinkster_inference.utils")
+            second = utils.common_upscale(
+                second, first.shape[3], first.shape[2], "bicubic", "center"
+            )
+        result["samples"] = first * blend_factor + second * (1 - blend_factor)
+        return cls.outputs(LATENT=result)
+
+
+class LatentCrop(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return _schema(
+            "LatentCrop",
+            "Crop Latent",
+            (
+                _SAMPLES,
+                _integer("width", 512, 64, 16384, 8),
+                _integer("height", 512, 64, 16384, 8),
+                _integer("x", 0, 0, 16384, 8),
+                _integer("y", 0, 0, 16384, 8),
+            ),
+            "model/latent/transform",
+        )
+
+    @classmethod
+    def execute(
+        cls, *, samples: dict[str, Any], width: int, height: int, x: int, y: int
+    ) -> Mapping[str, object]:
+        samples = materialize_latent(samples)
+        result = samples.copy()
+        source = samples["samples"]
+        x, y = min(x // 8, source.shape[3] - 8), min(y // 8, source.shape[2] - 8)
+        result["samples"] = source[:, :, y : y + height // 8, x : x + width // 8]
+        return cls.outputs(LATENT=result)
+
+
 LATENT_NODES = (
     EmptyLatentImage,
     LatentFromBatch,
@@ -295,4 +415,7 @@ LATENT_NODES = (
     LatentRotate,
     LatentFlip,
     SetLatentNoiseMask,
+    LatentComposite,
+    LatentBlend,
+    LatentCrop,
 )

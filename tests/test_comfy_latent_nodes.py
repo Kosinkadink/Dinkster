@@ -14,6 +14,9 @@ from dinkster_api.v1 import Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.latent import (
     LATENT_NODES,
+    LatentBlend,
+    LatentComposite,
+    LatentCrop,
     LatentFromBatch,
     LatentUpscale,
     RepeatLatentBatch,
@@ -45,6 +48,14 @@ from dinkster.compose import PackSpec, ServingComposer
         ("LatentRotate", "Rotate Latent", "/transform", ("samples", "rotation")),
         ("LatentFlip", "Flip Latent", "/transform", ("samples", "flip_method")),
         ("SetLatentNoiseMask", "Set Latent Noise Mask", "", ("samples", "mask")),
+        (
+            "LatentComposite",
+            "Latent Composite",
+            "",
+            ("samples_to", "samples_from", "x", "y", "feather"),
+        ),
+        ("LatentBlend", "Latent Blend", "experimental", ("samples1", "samples2", "blend_factor")),
+        ("LatentCrop", "Crop Latent", "/transform", ("samples", "width", "height", "x", "y")),
     ],
 )
 def test_latent_schemas_use_exact_core_interfaces(
@@ -53,7 +64,9 @@ def test_latent_schemas_use_exact_core_interfaces(
     node = next(node for node in LATENT_NODES if node.schema().node_type == node_id)
     schema = node.schema()
     assert schema.display_name == display
-    assert schema.category == "model/latent" + category
+    assert schema.category == (
+        category if category == "experimental" else "model/latent" + category
+    )
     assert tuple(spec.id for spec in schema.inputs) == inputs
     assert tuple((spec.id, spec.type.types) for spec in schema.outputs) == (
         ("LATENT", ("LATENT",)),
@@ -76,6 +89,15 @@ class ArrayTensor:
 
     def __getitem__(self, key: object) -> ArrayTensor:
         return ArrayTensor(self.array[cast(Any, key)])
+
+    def __setitem__(self, key: object, value: ArrayTensor) -> None:
+        self.array[cast(Any, key)] = value.array
+
+    def __mul__(self, value: float) -> ArrayTensor:
+        return ArrayTensor(self.array * value)
+
+    def __add__(self, value: ArrayTensor) -> ArrayTensor:
+        return ArrayTensor(self.array + value.array)
 
     def clone(self) -> ArrayTensor:
         return ArrayTensor(self.array.copy())
@@ -150,6 +172,52 @@ def test_zero_size_upscale_returns_the_existing_latent_unchanged() -> None:
         )["LATENT"]
         is latent
     )
+
+
+def test_latent_composite_clips_and_copies_while_blend_weights_the_first_input() -> None:
+    target = ArrayTensor(np.arange(20).reshape(1, 1, 4, 5).astype(np.float32))
+    source = ArrayTensor(np.full((1, 1, 3, 4), -3.0, dtype=np.float32))
+    result = cast(
+        dict[str, Any],
+        LatentComposite.execute(
+            samples_to={"samples": target, "note": "keep"},
+            samples_from={"samples": source},
+            x=24,
+            y=16,
+        )["LATENT"],
+    )
+    np.testing.assert_array_equal(
+        result["samples"].array,
+        np.array(
+            [[0, 1, 2, 3, 4], [5, 6, 7, 8, 9], [10, 11, 12, -3, -3], [15, 16, 17, -3, -3]]
+        ).reshape(1, 1, 4, 5),
+    )
+    assert result["note"] == "keep"
+    np.testing.assert_array_equal(target.array.flatten(), np.arange(20))
+    blend = cast(
+        dict[str, Any],
+        LatentBlend.execute(
+            samples1={"samples": target, "note": "keep"},
+            samples2={"samples": ArrayTensor(np.full((1, 1, 4, 5), 40.0))},
+            blend_factor=0.25,
+        )["LATENT"],
+    )
+    np.testing.assert_array_equal(blend["samples"].array.flatten(), 30 + np.arange(20) / 4)
+    assert blend["note"] == "keep"
+
+
+def test_latent_crop_clamps_offset_to_leave_eight_cells() -> None:
+    source = ArrayTensor(np.arange(130).reshape(1, 1, 10, 13))
+    result = cast(
+        dict[str, Any],
+        LatentCrop.execute(
+            samples={"samples": source, "note": "keep"}, width=64, height=64, x=800, y=800
+        )["LATENT"],
+    )
+    np.testing.assert_array_equal(
+        result["samples"].array, np.arange(130).reshape(1, 1, 10, 13)[:, :, 2:10, 5:13]
+    )
+    assert result["note"] == "keep"
 
 
 class PortableLatentSource(Node):
