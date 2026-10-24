@@ -333,14 +333,15 @@ class DualModelGuider(Node):
                 latent_shapes: Any = None,
             ) -> Any:
                 if self.uncond_inner is not None:
-                    if latent_image is not None and torch.count_nonzero(latent_image) > 0:
-                        latent_image = self.uncond_inner.process_latent_in(latent_image)
+                    negative_latent = latent_image
+                    if negative_latent is not None and torch.count_nonzero(negative_latent) > 0:
+                        negative_latent = self.uncond_inner.process_latent_in(negative_latent)
                     self._uncond_conds = samplers.process_conds(
                         self.uncond_inner,
                         noise,
                         {"negative": self._uncond_neg},
                         device,
-                        latent_image,
+                        negative_latent,
                         denoise_mask,
                         seed,
                         latent_shapes=latent_shapes,

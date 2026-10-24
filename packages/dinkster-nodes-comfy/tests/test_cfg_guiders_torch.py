@@ -585,6 +585,58 @@ def test_dual_model_guider_cleans_up_negative_model_when_sampling_fails(
     assert guider.uncond_inner is None
 
 
+def test_dual_model_negative_transform_does_not_change_primary_latent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    initialize_inference_process()
+    import dinkster_inference.samplers as samplers
+
+    latent = torch.tensor([[[[2.0, -7.0]]]], dtype=torch.float64)
+    original = latent.clone()
+
+    def process_conds(
+        _model: Any,
+        _noise: Any,
+        conditions: Any,
+        _device: Any,
+        negative_latent: Any,
+        *_args: Any,
+        **_kwargs: Any,
+    ) -> Any:
+        torch.testing.assert_close(negative_latent, original * 3.0 + 1.0)
+        return conditions
+
+    def primary_sample(
+        _self: Any, _noise: Any, primary_latent: Any, *_args: Any, **_kwargs: Any
+    ) -> Any:
+        return primary_latent
+
+    monkeypatch.setattr(samplers, "process_conds", process_conds)
+    monkeypatch.setattr(samplers.CFGGuider, "inner_sample", primary_sample)
+    guider = DualModelGuider.execute(
+        model=_patcher(),
+        model_negative=_patcher(),
+        positive=_conditioning(1.0, "positive"),
+        negative=_conditioning(-1.0, "negative"),
+        cfg=2.0,
+    )["GUIDER"]
+    guider.uncond_inner = SimpleNamespace(process_latent_in=lambda value: value * 3.0 + 1.0)
+    guider._uncond_neg = [{"marker": "negative"}]
+    result = guider.inner_sample(
+        torch.zeros_like(latent),
+        latent,
+        torch.device("cpu"),
+        None,
+        torch.tensor([2.0, 0.0]),
+        None,
+        None,
+        True,
+        17,
+    )
+    torch.testing.assert_close(result, original)
+    torch.testing.assert_close(latent, original)
+
+
 def test_cfg_override_uses_inclusive_bounds_and_restores_nested_cfg_on_error() -> None:
     model = _patcher()
     first = CFGOverride.execute(model=model, cfg=2.0, start_percent=0.2, end_percent=0.8)["MODEL"]
