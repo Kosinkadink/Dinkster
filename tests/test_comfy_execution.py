@@ -197,11 +197,7 @@ def test_for_loop(cache_enabled: bool) -> None:
     async def scenario() -> None:
         engine = make_engine()
         graph = Graph(
-            {
-                "loop": GraphNode(
-                    "dev.execution.test_for_loop_open", {"initial": 3, "iterations": 4}
-                )
-            }
+            {"loop": GraphNode("dev.execution.test_for_loop_open", {"initial": 3, "iterations": 4})}
         )
         for _ in range(2):
             result = await engine.run(graph, ["loop"], cache_enabled=cache_enabled)
