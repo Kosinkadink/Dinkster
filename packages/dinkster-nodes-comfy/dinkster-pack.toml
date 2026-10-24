@@ -59,6 +59,8 @@ namespaces = [
     "ModelMergeKrea2",
     "FreeU",
     "FreeU_V2",
+    "ScaleROPE",
+    "DifferentialDiffusion",
     "EmptyLatentImage",
     "LatentFromBatch",
     "RepeatLatentBatch",
