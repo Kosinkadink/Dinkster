@@ -56,7 +56,7 @@ def _schema(node_type: str, display_name: str, inputs: tuple[InputSpec, ...]) ->
     )
 
 
-def _set_values(
+def conditioning_set_values(
     conditioning: Sequence[Sequence[Any]], values: Mapping[str, object]
 ) -> list[list[Any]]:
     return [[entry[0], {**entry[1], **values}] for entry in conditioning]
@@ -179,7 +179,7 @@ class ConditioningMultiply(Node):
             pooled_output = metadata.get("pooled_output")
             if pooled_output is not None:
                 values["pooled_output"] = pooled_output * multiplier
-            result.extend(_set_values([[text * multiplier, metadata]], values))
+            result.extend(conditioning_set_values([[text * multiplier, metadata]], values))
         return cls.outputs(CONDITIONING=result)
 
 
@@ -211,7 +211,7 @@ class ConditioningSetArea(Node):
         strength: float,
     ) -> Mapping[str, object]:
         return cls.outputs(
-            CONDITIONING=_set_values(
+            CONDITIONING=conditioning_set_values(
                 conditioning,
                 {
                     "area": (height // 8, width // 8, y // 8, x // 8),
@@ -250,7 +250,7 @@ class ConditioningSetAreaPercentage(Node):
         strength: float,
     ) -> Mapping[str, object]:
         return cls.outputs(
-            CONDITIONING=_set_values(
+            CONDITIONING=conditioning_set_values(
                 conditioning,
                 {
                     "area": ("percentage", height, width, y, x),
@@ -277,7 +277,9 @@ class ConditioningSetAreaStrength(Node):
     def execute(
         cls, *, conditioning: Sequence[Sequence[Any]], strength: float
     ) -> Mapping[str, object]:
-        return cls.outputs(CONDITIONING=_set_values(conditioning, {"strength": strength}))
+        return cls.outputs(
+            CONDITIONING=conditioning_set_values(conditioning, {"strength": strength})
+        )
 
 
 class ConditioningSetMask(Node):
