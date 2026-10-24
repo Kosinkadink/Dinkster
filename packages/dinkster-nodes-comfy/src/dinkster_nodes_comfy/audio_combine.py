@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import Mapping
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from dinkster_api.v1 import (
     AUDIO_TYPE,
@@ -117,7 +117,7 @@ class AudioConcat(Node):
 
     @classmethod
     def execute(
-        cls, *, audio1: object | None, audio2: object | None, direction: str
+        cls, *, audio1: object | None, audio2: object | None, direction: Literal["after", "before"]
     ) -> Mapping[str, object]:
         if audio1 is None and audio2 is None:
             return cls.outputs(AUDIO=None)
@@ -134,7 +134,10 @@ class AudioConcat(Node):
             waveform_1, sample_rate_1, waveform_2, sample_rate_2
         )
         torch = importlib.import_module("torch")
-        waveforms = (waveform_1, waveform_2) if direction == "after" else (waveform_2, waveform_1)
+        if direction == "after":
+            waveforms = (waveform_1, waveform_2)
+        elif direction == "before":
+            waveforms = (waveform_2, waveform_1)
         return cls.outputs(
             AUDIO={"waveform": torch.cat(waveforms, dim=2), "sample_rate": sample_rate}
         )
@@ -167,7 +170,11 @@ class AudioMerge(Node):
 
     @classmethod
     def execute(
-        cls, *, audio1: object | None, audio2: object | None, merge_method: str
+        cls,
+        *,
+        audio1: object | None,
+        audio2: object | None,
+        merge_method: Literal["add", "mean", "subtract", "multiply"],
     ) -> Mapping[str, object]:
         if audio1 is None and audio2 is None:
             return cls.outputs(AUDIO=None)
@@ -203,7 +210,7 @@ class AudioMerge(Node):
             waveform = waveform_1 - waveform_2
         elif merge_method == "multiply":
             waveform = waveform_1 * waveform_2
-        else:
+        elif merge_method == "mean":
             waveform = (waveform_1 + waveform_2) / 2
         maximum = waveform.abs().max()
         if maximum > 1.0:

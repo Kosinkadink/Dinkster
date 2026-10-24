@@ -18,7 +18,6 @@ from dinkster_api.v1 import (
     OutputSpec,
     TypeExpr,
     materialize_audio,
-    register_audio_value_type,
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.audio_combine import (
@@ -89,6 +88,47 @@ def test_merge_normalizes_only_above_one_and_retains_dtype_device() -> None:
     assert result["waveform"].device.type == "cpu"
 
 
+@pytest.mark.parametrize("left_rate,right_rate", ((8_000, 16_000), (16_000, 8_000)))
+def test_join_resamples_only_the_lower_rate_with_asymmetric_batches(
+    left_rate: int, right_rate: int
+) -> None:
+    left = _audio([[[0.0, 1.0, -0.5]], [[0.5, -1.0, 0.25]]], left_rate)
+    right = _audio([[[0.25, -0.75, 1.0, 0.5]], [[-0.5, 0.75, 0.0, -1.0]]], right_rate)
+    result = JoinAudioChannels.execute(audio_left=left, audio_right=right)["audio"]
+    import dinkster_inference.audio
+
+    target_rate = max(left_rate, right_rate)
+    expected_left = (
+        left["waveform"]
+        if left_rate == target_rate
+        else dinkster_inference.audio.resample(left["waveform"], left_rate, target_rate)
+    )
+    expected_right = (
+        right["waveform"]
+        if right_rate == target_rate
+        else dinkster_inference.audio.resample(right["waveform"], right_rate, target_rate)
+    )
+    length = min(expected_left.shape[-1], expected_right.shape[-1])
+    assert set(result) == {"waveform", "sample_rate"}
+    assert result["sample_rate"] == target_rate
+    assert result["waveform"].dtype is torch.float32
+    assert result["waveform"].device.type == "cpu"
+    assert torch.equal(
+        result["waveform"],
+        torch.cat((expected_left[..., :length], expected_right[..., :length]), dim=1),
+    )
+
+
+def test_merge_trims_longer_second_and_returns_first_for_empty_audio() -> None:
+    first = _audio([[[1.0, -0.5]]])
+    longer = _audio([[[0.25, 0.5, 0.75]]])
+    merged = AudioMerge.execute(audio1=first, audio2=longer, merge_method="subtract")["AUDIO"]
+    assert torch.equal(merged["waveform"], torch.tensor([[[0.75, -1.0]]]))
+    empty = _audio([[[]]])
+    result = AudioMerge.execute(audio1=first, audio2=empty, merge_method="add")["AUDIO"]
+    assert result["waveform"] is first["waveform"]
+
+
 class AudioSource(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -136,10 +176,6 @@ class AudioInspect(Node):
         return cls.outputs(summary="audio-combine")
 
 
-def register_audio_combine_types(registry: Any) -> None:
-    register_audio_value_type(registry, AUDIO_TYPE)
-
-
 @pytest.mark.parametrize("in_process", (True, False))
 def test_audio_combine_nodes_execute_twice_in_both_manifest_hosts(
     tmp_path: Path, in_process: bool
@@ -157,9 +193,12 @@ def test_audio_combine_nodes_execute_twice_in_both_manifest_hosts(
             manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
             (tmp_path / "audio_combine_fixture.py").write_text(
                 "from test_audio_combine_torch import AudioInspect, AudioSource\n"
-                "from test_audio_combine_torch import register_audio_combine_types\n"
-                "from dinkster_nodes_comfy import COMFY_NODES\n"
-                "NODES = (*COMFY_NODES, AudioSource, AudioInspect)\n",
+                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_media_io import register_media_types\n"
+                "NODES = (*COMFY_NODES, AudioSource, AudioInspect)\n"
+                "\ndef register_types(registry):\n"
+                "    register_inference_types(registry)\n"
+                "    register_media_types(registry)\n",
                 encoding="ascii",
             )
             fixture = tmp_path / "dinkster-pack.toml"
@@ -169,9 +208,13 @@ def test_audio_combine_nodes_execute_twice_in_both_manifest_hosts(
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "audio_combine_fixture:NODES")
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
-                    "audio_combine_fixture:register_audio_combine_types",
+                    "audio_combine_fixture:register_types",
                 ),
                 encoding="ascii",
+            )
+            media_manifest = manifest.parent.parent / "dinkster-nodes-media-io/dinkster-pack.toml"
+            await composer.add_pack(
+                PackSpec(manifest=media_manifest, in_process=in_process, trust_reserved=True)
             )
             await composer.add_pack(PackSpec(manifest=fixture, in_process=in_process))
             graph = Graph(

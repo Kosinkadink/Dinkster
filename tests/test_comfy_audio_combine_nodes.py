@@ -35,6 +35,7 @@ def test_audio_combine_schemas_match_comfyui() -> None:
     merge = AUDIO_COMBINE_NODES[2].schema().inputs[-1]
     assert concat.type.runtime_type_id() == merge.type.runtime_type_id() == CORE_COMBO
     assert concat.default == "after"
+    assert merge.default is None
     assert isinstance(concat.widget, ComboWidget)
     assert isinstance(merge.widget, ComboWidget)
     assert tuple(option.value for option in cast(Any, concat.widget).options) == ("after", "before")
