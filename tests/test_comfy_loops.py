@@ -10,13 +10,22 @@ from dinkster_graph import Graph, GraphNode, Link, TypedLiteral
 from dinkster_memory import GovernorReservationService, MemoryGovernor, ReservationRequest
 from dinkster_nodes_comfy.loops import LOOP_NODES
 from dinkster_nodes_comfy.math import ComfyMathExpression
-from dinkster_nodes_comfy.primitive import PrimitiveInt
+from dinkster_nodes_comfy.primitive import PrimitiveBoolean, PrimitiveInt
+from dinkster_nodes_comfy.switch import ComfySwitchNode
 from dinkster_nodes_foundation.lists import ListElement, MakeList
 from dinkster_schema import build_node_types, build_schemas
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import GovernedWorker, InProcessWorker, IsolatedWorker
 
-NODES = (*LOOP_NODES, ComfyMathExpression, PrimitiveInt, MakeList, ListElement)
+NODES = (
+    *LOOP_NODES,
+    ComfyMathExpression,
+    PrimitiveInt,
+    PrimitiveBoolean,
+    ComfySwitchNode,
+    MakeList,
+    ListElement,
+)
 
 
 def make_engine() -> Engine:
@@ -151,7 +160,7 @@ def test_loop_expansion_and_publication_across_worker_boundary(
         manifest.write_text(
             '[pack]\nname="loop-test"\nnamespaces=["StartLoop","EndLoop",'
             '"LoopIteration","LoopProgress","LoopResult","ComfyMathExpression",'
-            '"PrimitiveInt","std"]\n[pack.entry]\n'
+            '"PrimitiveInt","PrimitiveBoolean","ComfySwitchNode","std"]\n[pack.entry]\n'
             'nodes="tests.test_comfy_loops:NODES"\n',
             encoding="ascii",
         )
@@ -199,3 +208,27 @@ def test_loop_expansion_and_publication_across_worker_boundary(
             await boundary.close()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("accumulate", [False, True])
+@pytest.mark.parametrize("linked", [False, True])
+def test_accumulation_control_reads_its_value(accumulate: bool, linked: bool) -> None:
+    graph = Graph(
+        {
+            "control": GraphNode("PrimitiveBoolean", {"value": accumulate}),
+            "start": GraphNode(
+                "StartLoop", {"mode.num_iterations": 3}, slot_variants={"mode": "simple"}
+            ),
+            "end": GraphNode(
+                "EndLoop",
+                {
+                    "output_value": Link("start", "iteration_index"),
+                    "accumulate": Link("control", "BOOLEAN")
+                    if linked
+                    else TypedLiteral("BOOLEAN", accumulate),
+                },
+            ),
+        }
+    )
+    result = asyncio.run(asyncio.wait_for(make_engine().run(graph, ["end"]), 10))
+    assert result.outputs["end"]["outputs"].resolve() == ([0, 1, 2] if accumulate else [2])

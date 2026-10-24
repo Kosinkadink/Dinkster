@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
 from typing import cast
@@ -104,4 +105,4 @@ class EngineRunContext:
 
     async def override_node(self, node_id: str, inputs: Mapping[str, object]) -> None:
         self._check_target(node_id)
-        self._override(node_id, inputs)
+        self._override(node_id, json.loads(json.dumps(inputs, default=dict, allow_nan=False)))

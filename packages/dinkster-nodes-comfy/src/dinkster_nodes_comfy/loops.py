@@ -133,6 +133,8 @@ class StartLoop(Node):
         body: Sequence[str] = pair["body"]
         nodes = document["nodes"]
         end_inputs = nodes[end_id]["inputs"]
+        accumulate: object = end_inputs.get("accumulate", False)
+        dynamic_accumulate = type(accumulate) is not bool
         builder = ExpansionBuilder(cache_policy="reuse" if cache_iterations else "rerun")
 
         def external(value: object) -> object:
@@ -194,7 +196,7 @@ class StartLoop(Node):
             if _link(end_inputs.get("output_value")) is not None:
                 output = copied(end_inputs["output_value"])
                 dependencies.append(output)
-                if end_inputs.get("accumulate", False):
+                if accumulate is True or dynamic_accumulate:
                     results.append(output)
                 elif position == len(values) - 1:
                     results = [output]
@@ -225,12 +227,12 @@ class StartLoop(Node):
                 **{f"items.{i}": value for i, value in enumerate(results)},
             )
             result_value: object = collected.out("list")
-            if _link(end_inputs.get("accumulate")) is not None:
+            if dynamic_accumulate:
                 final = builder.node("std.list.make", "final", **{"items.0": results[-1]})
                 selection = builder.node(
                     "ComfySwitchNode",
                     "accumulation",
-                    switch=external(end_inputs["accumulate"]),
+                    switch=external(accumulate),
                     on_false=final.out("list"),
                     on_true=result_value,
                 )
