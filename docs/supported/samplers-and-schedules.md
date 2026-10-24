@@ -19,6 +19,11 @@ Native SIGMAS tensors cross worker boundaries as canonical tensor records,
 preserving their dtype, shape, bytes, and fingerprint. Legacy schedule
 settings remain supported.
 
+Native Epsilon Scaling and Temporal Score Rescaling patch post-CFG noise
+predictions. FreSca filters low- and high-frequency guidance independently.
+Temporal Score Rescaling supports per-sample sigma tensors, leaving zero-sigma
+samples unchanged while rescaling the other samples independently.
+
 EasyCache and LazyCache patch a model for approximate denoiser-result reuse
 during a configured portion of sampling.
 
