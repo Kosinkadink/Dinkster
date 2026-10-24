@@ -37,3 +37,7 @@ resolved in another worker or after their resident state is released.
 
 Native sampler factory nodes provide KSampler selection, Euler ancestral,
 DPM++, LMS, adaptive DPM, ER-SDE, SA-Solver, and SEEDS-2 runtime samplers.
+
+LCM upscale, LCM noise controls, and Euler CFG++ sampler nodes run through the
+pinned native sampler runtime. Euler CFG++ supports regular and alternative
+ComfyUI callback behavior.

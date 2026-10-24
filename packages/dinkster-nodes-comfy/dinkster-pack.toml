@@ -301,6 +301,9 @@ namespaces = [
     "SamplerER_SDE",
     "SamplerSASolver",
     "SamplerSEEDS2",
+    "SamplerLCMUpscale",
+    "SamplerLCM",
+    "SamplerEulerCFGpp",
 ]
 
 [pack.sandbox]
