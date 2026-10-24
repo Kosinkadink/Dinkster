@@ -113,3 +113,5 @@ __all__ = [
     "VIDEO_TYPE",
     "VOXEL_TYPE",
 ]
+
+BUILTIN_TYPE_IDS: frozenset[str] = frozenset(globals()[name] for name in __all__)

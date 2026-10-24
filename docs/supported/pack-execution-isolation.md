@@ -3,6 +3,8 @@
 - Value type ownership is discoverable for live and cold-catalog packs without
   activating cold workers. Removing or replacing a pack retracts its old type
   identities; a rejected replacement preserves the active owners.
+  Built-in identities remain owned by foundation independently of the
+  official pack that provides their codec and survive pack removal.
 - Non-dinkster publishers' node schemas and type claims require the pack-name
   prefix at loading and catalog preparation. Declared type claims remain
   exclusive even when the pack has no codec callback. Dependent packs can

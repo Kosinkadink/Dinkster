@@ -21,6 +21,7 @@ from urllib.parse import urlencode
 from .assets import ASSET_BASE_TYPE, parse_asset_type_id, runtime_type_atom
 from .builtin_types import (
     ARRAY_TYPE,
+    BUILTIN_TYPE_IDS,
     CORE_ABSENT,
     CORE_BOOLEAN,
     CORE_COMBO,
@@ -290,7 +291,9 @@ class TypeRegistry:
         self._batch_merges: dict[TypeId, BatchMergeSpec] = {}
         self._type_equivalences: dict[TypeId, tuple[TypeId, str]] = {}
         self._claims: dict[str, tuple[str, ...]] = {}
-        self._owners: dict[TypeId, str] = {}
+        self._owners: dict[TypeId, str] = dict.fromkeys(
+            BUILTIN_TYPE_IDS, "dinkster-nodes-foundation"
+        )
         self._registering_pack: str | None = None
         self._allow_bare = False
         self._resident_tables: list[ResidencyTable] = []
@@ -385,20 +388,33 @@ class TypeRegistry:
         return dict(self._owners)
 
     def declare_types(
-        self, owner: str, claims: tuple[str, ...], type_ids: Sequence[TypeId]
+        self,
+        owner: str,
+        claims: tuple[str, ...],
+        type_ids: Sequence[TypeId],
+        *,
+        allow_bare: bool = False,
     ) -> None:
         """Publish worker-owned type identities without importing their codecs."""
         for type_id in type_ids:
+            if allow_bare and type_id in BUILTIN_TYPE_IDS:
+                continue
             if not any(type_id == claim or claim_covers(claim, type_id) for claim in claims):
                 raise ValueError(f"{owner}: type {type_id!r} is outside its declared type claims")
             if (held := self.owner_of(type_id)) is not None and held != owner:
                 raise ValueError(f"type {type_id!r} is owned by {held!r}, not {owner!r}")
         self.claim_types(owner, claims)
-        self._owners.update(dict.fromkeys(type_ids, owner))
+        self._owners.update(
+            dict.fromkeys((tid for tid in type_ids if tid not in BUILTIN_TYPE_IDS), owner)
+        )
 
     def remove_pack_types(self, owner: str) -> None:
         """Release a pack's claims, codecs, and type-specific registrations."""
-        removed = {type_id for type_id, holder in self._owners.items() if holder == owner}
+        removed = {
+            type_id
+            for type_id, holder in self._owners.items()
+            if holder == owner and type_id not in BUILTIN_TYPE_IDS
+        }
         self._claims.pop(owner, None)
         for type_id in removed:
             self._owners.pop(type_id)
@@ -444,13 +460,20 @@ class TypeRegistry:
         if type_id in self._types:
             raise ValueError(f"type already registered: {type_id}")
         owner = self._registering_pack or "dinkster-nodes-foundation"
+        builtin = type_id in BUILTIN_TYPE_IDS
         if self._registering_pack is not None and not self._allow_bare:
             if not claim_covers(owner, type_id):
                 raise ValueError(f"{owner}: type {type_id!r} must be prefixed by its pack name")
-        if self._registering_pack is not None and not any(
-            type_id == claim or claim_covers(claim, type_id) for claim in self._claims[owner]
+        if (
+            self._registering_pack is not None
+            and not (builtin and self._allow_bare)
+            and not any(
+                type_id == claim or claim_covers(claim, type_id) for claim in self._claims[owner]
+            )
         ):
             raise ValueError(f"{owner}: type {type_id!r} is outside its declared type claims")
+        if builtin:
+            owner = "dinkster-nodes-foundation"
         held_owner = self.owner_of(type_id)
         if held_owner is not None and held_owner != owner:
             raise ValueError(f"type {type_id!r} is owned by {held_owner!r}, not {owner!r}")

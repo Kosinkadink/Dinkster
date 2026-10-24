@@ -7571,7 +7571,12 @@ class ServingComposer:
                 f"{manifest.name}: registered types must use the pack-name prefix"
             )
         try:
-            registry.declare_types(manifest.name, manifest.type_namespaces, type_ids)
+            registry.declare_types(
+                manifest.name,
+                manifest.type_namespaces,
+                type_ids,
+                allow_bare=manifest.publisher == "dinkster",
+            )
         except ValueError as exc:
             raise CompositionError(str(exc)) from exc
 

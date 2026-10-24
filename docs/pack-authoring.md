@@ -751,6 +751,10 @@ its type in their schemas. A small shared types pack can own the definition
 when neither consuming pack should own it. Ownership restricts registration,
 not reference: any pack may reference a registered type.
 
+Built-in identities are reserved to the foundation pack by the shared type
+module. An official codec provider implements that identity without taking
+ownership; removing the provider does not retract the built-in identity.
+
 Do not declare aliases or structural equivalence between type ids. The id
 selects the codec, cache fingerprint, literal coercion, and renditions;
 there cannot be competing implementations for one shared concept. Use an

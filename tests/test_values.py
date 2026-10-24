@@ -12,6 +12,7 @@ from dinkster_values import (
     CORE_FLOAT,
     CORE_INT,
     CORE_STRING,
+    CURVE_TYPE,
     INLINE_STRING_CAP,
     BufferEncoding,
     EncodedPayload,
@@ -94,6 +95,22 @@ def test_declared_type_can_activate_and_release_its_codec_and_providers() -> Non
     with registry.registering_pack("mypack", ("mypack",)):
         registry.register("mypack.thing")
     assert registry.wrap("mypack.thing", 23).payload.load() == 23
+
+
+def test_builtin_owner_survives_official_codec_registration_and_pack_removal() -> None:
+    registry = make_registry()
+    assert registry.owner_of(CURVE_TYPE) == "dinkster-nodes-foundation"
+    assert CURVE_TYPE not in registry
+    with pytest.raises(ValueError, match="overlaps"):
+        registry.claim_types("another-official", (CURVE_TYPE,))
+    with registry.registering_pack("official-provider", ("official-provider",), allow_bare=True):
+        registry.register(CURVE_TYPE)
+    assert registry.type_owners()[CURVE_TYPE] == "dinkster-nodes-foundation"
+    registry.remove_pack_types("official-provider")
+    registry.remove_pack_types("dinkster-nodes-foundation")
+    assert registry.wrap(CURVE_TYPE, {"points": [2, 7]}).resolve() == {"points": [2, 7]}
+    assert registry.owner_of(CURVE_TYPE) == "dinkster-nodes-foundation"
+    assert registry.wrap(CORE_INT, 17).resolve() == 17
 
 
 def test_encoded_buffer_is_read_only_and_materializes_on_demand() -> None:
