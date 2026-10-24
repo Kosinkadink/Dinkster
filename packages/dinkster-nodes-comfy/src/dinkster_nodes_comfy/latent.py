@@ -16,6 +16,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
+    materialize_image,
     materialize_latent,
 )
 
@@ -279,6 +280,7 @@ class SetLatentNoiseMask(Node):
 
     @classmethod
     def execute(cls, *, samples: dict[str, Any], mask: Any) -> Mapping[str, object]:
+        mask = materialize_image(mask)
         result = samples.copy()
         result["noise_mask"] = mask.reshape((-1, 1, mask.shape[-2], mask.shape[-1]))
         return cls.outputs(LATENT=result)

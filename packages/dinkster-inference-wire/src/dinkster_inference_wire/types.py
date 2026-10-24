@@ -5,7 +5,7 @@ from __future__ import annotations
 from dinkster_values import TypeRegistry, TypeSpec, register_resident_type
 
 from .conditioning_wire import CONDITIONING_TYPE_ID, register_conditioning_type
-from .media_wire import materialize_latent, register_media_types
+from .media_wire import materialize_image, materialize_latent, register_media_types
 from .sampling_wire import register_sampling_type
 
 MODEL_TYPE_ID = "MODEL"
@@ -59,6 +59,7 @@ __all__ = [
     "SAMPLER_TYPE_ID",
     "SIGMAS_TYPE_ID",
     "VAE_TYPE_ID",
+    "materialize_image",
     "materialize_latent",
     "register_inference_types",
 ]

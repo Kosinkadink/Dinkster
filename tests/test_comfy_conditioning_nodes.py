@@ -29,11 +29,28 @@ from dinkster_nodes_comfy.conditioning import (
 from dinkster.compose import PackSpec, ServingComposer
 
 
+class MaskTensor:
+    def __init__(self, value: object) -> None:
+        self.array = np.asarray(value)
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        return self.array.shape
+
+    def unsqueeze(self, dim: int) -> MaskTensor:
+        return MaskTensor(np.expand_dims(self.array, dim))
+
+    def detach(self) -> MaskTensor:
+        return self
+
+
 @pytest.fixture
 def inference_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(as_tensor=MaskTensor))
+
     def set_mask(conditioning: object, mask: Any, area: str, strength: float) -> object:
         if len(mask.shape) < 3:
-            mask = np.expand_dims(mask, 0)
+            mask = mask.unsqueeze(0)
         return [
             [
                 text,

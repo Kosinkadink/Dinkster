@@ -14,6 +14,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
+    materialize_image,
 )
 
 _CATEGORY = "model/conditioning/transform"
@@ -300,7 +301,7 @@ class ConditioningSetMask(Node):
         hooks = importlib.import_module("dinkster_inference.hooks")
         return cls.outputs(
             CONDITIONING=hooks.set_mask_for_conditioning(
-                conditioning, mask, set_cond_area, strength
+                conditioning, materialize_image(mask), set_cond_area, strength
             )
         )
 

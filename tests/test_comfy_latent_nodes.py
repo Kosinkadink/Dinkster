@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import numpy as np
@@ -82,6 +84,12 @@ class ArrayTensor:
         dimensions = shape[0] if len(shape) == 1 else shape
         return ArrayTensor(np.tile(self.array, dimensions))
 
+    def reshape(self, shape: tuple[int, ...]) -> ArrayTensor:
+        return ArrayTensor(self.array.reshape(shape))
+
+    def detach(self) -> ArrayTensor:
+        return self
+
 
 @pytest.mark.parametrize(("index", "expected"), [(-2, [20, 30]), (-99, [10, 20]), (99, [30])])
 def test_batch_selection_clamps_indices_tiles_masks_and_copies(
@@ -119,14 +127,18 @@ def test_repeat_offsets_nonconsecutive_indices_and_repeats_original_masks() -> N
     assert latent["batch_index"] == [4, 9, 6]
 
 
-def test_mask_shape_is_batch_channel_height_width_without_changing_samples() -> None:
+def test_mask_shape_is_batch_channel_height_width_without_changing_samples(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(as_tensor=ArrayTensor))
     samples = object()
     mask = np.arange(24).reshape(2, 3, 4)
     latent = {"samples": samples, "note": "preserved"}
     result = cast(dict[str, Any], SetLatentNoiseMask.execute(samples=latent, mask=mask)["LATENT"])
     assert result["samples"] is samples
     assert result["note"] == "preserved"
-    np.testing.assert_array_equal(result["noise_mask"], mask[:, None, :, :])
+    assert isinstance(result["noise_mask"], ArrayTensor)
+    np.testing.assert_array_equal(result["noise_mask"].array, mask[:, None, :, :])
     assert "noise_mask" not in latent
 
 
@@ -166,8 +178,10 @@ class PortableLatentSource(Node):
 
 @pytest.mark.parametrize("in_process", (True, False))
 def test_manifest_executes_latent_and_mask_without_host_types(
-    tmp_path: Path, in_process: bool
+    tmp_path: Path, in_process: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(as_tensor=np.asarray))
+
     async def scenario() -> None:
         composer = ServingComposer(worker_env={"PYTHONPATH": str(Path(__file__).parent)})
         try:
@@ -178,6 +192,9 @@ def test_manifest_executes_latent_and_mask_without_host_types(
             (tmp_path / "latent_fixture_sources.py").write_text(
                 "from test_comfy_latent_nodes import PortableLatentSource\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "import sys, numpy as np\n"
+                "from types import SimpleNamespace\n"
+                "sys.modules.setdefault('torch', SimpleNamespace(as_tensor=np.asarray))\n"
                 "NODES = (*COMFY_NODES, PortableLatentSource)\n",
                 encoding="ascii",
             )

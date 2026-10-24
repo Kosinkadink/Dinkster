@@ -34,6 +34,14 @@ from dinkster_values import (
 from .latents import MultiStreamLatent
 
 
+def materialize_image(value: object) -> Any:
+    """Load portable pixels at a Torch consumer without moving live tensors."""
+    if hasattr(value, "detach"):
+        return value
+    torch = importlib.import_module("torch")
+    return torch.as_tensor(value)
+
+
 def materialize_latent(value: object) -> Any:
     """Reconstruct portable tensor records only where a node needs Torch.
 
@@ -110,4 +118,4 @@ def register_media_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
     return tuple(registered)
 
 
-__all__ = ["materialize_latent", "register_media_types"]
+__all__ = ["materialize_image", "materialize_latent", "register_media_types"]

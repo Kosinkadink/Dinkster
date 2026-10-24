@@ -29,6 +29,7 @@ from dinkster_values import register_core_types
 from dinkster_workers import InProcessWorker
 
 GOLDEN_V1_SURFACE = (
+    "materialize_image",
     "materialize_latent",
     "register_inference_types",
     "FrontendContribution",
