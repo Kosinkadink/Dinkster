@@ -108,6 +108,8 @@ namespaces = [
     "ConditioningSetMask",
     "ConditioningZeroOut",
     "ConditioningSetTimestepRange",
+    "InstructPixToPixConditioning",
+    "ReferenceLatent",
     "VAEEncodeForInpaint",
     "InpaintModelConditioning",
     "LatentCompositeMasked",

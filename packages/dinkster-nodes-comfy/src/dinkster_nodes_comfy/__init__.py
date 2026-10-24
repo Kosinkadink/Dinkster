@@ -30,6 +30,7 @@ from .primitive import (
     PrimitiveString,
     PrimitiveStringMultiline,
 )
+from .reference_conditioning import REFERENCE_CONDITIONING_NODES
 from .stable_cascade import STABLE_CASCADE_NODES
 from .text import TEXT_NODES
 from .utilities import ComfyNumberConvert, SeedNode
@@ -58,6 +59,7 @@ COMFY_NODES = (
     *MODEL_TEXT_ENCODER_NODES,
     *VAE_NODES,
     *CONDITIONING_NODES,
+    *REFERENCE_CONDITIONING_NODES,
     *INPAINT_NODES,
     *MASK_NODES,
     *COMPOSITING_NODES,
