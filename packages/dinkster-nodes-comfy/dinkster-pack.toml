@@ -106,6 +106,7 @@ namespaces = [
     "EmptyTrellis2LatentStructure",
     "CLIPTextEncode",
     "CLIPSetLastLayer",
+    "CLIPVisionEncode",
     "CLIPTextEncodeSDXLRefiner",
     "CLIPTextEncodeSDXL",
     "CLIPTextEncodePixArtAlpha",

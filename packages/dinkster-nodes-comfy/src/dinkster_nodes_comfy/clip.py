@@ -7,9 +7,14 @@ from typing import Any
 
 from dinkster_api.v1 import (
     CLIP_TYPE,
+    CLIP_VISION_OUTPUT_TYPE,
+    CLIP_VISION_TYPE,
     CONDITIONING_TYPE,
+    CORE_COMBO,
     CORE_INT,
     CORE_STRING,
+    IMAGE_TYPE,
+    ComboWidget,
     InputSpec,
     Node,
     NodeSchema,
@@ -17,6 +22,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
+    materialize_image,
 )
 
 
@@ -105,4 +111,33 @@ class CLIPSetLastLayer(Node):
         return cls.outputs(CLIP=selected)
 
 
-CLIP_NODES = (CLIPTextEncode, CLIPSetLastLayer)
+class CLIPVisionEncode(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="CLIPVisionEncode",
+            display_name="CLIP Vision Encode",
+            category="model/conditioning",
+            inputs=(
+                InputSpec("clip_vision", TypeExpr.concrete(CLIP_VISION_TYPE)),
+                InputSpec("image", TypeExpr.concrete(IMAGE_TYPE)),
+                InputSpec(
+                    "crop",
+                    TypeExpr.concrete(CORE_COMBO),
+                    default="center",
+                    widget=ComboWidget(("center", "none")),
+                ),
+            ),
+            outputs=(OutputSpec("CLIP_VISION_OUTPUT", TypeExpr.concrete(CLIP_VISION_OUTPUT_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls, *, clip_vision: Any, image: Any, crop: str) -> Mapping[str, object]:
+        return cls.outputs(
+            CLIP_VISION_OUTPUT=clip_vision.encode_image(
+                materialize_image(image), crop=crop == "center"
+            )
+        )
+
+
+CLIP_NODES = (CLIPTextEncode, CLIPSetLastLayer, CLIPVisionEncode)
