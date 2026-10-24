@@ -13,6 +13,7 @@ from .clip_sdxl import CLIP_SDXL_NODES
 from .compositing import COMPOSITING_NODES
 from .conditioning import CONDITIONING_NODES
 from .controlnet import CONTROLNET_NODES
+from .cosmos_conditioning import COSMOS_CONDITIONING_NODES
 from .dataset_collections import DATASET_COLLECTION_NODES
 from .dataset_images import DATASET_IMAGE_NODES
 from .dataset_text import DATASET_TEXT_NODES
@@ -103,6 +104,7 @@ COMFY_NODES = (
     *STABLE3D_NODES,
     *HUNYUAN_LATENT_NODES,
     *VIDEO_CONDITIONING_NODES,
+    *COSMOS_CONDITIONING_NODES,
     *VIDEO_LATENT_NODES,
     *VIDEO_LATENT_OPERATION_NODES,
     *POST_PROCESSING_NODES,

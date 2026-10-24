@@ -219,6 +219,8 @@ namespaces = [
     "EmptyHunyuanImageLatent",
     "HunyuanRefinerLatent",
     "SVD_img2vid_Conditioning",
+    "CosmosImageToVideoLatent",
+    "CosmosPredict2ImageToVideoLatent",
     "EmptyHunyuanLatentVideo",
     "EmptyHunyuanVideo15Latent",
     "EmptyLTXVLatentVideo",
