@@ -1626,7 +1626,7 @@ refusal, never a provider-specific blend, slice, or fallback.
 
 ## 11. Portable VIDEO values
 
-`comfy.VIDEO` codec v2 is immutable source/probe/ordered-edits data, or
+`VIDEO` codec v2 is immutable source/probe/ordered-edits data, or
 deferred IMAGE/AUDIO components with the same edit semantics. The exact
 fields, node surface, precision, compatibility differences, and save rules
 are defined in [First-class VIDEO values](video-io-design.md). That document
@@ -1781,7 +1781,7 @@ this declaration does not introduce a 3D renderer or texture type.
 
 ## 13. Asset-backed audio
 
-`comfy.AUDIO` carries a source, probe, and ordered edits. Sources are asset
+`AUDIO` carries a source, probe, and ordered edits. Sources are asset
 references, inline encoded bytes, or inline int16/float32 PCM up to 256 KiB.
 Probe fields are `sample_rate`, `channels`, `layout`, `duration`, `codec`,
 `frames`, `batch`, and `stream_index`; duration and frames may be unknown.

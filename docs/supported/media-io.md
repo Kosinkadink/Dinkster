@@ -64,7 +64,7 @@
   retained through a preserving CPU format fallback with requested/effective
   diagnostics when a format preference is incompatible. Actual encoder
   inability remains a capability error; alpha is never silently discarded.
-- Source-only video timeline documents with lazy `comfy.VIDEO` rendering,
+- Source-only video timeline documents with lazy `VIDEO` rendering,
   lossless OTIO JSON import/export, declared asset bindings, clip-level
   VIDEO_EDIT preservation, track composition, transitions, retiming, bounded
   audio mixing, CURVE parameters, and deterministic CPU text effects

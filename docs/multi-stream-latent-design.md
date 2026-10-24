@@ -355,7 +355,7 @@ The generic node surface uses only `comfy.LATENT`:
   selected visual role through the model's stream descriptor and registered
   latent RGB preview provider. Its graph output is always IMAGE and it rejects
   a nonvisual role or a family without that renderer.
-- `dinkster.preview_latent_audio(model, latent, role) -> comfy.AUDIO` resolves an
+- `dinkster.preview_latent_audio(model, latent, role) -> AUDIO` resolves an
   audio role through a registered family codec preview decoder. Its graph
   output is always AUDIO and it rejects a role without an audio renderer. Raw
   latent bytes are never labeled as waveform samples.

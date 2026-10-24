@@ -45,7 +45,7 @@ def _decode_torch(data: bytes) -> object:
 
 
 def register_audio_type(registry: TypeRegistry, type_id: str) -> None:
-    """Register comfy.AUDIO with the upstream torch runtime form."""
+    """Register AUDIO with the upstream torch runtime form."""
     registry.register(
         type_id,
         encode=encode_audio,

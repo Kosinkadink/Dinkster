@@ -16,6 +16,20 @@ from typing import Any, cast
 
 import numpy as np
 import pytest
+from dinkster_api.v1 import (
+    AUDIO_TYPE,
+    BACKGROUND_REMOVAL_TYPE,
+    BOUNDING_BOX_TYPE,
+    LATENT_UPSCALE_MODEL_TYPE,
+    MESH_TYPE,
+    MODEL_PATCH_TYPE,
+    MOGE_GEOMETRY_TYPE,
+    MOGE_MODEL_TYPE,
+    SHAPE_SUBDIVIDES_TYPE,
+    VIDEO_EDIT_TYPE,
+    VIDEO_TYPE,
+    VOXEL_TYPE,
+)
 from dinkster_caches import MemoryLRUCache
 from dinkster_compat_comfy import (
     NATIVE_NODES,
@@ -303,6 +317,35 @@ def test_translate_type_rules() -> None:
     assert translate_type("*")[0].kind == "wildcard"
     expr, opaque_types = translate_type("MODEL")
     assert expr.types == ("comfy.MODEL",) and opaque_types == ("comfy.MODEL",)
+
+
+@pytest.mark.parametrize(
+    ("raw_type", "canonical_type"),
+    [
+        ("AUDIO", AUDIO_TYPE),
+        ("VIDEO", VIDEO_TYPE),
+        ("VIDEO_EDIT", VIDEO_EDIT_TYPE),
+        ("MOGE_MODEL", MOGE_MODEL_TYPE),
+        ("MOGE_GEOMETRY", MOGE_GEOMETRY_TYPE),
+        ("BACKGROUND_REMOVAL", BACKGROUND_REMOVAL_TYPE),
+        ("VOXEL", VOXEL_TYPE),
+        ("MESH", MESH_TYPE),
+        ("SHAPE_SUBDIVIDES", SHAPE_SUBDIVIDES_TYPE),
+        ("BOUNDING_BOX", BOUNDING_BOX_TYPE),
+        ("MODEL_PATCH", MODEL_PATCH_TYPE),
+        ("LATENT_UPSCALE_MODEL", LATENT_UPSCALE_MODEL_TYPE),
+    ],
+)
+def test_translate_type_keeps_native_media_and_model_labels_bare(
+    raw_type: str, canonical_type: str
+) -> None:
+    assert translate_type(raw_type) == (TypeExpr.concrete(canonical_type), (canonical_type,))
+
+
+@pytest.mark.parametrize("raw_type", ["AUDIO_RECORD", "AUDIO_ENCODER"])
+def test_translate_type_keeps_unmigrated_audio_labels_prefixed(raw_type: str) -> None:
+    expected = f"comfy.{raw_type}"
+    assert translate_type(raw_type) == (TypeExpr.concrete(expected), (expected,))
 
 
 def test_translate_type_comma_unions() -> None:
@@ -682,6 +725,44 @@ def test_audio_float_bounds_remain_json_numbers(
         if key != "type"
     )
     assert schema_from_wire(wire) == schema
+
+
+@pytest.mark.parametrize("socket", ["FLOAT", "INT"])
+@pytest.mark.parametrize(
+    "precision", [False, True, 0, 0.0, -1, float("nan"), float("inf"), None, 0.01]
+)
+def test_translated_round_preserves_only_float_no_round_or_positive_precision(
+    socket: str, precision: object
+) -> None:
+    class AngleNode:
+        RETURN_TYPES = ()
+        FUNCTION = "execute"
+
+        @classmethod
+        def INPUT_TYPES(cls):
+            return {
+                "required": {
+                    "angle": (
+                        socket,
+                        {"round": precision, "min": False, "max": True, "step": False},
+                    )
+                }
+            }
+
+        def execute(self, **kwargs):
+            return ()
+
+    schema = translate_node("AngleNode", AngleNode, CompatTranslation()).schema()
+    wire = schema_to_wire(schema)
+    entry = cast("list[dict[str, Any]]", wire["interface"])[0]
+    if socket == "FLOAT" and (precision is False or precision == 0.01):
+        assert entry["widget"] == {"type": "NUMBER", "round": precision}
+        assert type(entry["widget"]["round"]) is type(precision)
+        restored = schema_from_wire(wire)
+        assert isinstance(restored.inputs[0].widget, NumberWidget)
+        assert type(restored.inputs[0].widget.round) is type(precision)
+    else:
+        assert "widget" not in entry
 
 
 def test_ksampler_advanced_filters_unusable_numeric_metadata() -> None:

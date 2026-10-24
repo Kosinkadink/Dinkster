@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from dinkster_api.v1 import ASSET_TYPE, AUDIO_TYPE, VIDEO_TYPE
 from dinkster_assets import (
     AssetError,
     AssetRef,
@@ -52,7 +53,7 @@ def _publish(vault: AssetVault, data: bytes) -> AssetRef:
     return AssetRef(digest, "source.mkv", len(data), resolver=vault)
 
 
-def _value(ref: AssetRef, type_id: str = "comfy.VIDEO") -> Value:
+def _value(ref: AssetRef, type_id: str = VIDEO_TYPE) -> Value:
     return Value(
         type_id=type_id,
         fingerprint="source",
@@ -65,7 +66,7 @@ def _unverified_wire() -> dict[str, object]:
     return LocalAssetRef("local-source", "source.mkv", 12, "input/source.mkv").to_wire()
 
 
-@pytest.mark.parametrize("type_id", ["comfy.VIDEO", "LAYERS", "comfy.AUDIO", "custom.asset"])
+@pytest.mark.parametrize("type_id", [VIDEO_TYPE, "dinkster.layers", AUDIO_TYPE, "custom.asset"])
 def test_adoption_survives_producer_removal_and_handles_list_values(
     vaults: tuple[AssetVault, AssetVault],
     type_id: str,
@@ -133,7 +134,7 @@ def test_existing_source_requires_integrity_verification(vaults, recorded) -> No
         authority.capture(outputs)
 
 
-@pytest.mark.parametrize("type_id", ["comfy.VIDEO", "LAYERS", "comfy.AUDIO", "custom.asset"])
+@pytest.mark.parametrize("type_id", [VIDEO_TYPE, "dinkster.layers", AUDIO_TYPE, "custom.asset"])
 def test_source_return_does_not_materialize_payloads(
     vaults: tuple[AssetVault, AssetVault], type_id: str
 ) -> None:
@@ -152,8 +153,8 @@ def test_source_return_does_not_materialize_payloads(
     assert engine.has(ref.digest)
 
 
-@pytest.mark.parametrize("type_id", ["comfy.VIDEO", "LAYERS", "comfy.AUDIO", "custom.asset"])
-@pytest.mark.parametrize("asset_input", [None, "ASSET", "asset<comfy.VIDEO>"])
+@pytest.mark.parametrize("type_id", [VIDEO_TYPE, "dinkster.layers", AUDIO_TYPE, "custom.asset"])
+@pytest.mark.parametrize("asset_input", [None, ASSET_TYPE, f"asset<{VIDEO_TYPE}>"])
 def test_returned_input_sources_need_no_produced_asset_vault(
     type_id: str, asset_input: str | None
 ) -> None:
@@ -240,7 +241,7 @@ def test_asset_provenance_rejects_malformed_wire_refs(wire: dict[str, object]) -
         ProducedAssetAuthority(None).capture({}, inputs={"asset": asset_input})
 
 
-@pytest.mark.parametrize("type_id", ["comfy.VIDEO", "LAYERS", "comfy.AUDIO", "custom.asset"])
+@pytest.mark.parametrize("type_id", [VIDEO_TYPE, "dinkster.layers", AUDIO_TYPE, "custom.asset"])
 def test_source_pins_include_list_children_and_parent_metadata(type_id: str) -> None:
     child = AssetRef(digest_bytes(b"child"), "child", 5)
     parent = AssetRef(digest_bytes(b"parent"), "parent", 6)
@@ -284,7 +285,7 @@ def test_produced_video_survives_shutdown_and_transfer_eviction(
     producer = tmp_path / "producer"
     monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(engine.root))
     registry = TypeRegistry()
-    register_video_value_type(registry, "comfy.VIDEO", engine)
+    register_video_value_type(registry, VIDEO_TYPE, engine)
     store = BudgetedDiskCAS(tmp_path / "transfer")
     diagnostics: list[BoundaryDiagnostic] = []
 
@@ -394,7 +395,7 @@ def test_produced_video_adoption_owns_source_until_finished(
     engine = AssetVault(tmp_path / "engine")
     monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(engine.root))
     registry = TypeRegistry()
-    register_video_value_type(registry, "comfy.VIDEO", engine)
+    register_video_value_type(registry, VIDEO_TYPE, engine)
     store = BudgetedDiskCAS(tmp_path / "transfer", max_bytes=1)
     entered, release, finished = threading.Event(), threading.Event(), threading.Event()
     captured: dict[str, Value] = {}
@@ -632,7 +633,7 @@ def test_buffered_result_and_eof_retain_source_until_adoption(
 def test_source_transfer_accounting_deduplicates_across_edges() -> None:
     ref = AssetRef(digest_bytes(b"encoded"), "source", 7)
     blobs = [default_encode({"asset_refs": [ref.to_wire()]})]
-    wire = {"typeId": "comfy.VIDEO", "metaBlob": 0, "payload": {"transport": "inline"}}
+    wire = {"typeId": VIDEO_TYPE, "metaBlob": 0, "payload": {"transport": "inline"}}
     header: dict[str, Any] = {
         "outputs": {"first": wire, "second": wire},
         "outputStats": {"first": {"networkBytes": 3}, "second": {"networkBytes": 3}},
@@ -646,6 +647,6 @@ def test_source_transfer_accounting_deduplicates_across_edges() -> None:
 def test_source_pin_rejects_invalid_metadata_index(index: object) -> None:
     with pytest.raises(AssetError, match="index is invalid"):
         result_asset_digests(
-            {"outputs": {"video": {"typeId": "comfy.VIDEO", "metaBlob": index}}},
+            {"outputs": {"video": {"typeId": VIDEO_TYPE, "metaBlob": index}}},
             [default_encode({})],
         )
