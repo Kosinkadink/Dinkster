@@ -42,6 +42,11 @@
   the same wrapping and ownership rules as ordinary node returns. Output
   indices resolve against the engine's elaborated interface, including when
   the referenced node belongs to another pack.
+- Expansion fragments can explicitly reference existing nodes in the same
+  run for inputs, returned outputs and display attribution. Missing references,
+  incompatible output types and dynamic demand cycles fail at the expanding
+  parent before its fragment runs. Completed values stay available for later
+  fragments until that run ends.
 - Model-backed vision provider packs can implement stable owner node schemas.
   Ordinary node cards hide implementation pack ids. A missing selection is
   resolved deterministically from the requested semantic model and compatible

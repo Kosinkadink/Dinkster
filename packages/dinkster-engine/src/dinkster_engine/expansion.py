@@ -4,11 +4,22 @@ from __future__ import annotations
 
 from collections.abc import Container, Mapping
 
-from dinkster_graph import Graph, GraphNode, Link, elaborate_graph, snapshot_graph, validate
+from dinkster_graph import (
+    Graph,
+    GraphNode,
+    Link,
+    RegionNode,
+    elaborate_graph,
+    region_interface,
+    snapshot_graph,
+    validate,
+)
 from dinkster_protocol import (
     CachedResult,
     CurrentNodeRef,
     CurrentOutputRef,
+    ExternalNodeRef,
+    ExternalOutputRef,
     JsonObject,
     LiteralInput,
     LocalOutputRef,
@@ -25,12 +36,28 @@ def _literal(value: JsonLiteral) -> object:
     return value
 
 
-def local_output_id(binding: LocalOutputRef, schema: NodeSchema) -> str:
+def referenced_output(
+    binding: LocalOutputRef | ExternalOutputRef,
+    source_id: str,
+    graph: Graph,
+    effective: Mapping[str, NodeSchema],
+    schemas: Mapping[str, NodeSchema],
+) -> tuple[str, TypeExpr | None]:
+    source = graph.nodes[source_id]
+    interface = (
+        region_interface(source, schemas)
+        if isinstance(source, RegionNode)
+        else {output.id: output.type for output in effective[source_id].outputs}
+    )
     if isinstance(binding.output_id, int):
-        if binding.output_id >= len(schema.outputs):
+        if binding.output_id >= len(interface):
             raise ValueError(f"expansion output index {binding.output_id} is out of range")
-        return schema.outputs[binding.output_id].id
-    return binding.output_id
+        name = tuple(interface)[binding.output_id]
+    else:
+        name = binding.output_id
+    if name not in interface:
+        raise ValueError(f"expansion references missing output '{source_id}/{name}'")
+    return name, interface[name]
 
 
 def admit_expansion(
@@ -41,6 +68,7 @@ def admit_expansion(
     schemas: Mapping[str, NodeSchema],
     known_types: Container[str],
     ports: Mapping[str, TypeExpr] | None = None,
+    expansion_demands: Mapping[str, set[str]] | None = None,
 ) -> tuple[Graph, dict[str, NodeSchema], dict[str, str], dict[str, tuple[str, str]]]:
     """Validate the overlay before exposing any node or changing the scheduler.
 
@@ -59,6 +87,10 @@ def admit_expansion(
     def metadata(ref: NodeMetadataRef | None) -> str:
         if ref is None or isinstance(ref, CurrentNodeRef):
             return parent_id
+        if isinstance(ref, ExternalNodeRef):
+            if ref.node_id not in graph.nodes:
+                raise ValueError(f"external display/parent node '{ref.node_id}' is missing")
+            return ref.node_id
         return ids[ref.local_node_id]
 
     nodes = dict(graph.nodes)
@@ -70,22 +102,34 @@ def admit_expansion(
                 inputs[name] = _literal(binding.value)
             elif isinstance(binding, CurrentOutputRef):
                 inputs[name] = Link(parent_id, binding.output_id)
+            elif isinstance(binding, ExternalOutputRef):
+                if binding.node_id not in graph.nodes:
+                    raise ValueError(f"external node '{binding.node_id}' is missing")
+                inputs[name] = Link(binding.node_id, str(binding.output_id))
             else:
                 inputs[name] = Link(ids[binding.local_node_id], str(binding.output_id))
         node_id = ids[node.local_id]
         nodes[node_id] = GraphNode(node.node_type, inputs)
         origins[node_id] = (metadata(node.parent), metadata(node.display))
     overlay = snapshot_graph(Graph(nodes))
-    effective, diagnostics = elaborate_graph(overlay, schemas)
+    effective, _ = elaborate_graph(overlay, schemas)
     for node in expansion.expansion.nodes:
         node_id = ids[node.local_id]
         inputs = dict(nodes[node_id].inputs)
         for name, binding in node.inputs:
-            if isinstance(binding, LocalOutputRef) and isinstance(binding.output_id, int):
-                source = ids[binding.local_node_id]
-                inputs[name] = Link(source, local_output_id(binding, effective[source]))
+            if isinstance(binding, (LocalOutputRef, ExternalOutputRef)) and isinstance(
+                binding.output_id, int
+            ):
+                source = (
+                    ids[binding.local_node_id]
+                    if isinstance(binding, LocalOutputRef)
+                    else binding.node_id
+                )
+                output_id, _ = referenced_output(binding, source, overlay, effective, schemas)
+                inputs[name] = Link(source, output_id)
         nodes[node_id] = GraphNode(node.node_type, inputs)
     overlay = snapshot_graph(Graph(nodes))
+    effective, diagnostics = elaborate_graph(overlay, schemas)
     diagnostics += validate(overlay, schemas, (), effective, known_types=known_types, ports=ports)
     added = set(ids.values())
     failures = [
@@ -98,14 +142,51 @@ def admit_expansion(
         raise ValueError("; ".join(f"{d.node_id}: {d.message}" for d in failures))
     parent_schema = effective[parent_id]
     for name, binding in expansion.bindings:
-        if isinstance(binding, LocalOutputRef):
-            child = effective[ids[binding.local_node_id]]
-            output = child.output(local_output_id(binding, child))
-            if output is None:
-                raise ValueError(f"expansion output '{name}' references a missing child output")
+        if isinstance(binding, (LocalOutputRef, ExternalOutputRef)):
+            source = (
+                ids[binding.local_node_id]
+                if isinstance(binding, LocalOutputRef)
+                else binding.node_id
+            )
+            _, output_type = referenced_output(binding, source, overlay, effective, schemas)
             expected = parent_schema.output(name)
             assert expected is not None
-            runtime = output.type.runtime_type_id()
+            runtime = output_type.runtime_type_id() if output_type is not None else None
             if runtime is not None and not expected.type.accepts_concrete(runtime):
                 raise ValueError(f"expansion output '{name}' rejects child type {runtime}")
+
+    # Parent returns and generated output nodes are also demand edges. Ordinary
+    # graph validation cannot see them, and a task awaiting itself never finishes.
+    demand = {
+        node_id: {value.node_id for value in node.inputs.values() if isinstance(value, Link)}
+        for node_id, node in nodes.items()
+    }
+    if expansion_demands is not None:
+        demand.update(
+            (node_id, set(dependencies)) for node_id, dependencies in expansion_demands.items()
+        )
+    for node in expansion.expansion.nodes:
+        demand[ids[node.local_id]] = {
+            ids[value.local_node_id] if isinstance(value, LocalOutputRef) else value.node_id
+            for _, value in node.inputs
+            if isinstance(value, (LocalOutputRef, ExternalOutputRef))
+        }
+    demand[parent_id].update(
+        ids[value.local_node_id] if isinstance(value, LocalOutputRef) else value.node_id
+        for _, value in expansion.bindings
+        if isinstance(value, (LocalOutputRef, ExternalOutputRef))
+    )
+    demand[parent_id].update(node_id for node_id in ids.values() if effective[node_id].output_node)
+    pending: list[tuple[str, tuple[str, ...]]] = [
+        (child, (parent_id,)) for child in demand[parent_id]
+    ]
+    visited: set[str] = set()
+    while pending:
+        node_id, path = pending.pop()
+        if node_id == parent_id:
+            raise ValueError("dynamic cycle: " + " -> ".join((*path, node_id)))
+        if node_id in visited:
+            continue
+        visited.add(node_id)
+        pending.extend((child, (*path, node_id)) for child in demand.get(node_id, ()))
     return overlay, effective, ids, origins

@@ -11,6 +11,7 @@ from types import MappingProxyType
 class ExpansionOutput:
     node_id: str | None
     output_id: str | int
+    external: bool = False
 
 
 @dataclass(frozen=True)
@@ -21,7 +22,7 @@ class Expansion:
     The worker owns wrapping present values and validating declarations.
     """
 
-    nodes: tuple[tuple[str, str, tuple[tuple[str, object], ...], str | None], ...]
+    nodes: tuple[tuple[str, str, tuple[tuple[str, object], ...], tuple[str, bool] | None], ...]
     outputs: Mapping[str, object]
 
     def __post_init__(self) -> None:
@@ -35,7 +36,7 @@ class ExpansionNode:
         self.node_type = node_type
         self.id = local_id
         self.inputs = dict(inputs)
-        self.override_display_id: str | None = None
+        self.override_display_id: tuple[str, bool] | None = None
 
     def out(self, index: str | int) -> ExpansionOutput:
         return ExpansionOutput(self.id, index)
@@ -49,8 +50,8 @@ class ExpansionNode:
     def get_input(self, key: str) -> object:
         return self.inputs.get(key)
 
-    def set_override_display_id(self, node_id: str | None) -> None:
-        self.override_display_id = node_id
+    def set_override_display_id(self, node_id: str | None, *, external: bool = False) -> None:
+        self.override_display_id = (node_id, external) if node_id is not None else None
 
 
 class ExpansionBuilder:
@@ -79,6 +80,11 @@ class ExpansionBuilder:
     def current(output_id: str) -> ExpansionOutput:
         """Refer to a present value in this same expansion's parent outputs."""
         return ExpansionOutput(None, output_id)
+
+    @staticmethod
+    def external(node_id: str, output_id: str | int) -> ExpansionOutput:
+        """Refer to an existing node in the live graph, outside this fragment."""
+        return ExpansionOutput(node_id, output_id, external=True)
 
     def finalize(self, **outputs: object) -> Expansion:
         return Expansion(

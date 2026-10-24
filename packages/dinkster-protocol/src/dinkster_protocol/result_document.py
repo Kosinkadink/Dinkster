@@ -13,6 +13,8 @@ from .result_algebra import (
     CurrentOutputRef,
     DirectReturn,
     ExpandedReturn,
+    ExternalNodeRef,
+    ExternalOutputRef,
     InputBinding,
     JsonLiteral,
     JsonObject,
@@ -28,9 +30,18 @@ from .result_algebra import (
 )
 
 
-def _ref_to_document(value: CurrentOutputRef | LocalOutputRef) -> dict[str, object]:
+def _ref_to_document(
+    value: CurrentOutputRef | LocalOutputRef | ExternalOutputRef,
+) -> dict[str, object]:
     if isinstance(value, CurrentOutputRef):
         return {"kind": "outputRef", "scope": "current", "outputId": value.output_id}
+    if isinstance(value, ExternalOutputRef):
+        return {
+            "kind": "outputRef",
+            "scope": "external",
+            "nodeId": value.node_id,
+            "outputId": value.output_id,
+        }
     return {
         "kind": "outputRef",
         "scope": "local",
@@ -44,6 +55,8 @@ def _metadata_to_document(value: NodeMetadataRef | None) -> dict[str, object] | 
         return None
     if isinstance(value, CurrentNodeRef):
         return {"kind": "nodeRef", "scope": "current"}
+    if isinstance(value, ExternalNodeRef):
+        return {"kind": "nodeRef", "scope": "external", "nodeId": value.node_id}
     return {"kind": "nodeRef", "scope": "local", "localNodeId": value.local_node_id}
 
 
@@ -99,7 +112,7 @@ def _exact(value: object, fields: set[str]) -> dict[str, Any]:
     return cast("dict[str, Any]", value)
 
 
-def _ref_from_document(raw: object) -> CurrentOutputRef | LocalOutputRef:
+def _ref_from_document(raw: object) -> CurrentOutputRef | LocalOutputRef | ExternalOutputRef:
     if not isinstance(raw, dict):
         raise ValueError("reference must be an object")
     item = cast("dict[str, Any]", raw)
@@ -111,6 +124,9 @@ def _ref_from_document(raw: object) -> CurrentOutputRef | LocalOutputRef:
     if item.get("scope") == "local":
         item = _exact(item, {"kind", "scope", "localNodeId", "outputId"})
         return LocalOutputRef(item["localNodeId"], item["outputId"])
+    if item.get("scope") == "external":
+        item = _exact(item, {"kind", "scope", "nodeId", "outputId"})
+        return ExternalOutputRef(item["nodeId"], item["outputId"])
     raise ValueError("unknown reference")
 
 
@@ -125,6 +141,9 @@ def _metadata_from_document(raw: object) -> NodeMetadataRef | None:
     if item.get("scope") == "current":
         _exact(item, {"kind", "scope"})
         return CurrentNodeRef()
+    if item.get("scope") == "external":
+        item = _exact(item, {"kind", "scope", "nodeId"})
+        return ExternalNodeRef(item["nodeId"])
     item = _exact(item, {"kind", "scope", "localNodeId"})
     if item["scope"] != "local":
         raise ValueError("unknown metadata scope")

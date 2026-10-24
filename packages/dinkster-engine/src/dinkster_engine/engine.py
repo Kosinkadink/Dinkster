@@ -59,6 +59,7 @@ from dinkster_protocol import (
     CurrentOutputRef,
     ExportSnapshot,
     ExtensionSnapshot,
+    ExternalOutputRef,
     GraphCompilerRegistrySnapshot,
     Invocation,
     InvocationEvent,
@@ -117,7 +118,7 @@ from .compile import (
     compile_graph,
 )
 from .events import EngineEvent, EventListener
-from .expansion import admit_expansion, local_output_id
+from .expansion import admit_expansion, referenced_output
 
 logger = logging.getLogger(__name__)
 
@@ -387,14 +388,6 @@ class _ProducedReferences:
         for dependencies in deps.values():
             for dependency in dependencies:
                 self._uses[dependency] += 1
-
-    def extend(self, deps: Mapping[str, set[str]]) -> None:
-        for node_id, dependencies in deps.items():
-            self._uses.setdefault(node_id, 0)
-            previous = self._deps.setdefault(node_id, set())
-            for dependency in dependencies - previous:
-                self._uses[dependency] = self._uses.get(dependency, 0) + 1
-            previous.update(dependencies)
 
     def finished(self, node_id: str) -> None:
         retired = [node_id]
@@ -1980,12 +1973,17 @@ class Engine:
             return
 
         tasks: dict[str, asyncio.Task[None]] = {}
-        references = _ProducedReferences(
-            dependency_map(graph, initial_targets), initial_targets, produced
+        references = (
+            None
+            if has_expansion
+            else _ProducedReferences(
+                dependency_map(graph, initial_targets), initial_targets, produced
+            )
         )
         expansion_calls: dict[str, int] = {}
         expansion_scopes: dict[str, str] = {}
         current_dependencies: dict[str, set[str]] = {}
+        expansion_demands: dict[str, set[str]] = {}
 
         async def resolve_expansion(parent_id: str, entry: CachedResult) -> Mapping[str, Value]:
             nonlocal graph, effective, signatures
@@ -2005,6 +2003,7 @@ class Engine:
                     self._schemas_for(run_id),
                     known_types if known_types is not None else self._registry,
                     region_ports,
+                    expansion_demands,
                 )
             except (KeyError, TypeError, ValueError) as exc:
                 message = f"invalid expansion: {exc}"
@@ -2016,16 +2015,6 @@ class Engine:
             expansion_calls[parent_id] = call + 1
             produced[parent_id] = entry.outputs
             children = set(ids.values())
-            child_deps = {
-                node_id: {
-                    value.node_id
-                    for value in graph.nodes[node_id].inputs.values()
-                    if isinstance(value, Link)
-                }
-                for node_id in children
-            }
-            references.extend(child_deps)
-            references.extend({parent_id: children})
             for node in expansion.expansion.nodes:
                 current_dependencies[ids[node.local_id]] = (
                     {parent_id}
@@ -2056,16 +2045,29 @@ class Engine:
             )
             targets = {
                 ids[binding.local_node_id]
-                for _, binding in expansion.bindings
                 if isinstance(binding, LocalOutputRef)
+                else binding.node_id
+                for _, binding in expansion.bindings
+                if isinstance(binding, (LocalOutputRef, ExternalOutputRef))
             }
             targets.update(node_id for node_id in children if effective[node_id].output_node)
+            expansion_demands[parent_id] = targets
+            expansion_demands.update(
+                (node_id, ordinary_dependencies(node_id)) for node_id in children
+            )
             await asyncio.gather(*(ensure_node(node_id) for node_id in sorted(targets)))
             outputs = dict(entry.outputs)
             for name, binding in expansion.bindings:
-                if isinstance(binding, LocalOutputRef):
-                    child = ids[binding.local_node_id]
-                    outputs[name] = produced[child][local_output_id(binding, effective[child])]
+                if isinstance(binding, (LocalOutputRef, ExternalOutputRef)):
+                    child = (
+                        ids[binding.local_node_id]
+                        if isinstance(binding, LocalOutputRef)
+                        else binding.node_id
+                    )
+                    output_id, _ = referenced_output(
+                        binding, child, graph, effective, self._schemas_for(run_id)
+                    )
+                    outputs[name] = produced[child][output_id]
                 elif isinstance(binding, CurrentOutputRef):
                     outputs[name] = entry[binding.output_id]
                 elif isinstance(binding, BlockedOutput):
@@ -2147,7 +2149,10 @@ class Engine:
                     expansion_scopes.get(node_id, cache_scope),
                     resolve_expansion,
                 )
-            references.finished(node_id)
+            # A future fragment may refer to any completed node, including a
+            # non-idempotent one. Such values must survive until the run ends.
+            if references is not None:
+                references.finished(node_id)
 
         async def ensure_node(node_id: str) -> None:
             task = tasks.get(node_id)

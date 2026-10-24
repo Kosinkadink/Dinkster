@@ -28,6 +28,8 @@ from dinkster_protocol import (
     CurrentNodeRef,
     CurrentOutputRef,
     ExpandedReturn,
+    ExternalNodeRef,
+    ExternalOutputRef,
     Invocation,
     InvocationEvent,
     InvocationResult,
@@ -1115,7 +1117,13 @@ class InProcessWorker:
         if set(declaration.outputs) != {output.id for output in schema.outputs}:
             raise ValueError("expansion bindings must match declared outputs")
 
-        def reference(value: ExpansionOutput) -> CurrentOutputRef | LocalOutputRef:
+        def reference(
+            value: ExpansionOutput,
+        ) -> CurrentOutputRef | LocalOutputRef | ExternalOutputRef:
+            if value.external:
+                if value.node_id is None:
+                    raise ValueError("external reference requires a node id")
+                return ExternalOutputRef(value.node_id, value.output_id)
             if value.node_id is None:
                 if not isinstance(value.output_id, str):
                     raise ValueError("current output reference requires an output id")
@@ -1161,7 +1169,11 @@ class InProcessWorker:
                     node_type,
                     tuple(bindings),
                     display=(
-                        CurrentNodeRef() if display == invocation.node_id else LocalNodeRef(display)
+                        ExternalNodeRef(display[0])
+                        if display[1]
+                        else CurrentNodeRef()
+                        if display[0] == invocation.node_id
+                        else LocalNodeRef(display[0])
                     )
                     if display is not None
                     else None,

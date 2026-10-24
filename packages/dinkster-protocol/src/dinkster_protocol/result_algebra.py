@@ -141,6 +141,24 @@ class CurrentNodeRef:
 
 
 @dataclass(frozen=True)
+class ExternalOutputRef:
+    node_id: str
+    output_id: str | int
+
+    def __post_init__(self) -> None:
+        _identifier(self.node_id, "node_id")
+        LocalOutputRef(self.node_id, self.output_id)
+
+
+@dataclass(frozen=True)
+class ExternalNodeRef:
+    node_id: str
+
+    def __post_init__(self) -> None:
+        _identifier(self.node_id, "node_id")
+
+
+@dataclass(frozen=True)
 class LocalNodeRef:
     local_node_id: str
 
@@ -148,7 +166,7 @@ class LocalNodeRef:
         _identifier(self.local_node_id, "local_node_id")
 
 
-NodeMetadataRef: TypeAlias = CurrentNodeRef | LocalNodeRef
+NodeMetadataRef: TypeAlias = CurrentNodeRef | LocalNodeRef | ExternalNodeRef
 
 
 @dataclass(frozen=True)
@@ -159,8 +177,10 @@ class LiteralInput:
         object.__setattr__(self, "value", _literal(self.value))
 
 
-InputBinding: TypeAlias = LiteralInput | CurrentOutputRef | LocalOutputRef
-OutputBinding: TypeAlias = PresentOutput | BlockedOutput | CurrentOutputRef | LocalOutputRef
+InputBinding: TypeAlias = LiteralInput | CurrentOutputRef | LocalOutputRef | ExternalOutputRef
+OutputBinding: TypeAlias = (
+    PresentOutput | BlockedOutput | CurrentOutputRef | LocalOutputRef | ExternalOutputRef
+)
 
 
 @dataclass(frozen=True)
@@ -176,13 +196,16 @@ class LocalNode:
         _identifier(self.node_type, "node_type")
         pairs = _pairs(self.inputs, "inputs")
         if not all(
-            isinstance(item[1], (LiteralInput, CurrentOutputRef, LocalOutputRef)) for item in pairs
+            isinstance(item[1], (LiteralInput, CurrentOutputRef, LocalOutputRef, ExternalOutputRef))
+            for item in pairs
         ):
             raise ValueError("invalid input binding")
-        if self.parent is not None and not isinstance(self.parent, (CurrentNodeRef, LocalNodeRef)):
+        if self.parent is not None and not isinstance(
+            self.parent, (CurrentNodeRef, LocalNodeRef, ExternalNodeRef)
+        ):
             raise ValueError("invalid parent metadata reference")
         if self.display is not None and not isinstance(
-            self.display, (CurrentNodeRef, LocalNodeRef)
+            self.display, (CurrentNodeRef, LocalNodeRef, ExternalNodeRef)
         ):
             raise ValueError("invalid display metadata reference")
 
@@ -239,7 +262,10 @@ class LocalExpansion:
 def _validate_bindings(bindings: object, *, local_ids: set[str]) -> None:
     pairs = _pairs(bindings, "bindings")
     if not all(
-        isinstance(item[1], (PresentOutput, BlockedOutput, CurrentOutputRef, LocalOutputRef))
+        isinstance(
+            item[1],
+            (PresentOutput, BlockedOutput, CurrentOutputRef, LocalOutputRef, ExternalOutputRef),
+        )
         for item in pairs
     ):
         raise ValueError("invalid output binding")
@@ -257,6 +283,8 @@ class DirectReturn:
 
     def __post_init__(self) -> None:
         _validate_bindings(self.bindings, local_ids=set())
+        if any(isinstance(value, ExternalOutputRef) for _, value in self.bindings):
+            raise ValueError("external return reference requires an expansion")
 
 
 @dataclass(frozen=True)
