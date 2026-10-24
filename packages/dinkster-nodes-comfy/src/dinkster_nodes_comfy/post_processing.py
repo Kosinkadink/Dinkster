@@ -144,7 +144,7 @@ def _scale_edge(value: Any, size: int, method: str, *, longer: bool) -> Any:
 
 def _scale_total_pixels(value: Any, megapixels: float, method: str) -> Any:
     value, is_image = _as_channels(value)
-    scale = math.sqrt(megapixels * 1024 * 1024 / (value.shape[-1] * value.shape[-2]))
+    scale = math.sqrt(int(megapixels * 1024.0 * 1024.0) / (value.shape[-1] * value.shape[-2]))
     result = _common_upscale(
         value, round(value.shape[-1] * scale), round(value.shape[-2] * scale), method, "disabled"
     )
