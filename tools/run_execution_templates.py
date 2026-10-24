@@ -12,6 +12,7 @@ import argparse
 import asyncio
 import json
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 from aiohttp import ClientSession, web
 from dinkster_server import create_app
@@ -103,14 +104,111 @@ async def _run(
     print("pack=dinkster-nodes-comfy")
 
 
+async def _template_jobs(reference: Path, templates: list[Path], output: Path, tsx: Path) -> None:
+    from tools import template_execution_stubs as stubs
+
+    stubs.configure(reference, templates)
+    output.mkdir(parents=True, exist_ok=True)
+    with NamedTemporaryFile(prefix=".execution-template-", suffix=".toml", dir=Path.cwd()) as file:
+        manifest = Path(file.name)
+        names = sorted({node.schema().node_type for node in stubs.NODES})
+        manifest.write_text(
+            '[pack]\nname = "execution-template-test"\npublisher = "dinkster"\n'
+            f"namespaces = {json.dumps(names)}\n"
+            '[pack.entry]\nnodes = "tools.template_execution_stubs:NODES"\n'
+            'types = "tools.template_execution_stubs:register_types"\n',
+            encoding="ascii",
+        )
+        composition = await compose_serving(
+            [PackSpec(manifest, trust_reserved=True, in_process=True)],
+            include_default_packs=False,
+        )
+        runner = web.AppRunner(create_app(composition.make_engine, composition.schemas))
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        try:
+            socket = next(iter(site._server.sockets))  # type: ignore[union-attr]
+            base = f"http://127.0.0.1:{socket.getsockname()[1]}"
+            async with ClientSession() as session:
+                async with session.get(base + "/api/nodes?wire=40") as response:
+                    response.raise_for_status()
+                    catalog = await response.json()
+                catalog_path = output / "catalog.json"
+                catalog_path.write_text(json.dumps(catalog, indent=2) + "\n")
+                compiler = await asyncio.create_subprocess_exec(
+                    str(tsx),
+                    "tools/compile_execution_templates.mts",
+                    str(catalog_path),
+                    str(output),
+                    *(str(template) for template in templates),
+                )
+                if await compiler.wait() != 0:
+                    raise RuntimeError("official template import/compile failed")
+                for index, template in enumerate(templates):
+                    compiled = json.loads((output / template.name).read_text())
+                    job_id = f"template-{index}"
+                    body = {
+                        "clientId": "execution-template-test",
+                        "jobId": job_id,
+                        "graph": compiled["graph"],
+                        "targets": compiled["targets"],
+                    }
+                    async with session.post(base + "/api/jobs", json=body) as response:
+                        submitted = await response.json()
+                        if response.status != 202:
+                            raise RuntimeError(f"{template.name} rejected: {submitted}")
+                    ref = submitted["jobRef"]
+                    async with asyncio.timeout(60):
+                        while True:
+                            async with session.get(base + f"/api/jobs/by-ref/{ref}") as response:
+                                response.raise_for_status()
+                                job = await response.json()
+                            if job["state"] in ("completed", "failed", "cancelled"):
+                                break
+                            await asyncio.sleep(0.05)
+                    async with session.get(
+                        base + f"/api/jobs/by-ref/{ref}/events?after=0"
+                    ) as response:
+                        events = await response.json()
+                    (output / f"{template.stem}-result.json").write_text(
+                        json.dumps(
+                            {"job": job, "events": events, "stubbed": stubs.STUBBED}, indent=2
+                        )
+                        + "\n"
+                    )
+                    if job["state"] != "completed":
+                        raise RuntimeError(f"{template.name} failed: {job}; events={events}")
+                    print(f"{template.name} job={ref} state=completed")
+        finally:
+            await runner.cleanup()
+            await composition.close()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--catalog", type=Path, required=True)
+    parser.add_argument("--catalog", type=Path)
     parser.add_argument("--reference", type=Path, required=True)
-    parser.add_argument("--selected-reference", type=Path, required=True)
-    parser.add_argument("--selected-catalog", type=Path, required=True)
+    parser.add_argument("--selected-reference", type=Path)
+    parser.add_argument("--selected-catalog", type=Path)
+    parser.add_argument("--template", type=Path, action="append", default=[])
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--tsx", type=Path)
     args = parser.parse_args()
-    asyncio.run(_run(args.catalog, args.reference, args.selected_reference, args.selected_catalog))
+    if args.template:
+        if args.output is None or args.tsx is None:
+            parser.error("--template requires --output and --tsx")
+        asyncio.run(_template_jobs(args.reference, args.template, args.output, args.tsx))
+    else:
+        if any(
+            path is None for path in (args.catalog, args.selected_reference, args.selected_catalog)
+        ):
+            parser.error(
+                "catalog comparison requires --catalog, --selected-reference and --selected-catalog"
+            )
+        asyncio.run(
+            _run(args.catalog, args.reference, args.selected_reference, args.selected_catalog)
+        )
     return 0
 
 
