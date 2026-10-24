@@ -21,5 +21,8 @@ predictions. FreSca filters low- and high-frequency guidance independently.
 Temporal Score Rescaling supports per-sample sigma tensors, leaving zero-sigma
 samples unchanged while rescaling the other samples independently.
 
+EasyCache and LazyCache patch a model for approximate denoiser-result reuse
+during a configured portion of sampling.
+
 Native scheduler nodes provide Basic, Karras, Exponential, Polyexponential,
 Laplace, VP, beta sampling, and SD Turbo sigma schedules.
