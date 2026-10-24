@@ -13,7 +13,6 @@ type-namespaces = [
     "comfy.CLIP_VISION_OUTPUT",
     "comfy.COLORS",
     "comfy.CONDITIONING",
-    "comfy.CONTROL_NET",
     "comfy.CURVE",
     "comfy.DA3_GEOMETRY",
     "comfy.DA3_MODEL",

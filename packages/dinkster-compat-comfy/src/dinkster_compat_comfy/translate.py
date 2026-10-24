@@ -153,6 +153,7 @@ from dinkster_values.builtin_types import (
     AUDIO_TYPE,
     BACKGROUND_REMOVAL_TYPE,
     BOUNDING_BOX_TYPE,
+    CONTROL_NET_TYPE,
     LATENT_UPSCALE_MODEL_TYPE,
     MESH_TYPE,
     MODEL_PATCH_TYPE,
@@ -192,6 +193,7 @@ COMFY_VALUE_TYPE_NAMES = frozenset(
         MESH_TYPE,
         SHAPE_SUBDIVIDES_TYPE,
         BOUNDING_BOX_TYPE,
+        CONTROL_NET_TYPE,
         MODEL_PATCH_TYPE,
         LATENT_UPSCALE_MODEL_TYPE,
     )
