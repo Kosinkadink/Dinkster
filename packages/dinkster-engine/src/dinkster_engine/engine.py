@@ -1318,7 +1318,7 @@ class Engine:
             return CachedResult(outputs)
         rebound = dict(outputs)
         for output_id, value in outputs.items():
-            if is_absent(value):
+            if is_absent(value) and not value.meta.get("absent.forwarded", False):
                 current = make_absent_value(
                     origin=f"{label}/{output_id}",
                     reason=str(value.meta.get(ABSENT_REASON_META_KEY, "")),

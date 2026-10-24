@@ -624,3 +624,40 @@ def test_no_warning_for_default_skip_consumer() -> None:
     )
     diags = validate(graph, build_schemas(NODES), ["a"])
     assert "maybe-absent" not in {d.code for d in diags}
+
+
+def test_cached_forwarded_absence_preserves_source_provenance() -> None:
+    absent = make_absent_value(origin="source/value", reason="missing source", stands_for="INT")
+
+    class Forward(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                "test.forward_absent",
+                outputs=(OutputSpec("value", TypeExpr.concrete("INT"), optional=True),),
+            )
+
+        @classmethod
+        def execute(cls):
+            return cls.outputs(value=absent)
+
+    registry = TypeRegistry()
+    register_core_types(registry)
+    nodes = [Forward]
+    engine = Engine(
+        schemas=build_schemas(nodes),
+        registry=registry,
+        worker=InProcessWorker(build_node_types(nodes), registry),
+        cache=MemoryLRUCache(),
+    )
+
+    async def scenario() -> None:
+        for node_id, cached in (("forward", False), ("forward", True), ("other_forward", True)):
+            result = await engine.run(Graph({node_id: GraphNode("test.forward_absent")}), [node_id])
+            output = result.outputs[node_id]["value"]
+            assert output.meta.get(ABSENT_ORIGIN_META_KEY) == "source/value"
+            assert output.meta.get(ABSENT_REASON_META_KEY) == "missing source"
+            assert output.fingerprint == absent.fingerprint
+            assert bool(result.cached) == cached
+
+    asyncio.run(scenario())
