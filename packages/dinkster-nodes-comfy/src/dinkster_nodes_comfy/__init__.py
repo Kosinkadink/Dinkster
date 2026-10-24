@@ -2,6 +2,7 @@
 
 from dinkster_api.v1 import register_inference_types
 
+from .ace_text_conditioning import ACE_TEXT_CONDITIONING_NODES
 from .attention_guidance import ATTENTION_GUIDANCE_NODES
 from .attention_multiply import ATTENTION_MULTIPLY_NODES
 from .audio_combine import AUDIO_COMBINE_NODES
@@ -126,6 +127,7 @@ COMFY_NODES = (
     *AUDIO_EFFECT_NODES,
     *AUDIO_GENERATOR_NODES,
     *AUDIO_LATENT_NODES,
+    *ACE_TEXT_CONDITIONING_NODES,
     *AUDIO_MUSIC_CONDITIONING_NODES,
     *AUDIO_TRANSFORM_NODES,
     *AUDIO_VAE_NODES,
