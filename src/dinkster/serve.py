@@ -149,7 +149,6 @@ from .compose import (
     ServingComposer,
     default_pack_ids,
     default_pack_spec,
-    development_pack_spec,
     model_pack_specs,
     order_pack_entries_by_requirements,
     resolve_manifest_path,
@@ -868,12 +867,6 @@ def main(argv: list[str] | None = None) -> None:
         help="pack to serve: a dinkster-pack.toml or its directory, repeatable; "
         "relative paths resolve from the launch directory; each pack runs "
         "isolated in its own process",
-    )
-    parser.add_argument(
-        "--development-pack",
-        action="store_true",
-        help="explicitly trust and compose the installed dinkster-nodes-dev scaffold pack; "
-        "does not grant trust to --pack paths",
     )
     parser.add_argument(
         "--install-root",
@@ -1783,8 +1776,6 @@ def main(argv: list[str] | None = None) -> None:
         # dev additions. Any name collision fails composition loudly.
         installer = Installer(Path(args.install_root))
         specs.extend(installer.packs_for_serving())
-    if args.development_pack:
-        specs.append(development_pack_spec())
     specs.extend(args.pack)
     default_pack_venv_root = _default_pack_venv_root(args.library_root)
     default_pack_accelerator = resolve_accelerator()

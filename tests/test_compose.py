@@ -1533,27 +1533,32 @@ def test_default_suite_package_matches_managed_lock() -> None:
     }
 
 
-def test_compose_dev_pack_adds_scaffold_nodes() -> None:
+def test_compose_dev_pack_adds_scaffold_nodes(tmp_path: Path) -> None:
     """The development manifest composes its complete node surface."""
     from dinkster_nodes_dev import PACK_NODES
 
-    from dinkster.compose import development_pack_spec
-
     async def scenario() -> None:
-        with pytest.raises(CompositionError, match="explicit host trust"):
-            await compose_serving([DEV_PACK_MANIFEST])
-        spec = development_pack_spec()
-        assert Path(spec.manifest).resolve() == DEV_PACK_MANIFEST.resolve()
-        composition = await compose_serving([spec])
+        composition = await compose_serving([DEV_PACK_MANIFEST])
         try:
             expected = set(build_schemas(DEFAULT_NODES)) | set(build_schemas(PACK_NODES))
             assert set(composition.schemas) == expected
+            info = composition.packs["dinkster-nodes-dev"]
+            assert info.source == f"local:{DEV_PACK_MANIFEST.parent.resolve()}"
+            assert info.version == ""
+            assert info.artifact_digest == ""
             engine = composition.make_engine(lambda event: None)
             graph = Graph(nodes={"g": GraphNode("dev.image.gradient", {"width": 8, "height": 4})})
             result = await engine.run(graph, ["g"])
             assert "g" in result.outputs
         finally:
             await composition.close()
+
+        second = write_iso_manifest(tmp_path, name="other-dev", namespaces=("dev",))
+        with pytest.raises(
+            CompositionError,
+            match="'dev' claimed by 'other-dev' overlaps 'dev' claimed by 'dinkster-nodes-dev'",
+        ):
+            await compose_serving([DEV_PACK_MANIFEST, second], worker_env=WORKER_ENV)
 
     asyncio.run(scenario())
 
