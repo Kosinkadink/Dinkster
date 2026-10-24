@@ -1,9 +1,8 @@
-"""CPU behavior for native sigma scheduler nodes."""
+"""CPU behavior for native sigma scheduler nodes against pinned inference."""
 
 from __future__ import annotations
 
 import sys
-from types import ModuleType
 from typing import Any
 
 import torch
@@ -20,7 +19,7 @@ from dinkster_nodes_comfy.sigma_schedulers import (
 
 
 class ModelSampling:
-    sigmas = torch.tensor((0.0, 0.1, 0.4, 1.0, 2.0, 4.0, 8.0), dtype=torch.float32)
+    sigmas = torch.tensor((0.0, 0.125, 0.5, 1.0, 2.0, 4.0, 8.0), dtype=torch.float32)
 
     def sigma(self, timesteps: torch.Tensor) -> torch.Tensor:
         return timesteps.to(torch.float32) / 1000
@@ -32,87 +31,65 @@ class Model:
         return ModelSampling()
 
 
-def _install_runtime(monkeypatch: Any) -> None:
-    runtime = ModuleType("dinkster_inference")
-    samplers = ModuleType("dinkster_inference.samplers")
-    sampling = ModuleType("dinkster_inference.k_diffusion.sampling")
+def _enable_cpu_runtime() -> None:
+    import dinkster_inference.options
 
-    def calculate_sigmas(model_sampling: ModelSampling, scheduler: str, steps: int) -> torch.Tensor:
-        assert model_sampling is not None
-        assert scheduler == "normal"
-        return torch.arange(steps + 1, dtype=torch.float32)
-
-    def beta_scheduler(
-        model_sampling: ModelSampling, steps: int, *, alpha: float, beta: float
-    ) -> torch.Tensor:
-        assert model_sampling is not None
-        assert (alpha, beta) == (0.7, 1.3)
-        return torch.linspace(steps, 0, steps + 1, dtype=torch.float32)
-
-    samplers.calculate_sigmas = calculate_sigmas
-    samplers.beta_scheduler = beta_scheduler
-    sampling.get_sigmas_karras = lambda n, sigma_min, sigma_max, rho: torch.tensor(
-        (sigma_max, rho, sigma_min, 0.0), dtype=torch.float32
-    )
-    sampling.get_sigmas_exponential = lambda n, sigma_min, sigma_max: torch.tensor(
-        (sigma_max, sigma_min, 0.0), dtype=torch.float32
-    )
-    sampling.get_sigmas_polyexponential = lambda n, sigma_min, sigma_max, rho: torch.tensor(
-        (sigma_max, rho, sigma_min, 0.0), dtype=torch.float32
-    )
-    sampling.get_sigmas_laplace = lambda n, sigma_min, sigma_max, mu, beta: torch.tensor(
-        (sigma_max, mu, beta, sigma_min), dtype=torch.float32
-    )
-    sampling.get_sigmas_vp = lambda n, beta_d, beta_min, eps_s: torch.tensor(
-        (beta_d, beta_min, eps_s, 0.0), dtype=torch.float32
-    )
-    monkeypatch.setitem(sys.modules, "dinkster_inference", runtime)
-    monkeypatch.setitem(sys.modules, "dinkster_inference.samplers", samplers)
-    monkeypatch.setitem(sys.modules, "dinkster_inference.k_diffusion", ModuleType("k_diffusion"))
-    monkeypatch.setitem(sys.modules, "dinkster_inference.k_diffusion.sampling", sampling)
+    sys.argv = ["test-sigma-schedulers", "--cpu"]
+    dinkster_inference.options.args_parsing = True
 
 
-def test_schedulers_use_pinned_runtime_functions_and_float32_outputs(monkeypatch: Any) -> None:
-    _install_runtime(monkeypatch)
-    model = Model()
-    expected = {
-        KarrasScheduler: (
-            dict(steps=3, sigma_max=4.2, sigma_min=0.2, rho=2.3),
-            (4.2, 2.3, 0.2, 0.0),
+def test_parameterized_schedulers_match_pinned_runtime_outputs() -> None:
+    _enable_cpu_runtime()
+    cases: tuple[tuple[type[Any], dict[str, float | int], tuple[float, ...]], ...] = (
+        (
+            KarrasScheduler,
+            {"steps": 4, "sigma_max": 3.7, "sigma_min": 0.13, "rho": 3.2},
+            (3.7000005, 1.6964283, 0.60366714, 0.13000005, 0.0),
         ),
-        ExponentialScheduler: (dict(steps=3, sigma_max=4.2, sigma_min=0.2), (4.2, 0.2, 0.0)),
-        PolyexponentialScheduler: (
-            dict(steps=3, sigma_max=4.2, sigma_min=0.2, rho=1.7),
-            (4.2, 1.7, 0.2, 0.0),
+        (
+            ExponentialScheduler,
+            {"steps": 4, "sigma_max": 3.7, "sigma_min": 0.13},
+            (3.6999998, 1.2118502, 0.3969138, 0.13000001, 0.0),
         ),
-        LaplaceScheduler: (
-            dict(steps=3, sigma_max=4.2, sigma_min=0.2, mu=-0.3, beta=0.7),
-            (4.2, -0.3, 0.7, 0.2),
+        (
+            PolyexponentialScheduler,
+            {"steps": 4, "sigma_max": 3.7, "sigma_min": 0.13, "rho": 1.7},
+            (3.7000003, 0.69804287, 0.21807629, 0.13000001, 0.0),
         ),
-        VPScheduler: (
-            dict(steps=3, beta_d=13.2, beta_min=0.3, eps_s=0.02),
-            (13.2, 0.3, 0.02, 0.0),
+        (
+            LaplaceScheduler,
+            {"steps": 4, "sigma_max": 3.7, "sigma_min": 0.13, "mu": 0.25, "beta": 0.8},
+            (3.7, 1.7759936, 0.92833745, 0.13),
         ),
-    }
-    for scheduler, (inputs, values) in expected.items():
+        (
+            VPScheduler,
+            {"steps": 4, "beta_d": 13.2, "beta_min": 0.37, "eps_s": 0.017},
+            (32.607094, 4.9330225, 1.2199332, 0.09072536, 0.0),
+        ),
+    )
+    for scheduler, inputs, expected in cases:
         sigmas = scheduler.execute(**inputs)["SIGMAS"]
         assert sigmas.dtype == torch.float32
-        torch.testing.assert_close(sigmas, torch.tensor(values, dtype=torch.float32))
-
-    beta = BetaSamplingScheduler.execute(model=model, steps=4, alpha=0.7, beta=1.3)["SIGMAS"]
-    torch.testing.assert_close(beta, torch.tensor((4.0, 3.0, 2.0, 1.0, 0.0)))
+        torch.testing.assert_close(sigmas, torch.tensor(expected, dtype=torch.float32))
 
 
-def test_basic_scheduler_denoise_boundaries_and_sd_turbo_terminal_zero(monkeypatch: Any) -> None:
-    _install_runtime(monkeypatch)
+def test_model_schedulers_match_denoise_boundaries_and_turbo_timesteps() -> None:
+    _enable_cpu_runtime()
     model = Model()
-    empty = BasicScheduler.execute(model=model, scheduler="normal", steps=3, denoise=0.0)["SIGMAS"]
+    empty = BasicScheduler.execute(model=model, scheduler="simple", steps=3, denoise=0.0)["SIGMAS"]
     assert empty.dtype == torch.float32
     assert empty.numel() == 0
-    fractional = BasicScheduler.execute(model=model, scheduler="normal", steps=3, denoise=0.6)[
+    full = BasicScheduler.execute(model=model, scheduler="simple", steps=3, denoise=1.0)["SIGMAS"]
+    assert full.dtype == torch.float32
+    torch.testing.assert_close(full, torch.tensor((8.0, 2.0, 0.5, 0.0)))
+    fractional = BasicScheduler.execute(model=model, scheduler="simple", steps=3, denoise=0.6)[
         "SIGMAS"
     ]
-    torch.testing.assert_close(fractional, torch.tensor((2.0, 3.0, 4.0, 5.0)))
+    assert fractional.dtype == torch.float32
+    torch.testing.assert_close(fractional, torch.tensor((2.0, 0.5, 0.125, 0.0)))
+    beta = BetaSamplingScheduler.execute(model=model, steps=4, alpha=0.7, beta=1.3)["SIGMAS"]
+    assert beta.dtype == torch.float32
+    torch.testing.assert_close(beta, torch.tensor((8.0, 1.0, 0.5, 0.125, 0.0)))
     turbo = SDTurboScheduler.execute(model=model, steps=4, denoise=0.6)["SIGMAS"]
     torch.testing.assert_close(turbo, torch.tensor((0.599, 0.499, 0.399, 0.299, 0.0)))
     assert turbo.dtype == torch.float32
