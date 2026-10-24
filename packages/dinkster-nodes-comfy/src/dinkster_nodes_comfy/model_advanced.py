@@ -378,7 +378,10 @@ class ModelNoiseScale(Node):
                     "noise_scale",
                     _FLOAT,
                     default=1.0,
-                    doc="Absolute training noise scale. For example HiDream-O1 base: 8.0, dev: 7.5.",
+                    doc=(
+                        "Absolute training noise scale. For example HiDream-O1 base: 8.0, dev: "
+                        "7.5."
+                    ),
                     widget=NumberWidget(min=0.0, max=64.0, step=0.01),
                 ),
             ),
@@ -491,7 +494,8 @@ class ModelAttentionBackend(Node):
             category="model/patch",
             description=(
                 "Selects the dense attention implementation for the model. When used with Block "
-                "Sparse Attention, this backend is used whenever sparse attention is inactive or unsupported."
+                "Sparse Attention, this backend is used whenever sparse attention is inactive or "
+                "unsupported."
             ),
             search_terms=("comfy kitchen", "attention", "pytorch", "kitchen attention"),
             inputs=(
