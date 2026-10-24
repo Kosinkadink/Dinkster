@@ -13,12 +13,14 @@ from dinkster_api.v1 import (
     CORE_INT,
     LATENT_TYPE,
     InputSpec,
+    MultiStreamLatent,
     Node,
     NodeSchema,
     OutputSpec,
     TypeExpr,
     materialize_latent,
 )
+from dinkster_engine import ExecutionError
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.audio_latent import (
     EmptyAceStep15LatentAudio,
@@ -122,6 +124,27 @@ def test_audio_latent_size_uses_last_nested_stream() -> None:
     assert torch.equal(nested.unbind()[-1], audio)
 
 
+@pytest.mark.parametrize("audio_last", (True, False))
+def test_audio_size_canonical_streams_preserve_last_stream_semantics(audio_last: bool) -> None:
+    video = torch.arange(1 * 16 * 4 * 2 * 3, dtype=torch.float64).reshape(1, 16, 4, 2, 3)
+    audio = torch.arange(2 * 8 * 5 * 13, dtype=torch.float32).reshape(2, 8, 5, 13)
+    pairs = (("video", video), ("audio", audio))
+    samples = MultiStreamLatent.from_pairs(pairs if audio_last else pairs[::-1])
+    if audio_last:
+        assert GetAudioLatentSize.execute(latent={"samples": samples}) == {
+            "length": 13,
+            "audio_channels": 5,
+            "batch_size": 2,
+        }
+    else:
+        with pytest.raises(ValueError, match="too many values to unpack"):
+            GetAudioLatentSize.execute(latent={"samples": samples})
+    assert samples.by_role("video") is video
+    assert samples.by_role("audio") is audio
+    assert torch.equal(video.flatten(), torch.arange(video.numel(), dtype=torch.float64))
+    assert torch.equal(audio.flatten(), torch.arange(audio.numel(), dtype=torch.float32))
+
+
 class SizeSource(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -129,20 +152,19 @@ class SizeSource(Node):
             "audio-size-fixture.source",
             outputs=tuple(
                 OutputSpec(name, TypeExpr.concrete(LATENT_TYPE))
-                for name in ("plain", "channel", "joint")
+                for name in ("plain", "channel", "joint", "reverse")
             ),
         )
 
     @classmethod
     def execute(cls) -> dict[str, object]:
-        from dinkster_inference_wire import MultiStreamLatent
-
         audio = torch.arange(2 * 8 * 5 * 13, dtype=torch.float64).reshape(2, 8, 5, 13)
         video = torch.zeros((1, 16, 4, 2, 3))
         return cls.outputs(
             plain={"samples": torch.zeros((3, 7, 11))},
             channel={"samples": audio},
             joint={"samples": MultiStreamLatent.from_pairs((("video", video), ("audio", audio)))},
+            reverse={"samples": MultiStreamLatent.from_pairs((("audio", audio), ("video", video)))},
         )
 
 
@@ -214,6 +236,16 @@ def test_audio_size_production_manifest_both_hosts_twice(tmp_path: Path, in_proc
                 )
                 for name, expected in (("plain", 11), ("channel", 13), ("joint", 13)):
                     assert result.outputs[name + "_inspect"]["length"].resolve() == expected
+                reverse = Graph(
+                    nodes={
+                        "source": nodes["source"],
+                        "reverse": GraphNode(
+                            "GetAudioLatentSize", {"latent": Link("source", "reverse")}
+                        ),
+                    }
+                )
+                with pytest.raises(ExecutionError, match="too many values to unpack"):
+                    await engine.run(reverse, ["reverse"])
         finally:
             await composer.close()
 

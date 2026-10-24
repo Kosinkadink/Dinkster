@@ -11,6 +11,7 @@ from dinkster_api.v1 import (
     CORE_INT,
     LATENT_TYPE,
     InputSpec,
+    MultiStreamLatent,
     Node,
     NodeSchema,
     NumberWidget,
@@ -156,6 +157,7 @@ class GetAudioLatentSize(Node):
         return NodeSchema(
             node_type="GetAudioLatentSize",
             display_name="Get Audio Latent Size",
+            search_terms=("dimensions", "audio latent info", "audio latent length"),
             description=(
                 "Returns the length, audio channel count, and batch size of an audio latent."
             ),
@@ -187,7 +189,9 @@ class GetAudioLatentSize(Node):
     def execute(cls, *, latent: object) -> Mapping[str, object]:
         initialize_inference_process()
         samples = cast("Mapping[str, Any]", materialize_latent(latent))["samples"]
-        if samples.is_nested:
+        if isinstance(samples, MultiStreamLatent):
+            samples = cast("MultiStreamLatent[Any]", samples).streams[-1].payload
+        elif samples.is_nested:
             samples = samples.unbind()[-1]
         if samples.ndim == 4:
             batch_size, _, audio_channels, length = samples.shape
