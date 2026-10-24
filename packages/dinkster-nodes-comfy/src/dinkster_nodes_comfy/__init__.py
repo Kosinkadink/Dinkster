@@ -6,6 +6,7 @@ from .clip import CLIP_NODES
 from .clip_model_specific import MODEL_TEXT_ENCODER_NODES
 from .compositing import COMPOSITING_NODES
 from .conditioning import CONDITIONING_NODES
+from .freeu import FREEU_NODES
 from .image_core import IMAGE_CORE_NODES
 from .image_filters import IMAGE_FILTER_NODES
 from .image_transform import IMAGE_TRANSFORM_NODES
@@ -43,6 +44,7 @@ COMFY_NODES = (
     ComfyMathExpression,
     *MODEL_MERGE_NODES,
     *MODEL_SPECIFIC_MERGE_NODES,
+    *FREEU_NODES,
     *LATENT_NODES,
     *LATENT_ADVANCED_NODES,
     *LATENT_OPERATION_NODES,
