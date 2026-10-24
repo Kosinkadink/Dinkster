@@ -18,6 +18,7 @@ from .cfg_guidance import CFG_GUIDANCE_NODES
 from .clip import CLIP_NODES
 from .clip_model_specific import MODEL_TEXT_ENCODER_NODES
 from .clip_sdxl import CLIP_SDXL_NODES
+from .compile import COMPILE_NODES
 from .compositing import COMPOSITING_NODES
 from .conditioning import CONDITIONING_NODES
 from .controlnet import CONTROLNET_NODES
@@ -93,6 +94,7 @@ COMFY_NODES = (
     *MODEL_MERGE_NODES,
     *MODEL_SPECIFIC_MERGE_NODES,
     *MODEL_ADVANCED_NODES,
+    *COMPILE_NODES,
     *MODEL_SPECIFIC_SCHEDULER_NODES,
     *CFG_GUIDANCE_NODES,
     *VIDEO_GUIDANCE_NODES,

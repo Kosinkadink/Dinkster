@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 import torch
 from dinkster_api.v1 import initialize_inference_process
-from dinkster_native.compile import TorchCompileModel, wanBlockSwap
+from dinkster_nodes_comfy.compile import TorchCompileModel, wanBlockSwap
 
 
 def _model_patcher() -> Any:
@@ -108,7 +108,7 @@ def test_wan_block_swap_is_a_deprecated_identity_node() -> None:
     model = object()
     schema = wanBlockSwap.schema()
 
-    assert schema.node_type == "comfy.wanBlockSwap"
+    assert schema.node_type == "wanBlockSwap"
     assert schema.deprecation is not None
     assert schema.search_visibility == "deprecated"
     assert wanBlockSwap.execute(model=model)["MODEL"] is model

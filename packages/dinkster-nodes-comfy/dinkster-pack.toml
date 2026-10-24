@@ -84,6 +84,8 @@ namespaces = [
     "RescaleCFG",
     "ModelComputeDtype",
     "ModelAttentionBackend",
+    "TorchCompileModel",
+    "wanBlockSwap",
     "AlignYourStepsScheduler",
     "GITSScheduler",
     "OptimalStepsScheduler",

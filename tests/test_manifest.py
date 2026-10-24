@@ -324,14 +324,11 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
     assert legacy.arm_nodes_entry == "dinkster_compat_comfy.legacy_entry:ARM_NODES"
 
     native = load_manifest(Path("packages/dinkster-native/dinkster-pack.toml"))
-    compile_nodes = ("comfy.TorchCompileModel", "comfy.wanBlockSwap")
-    native_nodes = set((*default_native, *mesh, *compile_nodes))
+    native_nodes = set((*default_native, *mesh))
     assert native.namespaces == ("comfy", "dinkster")
     assert set(native.executes) == native_nodes
     assert set(dict(native.arms)["native"]) == native_nodes
-    assert {node.schema().node_type for node in FORK_NODES} == native_nodes - set(mesh) - set(
-        compile_nodes
-    )
+    assert {node.schema().node_type for node in FORK_NODES} == native_nodes - set(mesh)
 
     generation = load_manifest(Path("packages/dinkster-nodes-generation/dinkster-pack.toml"))
     assert generation.namespaces == ("comfy", "dinkster")

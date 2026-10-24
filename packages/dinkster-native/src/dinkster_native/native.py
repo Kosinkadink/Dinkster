@@ -31,7 +31,6 @@ from dinkster_values import (
 )
 
 from .audio import register_audio_type
-from .compile import NATIVE_COMPILE_NODES
 from .devices import comfy_resident_meta
 from .fork_nodes import FORK_NODES
 from .image import (
@@ -77,7 +76,6 @@ NATIVE_NODES: tuple[type[Node], ...] = (
     GenerationRenderUVAtlas,
     GenerationApplyTextureToMesh,
     GenerationMeshToModel3D,
-    *NATIVE_COMPILE_NODES,
 )
 
 # These schema packs are composed in the host process, while the compatibility

@@ -44,7 +44,7 @@ class TorchCompileModel(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
-            node_type="comfy.TorchCompileModel",
+            node_type="TorchCompileModel",
             category="experimental",
             inputs=(
                 InputSpec("model", _MODEL),
@@ -86,7 +86,7 @@ class wanBlockSwap(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
-            node_type="comfy.wanBlockSwap",
+            node_type="wanBlockSwap",
             description=(
                 "Intercept wanBlockSwap custom node that causes major instability "
                 "and make it no-op."
@@ -104,4 +104,4 @@ class wanBlockSwap(Node):
         return cls.outputs(MODEL=model)
 
 
-NATIVE_COMPILE_NODES = (TorchCompileModel, wanBlockSwap)
+COMPILE_NODES = (TorchCompileModel, wanBlockSwap)

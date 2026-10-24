@@ -31,8 +31,6 @@ executes = [
     "dinkster.render_uv_atlas",
     "dinkster.apply_texture_to_mesh",
     "dinkster.mesh_to_model3d",
-    "comfy.TorchCompileModel",
-    "comfy.wanBlockSwap",
 ]
 requires = [
     "dinkster-inference @ git+https://github.com/Kosinkadink/dinkster-inference.git@c4ce40550e77f5a3b9b8d2f96597a4d6c24c1377",
@@ -82,8 +80,6 @@ native = [
     "dinkster.render_uv_atlas",
     "dinkster.apply_texture_to_mesh",
     "dinkster.mesh_to_model3d",
-    "comfy.TorchCompileModel",
-    "comfy.wanBlockSwap",
 ]
 
 [pack.entry]
