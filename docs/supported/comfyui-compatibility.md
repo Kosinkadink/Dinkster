@@ -18,6 +18,8 @@
   exact core interfaces, including CPU Fourier fallback.
 - Ten native conditioning nodes combine, blend, concatenate, multiply, mask,
   zero, and set area or timestep metadata under their exact ComfyUI interfaces.
+- Native VAE inpainting encoding and model conditioning preserve crop, mask,
+  latent, and conditioning metadata behavior under exact ComfyUI interfaces.
 - Fifteen native mask and composite nodes convert, create, invert, crop, combine,
   feather, grow, threshold, Porter-Duff composite, and split or join image alpha
   under exact core IDs.
