@@ -95,7 +95,7 @@ class PrimitiveFloat(Node):
                 InputSpec(
                     "value",
                     TypeExpr.concrete(CORE_FLOAT),
-                    widget=NumberWidget(min=-sys.maxsize, max=sys.maxsize, step=0.1),
+                    widget=NumberWidget(min=-float(sys.maxsize), max=float(sys.maxsize), step=0.1),
                 ),
             ),
             outputs=(OutputSpec("FLOAT", TypeExpr.concrete(CORE_FLOAT)),),

@@ -13,6 +13,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any, cast
 
+from dinkster_inference_wire.process import initialize_inference_process
 from dinkster_protocol import (
     ATTENTION_POLICIES,
     AttentionCapabilityEvidence,
@@ -66,14 +67,7 @@ class AttentionRuntime:
     """Resolve worker routes through upstream's named attention functions."""
 
     def __init__(self) -> None:
-        # Upstream probes its device while importing attention, before compat bootstrap.
-        cli_args = cast("Any", importlib.import_module("dinkster_inference.cli_args"))
-        if os.environ.get("DINKSTER_ACCELERATOR", "auto") == "cpu" or not (
-            torch.cuda.is_available()
-            or torch.xpu.is_available()
-            or torch.backends.mps.is_available()
-        ):
-            cli_args.args.cpu = True
+        initialize_inference_process()
         attention = cast("Any", importlib.import_module("dinkster_inference.ldm.modules.attention"))
         available = tuple(
             policy

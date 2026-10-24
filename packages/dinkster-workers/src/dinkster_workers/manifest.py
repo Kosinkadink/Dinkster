@@ -90,6 +90,7 @@ from dinkster_schema import (
     comfy_alias_registry_from_wire,
     comfy_group_registry_from_wire,
     core_logger,
+    reserved_root,
     validate_claim,
     validate_name,
 )
@@ -2124,6 +2125,10 @@ class PackManifest:
     """Explicit host/API/inference contracts. None marks a legacy manifest."""
     dependencies: tuple[PackDependency, ...] = ()
     """Pack ordering dependencies, sorted by canonical pack id."""
+    publisher: str = ""
+    """Checkout publisher identity; installed publisher authority comes from the registry."""
+    type_namespaces: tuple[str, ...] = ()
+    """Exclusive type ids or namespaces declared in [pack] type-namespaces."""
     requirements: PackRequirements = PackRequirements()
     """Versioned capabilities this pack consumes."""
     sandbox: PackSandboxNeeds = PackSandboxNeeds()
@@ -2740,6 +2745,9 @@ def load_manifest(path: Path | str) -> PackManifest:
         raise ManifestError(f"{manifest_path}: [pack] name {name!r} {name_problem}")
 
     namespaces = _parse_namespaces(pack.get("namespaces"), name, manifest_path)
+    publisher = pack.get("publisher", "")
+    if not isinstance(publisher, str) or (publisher and validate_name(publisher) is not None):
+        raise ManifestError(f"{manifest_path}: [pack] publisher must be a valid publisher id")
 
     entry = pack.get("entry")
     if not isinstance(entry, dict):
@@ -2880,6 +2888,8 @@ def load_manifest(path: Path | str) -> PackManifest:
         path=manifest_path,
         contracts=_parse_contracts(pack.get("contracts"), manifest_path),
         dependencies=_parse_pack_dependencies(pack.get("dependencies"), manifest_path),
+        publisher=publisher,
+        type_namespaces=_parse_type_namespaces(pack.get("type-namespaces"), name, manifest_path),
         requirements=_parse_requirements(pack.get("requirements"), manifest_path),
         sandbox=_parse_sandbox(pack.get("sandbox"), manifest_path),
         sandbox_declared="sandbox" in pack,
@@ -3024,6 +3034,46 @@ def _parse_namespaces(raw: object, pack_name: str, manifest_path: Path) -> tuple
                     f"{manifest_path}: [pack] namespaces entries {earlier!r} and {claim!r} {detail}"
                 )
     return tuple(claims)
+
+
+def validate_registration_claims(manifest: PackManifest) -> None:
+    """Enforce publisher-qualified ownership before any pack entry runs."""
+    if manifest.publisher == "dinkster":
+        return
+    for field, claims in (
+        ("namespaces", manifest.namespaces),
+        ("type-namespaces", manifest.type_namespaces),
+    ):
+        for claim in claims:
+            if reserved_root(claim) is not None:
+                raise ManifestError(
+                    f"{manifest.path}: {field} claim {claim!r} is reserved; "
+                    "only publisher 'dinkster' may claim reserved namespaces"
+                )
+            if claim != manifest.name and not claim_covers(manifest.name, claim):
+                raise ManifestError(
+                    f"{manifest.path}: {field} claim {claim!r} must be prefixed by "
+                    f"pack name {manifest.name!r}; only publisher 'dinkster' may claim bare ids"
+                )
+
+
+def _parse_type_namespaces(raw: object, pack_name: str, manifest_path: Path) -> tuple[str, ...]:
+    if raw is None:
+        return (pack_name,)
+    if not isinstance(raw, list) or any(
+        not isinstance(item, str)
+        or not item
+        or not re.fullmatch(r"[A-Za-z][A-Za-z0-9]*(?:[-_.][A-Za-z0-9]+)*", item)
+        for item in cast("list[object]", raw)
+    ):
+        raise ManifestError(
+            f"{manifest_path}: [pack] type-namespaces must be a list of type claims"
+        )
+    claims = tuple(cast("list[str]", raw))
+    for index, claim in enumerate(claims):
+        if any(claims_conflict(earlier, claim) for earlier in claims[:index]):
+            raise ManifestError(f"{manifest_path}: [pack] type-namespaces has overlapping claims")
+    return claims
 
 
 def _parse_executes(raw: object, manifest_path: Path) -> tuple[str, ...]:

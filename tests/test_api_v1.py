@@ -29,6 +29,8 @@ from dinkster_values import register_core_types
 from dinkster_workers import InProcessWorker
 
 GOLDEN_V1_SURFACE = (
+    "initialize_inference_process",
+    "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
     "register_inference_types",
@@ -150,6 +152,7 @@ GOLDEN_V1_SURFACE = (
     "BACKGROUND_REMOVAL_TYPE",
     "BOUNDING_BOX_TYPE",
     "CLIP_TYPE",
+    "CLIP_VISION_OUTPUT_TYPE",
     "CLIP_VISION_TYPE",
     "COMFY_ARRAY_TYPE",
     "COMPOSITOR_TYPE",
@@ -260,7 +263,7 @@ GOLDEN_V1_SURFACE = (
     "region_meta",
     # -- model3d codec (dinkster-values.model3d_codec): raw GLB bytes across
     # boundaries, the original container as the browser rendition, and the
-    # asset<dinkster.model3d> file decode provider.
+    # asset<MODEL3D> file decode provider.
     "MODEL3D_FILE_DECODER_ID",
     "decode_model3d",
     "decode_model3d_file",
@@ -273,7 +276,7 @@ GOLDEN_V1_SURFACE = (
     "validate_model3d_encoded",
     # -- gaussian splat codec (dinkster-values.splat_codec): framed tensor
     # buffers across boundaries, PLY interchange renditions, and the
-    # asset<dinkster.splat> file decode provider.
+    # asset<SPLAT> file decode provider.
     "SPLAT_FILE_DECODER_ID",
     "SPLAT_PLY_MIME",
     "decode_splat",
@@ -392,6 +395,43 @@ loaded = {
     if name.split(".")[0] in {"dinkster_inference_wire", "torch"}
 }
 assert not loaded, sorted(loaded)
+from dinkster_api.v1 import initialize_inference_process
+assert callable(initialize_inference_process)
+assert not any(name.split('.')[0] in {'torch', 'dinkster_inference'} for name in sys.modules)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_controlnet_registration_preserves_resident_identity_without_torch() -> None:
+    script = """
+import sys
+from dinkster_api.v1 import CONTROL_NET_TYPE, TypeRegistry, register_inference_types
+from dinkster_memory.resident import default_pool
+from dinkster_values import RESOURCE_ID_META_KEY, ResidentLookupError
+
+assert CONTROL_NET_TYPE == "CONTROL_NET"
+registry = TypeRegistry()
+register_inference_types(registry)
+spec = registry.spec(CONTROL_NET_TYPE)
+register_inference_types(registry)
+assert registry.spec(CONTROL_NET_TYPE) is spec
+assert "comfy.CONTROL_NET" not in registry
+source = object()
+encoded = spec.encode(source)
+assert spec.decode(encoded) is source
+assert spec.fingerprint(source) == spec.fingerprint(spec.decode(encoded))
+assert spec.meta(source)[RESOURCE_ID_META_KEY].startswith("resident:")
+assert default_pool().release_resident(source)
+try:
+    spec.decode(encoded)
+except ResidentLookupError:
+    pass
+else:
+    raise AssertionError("released ControlNet remained resolvable")
+assert "torch" not in sys.modules
 """
     result = subprocess.run(
         [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
@@ -413,6 +453,7 @@ def test_golden_surface_is_exact() -> None:
 def test_reexports_are_the_internal_objects() -> None:
     """Zero wrappers: the door hands out the internal objects themselves."""
     import dinkster_assets
+    import dinkster_inference_wire.process as inference_process
     import dinkster_inference_wire.types as inference_types
     import dinkster_memory
     import dinkster_protocol
@@ -421,6 +462,7 @@ def test_reexports_are_the_internal_objects() -> None:
     import dinkster_video
 
     sources = (
+        inference_process,
         inference_types,
         dinkster_schema,
         dinkster_values,

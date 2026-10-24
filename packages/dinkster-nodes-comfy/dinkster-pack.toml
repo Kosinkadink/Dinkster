@@ -1,5 +1,6 @@
 [pack]
 name = "dinkster-nodes-comfy"
+publisher = "dinkster"
 namespaces = [
     "StringFormat",
     "StringConcatenate",
@@ -39,6 +40,10 @@ namespaces = [
     "ComfyNumberConvert",
     "SeedNode",
     "ComfyMathExpression",
+    "UNetSelfAttentionMultiply",
+    "UNetCrossAttentionMultiply",
+    "CLIPAttentionMultiply",
+    "UNetTemporalAttentionMultiply",
     "ModelMergeSimple",
     "ModelMergeSubtract",
     "ModelMergeAdd",
@@ -64,6 +69,8 @@ namespaces = [
     "ModelMergeKrea2",
     "FreeU",
     "FreeU_V2",
+    "ScaleROPE",
+    "DifferentialDiffusion",
     "EmptyLatentImage",
     "LatentFromBatch",
     "RepeatLatentBatch",
@@ -90,6 +97,13 @@ namespaces = [
     "LatentOperationTonemapReinhard",
     "LatentOperationSharpen",
     "ReplaceVideoLatentFrames",
+    "EmptySD3LatentImage",
+    "EmptyFlux2LatentImage",
+    "EmptyChromaRadianceLatentImage",
+    "EmptyHiDreamO1LatentImage",
+    "EmptyQwenImageLayeredLatentImage",
+    "EmptyLatentHunyuan3Dv2",
+    "EmptyTrellis2LatentStructure",
     "CLIPTextEncode",
     "CLIPSetLastLayer",
     "CLIPTextEncodeSDXLRefiner",
@@ -113,8 +127,14 @@ namespaces = [
     "ConditioningSetMask",
     "ConditioningZeroOut",
     "ConditioningSetTimestepRange",
+    "InstructPixToPixConditioning",
+    "ReferenceLatent",
     "VAEEncodeForInpaint",
     "InpaintModelConditioning",
+    "ControlNetApply",
+    "ControlNetApplyAdvanced",
+    "SetUnionControlNetType",
+    "ControlNetInpaintingAliMamaApply",
     "LatentCompositeMasked",
     "ImageCompositeMasked",
     "MaskToImage",
@@ -162,6 +182,7 @@ namespaces = [
     "BatchMasksNode",
     "BatchLatentsNode",
     "ColorTransfer",
+    "EmptyMochiLatentVideo",
 ]
 
 [pack.sandbox]

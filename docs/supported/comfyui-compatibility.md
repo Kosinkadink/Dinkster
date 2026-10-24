@@ -1,5 +1,8 @@
 ## ComfyUI compatibility
 
+- Native EmptyMochiLatentVideo creates video latents with the core interface.
+  Empty image and Mochi latents honor CPU-only process policy without requiring
+  attention discovery or command-line initialization first.
 - Seven native dataset text nodes lowercase, uppercase, truncate, prefix,
   suffix, replace, and strip text under exact core IDs, retaining the fixed
   reference's one-element list payloads on scalar STRING outputs.
@@ -7,6 +10,8 @@
   blend, composite, crop, and noise-mask nodes under their exact ComfyUI IDs.
   IMAGE, MASK, and LATENT values cross ordinary pack boundaries without host type
   overrides.
+- Empty SD3, Flux 2, Chroma Radiance, HiDream-O1, Qwen layered, Hunyuan 3D v2,
+  and Trellis2 latents preserve each model's dimensions, channel count, and tags.
 - Six native latent operation nodes blend, tonemap, sharpen, apply operations
   directly or within a denoising schedule interval, and replace video frames.
   LATENT_OPERATION uses the same resident-value boundary as model hooks.
