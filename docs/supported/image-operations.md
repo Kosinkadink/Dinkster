@@ -60,6 +60,8 @@
 - Image and mask batch range, repeat, reverse, shuffle, ping-pong loop, count
   expansion, concatenation, insertion, and replacement; image batch/list
   conversion and rebatching
+- Dataset image and image-text pair shuffling, perceptual-hash deduplication,
+  row-major image grids, and deprecated text-list merging
 - Row-major image grid composition and decomposition; image stitching; split
   and merge with overlapping tiles
 - Image transitions between inputs, within a batch, or while joining batches,

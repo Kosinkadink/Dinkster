@@ -7,6 +7,7 @@ from .clip_model_specific import MODEL_TEXT_ENCODER_NODES
 from .clip_sdxl import CLIP_SDXL_NODES
 from .compositing import COMPOSITING_NODES
 from .conditioning import CONDITIONING_NODES
+from .dataset_collections import DATASET_COLLECTION_NODES
 from .dataset_text import DATASET_TEXT_NODES
 from .freeu import FREEU_NODES
 from .image_core import IMAGE_CORE_NODES
@@ -38,6 +39,7 @@ from .vae import VAE_NODES
 COMFY_NODES = (
     *TEXT_NODES,
     *DATASET_TEXT_NODES,
+    *DATASET_COLLECTION_NODES,
     PrimitiveString,
     PrimitiveStringMultiline,
     PrimitiveInt,
