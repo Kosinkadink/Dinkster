@@ -35,6 +35,7 @@ from .stable_cascade import STABLE_CASCADE_NODES
 from .text import TEXT_NODES
 from .utilities import ComfyNumberConvert, SeedNode
 from .vae import VAE_NODES
+from .video_latent import VIDEO_LATENT_NODES
 
 COMFY_NODES = (
     *TEXT_NODES,
@@ -68,6 +69,7 @@ COMFY_NODES = (
     *IMAGE_TRANSFORM_NODES,
     *MORPHOLOGY_NODES,
     *STABLE_CASCADE_NODES,
+    *VIDEO_LATENT_NODES,
     *POST_PROCESSING_NODES,
 )
 
