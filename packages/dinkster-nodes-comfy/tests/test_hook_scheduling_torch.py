@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 from typing import Any
 
@@ -184,35 +185,44 @@ def test_ordinary_manifests_execute_hook_scheduling_chain_twice(
     tmp_path: Any, in_process: bool
 ) -> None:
     async def scenario() -> None:
-        composer = ServingComposer(worker_env={"PYTHONPATH": str(Path(__file__).parent)})
+        root = Path(__file__).parents[1]
+        composer = ServingComposer(
+            worker_env={
+                "DINKSTER_ACCELERATOR": "cpu",
+                "PYTHONPATH": os.pathsep.join(
+                    (str(tmp_path), str(Path(__file__).parent), str(root / "src"))
+                ),
+            }
+        )
         try:
             module = f"hook_scheduling_fixture_{in_process}"
             (tmp_path / f"{module}.py").write_text(
-                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_api.v1 import register_inference_types\n"
                 "from test_hook_scheduling_torch import HookInspect, HookSource\n"
-                "NODES = (*COMFY_NODES, HookSource, HookInspect)\n",
+                "NODES = (HookSource, HookInspect)\n",
                 encoding="ascii",
             )
-            manifest = tmp_path / "dinkster-pack.toml"
-            pack_manifest = (Path(__file__).parents[1] / "dinkster-pack.toml").read_text(
-                encoding="ascii"
-            )
-            manifest.write_text(
-                pack_manifest.replace(
-                    '    "SDTurboScheduler",\n]',
-                    '    "SDTurboScheduler",\n    "hook-scheduling-fixture",\n]',
-                )
-                .replace(
-                    'nodes = "dinkster_nodes_comfy:COMFY_NODES"',
-                    f'nodes = "{module}:NODES"',
-                )
-                .replace(
-                    'types = "dinkster_nodes_comfy:register_inference_types"',
-                    f'types = "{module}:register_inference_types"',
-                ),
+            manifest = root / "dinkster-pack.toml"
+            fixture_manifest = tmp_path / "dinkster-pack.toml"
+            fixture_manifest.write_text(
+                "[pack]\n"
+                'name = "hook-scheduling-fixture"\n'
+                'publisher = "dinkster"\n'
+                'namespaces = ["hook-scheduling-fixture"]\n'
+                "\n[pack.entry]\n"
+                f'nodes = "{module}:NODES"\n'
+                f'types = "{module}:register_inference_types"\n',
                 encoding="ascii",
             )
-            await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
+            for pack_manifest in (manifest, fixture_manifest):
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=pack_manifest,
+                        in_process=in_process,
+                        worker_group=None if in_process else "hook-scheduling-fixture",
+                        group_manifests=() if in_process else (manifest, fixture_manifest),
+                    )
+                )
             graph = Graph(
                 nodes={
                     "source": GraphNode("hook-scheduling-fixture.source"),
@@ -251,15 +261,23 @@ def test_ordinary_manifests_execute_hook_scheduling_chain_twice(
                         "CombineHooks2",
                         {"hooks_A": Link("set", "HOOKS"), "hooks_B": Link("source", "hooks")},
                     ),
+                    "combined-four": GraphNode(
+                        "CombineHooks4", {"hooks_D": Link("combined", "HOOKS")}
+                    ),
+                    "combined-eight": GraphNode(
+                        "CombineHooks8", {"hooks_H": Link("combined-four", "HOOKS")}
+                    ),
                     "inspect": GraphNode(
-                        "hook-scheduling-fixture.inspect", {"hooks": Link("combined", "HOOKS")}
+                        "hook-scheduling-fixture.inspect",
+                        {"hooks": Link("combined-eight", "HOOKS")},
                     ),
                 }
             )
             engine = composer.composition.make_engine(lambda _event: None)
-            for _ in range(2):
+            for iteration in range(2):
                 result = await engine.run(graph, ["inspect"])
                 assert result.outputs["inspect"]["strength"].resolve() == 0.1875
+                assert set(result.executed if iteration == 0 else result.cached) == set(graph.nodes)
         finally:
             await composer.close()
 
