@@ -74,13 +74,15 @@ def test_sigma_operation_schemas_preserve_core_inputs_outputs_and_widgets() -> N
     assert denoise.default == 1.0
     set_first = SIGMA_OPERATION_NODES[3].schema().inputs[1]
     assert set_first.type == scalar_types["sigma"]
-    assert set_first.widget == NumberWidget(min=0.0, max=20_000.0, step=0.001)
+    assert set_first.widget == NumberWidget(min=0.0, max=20_000.0, step=0.001, round=False)
     extend = SIGMA_OPERATION_NODES[4].schema()
     assert [item.type for item in extend.inputs[1:4]] == [
         scalar_types["steps"],
         scalar_types["start_at_sigma"],
         scalar_types["end_at_sigma"],
     ]
+    assert extend.inputs[2].widget == NumberWidget(min=-1.0, max=20_000.0, step=0.01, round=False)
+    assert extend.inputs[3].widget == NumberWidget(min=0.0, max=20_000.0, step=0.01, round=False)
     sampling = SIGMA_OPERATION_NODES[5].schema()
     assert sampling.inputs[0].type == TypeExpr.concrete(MODEL_TYPE)
     assert sampling.inputs[1].type == scalar_types["sampling_percent"]

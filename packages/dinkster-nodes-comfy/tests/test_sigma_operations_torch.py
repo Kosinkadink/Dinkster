@@ -100,6 +100,7 @@ def test_extend_intermediate_sigmas_keeps_empty_and_unmatched_schedules() -> Non
     )["sigmas"]
     assert torch.equal(result, source)
     assert result.dtype == torch.float32
+    assert torch.equal(source, torch.tensor([20.0, 10.0, 0.0]))
 
 
 def test_manual_sigmas_matches_reference_number_extraction_and_float32_output() -> None:
