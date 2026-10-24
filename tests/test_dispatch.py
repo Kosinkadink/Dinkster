@@ -877,6 +877,7 @@ def test_inference_wire_registers_comfy_type_ids_without_legacy_aliases() -> Non
         "MODEL",
         "CLIP",
         "CLIP_VISION",
+        "CONTROL_NET",
         "VAE",
         "CONDITIONING",
         "SAMPLER",

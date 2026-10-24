@@ -21,6 +21,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
+    initialize_inference_process,
     materialize_image,
     materialize_latent,
 )
@@ -76,6 +77,7 @@ class EmptyLatentImage(Node):
 
     @classmethod
     def execute(cls, *, width: int, height: int, batch_size: int = 1) -> Mapping[str, object]:
+        initialize_inference_process()
         torch = importlib.import_module("torch")
         management = importlib.import_module("dinkster_inference.model_management")
         samples = torch.zeros(
