@@ -22,6 +22,7 @@ from dinkster_nodes_comfy.latent import (
     RepeatLatentBatch,
     SetLatentNoiseMask,
 )
+from dinkster_nodes_comfy.latent_model_specific import MODEL_LATENT_NODES
 from dinkster_values import EncodedLatentTensor, decode_latent, encode_latent
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -31,6 +32,48 @@ from dinkster.compose import PackSpec, ServingComposer
     ("node_id", "display", "category", "inputs"),
     [
         ("EmptyLatentImage", "Empty Latent Image", "", ("width", "height", "batch_size")),
+        (
+            "EmptySD3LatentImage",
+            "EmptySD3LatentImage",
+            "/stable diffusion",
+            ("width", "height", "batch_size"),
+        ),
+        (
+            "EmptyFlux2LatentImage",
+            "Empty Flux 2 Latent",
+            "/flux",
+            ("width", "height", "batch_size"),
+        ),
+        (
+            "EmptyChromaRadianceLatentImage",
+            "EmptyChromaRadianceLatentImage",
+            "/chroma radiance",
+            ("width", "height", "batch_size"),
+        ),
+        (
+            "EmptyHiDreamO1LatentImage",
+            "Empty HiDream-O1 Latent Image",
+            "/hidream",
+            ("width", "height", "batch_size"),
+        ),
+        (
+            "EmptyQwenImageLayeredLatentImage",
+            "Empty Qwen Image Layered Latent",
+            "/qwen",
+            ("width", "height", "layers", "batch_size"),
+        ),
+        (
+            "EmptyLatentHunyuan3Dv2",
+            "Empty Hunyuan 3D v2 Latent",
+            "/hunyuan 3d",
+            ("resolution", "batch_size"),
+        ),
+        (
+            "EmptyTrellis2LatentStructure",
+            "Empty Trellis2 Latent Structure",
+            "/trellis",
+            ("batch_size",),
+        ),
         (
             "LatentFromBatch",
             "Get Latent From Batch",
@@ -61,7 +104,9 @@ from dinkster.compose import PackSpec, ServingComposer
 def test_latent_schemas_use_exact_core_interfaces(
     node_id: str, display: str, category: str, inputs: tuple[str, ...]
 ) -> None:
-    node = next(node for node in LATENT_NODES if node.schema().node_type == node_id)
+    node = next(
+        node for node in (*LATENT_NODES, *MODEL_LATENT_NODES) if node.schema().node_type == node_id
+    )
     schema = node.schema()
     assert schema.display_name == display
     assert schema.category == (

@@ -4,6 +4,8 @@
   blend, composite, crop, and noise-mask nodes under their exact ComfyUI IDs.
   IMAGE, MASK, and LATENT values cross ordinary pack boundaries without host type
   overrides.
+- Empty SD3, Flux 2, Chroma Radiance, HiDream-O1, Qwen layered, Hunyuan 3D v2,
+  and Trellis2 latents preserve each model's dimensions, channel count, and tags.
 - Six native latent operation nodes blend, tonemap, sharpen, apply operations
   directly or within a denoising schedule interval, and replace video frames.
   LATENT_OPERATION uses the same resident-value boundary as model hooks.
