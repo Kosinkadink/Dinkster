@@ -309,7 +309,15 @@ class PortableLatentSource(Node):
 def test_manifest_executes_latent_and_mask_without_host_types(
     tmp_path: Path, in_process: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(as_tensor=np.asarray))
+    monkeypatch.setitem(
+        sys.modules,
+        "torch",
+        SimpleNamespace(
+            as_tensor=np.asarray,
+            cuda=SimpleNamespace(is_available=lambda: False),
+            version=SimpleNamespace(hip=None),
+        ),
+    )
 
     async def scenario() -> None:
         composer = ServingComposer(worker_env={"PYTHONPATH": str(Path(__file__).parent)})
@@ -323,7 +331,9 @@ def test_manifest_executes_latent_and_mask_without_host_types(
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
                 "import sys, numpy as np\n"
                 "from types import SimpleNamespace\n"
-                "sys.modules.setdefault('torch', SimpleNamespace(as_tensor=np.asarray))\n"
+                "sys.modules.setdefault('torch', SimpleNamespace(as_tensor=np.asarray, "
+                "cuda=SimpleNamespace(is_available=lambda: False), "
+                "version=SimpleNamespace(hip=None)))\n"
                 "NODES = (*COMFY_NODES, PortableLatentSource)\n",
                 encoding="ascii",
             )
