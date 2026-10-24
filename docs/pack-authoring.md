@@ -755,6 +755,13 @@ Built-in identities are reserved to the foundation pack by the shared type
 module. An official codec provider implements that identity without taking
 ownership; removing the provider does not retract the built-in identity.
 
+Import built-in type constants from `dinkster_values.builtin_types` (or the
+public `dinkster_api.v1` exports) rather than spelling socket ids in schemas,
+validators, codecs or generators. Dinkster-specific built-ins use bare
+uppercase names, for example `ASSET`, `CURVE` and `VIDEO_DOCUMENT`. Node ids,
+widget tags and external ComfyUI protocol labels keep their own identities.
+`core.absent` remains an internal execution envelope, not a socket type.
+
 Do not declare aliases or structural equivalence between type ids. The id
 selects the codec, cache fingerprint, literal coercion, and renditions;
 there cannot be competing implementations for one shared concept. Use an
