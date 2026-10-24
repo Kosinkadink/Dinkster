@@ -25,6 +25,7 @@ from .dataset_images import DATASET_IMAGE_NODES
 from .dataset_text import DATASET_TEXT_NODES
 from .freeu import FREEU_NODES
 from .hunyuan_latent import HUNYUAN_LATENT_NODES
+from .hunyuan_text import HUNYUAN_TEXT_NODES
 from .image_core import IMAGE_CORE_NODES
 from .image_filters import IMAGE_FILTER_NODES
 from .image_transform import IMAGE_TRANSFORM_NODES
@@ -116,6 +117,7 @@ COMFY_NODES = (
     *STABLE_CASCADE_NODES,
     *STABLE3D_NODES,
     *HUNYUAN_LATENT_NODES,
+    *HUNYUAN_TEXT_NODES,
     *VIDEO_CONDITIONING_NODES,
     *COSMOS_CONDITIONING_NODES,
     *VIDEO_LATENT_NODES,

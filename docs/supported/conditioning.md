@@ -15,6 +15,9 @@
   concatenated image latents to positive and negative prompt streams.
 - Cosmos image conditioning encodes optional first and last images into latent
   video frames for Cosmos and Cosmos Predict2 workflows.
+- Hunyuan Image text conditioning combines independent BERT and MT5 prompts.
+  Hunyuan Video image-to-video text conditioning uses projected vision embeddings
+  with the video prompt template and configurable image interleave.
 - Native Stable Audio conditioning attaches start and total seconds to both prompt
   streams. Video percentage-area conditioning preserves temporal and spatial bounds.
 - Typed absence remains a Dinkster engine contract: `core.absent` values,
