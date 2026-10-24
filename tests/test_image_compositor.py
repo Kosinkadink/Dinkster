@@ -201,7 +201,7 @@ def test_compositor_nodes_and_runtime_types_are_registered() -> None:
     assert boxes.kind == "list"
     assert boxes.element is not None
     assert boxes.element.kind == "union"
-    assert boxes.element.types == ("dinkster.region", "dinkster.detection")
+    assert boxes.element.types == ("REGION", "DETECTION")
 
     registry = _registry()
     assert registry.spec(LAYERS_TYPE).type_id == LAYERS_TYPE

@@ -80,6 +80,7 @@ class PackCatalog(PackDeclarations):
     def __init__(self, declarations: Mapping[str, Any], source: str) -> None:
         super().__init__(declarations)
         self.types = CatalogTypes.from_wire(declarations["types"])
+        self.registered_types = tuple(sorted(self.types.type_ids))
         self.source = source
 
 
@@ -112,6 +113,7 @@ def worker_declarations(worker: Any) -> dict[str, Any]:
     arms = cast("Mapping[str, tuple[str, ...]]", worker.body_arms or {})
     return {
         "schemas": {name: schema_to_wire(schema) for name, schema in worker.schemas.items()},
+        "registeredTypes": sorted(getattr(worker, "registered_types", ())),
         "comboChoices": {name: list(values) for name, values in worker.combo_choices.items()},
         "lazyChoiceIds": sorted(worker.lazy_choice_ids),
         "compatSkips": {name: value.to_wire() for name, value in worker.compat_skips.items()},
@@ -142,9 +144,16 @@ def worker_declarations(worker: Any) -> dict[str, Any]:
 
 
 def worker_declarations_match_catalog(worker: Any, catalog: PackCatalog) -> bool:
-    """Compare pack declarations while allowing shared host renderer extras."""
+    """Compare declarations while allowing codecs and renderers supplied by the host."""
     actual = worker_declarations(worker)
     expected = worker_declarations(catalog)
+    registry = getattr(worker, "registry", None)
+    if registry is not None:
+        # Idempotent pack registration leaves existing host codecs untouched.
+        actual["registeredTypes"] = sorted(
+            set(actual["registeredTypes"])
+            | {type_id for type_id in expected["registeredTypes"] if type_id in registry}
+        )
     actual_renditions = cast("list[dict[str, object]]", actual.pop("renditions"))
     expected_renditions = cast("list[dict[str, object]]", expected.pop("renditions"))
     return actual == expected and all(item in actual_renditions for item in expected_renditions)

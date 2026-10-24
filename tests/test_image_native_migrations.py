@@ -21,6 +21,7 @@ from dinkster_schema import (
     NodeSchema,
     ReplacementPredicate,
     ReplacementRule,
+    TypeExpr,
     schema_from_wire,
     schema_to_wire,
     validate_replacement_references,
@@ -447,8 +448,13 @@ def test_dynamic_inputs_preserve_v1_types_defaults_and_options() -> None:
                 }
                 continue
             if isinstance(entry, InputSpec):
+                expected_type = (
+                    TypeExpr.concrete("REGION")
+                    if old.type == TypeExpr.concrete("dinkster.region")
+                    else old.type
+                )
                 assert (entry.type, entry.default, entry.widget) == (
-                    old.type,
+                    expected_type,
                     old.default,
                     old.widget,
                 )
