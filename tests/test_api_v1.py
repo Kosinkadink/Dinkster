@@ -21,6 +21,7 @@ import sys
 from collections.abc import Mapping
 
 import dinkster_api.v1 as api
+import pytest
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EngineEvent
 from dinkster_graph import Graph, GraphNode, Link
@@ -164,6 +165,7 @@ GOLDEN_V1_SURFACE = (
     "CONTROL_NET_TYPE",
     "DICT_TYPE",
     "FLOATS_TYPE",
+    "GLIGEN_TYPE",
     "GUIDER_TYPE",
     "HOOK_KEYFRAMES_TYPE",
     "HOOKS_TYPE",
@@ -473,6 +475,48 @@ except ResidentLookupError:
     pass
 else:
     raise AssertionError("released ControlNet remained resolvable")
+assert "torch" not in sys.modules
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("native_first", (True, False))
+def test_gligen_registration_preserves_resident_identity_without_torch(native_first: bool) -> None:
+    script = f"""
+import sys
+from dinkster_api.v1 import GLIGEN_TYPE, TypeRegistry, register_inference_types
+from dinkster_memory.resident import default_pool
+from dinkster_native.native import register_native_types
+from dinkster_values import RESOURCE_ID_META_KEY, ResidentLookupError
+
+assert GLIGEN_TYPE == "GLIGEN"
+registry = TypeRegistry()
+registrations = (register_native_types, register_inference_types)
+if not {native_first!r}:
+    registrations = registrations[::-1]
+registrations[0](registry)
+spec = registry.spec(GLIGEN_TYPE)
+registrations[1](registry)
+assert registry.spec(GLIGEN_TYPE) is spec
+register_inference_types(registry)
+assert registry.spec(GLIGEN_TYPE) is spec
+assert default_pool() in registry.resident_tables
+assert "comfy.GLIGEN" not in registry
+source = object()
+encoded = spec.encode(source)
+assert spec.decode(encoded) is source
+assert spec.fingerprint(source) == spec.fingerprint(spec.decode(encoded))
+assert spec.meta(source)[RESOURCE_ID_META_KEY].startswith("resident:")
+assert default_pool().release_resident(source)
+try:
+    spec.decode(encoded)
+except ResidentLookupError:
+    pass
+else:
+    raise AssertionError("released GLIGEN remained resolvable")
 assert "torch" not in sys.modules
 """
     result = subprocess.run(

@@ -12,6 +12,7 @@ from dinkster_assets import (
     resolver_from_env,
 )
 from dinkster_inference_wire import register_inference_types
+from dinkster_inference_wire.hook_values import normalize_clip_hook_owners
 from dinkster_schema import Node
 from dinkster_values import (
     AUDIO_TYPE,
@@ -121,6 +122,7 @@ def _register_resident(registry: TypeRegistry, type_id: str) -> None:
             type_id,
             table=default_pool(),
             meta=comfy_resident_meta,
+            coerce=normalize_clip_hook_owners if type_id == CLIP_TYPE else None,
         )
 
 

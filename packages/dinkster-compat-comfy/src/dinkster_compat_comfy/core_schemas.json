@@ -35,7 +35,7 @@
     "comfy.FILE_3D_STL",
     "comfy.FILE_3D_USDZ",
     "comfy.FLOATS",
-    "comfy.GLIGEN",
+    "GLIGEN",
     "comfy.GUIDER",
     "comfy.HISTOGRAM",
     "comfy.HOOKS",
@@ -15594,7 +15594,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.GLIGEN"
+              "GLIGEN"
             ]
           }
         }
@@ -15641,7 +15641,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.GLIGEN"
+              "GLIGEN"
             ]
           }
         },
