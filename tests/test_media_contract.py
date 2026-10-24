@@ -561,7 +561,8 @@ def test_media_contract_through_ordinary_worker_boundaries(tmp_path, isolated):
         register_semantic_types(registry)
         manifest = tmp_path / "dinkster-pack.toml"
         manifest.write_text(
-            '[pack]\nname = "media-contract"\n[pack.entry]\n'
+            '[pack]\nname = "media-contract"\npublisher = "dinkster"\n'
+            "[pack.entry]\n"
             'nodes = "tests.test_media_contract:SEMANTIC_NODES"\n'
             'types = "tests.test_media_contract:register_semantic_types"\n'
         )

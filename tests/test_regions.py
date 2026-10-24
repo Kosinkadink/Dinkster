@@ -1032,7 +1032,7 @@ def test_map_region_executes_per_element() -> None:
         ),
         ("comfy.VIDEO", [{"frames": ["a", "b"], "fps": 24.0}, {"frames": ["c"], "fps": 30.0}]),
         (
-            "dinkster.asset",
+            "ASSET",
             [
                 {"digest": "blake3:" + "1" * 64, "name": "one.png"},
                 {"digest": "blake3:" + "2" * 64, "name": "two.wav"},

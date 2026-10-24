@@ -1,5 +1,6 @@
 [pack]
 name = "dinkster-nodes-comfy"
+publisher = "dinkster"
 namespaces = [
     "StringFormat",
     "StringConcatenate",

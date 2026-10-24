@@ -1,7 +1,7 @@
 """Structured save targets + the mount-scoped AssetWriter.
 
 The write half of filesystem mounts: a save destination is a
-``dinkster.save_target`` ({mount, prefix}) - never a raw host path - and the
+``SAVE_TARGET`` ({mount, prefix}) - never a raw host path - and the
 one gate to disk is AssetWriter, which checks the mount is currently
 granted readwrite, lands bytes atomically under collision-free counter
 names, and records every write in the sidecar so the digest resolves
@@ -81,15 +81,15 @@ def test_save_target_wire_is_strict() -> None:
 def test_save_target_type_registration_round_trip() -> None:
     registry = TypeRegistry()
     register_save_target_type(registry)
-    spec = registry.spec("dinkster.save_target")
+    spec = registry.spec("SAVE_TARGET")
     target = SaveTarget(mount="out", prefix="renders/scene")
     encoded = spec.encode(target)
     assert spec.decode(encoded) == target
     # Graph literals arrive as plain mappings; coercion applies one rule,
     # so the mapping and the dataclass are the same value (same
     # fingerprint, same bytes).
-    as_wire = registry.wrap("dinkster.save_target", {"mount": "out", "prefix": "renders/scene"})
-    as_object = registry.wrap("dinkster.save_target", target)
+    as_wire = registry.wrap("SAVE_TARGET", {"mount": "out", "prefix": "renders/scene"})
+    as_object = registry.wrap("SAVE_TARGET", target)
     assert as_wire.fingerprint == as_object.fingerprint
     assert spec.encode({"mount": "out", "prefix": "renders/scene"}) == encoded
     with pytest.raises(AssetError):

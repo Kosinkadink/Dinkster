@@ -1,5 +1,6 @@
 [pack]
 name = "dinkster-vision-birefnet"
+publisher = "dinkster"
 namespaces = []
 executes = ["dinkster.image.matte"]
 requires = [
