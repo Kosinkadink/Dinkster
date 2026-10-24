@@ -9,6 +9,8 @@
   feather, grow, threshold, and composite images or latents under exact core IDs.
 - Six native core image nodes create, resize, invert, batch, and pad images for
   outpainting, preserving source color, alpha, resize, and feathering behavior.
+- Nine native image transforms crop, repeat and select batches, add seeded noise,
+  stitch, resize with padding, rotate, flip, and scale to a maximum dimension.
 - Portable masks become Torch tensors at native tensor-consuming nodes, without
   moving already-live tensors or loading Torch in the host decoder.
 - `dinkster-serve --comfy-root ... --legacy-pack PATH` runs unmodified v1 and

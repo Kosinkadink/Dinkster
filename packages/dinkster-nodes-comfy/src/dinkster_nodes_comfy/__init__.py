@@ -4,6 +4,7 @@ from dinkster_api.v1 import register_inference_types
 
 from .conditioning import CONDITIONING_NODES
 from .image_core import IMAGE_CORE_NODES
+from .image_transform import IMAGE_TRANSFORM_NODES
 from .latent import LATENT_NODES
 from .logic import LOGIC_NODES
 from .mask import MASK_NODES
@@ -37,6 +38,7 @@ COMFY_NODES = (
     *CONDITIONING_NODES,
     *MASK_NODES,
     *IMAGE_CORE_NODES,
+    *IMAGE_TRANSFORM_NODES,
 )
 
 __all__ = ["COMFY_NODES", "register_inference_types"]
