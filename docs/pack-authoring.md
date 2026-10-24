@@ -762,10 +762,11 @@ uppercase names, for example `ASSET`, `CURVE` and `VIDEO_DOCUMENT`. Node ids,
 widget tags and external ComfyUI protocol labels keep their own identities.
 `core.absent` remains an internal execution envelope, not a socket type.
 
-Do not declare aliases or structural equivalence between type ids. The id
-selects the codec, cache fingerprint, literal coercion, and renditions;
+Do not use aliases or structural equivalence to share a type between packs.
+The id selects the codec, cache fingerprint, literal coercion, and renditions;
 there cannot be competing implementations for one shared concept. Use an
-ordinary converter node between genuinely different types.
+ordinary converter node between genuinely different types. Existing ComfyUI
+compatibility bridges are not a pack-sharing mechanism.
 
 ```python
 from dinkster_api.v1 import TypeRegistry
