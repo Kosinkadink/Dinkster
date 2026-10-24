@@ -34,6 +34,10 @@ namespaces = [
     "ComfyNumberConvert",
     "SeedNode",
     "ComfyMathExpression",
+    "UNetSelfAttentionMultiply",
+    "UNetCrossAttentionMultiply",
+    "CLIPAttentionMultiply",
+    "UNetTemporalAttentionMultiply",
     "ModelMergeSimple",
     "ModelMergeSubtract",
     "ModelMergeAdd",
@@ -159,6 +163,7 @@ namespaces = [
     "BatchMasksNode",
     "BatchLatentsNode",
     "ColorTransfer",
+    "EmptyMochiLatentVideo",
 ]
 
 [pack.sandbox]

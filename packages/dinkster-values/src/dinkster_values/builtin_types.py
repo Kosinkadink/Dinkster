@@ -45,7 +45,7 @@ SPLAT_TYPE = "dinkster.splat"
 INPAINT_CONDITIONING_TYPE = "dinkster.inpaint-conditioning"
 CONTEXT_WINDOWS_TYPE = "dinkster.context-windows"
 
-CONTROL_NET_TYPE = "comfy.CONTROL_NET"
+CONTROL_NET_TYPE = "CONTROL_NET"
 AUDIO_TYPE = "comfy.AUDIO"
 VIDEO_TYPE = "comfy.VIDEO"
 VIDEO_EDIT_TYPE = "comfy.VIDEO_EDIT"
