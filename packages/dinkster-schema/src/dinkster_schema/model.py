@@ -990,6 +990,14 @@ def _validate_widget_binding(input_id: str, input_type: TypeExpr, widget: Widget
                         f"input {input_id}: number widget {name} must be exactly representable "
                         f"on a INT input, got {bound}"
                     )
+        if socket == "FLOAT":
+            for name in ("min", "max", "step"):
+                bound = getattr(widget, name)
+                if isinstance(bound, int) and abs(bound) > _JSON_SAFE_INT:
+                    raise ValueError(
+                        f"input {input_id}: number widget {name} must use a float "
+                        f"outside the safe integer range on a FLOAT input, got {bound}"
+                    )
         if widget.round is not None and socket != "FLOAT":
             raise ValueError(
                 f"input {input_id}: number widget round requires a concrete FLOAT input"

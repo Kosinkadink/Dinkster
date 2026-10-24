@@ -134,14 +134,14 @@ def test_widget_roundtrip(type_id: str, widget: object, expected: dict[str, obje
     )
 
 
-def test_float_widget_preserves_large_integral_bounds_on_the_wire() -> None:
+def test_float_widget_preserves_large_float_bounds_on_the_wire() -> None:
     schema = NodeSchema(
         "test.float-bounds",
         inputs=(
             InputSpec(
                 "value",
                 TypeExpr.concrete("FLOAT"),
-                widget=NumberWidget(min=-(2**63) + 37, max=2**63 + 19, step=0.25),
+                widget=NumberWidget(min=-float(2**63), max=float(2**63), step=0.25),
             ),
         ),
     )
@@ -150,11 +150,32 @@ def test_float_widget_preserves_large_integral_bounds_on_the_wire() -> None:
     widget = cast("list[dict[str, object]]", wire["interface"])[0]["widget"]
     assert widget == {
         "type": "NUMBER",
-        "min": "-9223372036854775771",
-        "max": "9223372036854775827",
+        "min": -9.223372036854776e18,
+        "max": 9.223372036854776e18,
         "step": 0.25,
     }
+    assert isinstance(widget, dict)
+    assert type(widget["min"]) is float
+    assert type(widget["max"]) is float
     assert schema_from_wire(wire) == schema
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("min", -(2**53)), ("min", 2**53), ("max", -(2**53)), ("max", 2**53), ("step", 2**53)],
+)
+def test_float_widget_rejects_unsafe_integer_constraints(field: str, value: int) -> None:
+    with pytest.raises(ValueError, match="FLOAT input"):
+        InputSpec(
+            "value",
+            TypeExpr.concrete("FLOAT"),
+            widget=NumberWidget(**{field: value}),  # type: ignore[arg-type]
+        )
+    InputSpec(
+        "value",
+        TypeExpr.concrete("FLOAT"),
+        widget=NumberWidget(**{field: value - (1 if value > 0 else -1)}),  # type: ignore[arg-type]
+    )
 
 
 def test_multi_combo_roundtrip() -> None:
