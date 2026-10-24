@@ -27,6 +27,7 @@ from .mochi import EmptyMochiLatentVideo
 from .model_merging import MODEL_MERGE_NODES
 from .model_merging_specific import MODEL_SPECIFIC_MERGE_NODES
 from .morphology import MORPHOLOGY_NODES
+from .noise_guidance import NOISE_GUIDANCE_NODES
 from .post_processing import POST_PROCESSING_NODES
 from .primitive import (
     PrimitiveBoolean,
@@ -59,6 +60,7 @@ COMFY_NODES = (
     *MODEL_SPECIFIC_MERGE_NODES,
     *FREEU_NODES,
     *ROPE_AND_MASK_NODES,
+    *NOISE_GUIDANCE_NODES,
     *LATENT_NODES,
     *LATENT_ADVANCED_NODES,
     *LATENT_OPERATION_NODES,
