@@ -83,6 +83,10 @@ namespaces = [
     "CLIPTextEncodeHiDream",
     "CLIPTextEncodeControlnet",
     "T5TokenizerOptions",
+    "VAEDecode",
+    "VAEEncode",
+    "VAEDecodeTiled",
+    "VAEEncodeTiled",
     "ConditioningAverage",
     "ConditioningCombine",
     "ConditioningConcat",
@@ -131,6 +135,11 @@ namespaces = [
     "Morphology",
     "ImageRGBToYUV",
     "ImageYUVToRGB",
+    "ResizeImageMaskNode",
+    "BatchImagesNode",
+    "BatchMasksNode",
+    "BatchLatentsNode",
+    "ColorTransfer",
 ]
 
 [pack.sandbox]
