@@ -10,7 +10,10 @@ from typing import cast
 
 from dinkster_api.v1 import (
     DETECTION_TYPE,
+    POSE_TYPE,
     REGION_TYPE,
+    SEGMENTATION_TYPE,
+    VECTOR_TYPE,
     Detection,
     Region,
     TypeRegistry,
@@ -29,8 +32,6 @@ from .compositor_types import (
     LAYERS_TYPE,
 )
 
-POSE_TYPE = "dinkster.pose"
-
 MAX_POSE_DIMENSION = 16_384
 MAX_POSE_SKELETONS = 1_024
 MAX_SKELETON_KEYPOINTS = 4_096
@@ -40,10 +41,8 @@ MAX_POSE_JSON_DEPTH = 1_000
 POSE_KINDS = frozenset(("person", "face", "left_hand", "right_hand", "animal"))
 
 # Reserved for Dinkster#682; this pack intentionally provides no vector runtime.
-VECTOR_TYPE = "dinkster.vector"
 # Reserved for Dinkster#677; a segmentation result is list<dinkster.detection>
 # whose members carry masks, so no separate runtime type exists.
-SEGMENTATION_TYPE = "dinkster.segmentation"
 RESERVED_TYPE_IDS = frozenset((VECTOR_TYPE, SEGMENTATION_TYPE))
 
 

@@ -12,6 +12,11 @@ import numpy as np
 from dinkster_api.v1 import (
     CORE_FLOAT,
     CORE_INT,
+    DETECTION_TYPE,
+    IMAGE_TYPE,
+    MASK_TYPE,
+    REGION_TYPE,
+    VIDEO_TYPE,
     DynamicComboOption,
     DynamicComboSpec,
     InputSpec,
@@ -37,16 +42,13 @@ from .support import (
 )
 from .types import Detection, Region
 
-IMAGE_TYPE = "IMAGE"
-VIDEO_TYPE = "comfy.VIDEO"
-
 MEDIA = TypeExpr.variable("media_type", (IMAGE_TYPE, VIDEO_TYPE))
 BASE_MEDIA = TypeExpr.variable("base_media_type", (IMAGE_TYPE, VIDEO_TYPE))
 IMAGE_OR_VIDEO = TypeExpr.union(IMAGE_TYPE, VIDEO_TYPE)
-MASK = TypeExpr.concrete("MASK")
-REGION = TypeExpr.concrete("dinkster.region")
+MASK = TypeExpr.concrete(MASK_TYPE)
+REGION = TypeExpr.concrete(REGION_TYPE)
 REGION_LIST = TypeExpr.list_of(REGION)
-REGIONS_OR_DETECTIONS = TypeExpr.list_of(TypeExpr.union("dinkster.region", "dinkster.detection"))
+REGIONS_OR_DETECTIONS = TypeExpr.list_of(TypeExpr.union(REGION_TYPE, DETECTION_TYPE))
 INT = TypeExpr.concrete(CORE_INT)
 FLOAT = TypeExpr.concrete(CORE_FLOAT)
 

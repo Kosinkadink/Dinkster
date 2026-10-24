@@ -5,6 +5,7 @@ import json
 from dinkster_api.v1 import (
     ASSET_TYPE,
     IMAGE_BATCH_MERGER_ID,
+    MASK_TYPE,
     PNG_CONTAINER_VERSION,
     SAVE_TARGET_TYPE,
     SPLAT_FILE_DECODER_ID,
@@ -128,8 +129,6 @@ from .video_ops import (
     VideoFrameWindow,
     VideoInfo,
 )
-
-MASK_TYPE = "MASK"
 
 MEDIA_IO_NODES = [
     *SAVE_TARGET_NODES,

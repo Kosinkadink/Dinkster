@@ -17,8 +17,17 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 from urllib.parse import urlencode
 
-from .absent import CORE_ABSENT
 from .assets import ASSET_BASE_TYPE, parse_asset_type_id, runtime_type_atom
+from .builtin_types import (
+    ARRAY_TYPE,
+    CORE_ABSENT,
+    CORE_BOOLEAN,
+    CORE_COMBO,
+    CORE_FLOAT,
+    CORE_INT,
+    CORE_STRING,
+    DICT_TYPE,
+)
 from .lists import make_list_value, parse_list_type_id
 from .model import (
     EncodedPayload,
@@ -835,13 +844,6 @@ class TypeRegistry:
         return Value(type_id=type_id, fingerprint=fp, meta=meta, payload=PyObjPayload(obj))
 
 
-CORE_INT = "INT"
-CORE_FLOAT = "FLOAT"
-CORE_STRING = "STRING"
-CORE_COMBO = "COMBO"
-CORE_BOOLEAN = "BOOLEAN"
-
-
 def _coerce_combo(obj: object) -> str:
     if type(obj) is not str:
         raise TypeError(f"COMBO expects a string, got {type(obj).__name__}")
@@ -871,8 +873,8 @@ def register_core_types(registry: TypeRegistry) -> None:
         validate_encoded=_validate_combo_encoded,
     )
     registry.register(CORE_BOOLEAN, inline=lambda obj: obj)
-    registry.register("DICT")
-    registry.register("ARRAY")
+    registry.register(DICT_TYPE)
+    registry.register(ARRAY_TYPE)
     # core.absent registers with the default codec (payload is None, which
     # JSON-encodes) so absences cross boundaries and caches like any value.
     registry.register(CORE_ABSENT)

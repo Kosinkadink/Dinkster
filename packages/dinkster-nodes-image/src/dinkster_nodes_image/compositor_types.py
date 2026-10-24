@@ -12,7 +12,9 @@ from typing import cast
 
 import numpy as np
 from dinkster_api.v1 import (
+    COMPOSITOR_TYPE,
     COST_META_KEY,
+    LAYERS_TYPE,
     array_storage_meta,
     decode_image_array,
     encode_image_array,
@@ -21,8 +23,6 @@ from dinkster_image_document.format import BLEND_MODES
 
 from .support import check_output_size
 
-LAYERS_TYPE = "dinkster.layers"
-COMPOSITOR_TYPE = "dinkster.compositor"
 MAX_COMPOSITOR_LAYERS = 50
 MAX_COMPOSITOR_DIMENSION = 16_384
 

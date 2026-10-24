@@ -1,0 +1,93 @@
+"""Canonical spellings for built-in value type identifiers."""
+
+CORE_INT = "INT"
+CORE_FLOAT = "FLOAT"
+CORE_STRING = "STRING"
+CORE_COMBO = "COMBO"
+CORE_BOOLEAN = "BOOLEAN"
+CORE_ABSENT = "core.absent"
+
+DICT_TYPE = "DICT"
+ARRAY_TYPE = "ARRAY"
+
+IMAGE_TYPE = "IMAGE"
+MASK_TYPE = "MASK"
+LATENT_TYPE = "LATENT"
+MODEL_TYPE = "MODEL"
+CLIP_TYPE = "CLIP"
+CLIP_VISION_TYPE = "CLIP_VISION"
+VAE_TYPE = "VAE"
+SAMPLER_TYPE = "SAMPLER"
+SIGMAS_TYPE = "SIGMAS"
+GUIDER_TYPE = "GUIDER"
+NOISE_TYPE = "NOISE"
+CONDITIONING_TYPE = "CONDITIONING"
+INFERENCE_LATENT_OPERATION_TYPE = "LATENT_OPERATION"
+LATENT_OPERATION_TYPE = "dinkster.latent-operation"
+
+ASSET_TYPE = "dinkster.asset"
+SAVE_TARGET_TYPE = "dinkster.save_target"
+CURVE_TYPE = "dinkster.curve"
+REGION_TYPE = "dinkster.region"
+DETECTION_TYPE = "dinkster.detection"
+RESOURCE_HANDLE_TYPE = "dinkster.resource"
+VIDEO_DOCUMENT_TYPE = "dinkster.video_document"
+LAYERS_TYPE = "dinkster.layers"
+COMPOSITOR_TYPE = "dinkster.compositor"
+POSE_TYPE = "dinkster.pose"
+VECTOR_TYPE = "dinkster.vector"
+SEGMENTATION_TYPE = "dinkster.segmentation"
+MODEL3D_TYPE = "dinkster.model3d"
+SPLAT_TYPE = "dinkster.splat"
+
+CONTROL_NET_TYPE = "comfy.CONTROL_NET"
+AUDIO_TYPE = "comfy.AUDIO"
+VIDEO_TYPE = "comfy.VIDEO"
+IMPACT_BASIC_PIPE_TYPE = "comfy.BASIC_PIPE"
+MODEL_PATCH_TYPE = "comfy.MODEL_PATCH"
+LATENT_UPSCALE_MODEL_TYPE = "comfy.LATENT_UPSCALE_MODEL"
+
+__all__ = [
+    "ARRAY_TYPE",
+    "ASSET_TYPE",
+    "AUDIO_TYPE",
+    "CLIP_TYPE",
+    "CLIP_VISION_TYPE",
+    "COMPOSITOR_TYPE",
+    "CONDITIONING_TYPE",
+    "CONTROL_NET_TYPE",
+    "CORE_ABSENT",
+    "CORE_BOOLEAN",
+    "CORE_COMBO",
+    "CORE_FLOAT",
+    "CORE_INT",
+    "CORE_STRING",
+    "CURVE_TYPE",
+    "DETECTION_TYPE",
+    "DICT_TYPE",
+    "GUIDER_TYPE",
+    "IMAGE_TYPE",
+    "IMPACT_BASIC_PIPE_TYPE",
+    "INFERENCE_LATENT_OPERATION_TYPE",
+    "LATENT_OPERATION_TYPE",
+    "LATENT_TYPE",
+    "LATENT_UPSCALE_MODEL_TYPE",
+    "LAYERS_TYPE",
+    "MASK_TYPE",
+    "MODEL3D_TYPE",
+    "MODEL_PATCH_TYPE",
+    "MODEL_TYPE",
+    "NOISE_TYPE",
+    "POSE_TYPE",
+    "REGION_TYPE",
+    "RESOURCE_HANDLE_TYPE",
+    "SAMPLER_TYPE",
+    "SAVE_TARGET_TYPE",
+    "SEGMENTATION_TYPE",
+    "SIGMAS_TYPE",
+    "SPLAT_TYPE",
+    "VAE_TYPE",
+    "VECTOR_TYPE",
+    "VIDEO_DOCUMENT_TYPE",
+    "VIDEO_TYPE",
+]

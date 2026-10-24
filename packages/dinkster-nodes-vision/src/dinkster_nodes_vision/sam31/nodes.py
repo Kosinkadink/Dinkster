@@ -11,6 +11,8 @@ from dinkster_api.v1 import (
     CORE_INT,
     CORE_STRING,
     DETECTION_TYPE,
+    IMAGE_TYPE,
+    MASK_TYPE,
     REGION_TYPE,
     ComboOption,
     ComboWidget,
@@ -39,8 +41,6 @@ from dinkster_api.v1 import (
     region_meta,
 )
 
-IMAGE_TYPE = "IMAGE"
-MASK_TYPE = "MASK"
 IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 MASK = TypeExpr.concrete(MASK_TYPE)
 MASKS = TypeExpr.list_of(TypeExpr.concrete(MASK_TYPE))

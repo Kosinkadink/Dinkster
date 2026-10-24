@@ -11,6 +11,7 @@ from typing import Literal, TypeAlias, cast
 
 from dinkster_values import (
     CONDITIONING_HEADER_LIMIT_BYTES,
+    CONDITIONING_TYPE,
     ResidencyTable,
     ResidentCodec,
     ResidentLookupError,
@@ -38,7 +39,7 @@ from .conditioning import (
     canonical_conditioning_set,
 )
 
-CONDITIONING_TYPE_ID = "CONDITIONING"
+CONDITIONING_TYPE_ID = CONDITIONING_TYPE
 CONDITIONING_CARRIER_FORMAT = "dinkster-conditioning-carrier-v1"
 RESIDENT_CONDITIONING_FORMAT = "dinkster-resident-conditioning-v1"
 

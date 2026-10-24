@@ -3,20 +3,33 @@
 from __future__ import annotations
 
 from dinkster_memory.resident import default_pool
-from dinkster_values import TypeRegistry, TypeSpec, register_resident_type
+from dinkster_values import (
+    CLIP_TYPE,
+    CLIP_VISION_TYPE,
+    GUIDER_TYPE,
+    INFERENCE_LATENT_OPERATION_TYPE,
+    MODEL_TYPE,
+    NOISE_TYPE,
+    SAMPLER_TYPE,
+    SIGMAS_TYPE,
+    VAE_TYPE,
+    TypeRegistry,
+    TypeSpec,
+    register_resident_type,
+)
 
 from .conditioning_wire import CONDITIONING_TYPE_ID, register_conditioning_type
 from .media_wire import materialize_image, materialize_latent, register_media_types
 from .sampling_wire import register_sampling_type
 
-MODEL_TYPE_ID = "MODEL"
-CLIP_TYPE_ID = "CLIP"
-CLIP_VISION_TYPE_ID = "CLIP_VISION"
-VAE_TYPE_ID = "VAE"
-SAMPLER_TYPE_ID = "SAMPLER"
-SIGMAS_TYPE_ID = "SIGMAS"
-GUIDER_TYPE_ID = "GUIDER"
-NOISE_TYPE_ID = "NOISE"
+MODEL_TYPE_ID = MODEL_TYPE
+CLIP_TYPE_ID = CLIP_TYPE
+CLIP_VISION_TYPE_ID = CLIP_VISION_TYPE
+VAE_TYPE_ID = VAE_TYPE
+SAMPLER_TYPE_ID = SAMPLER_TYPE
+SIGMAS_TYPE_ID = SIGMAS_TYPE
+GUIDER_TYPE_ID = GUIDER_TYPE
+NOISE_TYPE_ID = NOISE_TYPE
 
 _RESIDENT_TYPE_IDS = (
     MODEL_TYPE_ID,
@@ -24,7 +37,7 @@ _RESIDENT_TYPE_IDS = (
     CLIP_VISION_TYPE_ID,
     VAE_TYPE_ID,
     GUIDER_TYPE_ID,
-    "LATENT_OPERATION",
+    INFERENCE_LATENT_OPERATION_TYPE,
 )
 _SAMPLING_TYPE_IDS = (SAMPLER_TYPE_ID, SIGMAS_TYPE_ID, NOISE_TYPE_ID)
 
