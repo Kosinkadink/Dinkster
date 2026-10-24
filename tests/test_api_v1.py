@@ -228,6 +228,7 @@ GOLDEN_V1_SURFACE = (
     "audio_input",
     "byte_storage_meta",
     "coerce_audio",
+    "list_children",
     "effective_audio_facts",
     "decode_audio",
     "encode_audio",

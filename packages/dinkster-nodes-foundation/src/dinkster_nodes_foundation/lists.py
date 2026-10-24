@@ -27,8 +27,8 @@ from dinkster_api.v1 import (
     OutputSpec,
     RunExecutionContext,
     TypeExpr,
+    list_children,
 )
-from dinkster_values import list_children
 
 INT = TypeExpr.concrete(CORE_INT)
 T = TypeExpr.variable("T")
