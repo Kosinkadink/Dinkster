@@ -153,13 +153,16 @@ def register_comfy_layers(registry: TypeRegistry) -> None:
         return ImageDocument(data, lambda wire: AssetRef.from_wire(wire, resolver_from_env()))
 
     if "comfy.LAYERS" not in registry:
-        registry.register(
-            "comfy.LAYERS",
-            coerce=coerce,
-            encode=lambda obj: coerce(obj).data,
-            decode=decode,
-            meta=lambda obj: document_meta(coerce(obj)),
-        )
+        with registry.registering_pack(
+            "dinkster-nodes-image", ("comfy.LAYERS", "comfy.COMPOSITOR"), allow_bare=True
+        ):
+            registry.register(
+                "comfy.LAYERS",
+                coerce=coerce,
+                encode=lambda obj: coerce(obj).data,
+                decode=decode,
+                meta=lambda obj: document_meta(coerce(obj)),
+            )
         registry.register_rendition(
             "comfy.LAYERS",
             "document",
@@ -191,12 +194,15 @@ def register_comfy_compositor(registry: TypeRegistry) -> None:
         return json.loads(canonical_json(value))
 
     if "comfy.COMPOSITOR" not in registry:
-        registry.register(
-            "comfy.COMPOSITOR",
-            coerce=coerce,
-            encode=lambda obj: canonical_json(coerce(obj)).encode("utf-8"),
-            decode=lambda data: coerce(json.loads(data)),
-        )
+        with registry.registering_pack(
+            "dinkster-nodes-image", ("comfy.LAYERS", "comfy.COMPOSITOR"), allow_bare=True
+        ):
+            registry.register(
+                "comfy.COMPOSITOR",
+                coerce=coerce,
+                encode=lambda obj: canonical_json(coerce(obj)).encode("utf-8"),
+                decode=lambda data: coerce(json.loads(data)),
+            )
     if COMPOSITOR_TYPE in registry:
         registry.register_type_equivalence(
             "comfy.COMPOSITOR",
