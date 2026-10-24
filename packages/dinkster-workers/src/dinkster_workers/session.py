@@ -1669,7 +1669,11 @@ class BoundarySession:
             )
             reply, blobs = await future
             explanation = reply.get("explanation")
-            if blobs or (explanation is not None and not isinstance(explanation, str)):
+            if (
+                blobs
+                or "explanation" not in reply
+                or (explanation is not None and not isinstance(explanation, str))
+            ):
                 raise BoundaryError(
                     "admission result requires a string or null explanation and no blobs"
                 )

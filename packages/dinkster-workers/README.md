@@ -70,6 +70,15 @@ provisioning, boundary diagnostics, and sandbox launchers. Those are
 composition surfaces for Dinkster hosts; pack authors normally use the doctor
 CLI rather than importing worker machinery.
 
+Nodes declaring `admission_validation=True` receive plain literal inputs and
+declared linked-input types through `Node.validate_admission`. Returning a
+message refuses the graph before producers execute; returning `None` accepts
+it. Boundary sessions send `validateAdmission`/`admissionResult` JSON frames,
+without materializing linked values. Cancellation sends `cancelAdmission` and
+disconnects fail pending admission requests rather than replaying them.
+Routing uses the node's owning worker; placement uses its unpinned policy
+because pre-execution validation has no resident input values.
+
 Remote services retain admitted invocations in memory across a physical
 connection loss. The same engine process can reconnect to the same daemon
 process for `--resume-grace` seconds (default 120). Running work is rebound and

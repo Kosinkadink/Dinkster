@@ -1812,7 +1812,7 @@ def test_worker_converter_delegates_retryable_classification_to_compat(
     assert len(classified) == 1 and isinstance(classified[0], Refusal)
 
 
-@pytest.mark.parametrize("finish", ["close", "cancel", "malformed"])
+@pytest.mark.parametrize("finish", ["close", "cancel", "malformed", "missing"])
 def test_admission_session_pending_request_terminates(
     finish: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1824,9 +1824,9 @@ def test_admission_session_pending_request_terminates(
             del blobs
             if header["type"] == "validateAdmission":
                 sent.set()
-                if finish == "malformed":
+                if finish in ("malformed", "missing"):
                     session._admission_pending[str(header["requestId"])].set_result(  # noqa: SLF001
-                        ({"explanation": 42}, [])
+                        ({"explanation": 42} if finish == "malformed" else {}, [])
                     )
 
         monkeypatch.setattr(session, "send", send)
