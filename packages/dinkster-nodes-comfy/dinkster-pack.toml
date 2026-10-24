@@ -200,6 +200,8 @@ namespaces = [
     "StableZero123_Conditioning",
     "StableZero123_Conditioning_Batched",
     "SV3D_Conditioning",
+    "EmptyHunyuanImageLatent",
+    "HunyuanRefinerLatent",
     "EmptyHunyuanLatentVideo",
     "EmptyHunyuanVideo15Latent",
     "EmptyLTXVLatentVideo",
