@@ -7,6 +7,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -286,6 +287,25 @@ def test_unnamed_outputs_still_compare_type_position_and_explicit_names(
     native["interface"][1:3] = reversed(native["interface"][1:3])
     reference["return_names"] = ["INT", "FLOAT"]
     assert any("outputs[0].name" in difference for difference in compare(reference, native))
+
+
+def test_v3_output_dump_preserves_only_declared_names(
+    example_contract: tuple[dict, dict],
+) -> None:
+    from tools.compare_nodes import compare
+    from tools.dump_comfy_nodes import output_contract
+
+    reference, native = example_contract
+    schema = SimpleNamespace(
+        outputs=[SimpleNamespace(display_name=None), SimpleNamespace(display_name="second")]
+    )
+    reference.update(output_contract(schema))
+    assert reference["return_names"] == [None, "second"]
+    assert compare(reference, native) == []
+    native["interface"][1]["id"] = "another_unnamed_output"
+    assert compare(reference, native) == []
+    native["interface"][2]["id"] = "renamed"
+    assert any("outputs[1].name" in difference for difference in compare(reference, native))
 
 
 @pytest.mark.parametrize("direction,index", [("input", 0), ("output", 1)])

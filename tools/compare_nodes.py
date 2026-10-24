@@ -262,16 +262,23 @@ def compare(row: dict[str, Any], schema: dict[str, Any]) -> list[str]:
             metadata = output_metadata[index] if index < len(output_metadata) else {}
             output_type = metadata.get("template", {"missing_output_template": True})
         output = {"type": output_type}
-        if names is not None:
+        if names is not None and names[index] is not None:
             output["name"] = names[index]
         expected_outputs.append(output)
     actual_outputs = [
         {
-            **({"name": item.get("displayName") or item["id"]} if names is not None else {}),
+            **(
+                {"name": item.get("displayName") or item["id"]}
+                if names is not None and index < len(names) and names[index] is not None
+                else {}
+            ),
             "type": _type(item["type"]),
         }
-        for item in schema.get("interface", [])
-        if item["role"] in ("output", "outputFamily")
+        for index, item in enumerate(
+            item
+            for item in schema.get("interface", [])
+            if item["role"] in ("output", "outputFamily")
+        )
     ]
     differences.extend(_differences(expected_outputs, actual_outputs, "outputs"))
     for key, reference, native in (
