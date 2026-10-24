@@ -227,6 +227,8 @@ def _native_scalar_type_expressions(value: Any) -> Any:
         "core.string": "STRING",
         "core.combo": "COMBO",
         "core.boolean": "BOOLEAN",
+        "dinkster.image": "IMAGE",
+        "dinkster.mask": "MASK",
     }
     if isinstance(value, list):
         return [_native_scalar_type_expressions(item) for item in value]

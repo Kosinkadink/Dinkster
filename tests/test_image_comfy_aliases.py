@@ -664,7 +664,7 @@ def test_resize_image_mask_alias_covers_every_dynamic_selection() -> None:
     assert source["interface"][-1]["type"] == {
         "kind": "variable",
         "templateId": "input_type",
-        "allowed": ["IMAGE", "MASK"],
+        "allowed": ["comfy.IMAGE", "comfy.MASK"],
     }
 
     cases = record["replacement"]["cases"]
