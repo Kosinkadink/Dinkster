@@ -378,8 +378,7 @@ class ModelNoiseScale(Node):
                     _FLOAT,
                     default=1.0,
                     doc=(
-                        "Absolute training noise scale. For example HiDream-O1 base: 8.0, dev: "
-                        "7.5."
+                        "Absolute training noise scale. For example HiDream-O1 base: 8.0, dev: 7.5."
                     ),
                     widget=NumberWidget(min=0.0, max=64.0, step=0.01),
                 ),
