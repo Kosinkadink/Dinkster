@@ -15,6 +15,7 @@ from dinkster_api.v1 import (
     HOOKS_TYPE,
     LATENT_TYPE,
     MASK_TYPE,
+    TIMESTEPS_RANGE_TYPE,
     InputSpec,
     Node,
     NodeSchema,
@@ -25,6 +26,7 @@ from dinkster_api.v1 import (
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.hook_conditioning import (
     ConditioningSetDefaultCombine,
+    ConditioningSetProperties,
     ConditioningSetPropertiesAndCombine,
     ConditioningTimestepsRange,
     PairConditioningCombine,
@@ -153,15 +155,32 @@ class HookConditioningPropertiesInspect(Node):
             inputs=(
                 InputSpec("positive", TypeExpr.concrete(CONDITIONING_TYPE)),
                 InputSpec("negative", TypeExpr.concrete(CONDITIONING_TYPE)),
+                InputSpec("single", TypeExpr.concrete(CONDITIONING_TYPE)),
                 InputSpec("combined", TypeExpr.concrete(CONDITIONING_TYPE)),
                 InputSpec("defaults", TypeExpr.concrete(CONDITIONING_TYPE)),
+                InputSpec("pair_combined", TypeExpr.concrete(CONDITIONING_TYPE)),
+                InputSpec("pair_properties_combined", TypeExpr.concrete(CONDITIONING_TYPE)),
+                InputSpec("pair_defaults", TypeExpr.concrete(CONDITIONING_TYPE)),
+                InputSpec("before", TypeExpr.concrete(TIMESTEPS_RANGE_TYPE)),
+                InputSpec("after", TypeExpr.concrete(TIMESTEPS_RANGE_TYPE)),
             ),
             outputs=(OutputSpec("strength", TypeExpr.concrete(CORE_FLOAT)),),
         )
 
     @classmethod
     def execute(
-        cls, *, positive: Any, negative: Any, combined: Any, defaults: Any
+        cls,
+        *,
+        positive: Any,
+        negative: Any,
+        single: Any,
+        combined: Any,
+        defaults: Any,
+        pair_combined: Any,
+        pair_properties_combined: Any,
+        pair_defaults: Any,
+        before: tuple[float, float],
+        after: tuple[float, float],
     ) -> dict[str, object]:
         initialize_inference_process()
         from dinkster_inference import hooks
@@ -192,6 +211,18 @@ class HookConditioningPropertiesInspect(Node):
         assert defaults[0][1] == {"source": "existing"}
         assert defaults[1][1]["default"] is True
         assert defaults[1][1]["hooks"].hooks[0].strength_clip == -0.375
+        assert torch.equal(single[0][0], torch.tensor([[1.0, 2.0]], dtype=torch.float64))
+        assert single[0][1]["strength"] == 0.9
+        assert single[0][1]["start_percent"] == 0.0
+        assert single[0][1]["end_percent"] == 0.2
+        assert [entry[1]["side"] for entry in pair_combined] == ["positive", "negative"]
+        assert [entry[1]["side"] for entry in pair_properties_combined] == [
+            "positive",
+            "negative",
+        ]
+        assert [entry[1]["default"] for entry in pair_defaults] == [True]
+        assert before == (0.0, 0.2)
+        assert after == (0.7, 1.0)
         return cls.outputs(strength=positive[0][1]["mask_strength"])
 
 
@@ -221,6 +252,20 @@ def test_hook_conditioning_nodes_preserve_asymmetric_values() -> None:
     assert positive[0][1] == {"source": "positive"}
     assert torch.equal(negative[0][0], torch.tensor([[-2.0]], dtype=torch.float64))
     assert negative[0][1] == {"source": "negative"}
+
+    single = ConditioningSetProperties.execute(
+        cond_NEW=positive,
+        strength=0.9,
+        set_cond_area="default",
+        timesteps=ranges["BEFORE_RANGE"],
+    )["conditioning"]
+    assert torch.equal(single[0][0], positive[0][0])
+    assert single[0][1] == {
+        "source": "positive",
+        "strength": 0.9,
+        "start_percent": 0.0,
+        "end_percent": 0.2,
+    }
 
     combined = ConditioningSetPropertiesAndCombine.execute(
         cond=positive,
@@ -284,6 +329,12 @@ def test_hook_conditioning_nodes_preserve_asymmetric_values() -> None:
     assert applied is not clip
     assert applied.apply_hooks_to_conds is group
     assert len(applied.patcher.calls) == 1
+    scheduled = SetClipHooks.execute(
+        clip=clip, apply_to_conds=False, schedule_clip=True, hooks=group
+    )["clip"]
+    assert scheduled.apply_hooks_to_conds is None
+    assert scheduled.use_clip_schedule is True
+    assert scheduled.patcher.forced_hooks.hooks[0].hook_keyframe is not None
 
 
 @pytest.mark.parametrize("in_process", (True, False))
@@ -298,26 +349,25 @@ def test_hook_conditioning_properties_cross_ordinary_hosts_twice(
         try:
             (tmp_path / "hook_properties_fixture.py").write_text(
                 "from test_hook_conditioning_torch import (\n"
-                "    HookConditioningPropertiesInspect, HookConditioningPropertiesSource,\n"
+                "    HookConditioningPropertiesInspect,\n"
+                "    HookConditioningPropertiesSource,\n"
                 ")\n"
-                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "NODES = (*COMFY_NODES, HookConditioningPropertiesSource,\n"
-                "         HookConditioningPropertiesInspect)\n",
+                "from dinkster_nodes_comfy import register_inference_types\n"
+                "NODES = (HookConditioningPropertiesSource, HookConditioningPropertiesInspect)\n",
                 encoding="ascii",
             )
-            manifest = tmp_path / "dinkster-pack.toml"
-            manifest.write_text(
-                (root / "dinkster-pack.toml")
-                .read_text(encoding="ascii")
-                .replace("namespaces = [", 'namespaces = ["hook-properties",')
-                .replace("dinkster_nodes_comfy:COMFY_NODES", "hook_properties_fixture:NODES")
-                .replace(
-                    "dinkster_nodes_comfy:register_inference_types",
-                    "hook_properties_fixture:register_inference_types",
-                ),
+            fixture_manifest = tmp_path / "hook-properties-dinkster-pack.toml"
+            fixture_manifest.write_text(
+                '[pack]\nname = "hook-properties-fixture"\npublisher = "dinkster"\n'
+                'namespaces = ["hook-properties"]\n'
+                '[pack.entry]\nnodes = "hook_properties_fixture:NODES"\n'
+                'types = "hook_properties_fixture:register_inference_types"\n',
                 encoding="ascii",
             )
-            await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
+            await composer.add_pack(
+                PackSpec(manifest=root / "dinkster-pack.toml", in_process=in_process)
+            )
+            await composer.add_pack(PackSpec(manifest=fixture_manifest, in_process=in_process))
             graph = Graph(
                 nodes={
                     "source": GraphNode("hook-properties.source"),
@@ -334,6 +384,15 @@ def test_hook_conditioning_properties_cross_ordinary_hosts_twice(
                             "mask": Link("source", "mask"),
                             "hooks": Link("source", "hooks"),
                             "timesteps": Link("range", "TIMESTEPS_RANGE"),
+                        },
+                    ),
+                    "single": GraphNode(
+                        "ConditioningSetProperties",
+                        {
+                            "cond_NEW": Link("source", "positive"),
+                            "strength": 0.9,
+                            "set_cond_area": "default",
+                            "timesteps": Link("range", "BEFORE_RANGE"),
                         },
                     ),
                     "combined": GraphNode(
@@ -354,13 +413,51 @@ def test_hook_conditioning_properties_cross_ordinary_hosts_twice(
                             "hooks": Link("source", "hooks"),
                         },
                     ),
+                    "pair_combined": GraphNode(
+                        "PairConditioningCombine",
+                        {
+                            "positive_A": Link("source", "positive"),
+                            "negative_A": Link("source", "negative"),
+                            "positive_B": Link("source", "negative"),
+                            "negative_B": Link("source", "positive"),
+                        },
+                    ),
+                    "pair_properties_combined": GraphNode(
+                        "PairConditioningSetPropertiesAndCombine",
+                        {
+                            "positive": Link("source", "positive"),
+                            "negative": Link("source", "negative"),
+                            "positive_NEW": Link("source", "negative"),
+                            "negative_NEW": Link("source", "positive"),
+                            "strength": 0.5,
+                            "set_cond_area": "default",
+                        },
+                    ),
+                    "pair_defaults": GraphNode(
+                        "PairConditioningSetDefaultCombine",
+                        {
+                            "positive": Link("source", "positive"),
+                            "negative": Link("source", "negative"),
+                            "positive_DEFAULT": Link("source", "negative"),
+                            "negative_DEFAULT": Link("source", "positive"),
+                            "hooks": Link("source", "hooks"),
+                        },
+                    ),
                     "inspect": GraphNode(
                         "hook-properties.inspect",
                         {
                             "positive": Link("properties", "positive"),
                             "negative": Link("properties", "negative"),
+                            "single": Link("single", "conditioning"),
                             "combined": Link("combined", "conditioning"),
                             "defaults": Link("defaults", "conditioning"),
+                            "pair_combined": Link("pair_combined", "positive"),
+                            "pair_properties_combined": Link(
+                                "pair_properties_combined", "positive"
+                            ),
+                            "pair_defaults": Link("pair_defaults", "positive"),
+                            "before": Link("range", "BEFORE_RANGE"),
+                            "after": Link("range", "AFTER_RANGE"),
                         },
                     ),
                 }
@@ -369,6 +466,8 @@ def test_hook_conditioning_properties_cross_ordinary_hosts_twice(
             for _ in range(2):
                 result = await engine.run(graph, ["inspect"])
                 assert result.outputs["inspect"]["strength"].resolve() == 1.25
+                if _:
+                    assert {"source", "range", "properties", "single"} <= set(result.cached)
         finally:
             await composer.close()
 
