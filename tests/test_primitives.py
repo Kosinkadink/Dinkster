@@ -13,8 +13,12 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import json
+from collections.abc import Mapping
+from pathlib import Path
 from typing import Any, cast
 
+import dinkster_api.v1 as api
 import pytest
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, Invocation
@@ -44,6 +48,8 @@ from dinkster_values import (
     register_core_types,
 )
 from dinkster_workers import InProcessWorker
+
+from dinkster.compose import PackSpec, ServingComposer
 
 PRIMITIVE_TYPES = {node.schema().node_type for node in PRIMITIVE_NODES}
 PRIMITIVE_TEST_NODES = [*FOUNDATION_NODES, *MEDIA_IO_NODES]
@@ -293,6 +299,135 @@ def test_save_target_prefix_is_an_explicit_typed_constructor() -> None:
         assert wrapped.resolve() == SaveTarget(
             mount="project-output", prefix="computed/linked-scene"
         )
+
+    asyncio.run(scenario())
+
+
+class ColorSource(api.Node):
+    @classmethod
+    def define_schema(cls) -> api.NodeSchema:
+        return api.NodeSchema(
+            node_type="color-fixture.source",
+            outputs=(
+                api.OutputSpec("color", api.TypeExpr.concrete(api.COLOR_TYPE)),
+                api.OutputSpec("palette", api.TypeExpr.concrete(api.COLORS_TYPE)),
+                api.OutputSpec("preview", api.TypeExpr.concrete(api.RESOLUTION_PREVIEW_TYPE)),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> Mapping[str, object]:
+        return cls.outputs(
+            color="#aB12f080",
+            palette=["#1200ff", "red", "#1200ff"],
+            preview={"width": 832, "height": 1216, "extra": {"enabled": False}},
+        )
+
+
+class ColorInspect(api.Node):
+    @classmethod
+    def define_schema(cls) -> api.NodeSchema:
+        return api.NodeSchema(
+            node_type="color-fixture.inspect",
+            inputs=(
+                api.InputSpec("color", api.TypeExpr.concrete(api.COLOR_TYPE)),
+                api.InputSpec("palette", api.TypeExpr.concrete(api.COLORS_TYPE)),
+                api.InputSpec(
+                    "preview", api.TypeExpr.concrete(api.RESOLUTION_PREVIEW_TYPE), required=False
+                ),
+            ),
+            outputs=(api.OutputSpec("text", api.TypeExpr.concrete(api.CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(
+        cls, *, color: str, palette: list[str], preview: dict[str, object] | None = None
+    ) -> Mapping[str, object]:
+        return cls.outputs(text=json.dumps([color, palette, preview]))
+
+
+COLOR_FIXTURES = (ColorSource, ColorInspect)
+
+
+def test_color_preview_registration_is_portable_and_idempotent() -> None:
+    registry = TypeRegistry()
+    api.register_inference_types(registry)
+    api.register_inference_types(registry)
+    assert (api.COLOR_TYPE, api.COLORS_TYPE, api.RESOLUTION_PREVIEW_TYPE) == (
+        "COLOR",
+        "COLORS",
+        "RESOLUTION_PREVIEW",
+    )
+    for type_id, source in (
+        (api.COLOR_TYPE, "#ff001280"),
+        (api.COLORS_TYPE, []),
+        (api.COLORS_TYPE, ["blue", "#00ff00", "blue"]),
+        (api.RESOLUTION_PREVIEW_TYPE, {}),
+        (api.RESOLUTION_PREVIEW_TYPE, {"width": 832, "height": 1216}),
+    ):
+        spec = registry.spec(type_id)
+        encoded = spec.encode(source)
+        assert encoded.startswith(b"json:")
+        decoded = spec.decode(encoded)
+        assert decoded == source
+        assert (
+            registry.wrap(type_id, decoded).fingerprint
+            == registry.wrap(type_id, source).fingerprint
+        )
+    assert (
+        registry.wrap(api.COLORS_TYPE, ["red", "blue"]).fingerprint
+        != registry.wrap(api.COLORS_TYPE, ["blue", "red"]).fingerprint
+    )
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_color_and_resolution_preview_types_cross_pack_hosts(
+    tmp_path: Path, in_process: bool
+) -> None:
+    async def scenario() -> None:
+        composer = ServingComposer(worker_env={"PYTHONPATH": str(Path(__file__).parent)})
+        try:
+            (tmp_path / "color_fixture.py").write_text(
+                "from test_primitives import COLOR_FIXTURES as NODES\n"
+                "from dinkster_api.v1 import register_inference_types\n",
+                encoding="ascii",
+            )
+            manifest = tmp_path / "dinkster-pack.toml"
+            manifest.write_text(
+                '[pack]\nname = "color-fixture"\nnamespaces = ["color-fixture"]\n'
+                '[pack.sandbox]\n[pack.contracts]\nhost = "dinkster-pack-host/1"\n'
+                'api = "dinkster-api/v1"\n[pack.entry]\nnodes = "color_fixture:NODES"\n'
+                'types = "color_fixture:register_inference_types"\n',
+                encoding="ascii",
+            )
+            await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
+            engine = composer.composition.make_engine(lambda _event: None)
+            for linked_preview in (True, False):
+                inputs: dict[str, Link] = {
+                    "color": Link("source", "color"),
+                    "palette": Link("source", "palette"),
+                }
+                if linked_preview:
+                    inputs["preview"] = Link("source", "preview")
+                graph = Graph(
+                    nodes={
+                        "source": GraphNode("color-fixture.source"),
+                        "inspect": GraphNode("color-fixture.inspect", inputs),
+                    }
+                )
+                for _ in range(2):
+                    result = await engine.run(graph, ["inspect"])
+                    text = result.outputs["inspect"]["text"].resolve()
+                    assert isinstance(text, str)
+                    assert json.loads(text) == [
+                        "#aB12f080",
+                        ["#1200ff", "red", "#1200ff"],
+                        {"width": 832, "height": 1216, "extra": {"enabled": False}}
+                        if linked_preview
+                        else None,
+                    ]
+        finally:
+            await composer.close()
 
     asyncio.run(scenario())
 
