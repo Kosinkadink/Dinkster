@@ -47,10 +47,10 @@ def test_hunyuan_image_latents_preserve_source_values_and_allocate_on_cpu() -> N
     assert refined_samples.dtype == torch.float32
     assert refined_samples.device.type == "cpu"
     assert not refined_samples.count_nonzero()
-    assert refined["batch_index"] == [3, 1]
-    assert refined["unrelated"] == "retained"
+    assert set(refined) == {"samples"}
     assert source["samples"] is samples
     assert source["batch_index"] == [3, 1]
+    assert source["unrelated"] == "retained"
     assert positive[0][1] == {"positive": True}
     assert negative[0][1] == {"negative": True}
     for conditioning, metadata_key in (
@@ -113,8 +113,7 @@ class HunyuanInspect(Node):
             for value in (empty_samples, samples)
         )
         assert not empty_samples.count_nonzero() and not samples.count_nonzero()
-        assert refined["batch_index"] == [3, 1]
-        assert refined["unrelated"] == "retained"
+        assert set(refined) == {"samples"}
         for conditioning, expected in ((positive, "positive"), (negative, "negative")):
             metadata = conditioning[0][1]
             assert metadata[expected] is True
