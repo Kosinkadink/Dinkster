@@ -24,6 +24,28 @@ def test_stable_video_conditioning_schema_matches_comfyui() -> None:
     )
     assert tuple(item.id for item in schema.outputs) == ("positive", "negative", "latent")
     assert all(item.required for item in schema.inputs)
+    assert [item.default for item in schema.inputs] == [
+        None,
+        None,
+        None,
+        1024,
+        576,
+        14,
+        127,
+        6,
+        0.0,
+    ]
+    assert [item.type.runtime_type_id() for item in schema.inputs] == [
+        "CLIP_VISION",
+        "IMAGE",
+        "VAE",
+        "INT",
+        "INT",
+        "INT",
+        "INT",
+        "INT",
+        "FLOAT",
+    ]
     assert schema.inputs[6].advanced and schema.inputs[8].advanced
     assert not schema.inputs[3].advanced and not schema.inputs[7].advanced
     widgets = [
