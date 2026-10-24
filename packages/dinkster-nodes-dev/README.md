@@ -33,11 +33,14 @@ result = asyncio.run(Delay.execute(value="ready", seconds=0.01))
 assert result == {"value": "ready"}
 ```
 
-Compose the pack explicitly with its manifest:
+Compose the installed pack with an explicit host trust grant:
 
 ```console
-uv run dinkster-serve --pack packages/dinkster-nodes-dev/dinkster-pack.toml
+uv run dinkster-serve --development-pack
 ```
+
+Ordinary `--pack` paths remain untrusted and cannot claim the reserved `dev`
+namespace. Python hosts can compose `dinkster.compose.development_pack_spec()`.
 
 ## The widget/socket gallery
 

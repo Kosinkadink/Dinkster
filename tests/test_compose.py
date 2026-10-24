@@ -1537,8 +1537,14 @@ def test_compose_dev_pack_adds_scaffold_nodes() -> None:
     """The development manifest composes its complete node surface."""
     from dinkster_nodes_dev import PACK_NODES
 
+    from dinkster.compose import development_pack_spec
+
     async def scenario() -> None:
-        composition = await compose_serving([PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)])
+        with pytest.raises(CompositionError, match="explicit host trust"):
+            await compose_serving([DEV_PACK_MANIFEST])
+        spec = development_pack_spec()
+        assert Path(spec.manifest).resolve() == DEV_PACK_MANIFEST.resolve()
+        composition = await compose_serving([spec])
         try:
             expected = set(build_schemas(DEFAULT_NODES)) | set(build_schemas(PACK_NODES))
             assert set(composition.schemas) == expected

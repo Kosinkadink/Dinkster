@@ -459,7 +459,17 @@ def load_pack(
             combo_choices=choices.static,
             lazy_choices=choices.lazy,
             memory_consumers=consumers,
-            registered_types=tuple(tid for tid in registry.type_ids() if tid not in previous_types),
+            # Dependency codecs retain their owner's identity in this worker;
+            # installing them does not transfer ownership to the consumer.
+            registered_types=tuple(
+                tid
+                for tid in registry.type_ids()
+                if tid not in previous_types
+                and not any(
+                    dependency.pack == registry.owner_of(tid)
+                    for dependency in manifest.dependencies
+                )
+            ),
         )
         if manifest.comfy_aliases is not None:
             for record in manifest.comfy_aliases.records:

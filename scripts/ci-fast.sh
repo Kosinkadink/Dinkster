@@ -24,4 +24,7 @@ uv run --locked python -m pytest -q \
   tests/test_values.py \
   tests/test_graph.py \
   tests/test_graph_wire.py \
-  tests/test_vision_capability_schemas.py
+  tests/test_vision_capability_schemas.py \
+  tests/test_compose.py::test_compose_dev_pack_adds_scaffold_nodes \
+  tests/test_serve.py::test_serve_development_pack_is_explicitly_trusted \
+  tests/test_compat_comfy.py::test_compat_worker_type_ownership_preserves_image_dependency
