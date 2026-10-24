@@ -23,6 +23,10 @@
   for explicit no-round presentation, or a positive finite numeric precision.
   Omission leaves precision unspecified; false is distinct from numeric zero.
   This backend schema support does not claim frontend editor support.
+- Backend number descriptors also accept the scalar union of exactly INT and
+  FLOAT, in either order, with FLOAT constraint and rounding semantics. Socket
+  types and numeric defaults remain unchanged, including with named widget
+  representations. This does not claim frontend numeric-union editor support.
 - Node schemas can declare presentation-only editor roles and JSON-safe custom
   widget descriptors. Clients use these declarations without matching node IDs;
   native video trim and crop declare their exact `VIDEO_EDIT` features.

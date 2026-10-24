@@ -2,6 +2,7 @@
 
 from dinkster_api.v1 import register_inference_types
 
+from .ace_text_conditioning import ACE_TEXT_CONDITIONING_NODES
 from .attention_guidance import ATTENTION_GUIDANCE_NODES
 from .attention_multiply import ATTENTION_MULTIPLY_NODES
 from .audio_combine import AUDIO_COMBINE_NODES
@@ -58,6 +59,7 @@ from .rope_and_mask import ROPE_AND_MASK_NODES
 from .sampler_factories import SAMPLER_FACTORY_NODES
 from .sigma_operations import SIGMA_OPERATION_NODES
 from .sigma_schedulers import SIGMA_SCHEDULER_NODES
+from .sparse_attention import SPARSE_ATTENTION_NODES
 from .spatial_model_patches import SPATIAL_MODEL_PATCH_NODES
 from .stable3d import STABLE3D_NODES
 from .stable_cascade import STABLE_CASCADE_NODES
@@ -96,6 +98,7 @@ COMFY_NODES = (
     *SPATIAL_MODEL_PATCH_NODES,
     *ROPE_AND_MASK_NODES,
     *NOISE_GUIDANCE_NODES,
+    *SPARSE_ATTENTION_NODES,
     *HOOK_SCHEDULING_NODES,
     *SIGMA_OPERATION_NODES,
     *LATENT_NODES,
@@ -131,6 +134,7 @@ COMFY_NODES = (
     *AUDIO_EFFECT_NODES,
     *AUDIO_GENERATOR_NODES,
     *AUDIO_LATENT_NODES,
+    *ACE_TEXT_CONDITIONING_NODES,
     *AUDIO_MUSIC_CONDITIONING_NODES,
     *AUDIO_TRANSFORM_NODES,
     *AUDIO_VAE_NODES,
