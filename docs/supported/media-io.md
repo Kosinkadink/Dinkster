@@ -89,7 +89,8 @@
   ordered published asset per batch element under a mounted save target
 - Native ComfyUI audio nodes include Trim Audio Duration, Split Audio Channels,
   Adjust Audio Volume, Audio Equalizer (3-Band), Empty Audio with rounded sample
-  counts, and Empty MiniMax Music3 Latent Audio with frame-aligned duration and batching.
+  counts, Empty MiniMax Music3 Latent Audio with frame-aligned duration and batching,
+  VAE Encode Audio, VAE Decode Audio, and tiled VAE Decode Audio.
   Value-level audio operations on AUDIO values include duration trimming with
   negative-from-end starts, stereo channel split and mono join, before/after
   concatenation, add/subtract/multiply/mean merging with peak normalization,
