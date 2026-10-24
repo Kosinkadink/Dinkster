@@ -11,4 +11,8 @@
   guide conditioning are unsupported.
 - Typed absence remains a Dinkster engine contract: `core.absent` values,
   optional outputs, per-input absence policies, and skip propagation.
+- Native `InstructPixToPixConditioning` crops and encodes the input image,
+  attaches image conditioning to both prompt streams, and returns a zero latent.
+- Native `ReferenceLatent` appends a guiding latent to conditioning while
+  preserving existing references; an unconnected latent leaves conditioning unchanged.
 - Other model-family conditioning surfaces are unsupported.

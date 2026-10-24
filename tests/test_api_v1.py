@@ -403,6 +403,40 @@ assert not any(name.split('.')[0] in {'torch', 'dinkster_inference'} for name in
     assert result.returncode == 0, result.stderr
 
 
+def test_controlnet_registration_preserves_resident_identity_without_torch() -> None:
+    script = """
+import sys
+from dinkster_api.v1 import CONTROL_NET_TYPE, TypeRegistry, register_inference_types
+from dinkster_memory.resident import default_pool
+from dinkster_values import RESOURCE_ID_META_KEY, ResidentLookupError
+
+assert CONTROL_NET_TYPE == "CONTROL_NET"
+registry = TypeRegistry()
+register_inference_types(registry)
+spec = registry.spec(CONTROL_NET_TYPE)
+register_inference_types(registry)
+assert registry.spec(CONTROL_NET_TYPE) is spec
+assert "comfy.CONTROL_NET" not in registry
+source = object()
+encoded = spec.encode(source)
+assert spec.decode(encoded) is source
+assert spec.fingerprint(source) == spec.fingerprint(spec.decode(encoded))
+assert spec.meta(source)[RESOURCE_ID_META_KEY].startswith("resident:")
+assert default_pool().release_resident(source)
+try:
+    spec.decode(encoded)
+except ResidentLookupError:
+    pass
+else:
+    raise AssertionError("released ControlNet remained resolvable")
+assert "torch" not in sys.modules
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_golden_surface_is_exact() -> None:
     """The frozen v1 surface. A failure here is a compat event: additions
     update this list deliberately; removals/renames are forbidden within v1
