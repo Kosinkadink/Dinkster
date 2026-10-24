@@ -16,6 +16,7 @@ from tempfile import NamedTemporaryFile
 
 from aiohttp import ClientSession, web
 from dinkster_server import create_app
+from dinkster_values.builtin_types import BUILTIN_TYPE_IDS
 
 from dinkster.compose import PackSpec, compose_serving
 
@@ -111,10 +112,11 @@ async def _template_jobs(reference: Path, templates: list[Path], output: Path, t
     output.mkdir(parents=True, exist_ok=True)
     with NamedTemporaryFile(prefix=".execution-template-", suffix=".toml", dir=Path.cwd()) as file:
         manifest = Path(file.name)
-        names = sorted({node.schema().node_type for node in stubs.NODES})
+        names = sorted({node.schema().node_type.split(".")[0] for node in stubs.NODES})
         manifest.write_text(
             '[pack]\nname = "execution-template-test"\npublisher = "dinkster"\n'
             f"namespaces = {json.dumps(names)}\n"
+            f"type-namespaces = {json.dumps(sorted(stubs._TYPES - BUILTIN_TYPE_IDS))}\n"
             '[pack.entry]\nnodes = "tools.template_execution_stubs:NODES"\n'
             'types = "tools.template_execution_stubs:register_types"\n',
             encoding="ascii",

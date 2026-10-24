@@ -16,8 +16,13 @@ from dinkster_inference_wire.sampling_wire import (
     SigmaSchedule,
 )
 from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_foundation import FOUNDATION_NODES
 from dinkster_schema import (
     ComboWidget,
+    DynamicComboOption,
+    DynamicComboSpec,
+    DynamicEntry,
+    InputFamilySpec,
     InputSpec,
     Node,
     NodeSchema,
@@ -44,8 +49,6 @@ PURE = CONTROLS | {
     "PrimitiveStringMultiline",
     "ComfyMathExpression",
     "ComfyNumberConvert",
-    "CreateList",
-    "GetItemFromList",
     "StringFormat",
     "StringLength",
     "RegexExtract",
@@ -58,25 +61,69 @@ STUBBED: list[str] = []
 _TYPES: set[str] = set()
 
 
-def _input(name: str, descriptor: Sequence[Any], required: bool) -> InputSpec:
+def _input(name: str, descriptor: Sequence[Any], required: bool) -> DynamicEntry:
     atom = descriptor[0]
     options = descriptor[1] if len(descriptor) > 1 else {}
     default = options.get("default")
     widget = None
-    if isinstance(atom, list):
-        choices = tuple(str(item) for item in atom)
+    if atom == "COMFY_MATCHTYPE_V3":
+        template = options["template"]
+        names = template.get("allowed_types", "").split(",")
+        _TYPES.update(name for name in names if name)
+        return InputSpec(name, TypeExpr.variable(template["template_id"]), required=required)
+    if atom == "COMFY_AUTOGROW_V3":
+        template = options["template"]
+        entries = template["input"].get("required", {})
+        item_name, item_descriptor = next(iter(entries.items()))
+        item = _input(item_name, item_descriptor, True)
+        assert isinstance(item, InputSpec)
+        return InputFamilySpec(
+            name,
+            item.type,
+            min_members=template.get("min", 0),
+            member_names=tuple(template["names"]) if "names" in template else None,
+            member_prefix=template.get("prefix"),
+        )
+    if atom == "COMFY_DYNAMICCOMBO_V3":
+        return DynamicComboSpec(
+            name,
+            tuple(
+                DynamicComboOption(
+                    option["key"],
+                    tuple(
+                        _input(key, value, section == "required")
+                        for section in ("required", "optional")
+                        for key, value in option["inputs"].get(section, {}).items()
+                    ),
+                )
+                for option in options["options"]
+            ),
+            default=default,
+            required=required,
+        )
+    if isinstance(atom, list) or atom == "COMBO":
+        choices = tuple(
+            str(item) for item in (atom if isinstance(atom, list) else options["options"])
+        )
         # File inventories are empty on the reference CPU host. A file name
         # remains a COMBO string; the stub never opens the selected file.
         widget = ComboWidget(options=choices or ("test-fixture",))
         atom = "COMBO"
         default = default if default is not None else widget.options[0]
     elif atom in ("INT", "FLOAT"):
-        if options.get("control_after_generate"):
-            widget = NumberWidget(control_after_generate="fixed")
+        if not options.get("forceInput"):
+            widget = NumberWidget(
+                step=options.get("step", 1 if atom == "INT" else 0.01),
+                control_after_generate="fixed" if options.get("control_after_generate") else None,
+            )
     elif atom == "STRING":
         widget = StringWidget(multiline=bool(options.get("multiline")))
     elif atom == "*":
         return InputSpec(name, TypeExpr.variable("value"), required=required)
+    if "," in atom:
+        names = tuple(part.strip() for part in atom.split(","))
+        _TYPES.update(names)
+        return InputSpec(name, TypeExpr.union(*names), required=required, default=default)
     _TYPES.add(atom)
     return InputSpec(
         name,
@@ -90,20 +137,33 @@ def _input(name: str, descriptor: Sequence[Any], required: bool) -> InputSpec:
 
 def _stub(row: Mapping[str, Any]) -> type[Node]:
     node_type = row["class_name"]
-    inputs = tuple(
+    entries = tuple(
         _input(name, descriptor, section == "required")
         for section in ("required", "optional")
         for name, descriptor in row["input_types"].get(section, {}).items()
     )
+    inputs = tuple(item for item in entries if isinstance(item, InputSpec))
     returns = row.get("return_types") or []
     names = row.get("return_names") or returns
+    output_metadata = row.get("v3_outputs") or [{} for _ in returns]
     outputs = tuple(
-        OutputSpec(name or atom, TypeExpr.concrete(atom))
-        for name, atom in zip(names, returns, strict=True)
+        OutputSpec(
+            name or atom,
+            TypeExpr.variable(metadata["template"]["template_id"])
+            if atom == "COMFY_MATCHTYPE_V3"
+            else TypeExpr.concrete(atom),
+        )
+        for name, atom, metadata in zip(names, returns, output_metadata, strict=True)
     )
-    _TYPES.update(returns)
+    _TYPES.update(atom for atom in returns if atom != "COMFY_MATCHTYPE_V3")
     schema = NodeSchema(
-        node_type, inputs=inputs, outputs=outputs, output_node=bool(row.get("output_node"))
+        node_type,
+        inputs=inputs,
+        input_families=tuple(item for item in entries if isinstance(item, InputFamilySpec)),
+        combos=tuple(item for item in entries if isinstance(item, DynamicComboSpec)),
+        input_order=tuple(item.id for item in entries),
+        outputs=outputs,
+        output_node=bool(row.get("output_node")),
     )
 
     def define_schema(cls: type[Node]) -> NodeSchema:
@@ -176,7 +236,24 @@ def configure(reference: Path, templates: Sequence[Path]) -> None:
     NODES.clear()
     STUBBED.clear()
     _TYPES.clear()
+    NODES.extend(
+        node
+        for node in FOUNDATION_NODES
+        if node.schema().node_type
+        in {
+            "std.list.make",
+            "std.list.concat",
+            "std.list.element",
+            "std.list.length",
+            "std.list.range",
+            "std.math.add_ints",
+            "dinkster.value.compare",
+            "dinkster.value.select",
+        }
+    )
     for name in sorted(needed):
+        if name in {"CreateList", "GetItemFromList"}:
+            continue
         if name in PURE:
             if name not in real:
                 raise RuntimeError(f"template requires native computation node {name}")
