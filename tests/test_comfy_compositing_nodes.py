@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import torch
-from dinkster_api.v1 import schema_to_wire
-from dinkster_inference import utils
+import importlib
+from typing import Any, cast
+
+from dinkster_api.v1 import ComboWidget, schema_to_wire
 from dinkster_nodes_comfy.compositing import (
     COMPOSITING_NODES,
     JoinImageWithAlpha,
@@ -12,6 +13,9 @@ from dinkster_nodes_comfy.compositing import (
     PorterDuffMode,
     SplitImageWithAlpha,
 )
+
+torch: Any = importlib.import_module("torch")
+utils: Any = importlib.import_module("dinkster_inference.utils")
 
 
 def test_compositing_schemas_match_the_fixed_reference_contract() -> None:
@@ -37,9 +41,11 @@ def test_compositing_schemas_match_the_fixed_reference_contract() -> None:
     assert actual == expected
     schema = PorterDuffImageComposite.schema()
     assert schema.inputs[-1].default == "DST"
-    assert tuple(option.value for option in schema.inputs[-1].widget.options) == tuple(
-        mode.name for mode in PorterDuffMode
-    )
+    assert isinstance(schema.inputs[-1].widget, ComboWidget)
+    assert tuple(
+        option if isinstance(option, str) else option.value
+        for option in schema.inputs[-1].widget.options
+    ) == tuple(mode.name for mode in PorterDuffMode)
     for node in COMPOSITING_NODES:
         assert schema_to_wire(node.schema())
 
@@ -76,7 +82,7 @@ def test_porter_duff_truncates_batches_and_resizes_images_and_masks() -> None:
     destination = torch.full((1, 3, 4, 3), 0.5, dtype=torch.float32)
     destination_alpha = torch.tensor([[[0.1, 0.4], [0.6, 0.9]]], dtype=torch.float32)
 
-    result = PorterDuffImageComposite.execute(
+    result: Any = PorterDuffImageComposite.execute(
         source=source,
         source_alpha=source_alpha,
         destination=destination,
@@ -105,12 +111,14 @@ def test_split_and_join_preserve_alpha_polarity_across_resized_batches() -> None
         ],
         dtype=torch.float32,
     )
-    split = SplitImageWithAlpha.execute(image=image)
+    split = cast(dict[str, Any], SplitImageWithAlpha.execute(image=image))
     torch.testing.assert_close(split["IMAGE"], image[..., :3])
     torch.testing.assert_close(split["MASK"], 1.0 - image[..., 3])
 
     alpha = torch.tensor([[[0.0], [1.0]]], dtype=torch.float32)
-    joined = JoinImageWithAlpha.execute(image=split["IMAGE"], alpha=alpha)["IMAGE"]
+    joined = cast(dict[str, Any], JoinImageWithAlpha.execute(image=split["IMAGE"], alpha=alpha))[
+        "IMAGE"
+    ]
     expected_alpha = 1.0 - torch.nn.functional.interpolate(
         alpha.reshape(1, 1, 2, 1), size=(1, 2), mode="bilinear"
     ).squeeze(1)

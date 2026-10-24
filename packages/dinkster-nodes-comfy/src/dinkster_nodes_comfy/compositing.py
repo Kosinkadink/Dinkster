@@ -194,8 +194,8 @@ class PorterDuffImageComposite(Node):
         utils = importlib.import_module("dinkster_inference.utils")
         source, destination = materialize_image(source), materialize_image(destination)
         batch_size = min(len(source), len(source_alpha), len(destination), len(destination_alpha))
-        output_images = []
-        output_alphas = []
+        output_images: list[Any] = []
+        output_alphas: list[Any] = []
 
         for index in range(batch_size):
             source_image = source[index]
