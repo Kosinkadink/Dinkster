@@ -458,10 +458,15 @@ class ModelComputeDtype(Node):
 class ModelAttentionBackend(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
+        backends = ("pytorch attention",)
+        if importlib.util.find_spec("torch") is not None:
+            attention = importlib.import_module("dinkster_inference.ldm.modules.attention")
+            if attention.COMFY_KITCHEN_INT8_ATTENTION_IS_AVAILABLE:
+                backends += ("comfy kitchen attention",)
         return _sampling_schema(
             "ModelAttentionBackend",
             "model/patch",
-            (_combo("attention", ("pytorch attention",), "pytorch attention"),),
+            (_combo("attention", backends, "pytorch attention"),),
         )
 
     @classmethod
