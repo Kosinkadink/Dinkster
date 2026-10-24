@@ -1,7 +1,14 @@
 [pack]
 name = "dinkster-native"
 publisher = "dinkster"
-namespaces = ["comfy", "dinkster"]
+namespaces = [
+    "comfy",
+    "dinkster",
+    "MultiGPU_WorkUnits",
+    "SelectModelDevice",
+    "SelectCLIPDevice",
+    "SelectVAEDevice",
+]
 executes = [
     "dinkster.load_checkpoint",
     "dinkster.load_diffusion_model",
@@ -31,6 +38,10 @@ executes = [
     "dinkster.render_uv_atlas",
     "dinkster.apply_texture_to_mesh",
     "dinkster.mesh_to_model3d",
+    "MultiGPU_WorkUnits",
+    "SelectModelDevice",
+    "SelectCLIPDevice",
+    "SelectVAEDevice",
 ]
 requires = [
     "dinkster-inference @ git+https://github.com/Kosinkadink/dinkster-inference.git@c4ce40550e77f5a3b9b8d2f96597a4d6c24c1377",
@@ -80,11 +91,15 @@ native = [
     "dinkster.render_uv_atlas",
     "dinkster.apply_texture_to_mesh",
     "dinkster.mesh_to_model3d",
+    "MultiGPU_WorkUnits",
+    "SelectModelDevice",
+    "SelectCLIPDevice",
+    "SelectVAEDevice",
 ]
 
 [pack.entry]
-nodes = "dinkster_native.entry:NATIVE_NODES"
-arm_nodes = "dinkster_native.entry:ARM_NODES"
+nodes = "dinkster_native.device_routing:NATIVE_NODES"
+arm_nodes = "dinkster_native.device_routing:ARM_NODES"
 types = "dinkster_native.entry:register_types"
 reservations = "dinkster_native.memory:plan_reservations"
 consumers = "dinkster_native.pool:memory_consumers"
