@@ -21,7 +21,12 @@ from dinkster_values import (
 )
 
 from .conditioning_wire import CONDITIONING_TYPE_ID, register_conditioning_type
-from .media_wire import materialize_image, materialize_latent, register_media_types
+from .media_wire import (
+    materialize_audio,
+    materialize_image,
+    materialize_latent,
+    register_media_types,
+)
 from .sampling_wire import register_sampling_type
 from .vision_wire import (
     clip_vision_output_fingerprint,
@@ -94,6 +99,7 @@ __all__ = [
     "SAMPLER_TYPE_ID",
     "SIGMAS_TYPE_ID",
     "VAE_TYPE_ID",
+    "materialize_audio",
     "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
