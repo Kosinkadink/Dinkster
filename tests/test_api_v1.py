@@ -29,6 +29,7 @@ from dinkster_values import register_core_types
 from dinkster_workers import InProcessWorker
 
 GOLDEN_V1_SURFACE = (
+    "initialize_inference_process",
     "materialize_image",
     "materialize_latent",
     "register_inference_types",
@@ -392,6 +393,9 @@ loaded = {
     if name.split(".")[0] in {"dinkster_inference_wire", "torch"}
 }
 assert not loaded, sorted(loaded)
+from dinkster_api.v1 import initialize_inference_process
+assert callable(initialize_inference_process)
+assert not any(name.split('.')[0] in {'torch', 'dinkster_inference'} for name in sys.modules)
 """
     result = subprocess.run(
         [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
@@ -447,6 +451,7 @@ def test_golden_surface_is_exact() -> None:
 def test_reexports_are_the_internal_objects() -> None:
     """Zero wrappers: the door hands out the internal objects themselves."""
     import dinkster_assets
+    import dinkster_inference_wire.process as inference_process
     import dinkster_inference_wire.types as inference_types
     import dinkster_memory
     import dinkster_protocol
@@ -455,6 +460,7 @@ def test_reexports_are_the_internal_objects() -> None:
     import dinkster_video
 
     sources = (
+        inference_process,
         inference_types,
         dinkster_schema,
         dinkster_values,
