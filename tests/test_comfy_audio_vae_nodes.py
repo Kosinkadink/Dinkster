@@ -54,6 +54,7 @@ def test_audio_vae_interfaces_match_comfy_schemas() -> None:
             "model/latent",
         )
         assert tuple((item.id, item.type.types[0]) for item in schema.inputs) == inputs
+        assert all(item.required for item in schema.inputs)
         assert tuple((item.id, item.type.types[0]) for item in schema.outputs) == (output,)
         assert schema_from_wire(schema_to_wire(schema)) == schema
 

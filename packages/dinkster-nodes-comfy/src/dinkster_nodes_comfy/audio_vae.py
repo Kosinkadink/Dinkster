@@ -17,6 +17,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
+    initialize_inference_process,
     materialize_audio,
     materialize_latent,
 )
@@ -30,6 +31,7 @@ _VAE = TypeExpr.concrete(VAE_TYPE)
 def _decode_audio(
     vae: Any, samples: object, tile: int | None = None, overlap: int | None = None
 ) -> dict[str, object]:
+    initialize_inference_process()
     samples = cast("Mapping[str, Any]", materialize_latent(samples))
     latent = samples["samples"]
     if latent.is_nested:
@@ -68,6 +70,7 @@ class VAEEncodeAudio(Node):
             raise ValueError(
                 "VAEEncodeAudio: input audio is None (source video may have no audio track)."
             )
+        initialize_inference_process()
         source = cast("Mapping[str, Any]", materialize_audio(audio))
         sample_rate = source["sample_rate"]
         vae_sample_rate = getattr(vae, "audio_sample_rate", 44100)
