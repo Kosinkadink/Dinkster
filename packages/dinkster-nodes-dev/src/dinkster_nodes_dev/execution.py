@@ -268,6 +268,49 @@ class ExecutionFail(Node):
         raise RuntimeError("execution fixture failure")
 
 
+class ExecutionAdmissionSource(ExecutionValue):
+    executed = False
+
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dev.execution.admission_source",
+            inputs=(InputSpec("value", INT),),
+            outputs=(OutputSpec("value", INT),),
+        )
+
+    @classmethod
+    def execute(cls, *, value: int) -> Mapping[str, object]:
+        cls.executed = True
+        return cls.outputs(value=value)
+
+
+class ExecutionAdmission(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dev.execution.admission",
+            inputs=(InputSpec("value", FLOAT),),
+            outputs=(OutputSpec("value", FLOAT),),
+            admission_validation=True,
+        )
+
+    @classmethod
+    def validate_admission(
+        cls, *, literal_inputs: Mapping[str, object], linked_input_types: Mapping[str, str]
+    ) -> str | None:
+        value = literal_inputs.get("value")
+        if value is not None and type(value) is not float:
+            return "value must be a float literal"
+        if linked_input_types.get("value") not in (None, "FLOAT"):
+            return "value must be linked from FLOAT"
+        return None
+
+    @classmethod
+    def execute(cls, *, value: float) -> Mapping[str, object]:
+        return cls.outputs(value=value)
+
+
 EXECUTION_NODES: tuple[type[Node], ...] = (
     ExecutionValue,
     ExecutionAdd,
@@ -282,4 +325,6 @@ EXECUTION_NODES: tuple[type[Node], ...] = (
     ExecutionParallelSleep,
     TestForLoopOpen,
     ExecutionFail,
+    ExecutionAdmissionSource,
+    ExecutionAdmission,
 )

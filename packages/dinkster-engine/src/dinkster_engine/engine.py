@@ -52,6 +52,8 @@ from dinkster_graph import (
 )
 from dinkster_protocol import (
     GRAPH_COMPILE_ERROR_GENERATION_MISMATCH,
+    AdmissionInvocation,
+    AdmissionWorker,
     AttentionPolicy,
     AttentionPolicyConfig,
     AttentionRouteToken,
@@ -597,6 +599,52 @@ class Engine:
             if missing:
                 await self._runtime().worker.prepare(missing)
                 prepared.update(missing)
+
+    async def _validate_admission(
+        self,
+        graph: Graph,
+        effective: Mapping[str, NodeSchema],
+    ) -> None:
+        worker = self._runtime().worker
+        validate_admission = getattr(worker, "validate_admission", None)
+        for node_id, node in graph.nodes.items():
+            if not isinstance(node, GraphNode):
+                continue
+            schema = effective[node_id]
+            if not schema.admission_validation:
+                continue
+            if not callable(validate_admission):
+                raise ExecutionError(
+                    NodeError(
+                        node_id,
+                        node.node_type,
+                        "admission-protocol-skew: worker does not support admission validation",
+                    )
+                )
+            linked_types: dict[str, str] = {}
+            literal_inputs: dict[str, object] = {}
+            for name, value in node.inputs.items():
+                if isinstance(value, Link):
+                    output = effective[value.node_id].output(value.output_id)
+                    linked_types[name] = (
+                        output.type.runtime_type_id() if output is not None else None
+                    ) or "unknown"
+                else:
+                    literal_inputs[name] = value
+            result = await cast("AdmissionWorker", worker).validate_admission(
+                AdmissionInvocation(
+                    request_id=uuid.uuid4().hex,
+                    node_id=node_id,
+                    node_type=node.node_type,
+                    literal_inputs=literal_inputs,
+                    linked_input_types=linked_types,
+                    effective_schema=schema,
+                )
+            )
+            if result.explanation is not None:
+                raise GraphValidationError(
+                    [Diagnostic("error", "admission-validation", node_id, result.explanation)]
+                )
 
     def _emit(self, event: EngineEvent) -> None:
         origins = self._run_expansion_origins.get(event.run_id, {})
@@ -3030,6 +3078,7 @@ class Engine:
             )
             if has_errors(diagnostics):
                 raise GraphValidationError(diagnostics)
+            await self._validate_admission(graph, effective)
             signatures = {node_id: schema_signature(s) for node_id, s in effective.items()}
 
             # Validation above used every edge. Scheduling deliberately starts

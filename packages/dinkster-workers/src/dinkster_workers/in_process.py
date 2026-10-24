@@ -21,6 +21,8 @@ from typing import cast
 from dinkster_memory import FullReleaseConsumer, Shedder
 from dinkster_memory.resident import ResidentPool
 from dinkster_protocol import (
+    AdmissionInvocation,
+    AdmissionResult,
     AttentionCapabilityEvidence,
     AttentionPolicyConfig,
     AttentionRouteToken,
@@ -403,6 +405,7 @@ class InProcessWorker:
                     "lazy-dispatch-unsupported: lazy hooks require the default owner body",
                 )
             )
+
         cls = self._node_types.get(invocation.node_type)
         if cls is None:
             return LazyStatusResult(
@@ -477,6 +480,28 @@ class InProcessWorker:
                     traceback=traceback.format_exc(),
                 )
             )
+
+    async def validate_admission(
+        self,
+        invocation: AdmissionInvocation,
+        on_event: OnInvocationEvent | None = None,
+    ) -> AdmissionResult:
+        del on_event
+        cls = self._node_types.get(invocation.node_type)
+        if cls is None:
+            return AdmissionResult("admission-protocol-skew: unknown node type")
+        if not invocation.effective_schema.admission_validation:
+            return AdmissionResult(
+                "admission-protocol-skew: node did not opt into admission validation"
+            )
+        try:
+            explanation = cls.validate_admission(
+                literal_inputs=dict(invocation.literal_inputs),
+                linked_input_types=dict(invocation.linked_input_types),
+            )
+        except Exception as exc:  # noqa: BLE001 - hook failures refuse admission
+            return AdmissionResult(f"admission-hook-failed: {exc}")
+        return AdmissionResult(explanation)
 
     async def _invoke_in_context(
         self,

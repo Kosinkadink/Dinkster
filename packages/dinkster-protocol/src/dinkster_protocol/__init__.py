@@ -641,6 +641,29 @@ class LazyStatusResult:
             )
 
 
+@dataclass(frozen=True)
+class AdmissionInvocation:
+    """Plain pre-execution inputs for an opted-in native admission hook."""
+
+    request_id: str
+    node_id: str
+    node_type: str
+    literal_inputs: Mapping[str, object]
+    linked_input_types: Mapping[str, str]
+    effective_schema: NodeSchema
+
+
+@dataclass(frozen=True)
+class AdmissionResult:
+    explanation: str | None = None
+
+
+class AdmissionWorker(Protocol):
+    async def validate_admission(
+        self, invocation: AdmissionInvocation, on_event: OnInvocationEvent | None = None
+    ) -> AdmissionResult: ...
+
+
 class Worker(Protocol):
     async def prepare(self, node_types: Sequence[str]) -> None: ...
 
@@ -806,6 +829,9 @@ __all__ = [
     "LazyStatusInvocation",
     "LazyStatusResult",
     "LazyStatusWorker",
+    "AdmissionInvocation",
+    "AdmissionResult",
+    "AdmissionWorker",
     "MediaSourceAuthority",
     "KeyedContribution",
     "NodeError",

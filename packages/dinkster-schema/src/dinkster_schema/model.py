@@ -2137,6 +2137,10 @@ class NodeSchema:
     may_expand_graph: bool = False
     """Execution may return a validated runtime graph expansion and inhibit
     nodes in the run overlay. Capability metadata, not cache identity."""
+    admission_validation: bool = False
+    """Ask the owning native worker to validate literal values and declared
+    linked-input types before producers execute. Opt-in only: nodes without
+    this hook retain advisory declared-type mismatch behavior."""
     execution_context: bool = False
     """Inject the hidden run-scoped execution_context parameter. Such nodes
     observe live run state and therefore never use invocation-result caches."""

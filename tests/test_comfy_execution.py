@@ -183,6 +183,42 @@ def test_undeclared_inputs(cache_enabled: bool) -> None:
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
+@pytest.mark.parametrize(("value", "error"), [(5, True), ("foo", True), (5.0, False)])
+def test_validation_error_literal(cache_enabled: bool, value: object, error: bool) -> None:
+    async def scenario() -> None:
+        graph = Graph({"validation": GraphNode("dev.execution.admission", {"value": value})})
+        if error:
+            with pytest.raises(GraphValidationError, match="value must be a float literal"):
+                await make_engine().run(graph, ["validation"], cache_enabled=cache_enabled)
+        else:
+            result = await make_engine().run(graph, ["validation"], cache_enabled=cache_enabled)
+            assert result.outputs["validation"]["value"].resolve() == 5.0
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("cache_enabled", [False, True])
+def test_validation_error_edge_rejects_before_producer(cache_enabled: bool) -> None:
+    async def scenario() -> None:
+        from dinkster_nodes_dev.execution import ExecutionAdmissionSource
+
+        ExecutionAdmissionSource.executed = False
+        graph = Graph(
+            {
+                "source": GraphNode("dev.execution.admission_source", {"value": 5}),
+                "validation": GraphNode(
+                    "dev.execution.admission", {"value": Link("source", "value")}
+                ),
+            }
+        )
+        with pytest.raises(GraphValidationError, match="value must be linked from FLOAT"):
+            await make_engine().run(graph, ["validation"], cache_enabled=cache_enabled)
+        assert not ExecutionAdmissionSource.executed
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("cache_enabled", [False, True])
 def test_mixed_expansion_returns(cache_enabled: bool) -> None:
     """Port of ComfyUI test_mixed_expansion_returns."""
 

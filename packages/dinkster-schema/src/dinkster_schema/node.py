@@ -66,6 +66,13 @@ class Node:
         raise NotImplementedError
 
     @classmethod
+    def validate_admission(
+        cls, *, literal_inputs: Mapping[str, object], linked_input_types: Mapping[str, str]
+    ) -> str | None:
+        """Optionally explain why a node must not be admitted for execution."""
+        raise NotImplementedError
+
+    @classmethod
     def schema(cls) -> NodeSchema:
         """The class's schema, computed once and cached per subclass."""
         cached = cls.__dict__.get("_cached_schema")
