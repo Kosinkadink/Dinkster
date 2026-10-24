@@ -1,5 +1,7 @@
 ## ComfyUI compatibility
 
+- Four native audio latent constructors preserve Stable Audio, ACE-Step 1.0,
+  ACE-Step 1.5 and YuE2 duration rounding, tensor layouts and audio metadata.
 - Native EmptyMochiLatentVideo creates video latents with the core interface.
   Empty image and Mochi latents honor CPU-only process policy without requiring
   attention discovery or command-line initialization first.

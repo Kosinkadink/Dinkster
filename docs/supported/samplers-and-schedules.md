@@ -8,3 +8,7 @@ pinned runtime. Layered window plans and RES4LYF samplers are unsupported.
 
 Sigma schedules can be entered, split, flipped, adjusted, extended and derived
 from a model sampling percentage through the native ComfyUI sigma nodes.
+
+Native SIGMAS tensors cross worker boundaries as canonical tensor records,
+preserving their dtype, shape, bytes, and fingerprint. Legacy schedule
+settings remain supported.
