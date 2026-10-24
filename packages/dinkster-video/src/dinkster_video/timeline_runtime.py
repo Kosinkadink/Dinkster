@@ -21,7 +21,6 @@ from dinkster_values import (
     media_semantics,
     video_from_source,
 )
-from dinkster_values.builtin_types import AUDIO_TYPE, VIDEO_TYPE
 from dinkster_values.curve import coerce_curve
 from dinkster_values.timeline_video import TimelineVideo
 from dinkster_values.video_document import TimelineError, json_bytes, source_video

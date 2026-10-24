@@ -18,7 +18,6 @@ from dinkster_values import (
     coerce_video,
     edit_video,
 )
-from dinkster_values.builtin_types import VIDEO_TYPE
 from dinkster_values.video_document import (
     TimelineError,
     document,

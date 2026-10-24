@@ -27,7 +27,6 @@ from dinkster_graph import Graph, GraphNode, Link, graph_from_wire, graph_to_wir
 from dinkster_nodes_media_io import register_media_types
 from dinkster_protocol import Invocation
 from dinkster_values import (
-    VIDEO_TYPE,
     TypeRegistry,
     edit_video,
     encode_video,

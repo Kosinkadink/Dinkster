@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from dinkster_api.v1 import AUDIO_TYPE, VIDEO_TYPE
+from dinkster_api.v1 import ASSET_TYPE, AUDIO_TYPE, VIDEO_TYPE
 from dinkster_assets import (
     AssetError,
     AssetRef,
@@ -154,7 +154,7 @@ def test_source_return_does_not_materialize_payloads(
 
 
 @pytest.mark.parametrize("type_id", [VIDEO_TYPE, "dinkster.layers", AUDIO_TYPE, "custom.asset"])
-@pytest.mark.parametrize("asset_input", [None, "dinkster.asset", "asset<dinkster.video>"])
+@pytest.mark.parametrize("asset_input", [None, ASSET_TYPE, f"asset<{VIDEO_TYPE}>"])
 def test_returned_input_sources_need_no_produced_asset_vault(
     type_id: str, asset_input: str | None
 ) -> None:
