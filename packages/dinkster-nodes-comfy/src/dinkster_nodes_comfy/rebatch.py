@@ -22,6 +22,8 @@ from dinkster_api.v1 import (
 
 _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 _LATENT = TypeExpr.concrete(LATENT_TYPE)
+_IMAGES = TypeExpr.list_of(_IMAGE)
+_LATENTS = TypeExpr.list_of(_LATENT)
 _INT = TypeExpr.concrete(CORE_INT)
 
 
@@ -36,8 +38,8 @@ class RebatchLatents(Node):
             node_type="RebatchLatents",
             display_name="Rebatch Latents",
             category="model/latent/batch",
-            inputs=(InputSpec("latents", _LATENT), _batch_size()),
-            outputs=(OutputSpec("LATENT", _LATENT),),
+            inputs=(InputSpec("latents", _LATENTS), _batch_size()),
+            outputs=(OutputSpec("LATENT", _LATENTS),),
         )
 
     @staticmethod
@@ -75,8 +77,8 @@ class RebatchLatents(Node):
         ) else None
 
     @classmethod
-    def execute(cls, *, latents: Any, batch_size: list[int]) -> Mapping[str, object]:
-        size = batch_size[0]
+    def execute(cls, *, latents: Any, batch_size: int) -> Mapping[str, object]:
+        size = batch_size
         torch = importlib.import_module("torch")
         latents = [materialize_latent(latent) for latent in latents]
         output_list: list[dict[str, Any]] = []
@@ -137,13 +139,13 @@ class RebatchImages(Node):
             node_type="RebatchImages",
             display_name="Rebatch Images",
             category="image/batch",
-            inputs=(InputSpec("images", _IMAGE), _batch_size()),
-            outputs=(OutputSpec("IMAGE", _IMAGE),),
+            inputs=(InputSpec("images", _IMAGES), _batch_size()),
+            outputs=(OutputSpec("IMAGE", _IMAGES),),
         )
 
     @classmethod
-    def execute(cls, *, images: Any, batch_size: list[int]) -> Mapping[str, object]:
-        size = batch_size[0]
+    def execute(cls, *, images: Any, batch_size: int) -> Mapping[str, object]:
+        size = batch_size
         torch = importlib.import_module("torch")
         frames = [
             image[index : index + 1]
