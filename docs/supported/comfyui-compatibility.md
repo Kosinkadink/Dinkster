@@ -23,6 +23,8 @@
   clones the encoder without changing the source under exact core interfaces.
 - FreeU and FreeU_V2 clone models and patch UNet output blocks under their
   exact core interfaces, including CPU Fourier fallback.
+- Video Linear CFG Guidance and Video Triangle CFG Guidance clone model
+  patchers and install their native frame-wise CFG callbacks under exact core IDs.
 - Ten native conditioning nodes combine, blend, concatenate, multiply, mask,
   zero, and set area or timestep metadata under their exact ComfyUI interfaces.
 - Native VAE inpainting encoding and model conditioning preserve crop, mask,
