@@ -11,6 +11,9 @@ socket matches an unrestricted native type-template socket, not a concrete
 type. List flags never wrap the reference declaration. On a list-flagged
 port only, the native type may be the declared type or one list wrapper
 around it. Unflagged and nested-list differences remain differences.
+Declared FLOAT bounds, step and round compare exactly after projecting the
+reference numbers to float; INT and field presence remain exact. Boolean
+round sentinels are not numeric precision values.
 
 Usage: python tools/compare_nodes.py COMFY_JSON REGISTRY_JSON OUT_CSV OUT_JSON
 """
@@ -104,6 +107,11 @@ def _reference_inputs(groups: dict[str, Any], list_inputs: bool = False) -> list
             for key in VALUE_OPTIONS:
                 if key in options:
                     entry[key] = options[key]
+            if entry["type"] in ("FLOAT", {"list": "FLOAT"}):
+                for key in ("min", "max", "step", "round"):
+                    value = entry.get(key)
+                    if isinstance(value, (int, float)) and not isinstance(value, bool):
+                        entry[key] = float(value)
             if entry.get("control_after_generate") is True:
                 entry["control_after_generate"] = "fixed"
             if entry.get("multiselect") is False:

@@ -541,8 +541,12 @@ def _widget_descriptor_from_wire(
                 None if raw is None else _number_constraint_from_wire(raw, field, wire_version)
             )
         round_value = widget_data.get("round")
-        if "round" in widget_data and type(round_value) not in (int, float):
-            raise ValueError("NUMBER widget round must be a number")
+        if (
+            "round" in widget_data
+            and round_value is not False
+            and type(round_value) not in (int, float)
+        ):
+            raise ValueError("NUMBER widget round must be False or a number")
         control = widget_data.get("controlAfterGenerate")
         if control is not None and (
             not isinstance(control, str) or control not in CONTROL_AFTER_GENERATE
@@ -559,7 +563,7 @@ def _widget_descriptor_from_wire(
             min=bounds["min"],
             max=bounds["max"],
             step=bounds["step"],
-            round=cast("int | float | None", round_value),
+            round=cast("int | float | Literal[False] | None", round_value),
             control_after_generate=cast("ControlAfterGenerate | None", control),
             display=cast("Any", display),
         )

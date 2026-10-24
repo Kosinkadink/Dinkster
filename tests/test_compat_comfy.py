@@ -684,6 +684,44 @@ def test_audio_float_bounds_remain_json_numbers(
     assert schema_from_wire(wire) == schema
 
 
+@pytest.mark.parametrize("socket", ["FLOAT", "INT"])
+@pytest.mark.parametrize(
+    "precision", [False, True, 0, 0.0, -1, float("nan"), float("inf"), None, 0.01]
+)
+def test_translated_round_preserves_only_float_no_round_or_positive_precision(
+    socket: str, precision: object
+) -> None:
+    class AngleNode:
+        RETURN_TYPES = ()
+        FUNCTION = "execute"
+
+        @classmethod
+        def INPUT_TYPES(cls):
+            return {
+                "required": {
+                    "angle": (
+                        socket,
+                        {"round": precision, "min": False, "max": True, "step": False},
+                    )
+                }
+            }
+
+        def execute(self, **kwargs):
+            return ()
+
+    schema = translate_node("AngleNode", AngleNode, CompatTranslation()).schema()
+    wire = schema_to_wire(schema)
+    entry = cast("list[dict[str, Any]]", wire["interface"])[0]
+    if socket == "FLOAT" and (precision is False or precision == 0.01):
+        assert entry["widget"] == {"type": "NUMBER", "round": precision}
+        assert type(entry["widget"]["round"]) is type(precision)
+        restored = schema_from_wire(wire)
+        assert isinstance(restored.inputs[0].widget, NumberWidget)
+        assert type(restored.inputs[0].widget.round) is type(precision)
+    else:
+        assert "widget" not in entry
+
+
 def test_ksampler_advanced_filters_unusable_numeric_metadata() -> None:
     class StringSubclass(str):
         pass

@@ -152,7 +152,21 @@ def test_alimama_preserves_original_inverse_mask_and_only_masks_when_required(
     assert source.cond_hint_original is None
 
 
-@pytest.mark.parametrize("name, expected", (("auto", []), ("openpose", [0]), ("repaint", [7])))
+@pytest.mark.parametrize(
+    "name, expected",
+    (
+        ("auto", []),
+        ("openpose", [0]),
+        ("depth", [1]),
+        ("hed/pidi/scribble/ted", [2]),
+        ("canny/lineart/anime_lineart/mlsd", [3]),
+        ("normal", [4]),
+        ("segment", [5]),
+        ("tile", [6]),
+        ("repaint", [7]),
+        ("unknown", []),
+    ),
+)
 def test_union_type_selection_copies_source(name: str, expected: list[int]) -> None:
     source = Control()
     source.set_extra_arg("retained", 4)
