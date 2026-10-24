@@ -1,7 +1,18 @@
 """CPU behavior for native ComfyUI noise nodes."""
 
+import asyncio
+import os
+import sys
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Any
+
 import torch
+from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr, materialize_latent
+from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.noise import AddNoise, DisableNoise, RandomNoise
+
+from dinkster.compose import PackSpec, ServingComposer
 
 
 def test_random_noise_uses_seeded_batch_indices_and_disable_noise_preserves_layout() -> None:
@@ -94,3 +105,121 @@ def test_add_noise_uses_absolute_endpoint_delta_and_transforms_nonzero_latents()
         model=_Model(), noise=Noise(), sigmas=torch.tensor([3.0]), latent_image=latent
     )["LATENT"]
     assert torch.equal(one_sigma["samples"], torch.tensor([[[[34.0, -2.0]]]]))
+
+
+class _PackSampling:
+    def noise_scaling(
+        self, scale: torch.Tensor, noise: torch.Tensor, latent: torch.Tensor
+    ) -> torch.Tensor:
+        return latent + noise * scale
+
+
+class _PackModel:
+    def get_model_object(self, name: str) -> object:
+        return {
+            "model_sampling": _PackSampling(),
+            "process_latent_in": lambda value: value + 1,
+            "process_latent_out": lambda value: value * 2,
+        }[name]
+
+
+class _Source(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="noise-fixture.source",
+            outputs=(
+                OutputSpec("model", TypeExpr.concrete("MODEL")),
+                OutputSpec("sigmas", TypeExpr.concrete("SIGMAS")),
+                OutputSpec("latent", TypeExpr.concrete("LATENT")),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> Mapping[str, object]:
+        return cls.outputs(
+            model=_PackModel(),
+            sigmas=torch.tensor([4.0, 1.0]),
+            latent={
+                "samples": torch.tensor([[[[1.0, -2.0]]], [[[3.0, 4.0]]]]),
+                "batch_index": [7, 3],
+                "note": "preserved",
+            },
+        )
+
+
+class _Consumer(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="noise-fixture.consumer",
+            inputs=(InputSpec("latent", TypeExpr.concrete("LATENT")),),
+            outputs=(OutputSpec("value", TypeExpr.concrete("FLOAT")),),
+        )
+
+    @classmethod
+    def execute(cls, *, latent: Any) -> Mapping[str, object]:
+        materialized = materialize_latent(latent)
+        assert materialized["note"] == "preserved"
+        return cls.outputs(value=float(materialized["samples"].sum()))
+
+
+def test_noise_nodes_cross_an_ordinary_complete_pack_twice_in_both_hosts(tmp_path: Path) -> None:
+    async def scenario(in_process: bool, noise_node: str) -> None:
+        manifest = Path(__file__).parents[1] / "dinkster-pack.toml"
+        fixture_module = f"noise_fixture_{in_process}_{noise_node.lower()}"
+        (tmp_path / f"{fixture_module}.py").write_text(
+            "from test_noise_torch import _Consumer, _Source\n"
+            "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+            "NODES = (*COMFY_NODES, _Source, _Consumer)\n",
+            encoding="ascii",
+        )
+        fixture_manifest = tmp_path / f"{fixture_module}.toml"
+        fixture_manifest.write_text(
+            manifest.read_text(encoding="ascii")
+            .replace("namespaces = [", 'namespaces = ["noise-fixture",')
+            .replace("dinkster_nodes_comfy:COMFY_NODES", f"{fixture_module}:NODES")
+            .replace(
+                "dinkster_nodes_comfy:register_inference_types",
+                f"{fixture_module}:register_inference_types",
+            ),
+            encoding="ascii",
+        )
+        composer = ServingComposer(
+            worker_env={
+                "PYTHONPATH": os.pathsep.join((str(Path(__file__).parent), *sys.path)),
+                "DINKSTER_ACCELERATOR": "cpu",
+            }
+        )
+        try:
+            await composer.add_pack(PackSpec(fixture_manifest, in_process=in_process))
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("noise-fixture.source"),
+                    "noise": GraphNode(noise_node, {"noise_seed": 42})
+                    if noise_node == "RandomNoise"
+                    else GraphNode(noise_node),
+                    "add": GraphNode(
+                        "AddNoise",
+                        {
+                            "model": Link("source", "model"),
+                            "noise": Link("noise", "NOISE"),
+                            "sigmas": Link("source", "sigmas"),
+                            "latent_image": Link("source", "latent"),
+                        },
+                    ),
+                    "consumer": GraphNode(
+                        "noise-fixture.consumer", {"latent": Link("add", "LATENT")}
+                    ),
+                }
+            )
+            engine = composer.composition.make_engine(lambda _event: None)
+            for _ in range(2):
+                result = await engine.run(graph, ["consumer"])
+                assert isinstance(result.outputs["consumer"]["value"].resolve(), float)
+        finally:
+            await composer.close()
+
+    for in_process in (True, False):
+        for noise_node in ("RandomNoise", "DisableNoise"):
+            asyncio.run(scenario(in_process, noise_node))
