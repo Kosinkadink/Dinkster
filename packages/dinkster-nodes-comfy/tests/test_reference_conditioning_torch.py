@@ -24,12 +24,12 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_inference.utils import common_upscale
 from dinkster_nodes_comfy.reference_conditioning import (
     InstructPixToPixConditioning,
     ReferenceLatent,
     ReferenceMultiLatent,
 )
+from PIL import Image
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -123,15 +123,19 @@ def test_reference_multi_latent_orders_resizes_and_preserves_inputs() -> None:
 
 def test_reference_multi_latent_without_vae_or_images_returns_empty_latent() -> None:
     positive = [[torch.tensor([2.0]), {"strength": 0.3}]]
+    ignored_image = _reference_multi_image2()
+    before = ignored_image.copy()
     result: Any = ReferenceMultiLatent.execute(
         positive=positive,
         resolution={"resolution": "resize", "megapixels": 0.01},
+        images={"image2": ignored_image},
     )
 
     assert result["negative"] is result["positive"]
     assert result["positive"] is positive
     assert result["empty_latent"]["samples"].shape == (1, 4, 12, 12)
     assert positive[0][1] == {"strength": 0.3}
+    assert np.array_equal(ignored_image, before)
 
 
 class ReferenceSource(Node):
@@ -184,12 +188,61 @@ class ReferenceMultiSource(Node):
     @classmethod
     def execute(cls) -> dict[str, object]:
         return cls.outputs(
-            positive=[["multi-positive", {"strength": 0.7}]],
-            negative=[["multi-negative", {"strength": 0.2}]],
+            positive=[
+                [
+                    torch.tensor([11.0, 17.0]),
+                    {"reference_latents": [torch.tensor([[[[7.0]]]])], "strength": 0.7},
+                ]
+            ],
+            negative=[
+                [
+                    torch.tensor([-11.0, -17.0]),
+                    {"reference_latents": [torch.tensor([[[[-7.0]]]])], "strength": 0.2},
+                ]
+            ],
             vae=ImageVAE(),
-            image2=np.full((1, 3, 5, 4), 0.25, dtype=np.float32),
-            image10=np.full((1, 5, 3, 4), 0.75, dtype=np.float32),
+            image2=_reference_multi_image2(),
+            image10=_reference_multi_image10(),
         )
+
+
+def _reference_multi_image2() -> np.ndarray[Any, Any]:
+    return (
+        np.array(
+            [
+                [[0, 19, 38], [57, 76, 95], [114, 133, 152], [171, 190, 209], [228, 247, 11]],
+                [[30, 49, 68], [87, 106, 125], [144, 163, 182], [201, 220, 239], [3, 22, 41]],
+                [[60, 79, 98], [117, 136, 155], [174, 193, 212], [231, 250, 14], [33, 52, 71]],
+            ],
+            dtype=np.uint8,
+        )[None].astype(np.float32)
+        / 255
+    )
+
+
+def _reference_multi_image10() -> np.ndarray[Any, Any]:
+    return (
+        np.array(
+            [
+                [[251, 232, 213], [194, 175, 156], [137, 118, 99]],
+                [[221, 202, 183], [164, 145, 126], [107, 88, 69]],
+                [[191, 172, 153], [134, 115, 96], [77, 58, 39]],
+                [[161, 142, 123], [104, 85, 66], [47, 28, 9]],
+                [[131, 112, 93], [74, 55, 36], [17, 253, 234]],
+            ],
+            dtype=np.uint8,
+        )[None].astype(np.float32)
+        / 255
+    )
+
+
+def _expected_pillow_lanczos(image: np.ndarray[Any, Any], width: int, height: int) -> torch.Tensor:
+    quantized = np.rint(image[0] * 255).astype(np.uint8)
+    resized = np.asarray(
+        Image.fromarray(quantized, mode="RGB").resize((width, height), Image.Resampling.LANCZOS),
+        dtype=np.float32,
+    )
+    return torch.from_numpy(resized[None]).movedim(-1, 1) / 127.5 - 1
 
 
 class MediaConditioningInspect(Node):
@@ -294,31 +347,52 @@ class ReferenceMultiInspect(Node):
         resized_negative_references = resized_negative[0][1]["reference_latents"]
         kept_references = kept[0][1]["reference_latents"]
         assert (
-            len(resized_references) == len(resized_negative_references) == len(kept_references) == 2
+            len(resized_references) == len(resized_negative_references) == len(kept_references) == 3
         )
-        assert resized_negative[0][0] == "multi-positive"
-        assert source_positive[0][0] == "multi-positive"
-        assert source_negative[0][0] == "multi-negative"
-        resized_first = materialize_image(resized_references[0])
-        resized_second = materialize_image(resized_references[1])
-        kept_first = materialize_image(kept_references[0])
-        kept_second = materialize_image(kept_references[1])
-        image2 = torch.full((1, 4, 3, 5), 63 / 255)
-        image10 = torch.full((1, 4, 5, 3), 191 / 255)
-        expected_resized_first = common_upscale(image2, 132, 79, "lanczos", "disabled") * 2 - 1
-        expected_resized_second = common_upscale(image10, 79, 132, "lanczos", "disabled") * 2 - 1
+        torch.testing.assert_close(torch.as_tensor(resized[0][0]), torch.tensor([11.0, 17.0]))
+        torch.testing.assert_close(
+            torch.as_tensor(resized_negative[0][0]), torch.tensor([11.0, 17.0])
+        )
+        torch.testing.assert_close(
+            torch.as_tensor(source_positive[0][0]), torch.tensor([11.0, 17.0])
+        )
+        torch.testing.assert_close(
+            torch.as_tensor(source_negative[0][0]), torch.tensor([-11.0, -17.0])
+        )
+        torch.testing.assert_close(
+            materialize_image(resized_references[0]), torch.tensor([[[[7.0]]]])
+        )
+        torch.testing.assert_close(materialize_image(kept_references[0]), torch.tensor([[[[7.0]]]]))
+        resized_first = materialize_image(resized_references[1])
+        resized_second = materialize_image(resized_references[2])
+        kept_first = materialize_image(kept_references[1])
+        kept_second = materialize_image(kept_references[2])
+        expected_resized_first = _expected_pillow_lanczos(_reference_multi_image2(), 132, 79)
+        expected_resized_second = _expected_pillow_lanczos(_reference_multi_image10(), 79, 132)
         torch.testing.assert_close(resized_first, expected_resized_first)
         torch.testing.assert_close(resized_second, expected_resized_second)
-        torch.testing.assert_close(kept_first, torch.full((1, 4, 3, 5), -0.5))
-        torch.testing.assert_close(kept_second, torch.full((1, 4, 5, 3), 0.5))
+        torch.testing.assert_close(
+            kept_first, torch.from_numpy(_reference_multi_image2()).movedim(-1, 1) * 2 - 1
+        )
+        torch.testing.assert_close(
+            kept_second, torch.from_numpy(_reference_multi_image10()).movedim(-1, 1) * 2 - 1
+        )
         torch.testing.assert_close(
             materialize_image(materialize_latent(resized_empty)["samples"]),
-            torch.zeros((1, 4, 79, 132)),
+            torch.zeros((1, 3, 79, 132)),
         )
         assert resized[0][1]["strength"] == 2.5
         assert kept[0][1]["strength"] == 3.5
-        assert source_positive[0][1] == {"strength": 0.7}
-        assert source_negative[0][1] == {"strength": 0.2}
+        assert source_positive[0][1]["strength"] == 0.7
+        assert source_negative[0][1]["strength"] == 0.2
+        torch.testing.assert_close(
+            materialize_image(source_positive[0][1]["reference_latents"][0]),
+            torch.tensor([[[[7.0]]]]),
+        )
+        torch.testing.assert_close(
+            materialize_image(source_negative[0][1]["reference_latents"][0]),
+            torch.tensor([[[[-7.0]]]]),
+        )
         return cls.outputs(value=float(resized_first[0, 0, 0, 0] + kept_first[0, 0, 0, 0]))
 
 
@@ -477,7 +551,11 @@ def test_ordinary_manifest_links_image_edit_and_reference_nodes(
                 assert result.outputs["inspect"]["pixel"].resolve() == -105 / 128
                 assert result.outputs["media_inspect"]["strength"].resolve() == 2.5
                 assert result.outputs["multi_inspect"]["value"].resolve() == pytest.approx(
-                    -127 / 255 - 0.5
+                    float(
+                        _expected_pillow_lanczos(_reference_multi_image2(), 132, 79)[0, 0, 0, 0]
+                        + _reference_multi_image2()[0, 0, 0, 0] * 2
+                        - 1
+                    )
                 )
                 if _:
                     assert set(result.cached) == {
