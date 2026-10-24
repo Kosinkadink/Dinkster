@@ -19,6 +19,7 @@ uv run --locked python -m pytest -q \
   tests/test_release_install.py \
   tests/test_schema.py \
   tests/test_schema_current_contracts.py \
+  tests/test_names.py \
   tests/test_comfy_controlnet_nodes.py \
   tests/test_validation_inputs.py \
   tests/test_values.py \
