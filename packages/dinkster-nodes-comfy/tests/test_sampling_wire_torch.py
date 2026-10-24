@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import os
 from pathlib import Path
 from typing import Any
 
@@ -116,27 +115,15 @@ class SigmaConsumer(Node):
 
 
 @pytest.mark.parametrize("case", ("float64", "noncontiguous-float32", "bfloat16", "empty"))
+@pytest.mark.parametrize("in_process", (True, False))
 def test_ordinary_manifest_sigma_producer_consumer_repeats_on_both_hosts(
-    tmp_path: Path, case: str
+    tmp_path: Path, case: str, in_process: bool
 ) -> None:
     async def scenario() -> None:
-        source_root = Path(__file__).resolve().parents[1] / "src"
-        repository_root = Path(__file__).resolve().parents[3]
-        package_sources = tuple((repository_root / "packages").glob("*/src"))
-        composer = ServingComposer(
-            worker_env={
-                "CUDA_VISIBLE_DEVICES": "",
-                "PYTHONPATH": os.pathsep.join(
-                    (
-                        str(Path(__file__).parent),
-                        *(str(path) for path in package_sources),
-                        str(source_root),
-                    )
-                ),
-            }
-        )
+        composer = ServingComposer(worker_env={"PYTHONPATH": str(Path(__file__).parent)})
         try:
-            (tmp_path / "sigma_fixture.py").write_text(
+            module = "sigma_fixture_" + case.replace("-", "_") + str(in_process)
+            (tmp_path / f"{module}.py").write_text(
                 "from test_sampling_wire_torch import SigmaConsumer, SigmaSource\n"
                 "from dinkster_inference_wire import register_inference_types\n"
                 "SOURCE_NODES = [SigmaSource]\n"
@@ -147,18 +134,18 @@ def test_ordinary_manifest_sigma_producer_consumer_repeats_on_both_hosts(
             consumer_manifest = tmp_path / "consumer-dinkster-pack.toml"
             source_manifest.write_text(
                 '[pack]\nname = "sigma-source"\nnamespaces = ["sigma-source"]\n'
-                '[pack.entry]\nnodes = "sigma_fixture:SOURCE_NODES"\n'
-                'types = "sigma_fixture:register_inference_types"\n',
+                f'[pack.entry]\nnodes = "{module}:SOURCE_NODES"\n'
+                f'types = "{module}:register_inference_types"\n',
                 encoding="ascii",
             )
             consumer_manifest.write_text(
                 '[pack]\nname = "sigma-consumer"\nnamespaces = ["sigma-consumer"]\n'
-                '[pack.entry]\nnodes = "sigma_fixture:CONSUMER_NODES"\n'
-                'types = "sigma_fixture:register_inference_types"\n',
+                f'[pack.entry]\nnodes = "{module}:CONSUMER_NODES"\n'
+                f'types = "{module}:register_inference_types"\n',
                 encoding="ascii",
             )
-            await composer.add_pack(PackSpec(manifest=source_manifest))
-            await composer.add_pack(PackSpec(manifest=consumer_manifest))
+            await composer.add_pack(PackSpec(manifest=source_manifest, in_process=in_process))
+            await composer.add_pack(PackSpec(manifest=consumer_manifest, in_process=in_process))
             graph = Graph(
                 nodes={
                     "source": GraphNode("sigma-source.source", {"case": case}),
@@ -173,9 +160,11 @@ def test_ordinary_manifest_sigma_producer_consumer_repeats_on_both_hosts(
                 f"{expected_tensor.dtype};{tuple(expected_tensor.shape)};"
                 f"{hashlib.sha256(_raw_bytes(expected_tensor)).hexdigest()}"
             )
-            for _ in range(2):
+            for attempt in range(2):
                 result = await engine.run(graph, ["consumer"])
                 assert result.outputs["consumer"]["summary"].resolve() == expected
+                if attempt:
+                    assert set(result.cached) == {"source", "consumer"}
         finally:
             await composer.close()
 
