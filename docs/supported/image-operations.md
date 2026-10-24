@@ -36,6 +36,9 @@
   are supported, while unavailable platforms refuse explicitly
 - Pointwise invert, normalize, brightness, and contrast adjustment; Gaussian
   blur, sharpen, quantize, seeded noise, and bounded image morphology
+- ComfyUI SDR-to-HDR and image color-space conversion with Rec.2020 HLG/PQ,
+  Rec.709 linear, ACEScg/ACEScct, and LogC3 transforms; straight alpha is
+  preserved
 - RGB and YCbCr channel split/merge plus explicit alpha extraction and joining
 - Explicit coverage/transparency mask polarity, with migration of saved polarity
   controls; mask polarity inversion and RGBA premultiply/unpremultiply nodes
