@@ -54,7 +54,7 @@ class SaveText(Node):
             description="Save text content to a file in the output directory.",
             search_terms=("save text", "write text", "export text"),
             inputs=(
-                InputSpec("text", _STRING, force_input=True, widget=StringWidget()),
+                InputSpec("text", _STRING, force_input=True, widget=StringWidget(multiline=False)),
                 InputSpec(
                     "filename_prefix",
                     _STRING,
@@ -92,7 +92,7 @@ class SaveText(Node):
         data = _render(text, format)
         writer = _writer()
         writer.save_bytes(
-            writer.output_target(filename_prefix, mount=mount),
+            writer.output_target(filename_prefix, mount=mount, image_width=1, image_height=1),
             data,
             suffix=f".{format}",
             media_type="application/json" if format == "json" else "text/plain",

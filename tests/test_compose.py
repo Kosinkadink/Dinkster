@@ -1058,11 +1058,11 @@ def test_compose_serving_default_resolution_is_atomic(
         ),
         (
             "dinkster-nodes-media-io",
-            "blake3:a5fc9c2f4806f4ad77f3c86e60c0d32159adac1bfad07bcc7739f4addf2d7077",
+            "blake3:76b4f2ab36f964b80382d2ee61f7e4092956df21540b23fff4da1faa8b2975e7",
         ),
         (
             "dinkster-nodes-image",
-            "blake3:a180405873344dee9917988731061852d48f017894d709edc505c709c2159535",
+            "blake3:2939448809f359f767e8575ece6c5b466b990c6a30aaba84a4fd63acbde63191",
         ),
         (
             "dinkster-nodes-remote",
@@ -1537,8 +1537,14 @@ def test_compose_dev_pack_adds_scaffold_nodes() -> None:
     """The development manifest composes its complete node surface."""
     from dinkster_nodes_dev import PACK_NODES
 
+    from dinkster.compose import development_pack_spec
+
     async def scenario() -> None:
-        composition = await compose_serving([PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)])
+        with pytest.raises(CompositionError, match="explicit host trust"):
+            await compose_serving([DEV_PACK_MANIFEST])
+        spec = development_pack_spec()
+        assert Path(spec.manifest).resolve() == DEV_PACK_MANIFEST.resolve()
+        composition = await compose_serving([spec])
         try:
             expected = set(build_schemas(DEFAULT_NODES)) | set(build_schemas(PACK_NODES))
             assert set(composition.schemas) == expected

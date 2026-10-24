@@ -9,6 +9,10 @@
 - MiniMax H3 supports text-to-video conditioning through the pinned
   `dinkster_inference` runtime. First/last-frame, reference image, clip, and audio
   guide conditioning are unsupported.
+- Stable Zero123 and Stable Video 3D image conditioning execute through the pinned
+  `dinkster_inference` runtime.
+- Native Stable Audio conditioning attaches start and total seconds to both prompt
+  streams. Video percentage-area conditioning preserves temporal and spatial bounds.
 - Typed absence remains a Dinkster engine contract: `core.absent` values,
   optional outputs, per-input absence policies, and skip propagation.
 - Native ControlNet application supports both legacy and scheduled positive/negative

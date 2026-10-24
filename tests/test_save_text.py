@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 
 import pytest
-from dinkster_api.v1 import ComboWidget
+from dinkster_api.v1 import ComboWidget, StringWidget
 from dinkster_assets import AssetError
 from dinkster_graph import Graph, GraphNode
 from dinkster_nodes_comfy.save_text import SaveText
@@ -28,6 +28,7 @@ def test_save_text_schema_preserves_core_contract_and_appends_mount() -> None:
         "mount",
     )
     assert schema.inputs[0].force_input
+    assert schema.inputs[0].widget == StringWidget(multiline=False)
     assert schema.inputs[1].default == "ComfyUI"
     assert schema.inputs[2].default == "txt"
     assert isinstance(schema.inputs[2].widget, ComboWidget)
@@ -71,12 +72,15 @@ def test_save_text_writes_default_and_explicit_mounts(
         "text": original
     }
     assert SaveText.execute(
-        text="alternate\n", filename_prefix="notes/alternate", format="md", mount="alternate"
+        text="alternate\n",
+        filename_prefix="notes/%width%x%height%-%unknown%",
+        format="md",
+        mount="alternate",
     ) == {"text": "alternate\n"}
     assert (roots["default"] / "notes" / "default_00001.json").read_bytes() == (
         b'{\n  "greeting": "cafe"\n}'
     )
-    assert (roots["alternate"] / "notes" / "alternate_00001.md").read_bytes() == b"alternate\n"
+    assert (roots["alternate"] / "notes" / "1x1-%unknown%_00001.md").read_bytes() == b"alternate\n"
 
 
 def test_save_text_collisions_and_security_boundaries(
@@ -136,7 +140,11 @@ def test_save_text_executes_through_the_ordinary_manifest(
                 nodes={
                     "save": GraphNode(
                         "SaveText",
-                        {"text": "manifest\n", "filename_prefix": "manifest", "format": "txt"},
+                        {
+                            "text": "manifest\n",
+                            "filename_prefix": "manifest/%width%x%height%",
+                            "format": "txt",
+                        },
                     )
                 }
             )
@@ -148,5 +156,5 @@ def test_save_text_executes_through_the_ordinary_manifest(
             await composer.close()
 
     asyncio.run(scenario())
-    assert (roots["default"] / "manifest_00001.txt").read_bytes() == b"manifest\n"
-    assert (roots["default"] / "manifest_00002.txt").read_bytes() == b"manifest\n"
+    assert (roots["default"] / "manifest" / "1x1_00001.txt").read_bytes() == b"manifest\n"
+    assert (roots["default"] / "manifest" / "1x1_00002.txt").read_bytes() == b"manifest\n"

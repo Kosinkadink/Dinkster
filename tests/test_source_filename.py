@@ -4,6 +4,7 @@ import dataclasses
 from typing import Any, cast
 
 import pytest
+from dinkster_api.v1 import VIDEO_TYPE
 from dinkster_assets import AssetRef, digest_bytes
 from dinkster_compat_comfy import CompatError, CompatTranslation
 from dinkster_compat_comfy.translate import translate_node
@@ -192,7 +193,7 @@ def test_typed_asset_upload_widget_requires_source_binding() -> None:
     # declare source_filename like any other upload input: the frontend
     # decoder rejects the schema otherwise, silently dropping the node from
     # the catalog (dinkster.load_video shipped this way).
-    typed = TypeExpr.asset_of(TypeExpr.concrete("comfy.VIDEO"))
+    typed = TypeExpr.asset_of(TypeExpr.concrete(VIDEO_TYPE))
     widget = AssetWidget(accept=("video/mp4",), kind="media/video", allow_upload=True)
     with pytest.raises(ValueError, match="requires a source filename binding"):
         InputSpec("video", typed, widget=widget)

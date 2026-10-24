@@ -19,7 +19,13 @@ uv run --locked python -m pytest -q \
   tests/test_release_install.py \
   tests/test_schema.py \
   tests/test_schema_current_contracts.py \
+  tests/test_comfy_controlnet_nodes.py \
   tests/test_validation_inputs.py \
   tests/test_values.py \
   tests/test_graph.py \
-  tests/test_graph_wire.py
+  tests/test_graph_wire.py \
+  tests/test_vision_capability_schemas.py \
+  tests/test_compose.py::test_compose_dev_pack_adds_scaffold_nodes \
+  tests/test_serve.py::test_serve_rejects_removed_dev_argument \
+  tests/test_serve.py::test_serve_development_pack_is_explicitly_trusted \
+  tests/test_compat_comfy.py::test_compat_worker_type_ownership_preserves_image_dependency

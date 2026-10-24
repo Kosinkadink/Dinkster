@@ -19,6 +19,10 @@
   lists of their matching primitive type, retaining numeric constraints and wire
   defaults unchanged. This schema support does not provide frontend list-value
   submission or scalar-to-list execution coercion.
+- FLOAT number descriptors, including one-level FLOAT lists, accept `round: false`
+  for explicit no-round presentation, or a positive finite numeric precision.
+  Omission leaves precision unspecified; false is distinct from numeric zero.
+  This backend schema support does not claim frontend editor support.
 - Node schemas can declare presentation-only editor roles and JSON-safe custom
   widget descriptors. Clients use these declarations without matching node IDs;
   native video trim and crop declare their exact `VIDEO_EDIT` features.
