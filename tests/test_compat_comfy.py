@@ -359,6 +359,7 @@ def test_compat_worker_type_ownership_preserves_image_dependency(
 
     root = Path(__file__).parents[1] / "packages"
     manifest = load_manifest(root / "dinkster-compat-comfy/dinkster-pack.toml")
+    assert "comfy.CONTROL_NET" not in manifest.type_namespaces
     translation = CompatTranslation()
     translation.opaque_types.update(core_schema_snapshot()["opaqueTypes"])
     manifest = dataclasses.replace(
@@ -388,6 +389,7 @@ def test_compat_worker_type_ownership_preserves_image_dependency(
     assert published.owner_of("comfy.AUDIO_ENCODER") == manifest.name
     assert published.owner_of("comfy.LAYERS") == image.name
     assert published.owner_of("comfy.COMPOSITOR") == image.name
+    assert published.owner_of(CONTROL_NET_TYPE) == "dinkster-nodes-foundation"
     with registry.registering_pack(manifest.name, manifest.type_namespaces, allow_bare=True):
         with pytest.raises(ValueError, match="outside its declared type claims"):
             registry.register("comfy.UNDECLARED")
