@@ -25,6 +25,10 @@
   attaches image conditioning to both prompt streams, and returns a zero latent.
 - Native `ReferenceLatent` appends a guiding latent to conditioning while
   preserving existing references; an unconnected latent leaves conditioning unchanged.
+- `MiniMaxMusic3TextEncode` encodes captions and lyrics with duration, seed, and
+  guidance controls, returning acoustic conditioning and its duration.
+- `ReferenceTimbreAudio` appends audio timbre latents to conditioning; an
+  unconnected latent leaves conditioning unchanged.
 - Hook-bearing native conditioning retains its runtime hook groups across node
   links. Releasing a referenced hook invalidates dependent conditioning and caches.
 - Other model-family conditioning surfaces are unsupported.

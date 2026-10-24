@@ -7,6 +7,7 @@ from .attention_multiply import ATTENTION_MULTIPLY_NODES
 from .audio_combine import AUDIO_COMBINE_NODES
 from .audio_generators import AUDIO_GENERATOR_NODES
 from .audio_latent import AUDIO_LATENT_NODES
+from .audio_music_conditioning import AUDIO_MUSIC_CONDITIONING_NODES
 from .audio_transform import AUDIO_TRANSFORM_NODES
 from .cache import CACHE_NODES
 from .cfg_guidance import CFG_GUIDANCE_NODES
@@ -118,6 +119,7 @@ COMFY_NODES = (
     *AUDIO_COMBINE_NODES,
     *AUDIO_GENERATOR_NODES,
     *AUDIO_LATENT_NODES,
+    *AUDIO_MUSIC_CONDITIONING_NODES,
     *AUDIO_TRANSFORM_NODES,
     *DATASET_IMAGE_NODES,
     *SIGMA_SCHEDULER_NODES,
