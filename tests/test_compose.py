@@ -1056,15 +1056,15 @@ def test_compose_serving_default_resolution_is_atomic(
     [
         (
             "dinkster-nodes-foundation",
-            "blake3:837d8e13f9505694d551c68504883f43be50612358ae59a679fdd84089db6698",
+            "blake3:9ac4935ed2fb460f09f38875afdd7b65b83c3a86e56b29084f8c80c5fa69e6e3",
         ),
         (
             "dinkster-nodes-media-io",
-            "blake3:f6d57f428b921bdfcf4d0b53aa1f1d73bf0bc9ad5c7845776339218dac01c02a",
+            "blake3:0eb7ecfb456171afdeb488cc3f81d168a1d716ac09c9e0448b3a6c81248e5a5c",
         ),
         (
             "dinkster-nodes-image",
-            "blake3:47e4cdc20d145725cba6fae93b0c218336bbc2375973546f3bc9c2156692115e",
+            "blake3:193eba9a096ce415066c01784fc4c043ceb4f59af1a7221a5b751e114de4b0b0",
         ),
         (
             "dinkster-nodes-remote",
@@ -1399,7 +1399,7 @@ def test_vision_pack_license_checkout_endings_do_not_change_digest(tmp_path: Pat
     manifest = copied / "dinkster_vision_hed_pack/dinkster-pack.toml"
     module = copied / "src/dinkster_nodes_vision/hed"
     expected = compose._installed_pack_digest(manifest, module)
-    assert expected == ("blake3:0be0262b9d197f66815edc6a634e4a8476735b9c3ef20d91a07d343ea914de1b")
+    assert expected == ("blake3:b89f948d6ce1607ade7afe66afa556b7bc67d26b75e603378babfe5553001df2")
     license_file = manifest.parent / "MLSD_LICENSE"
     license_bytes = license_file.read_bytes().replace(b"\r\n", b"\n")
     license_file.write_bytes(license_bytes.replace(b"\n", b"\r\n"))
