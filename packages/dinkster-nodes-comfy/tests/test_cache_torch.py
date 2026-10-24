@@ -7,7 +7,8 @@ from typing import Any
 
 import torch
 from dinkster_api.v1 import (
-    CORE_STRING,
+    CORE_FLOAT,
+    MODEL_TYPE,
     InputSpec,
     Node,
     NodeSchema,
@@ -152,45 +153,69 @@ def test_cache_nodes_install_the_inference_wrapper_points() -> None:
         assert type(patched.model_options["transformer_options"]["easycache"]) is node.holder_type
 
 
-_STRING = TypeExpr.concrete(CORE_STRING)
+_MODEL = TypeExpr.concrete(MODEL_TYPE)
 
 
-class CacheSource(Node):
+class CacheModel:
+    class Inner:
+        class LatentFormat:
+            latent_channels = 2
+
+        latent_format = LatentFormat()
+
+    model = Inner()
+
+    def __init__(self, model_options: dict[str, Any] | None = None) -> None:
+        self.model_options = model_options or {"transformer_options": {}}
+        self.wrappers: list[tuple[str, str, object]] = []
+
+    def clone(self) -> CacheModel:
+        cloned = CacheModel(
+            {"transformer_options": self.model_options["transformer_options"].copy()}
+        )
+        cloned.wrappers = self.wrappers.copy()
+        return cloned
+
+    def add_wrapper_with_key(self, point: str, key: str, wrapper: object) -> None:
+        self.wrappers.append((point, key, wrapper))
+
+
+class ModelSource(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
-            node_type="cache-source.source",
-            outputs=(OutputSpec("value", _STRING),),
+            node_type="cache-fixture.source",
+            outputs=(OutputSpec("MODEL", _MODEL),),
         )
 
     @classmethod
     def execute(cls) -> dict[str, object]:
-        holder = _holder(LazyCacheHolder)
-        source = torch.zeros((1, 2, 4, 4))
-        result = lazycache_predict_noise_wrapper(
-            lambda value, _timestep, _options: value + 4,
-            source,
-            torch.tensor([0.5]),
-            {"transformer_options": {"easycache": holder}},
-        )
-        return cls.outputs(value=str(result.sum().item()))
+        return cls.outputs(MODEL=CacheModel())
 
 
-class CacheConsumer(Node):
+class ModelConsumer(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
-            node_type="cache-consumer.consumer",
-            inputs=(InputSpec("value", _STRING),),
-            outputs=(OutputSpec("value", _STRING),),
+            node_type="cache-fixture.consumer",
+            inputs=(InputSpec("model", _MODEL), InputSpec("source", _MODEL)),
+            outputs=(OutputSpec("value", TypeExpr.concrete(CORE_FLOAT)),),
         )
 
     @classmethod
-    def execute(cls, *, value: str) -> dict[str, object]:
-        return cls.outputs(value=value)
+    def execute(cls, *, model: CacheModel, source: CacheModel) -> dict[str, object]:
+        assert source.wrappers == []
+        assert [(point, key) for point, key, _ in model.wrappers] == [
+            ("outer_sample", "easycache"),
+            ("calc_cond_batch", "easycache"),
+            ("diffusion_model", "easycache"),
+            ("outer_sample", "lazycache"),
+            ("predict_noise", "lazycache"),
+        ]
+        return cls.outputs(value=float(len(model.wrappers)))
 
 
-def test_cache_callback_executes_twice_in_both_ordinary_hosts(tmp_path: Any) -> None:
+def test_cache_nodes_execute_twice_in_both_ordinary_hosts(tmp_path: Any) -> None:
     async def scenario(in_process: bool) -> None:
         composer = ServingComposer(
             worker_env={"PYTHONPATH": str(Path(__file__).parent), "DINKSTER_ACCELERATOR": "cpu"}
@@ -198,35 +223,39 @@ def test_cache_callback_executes_twice_in_both_ordinary_hosts(tmp_path: Any) -> 
         try:
             module = f"cache_fixture_{in_process}"
             (tmp_path / f"{module}.py").write_text(
-                "from test_cache_torch import CacheConsumer, CacheSource\n"
-                "SOURCE_NODES = (CacheSource,)\nCONSUMER_NODES = (CacheConsumer,)\n",
+                "from test_cache_torch import ModelConsumer, ModelSource\n"
+                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "NODES = (*COMFY_NODES, ModelSource, ModelConsumer)\n",
                 encoding="ascii",
             )
-            source_manifest = tmp_path / "source.toml"
-            consumer_manifest = tmp_path / "consumer.toml"
-            for manifest, nodes, namespace in (
-                (source_manifest, "SOURCE_NODES", "cache-source"),
-                (consumer_manifest, "CONSUMER_NODES", "cache-consumer"),
-            ):
-                manifest.write_text(
-                    f'[pack]\nname = "{namespace}"\npublisher = "dinkster"\n'
-                    f'namespaces = ["{namespace}"]\n[pack.entry]\nnodes = "{module}:{nodes}"\n',
-                    encoding="ascii",
-                )
-            await composer.add_pack(PackSpec(source_manifest, in_process=in_process))
-            await composer.add_pack(PackSpec(consumer_manifest, in_process=in_process))
+            manifest = Path(__file__).parents[1] / "dinkster-pack.toml"
+            fixture_manifest = tmp_path / "dinkster-pack.toml"
+            fixture_manifest.write_text(
+                manifest.read_text(encoding="ascii")
+                .replace("namespaces = [", 'namespaces = ["cache-fixture",')
+                .replace("dinkster_nodes_comfy:COMFY_NODES", f"{module}:NODES")
+                .replace(
+                    "dinkster_nodes_comfy:register_inference_types",
+                    f"{module}:register_inference_types",
+                ),
+                encoding="ascii",
+            )
+            await composer.add_pack(PackSpec(manifest=fixture_manifest, in_process=in_process))
             graph = Graph(
                 nodes={
-                    "source": GraphNode("cache-source.source", {}),
+                    "source": GraphNode("cache-fixture.source", {}),
+                    "easy": GraphNode("EasyCache", {"model": Link("source", "MODEL")}),
+                    "lazy": GraphNode("LazyCache", {"model": Link("easy", "MODEL")}),
                     "consumer": GraphNode(
-                        "cache-consumer.consumer", {"value": Link("source", "value")}
+                        "cache-fixture.consumer",
+                        {"model": Link("lazy", "MODEL"), "source": Link("source", "MODEL")},
                     ),
                 }
             )
             engine = composer.composition.make_engine(lambda _event: None)
             for _ in range(2):
                 result = await engine.run(graph, ["consumer"])
-                assert result.outputs["consumer"]["value"].resolve() == "128.0"
+                assert result.outputs["consumer"]["value"].resolve() == 5.0
         finally:
             await composer.close()
 

@@ -97,7 +97,7 @@ class _CacheHolder:
         return False
 
     def reset(self) -> _CacheHolder:
-        self.relative_transformation_rate: Any | None = None
+        self.relative_transformation_rate: Any = 0.0
         self.cumulative_change_rate = 0.0
         self.initial_step = True
         self.skip_current_step = False
