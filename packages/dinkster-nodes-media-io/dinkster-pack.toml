@@ -3,6 +3,7 @@
 
 [pack]
 name = "dinkster-nodes-media-io"
+publisher = "dinkster"
 # dinkster is reserved. This first-party pack receives explicit host trust but
 # otherwise follows the same composition path as every pack.
 namespaces = ["dinkster"]

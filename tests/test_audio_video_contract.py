@@ -573,7 +573,8 @@ def test_remote_audio_stages_once_and_decodes_exact_edited_window(tmp_path, monk
     expected = TrimAudio.execute(audio=source, start=0.113, duration=0.751)["audio"]
     manifest = tmp_path / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname = "audio-contract"\nnamespaces = ["dinkster"]\n'
+        '[pack]\nname = "audio-contract"\npublisher = "dinkster"\n'
+        'type-namespaces = ["dinkster"]\nnamespaces = ["dinkster"]\n'
         '[pack.entry]\nnodes = "dinkster_nodes_media_io:AUDIO_OPS_NODES"\n'
         'types = "dinkster_nodes_media_io:register_media_types"\n'
     )

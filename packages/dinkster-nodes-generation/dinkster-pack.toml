@@ -1,5 +1,6 @@
 [pack]
 name = "dinkster-nodes-generation"
+publisher = "dinkster"
 namespaces = ["comfy", "dinkster"]
 schema-only = [
     "dinkster.load_checkpoint",

@@ -48,6 +48,7 @@ from dinkster_schema.replace import rule_to_wire
 from dinkster_schema.wire import schema_to_wire
 from layer_comfy_aliases import layer_alias_data
 
+SOURCE_IMAGE = "comfy.IMAGE"
 COMFY_BASELINE = "b78cec879b9460d5cb25228a83a942fb78d2cd24"
 MTB_BASELINE = "b35b5d8a17c0d59e80a8b3627b679c2c1003d04f"
 KJ_BASELINE = "827fe6ee0ed7348d8daa988ed852bedf1272380c"
@@ -486,7 +487,7 @@ def _dynamic_image_schema(schema: NodeSchema) -> NodeSchema:
         input_families=(
             InputFamilySpec(
                 "images",
-                TypeExpr.concrete("comfy.IMAGE"),
+                TypeExpr.concrete(SOURCE_IMAGE),
                 min_members=1,
                 max_members=1000,
                 member_prefix="image_",

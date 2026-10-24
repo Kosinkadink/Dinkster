@@ -24,7 +24,7 @@ from dinkster_workers.execution import use_execution_context
 
 
 def _schema(*, listed: bool = False) -> NodeSchema:
-    asset = TypeExpr.concrete("dinkster.asset")
+    asset = TypeExpr.concrete("ASSET")
     return NodeSchema(
         node_type="test.source-filename",
         inputs=(
@@ -57,7 +57,7 @@ def test_source_filename_model_is_frozen_strict_and_signature_significant() -> N
     with pytest.raises(ValueError, match="requires an upload-enabled ASSET widget"):
         InputSpec(
             "source",
-            TypeExpr.concrete("dinkster.asset"),
+            TypeExpr.concrete("ASSET"),
             source_filename=source,
         )
     with pytest.raises(ValueError, match="requires a scalar asset or list of assets"):
@@ -98,7 +98,7 @@ def _model3d_schema() -> NodeSchema:
         inputs=(
             InputSpec(
                 "model_file",
-                TypeExpr.asset_of(TypeExpr.concrete("dinkster.model3d")),
+                TypeExpr.asset_of(TypeExpr.concrete("MODEL3D")),
                 source_filename=SourceFilenameSpec("media/model3d", "input"),
                 widget=AssetWidget(
                     accept=("model/gltf-binary",),
@@ -122,9 +122,9 @@ def test_model3d_source_filename_roundtrip() -> None:
 
 
 def test_signature_basis_covers_model3d_and_keeps_prior_signatures() -> None:
-    # This pre-model3d signature must never move; a change here means cache
-    # keys drifted.
-    assert schema_signature(_schema()) == "a5f4d7ad940047fe84496c165b176c88b40dead2"
+    # Pin the signature for the canonical ASSET vocabulary; model3d support
+    # must not change schemas that do not use it.
+    assert schema_signature(_schema()) == "d4518a7b1ae2855b2ea80088a615af6ecac536a0"
     model3d = schema_signature(_model3d_schema())
     assert model3d != schema_signature(_schema())
     image_bound = dataclasses.replace(
@@ -145,7 +145,7 @@ def test_signature_basis_covers_model3d_and_keeps_prior_signatures() -> None:
 
 
 def test_list_asset_widget_representations_cannot_bypass_source_binding() -> None:
-    asset_list = TypeExpr.list_of(TypeExpr.concrete("dinkster.asset"))
+    asset_list = TypeExpr.list_of(TypeExpr.concrete("ASSET"))
 
     def representations(*, allow_upload: bool) -> WidgetRepresentations:
         return WidgetRepresentations(
@@ -219,7 +219,7 @@ def test_source_filename_golden_is_encoder_authored() -> None:
                 "id": "source",
                 "type": {
                     "kind": "list",
-                    "element": {"kind": "concrete", "types": ["dinkster.asset"]},
+                    "element": {"kind": "concrete", "types": ["ASSET"]},
                 },
                 "required": True,
                 "widget": {
@@ -262,7 +262,7 @@ def test_v1_source_filename_translation_and_execution_use_only_materializer() ->
     source = _source_node({"video_upload": True, "image_folder": "temp", "forceInput": True})
     node = translate_node("SourceVideo", source, translation)
     (spec,) = node.schema().inputs
-    assert spec.type == TypeExpr.concrete("dinkster.asset")
+    assert spec.type == TypeExpr.concrete("ASSET")
     assert spec.source_filename == SourceFilenameSpec("media/video", "temp")
     assert spec.force_input is True
     assert spec.widget == AssetWidget(
@@ -294,7 +294,7 @@ def test_v1_declared_source_list_preserves_order_and_duplicates() -> None:
     source = _source_node({"audio_upload": True, "multiselect": True})
     node = translate_node("SourceAudioList", source, CompatTranslation())
     (spec,) = node.schema().inputs
-    assert spec.type == TypeExpr.list_of(TypeExpr.concrete("dinkster.asset"))
+    assert spec.type == TypeExpr.list_of(TypeExpr.concrete("ASSET"))
     first = _ref("one.wav")
     second = _ref("two.wav")
     calls: list[AssetRef] = []
