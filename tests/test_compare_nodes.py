@@ -209,21 +209,19 @@ def test_exact_ids_and_file_widget_exemption(list_inputs: bool) -> None:
             {
                 "role": "output",
                 "id": "model",
-                "type": {"kind": "list", "element": {"kind": "concrete", "types": ["MODEL"]}},
+                "type": {"kind": "concrete", "types": ["MODEL"]},
             },
         ],
     }
     registry = {"nodes": {"LoadExample": schema, "Extra": {"nodeType": "Extra", "interface": []}}}
-    if list_inputs:
-        schema["interface"][0]["type"] = {
-            "kind": "list",
-            "element": {"kind": "concrete", "types": ["COMBO"]},
-        }
     summary = compare_registry(reference, registry)
     assert summary["passed"]
     assert summary["counts"] == {"identical": 1, "Dinkster-only": 1}
 
-    schema["interface"][1]["type"] = {"kind": "concrete", "types": ["MODEL"]}
+    schema["interface"][1]["type"] = {
+        "kind": "list",
+        "element": {"kind": "concrete", "types": ["MODEL"]},
+    }
     assert not compare_registry(reference, registry)["passed"]
 
     del registry["nodes"]["LoadExample"]
@@ -231,6 +229,100 @@ def test_exact_ids_and_file_widget_exemption(list_inputs: bool) -> None:
     summary = compare_registry(reference, registry)
     assert not summary["passed"]
     assert summary["counts"] == {"absent": 1, "Dinkster-only": 1}
+
+
+@pytest.fixture
+def example_contract() -> tuple[dict, dict]:
+    return (
+        {
+            "class_name": "Example",
+            "input_types": {"required": {"value": ["INT"]}},
+            "return_types": ["INT", "FLOAT"],
+            "return_names": None,
+        },
+        {
+            "nodeType": "Example",
+            "interface": [
+                {"role": "input", "id": "value", "type": {"kind": "concrete", "types": ["INT"]}},
+                {"role": "output", "id": "first", "type": {"kind": "concrete", "types": ["INT"]}},
+                {
+                    "role": "output",
+                    "id": "second",
+                    "type": {"kind": "concrete", "types": ["FLOAT"]},
+                },
+            ],
+        },
+    )
+
+
+def test_hidden_inputs_do_not_hide_public_input_drift(example_contract: tuple[dict, dict]) -> None:
+    from tools.compare_nodes import compare
+
+    reference, native = example_contract
+    reference["input_types"]["hidden"] = {"dynprompt": ["DYNPROMPT"]}
+    native["interface"].insert(
+        0,
+        {
+            "role": "input",
+            "id": "execution_context",
+            "hidden": True,
+            "type": {"kind": "wildcard"},
+        },
+    )
+    assert compare(reference, native) == []
+    native["interface"][1]["id"] = "renamed"
+    assert any("name" in difference for difference in compare(reference, native))
+
+
+def test_unnamed_outputs_still_compare_type_position_and_explicit_names(
+    example_contract: tuple[dict, dict],
+) -> None:
+    from tools.compare_nodes import compare
+
+    reference, native = example_contract
+    assert compare(reference, native) == []
+    native["interface"][1:3] = reversed(native["interface"][1:3])
+    assert any("outputs[0].type" in difference for difference in compare(reference, native))
+    native["interface"][1:3] = reversed(native["interface"][1:3])
+    reference["return_names"] = ["INT", "FLOAT"]
+    assert any("outputs[0].name" in difference for difference in compare(reference, native))
+
+
+@pytest.mark.parametrize("direction,index", [("input", 0), ("output", 1)])
+def test_wildcard_accepts_template_but_not_concrete_or_restricted_type(
+    example_contract: tuple[dict, dict], direction: str, index: int
+) -> None:
+    from tools.compare_nodes import compare
+
+    reference, native = example_contract
+    if direction == "input":
+        reference["input_types"]["required"]["value"] = ["*"]
+    else:
+        reference["return_types"][0] = "*"
+    native["interface"][index]["type"] = {"kind": "variable", "templateId": "carry"}
+    assert compare(reference, native) == []
+    native["interface"][index]["type"]["allowed"] = ["INT"]
+    assert compare(reference, native)
+    native["interface"][index]["type"] = {"kind": "concrete", "types": ["INT"]}
+    assert compare(reference, native)
+
+
+@pytest.mark.parametrize("input_list,output_list", [(False, True), (True, False), (True, True)])
+def test_list_execution_flags_do_not_change_declared_socket_types(
+    example_contract: tuple[dict, dict], input_list: bool, output_list: bool
+) -> None:
+    from tools.compare_nodes import compare
+
+    reference, native = example_contract
+    reference["input_is_list"] = input_list
+    reference["output_is_list"] = [output_list, False]
+    assert compare(reference, native) == []
+    index = 0 if input_list else 1
+    native["interface"][index]["type"] = {
+        "kind": "list",
+        "element": {"kind": "concrete", "types": ["INT"]},
+    }
+    assert compare(reference, native)
 
 
 @pytest.mark.parametrize("kind", ["autogrow", "group", "combo"])

@@ -3,6 +3,12 @@
 Derived from the node-interface comparison in comfy-vibe-station issue 504.
 Only exact class ids match. Aliases, labels and namespace rewrites never match
 an id or a value. The only additional input is an appended optional save mount.
+Hidden inputs are outside the workflow contract on both sides. Output names
+count only when the reference declares RETURN_NAMES (or explicit V3 output
+labels); dumps must leave return_names null when names are synthesized.
+Unnamed outputs compare by type and position. A reference wildcard
+socket matches an unrestricted native type-template socket, not a concrete
+type. INPUT_IS_LIST and OUTPUT_IS_LIST do not change declared socket types.
 
 Usage: python tools/compare_nodes.py COMFY_JSON REGISTRY_JSON OUT_CSV OUT_JSON
 """
@@ -58,9 +64,9 @@ def _type(expr: dict[str, Any]) -> Any:
     return {"unknown_type": expr}
 
 
-def _reference_inputs(groups: dict[str, Any], list_inputs: bool = False) -> list[dict[str, Any]]:
+def _reference_inputs(groups: dict[str, Any]) -> list[dict[str, Any]]:
     result = []
-    for group in ("required", "optional", "hidden"):
+    for group in ("required", "optional"):
         for name, spec in groups.get(group, {}).items():
             value_type = spec[0] if isinstance(spec, list) else spec
             options = spec[1] if isinstance(spec, list) and len(spec) > 1 else {}
@@ -76,14 +82,14 @@ def _reference_inputs(groups: dict[str, Any], list_inputs: bool = False) -> list
                 entry["options"] = [
                     {
                         "key": option["key"],
-                        "inputs": _reference_inputs(option["inputs"], list_inputs),
+                        "inputs": _reference_inputs(option["inputs"]),
                     }
                     for option in options["options"]
                 ]
             elif value_type == "COMFY_AUTOGROW_V3":
                 template = options["template"]
                 entry["type"] = "inputFamily"
-                entry["template"] = _reference_inputs(template["input"], list_inputs)
+                entry["template"] = _reference_inputs(template["input"])
                 entry["min"] = template.get("min", 1)
                 if "names" in template:
                     entry["names"] = template["names"]
@@ -93,7 +99,7 @@ def _reference_inputs(groups: dict[str, Any], list_inputs: bool = False) -> list
             elif value_type == "COMFY_DYNAMICGROUP_V3":
                 entry.update(
                     type="inputFamily",
-                    template=_reference_inputs(options["template"], list_inputs),
+                    template=_reference_inputs(options["template"]),
                     min=options["min"],
                     max=options["max"],
                     prefix=None,
@@ -112,8 +118,6 @@ def _reference_inputs(groups: dict[str, Any], list_inputs: bool = False) -> list
                 entry["file_input"] = True
             if "options" in entry and entry["type"] == "COMBO" and entry["options"]:
                 entry.setdefault("default", entry["options"][0])
-            if list_inputs and entry["type"] not in ("inputFamily", "dynamicCombo"):
-                entry["type"] = {"list": entry["type"]}
             result.append(entry)
     return result
 
@@ -122,13 +126,11 @@ def _native_inputs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     result = []
     for item in items:
         role = item["role"]
-        if role not in INPUT_ROLES:
+        if role not in INPUT_ROLES or item.get("hidden"):
             continue
         entry: dict[str, Any] = {
             "name": item["id"],
-            "group": "hidden"
-            if item.get("hidden")
-            else ("required" if item.get("required", True) else "optional"),
+            "group": "required" if item.get("required", True) else "optional",
         }
         if role == "input":
             entry["type"] = _type(item["type"])
@@ -183,6 +185,16 @@ def _native_inputs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _differences(expected: Any, actual: Any, path: str) -> list[str]:
+    if (
+        path.endswith(".type")
+        and expected == "*"
+        and isinstance(actual, dict)
+        and set(actual) == {"template_id", "allowed_types"}
+        and isinstance(actual["template_id"], str)
+        and actual["template_id"]
+        and actual["allowed_types"] == "*"
+    ):
+        return []
     if isinstance(expected, dict) and isinstance(actual, dict):
         expected, actual = dict(expected), dict(actual)
         file_input = expected.pop("file_input", False)
@@ -223,7 +235,7 @@ def compare(row: dict[str, Any], schema: dict[str, Any]) -> list[str]:
         return ["native interface missing"]
     if any(item.get("role") not in INPUT_ROLES | {"output"} for item in schema["interface"]):
         return ["native interface contains an unsupported role or a variable output family"]
-    expected = _reference_inputs(row["input_types"], bool(row.get("input_is_list")))
+    expected = _reference_inputs(row["input_types"])
     actual = _native_inputs(schema.get("interface", []))
     differences = []
     save_node = row["class_name"].startswith("Save") and any(
@@ -243,19 +255,21 @@ def compare(row: dict[str, Any], schema: dict[str, Any]) -> list[str]:
             item["file_input"] = True
     differences.extend(_differences(expected, actual, "inputs"))
     expected_outputs = []
-    names = row.get("return_names") or row.get("return_types") or []
-    output_lists = row.get("output_is_list") or []
+    names = row.get("return_names")
     output_metadata = row.get("v3_outputs") or []
     for index, output_type in enumerate(row.get("return_types") or []):
         if output_type == "COMFY_MATCHTYPE_V3":
             metadata = output_metadata[index] if index < len(output_metadata) else {}
             output_type = metadata.get("template", {"missing_output_template": True})
-        is_list = index < len(output_lists) and output_lists[index]
-        expected_outputs.append(
-            {"name": names[index], "type": ({"list": output_type} if is_list else output_type)}
-        )
+        output = {"type": output_type}
+        if names is not None:
+            output["name"] = names[index]
+        expected_outputs.append(output)
     actual_outputs = [
-        {"name": item.get("displayName") or item["id"], "type": _type(item["type"])}
+        {
+            **({"name": item.get("displayName") or item["id"]} if names is not None else {}),
+            "type": _type(item["type"]),
+        }
         for item in schema.get("interface", [])
         if item["role"] in ("output", "outputFamily")
     ]
