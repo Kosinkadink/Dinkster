@@ -217,6 +217,8 @@ namespaces = [
     "StableZero123_Conditioning_Batched",
     "SV3D_Conditioning",
     "SVD_img2vid_Conditioning",
+    "CosmosImageToVideoLatent",
+    "CosmosPredict2ImageToVideoLatent",
     "EmptyHunyuanImageLatent",
     "HunyuanRefinerLatent",
     "EmptyHunyuanLatentVideo",
