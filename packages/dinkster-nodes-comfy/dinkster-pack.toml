@@ -106,6 +106,8 @@ namespaces = [
     "TCFG",
     "Mahiro",
     "NAGuidance",
+    "PerpNeg",
+    "PerpNegGuider",
     "VideoLinearCFGGuidance",
     "VideoTriangleCFGGuidance",
     "FreeU",
