@@ -2,6 +2,7 @@
 
 from dinkster_api.v1 import register_inference_types
 
+from .cfg_guidance import CFG_GUIDANCE_NODES
 from .clip import CLIP_NODES
 from .clip_model_specific import MODEL_TEXT_ENCODER_NODES
 from .compositing import COMPOSITING_NODES
@@ -46,6 +47,7 @@ COMFY_NODES = (
     ComfyMathExpression,
     *MODEL_MERGE_NODES,
     *MODEL_SPECIFIC_MERGE_NODES,
+    *CFG_GUIDANCE_NODES,
     *FREEU_NODES,
     *LATENT_NODES,
     *LATENT_ADVANCED_NODES,
