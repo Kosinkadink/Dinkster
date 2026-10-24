@@ -114,9 +114,17 @@ def compile_prompt(prompt: MappingPrompt) -> Graph:
         generated += 1
         return f"{prefix}_{generated}"
 
-    def concat(link: Link) -> Link:
-        node_id = generated_id("concat")
-        nodes[node_id] = GraphNode("std.list.concat", {"lists.0": link})
+    def flatten(link: Link, source_type: TypeExpr) -> Link:
+        assert source_type.element is not None
+        node_id = generated_id("flatten")
+        nodes[node_id] = RegionNode(
+            kind="map",
+            body=Graph({}),
+            ports={"item": source_type.element},
+            inputs={"item": link},
+            element_ports=("item",),
+            outputs={"list": RegionOutput(Link(PORTS_NODE_ID, "item"), mode="flatten")},
+        )
         return Link(node_id, "list")
 
     def last_element(link: Link) -> Link:
@@ -124,22 +132,10 @@ def compile_prompt(prompt: MappingPrompt) -> Graph:
         nodes[node_id] = GraphNode("std.list.element", {"list": link, "index": -1})
         return Link(node_id, "item")
 
-    def lower_link(value: object, original: object) -> object:
-        if not isinstance(value, Link) or not isinstance(original, list):
-            return value
-        if str(prompt[value.node_id]["class_type"]) != "EndLoop":
-            return value
-        source_inputs = cast(dict[str, object], prompt[value.node_id]["inputs"])
-        output = source_inputs.get("output_value")
-        if output is not None and reference_type(output).kind == "list":
-            return concat(value)
-        return value
-
     for node_id, spec in prompt.items():
         source_type = str(spec["class_type"])
         inputs = {
-            name: lower_link(_link(value), value)
-            for name, value in cast(dict[str, object], spec["inputs"]).items()
+            name: _link(value) for name, value in cast(dict[str, object], spec["inputs"]).items()
         }
         if source_type == "EndLoop":
             inputs = {
@@ -173,7 +169,7 @@ def compile_prompt(prompt: MappingPrompt) -> Graph:
                 and value_type.element is not None
                 and value_type.element.kind == "list"
             ):
-                value = concat(value)
+                value = flatten(value, value_type)
                 value_type = value_type.element
             if value_type.kind == "list" and value_type.element is not None:
                 item_type = value_type.element

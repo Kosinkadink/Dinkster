@@ -39,9 +39,10 @@ def test_list_outputs_are_explicitly_flattened_before_map_capture() -> None:
     assert isinstance(capture, RegionNode)
     capture_input = capture.inputs["item"]
     assert isinstance(capture_input, Link)
-    concat = graph.nodes[capture_input.node_id]
-    assert isinstance(concat, GraphNode)
-    assert concat.node_type == "std.list.concat"
+    flatten = graph.nodes[capture_input.node_id]
+    assert isinstance(flatten, RegionNode)
+    assert flatten.kind == "map"
+    assert flatten.outputs["list"].mode == "flatten"
 
 
 def test_native_loop_compiler_runs_carried_value_fixtures() -> None:
