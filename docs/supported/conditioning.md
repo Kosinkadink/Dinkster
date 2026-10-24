@@ -9,6 +9,8 @@
 - MiniMax H3 supports text-to-video conditioning through the pinned
   `dinkster_inference` runtime. First/last-frame, reference image, clip, and audio
   guide conditioning are unsupported.
+- Stable Zero123 and Stable Video 3D image conditioning execute through the pinned
+  `dinkster_inference` runtime.
 - Typed absence remains a Dinkster engine contract: `core.absent` values,
   optional outputs, per-input absence policies, and skip propagation.
 - Native `InstructPixToPixConditioning` crops and encodes the input image,

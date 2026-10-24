@@ -31,6 +31,7 @@ from .primitive import (
     PrimitiveStringMultiline,
 )
 from .reference_conditioning import REFERENCE_CONDITIONING_NODES
+from .stable3d import STABLE3D_NODES
 from .stable_cascade import STABLE_CASCADE_NODES
 from .text import TEXT_NODES
 from .utilities import ComfyNumberConvert, SeedNode
@@ -68,6 +69,7 @@ COMFY_NODES = (
     *IMAGE_TRANSFORM_NODES,
     *MORPHOLOGY_NODES,
     *STABLE_CASCADE_NODES,
+    *STABLE3D_NODES,
     *POST_PROCESSING_NODES,
 )
 
