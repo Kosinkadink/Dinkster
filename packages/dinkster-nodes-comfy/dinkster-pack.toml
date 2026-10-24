@@ -261,6 +261,8 @@ namespaces = [
     "EmptyAceStepLatentAudio",
     "EmptyAceStep1.5LatentAudio",
     "EmptyYuE2LatentAudio",
+    "TextEncodeAceStepAudio",
+    "TextEncodeAceStepAudio1.5",
     "MiniMaxMusic3TextEncode",
     "ReferenceTimbreAudio",
     "SplitAudioChannels",
