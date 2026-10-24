@@ -6,6 +6,12 @@ rescale classifier-free guidance; select compute dtype; and select a supported
 dense attention backend. They use the pinned `dinkster_inference` sampler and
 model patcher.
 
+`MultiGPU_WorkUnits` creates reusable model deep clones for the visible devices.
+`SelectModelDevice`, `SelectCLIPDevice`, and `SelectVAEDevice` route their
+resident values to the selected default, CPU, or portable `gpu:N` device where
+supported. Unavailable devices leave the value unchanged; VAE routing does not
+offer CPU.
+
 `ScaleROPE` scales and shifts spatial and temporal rotary coordinates on a cloned
 model. `DifferentialDiffusion` applies timestep-dependent denoise masks, with
 optional blending strength, without changing the source model.
