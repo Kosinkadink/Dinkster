@@ -15,7 +15,7 @@ from typing import Any, cast
 import pytest
 from dinkster_caches import MemoryLRUCache, encode_entry, entry_from_wire, entry_to_wire
 from dinkster_engine import Engine
-from dinkster_graph import Graph, GraphNode, Link, validate
+from dinkster_graph import Graph, GraphNode, Link, RegionNode, RegionOutput, validate
 from dinkster_schema import (
     InputSpec,
     Node,
@@ -322,6 +322,101 @@ def test_engine_wraps_list_literals() -> None:
         result = await engine.run(graph, ["s"])
         assert result.outputs["s"]["total"].resolve() == 11
         assert SumList.saw == [[5, 6]]
+
+    asyncio.run(scenario())
+
+
+def test_engine_runs_independently_typed_tuple_nodes_and_caches() -> None:
+    from dinkster_nodes_foundation import (
+        AddInts,
+        GetTupleItem,
+        IntPrimitive,
+        MakeTuple,
+        StringPrimitive,
+    )
+
+    async def scenario() -> None:
+        nodes = (MakeTuple, GetTupleItem, IntPrimitive, StringPrimitive, AddInts)
+        registry = make_registry()
+        engine = Engine(
+            schemas=build_schemas(nodes),
+            registry=registry,
+            worker=InProcessWorker(build_node_types(nodes), registry),
+            cache=MemoryLRUCache(),
+        )
+        graph = Graph(
+            nodes={
+                "integer": GraphNode("dinkster.int", {"value": 7}),
+                "text": GraphNode("dinkster.string", {"value": "label"}),
+                "pair": GraphNode(
+                    "std.tuple.make",
+                    {
+                        "items.first": Link("integer", "value"),
+                        "items.second": Link("text", "value"),
+                    },
+                ),
+                "first": GraphNode("std.tuple.get", {"tuple": Link("pair", "tuple"), "index": 0}),
+                "last": GraphNode("std.tuple.get", {"tuple": Link("pair", "tuple"), "index": -1}),
+            }
+        )
+        first = await engine.run(graph, ["pair", "first", "last"])
+        assert first.outputs["pair"]["tuple"].type_id == "tuple<INT,STRING>"
+        assert first.outputs["first"]["item"].type_id == "INT"
+        assert first.outputs["first"]["item"].resolve() == 7
+        assert first.outputs["last"]["item"].type_id == "STRING"
+        assert first.outputs["last"]["item"].resolve() == "label"
+        second = await engine.run(graph, ["pair", "first", "last"])
+        assert second.executed == ()
+        assert set(second.cached) == set(graph.nodes)
+
+        folded = RegionNode(
+            kind="fold",
+            ports={
+                "item": TypeExpr.concrete("INT"),
+                "carry": TypeExpr.tuple_of(TypeExpr.concrete("INT"), TypeExpr.concrete("STRING")),
+            },
+            inputs={"item": [2, 5], "carry": Link("pair", "tuple")},
+            element_ports=("item",),
+            state_ports=("carry",),
+            body=Graph(
+                nodes={
+                    "count": GraphNode(
+                        "std.tuple.get", {"tuple": Link("$region", "carry"), "index": 0}
+                    ),
+                    "label": GraphNode(
+                        "std.tuple.get", {"tuple": Link("$region", "carry"), "index": 1}
+                    ),
+                    "sum": GraphNode(
+                        "std.math.add_ints",
+                        {"a": Link("count", "item"), "b": Link("$region", "item")},
+                    ),
+                    "next": GraphNode(
+                        "std.tuple.make",
+                        {"items.count": Link("sum", "sum"), "items.label": Link("label", "item")},
+                    ),
+                }
+            ),
+            outputs={
+                "carry": RegionOutput(Link("next", "tuple"), mode="state"),
+                "observed": RegionOutput(Link("next", "tuple")),
+            },
+        )
+        carried = await engine.run(Graph(nodes={**graph.nodes, "fold": folded}), ["fold"])
+        assert carried.outputs["fold"]["carry"].type_id == "tuple<INT,STRING>"
+        assert carried.outputs["fold"]["carry"].resolve() == (14, "label")
+        assert carried.outputs["fold"]["observed"].type_id == "list<tuple<INT,STRING>>"
+        assert carried.outputs["fold"]["observed"].resolve() == [(9, "label"), (14, "label")]
+
+        connected_selector = replace(
+            graph.nodes["first"],
+            inputs={"tuple": Link("pair", "tuple"), "index": Link("integer", "value")},
+        )
+        diagnostics = validate(
+            Graph(nodes={**graph.nodes, "first": connected_selector}),
+            build_schemas(nodes),
+            ["first"],
+        )
+        assert any(d.severity == "error" and "constant INT" in d.message for d in diagnostics)
 
     asyncio.run(scenario())
 

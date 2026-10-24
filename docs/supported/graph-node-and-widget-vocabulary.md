@@ -9,8 +9,10 @@
   Tuple values retain independently typed child envelopes across worker and
   persistent-cache boundaries, including nested lists and tuples. Resource
   invalidation and device metadata projection inspect every position; persistent
-  caches refuse tuples containing live resident references. This does not claim
-  tuple standard-node, graph-elaboration, or frontend editor support.
+  caches refuse tuples containing live resident references. Foundation tuple
+  nodes collect independently typed connected values and select a position with
+  a document-stored integer index, including negative indices. This does not
+  claim complete tuple graph validation, frontend editor, or importer support.
 - Required closed dynamic slots can bind their selected variant type to shared
   input and output variables, including list and asset element types
 - Widgets: asset, save-target, combo and multi-combo with optional labels,
