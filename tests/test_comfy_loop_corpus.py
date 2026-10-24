@@ -11,12 +11,14 @@ from dinkster_nodes_dev.loop_corpus import Observations
 
 from tools.run_comfy_loop_corpus import compile_prompt, make_engine
 
-CORPUS = Path("/home/kosin/comfy-vibe-station/dinkster-evidence/comfyui-generic-loops")
+# Recorded issue408 prompts and observations; no sibling evidence checkout is required.
+PROMPTS = json.loads(
+    (Path(__file__).parent / "fixtures/loop-corpus-prompts.json").read_text(encoding="utf-8")
+)
 
 
 def test_recorded_prompts_compile_to_native_loop_nodes() -> None:
-    workflow = json.loads((CORPUS / "workflows/nested-carry.json").read_text(encoding="utf-8"))
-    graph = compile_prompt(workflow["extra"]["issue408"]["api_prompt"])
+    graph = compile_prompt(PROMPTS["nested-carry"]["api_prompt"])
     outer = graph.nodes["outer"]
     inner_close = graph.nodes["inner_close"]
     assert isinstance(outer, GraphNode)
@@ -31,10 +33,7 @@ def test_recorded_prompts_compile_to_native_loop_nodes() -> None:
 
 
 def test_list_outputs_are_explicitly_flattened_before_map_capture() -> None:
-    workflow = json.loads(
-        (CORPUS / "workflows/accumulate-list-output.json").read_text(encoding="utf-8")
-    )
-    graph = compile_prompt(workflow["extra"]["issue408"]["api_prompt"])
+    graph = compile_prompt(PROMPTS["accumulate-list-output"]["api_prompt"])
     capture = graph.nodes["capture"]
     assert isinstance(capture, RegionNode)
     capture_input = capture.inputs["item"]
@@ -48,8 +47,7 @@ def test_list_outputs_are_explicitly_flattened_before_map_capture() -> None:
 def test_native_loop_compiler_runs_carried_value_fixtures() -> None:
     async def scenario() -> None:
         for name in ("carry-only", "heterogeneous-carry", "list-backed-carry", "for-state"):
-            workflow = json.loads((CORPUS / f"workflows/{name}.json").read_text(encoding="utf-8"))
-            issue408 = workflow["extra"]["issue408"]
+            issue408 = PROMPTS[name]
             Observations.reset()
             result = await make_engine().run(
                 compile_prompt(issue408["api_prompt"]),
@@ -57,18 +55,15 @@ def test_native_loop_compiler_runs_carried_value_fixtures() -> None:
                 cache_enabled=False,
             )
             assert not [item for item in result.diagnostics if item.severity == "error"]
-            assert {
-                key: Observations.values[key] for key in issue408["recorded_cpu_result"]["observed"]
-            } == issue408["recorded_cpu_result"]["observed"]
+            assert {key: Observations.values[key] for key in issue408["observed"]} == issue408[
+                "observed"
+            ]
 
     asyncio.run(scenario())
 
 
 def test_corpus_includes_the_runtime_expansion_prompt() -> None:
-    workflow = json.loads(
-        (CORPUS / "workflows/runtime-expanded-descendant.json").read_text(encoding="utf-8")
-    )
-    graph = compile_prompt(workflow["extra"]["issue408"]["api_prompt"])
+    graph = compile_prompt(PROMPTS["runtime-expanded-descendant"]["api_prompt"])
     expanded = graph.nodes["expand"]
     assert isinstance(expanded, GraphNode)
     assert expanded.node_type == "Issue408ExpandIncrement"
