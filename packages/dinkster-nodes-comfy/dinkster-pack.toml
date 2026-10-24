@@ -276,6 +276,7 @@ namespaces = [
     "VAEEncodeAudio",
     "VAEDecodeAudio",
     "VAEDecodeAudioTiled",
+    "GetAudioLatentSize",
     "LTXVAudioVAEEncode",
     "LTXVAudioVAEDecode",
     "LTXVEmptyLatentAudio",
