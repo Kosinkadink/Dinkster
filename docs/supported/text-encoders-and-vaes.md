@@ -6,6 +6,8 @@
   tokenizer options clone the source CLIP.
 - CLIP vision outputs preserve feature tensor precision, shape, metadata,
   and optional attributes across worker boundaries.
+- Style models retain their runtime objects and governed owner lifetime
+  across node connections within a worker.
 - `CLIPVisionEncode` materializes portable image inputs and produces CLIP
   vision outputs with center or no crop selection.
 - Native VAEEncode, VAEDecode and their tiled variants preserve the core
