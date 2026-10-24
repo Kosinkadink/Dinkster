@@ -185,6 +185,10 @@ namespaces = [
     "BatchLatentsNode",
     "ColorTransfer",
     "EmptyMochiLatentVideo",
+    "EmptyLatentAudio",
+    "EmptyAceStepLatentAudio",
+    "EmptyAceStep1.5LatentAudio",
+    "EmptyYuE2LatentAudio",
 ]
 
 [pack.sandbox]
