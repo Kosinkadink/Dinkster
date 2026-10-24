@@ -135,6 +135,13 @@ namespaces = [
     "BatchMasksNode",
     "BatchLatentsNode",
     "ColorTransfer",
+    "ResizeImagesByShorterEdge",
+    "ResizeImagesByLongerEdge",
+    "CenterCropImages",
+    "RandomCropImages",
+    "NormalizeImages",
+    "AdjustBrightness",
+    "AdjustContrast",
 ]
 
 [pack.sandbox]

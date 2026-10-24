@@ -5,6 +5,7 @@ from dinkster_api.v1 import register_inference_types
 from .clip import CLIP_NODES
 from .compositing import COMPOSITING_NODES
 from .conditioning import CONDITIONING_NODES
+from .dataset_images import DATASET_IMAGE_NODES
 from .image_core import IMAGE_CORE_NODES
 from .image_filters import IMAGE_FILTER_NODES
 from .image_transform import IMAGE_TRANSFORM_NODES
@@ -48,6 +49,7 @@ COMFY_NODES = (
     *CLIP_NODES,
     *VAE_NODES,
     *CONDITIONING_NODES,
+    *DATASET_IMAGE_NODES,
     *MASK_NODES,
     *COMPOSITING_NODES,
     *IMAGE_CORE_NODES,
