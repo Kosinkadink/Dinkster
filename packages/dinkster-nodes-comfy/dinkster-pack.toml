@@ -113,6 +113,9 @@ namespaces = [
     "ImageRotate",
     "ImageFlip",
     "ImageScaleToMaxDimension",
+    "Morphology",
+    "ImageRGBToYUV",
+    "ImageYUVToRGB",
 ]
 
 [pack.sandbox]
