@@ -223,6 +223,35 @@ def test_er_sde_and_sa_solver_closures_preserve_solver_boundaries() -> None:
     assert tau(1.5) == 0.75
     assert tau(0.5) == 0.0
 
+    explicit_ode = _sampler(SamplerER_SDE, solver_type="ODE", max_stage=1, eta=0.9, s_noise=2.0)
+    assert explicit_ode.extra_options["s_noise"] == 0.0
+    assert explicit_ode.extra_options["noise_scaler"](values) is values
+
+
+def test_sde_noise_device_gpu_names_are_selected_without_gpu_execution() -> None:
+    assert (
+        _sampler(
+            SamplerDPMPP_3M_SDE, eta=0.4, s_noise=1.3, noise_device="gpu"
+        ).sampler_function.__name__
+        == "sample_dpmpp_3m_sde_gpu"
+    )
+    assert (
+        _sampler(
+            SamplerDPMPP_2M_SDE,
+            solver_type="heun",
+            eta=0.4,
+            s_noise=1.3,
+            noise_device="gpu",
+        ).sampler_function.__name__
+        == "sample_dpmpp_2m_sde_gpu"
+    )
+    assert (
+        _sampler(
+            SamplerDPMPP_SDE, eta=0.4, s_noise=1.3, r=0.27, noise_device="gpu"
+        ).sampler_function.__name__
+        == "sample_dpmpp_sde_gpu"
+    )
+
 
 def test_euler_ancestral_factory_callable_uses_asymmetric_inputs() -> None:
     sampler = _sampler(SamplerEulerAncestral, eta=0.375, s_noise=1.25)
@@ -277,19 +306,7 @@ class SamplerConsumer(Node):
     @classmethod
     def execute(cls, **inputs: Any) -> dict[str, object]:
         assert set(inputs) == set(_factory_graph_inputs())
-        for sampler in inputs.values():
-            assert callable(sampler.sample)
-            assert callable(sampler.sampler_function)
-        sampler = inputs["euler_ancestral"]
-        result = sampler.sampler_function(
-            _RuntimeModel(),
-            torch.tensor([[[[0.2, -0.4]]]], dtype=torch.float32),
-            torch.tensor((1.5, 0.75)),
-            extra_args={"seed": 739},
-            disable=True,
-            **sampler.extra_options,
-        )
-        assert result.shape == (1, 1, 1, 2)
+        _assert_hosted_sampler_contracts(inputs)
         return cls.outputs(
             summary=",".join(
                 sorted(sampler.sampler_function.__name__ for sampler in inputs.values())
@@ -302,6 +319,99 @@ class _RuntimeModel:
 
     def __call__(self, value: torch.Tensor, _sigma: torch.Tensor, **_kwargs: Any) -> torch.Tensor:
         return torch.full_like(value, 0.25)
+
+
+def _assert_hosted_sampler_contracts(inputs: dict[str, Any]) -> None:
+    expected = {
+        "select": ("sample_euler", {}),
+        "euler_ancestral": ("sample_euler_ancestral", {"eta": 0.375, "s_noise": 1.25}),
+        "euler_ancestral_cfgpp": (
+            "sample_euler_ancestral_cfg_pp",
+            {"eta": 0.625, "s_noise": 2.5},
+        ),
+        "lms": ("sample_lms", {"order": 7}),
+        "dpmpp_3m_sde": ("sample_dpmpp_3m_sde", {"eta": 0.4, "s_noise": 1.3}),
+        "dpmpp_2m_sde": (
+            "sample_dpmpp_2m_sde",
+            {"eta": 0.4, "s_noise": 1.3, "solver_type": "heun"},
+        ),
+        "dpmpp_sde": ("sample_dpmpp_sde", {"eta": 0.4, "s_noise": 1.3, "r": 0.27}),
+        "dpmpp_2s_ancestral": (
+            "sample_dpmpp_2s_ancestral",
+            {"eta": 0.4, "s_noise": 1.3},
+        ),
+        "dpm_adaptative": (
+            "dpm_adaptive_function",
+            {
+                "order": 2,
+                "rtol": 0.04,
+                "atol": 0.005,
+                "h_init": 0.07,
+                "pcoeff": 0.2,
+                "icoeff": 0.8,
+                "dcoeff": 0.1,
+                "accept_safety": 0.75,
+                "eta": 0.3,
+                "s_noise": 1.1,
+            },
+        ),
+        "er_sde": ("sample_er_sde", {"s_noise": 1.3, "max_stage": 2}),
+        "sa_solver": (
+            "sample_sa_solver",
+            {
+                "s_noise": 1.4,
+                "predictor_order": 2,
+                "corrector_order": 3,
+                "use_pece": True,
+                "simple_order_2": True,
+            },
+        ),
+        "seeds2": (
+            "sample_seeds_2",
+            {"eta": 0.4, "s_noise": 1.3, "r": 0.27, "solver_type": "phi_2"},
+        ),
+    }
+    for name, (function_name, options) in expected.items():
+        sampler = inputs[name]
+        assert callable(sampler.sample)
+        assert sampler.sampler_function.__name__ == function_name
+        if name == "er_sde":
+            assert sampler.extra_options.keys() == {"s_noise", "noise_scaler", "max_stage"}
+            assert sampler.extra_options["s_noise"] == options["s_noise"]
+            assert sampler.extra_options["max_stage"] == options["max_stage"]
+        elif name == "sa_solver":
+            assert sampler.extra_options.keys() == {"tau_func", *options}
+            for option_name, option_value in options.items():
+                assert sampler.extra_options[option_name] == option_value
+        else:
+            assert sampler.extra_options.keys() == options.keys()
+            assert sampler.extra_options == options
+
+    values = torch.tensor((0.125, 2.75), dtype=torch.float32)
+    er_scaler = inputs["er_sde"].extra_options["noise_scaler"]
+    torch.testing.assert_close(er_scaler(values), values * ((values**0.3).exp() + 10.0) ** 0.5)
+
+    tau = inputs["sa_solver"].extra_options["tau_func"]
+    assert tau(2.5) == 0.75
+    assert tau(1.5) == 0.75
+    assert tau(2.5001) == 0.0
+    assert tau(1.4999) == 0.0
+
+    sampler = inputs["euler_ancestral"]
+    noise = torch.tensor([[[[0.2, -0.4], [1.1, -0.8]]]], dtype=torch.float32)
+    result = sampler.sampler_function(
+        _RuntimeModel(),
+        noise,
+        torch.tensor((1.5, 0.75)),
+        extra_args={"seed": 739},
+        disable=True,
+        **sampler.extra_options,
+    )
+    sigma_up = 0.375 * (0.75**2 * (1.5**2 - 0.75**2) / 1.5**2) ** 0.5
+    sigma_down = (0.75**2 - sigma_up**2) ** 0.5
+    random = torch.randn(4, generator=torch.Generator().manual_seed(740)).reshape_as(noise)
+    expected_euler = noise * (sigma_down / 1.5) + 0.25 * (1 - sigma_down / 1.5)
+    torch.testing.assert_close(result, expected_euler + random * 1.25 * sigma_up)
 
 
 def _factory_graph_inputs() -> tuple[str, ...]:
