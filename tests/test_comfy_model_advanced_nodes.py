@@ -1,6 +1,6 @@
 """Public interfaces for native model-sampling and model patches."""
 
-from dinkster_api.v1 import MODEL_TYPE, TypeExpr
+from dinkster_api.v1 import MODEL_TYPE, NumberWidget, TypeExpr
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.model_advanced import MODEL_ADVANCED_NODES
 
@@ -28,6 +28,9 @@ def test_advanced_model_patch_interfaces() -> None:
         assert [(item.id, item.type) for item in schema.outputs] == [
             ("MODEL", TypeExpr.concrete(MODEL_TYPE))
         ]
+        if schema.node_type in ("ModelSamplingContinuousEDM", "ModelSamplingContinuousV"):
+            for item in schema.inputs[2:]:
+                assert item.widget == NumberWidget(min=0.0, max=1000.0, step=0.001, round=False)
     aura = next(node for node in MODEL_ADVANCED_NODES if node.__name__ == "ModelSamplingAuraFlow")
     assert not aura.define_schema().inputs[-1].required
     attention = MODEL_ADVANCED_NODES[-1].define_schema()

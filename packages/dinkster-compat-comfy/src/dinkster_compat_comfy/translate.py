@@ -1541,6 +1541,9 @@ def number_widget(
         if field not in config:
             continue
         raw_value = config[field]
+        if field == "round" and raw_value is False:
+            accepted[field] = False
+            continue
         if type(raw_value) not in (int, float):
             continue
         value = cast("int | float", raw_value)

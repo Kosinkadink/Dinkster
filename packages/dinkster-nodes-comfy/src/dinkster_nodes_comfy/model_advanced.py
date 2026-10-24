@@ -48,7 +48,7 @@ def _sigma(name: str, default: float) -> InputSpec:
         _FLOAT,
         default=default,
         advanced=True,
-        widget=NumberWidget(min=0.0, max=1000.0, step=0.001),
+        widget=NumberWidget(min=0.0, max=1000.0, step=0.001, round=False),
     )
 
 

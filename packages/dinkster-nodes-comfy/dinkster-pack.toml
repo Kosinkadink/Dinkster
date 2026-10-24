@@ -24,6 +24,11 @@ namespaces = [
     "AddTextSuffix",
     "ReplaceText",
     "StripWhitespace",
+    "ShuffleDataset",
+    "ShuffleImageTextDataset",
+    "ImageDeduplication",
+    "ImageGrid",
+    "MergeTextLists",
     "PrimitiveString",
     "PrimitiveStringMultiline",
     "PrimitiveInt",
@@ -167,6 +172,7 @@ namespaces = [
     "ImageQuantize",
     "ImageSharpen",
     "ImageScaleToTotalPixels",
+    "Canny",
     "ImageCrop",
     "RepeatImageBatch",
     "ImageFromBatch",
@@ -189,6 +195,10 @@ namespaces = [
     "BatchLatentsNode",
     "ColorTransfer",
     "EmptyMochiLatentVideo",
+    "EmptyLatentAudio",
+    "EmptyAceStepLatentAudio",
+    "EmptyAceStep1.5LatentAudio",
+    "EmptyYuE2LatentAudio",
 ]
 
 [pack.sandbox]
