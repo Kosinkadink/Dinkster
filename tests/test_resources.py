@@ -34,7 +34,7 @@ from dinkster_schema import (
 from dinkster_values import RESOURCES_META_KEY, TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 
-STRING = TypeExpr.concrete("core.string")
+STRING = TypeExpr.concrete("STRING")
 MODEL = TypeExpr.concrete("test.model")
 
 

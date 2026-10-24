@@ -63,7 +63,7 @@ def test_source_filename_model_is_frozen_strict_and_signature_significant() -> N
     with pytest.raises(ValueError, match="requires a scalar asset or list of assets"):
         InputSpec(
             "source",
-            TypeExpr.concrete("core.string"),
+            TypeExpr.concrete("STRING"),
             source_filename=source,
             widget=AssetWidget(kind="media/image", allow_upload=True),
         )
@@ -386,7 +386,7 @@ def test_legacy_combo_without_source_declaration_stays_dormant() -> None:
     source = _source_node({})
     node = translate_node("LegacyCombo", source, CompatTranslation())
     (spec,) = node.schema().inputs
-    assert spec.type == TypeExpr.concrete("core.combo")
+    assert spec.type == TypeExpr.concrete("COMBO")
     assert spec.source_filename is None
     assert node.execute(source="existing") == {}
     assert source.seen == ["existing"]

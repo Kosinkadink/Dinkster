@@ -3,19 +3,23 @@
 from dinkster_values.names import (
     NAME_MAX,
     RESERVED_NAMESPACES,
+    canonical_claim,
     canonical_name,
     claim_covers,
     claims_conflict,
     reserved_root,
+    validate_claim,
     validate_name,
 )
 
 __all__ = [
     "NAME_MAX",
     "RESERVED_NAMESPACES",
+    "canonical_claim",
     "canonical_name",
     "claim_covers",
     "claims_conflict",
     "reserved_root",
+    "validate_claim",
     "validate_name",
 ]

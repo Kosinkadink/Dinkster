@@ -427,8 +427,7 @@ def test_full_release_acknowledges_worker_with_no_consumers(tmp_path: Path) -> N
     async def scenario() -> None:
         manifest = tmp_path / "dinkster-pack.toml"
         manifest.write_text(
-            '[pack]\nname = "memorypack"\n\n[pack.entry]\n'
-            'nodes = "memorypack_nodes:NODES"\ntypes = "memorypack_nodes:register_types"\n'
+            '[pack]\nname = "memorypack"\n\n[pack.entry]\nnodes = "memorypack_nodes:NODES"\n'
         )
         worker = IsolatedWorker(
             manifest,
@@ -1161,7 +1160,7 @@ def test_cancelled_in_process_invocation_refuses_late_source_materialization() -
         registry = core_registry()
         schema = NodeSchema(
             node_type="test.late_source",
-            outputs=(OutputSpec("result", TypeExpr.concrete("core.string")),),
+            outputs=(OutputSpec("result", TypeExpr.concrete("STRING")),),
         )
         entered = threading.Event()
         finished = threading.Event()

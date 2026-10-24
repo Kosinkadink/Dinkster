@@ -76,7 +76,7 @@ def test_record_assembles_states_timings_and_miss_attribution() -> None:
             {
                 "duration_ms": 42.5,
                 "cache_key": "k-a",
-                "outputs": {"out": {"typeId": "core.int", "value": 7}},
+                "outputs": {"out": {"typeId": "INT", "value": 7}},
             },
         )
     )
@@ -89,7 +89,7 @@ def test_record_assembles_states_timings_and_miss_attribution() -> None:
                 "cache_key": "k-b",
                 "coalesced": True,
                 "cacheLayer": "disk",
-                "outputs": {"out": {"typeId": "core.list<core.int>", "length": 3}},
+                "outputs": {"out": {"typeId": "core.list<INT>", "length": 3}},
             },
         )
     )
@@ -127,7 +127,7 @@ def test_record_assembles_states_timings_and_miss_attribution() -> None:
     assert b["state"] == "cached"
     assert b["coalesced"] is True
     assert b["cacheLayer"] == "disk"
-    assert b["outputs"] == {"out": {"typeId": "core.list<core.int>", "length": 3}}
+    assert b["outputs"] == {"out": {"typeId": "core.list<INT>", "length": 3}}
     c = by_id["c"]
     assert c["state"] == "skipped"
     assert c["skip"] == {"input": "image", "origin": "b", "reason": "no-face-found"}
@@ -147,8 +147,8 @@ def test_inline_scalar_values_never_enter_a_record() -> None:
             {
                 "duration_ms": 1.0,
                 "outputs": {
-                    "count": {"typeId": "core.int", "value": 42},
-                    "name": {"typeId": "core.string", "value": "secret prompt"},
+                    "count": {"typeId": "INT", "value": 42},
+                    "name": {"typeId": "STRING", "value": "secret prompt"},
                 },
             },
         )
@@ -158,8 +158,8 @@ def test_inline_scalar_values_never_enter_a_record() -> None:
     assert "secret prompt" not in json.dumps(record)
     (occurrence,) = occurrences(record)
     assert occurrence["outputs"] == {
-        "count": {"typeId": "core.int"},
-        "name": {"typeId": "core.string"},
+        "count": {"typeId": "INT"},
+        "name": {"typeId": "STRING"},
     }
 
 

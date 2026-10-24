@@ -5,6 +5,7 @@ import json
 from dinkster_api.v1 import (
     ASSET_TYPE,
     IMAGE_BATCH_MERGER_ID,
+    MASK_TYPE,
     PNG_CONTAINER_VERSION,
     SAVE_TARGET_TYPE,
     SPLAT_FILE_DECODER_ID,
@@ -109,7 +110,6 @@ from .splat import SPLAT_NODES, SPLAT_TYPE, LoadGaussianSplat, SaveGaussianSplat
 from .text import TEXT_IO_NODES, SaveText
 from .video import (
     AUDIO_TYPE,
-    COMPAT_IMAGE_TYPE,
     IMAGE_TYPE,
     VIDEO_NODES,
     VIDEO_TYPE,
@@ -129,8 +129,6 @@ from .video_ops import (
     VideoFrameWindow,
     VideoInfo,
 )
-
-MASK_TYPE = "dinkster.mask"
 
 MEDIA_IO_NODES = [
     *SAVE_TARGET_NODES,
@@ -172,7 +170,6 @@ def register_media_types(registry: TypeRegistry) -> None:
         register_asset_type(registry, resolver_from_env())
     for type_id, renderer in (
         (IMAGE_TYPE, render_image_png),
-        (COMPAT_IMAGE_TYPE, render_image_png),
         (MASK_TYPE, render_mask_png),
     ):
         if type_id not in registry:
@@ -245,7 +242,6 @@ __all__ = [
     "AUDIO_OPS_NODES",
     "AUDIO_TYPE",
     "CAPTURE_NODES",
-    "COMPAT_IMAGE_TYPE",
     "IMAGE_TYPE",
     "IMAGE_IO_NODES",
     "IMAGE_DOCUMENT_NODES",

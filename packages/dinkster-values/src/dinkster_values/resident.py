@@ -186,13 +186,15 @@ def register_resident_type(
     asked to drop entries referencing it (invalidate-then-release)."""
     codec = ResidentCodec(table, meta)
 
-    return registry.register(
+    spec = registry.register(
         type_id,
         encode=codec.encode,
         decode=codec.decode,
         fingerprint=codec.fingerprint,
         meta=codec.metadata,
     )
+    registry.register_resident_table(table if table is not None else _TABLE)
+    return spec
 
 
 __all__ = [

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import importlib
+import weakref
 from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,13 +19,14 @@ from dinkster_inference_wire import (
 )
 from dinkster_native import fork_nodes
 from dinkster_native.native import register_native_types
+from dinkster_native.pool import default_pool
 from dinkster_protocol import Invocation
 from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
-from dinkster_values import TypeRegistry, register_core_types
+from dinkster_values import ResidentLookupError, TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 
-CONDITIONING = TypeExpr.concrete("dinkster.conditioning")
-INT = TypeExpr.concrete("core.int")
+CONDITIONING = TypeExpr.concrete("CONDITIONING")
+INT = TypeExpr.concrete("INT")
 
 
 class _ConditioningConsumer(Node):
@@ -133,9 +136,9 @@ def test_native_types_preserve_resident_conditioning_codec() -> None:
     register_native_types(registry)
     carrier = ResidentConditioningCarrier(ResidentPayload())
 
-    spec = registry.spec("dinkster.conditioning")
+    spec = registry.spec("CONDITIONING")
     assert spec.decode(spec.encode(carrier)) is carrier
-    assert registry.input_object("dinkster.conditioning", carrier) == "native-conditioning"
+    assert registry.input_object("CONDITIONING", carrier) == "native-conditioning"
 
 
 def test_native_types_register_resident_model_patches() -> None:
@@ -148,6 +151,32 @@ def test_native_types_register_resident_model_patches() -> None:
     assert spec.decode(spec.encode(model_patch)) is model_patch
 
 
+def test_native_latent_operation_full_release_invalidates_encoded_closure() -> None:
+    registry = TypeRegistry()
+    register_native_types(registry)
+    storage = np.zeros(1)
+    storage_reference = weakref.ref(storage)
+
+    def make_operation(captured: np.ndarray[Any, Any]) -> object:
+        def operation(value: object) -> np.ndarray[Any, Any]:
+            del value
+            return captured
+
+        return operation
+
+    operation = make_operation(storage)
+    spec = registry.spec("LATENT_OPERATION")
+    encoded = spec.encode(operation)
+
+    assert asyncio.run(default_pool().full_release()).status == "complete"
+    del operation, storage
+    gc.collect()
+
+    with pytest.raises(ResidentLookupError):
+        spec.decode(encoded)
+    assert storage_reference() is None
+
+
 def test_worker_unwraps_resident_conditioning_for_node_consumers() -> None:
     class ResidentPayload:
         _dinkster_resident_fingerprint = "test-worker-conditioning"
@@ -157,7 +186,7 @@ def test_worker_unwraps_resident_conditioning_for_node_consumers() -> None:
     register_core_types(registry)
     register_native_types(registry)
     value = registry.wrap(
-        "dinkster.conditioning",
+        "CONDITIONING",
         ResidentConditioningCarrier(ResidentPayload()),
     )
     schema = _ConditioningConsumer.schema()
@@ -302,7 +331,7 @@ def test_fork_sd15_adapters_preserve_conditioning_latent_and_decode(
     )
     registry = TypeRegistry()
     register_native_types(registry)
-    assert registry.input_object("dinkster.conditioning", encoded) == (
+    assert registry.input_object("CONDITIONING", encoded) == (
         "conditioning",
         ("tokens", "hello"),
     )

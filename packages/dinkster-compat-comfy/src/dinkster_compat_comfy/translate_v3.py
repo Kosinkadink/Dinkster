@@ -13,12 +13,12 @@ conversion is testable with plain fakes and only ever runs against real
 Translation rules (the v1 rules extended with what V3 can actually say):
 
 - io_type strings map exactly like v1 type strings: INT/FLOAT/STRING/
-  BOOLEAN -> core envelope types, COMBO -> core.combo (choice vocabulary is
+  BOOLEAN -> core envelope types, COMBO -> COMBO (choice vocabulary is
   UI affordance within that identity), ``*`` -> wildcard, anything else -> opaque
   ``comfy.T``. COMBO ``options`` that are all non-empty strings ride
   along as a static ComboWidget (the v1 combo rule), skipped under
   ``is_input_list`` where the socket is a list. Disguised-boolean combos
-  (enable/disable and kin) become core.boolean with a BooleanWidget, and
+  (enable/disable and kin) become BOOLEAN with a BooleanWidget, and
   BOOLEAN inputs keep their label_on/label_off as the same widget - the
   port skeleton's execute is the human's to adapt, and the porting fact
   is spelled in the schema instead of lost.
@@ -83,6 +83,7 @@ from .translate import (
     boolean_combo,
     combo_widget,
     comfy_type_id,
+    comfy_value_type_id,
     dynamic_entries_occupy_gpu,
     number_widget,
     selector_lazy_inputs,
@@ -108,7 +109,7 @@ def _is_structural_marker(io_type: str) -> bool:
     return io_type.startswith("COMFY_") and io_type.endswith("_V3")
 
 
-#: io_type whose vocabulary is widget data within core.combo identity.
+#: io_type whose vocabulary is widget data within COMBO identity.
 _COMBO_IO_TYPE = "COMBO"
 
 
@@ -158,7 +159,7 @@ def _member_type_id(io_type: str, translation: CompatTranslation) -> str:
     primitive = PRIMITIVES.get(io_type)
     if primitive is not None:
         return primitive
-    opaque = comfy_type_id(io_type)
+    opaque = comfy_value_type_id(io_type)
     translation.opaque_types.add(opaque)
     return opaque
 

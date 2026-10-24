@@ -1,5 +1,28 @@
 ## ComfyUI compatibility
 
+- The native core pack exposes eleven latent creation, batch, transform, resize,
+  blend, composite, crop, and noise-mask nodes under their exact ComfyUI IDs.
+  IMAGE, MASK, and LATENT values cross ordinary pack boundaries without host type
+  overrides.
+- Six native latent operation nodes blend, tonemap, sharpen, apply operations
+  directly or within a denoising schedule interval, and replace video frames.
+  LATENT_OPERATION uses the same resident-value boundary as model hooks.
+- Nine native advanced latent nodes add, subtract, multiply, interpolate,
+  concatenate, cut, split to batches, join batches, and set batch seed behavior.
+- Ten native conditioning nodes combine, blend, concatenate, multiply, mask,
+  zero, and set area or timestep metadata under their exact ComfyUI interfaces.
+- Twelve native mask and composite nodes convert, create, invert, crop, combine,
+  feather, grow, threshold, and composite images or latents under exact core IDs.
+- Six native core image nodes create, resize, invert, batch, and pad images for
+  outpainting, preserving source color, alpha, resize, and feathering behavior.
+- Five native image filters blend, blur, quantize, sharpen, and scale to a total
+  pixel count under their exact ComfyUI interfaces.
+- Nine native image transforms crop, repeat and select batches, add seeded noise,
+  stitch, resize with padding, rotate, flip, and scale to a maximum dimension.
+- Native morphology applies erosion, dilation, opening, closing, gradients and
+  top/bottom hats; RGB/YUV conversion splits and joins three image channels.
+- Portable masks become Torch tensors at native tensor-consuming nodes, without
+  moving already-live tensors or loading Torch in the host decoder.
 - `dinkster-serve --comfy-root ... --legacy-pack PATH` runs unmodified v1 and
   pure V3 custom-node packs in quarantined isolated workers under namespaced
   node ids.

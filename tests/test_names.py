@@ -14,10 +14,12 @@ import pytest
 from dinkster_schema import (
     NAME_MAX,
     RESERVED_NAMESPACES,
+    canonical_claim,
     canonical_name,
     claim_covers,
     claims_conflict,
     reserved_root,
+    validate_claim,
     validate_name,
 )
 
@@ -105,7 +107,7 @@ def test_siblings_do_not_conflict() -> None:
 
 
 def test_reserved_roots() -> None:
-    assert RESERVED_NAMESPACES == {"std", "comfy", "core", "dinkster"}
+    assert RESERVED_NAMESPACES == {"std", "comfy", "core", "dinkster", "dev"}
     assert reserved_root("std") == "std"
     assert reserved_root("std.magic") == "std"
     assert reserved_root("std-extra") == "std"  # every contesting spelling
@@ -113,3 +115,35 @@ def test_reserved_roots() -> None:
     assert reserved_root("dinkster-nodes-foundation") == "dinkster"
     assert reserved_root("standard") is None
     assert reserved_root("my-pack") is None
+
+
+@pytest.mark.parametrize(
+    "node_id",
+    ["Epsilon Scaling", "Video Slice", "TextEncodeAceStepAudio1.5", "EmptyAceStep1.5LatentAudio"],
+)
+def test_exact_node_claims_preserve_spelling_and_do_not_cover_descendants(node_id: str) -> None:
+    assert validate_claim(node_id) is None
+    assert validate_name(node_id) is not None
+    assert canonical_claim(node_id) == node_id
+    assert claim_covers(node_id, node_id)
+    assert claims_conflict(node_id, node_id)
+    for other in (node_id.lower(), node_id.replace(" ", "_"), node_id + ".Child"):
+        if other != node_id:
+            assert not claim_covers(node_id, other)
+            assert not claims_conflict(node_id, other)
+
+
+def test_namespace_and_exact_claims_cannot_own_the_same_node() -> None:
+    assert canonical_claim("img.filters") == "img-filters"
+    for namespace, exact in (("img", "Img.Blur"), ("img.filters", "Img_Filters.Blur")):
+        assert claims_conflict(namespace, exact)
+        assert claims_conflict(exact, namespace)
+    assert not claims_conflict("img", "Img-Blur")
+    assert not claims_conflict("img", "Img")
+    assert reserved_root("Core.Blur") == "core"
+    assert reserved_root("CoreBlur") is None
+
+
+@pytest.mark.parametrize("claim", ["", " Bad", "Bad ", "Bad/Node", "Bad..Node", "Bad\tNode"])
+def test_malformed_exact_claims_are_rejected(claim: str) -> None:
+    assert validate_claim(claim) is not None

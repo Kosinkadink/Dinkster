@@ -83,6 +83,7 @@ from dinkster_protocol.pack_surfaces import PACK_SETTINGS_SCHEMA_MAX_BYTES, pack
 from dinkster_schema import (
     ComfyAliasRegistry,
     ComfyGroupRegistry,
+    canonical_claim,
     canonical_name,
     claim_covers,
     claims_conflict,
@@ -90,6 +91,7 @@ from dinkster_schema import (
     comfy_group_registry_from_wire,
     core_logger,
     reserved_root,
+    validate_claim,
     validate_name,
 )
 from dinkster_values import MEBIBYTE
@@ -826,8 +828,8 @@ def _catalog_node_port_map(value: object, where: str) -> str | None:
     if not isinstance(value, dict):
         return f"{where} must be an object"
     for port_id, raw in cast("dict[str, object]", value).items():
-        if validate_name(port_id) is not None:
-            return f"{where} keys must be valid port ids"
+        if not port_id:
+            return f"{where} keys must be non-empty port ids"
         if not isinstance(raw, dict):
             return f"{where}.{port_id} must be an object"
         record = cast("dict[str, object]", raw)
@@ -846,8 +848,8 @@ def _catalog_combo_map(value: object, where: str) -> str | None:
     if not isinstance(value, dict):
         return f"{where} must be an object"
     for input_id, raw in cast("dict[str, object]", value).items():
-        if validate_name(input_id) is not None:
-            return f"{where} keys must be valid input ids"
+        if not input_id:
+            return f"{where} keys must be non-empty input ids"
         if not isinstance(raw, dict) or not raw:
             return f"{where}.{input_id} must be a non-empty object"
         for option, text in cast("dict[str, object]", raw).items():
@@ -876,8 +878,8 @@ def _validate_locale_catalog(
     if not isinstance(nodes, dict):
         return None, f"{path} nodes must be an object"
     for node_type, raw in cast("dict[str, object]", nodes).items():
-        if validate_name(node_type) is not None:
-            return None, f"{path} nodes keys must be valid node types"
+        if not node_type:
+            return None, f"{path} nodes keys must be non-empty node types"
         if not any(claim_covers(claim, node_type) for claim in namespaces):
             return None, f"{path} node {node_type!r} is not owned by this pack"
         if not isinstance(raw, dict) or not raw:
@@ -944,8 +946,8 @@ def _validate_locale_catalog(
     if not isinstance(search_terms, dict):
         return None, f"{path} searchTerms must be an object"
     for node_type, raw in cast("dict[str, object]", search_terms).items():
-        if validate_name(node_type) is not None:
-            return None, f"{path} searchTerms keys must be valid node types"
+        if not node_type:
+            return None, f"{path} searchTerms keys must be non-empty node types"
         if not any(claim_covers(claim, node_type) for claim in namespaces):
             return None, f"{path} searchTerms node {node_type!r} is not owned by this pack"
         if not isinstance(raw, list) or not raw:
@@ -3017,7 +3019,7 @@ def _parse_namespaces(raw: object, pack_name: str, manifest_path: Path) -> tuple
         )
     claims = cast("list[str]", raw)
     for claim in claims:
-        problem = validate_name(claim)
+        problem = validate_claim(claim)
         if problem is not None:
             raise ManifestError(f"{manifest_path}: [pack] namespaces entry {claim!r} {problem}")
     for index, claim in enumerate(claims):
@@ -3025,7 +3027,7 @@ def _parse_namespaces(raw: object, pack_name: str, manifest_path: Path) -> tuple
             if claims_conflict(earlier, claim):
                 detail = (
                     "are the same claim (separators '-', '_' and '.' are one equivalence class)"
-                    if canonical_name(earlier) == canonical_name(claim)
+                    if canonical_claim(earlier) == canonical_claim(claim)
                     else "overlap (one nests inside the other); keep only the broader claim"
                 )
                 raise ManifestError(

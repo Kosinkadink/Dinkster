@@ -412,7 +412,7 @@ def test_media_comfy_aliases_preserve_pinned_audio_ops_semantics() -> None:
 
     # The pinned integer decibel volume widens to the native float gain_db.
     volume = {item["id"]: item for item in source_schemas["comfy.AudioAdjustVolume"]["interface"]}
-    assert volume["volume"]["type"] == {"kind": "concrete", "types": ["core.int"]}
+    assert volume["volume"]["type"] == {"kind": "concrete", "types": ["INT"]}
     assert volume["volume"]["default"] == 1
     assert volume["volume"]["widget"]["min"] == -100
     assert volume["volume"]["widget"]["max"] == 100

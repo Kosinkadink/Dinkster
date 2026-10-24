@@ -152,7 +152,7 @@ def test_manifest_provisioned_birefnet_matches_pinned_matte(
                     "matte": GraphNode(
                         "dinkster.image.matte",
                         {
-                            "image": TypedLiteral("dinkster.image", source.tolist()),
+                            "image": TypedLiteral("IMAGE", source.tolist()),
                             "provider": "dinkster-vision-birefnet",
                         },
                     )

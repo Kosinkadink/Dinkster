@@ -467,7 +467,7 @@ def test_path_loaded_builtin_selector_provenance_fails_closed(
             probe=_probe_with(_listing(category, listed)),
         )
         (input_spec,) = node.schema().inputs
-        assert input_spec.type == TypeExpr.concrete("core.combo")
+        assert input_spec.type == TypeExpr.concrete("COMBO")
         assert isinstance(input_spec.widget, ComboWidget)
 
     third_party = tmp_path / "custom_nodes" / expected_source.name
@@ -601,7 +601,7 @@ def test_ungrammatical_category_stays_frozen() -> None:
 
 
 def test_input_is_list_combo_carries_no_widget_or_snapshot() -> None:
-    # Under INPUT_IS_LIST the socket is list<core.combo>; a widget on a
+    # Under INPUT_IS_LIST the socket is list<COMBO>; a widget on a
     # list socket is undefined in the wire contract, so nothing to
     # remote-ify and no snapshot is recorded.
     listed = ["a.safetensors"]

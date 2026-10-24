@@ -118,7 +118,11 @@ def test_manifest_type_claims_accept_exact_ids_and_reject_overlaps(tmp_path: Pat
     assert manifest.type_namespaces == ("mypack.Thing", "mypack.Other")
     assert manifest.publisher == ""
     validate_registration_claims(manifest)
-    path.write_text(path.read_text().replace('"mypack.Other"', '"mypack.Thing-child"'))
+    path.write_text(
+        path.read_text()
+        .replace('"mypack.Thing"', '"mypack.thing"')
+        .replace('"mypack.Other"', '"mypack.thing-child"')
+    )
     with pytest.raises(ManifestError, match="overlapping claims"):
         load_manifest(path)
 
@@ -177,6 +181,49 @@ def test_pack_registration_rejects_bare_node_under_a_prefixed_claim(tmp_path: Pa
     with pytest.raises(ManifestError, match="node.*bare_node.*pack-name prefix"):
         load_pack(load_manifest(path), import_from_pack_root=True)
     assert not prepare_catalog(path).ok
+
+
+def test_manifest_keeps_exact_node_claims_and_rejects_overlapping_namespace(tmp_path: Path) -> None:
+    path = tmp_path / "dinkster-pack.toml"
+    claims = ["Epsilon Scaling", "Video Slice", "TextEncodeAceStepAudio1.5"]
+    path.write_text(
+        f'[pack]\nname = "test"\nnamespaces = {json.dumps(claims)}\n'
+        '[pack.entry]\nnodes = "test_pack:NODES"\n'
+    )
+    assert load_manifest(path).namespaces == tuple(claims)
+    path.write_text(path.read_text().replace(json.dumps(claims), '["img", "Img.Blur"]'))
+    with pytest.raises(ManifestError, match="overlap"):
+        load_manifest(path)
+
+
+@pytest.mark.parametrize("field", ["nodes", "searchTerms"])
+def test_locale_metadata_preserves_exact_node_and_port_ids(tmp_path: Path, field: str) -> None:
+    path = tmp_path / "dinkster-pack.toml"
+    path.write_text(
+        '[pack]\nname = "test"\nnamespaces = ["Epsilon Scaling"]\n'
+        '[pack.entry]\nnodes = "test_pack:NODES"\n'
+    )
+    locales = tmp_path / "locales"
+    locales.mkdir()
+    catalog = locales / "en.json"
+    record = {
+        "displayName": "Scale epsilon",
+        "inputs": {"blocks.0.": {"displayName": "First block"}},
+        "outputs": {"STRING": {"displayName": "Text"}, "*": {"doc": "Any value"}},
+        "combos": {"Model Choice": {"fast": "Fast"}},
+    }
+    payload = {field: {"Epsilon Scaling": record if field == "nodes" else ["epsilon"]}}
+    data = json.dumps(payload).encode()
+    catalog.write_bytes(data)
+    manifest = load_manifest(path)
+    assert manifest.locale_catalog_problems == ()
+    assert len(manifest.locale_catalogs) == 1
+    assert manifest.locale_catalogs[0].node_references == ("Epsilon Scaling",)
+    assert manifest.locale_catalogs[0].data == data
+    catalog.write_text(json.dumps({field: {"Epsilon scaling": payload[field]["Epsilon Scaling"]}}))
+    unowned = load_manifest(path)
+    assert unowned.locale_catalogs == ()
+    assert any("not owned" in problem for problem in unowned.locale_catalog_problems)
 
 
 def write_alias_registry(path: Path, *, carrier: str = "test.native") -> None:

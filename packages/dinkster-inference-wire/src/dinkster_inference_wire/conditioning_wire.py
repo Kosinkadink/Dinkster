@@ -11,6 +11,7 @@ from typing import Literal, TypeAlias, cast
 
 from dinkster_values import (
     CONDITIONING_HEADER_LIMIT_BYTES,
+    CONDITIONING_TYPE,
     ResidencyTable,
     ResidentCodec,
     ResidentLookupError,
@@ -38,7 +39,7 @@ from .conditioning import (
     canonical_conditioning_set,
 )
 
-CONDITIONING_TYPE_ID = "dinkster.conditioning"
+CONDITIONING_TYPE_ID = CONDITIONING_TYPE
 CONDITIONING_CARRIER_FORMAT = "dinkster-conditioning-carrier-v1"
 RESIDENT_CONDITIONING_FORMAT = "dinkster-resident-conditioning-v1"
 
@@ -989,6 +990,8 @@ def register_conditioning_type(
     resident_codec = ResidentCodec(resident_table, resident_meta)
 
     def coerce(obj: object) -> object:
+        if type(obj) is list:
+            return cast(object, obj)
         if (
             not isinstance(obj, ConditioningCarrier)
             and type(obj) is not ResidentConditioningCarrier
@@ -999,6 +1002,8 @@ def register_conditioning_type(
         return obj
 
     def fingerprint(obj: object) -> str:
+        if type(obj) is list:
+            return resident_codec.fingerprint(cast(object, obj))
         if type(obj) is ResidentConditioningCarrier:
             return resident_codec.fingerprint(obj)
         carrier = cast("ConditioningCarrier", obj)
@@ -1010,6 +1015,8 @@ def register_conditioning_type(
         return stable_hash([encoded])
 
     def encode(obj: object) -> bytes:
+        if type(obj) is list:
+            return _RESIDENT_MAGIC + resident_codec.encode(cast(object, obj))
         if type(obj) is ResidentConditioningCarrier:
             return _RESIDENT_MAGIC + resident_codec.encode(obj)
         carrier = cast("ConditioningCarrier", obj)
@@ -1022,7 +1029,7 @@ def register_conditioning_type(
     def decode(data: bytes) -> object:
         if data.startswith(_RESIDENT_MAGIC):
             value = resident_codec.decode(data[len(_RESIDENT_MAGIC) :])
-            if type(value) not in (ConditioningCarrier, ResidentConditioningCarrier):
+            if type(value) not in (ConditioningCarrier, ResidentConditioningCarrier, list):
                 raise ConditioningWireError("invalid-resident-carrier")
             return value
         return decode_conditioning_carrier(data)
@@ -1039,6 +1046,11 @@ def register_conditioning_type(
         decode_conditioning_carrier(data, metadata)
 
     def metadata(obj: object) -> Mapping[str, object]:
+        if type(obj) is list:
+            return {
+                **resident_codec.metadata(cast(object, obj)),
+                "format": RESIDENT_CONDITIONING_FORMAT,
+            }
         if type(obj) is ResidentConditioningCarrier or (
             type(obj) is ConditioningCarrier and obj.has_resident_payloads
         ):
@@ -1054,7 +1066,7 @@ def register_conditioning_type(
             return getattr(payload, "_dinkster_input_value", payload)
         return obj
 
-    return registry.register(
+    spec = registry.register(
         CONDITIONING_TYPE_ID,
         encode=encode,
         decode=decode,
@@ -1064,3 +1076,6 @@ def register_conditioning_type(
         input_convert=input_convert,
         validate_encoded=validate_encoded,
     )
+    if resident_table is not None:
+        registry.register_resident_table(resident_table)
+    return spec

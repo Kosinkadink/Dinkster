@@ -25,18 +25,12 @@ collisions arbitrated by load order on user machines:
   conservative, coverage precise: ``img``'s owner is the only one who
   *may* claim ``img-extra``, but must claim it to cover its nodes.
 
-Node *type* ids themselves are not forced into this grammar - compat
-translation legitimately preserves v1 casing in later segments
-(``comfy.<pack>.<V1Name>``). Only the claim prefix is grammar-bound;
-coverage compares atoms case-insensitively so a lowercase claim governs
-regardless of what a legacy tail looks like.
+Claims outside the lowercase namespace grammar name one exact ID.
+They retain case, spaces and separators and cover only that spelling.
+Namespace claims still conflict with exact claims they cover. Pack and
+publisher identities never use the exact-ID grammar.
 
-Reserved namespaces (``std``, ``comfy``, ``core``, ``dinkster``) are data
-here, policy elsewhere: the public registry never grants them, and local
-composition requires explicit host trust to compose a pack claiming one
-(the host's spec is the local analog of the registry's grant table).
-Core packs claim them through the ordinary manifest field - the same
-declaration as everyone, no privileged shortcut (H5).
+Reserved namespaces are data here; registration applies publisher policy.
 """
 
 from __future__ import annotations
@@ -48,6 +42,7 @@ NAME_MAX = 64
 RESERVED_NAMESPACES: frozenset[str] = frozenset({"std", "comfy", "core", "dinkster", "dev"})
 
 _NAME_RE = re.compile(r"^[a-z][a-z0-9]*(?:[-_.][a-z0-9]+)*$")
+_CLAIM_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*(?:[-_. ][A-Za-z0-9]+)*$")
 _SEP_SPLIT_RE = re.compile(r"([-_.])")
 
 
@@ -70,6 +65,22 @@ def validate_name(name: str) -> str | None:
     return None
 
 
+def validate_claim(claim: str) -> str | None:
+    """Validate a namespace claim or an exact ASCII node ID."""
+    if not claim:
+        return "must not be empty"
+    if len(claim) > NAME_MAX:
+        return f"must be at most {NAME_MAX} characters, got {len(claim)}"
+    if not _CLAIM_RE.fullmatch(claim):
+        return "must be ASCII letters/digits separated by single '-', '_', '.' or space"
+    return None
+
+
+def canonical_claim(claim: str) -> str:
+    """Namespace identity is canonical; exact node IDs retain their spelling."""
+    return canonical_name(claim) if validate_name(claim) is None else claim
+
+
 def _atoms(name: str) -> tuple[list[str], list[str]]:
     """Split into (atoms, separators); ``separators[i]`` follows
     ``atoms[i]``. Works on any id, not just grammar-valid names, so
@@ -79,22 +90,26 @@ def _atoms(name: str) -> tuple[list[str], list[str]]:
 
 
 def canonical_name(name: str) -> str:
-    """The uniqueness key: atoms joined with ``-``. Two names with the
-    same canonical form are one identity everywhere (pack table, claim
-    ownership, publisher ids)."""
+    """Identity key for pack/publisher names and namespace claims.
+
+    Exact-ID ownership uses canonical_claim instead.
+    """
     atoms, _ = _atoms(name)
     return "-".join(atom.casefold() for atom in atoms)
 
 
 def claim_covers(claim: str, node_type: str) -> bool:
-    """Whether a namespace claim covers a node type id.
+    """Whether a namespace or exact claim covers an id.
 
     The claim's atoms must prefix the node type's atoms (case-insensitive
     - legacy tails keep v1 casing), the node type must continue past the
     claim (a namespace is not a node name), and the separator in the node
     type at the claim edge must be a literal ``.`` - so ``img`` covers
     ``img.blur`` and ``img`` covers ``img-x`` never.
+    Exact claims cover only the same spelling, never descendants.
     """
+    if validate_name(claim) is not None:
+        return claim == node_type
     claim_atoms, _ = _atoms(claim)
     node_atoms, node_seps = _atoms(node_type)
     edge = len(claim_atoms)
@@ -114,6 +129,14 @@ def claims_conflict(a: str, b: str) -> bool:
     claim as ``img.extra``, which nests inside ``img``. Coarser than
     coverage on purpose: exclusivity must hold under every separator
     spelling, or two owners could cover one node type."""
+    a_exact = validate_name(a) is not None
+    b_exact = validate_name(b) is not None
+    if a_exact and b_exact:
+        return a == b
+    if a_exact:
+        return claim_covers(b, a)
+    if b_exact:
+        return claim_covers(a, b)
     a_atoms = [atom.casefold() for atom in _atoms(a)[0]]
     b_atoms = [atom.casefold() for atom in _atoms(b)[0]]
     if len(a_atoms) > len(b_atoms):
@@ -135,9 +158,11 @@ def reserved_root(claim: str) -> str | None:
 __all__ = [
     "NAME_MAX",
     "RESERVED_NAMESPACES",
+    "canonical_claim",
     "canonical_name",
     "claim_covers",
     "claims_conflict",
     "reserved_root",
+    "validate_claim",
     "validate_name",
 ]

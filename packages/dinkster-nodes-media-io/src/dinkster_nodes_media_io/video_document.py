@@ -6,6 +6,8 @@ from collections.abc import Mapping
 from typing import Any, ClassVar
 
 from dinkster_api.v1 import (
+    CORE_STRING,
+    VIDEO_TYPE,
     AssetRef,
     InputSpec,
     Node,
@@ -36,7 +38,7 @@ SourceMedia = timeline_runtime.SourceMedia
 TimelineVideo = timeline_video.TimelineVideo
 
 DOCUMENT = TypeExpr.concrete(DOCUMENT_TYPE)
-STRING = TypeExpr.concrete("core.string")
+STRING = TypeExpr.concrete(CORE_STRING)
 
 
 class MakeVideoDocument(Node):
@@ -140,7 +142,7 @@ class BindTimelineSource(_Mutation):
             inputs=(
                 InputSpec("document", DOCUMENT),
                 InputSpec("params", STRING, widget=StringWidget(multiline=True)),
-                InputSpec("video", TypeExpr.concrete("comfy.VIDEO"), required=False),
+                InputSpec("video", TypeExpr.concrete(VIDEO_TYPE), required=False),
             ),
             outputs=(OutputSpec("document", DOCUMENT),),
         )
@@ -165,7 +167,7 @@ class RenderVideoDocument(Node):
             display_name="Render Video Document",
             category="video/timeline",
             inputs=(InputSpec("document", DOCUMENT),),
-            outputs=(OutputSpec("video", TypeExpr.concrete("comfy.VIDEO")),),
+            outputs=(OutputSpec("video", TypeExpr.concrete(VIDEO_TYPE)),),
         )
 
     @classmethod

@@ -47,10 +47,10 @@ from dinkster_workers import InProcessWorker
 def entry(nbytes: int, *, device: str = "ram", text: str = "payload") -> dict[str, Value]:
     return {
         "out": Value(
-            "core.string",
+            "STRING",
             text,
             ValueMeta({COST_META_KEY: {device: nbytes}}),
-            EncodedPayload("core.string", default_encode(text), None),
+            EncodedPayload("STRING", default_encode(text), None),
         )
     }
 
@@ -126,7 +126,7 @@ def test_budgeted_batch_workflow_matches_unbounded_output_and_peak_stays_bounded
                 node_type="test.xor",
                 inputs=(
                     InputSpec("image", image_type, accepts_storage=True),
-                    InputSpec("mask", TypeExpr.concrete("core.int")),
+                    InputSpec("mask", TypeExpr.concrete("INT")),
                 ),
                 outputs=(OutputSpec("image", image_type),),
             )
@@ -689,8 +689,8 @@ def test_list_aliases_and_replacements_count_shared_payload_once() -> None:
         cache = MemoryLRUCache(max_bytes=200)
         original = entry(40)["out"]
         alias = Value(original.type_id, original.fingerprint, original.meta, original.payload)
-        repeated = make_list_value("core.string", [original, alias, original])
-        nested = {"out": make_list_value("list<core.string>", [repeated, repeated])}
+        repeated = make_list_value("STRING", [original, alias, original])
+        nested = {"out": make_list_value("list<STRING>", [repeated, repeated])}
         assert entry_cost(nested, "ram") == 40
         await cache.put("first", nested)
         await cache.put("second", {"out": alias})

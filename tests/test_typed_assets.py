@@ -59,26 +59,26 @@ from dinkster_workers import InProcessWorker
 
 def test_asset_type_id_round_trips() -> None:
     for element in (
-        "comfy.IMAGE",
-        "list<comfy.IMAGE>",
-        "asset<comfy.IMAGE>",  # grammatical even though registration bans it
+        "IMAGE",
+        "list<IMAGE>",
+        "asset<IMAGE>",  # grammatical even though registration bans it
     ):
         assert parse_asset_type_id(asset_type_id(element)) == element
 
 
 def test_parse_asset_type_id_rejects_non_asset_spellings() -> None:
-    for spelling in ("comfy.IMAGE", "list<comfy.IMAGE>", "asset<>", "asset<", "", "x>"):
+    for spelling in ("IMAGE", "list<IMAGE>", "asset<>", "asset<", "", "x>"):
         assert parse_asset_type_id(spelling) is None
 
 
 def test_runtime_type_atom_peels_the_whole_grammar() -> None:
-    assert runtime_type_atom("comfy.IMAGE") == "comfy.IMAGE"
-    assert runtime_type_atom("asset<comfy.IMAGE>") == "comfy.IMAGE"
-    assert runtime_type_atom("asset<list<comfy.IMAGE>>") == "comfy.IMAGE"
-    assert runtime_type_atom("list<asset<comfy.IMAGE>>") == "comfy.IMAGE"
-    assert runtime_type_atom("list<asset<list<comfy.IMAGE>>>") == "comfy.IMAGE"
-    assert runtime_type_atom("stream<comfy.IMAGE>") == "comfy.IMAGE"
-    assert runtime_type_atom("asset<stream<comfy.IMAGE>>") == "comfy.IMAGE"
+    assert runtime_type_atom("IMAGE") == "IMAGE"
+    assert runtime_type_atom("asset<IMAGE>") == "IMAGE"
+    assert runtime_type_atom("asset<list<IMAGE>>") == "IMAGE"
+    assert runtime_type_atom("list<asset<IMAGE>>") == "IMAGE"
+    assert runtime_type_atom("list<asset<list<IMAGE>>>") == "IMAGE"
+    assert runtime_type_atom("stream<IMAGE>") == "IMAGE"
+    assert runtime_type_atom("asset<stream<IMAGE>>") == "IMAGE"
 
 
 def test_runtime_type_atom_rejects_malformed_ids() -> None:
@@ -86,12 +86,12 @@ def test_runtime_type_atom_rejects_malformed_ids() -> None:
         "",
         "asset<>",
         "list<asset<>>",
-        "asset<comfy.IMAGE",
-        "list<comfy.IMAGE>>",
-        "asset<comfy.IMAGE>x",
+        "asset<IMAGE",
+        "list<IMAGE>>",
+        "asset<IMAGE>x",
         "stream<>",
-        "stream<comfy.IMAGE",
-        "stream<comfy.IMAGE>>",
+        "stream<IMAGE",
+        "stream<IMAGE>>",
         "as<set>",
     ):
         assert runtime_type_atom(bad) is None, bad
@@ -101,39 +101,39 @@ def test_runtime_type_atom_rejects_malformed_ids() -> None:
 # TypeExpr model + wire
 
 
-IMAGE = TypeExpr.concrete("comfy.IMAGE")
+IMAGE = TypeExpr.concrete("IMAGE")
 
 
 def test_asset_expr_runtime_ids_and_cardinality() -> None:
     single = TypeExpr.asset_of(IMAGE)
-    assert single.runtime_type_id() == "asset<comfy.IMAGE>"
+    assert single.runtime_type_id() == "asset<IMAGE>"
     assert single.cardinality() == "scalar"
 
     one_asset_many_images = TypeExpr.asset_of(TypeExpr.list_of(IMAGE))
-    assert one_asset_many_images.runtime_type_id() == "asset<list<comfy.IMAGE>>"
+    assert one_asset_many_images.runtime_type_id() == "asset<list<IMAGE>>"
     assert one_asset_many_images.cardinality() == "scalar"  # ONE AssetRef
 
     many_assets = TypeExpr.list_of(TypeExpr.asset_of(IMAGE))
-    assert many_assets.runtime_type_id() == "list<asset<comfy.IMAGE>>"
+    assert many_assets.runtime_type_id() == "list<asset<IMAGE>>"
     assert many_assets.cardinality() == "list"
 
-    assert TypeExpr.runtime_cardinality("asset<list<comfy.IMAGE>>") == "scalar"
-    assert TypeExpr.runtime_cardinality("list<asset<comfy.IMAGE>>") == "list"
+    assert TypeExpr.runtime_cardinality("asset<list<IMAGE>>") == "scalar"
+    assert TypeExpr.runtime_cardinality("list<asset<IMAGE>>") == "list"
 
 
 def test_asset_expr_accepts_only_matching_asset_ids() -> None:
     expr = TypeExpr.asset_of(IMAGE)
-    assert expr.accepts_concrete("asset<comfy.IMAGE>")
-    assert not expr.accepts_concrete("comfy.IMAGE")
-    assert not expr.accepts_concrete("asset<comfy.LATENT>")
-    assert not expr.accepts_concrete("list<asset<comfy.IMAGE>>")
+    assert expr.accepts_concrete("asset<IMAGE>")
+    assert not expr.accepts_concrete("IMAGE")
+    assert not expr.accepts_concrete("asset<LATENT>")
+    assert not expr.accepts_concrete("list<asset<IMAGE>>")
 
 
 def test_asset_ids_are_never_spelled_concrete() -> None:
     with pytest.raises(ValueError, match="asset types are spelled"):
-        TypeExpr.concrete("asset<comfy.IMAGE>")
+        TypeExpr.concrete("asset<IMAGE>")
     with pytest.raises(ValueError, match="asset types are spelled"):
-        TypeExpr.union("comfy.IMAGE", "asset<comfy.IMAGE>")
+        TypeExpr.union("IMAGE", "asset<IMAGE>")
 
 
 def test_asset_expr_wire_round_trip() -> None:
@@ -163,18 +163,18 @@ def ref_for(data: bytes, name: str = "note.txt") -> AssetRef:
 def test_parametric_asset_wrap_keeps_the_stamp() -> None:
     registry = make_registry()
     ref = ref_for(b"hello")
-    typed = registry.wrap("asset<core.string>", ref)
-    assert typed.type_id == "asset<core.string>"
+    typed = registry.wrap("asset<STRING>", ref)
+    assert typed.type_id == "asset<STRING>"
     assert typed.fingerprint == ref.digest  # identity is the content digest
     untyped = registry.wrap("dinkster.asset", ref)
     assert untyped.fingerprint == typed.fingerprint
 
-    assert "asset<core.string>" in registry
-    assert "asset<list<core.string>>" in registry
+    assert "asset<STRING>" in registry
+    assert "asset<list<STRING>>" in registry
     assert "asset<no.such.type>" not in registry
     assert "asset<>" not in registry
     # Parametric ids resolve through the base spec, never enumerate:
-    assert "asset<core.string>" not in registry.type_ids()
+    assert "asset<STRING>" not in registry.type_ids()
 
 
 def test_unregistered_asset_stamps_never_wrap_or_code() -> None:
@@ -193,39 +193,35 @@ def test_unregistered_asset_stamps_never_wrap_or_code() -> None:
 
 def test_decoder_registration_rules() -> None:
     registry = make_registry()
-    registry.register_asset_decoder("core.string", provider_id="t.text@1", decode=lambda ref: "x")
+    registry.register_asset_decoder("STRING", provider_id="t.text@1", decode=lambda ref: "x")
     with pytest.raises(ValueError, match="already registered"):
-        registry.register_asset_decoder(
-            "core.string", provider_id="t.text@2", decode=lambda ref: "y"
-        )
+        registry.register_asset_decoder("STRING", provider_id="t.text@2", decode=lambda ref: "y")
     with pytest.raises(ValueError, match="provider_id must be non-empty"):
-        registry.register_asset_decoder("core.int", provider_id="", decode=lambda ref: 1)
+        registry.register_asset_decoder("INT", provider_id="", decode=lambda ref: 1)
     with pytest.raises(ValueError, match="no provider chains"):
         registry.register_asset_decoder(
-            "asset<core.string>", provider_id="t.chain@1", decode=lambda ref: ref
+            "asset<STRING>", provider_id="t.chain@1", decode=lambda ref: ref
         )
     with pytest.raises(KeyError, match="unregistered decode target"):
         registry.register_asset_decoder("no.such.type", provider_id="t.err@1", decode=lambda ref: 1)
     # list targets are legal: one asset decoding to a list of values.
     registry.register_asset_decoder(
-        "list<core.string>", provider_id="t.lines@1", decode=lambda ref: ["x"]
+        "list<STRING>", provider_id="t.lines@1", decode=lambda ref: ["x"]
     )
-    assert registry.asset_decoder_for("list<core.string>") is not None
+    assert registry.asset_decoder_for("list<STRING>") is not None
 
 
 def test_batch_merge_registration_rules() -> None:
     registry = make_registry()
-    registry.register_batch_merge("core.string", provider_id="t.join@1", merge=lambda items: "")
+    registry.register_batch_merge("STRING", provider_id="t.join@1", merge=lambda items: "")
     with pytest.raises(ValueError, match="already registered"):
-        registry.register_batch_merge("core.string", provider_id="t.join@2", merge=lambda items: "")
+        registry.register_batch_merge("STRING", provider_id="t.join@2", merge=lambda items: "")
     with pytest.raises(ValueError, match="atom type ids"):
-        registry.register_batch_merge(
-            "list<core.string>", provider_id="t.err@1", merge=lambda items: ""
-        )
+        registry.register_batch_merge("list<STRING>", provider_id="t.err@1", merge=lambda items: "")
     with pytest.raises(KeyError, match="unregistered value type"):
         registry.register_batch_merge("no.such.type", provider_id="t.err@1", merge=lambda items: "")
     with pytest.raises(ValueError, match="provider_id must be non-empty"):
-        registry.register_batch_merge("core.int", provider_id="", merge=lambda items: 0)
+        registry.register_batch_merge("INT", provider_id="", merge=lambda items: 0)
 
 
 # ---------------------------------------------------------------------------
@@ -236,55 +232,55 @@ def test_planner_covers_exactly_the_pinned_coercions() -> None:
     scalar = TypeExpr.concrete(CORE_STRING)
     listy = TypeExpr.list_of(scalar)
 
-    decode = plan_asset_coercion("asset<core.string>", scalar)
+    decode = plan_asset_coercion("asset<STRING>", scalar)
     assert decode is not None and decode.kind == "decode"
-    assert decode.target_type_id == "core.string"
-    assert decode.result_type_id == "core.string"
+    assert decode.target_type_id == "STRING"
+    assert decode.result_type_id == "STRING"
     assert decode.merge_type_id is None
 
-    packed = plan_asset_coercion("asset<list<core.string>>", listy)
+    packed = plan_asset_coercion("asset<list<STRING>>", listy)
     assert packed is not None and packed.kind == "decode"
-    assert packed.target_type_id == "list<core.string>"
+    assert packed.target_type_id == "list<STRING>"
 
-    lift = plan_asset_coercion("list<asset<core.string>>", listy)
+    lift = plan_asset_coercion("list<asset<STRING>>", listy)
     assert lift is not None and lift.kind == "lift"
-    assert lift.target_type_id == "core.string"
-    assert lift.result_type_id == "list<core.string>"
+    assert lift.target_type_id == "STRING"
+    assert lift.result_type_id == "list<STRING>"
 
-    merge = plan_asset_coercion("list<asset<core.string>>", scalar)
+    merge = plan_asset_coercion("list<asset<STRING>>", scalar)
     assert merge is not None and merge.kind == "merge"
-    assert merge.target_type_id == "core.string"
-    assert merge.result_type_id == "core.string"
-    assert merge.merge_type_id == "core.string"
+    assert merge.target_type_id == "STRING"
+    assert merge.result_type_id == "STRING"
+    assert merge.merge_type_id == "STRING"
 
 
 def test_planner_refuses_everything_else() -> None:
     scalar = TypeExpr.concrete(CORE_STRING)
     listy = TypeExpr.list_of(scalar)
     # Plain values never coerce: no list/scalar bridging exists.
-    assert plan_asset_coercion("core.string", listy) is None
-    assert plan_asset_coercion("list<core.string>", scalar) is None
+    assert plan_asset_coercion("STRING", listy) is None
+    assert plan_asset_coercion("list<STRING>", scalar) is None
     # Wrong element type.
-    assert plan_asset_coercion("asset<core.int>", scalar) is None
+    assert plan_asset_coercion("asset<INT>", scalar) is None
     # A list-decoding asset never merges (list-of-lists does not batch).
-    assert plan_asset_coercion("list<asset<list<core.string>>>", listy) is None
+    assert plan_asset_coercion("list<asset<list<STRING>>>", listy) is None
     # No implicit flattening between asset list forms.
     assert (
-        plan_asset_coercion("asset<list<core.string>>", TypeExpr.list_of(TypeExpr.asset_of(scalar)))
+        plan_asset_coercion("asset<list<STRING>>", TypeExpr.list_of(TypeExpr.asset_of(scalar)))
         is None
     )
 
 
 def test_planner_missing_providers_names_what_is_absent() -> None:
     registry = make_registry()
-    merge = plan_asset_coercion("list<asset<core.string>>", TypeExpr.concrete(CORE_STRING))
+    merge = plan_asset_coercion("list<asset<STRING>>", TypeExpr.concrete(CORE_STRING))
     assert merge is not None
     missing = merge.missing_providers(registry)
     assert len(missing) == 2  # decoder and merger both absent
-    registry.register_asset_decoder("core.string", provider_id="t.text@1", decode=lambda ref: "x")
+    registry.register_asset_decoder("STRING", provider_id="t.text@1", decode=lambda ref: "x")
     missing = merge.missing_providers(registry)
     assert len(missing) == 1 and "batch merge" in missing[0]
-    registry.register_batch_merge("core.string", provider_id="t.join@1", merge=lambda items: "")
+    registry.register_batch_merge("STRING", provider_id="t.join@1", merge=lambda items: "")
     assert merge.missing_providers(registry) == ()
 
 
@@ -297,20 +293,17 @@ def test_asset_expr_binds_and_resolves_type_variables() -> None:
     generics: the constructor recurses, the variable binds to the element."""
     T = TypeExpr.variable("T")
     specs = (InputSpec("ref", TypeExpr.asset_of(T)),)
-    bindings = bind_type_variables(specs, {"ref": "asset<core.int>"})
-    assert bindings == {"T": "core.int"}
-    assert resolved_type_id(TypeExpr.asset_of(T), bindings) == "asset<core.int>"
-    assert (
-        resolved_type_id(TypeExpr.list_of(TypeExpr.asset_of(T)), bindings)
-        == "list<asset<core.int>>"
-    )
+    bindings = bind_type_variables(specs, {"ref": "asset<INT>"})
+    assert bindings == {"T": "INT"}
+    assert resolved_type_id(TypeExpr.asset_of(T), bindings) == "asset<INT>"
+    assert resolved_type_id(TypeExpr.list_of(TypeExpr.asset_of(T)), bindings) == "list<asset<INT>>"
     nested = bind_type_variables(
         (InputSpec("refs", TypeExpr.list_of(TypeExpr.asset_of(T))),),
-        {"refs": "list<asset<core.string>>"},
+        {"refs": "list<asset<STRING>>"},
     )
-    assert nested == {"T": "core.string"}
+    assert nested == {"T": "STRING"}
     with pytest.raises(TypeSolveError, match="expected an asset value"):
-        bind_type_variables(specs, {"ref": "core.int"})
+        bind_type_variables(specs, {"ref": "INT"})
 
 
 # ---------------------------------------------------------------------------
@@ -426,13 +419,13 @@ def make_engine(
     register_asset_type(registry, resolver)
     if register_providers:
         registry.register_asset_decoder(
-            "core.string",
+            "STRING",
             provider_id=decoder_id,
             decode=lambda ref: ref.read_bytes().decode("utf-8"),  # type: ignore[union-attr]
         )
         if merger_id is not None:
             registry.register_batch_merge(
-                "core.string",
+                "STRING",
                 provider_id=merger_id,
                 merge=lambda items: "+".join(str(i) for i in items),
             )
@@ -450,16 +443,16 @@ def make_engine(
 
 def registry_with_providers(*, merger: bool = True) -> TypeRegistry:
     registry = make_registry()
-    registry.register_asset_decoder("core.string", provider_id="t.text@1", decode=lambda ref: "x")
+    registry.register_asset_decoder("STRING", provider_id="t.text@1", decode=lambda ref: "x")
     if merger:
-        registry.register_batch_merge("core.string", provider_id="t.join@1", merge=lambda items: "")
+        registry.register_batch_merge("STRING", provider_id="t.join@1", merge=lambda items: "")
     return registry
 
 
 def asset_literal(*wires: object) -> TypedLiteral:
     if len(wires) == 1:
-        return TypedLiteral("asset<core.string>", wires[0])
-    return TypedLiteral("list<asset<core.string>>", list(wires))
+        return TypedLiteral("asset<STRING>", wires[0])
+    return TypedLiteral("list<asset<STRING>>", list(wires))
 
 
 WIRE = {"digest": digest_bytes(b"w"), "name": "w.txt", "size": 1}
@@ -485,7 +478,7 @@ def test_validation_errors_on_missing_providers() -> None:
     assert "batch merge" in diags[0].message
     # No registry at hand (plain atom set): structural acceptance, silent -
     # the engine's own registry-backed validation is the enforcement point.
-    quiet = validate(graph, SCHEMAS, ["m"], known_types={"core.string", "dinkster.asset"})
+    quiet = validate(graph, SCHEMAS, ["m"], known_types={"STRING", "dinkster.asset"})
     assert quiet == []
 
 
@@ -497,9 +490,7 @@ def test_asset_widget_scalar_rejects_unstamped_asset_literal() -> None:
 
 
 def test_validation_still_rejects_plain_shape_mismatches() -> None:
-    graph = Graph(
-        nodes={"m": GraphNode("ta.upper", {"text": TypedLiteral("list<core.string>", ["a"])})}
-    )
+    graph = Graph(nodes={"m": GraphNode("ta.upper", {"text": TypedLiteral("list<STRING>", ["a"])})})
     diags = validate(graph, SCHEMAS, ["m"], known_types=registry_with_providers())
     assert any(d.code == "list-into-scalar" for d in diags)
 
@@ -509,14 +500,14 @@ def test_asset_of_list_needs_its_own_list_target_decoder() -> None:
     scalar-element decoder never covers it, and registering the list-target
     decoder makes it valid."""
     graph = Graph(
-        nodes={"j": GraphNode("ta.join", {"texts": TypedLiteral("asset<list<core.string>>", WIRE)})}
+        nodes={"j": GraphNode("ta.join", {"texts": TypedLiteral("asset<list<STRING>>", WIRE)})}
     )
-    registry = registry_with_providers()  # core.string decoder only
+    registry = registry_with_providers()  # STRING decoder only
     diags = validate(graph, SCHEMAS, ["j"], known_types=registry)
     assert [d.code for d in diags] == ["asset-coercion-unavailable"]
-    assert "list<core.string>" in diags[0].message
+    assert "list<STRING>" in diags[0].message
     registry.register_asset_decoder(
-        "list<core.string>", provider_id="t.lines@1", decode=lambda ref: ["x"]
+        "list<STRING>", provider_id="t.lines@1", decode=lambda ref: ["x"]
     )
     assert validate(graph, SCHEMAS, ["j"], known_types=registry) == []
 
@@ -582,7 +573,7 @@ def test_asset_widget_scalar_merge_requires_registered_merger(tmp_path: Path) ->
         with pytest.raises(GraphValidationError) as err:
             await make_engine(resolver, merger_id=None).run(graph, ["u"])
         assert [d.code for d in err.value.diagnostics] == ["asset-coercion-unavailable"]
-        assert "batch merge for type 'core.string'" in str(err.value)
+        assert "batch merge for type 'STRING'" in str(err.value)
 
     asyncio.run(scenario())
 
@@ -607,7 +598,7 @@ def test_asset_of_list_decodes_to_the_whole_list(tmp_path: Path) -> None:
         register_core_types(registry)
         register_asset_type(registry, resolver)
         registry.register_asset_decoder(
-            "list<core.string>",
+            "list<STRING>",
             provider_id="t.lines@1",
             decode=lambda ref: ref.read_bytes().decode("utf-8").splitlines(),  # type: ignore[union-attr]
         )
@@ -622,7 +613,7 @@ def test_asset_of_list_decodes_to_the_whole_list(tmp_path: Path) -> None:
                 nodes={
                     "j": GraphNode(
                         "ta.join",
-                        {"texts": TypedLiteral("asset<list<core.string>>", wires[0])},
+                        {"texts": TypedLiteral("asset<list<STRING>>", wires[0])},
                     )
                 }
             ),
@@ -672,7 +663,7 @@ def test_different_stamps_on_the_same_asset_never_share_a_cache_entry(
     tmp_path: Path,
 ) -> None:
     """The stamp is part of cache identity: the same AssetRef under
-    asset<core.string> vs asset<core.int> shares a content fingerprint but
+    asset<STRING> vs asset<INT> shares a content fingerprint but
     must miss the cache and re-solve the output stamp (a generic
     asset<T> -> asset<T> node's output type depends on the stamp alone)."""
 
@@ -711,15 +702,15 @@ def test_different_stamps_on_the_same_asset_never_share_a_cache_entry(
                 nodes={"i": GraphNode("ta.identity", {"ref": TypedLiteral(stamp, wires[0])})}
             )
 
-        first = await engine.run(graph("asset<core.string>"), ["i"])
+        first = await engine.run(graph("asset<STRING>"), ["i"])
         assert first.executed == ("i",)
-        assert first.outputs["i"]["ref"].type_id == "asset<core.string>"
+        assert first.outputs["i"]["ref"].type_id == "asset<STRING>"
 
-        restamped = await engine.run(graph("asset<core.int>"), ["i"])
+        restamped = await engine.run(graph("asset<INT>"), ["i"])
         assert restamped.executed == ("i",)  # different stamp, never a hit
-        assert restamped.outputs["i"]["ref"].type_id == "asset<core.int>"
+        assert restamped.outputs["i"]["ref"].type_id == "asset<INT>"
 
-        again = await engine.run(graph("asset<core.string>"), ["i"])
+        again = await engine.run(graph("asset<STRING>"), ["i"])
         assert again.cached == ("i",)  # same stamp still hits
 
     asyncio.run(scenario())
@@ -747,7 +738,7 @@ def test_decode_failure_is_a_node_error(tmp_path: Path) -> None:
         register_core_types(registry)
         register_asset_type(registry, resolver)
         registry.register_asset_decoder(
-            "core.string",
+            "STRING",
             provider_id="t.broken@1",
             decode=lambda ref: (_ for _ in ()).throw(ValueError("corrupt")),
         )
@@ -760,7 +751,7 @@ def test_decode_failure_is_a_node_error(tmp_path: Path) -> None:
         graph = Graph(nodes={"u": GraphNode("ta.upper", {"text": asset_literal(wires[0])})})
         with pytest.raises(ExecutionError) as err:
             await engine.run(graph, ["u"])
-        assert "coercing asset<core.string>" in str(err.value)
+        assert "coercing asset<STRING>" in str(err.value)
         assert "corrupt" in str(err.value)
 
     asyncio.run(scenario())
@@ -792,7 +783,7 @@ def test_declared_asset_inputs_still_receive_refs(tmp_path: Path) -> None:
         register_core_types(registry)
         register_asset_type(registry, resolver)
         registry.register_asset_decoder(
-            "core.string",
+            "STRING",
             provider_id="t.text@1",
             decode=lambda ref: ref.read_bytes().decode("utf-8"),  # type: ignore[union-attr]
         )

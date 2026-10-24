@@ -10,6 +10,7 @@ from typing import BinaryIO, cast
 from dinkster_api.v1 import (
     GIBIBYTE,
     SAVE_TARGET_TYPE,
+    SPLAT_TYPE,
     AssetError,
     AssetRef,
     AssetWidget,
@@ -26,7 +27,6 @@ from dinkster_api.v1 import (
     render_splat_ply,
 )
 
-SPLAT_TYPE = "dinkster.splat"
 SPLAT_MEDIA_TYPE = "model/ply"
 
 SPLAT = TypeExpr.concrete(SPLAT_TYPE)

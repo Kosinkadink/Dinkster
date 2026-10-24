@@ -10,7 +10,10 @@ from typing import cast
 
 from dinkster_api.v1 import (
     DETECTION_TYPE,
+    POSE_TYPE,
     REGION_TYPE,
+    SEGMENTATION_TYPE,
+    VECTOR_TYPE,
     Detection,
     Region,
     TypeRegistry,
@@ -29,20 +32,17 @@ from .compositor_types import (
     LAYERS_TYPE,
 )
 
-POSE_TYPE = "dinkster.pose"
-
 MAX_POSE_DIMENSION = 16_384
 MAX_POSE_SKELETONS = 1_024
 MAX_SKELETON_KEYPOINTS = 4_096
 MAX_SKELETON_EDGES = 8_192
 MAX_KEYPOINT_COORDINATE = 32_767.0
+MAX_POSE_JSON_DEPTH = 1_000
 POSE_KINDS = frozenset(("person", "face", "left_hand", "right_hand", "animal"))
 
 # Reserved for Dinkster#682; this pack intentionally provides no vector runtime.
-VECTOR_TYPE = "dinkster.vector"
 # Reserved for Dinkster#677; a segmentation result is list<dinkster.detection>
 # whose members carry masks, so no separate runtime type exists.
-SEGMENTATION_TYPE = "dinkster.segmentation"
 RESERVED_TYPE_IDS = frozenset((VECTOR_TYPE, SEGMENTATION_TYPE))
 
 
@@ -56,6 +56,21 @@ def _finite_number(value: object, subject: str) -> float:
     if not math.isfinite(result):
         raise ValueError(f"{subject} must be finite")
     return result
+
+
+def validate_pose_json_nesting(value: object) -> None:
+    pending: list[tuple[object, int]] = [(value, 0)]
+    while pending:
+        current, depth = pending.pop()
+        if isinstance(current, dict):
+            children = cast("dict[str, object]", current).values()
+        elif isinstance(current, list):
+            children = cast("list[object]", current)
+        else:
+            continue
+        if depth >= MAX_POSE_JSON_DEPTH:
+            raise ValueError("pose JSON exceeds nesting bound")
+        pending.extend((child, depth + 1) for child in children)
 
 
 @dataclass(frozen=True)
@@ -265,6 +280,10 @@ def _decode_pose(data: bytes) -> object:
         record = json.loads(data)
     except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
         raise ValueError(f"invalid {POSE_TYPE} payload") from exc
+    try:
+        validate_pose_json_nesting(record)
+    except ValueError as exc:
+        raise ValueError(f"invalid {POSE_TYPE} payload") from exc
     return _coerce_pose(record)
 
 
@@ -309,8 +328,8 @@ def register_image_types(registry: TypeRegistry) -> None:
     if SAVE_TARGET_TYPE not in registry:
         register_save_target_type(registry)
     for type_id, renderer in (
-        ("dinkster.image", render_image_png),
-        ("dinkster.mask", render_mask_png),
+        ("IMAGE", render_image_png),
+        ("MASK", render_mask_png),
     ):
         if type_id not in registry:
             registry.register(
@@ -319,7 +338,7 @@ def register_image_types(registry: TypeRegistry) -> None:
                 decode=decode_image_array,
                 prepare_buffer_encoding=prepare_image_array_encoding,
                 fingerprint=image_array_fingerprint(type_id),
-                meta=mask_array_meta if type_id == "dinkster.mask" else image_array_meta,
+                meta=mask_array_meta if type_id == "MASK" else image_array_meta,
                 validate_encoded=validate_image_encoded,
                 validate_encoded_buffer=validate_image_encoded,
             )

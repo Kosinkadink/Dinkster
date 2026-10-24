@@ -37,7 +37,7 @@ def test_type_claims_refuse_overlapping_owners_and_preserve_reference_access() -
         registry.register("mypack.thing")
     assert registry.owner_of("mypack.thing") == "mypack"
     assert registry.owner_of(CORE_INT) == "dinkster-nodes-foundation"
-    for claim in ("mypack", "mypack.child", "myPack-child"):
+    for claim in ("mypack", "mypack.child", "mypack-child"):
         with pytest.raises(ValueError, match="overlaps"):
             registry.claim_types("other", (claim,))
     with registry.registering_pack("consumer", ("consumer",)):
@@ -231,6 +231,16 @@ def test_same_payload_different_type_differs() -> None:
     assert registry.wrap(CORE_INT, 42).fingerprint != registry.wrap("custom.answer", 42).fingerprint
 
 
+def test_core_types_use_comfy_socket_identities_without_legacy_aliases() -> None:
+    registry = make_registry()
+
+    assert {CORE_INT, CORE_FLOAT, CORE_STRING, CORE_COMBO, CORE_BOOLEAN, "DICT", "ARRAY"} <= set(
+        registry.type_ids()
+    )
+    legacy_type_ids = {f"core.{name}" for name in ("int", "float", "string", "combo", "boolean")}
+    assert not legacy_type_ids & set(registry.type_ids())
+
+
 def test_core_combo_is_string_shaped_but_type_distinct() -> None:
     registry = make_registry()
     assert CORE_COMBO in registry
@@ -253,7 +263,7 @@ def test_core_combo_keeps_canonical_codec_and_fingerprint() -> None:
     spec = registry.spec(CORE_COMBO)
 
     assert spec.encode("euler") == b'json:"euler"'
-    assert combo.fingerprint == "adfaa12b6da4ac3f28ffc6a3ec6712f845573052"
+    assert combo.fingerprint == "5cc02dd05421d92f092e0c685a9ae179ce868b7c"
     assert registry.wrap(CORE_COMBO, combo.resolve()).fingerprint == combo.fingerprint
 
 
@@ -266,7 +276,7 @@ class ComboStringSubclass(str):
 )
 def test_core_combo_rejects_non_string_values(invalid: object) -> None:
     registry = make_registry()
-    with pytest.raises(TypeError, match="core.combo expects a string"):
+    with pytest.raises(TypeError, match="COMBO expects a string"):
         registry.wrap(CORE_COMBO, invalid)
 
 
@@ -447,7 +457,7 @@ def test_list_values_do_not_inline() -> None:
     """List type ids are constructor syntax, never registered atoms, so the
     top-level list never inlines - elements do, via descriptor recursion."""
     registry = make_registry()
-    value = registry.wrap("list<core.int>", [1, 2, 3])
+    value = registry.wrap("list<INT>", [1, 2, 3])
     assert registry.inline_of(value) is None
 
 

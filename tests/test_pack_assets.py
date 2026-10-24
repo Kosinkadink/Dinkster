@@ -468,7 +468,7 @@ def test_provider_assets_follow_literal_and_linked_selections() -> None:
             "a": GraphNode("test.depth", {"provider": "first"}),
             "b": GraphNode(
                 "test.depth",
-                {"provider": TypedLiteral("core.combo", "second")},
+                {"provider": TypedLiteral("COMBO", "second")},
             ),
         }
     )
@@ -556,7 +556,7 @@ class ProviderVision(Node):
             node_type="test.provider_vision",
             inputs=(
                 InputSpec("x", INT),
-                InputSpec("provider", TypeExpr.concrete("core.combo")),
+                InputSpec("provider", TypeExpr.concrete("COMBO")),
             ),
             outputs=(OutputSpec("y", INT),),
         )

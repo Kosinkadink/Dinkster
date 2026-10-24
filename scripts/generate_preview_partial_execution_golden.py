@@ -28,7 +28,7 @@ from dinkster_workers import InProcessWorker
 GOLDEN_PATH = (
     Path(__file__).resolve().parent.parent / "tests" / "goldens" / "preview_partial_execution.json"
 )
-INT = TypeExpr.concrete("core.int")
+INT = TypeExpr.concrete("INT")
 
 
 def _canonical(value: object) -> bytes:
@@ -359,7 +359,7 @@ async def _preview_terminal_case() -> dict[str, object]:
     phase["finalRenditionSha256"] = hashlib.sha256(rendition.data).hexdigest()
     phase["fallbackRenditions"] = [
         {"kind": spec.kind, "mime": spec.mime, "default": spec.default}
-        for spec in engine.registry.renditions_of("core.int")
+        for spec in engine.registry.renditions_of("INT")
     ]
 
     events.clear()

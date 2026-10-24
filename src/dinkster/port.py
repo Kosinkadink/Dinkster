@@ -58,11 +58,11 @@ _LINE_WIDTH = 100
 _CHOICE_PREVIEW = 8
 
 _SCALAR_ANNOTATIONS = {
-    "core.int": "int",
-    "core.float": "float",
-    "core.string": "str",
-    "core.combo": "str",
-    "core.boolean": "bool",
+    "INT": "int",
+    "FLOAT": "float",
+    "STRING": "str",
+    "COMBO": "str",
+    "BOOLEAN": "bool",
 }
 
 
@@ -391,7 +391,7 @@ def _choices_comment(node: dict[str, Any], input_id: str, indent: str) -> list[s
     if len(values) > _CHOICE_PREVIEW:
         preview += f", ... (+{len(values) - _CHOICE_PREVIEW} more)"
     return _comment_lines(
-        f"source combo choices for {input_id!r} (core.combo identity with "
+        f"source combo choices for {input_id!r} (COMBO identity with "
         f"UI-only vocabulary - consider a closed enum or an asset input): {preview}",
         indent,
     )
@@ -786,7 +786,7 @@ def _emit_readme(
         )
     lines.extend(
         [
-            "- [ ] Review generated combo/boolean widgets; core.combo keeps",
+            "- [ ] Review generated combo/boolean widgets; COMBO keeps",
             "      choice vocabulary as UI affordance, so promote to closed",
             "      enums or asset inputs where choices are actual identity.",
             "- [ ] Revisit `idempotent=False` nodes - OUTPUT_NODE/IS_CHANGED",

@@ -11,6 +11,9 @@ from fractions import Fraction
 import numpy as np
 from dinkster_api.v1 import (
     ABSENT,
+    CORE_BOOLEAN,
+    CORE_STRING,
+    VIDEO_EDIT_TYPE,
     ComboWidget,
     CustomWidgetDescriptor,
     InputSpec,
@@ -281,7 +284,7 @@ class DisassembleVideo(Node):
                 OutputSpec("fps", FLOAT),
                 OutputSpec("duration", FLOAT),
                 OutputSpec("bit_depth", INT),
-                OutputSpec("color_space", TypeExpr.concrete("core.string")),
+                OutputSpec("color_space", TypeExpr.concrete(CORE_STRING)),
             ),
             search_terms=("video to images", "extract frames", "components", "demux"),
         )
@@ -309,7 +312,7 @@ class TrimVideo(Node):
                 InputSpec("video", VIDEO),
                 InputSpec(
                     "video_edit",
-                    TypeExpr.concrete("comfy.VIDEO_EDIT"),
+                    TypeExpr.concrete(VIDEO_EDIT_TYPE),
                     required=False,
                     widget=CustomWidgetDescriptor("VIDEO_EDIT", {"features": ["trim"]}),
                 ),
@@ -329,7 +332,7 @@ class TrimVideo(Node):
                 ),
                 InputSpec(
                     "strict_duration",
-                    TypeExpr.concrete("core.boolean"),
+                    TypeExpr.concrete(CORE_BOOLEAN),
                     required=False,
                     default=False,
                 ),
@@ -381,7 +384,7 @@ class CropVideo(Node):
                 InputSpec("video", VIDEO),
                 InputSpec(
                     "video_edit",
-                    TypeExpr.concrete("comfy.VIDEO_EDIT"),
+                    TypeExpr.concrete(VIDEO_EDIT_TYPE),
                     required=False,
                     widget=CustomWidgetDescriptor("VIDEO_EDIT", {"features": ["crop"]}),
                 ),
@@ -429,7 +432,7 @@ class VideoInfo(Node):
             category="video",
             inputs=(InputSpec("video", VIDEO),),
             outputs=(
-                OutputSpec("info", TypeExpr.concrete("core.string")),
+                OutputSpec("info", TypeExpr.concrete(CORE_STRING)),
                 OutputSpec("width", INT),
                 OutputSpec("height", INT),
                 OutputSpec("fps", FLOAT, optional=True),

@@ -59,8 +59,8 @@ from tools.serverless_transport import (
 )
 
 SOURCE = "test-deployment-source-and-lock-digest"
-IMAGE = TypeExpr.concrete("comfy.IMAGE")
-LATENT = TypeExpr.concrete("comfy.LATENT")
+IMAGE = TypeExpr.concrete("IMAGE")
+LATENT = TypeExpr.concrete("LATENT")
 
 
 class Generate(Node):
@@ -146,7 +146,7 @@ class Harness:
             "node-1",
             "test.transform",
             {
-                key: self.registry.wrap("comfy.IMAGE" if key == "image" else "comfy.LATENT", value)
+                key: self.registry.wrap("IMAGE" if key == "image" else "LATENT", value)
                 for key, value in Generate.execute().items()
             },
             Transform.schema(),
@@ -193,7 +193,7 @@ def test_prepare_and_catalog_do_not_dispatch(harness: Harness) -> None:
 def test_dynamic_output_descriptors_are_not_dispatched(harness: Harness) -> None:
     schema = NodeSchema(
         node_type="test.descriptors",
-        inputs=(InputSpec("description", TypeExpr.concrete("core.string")),),
+        inputs=(InputSpec("description", TypeExpr.concrete("STRING")),),
         output_descriptors=OutputDescriptorsSpec(
             "description", (OutputSpec("image", IMAGE),), max_entries=1
         ),
@@ -283,9 +283,7 @@ def test_fresh_handlers_and_durable_cas(harness: Harness, reuse_cache: bool) -> 
         )
         result = await fresh_client.invoke(harness.invocation())
         assert result.outputs is not None
-        expected = harness.registry.wrap(
-            "comfy.IMAGE", Transform.execute(**Generate.execute())["image"]
-        )
+        expected = harness.registry.wrap("IMAGE", Transform.execute(**Generate.execute())["image"])
         assert result.outputs["image"].fingerprint == expected.fingerprint
         actual_meta = dict(result.outputs["image"].meta.entries)
         expected_meta = dict(expected.meta.entries)
@@ -414,9 +412,9 @@ def test_unsupported_invocation_is_not_dispatched(
 @pytest.mark.parametrize(
     "type_id",
     [
-        "dinkster.model",
-        "dinkster.clip",
-        "dinkster.vae",
+        "MODEL",
+        "CLIP",
+        "VAE",
         "core.resource",
         "comfy.MODEL",
         "comfy.CLIP",
@@ -469,7 +467,7 @@ def test_unsupported_worker_results_are_explicit(
         if capability == "continuation":
             return object()
         if capability == "resident":
-            value = replace(invocation.inputs["image"], type_id="dinkster.model")
+            value = replace(invocation.inputs["image"], type_id="MODEL")
             return InvocationResult(outputs={"image": value})
         return InvocationResult(
             outputs={},
@@ -706,7 +704,7 @@ def test_real_inprocess_error_and_event_paths(
 
 def test_recursive_list_values_and_resident_child(harness: Harness) -> None:
     async def scenario() -> None:
-        inner = make_list_value("core.int", (harness.registry.wrap("core.int", 7),))
+        inner = make_list_value("INT", (harness.registry.wrap("INT", 7),))
         values = {"nested": make_list_value(inner.type_id, (inner,))}
         invocation = replace(harness.invocation(), inputs=values)
         header, blobs, _, _ = encode_invocation(harness.client_transport.codec(), invocation)

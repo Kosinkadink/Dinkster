@@ -15,11 +15,20 @@ import pickle
 from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from urllib.parse import urlencode
 
-from .absent import CORE_ABSENT
 from .assets import ASSET_BASE_TYPE, parse_asset_type_id, runtime_type_atom
+from .builtin_types import (
+    ARRAY_TYPE,
+    CORE_ABSENT,
+    CORE_BOOLEAN,
+    CORE_COMBO,
+    CORE_FLOAT,
+    CORE_INT,
+    CORE_STRING,
+    DICT_TYPE,
+)
 from .lists import make_list_value, parse_list_type_id
 from .model import (
     EncodedPayload,
@@ -31,6 +40,9 @@ from .model import (
 )
 from .names import claim_covers, claims_conflict
 from .streams import MediaStream, make_stream_value, parse_stream_type_id
+
+if TYPE_CHECKING:
+    from .resident import ResidencyTable
 
 Encoder = Callable[[object], bytes]
 Decoder = Callable[[bytes], object]
@@ -281,6 +293,16 @@ class TypeRegistry:
         self._owners: dict[TypeId, str] = {}
         self._registering_pack: str | None = None
         self._allow_bare = False
+        self._resident_tables: list[ResidencyTable] = []
+
+    @property
+    def resident_tables(self) -> tuple[ResidencyTable, ...]:
+        """Holding tables used by this registry's resident codecs."""
+        return tuple(self._resident_tables)
+
+    def register_resident_table(self, table: ResidencyTable) -> None:
+        if not any(existing is table for existing in self._resident_tables):
+            self._resident_tables.append(table)
 
     def copy(self) -> TypeRegistry:
         """Return an independent registry with the same registrations."""
@@ -294,6 +316,7 @@ class TypeRegistry:
         copied._type_equivalences = dict(self._type_equivalences)
         copied._claims = dict(self._claims)
         copied._owners = dict(self._owners)
+        copied._resident_tables = list(self._resident_tables)
         return copied
 
     def replace_from(self, other: TypeRegistry) -> None:
@@ -307,6 +330,7 @@ class TypeRegistry:
         self._type_equivalences = dict(other._type_equivalences)
         self._claims = dict(other._claims)
         self._owners = dict(other._owners)
+        self._resident_tables = list(other._resident_tables)
 
     def claim_types(self, owner: str, claims: tuple[str, ...]) -> None:
         """Reserve type ids or namespaces before publishing a pack's codecs."""
@@ -926,26 +950,19 @@ class TypeRegistry:
         return Value(type_id=type_id, fingerprint=fp, meta=meta, payload=PyObjPayload(obj))
 
 
-CORE_INT = "core.int"
-CORE_FLOAT = "core.float"
-CORE_STRING = "core.string"
-CORE_COMBO = "core.combo"
-CORE_BOOLEAN = "core.boolean"
-
-
 def _coerce_combo(obj: object) -> str:
     if type(obj) is not str:
-        raise TypeError(f"core.combo expects a string, got {type(obj).__name__}")
+        raise TypeError(f"COMBO expects a string, got {type(obj).__name__}")
     return obj
 
 
 def _validate_combo_encoded(data: bytes, _metadata: Mapping[str, object]) -> None:
     if not data.startswith(b"json:"):
-        raise ValueError("core.combo expects canonical JSON encoding")
+        raise ValueError("COMBO expects canonical JSON encoding")
     obj = default_decode(data)
     _coerce_combo(obj)
     if default_encode(obj) != data:
-        raise ValueError("core.combo expects canonical JSON encoding")
+        raise ValueError("COMBO expects canonical JSON encoding")
 
 
 def register_core_types(registry: TypeRegistry) -> None:
@@ -962,6 +979,8 @@ def register_core_types(registry: TypeRegistry) -> None:
         validate_encoded=_validate_combo_encoded,
     )
     registry.register(CORE_BOOLEAN, inline=lambda obj: obj)
+    registry.register(DICT_TYPE)
+    registry.register(ARRAY_TYPE)
     # core.absent registers with the default codec (payload is None, which
     # JSON-encodes) so absences cross boundaries and caches like any value.
     registry.register(CORE_ABSENT)

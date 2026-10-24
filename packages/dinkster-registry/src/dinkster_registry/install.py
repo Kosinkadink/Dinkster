@@ -54,7 +54,13 @@ from dataclasses import dataclass
 from typing import Literal, cast
 
 from blake3 import blake3
-from dinkster_schema import canonical_name, claims_conflict, validate_name
+from dinkster_schema import (
+    canonical_claim,
+    canonical_name,
+    claims_conflict,
+    validate_claim,
+    validate_name,
+)
 
 from .model import (
     ARTIFACT_DIGEST_PREFIX,
@@ -134,7 +140,11 @@ class Lockfile:
             # namespaces, non-empty executes) locks no claims. Pack-name
             # uniqueness is enforced below independently of claims.
             for claim in entry.claims:
-                _require_canonical(f"claim of pack {entry.pack!r}", claim)
+                problem = validate_claim(claim)
+                if problem is not None or canonical_claim(claim) != claim:
+                    raise InstallError(
+                        f"claim of pack {entry.pack!r} {claim!r} {problem or 'is not canonical'}"
+                    )
             problem = validate_version(entry.version)
             if problem is not None:
                 raise InstallError(f"pack {entry.pack!r} version {entry.version!r} {problem}")

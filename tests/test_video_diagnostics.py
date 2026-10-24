@@ -40,8 +40,8 @@ class FormatSource(Node):
         return NodeSchema(
             node_type="test.format-source",
             inputs=(
-                InputSpec("alpha", TypeExpr.concrete("core.boolean")),
-                InputSpec("audio", TypeExpr.concrete("core.boolean"), default=False),
+                InputSpec("alpha", TypeExpr.concrete("BOOLEAN")),
+                InputSpec("audio", TypeExpr.concrete("BOOLEAN"), default=False),
             ),
             outputs=(OutputSpec("video", TypeExpr.concrete("comfy.VIDEO")),),
         )

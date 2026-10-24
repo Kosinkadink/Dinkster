@@ -206,7 +206,7 @@ def test_birefnet_provider_executes_in_an_isolated_worker(tmp_path: Path) -> Non
                     "matte": GraphNode(
                         "dinkster.image.matte",
                         {
-                            "image": TypedLiteral("dinkster.image", source.tolist()),
+                            "image": TypedLiteral("IMAGE", source.tolist()),
                             "provider": "dinkster-vision-birefnet",
                         },
                     )

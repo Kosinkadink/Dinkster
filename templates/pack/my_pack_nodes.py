@@ -33,15 +33,15 @@ class Shout(Node):
             category="text",
             description="Uppercase the text and repeat it.",
             inputs=(
-                InputSpec("text", TypeExpr.concrete("core.string")),
+                InputSpec("text", TypeExpr.concrete("STRING")),
                 InputSpec(
                     "times",
-                    TypeExpr.concrete("core.int"),
+                    TypeExpr.concrete("INT"),
                     required=False,
                     default=1,
                 ),
             ),
-            outputs=(OutputSpec("shouted", TypeExpr.concrete("core.string")),),
+            outputs=(OutputSpec("shouted", TypeExpr.concrete("STRING")),),
         )
 
     @classmethod
@@ -59,7 +59,7 @@ class Tally(Node):
             display_name="Word Tally",
             category="text",
             description="Count word occurrences into a my-pack.tally value.",
-            inputs=(InputSpec("text", TypeExpr.concrete("core.string")),),
+            inputs=(InputSpec("text", TypeExpr.concrete("STRING")),),
             outputs=(OutputSpec("tally", TypeExpr.concrete("my-pack.tally")),),
         )
 

@@ -23,7 +23,7 @@ from dinkster_schema import (
 )
 from dinkster_values import TypeRegistry
 
-STRING = TypeExpr.concrete("core.string")
+STRING = TypeExpr.concrete("STRING")
 
 
 def register_types(registry: TypeRegistry) -> None:
@@ -39,7 +39,7 @@ class Pick(Node):
             inputs=(
                 InputSpec(
                     "value",
-                    TypeExpr.concrete("core.combo"),
+                    TypeExpr.concrete("COMBO"),
                     widget=ComboWidget(remote_route="/api/choices/cp.samplers"),
                 ),
             ),
@@ -80,7 +80,7 @@ class ReservedPick(Node):
             inputs=(
                 InputSpec(
                     "value",
-                    TypeExpr.concrete("core.combo"),
+                    TypeExpr.concrete("COMBO"),
                     widget=ComboWidget(remote_route="/api/choices/comfy.samplers"),
                 ),
             ),
@@ -98,7 +98,7 @@ class MissingRemoteChoice(Node):
             inputs=(
                 InputSpec(
                     "value",
-                    TypeExpr.concrete("core.combo"),
+                    TypeExpr.concrete("COMBO"),
                     widget=ComboWidget(remote_route="/api/choices/cp.missing"),
                 ),
             ),
@@ -122,7 +122,7 @@ class NestedMissingRemoteChoice(Node):
                             inputs=(
                                 InputSpec(
                                     "value",
-                                    TypeExpr.concrete("core.combo"),
+                                    TypeExpr.concrete("COMBO"),
                                     widget=ComboWidget(
                                         remote_route="/api/choices/cp.nested-missing"
                                     ),
@@ -162,7 +162,7 @@ class LazyPick(Node):
             inputs=(
                 InputSpec(
                     "value",
-                    TypeExpr.concrete("core.combo"),
+                    TypeExpr.concrete("COMBO"),
                     widget=ComboWidget(remote_route="/api/choices/cp.devices", refresh_button=True),
                 ),
             ),

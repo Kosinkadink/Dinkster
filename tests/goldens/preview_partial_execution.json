@@ -108,7 +108,7 @@
               "value": {
                 "fingerprint": "8be6da4fd03da618275b638e7fa34ba1bc4f8734",
                 "meta": {},
-                "typeId": "core.int",
+                "typeId": "INT",
                 "value": 13
               }
             },
@@ -116,7 +116,7 @@
               "value": {
                 "fingerprint": "3ab591aa4c267f25aeb0b9332eb5d55d0449e9f0",
                 "meta": {},
-                "typeId": "core.int",
+                "typeId": "INT",
                 "value": 24
               }
             },
@@ -124,13 +124,13 @@
               "left": {
                 "fingerprint": "849c00892d28acea2d8fb8f3b2455205db0c14a0",
                 "meta": {},
-                "typeId": "core.int",
+                "typeId": "INT",
                 "value": 3
               },
               "right": {
                 "fingerprint": "784b0c533aef383a6c32dc4ff695ae873cfd6461",
                 "meta": {},
-                "typeId": "core.int",
+                "typeId": "INT",
                 "value": 4
               }
             }
@@ -140,7 +140,7 @@
               "descriptor": {
                 "fingerprint": "849c00892d28acea2d8fb8f3b2455205db0c14a0",
                 "meta": {},
-                "typeId": "core.int",
+                "typeId": "INT",
                 "value": 3
               },
               "nodeId": "split",
@@ -150,7 +150,7 @@
               "descriptor": {
                 "fingerprint": "784b0c533aef383a6c32dc4ff695ae873cfd6461",
                 "meta": {},
-                "typeId": "core.int",
+                "typeId": "INT",
                 "value": 4
               },
               "nodeId": "split",
@@ -160,7 +160,7 @@
               "descriptor": {
                 "fingerprint": "8be6da4fd03da618275b638e7fa34ba1bc4f8734",
                 "meta": {},
-                "typeId": "core.int",
+                "typeId": "INT",
                 "value": 13
               },
               "nodeId": "left",
@@ -170,7 +170,7 @@
               "descriptor": {
                 "fingerprint": "3ab591aa4c267f25aeb0b9332eb5d55d0449e9f0",
                 "meta": {},
-                "typeId": "core.int",
+                "typeId": "INT",
                 "value": 24
               },
               "nodeId": "right",
@@ -266,7 +266,7 @@
               "value": {
                 "fingerprint": "fc3685e71380201d9e1fcd6f8f08e91dcd455051",
                 "meta": {},
-                "typeId": "core.int",
+                "typeId": "INT",
                 "value": 14
               }
             },
@@ -274,7 +274,7 @@
               "value": {
                 "fingerprint": "a4af0b3f03c146ae4080b193b5d655184ef8f178",
                 "meta": {},
-                "typeId": "core.int",
+                "typeId": "INT",
                 "value": 25
               }
             },
@@ -282,13 +282,13 @@
               "left": {
                 "fingerprint": "784b0c533aef383a6c32dc4ff695ae873cfd6461",
                 "meta": {},
-                "typeId": "core.int",
+                "typeId": "INT",
                 "value": 4
               },
               "right": {
                 "fingerprint": "a664867224ffa6661704138c729b09e88d99236a",
                 "meta": {},
-                "typeId": "core.int",
+                "typeId": "INT",
                 "value": 5
               }
             }
@@ -298,7 +298,7 @@
               "descriptor": {
                 "fingerprint": "784b0c533aef383a6c32dc4ff695ae873cfd6461",
                 "meta": {},
-                "typeId": "core.int",
+                "typeId": "INT",
                 "value": 4
               },
               "nodeId": "split",
@@ -308,7 +308,7 @@
               "descriptor": {
                 "fingerprint": "a664867224ffa6661704138c729b09e88d99236a",
                 "meta": {},
-                "typeId": "core.int",
+                "typeId": "INT",
                 "value": 5
               },
               "nodeId": "split",
@@ -318,7 +318,7 @@
               "descriptor": {
                 "fingerprint": "fc3685e71380201d9e1fcd6f8f08e91dcd455051",
                 "meta": {},
-                "typeId": "core.int",
+                "typeId": "INT",
                 "value": 14
               },
               "nodeId": "left",
@@ -328,7 +328,7 @@
               "descriptor": {
                 "fingerprint": "a4af0b3f03c146ae4080b193b5d655184ef8f178",
                 "meta": {},
-                "typeId": "core.int",
+                "typeId": "INT",
                 "value": 25
               },
               "nodeId": "right",
@@ -356,7 +356,7 @@
               "value": {
                 "fingerprint": "8be6da4fd03da618275b638e7fa34ba1bc4f8734",
                 "meta": {},
-                "typeId": "core.int",
+                "typeId": "INT",
                 "value": 13
               }
             },
@@ -364,7 +364,7 @@
               "value": {
                 "fingerprint": "3ab591aa4c267f25aeb0b9332eb5d55d0449e9f0",
                 "meta": {},
-                "typeId": "core.int",
+                "typeId": "INT",
                 "value": 24
               }
             },
@@ -372,13 +372,13 @@
               "left": {
                 "fingerprint": "849c00892d28acea2d8fb8f3b2455205db0c14a0",
                 "meta": {},
-                "typeId": "core.int",
+                "typeId": "INT",
                 "value": 3
               },
               "right": {
                 "fingerprint": "784b0c533aef383a6c32dc4ff695ae873cfd6461",
                 "meta": {},
-                "typeId": "core.int",
+                "typeId": "INT",
                 "value": 4
               }
             }
@@ -388,7 +388,7 @@
               "descriptor": {
                 "fingerprint": "849c00892d28acea2d8fb8f3b2455205db0c14a0",
                 "meta": {},
-                "typeId": "core.int",
+                "typeId": "INT",
                 "value": 3
               },
               "nodeId": "split",
@@ -398,7 +398,7 @@
               "descriptor": {
                 "fingerprint": "784b0c533aef383a6c32dc4ff695ae873cfd6461",
                 "meta": {},
-                "typeId": "core.int",
+                "typeId": "INT",
                 "value": 4
               },
               "nodeId": "split",
@@ -408,7 +408,7 @@
               "descriptor": {
                 "fingerprint": "8be6da4fd03da618275b638e7fa34ba1bc4f8734",
                 "meta": {},
-                "typeId": "core.int",
+                "typeId": "INT",
                 "value": 13
               },
               "nodeId": "left",
@@ -418,7 +418,7 @@
               "descriptor": {
                 "fingerprint": "3ab591aa4c267f25aeb0b9332eb5d55d0449e9f0",
                 "meta": {},
-                "typeId": "core.int",
+                "typeId": "INT",
                 "value": 24
               },
               "nodeId": "right",
@@ -482,7 +482,7 @@
               "value": {
                 "fingerprint": "a664867224ffa6661704138c729b09e88d99236a",
                 "meta": {},
-                "typeId": "core.int",
+                "typeId": "INT",
                 "value": 5
               }
             }
@@ -492,7 +492,7 @@
               "descriptor": {
                 "fingerprint": "a664867224ffa6661704138c729b09e88d99236a",
                 "meta": {},
-                "typeId": "core.int",
+                "typeId": "INT",
                 "value": 5
               },
               "nodeId": "effect",
@@ -519,7 +519,7 @@
               "value": {
                 "fingerprint": "a664867224ffa6661704138c729b09e88d99236a",
                 "meta": {},
-                "typeId": "core.int",
+                "typeId": "INT",
                 "value": 5
               }
             }
@@ -529,7 +529,7 @@
               "descriptor": {
                 "fingerprint": "a664867224ffa6661704138c729b09e88d99236a",
                 "meta": {},
-                "typeId": "core.int",
+                "typeId": "INT",
                 "value": 5
               },
               "nodeId": "effect",
@@ -626,7 +626,7 @@
                 "meta": {
                   "absent.origin": "maybe/value",
                   "absent.reason": "proof value omitted",
-                  "absent.standsFor": "core.int"
+                  "absent.standsFor": "INT"
                 },
                 "typeId": "core.absent"
               }
@@ -635,7 +635,7 @@
               "value": {
                 "fingerprint": "d50c95bcfa10669748ee7aa441bdbd96dec32257",
                 "meta": {},
-                "typeId": "core.int",
+                "typeId": "INT",
                 "value": 11
               }
             },
@@ -645,7 +645,7 @@
                 "meta": {
                   "absent.origin": "maybe/value",
                   "absent.reason": "proof value omitted",
-                  "absent.standsFor": "core.int"
+                  "absent.standsFor": "INT"
                 },
                 "typeId": "core.absent"
               }
@@ -658,7 +658,7 @@
                 "meta": {
                   "absent.origin": "maybe/value",
                   "absent.reason": "proof value omitted",
-                  "absent.standsFor": "core.int"
+                  "absent.standsFor": "INT"
                 },
                 "typeId": "core.absent"
               },
@@ -671,7 +671,7 @@
                 "meta": {
                   "absent.origin": "maybe/value",
                   "absent.reason": "proof value omitted",
-                  "absent.standsFor": "core.int"
+                  "absent.standsFor": "INT"
                 },
                 "typeId": "core.absent"
               },
@@ -682,7 +682,7 @@
               "descriptor": {
                 "fingerprint": "d50c95bcfa10669748ee7aa441bdbd96dec32257",
                 "meta": {},
-                "typeId": "core.int",
+                "typeId": "INT",
                 "value": 11
               },
               "nodeId": "omit",
@@ -760,7 +760,7 @@
                 "item": {
                   "kind": "concrete",
                   "types": [
-                    "core.int"
+                    "INT"
                   ]
                 }
               }
@@ -803,19 +803,19 @@
                   {
                     "fingerprint": "849c00892d28acea2d8fb8f3b2455205db0c14a0",
                     "meta": {},
-                    "typeId": "core.int",
+                    "typeId": "INT",
                     "value": 3
                   },
                   {
                     "fingerprint": "a664867224ffa6661704138c729b09e88d99236a",
                     "meta": {},
-                    "typeId": "core.int",
+                    "typeId": "INT",
                     "value": 5
                   },
                   {
                     "fingerprint": "aefa02b5c4daa3640ef1517afa790314228e2402",
                     "meta": {},
-                    "typeId": "core.int",
+                    "typeId": "INT",
                     "value": 9
                   }
                 ],
@@ -824,7 +824,7 @@
                 "meta": {
                   "length": 3
                 },
-                "typeId": "list<core.int>"
+                "typeId": "list<INT>"
               }
             }
           },
@@ -835,19 +835,19 @@
                   {
                     "fingerprint": "849c00892d28acea2d8fb8f3b2455205db0c14a0",
                     "meta": {},
-                    "typeId": "core.int",
+                    "typeId": "INT",
                     "value": 3
                   },
                   {
                     "fingerprint": "a664867224ffa6661704138c729b09e88d99236a",
                     "meta": {},
-                    "typeId": "core.int",
+                    "typeId": "INT",
                     "value": 5
                   },
                   {
                     "fingerprint": "aefa02b5c4daa3640ef1517afa790314228e2402",
                     "meta": {},
-                    "typeId": "core.int",
+                    "typeId": "INT",
                     "value": 9
                   }
                 ],
@@ -856,7 +856,7 @@
                 "meta": {
                   "length": 3
                 },
-                "typeId": "list<core.int>"
+                "typeId": "list<INT>"
               },
               "nodeId": "mapped",
               "outputId": "values"
@@ -937,7 +937,7 @@
               "fallback": {
                 "fingerprint": "aefa02b5c4daa3640ef1517afa790314228e2402",
                 "meta": {},
-                "typeId": "core.int",
+                "typeId": "INT",
                 "value": 9
               },
               "image": {
@@ -999,7 +999,7 @@
               "descriptor": {
                 "fingerprint": "aefa02b5c4daa3640ef1517afa790314228e2402",
                 "meta": {},
-                "typeId": "core.int",
+                "typeId": "INT",
                 "value": 9
               },
               "nodeId": "preview",
