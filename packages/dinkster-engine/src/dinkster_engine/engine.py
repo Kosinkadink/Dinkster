@@ -643,7 +643,7 @@ class Engine:
             )
             if result.explanation is not None:
                 raise GraphValidationError(
-                    [Diagnostic("error", "admission-validation", node_id, result.explanation)]
+                    [Diagnostic("error", "admission-validation", result.explanation, node_id)]
                 )
 
     def _emit(self, event: EngineEvent) -> None:
