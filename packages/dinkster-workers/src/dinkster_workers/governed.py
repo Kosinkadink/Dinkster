@@ -27,6 +27,9 @@ from dinkster_memory import (
     ReservationTimeout,
 )
 from dinkster_protocol import (
+    AdmissionInvocation,
+    AdmissionResult,
+    AdmissionWorker,
     Invocation,
     InvocationResult,
     LazyStatusInvocation,
@@ -105,5 +108,16 @@ class GovernedWorker:
                 )
             )
         return await cast("LazyStatusWorker", self._inner).check_lazy_status(
+            invocation, on_event=on_event
+        )
+
+    async def validate_admission(
+        self, invocation: AdmissionInvocation, on_event: OnInvocationEvent | None = None
+    ) -> AdmissionResult:
+        if not callable(getattr(self._inner, "validate_admission", None)):
+            return AdmissionResult(
+                "admission-protocol-skew: governed worker does not support admission validation"
+            )
+        return await cast("AdmissionWorker", self._inner).validate_admission(
             invocation, on_event=on_event
         )
