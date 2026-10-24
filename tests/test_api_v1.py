@@ -497,9 +497,10 @@ registry = TypeRegistry()
 registrations = (register_native_types, register_inference_types)
 if not {native_first!r}:
     registrations = registrations[::-1]
-for registration in registrations:
-    registration(registry)
+registrations[0](registry)
 spec = registry.spec(GLIGEN_TYPE)
+registrations[1](registry)
+assert registry.spec(GLIGEN_TYPE) is spec
 register_inference_types(registry)
 assert registry.spec(GLIGEN_TYPE) is spec
 assert default_pool() in registry.resident_tables
