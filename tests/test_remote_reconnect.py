@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
 from typing import Any
@@ -19,6 +19,7 @@ import pytest
 from aiohttp import ClientResponse
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_caches import BudgetedDiskCAS
+from dinkster_engine.control import EngineRunContext
 from dinkster_graph import Graph, GraphNode, Link, graph_to_wire
 from dinkster_server import STATE_KEY, create_app
 from dinkster_workers import TransportError
@@ -216,21 +217,27 @@ def test_run_control_wait_and_reply_survive_same_daemon_reconnect(
         )
         composer = ServingComposer()
         entered = asyncio.Event()
-        continue_dispatch = asyncio.Event()
+        release_publisher = asyncio.Event()
         operations: list[str] = []
         import dinkster_workers.session as session_module
 
-        async def pause_first_control(*args: Any, **kwargs: Any) -> None:
+        await_run_value = EngineRunContext.await_run_value
+
+        async def observe_await(context: EngineRunContext, node_id: str) -> Mapping[str, Any]:
+            entered.set()
+            return await await_run_value(context, node_id)
+
+        async def pause_publisher_dispatch(*args: Any, **kwargs: Any) -> None:
             header = args[2]
             operation = header["operation"]
             assert type(operation) is str
             operations.append(operation)
-            if operation == "awaitRunValue":
-                entered.set()
-                await continue_dispatch.wait()
+            if operation == "publishRunValue":
+                await release_publisher.wait()
             await dispatch_run_control(*args, **kwargs)
 
-        monkeypatch.setattr(session_module, "dispatch_run_control", pause_first_control)
+        monkeypatch.setattr(EngineRunContext, "await_run_value", observe_await)
+        monkeypatch.setattr(session_module, "dispatch_run_control", pause_publisher_dispatch)
         try:
             spec = remote_spec(host, port, tmp_path, name="control")
             await composer.add_remote(spec)
@@ -270,7 +277,7 @@ def test_run_control_wait_and_reply_survive_same_daemon_reconnect(
                 await send(header, blobs, segments)
 
             session.send = lose_first_control_reply  # type: ignore[method-assign]
-            continue_dispatch.set()
+            release_publisher.set()
             await asyncio.wait_for(reply_lost.wait(), 10)
             await wait_for_connected(composer, "control", False)
             outcome = await composer.reattach_remote(spec)
@@ -280,7 +287,7 @@ def test_run_control_wait_and_reply_survive_same_daemon_reconnect(
             assert operations.count("awaitRunValue") == 1
             assert operations.count("publishRunValue") == 3
         finally:
-            continue_dispatch.set()
+            release_publisher.set()
             await composer.close()
             await stop_service(proc)
 
