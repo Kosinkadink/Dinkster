@@ -5,6 +5,7 @@ CORE_FLOAT = "FLOAT"
 CORE_STRING = "STRING"
 CORE_COMBO = "COMBO"
 CORE_BOOLEAN = "BOOLEAN"
+# Internal execution envelope, not a socket type.
 CORE_ABSENT = "core.absent"
 
 DICT_TYPE = "DICT"
@@ -24,24 +25,24 @@ GUIDER_TYPE = "GUIDER"
 NOISE_TYPE = "NOISE"
 CONDITIONING_TYPE = "CONDITIONING"
 INFERENCE_LATENT_OPERATION_TYPE = "LATENT_OPERATION"
-LATENT_OPERATION_TYPE = "dinkster.latent-operation"
+LATENT_OPERATION_TYPE = INFERENCE_LATENT_OPERATION_TYPE
 
-ASSET_TYPE = "dinkster.asset"
-SAVE_TARGET_TYPE = "dinkster.save_target"
-CURVE_TYPE = "dinkster.curve"
-REGION_TYPE = "dinkster.region"
-DETECTION_TYPE = "dinkster.detection"
-RESOURCE_HANDLE_TYPE = "dinkster.resource"
-VIDEO_DOCUMENT_TYPE = "dinkster.video_document"
-LAYERS_TYPE = "dinkster.layers"
-COMPOSITOR_TYPE = "dinkster.compositor"
-POSE_TYPE = "dinkster.pose"
-VECTOR_TYPE = "dinkster.vector"
-SEGMENTATION_TYPE = "dinkster.segmentation"
-MODEL3D_TYPE = "dinkster.model3d"
-SPLAT_TYPE = "dinkster.splat"
-INPAINT_CONDITIONING_TYPE = "dinkster.inpaint-conditioning"
-CONTEXT_WINDOWS_TYPE = "dinkster.context-windows"
+ASSET_TYPE = "ASSET"
+SAVE_TARGET_TYPE = "SAVE_TARGET"
+CURVE_TYPE = "CURVE"
+REGION_TYPE = "REGION"
+DETECTION_TYPE = "DETECTION"
+RESOURCE_HANDLE_TYPE = "RESOURCE"
+VIDEO_DOCUMENT_TYPE = "VIDEO_DOCUMENT"
+LAYERS_TYPE = "LAYERS"
+COMPOSITOR_TYPE = "COMPOSITOR"
+POSE_TYPE = "POSE"
+VECTOR_TYPE = "VECTOR"
+SEGMENTATION_TYPE = "SEGMENTATION"
+MODEL3D_TYPE = "MODEL3D"
+SPLAT_TYPE = "SPLAT"
+INPAINT_CONDITIONING_TYPE = "INPAINT_CONDITIONING"
+CONTEXT_WINDOWS_TYPE = "CONTEXT_WINDOWS"
 
 CONTROL_NET_TYPE = "CONTROL_NET"
 AUDIO_TYPE = "comfy.AUDIO"
@@ -115,3 +116,5 @@ __all__ = [
     "VIDEO_TYPE",
     "VOXEL_TYPE",
 ]
+
+BUILTIN_TYPE_IDS: frozenset[str] = frozenset(globals()[name] for name in __all__)

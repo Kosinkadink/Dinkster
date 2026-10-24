@@ -10,6 +10,9 @@ from typing import Any, TypeAlias, cast
 
 from dinkster_values import (
     LATENT_CODEC_MAGIC,
+    NOISE_TYPE,
+    SAMPLER_TYPE,
+    SIGMAS_TYPE,
     EncodedLatentTensor,
     TypeRegistry,
     TypeSpec,
@@ -76,14 +79,14 @@ def _encode_sigma_tensor(value: object) -> bytes:
 
 def _encode(type_id: str, obj: object) -> bytes:
     record: dict[str, object]
-    if type_id == "NOISE" and type(obj) is NoiseSelection:
+    if type_id == NOISE_TYPE and type(obj) is NoiseSelection:
         seed = obj.seed
         if seed is not None and (type(seed) is not int or not 0 <= seed < 2**64):
             raise ValueError("noise seed must be None or an unsigned 64-bit integer")
         record = {"seed": seed}
-    elif type_id == "SIGMAS" and type(obj) is not SigmaSchedule:
+    elif type_id == SIGMAS_TYPE and type(obj) is not SigmaSchedule:
         return _encode_sigma_tensor(obj)
-    elif type_id == "SIGMAS" and type(obj) is SigmaSchedule:
+    elif type_id == SIGMAS_TYPE and type(obj) is SigmaSchedule:
         if type(obj.values) is not tuple or any(
             type(value) not in (int, float) or not math.isfinite(value) for value in obj.values
         ):
@@ -95,7 +98,7 @@ def _encode(type_id: str, obj: object) -> bytes:
         record = {"values": obj.values}
         if obj.source_scheduler_id is not None:
             record["source_scheduler_id"] = obj.source_scheduler_id
-    elif type_id == "SAMPLER" and type(obj) in (BuiltinSamplerSelection, SamplerSelection):
+    elif type_id == SAMPLER_TYPE and type(obj) in (BuiltinSamplerSelection, SamplerSelection):
         selection = cast("BuiltinSamplerSelection", obj)
         selection.__post_init__()
         options: list[tuple[str, object]] = []
@@ -135,7 +138,7 @@ def _encode(type_id: str, obj: object) -> bytes:
 
 
 def _decode(type_id: str, data: bytes) -> object:
-    if type_id == "SIGMAS" and data.startswith(LATENT_CODEC_MAGIC):
+    if type_id == SIGMAS_TYPE and data.startswith(LATENT_CODEC_MAGIC):
         decoded = decode_latent(data)
         if type(decoded) is not dict:
             raise ValueError("SIGMAS tensor frame must contain only samples")
@@ -155,9 +158,9 @@ def _decode(type_id: str, data: bytes) -> object:
         record = cast("dict[str, Any]", loaded)
         if record.pop("format") != type_id + ".v1":
             raise ValueError("invalid sampling settings format")
-        if type_id == "NOISE":
+        if type_id == NOISE_TYPE:
             result: object = NoiseSelection(**record)
-        elif type_id == "SIGMAS":
+        elif type_id == SIGMAS_TYPE:
             if type(record["values"]) is not list:
                 raise ValueError("sigmas values must be an array")
             result = SigmaSchedule(tuple(record.pop("values")), **record)
@@ -196,13 +199,13 @@ def register_sampling_type(
     *,
     sampler_coerce: Callable[[object], object] | None = None,
 ) -> TypeSpec:
-    if type_id not in ("SAMPLER", "SIGMAS", "NOISE"):
+    if type_id not in (SAMPLER_TYPE, SIGMAS_TYPE, NOISE_TYPE):
         raise ValueError(f"unknown sampling type: {type_id}")
     if type_id in registry:
         return registry.spec(type_id)
 
     def encode(obj: object) -> bytes:
-        if type_id == "SAMPLER" and sampler_coerce is not None:
+        if type_id == SAMPLER_TYPE and sampler_coerce is not None:
             obj = sampler_coerce(obj)
         return _encode(type_id, obj)
 

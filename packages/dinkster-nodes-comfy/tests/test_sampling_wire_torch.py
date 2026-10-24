@@ -133,13 +133,15 @@ def test_ordinary_manifest_sigma_producer_consumer_repeats_on_both_hosts(
             source_manifest = tmp_path / "dinkster-pack.toml"
             consumer_manifest = tmp_path / "consumer-dinkster-pack.toml"
             source_manifest.write_text(
-                '[pack]\nname = "sigma-source"\nnamespaces = ["sigma-source"]\n'
+                '[pack]\nname = "sigma-source"\npublisher = "dinkster"\n'
+                'namespaces = ["sigma-source"]\n'
                 f'[pack.entry]\nnodes = "{module}:SOURCE_NODES"\n'
                 f'types = "{module}:register_inference_types"\n',
                 encoding="ascii",
             )
             consumer_manifest.write_text(
-                '[pack]\nname = "sigma-consumer"\nnamespaces = ["sigma-consumer"]\n'
+                '[pack]\nname = "sigma-consumer"\npublisher = "dinkster"\n'
+                'namespaces = ["sigma-consumer"]\n'
                 f'[pack.entry]\nnodes = "{module}:CONSUMER_NODES"\n'
                 f'types = "{module}:register_inference_types"\n',
                 encoding="ascii",

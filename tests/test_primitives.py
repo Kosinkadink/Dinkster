@@ -237,7 +237,7 @@ def test_primitive_wire_presentation() -> None:
     target = _entry(target_wire, "target")
     assert target["type"] == {
         "kind": "concrete",
-        "types": ["dinkster.save_target"],
+        "types": ["SAVE_TARGET"],
     }
     assert target["widget"] == {"type": "SAVE_TARGET"}
     prefix = _entry(target_wire, "prefix")
@@ -247,14 +247,14 @@ def test_primitive_wire_presentation() -> None:
     output = _entry(target_wire, "save_target")
     assert output["type"] == {
         "kind": "concrete",
-        "types": ["dinkster.save_target"],
+        "types": ["SAVE_TARGET"],
     }
 
 
 def test_save_target_prefix_is_an_explicit_typed_constructor() -> None:
     """A computed STRING may replace only the relative prefix. The
     structured input supplies and preserves the mount id, the output remains
-    dinkster.save_target, and omitting the replacement is an exact identity."""
+    SAVE_TARGET, and omitting the replacement is an exact identity."""
     from dinkster_assets import AssetError, SaveTarget
 
     assert SAVE_TARGET_NODES == (SetSaveTargetPrefix,)
@@ -289,7 +289,7 @@ def test_save_target_prefix_is_an_explicit_typed_constructor() -> None:
         )
         result = await engine.run(graph, ["target"])
         wrapped = result.outputs["target"]["save_target"]
-        assert wrapped.type_id == "dinkster.save_target"
+        assert wrapped.type_id == "SAVE_TARGET"
         assert wrapped.resolve() == SaveTarget(
             mount="project-output", prefix="computed/linked-scene"
         )
