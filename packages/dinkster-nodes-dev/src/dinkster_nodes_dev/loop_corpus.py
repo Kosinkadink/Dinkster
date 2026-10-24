@@ -8,6 +8,8 @@ from typing import cast
 from dinkster_api.v1 import (
     CORE_BOOLEAN,
     CORE_INT,
+    Expansion,
+    ExpansionBuilder,
     InputSpec,
     Node,
     NodeSchema,
@@ -85,6 +87,23 @@ class OuterProbe(Increment):
     node_type = "Issue408OuterProbe"
 
 
+class ExpandIncrement(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "Issue408ExpandIncrement",
+            inputs=(InputSpec("value", INT),),
+            outputs=(OutputSpec("output_0", INT),),
+            may_expand_graph=True,
+        )
+
+    @classmethod
+    def execute(cls, *, value: int) -> Expansion:
+        builder = ExpansionBuilder(cache_policy="rerun")
+        increment = builder.node("Issue408Increment", "increment", value=value)
+        return builder.finalize(output_0=increment.out("output_0"))
+
+
 class IndexIndependentProbe(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -114,18 +133,26 @@ def _recorder(
 
         @classmethod
         def execute(cls, **values: object) -> Mapping[str, object]:
-            value = values["value"]
-            recorded: object = value
-            if observation == "second_values":
-                recorded = [value, values["last"]]
-            elif observation == "loop_state_values":
-                recorded = [values["index"], values["is_first"], values["is_last"], values["item"]]
-            elif observation == "append_values":
-                if not isinstance(value, list):
-                    raise TypeError("Issue408AppendIndex requires a list value")
-                recorded = [*cast(list[object], value), values["index"]]
+            if observation == "loop_state_values":
+                recorded: object = [
+                    values["index"],
+                    values["is_first"],
+                    values["is_last"],
+                    values["item"],
+                ]
+                result = values["index"]
+            else:
+                value = values["value"]
+                recorded = value
+                result = recorded
+                if observation == "second_values":
+                    recorded = [value, values["last"]]
+                elif observation == "append_values":
+                    if not isinstance(value, list):
+                        raise TypeError("Issue408AppendIndex requires a list value")
+                    recorded = [*cast(list[object], value), values["index"]]
+                    result = recorded
             Observations.values[observation].append(recorded)
-            result = values["index"] if observation == "loop_state_values" else recorded
             return cls.outputs(output_0=result)
 
     Recorder.__name__ = node_type
@@ -225,6 +252,7 @@ LOOP_CORPUS_NODES = (
     Constant,
     Increment,
     OuterProbe,
+    ExpandIncrement,
     IndexIndependentProbe,
     Capture,
     Passthrough,

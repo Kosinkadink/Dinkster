@@ -43,3 +43,13 @@ def test_native_loop_compiler_runs_carried_value_fixtures() -> None:
             } == issue408["recorded_cpu_result"]["observed"]
 
     asyncio.run(scenario())
+
+
+def test_corpus_includes_the_runtime_expansion_prompt() -> None:
+    workflow = json.loads(
+        (CORPUS / "workflows/runtime-expanded-descendant.json").read_text(encoding="utf-8")
+    )
+    graph = compile_prompt(workflow["extra"]["issue408"]["api_prompt"])
+    expanded = graph.nodes["expand"]
+    assert isinstance(expanded, GraphNode)
+    assert expanded.node_type == "Issue408ExpandIncrement"

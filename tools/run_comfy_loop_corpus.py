@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
@@ -22,8 +23,10 @@ EXPECTED_DIVERGENCES = {"nested-cache-enabled": {"outer_probe_calls": [1, 2]}}
 OUTPUTS = {
     "StartLoop": ("iteration_index", "is_first", "is_last", "list_item", "current_iteration_value"),
     "EndLoop": ("outputs",),
+    "Issue408LazySwitch": ("output",),
 }
 TYPE_NAMES = {"Issue408LazySwitch": "ComfySwitchNode"}
+RUN_TIMEOUT_SECONDS = 10
 
 
 def _link(value: object) -> object:
@@ -53,6 +56,13 @@ def compile_prompt(prompt: MappingPrompt) -> Graph:
         inputs = {
             name: _link(value) for name, value in cast(dict[str, object], spec["inputs"]).items()
         }
+        if source_type == "EndLoop":
+            inputs = {
+                f"terminations.{name.removeprefix('termination')}"
+                if name.startswith("termination")
+                else name: value
+                for name, value in inputs.items()
+            }
         node_type = TYPE_NAMES.get(source_type, source_type)
         variants: dict[str, str] = {}
         if source_type == "StartLoop":
@@ -81,48 +91,81 @@ def make_engine() -> Engine:
 
 
 async def run_corpus(root: Path) -> list[str]:
+    outcomes = await collect_corpus(root)
+    failures = [outcome for outcome in outcomes if outcome.status == "FAIL"]
+    if failures:
+        details = "\n".join(f"{outcome.name}: {outcome.detail}" for outcome in failures)
+        raise AssertionError(details)
+    return [outcome.name for outcome in outcomes if outcome.status == "EXACT"]
+
+
+@dataclass(frozen=True)
+class CorpusOutcome:
+    name: str
+    status: str
+    detail: str
+
+
+async def collect_corpus(root: Path) -> list[CorpusOutcome]:
     results = json.loads((root / "results.json").read_text(encoding="utf-8"))["cases"]
-    passed: list[str] = []
+    outcomes: list[CorpusOutcome] = []
     for case in results:
         workflow = json.loads((root / case["workflow"]).read_text(encoding="utf-8"))
         issue408 = workflow["extra"]["issue408"]
         name = case["case"]
-        if name == "runtime-expanded-descendant":
-            continue
         Observations.reset()
         engine = make_engine()
         graph = compile_prompt(cast(MappingPrompt, issue408["api_prompt"]))
         targets = cast(list[str], issue408["outputs"])
-        for run in range(case["runs"]):
-            result = await asyncio.wait_for(
-                engine.run(
-                    graph, targets, cache_enabled=name != "cache-disabled", run_id=f"{name}-{run}"
-                ),
-                timeout=10,
-            )
-            errors = [
-                diagnostic for diagnostic in result.diagnostics if diagnostic.severity == "error"
-            ]
-            if errors:
-                raise AssertionError(f"{name}: {errors}")
-        expected = dict(case["observed"])
-        expected.update(EXPECTED_DIVERGENCES.get(name, {}))
-        observed = {key: Observations.values[key] for key in expected}
-        if observed != expected:
-            raise AssertionError(f"{name}: expected {expected!r}, got {observed!r}")
-        passed.append(name)
-    return passed
+        try:
+            for run in range(case["runs"]):
+                result = await asyncio.wait_for(
+                    engine.run(
+                        graph,
+                        targets,
+                        cache_enabled=name != "cache-disabled",
+                        run_id=f"{name}-{run}",
+                    ),
+                    timeout=RUN_TIMEOUT_SECONDS,
+                )
+                errors = [
+                    diagnostic
+                    for diagnostic in result.diagnostics
+                    if diagnostic.severity == "error"
+                ]
+                if errors:
+                    raise AssertionError(repr(errors))
+            expected = dict(case["observed"])
+            observed = {key: Observations.values[key] for key in expected}
+            divergence = EXPECTED_DIVERGENCES.get(name)
+            if divergence is not None:
+                if observed != {**expected, **divergence}:
+                    raise AssertionError(f"expected {expected!r}, got {observed!r}")
+                outcomes.append(CorpusOutcome(name, "DIVERGENCE", repr(observed)))
+            elif observed == expected:
+                outcomes.append(CorpusOutcome(name, "EXACT", repr(observed)))
+            else:
+                outcomes.append(
+                    CorpusOutcome(name, "FAIL", f"expected {expected!r}, got {observed!r}")
+                )
+        except Exception as exc:
+            outcomes.append(CorpusOutcome(name, "FAIL", f"{type(exc).__name__}: {exc}"))
+    return outcomes
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--corpus", type=Path, required=True)
     args = parser.parse_args()
-    passed = asyncio.run(run_corpus(args.corpus))
-    print(
-        f"PASS {len(passed)} exact native call sequences; "
-        "nested-cache-enabled is the recorded divergence"
-    )
+    outcomes = asyncio.run(collect_corpus(args.corpus))
+    for outcome in outcomes:
+        print(f"{outcome.status} {outcome.name}: {outcome.detail}")
+    exact = sum(outcome.status == "EXACT" for outcome in outcomes)
+    divergent = sum(outcome.status == "DIVERGENCE" for outcome in outcomes)
+    failed = sum(outcome.status == "FAIL" for outcome in outcomes)
+    print(f"SUMMARY exact={exact} divergence={divergent} failed={failed} total={len(outcomes)}")
+    if failed:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
