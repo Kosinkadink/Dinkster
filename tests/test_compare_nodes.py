@@ -310,7 +310,7 @@ def test_unnamed_outputs_still_compare_type_position_and_explicit_names(
     assert any("outputs[0].name" in difference for difference in compare(reference, native))
 
 
-def test_v3_output_dump_preserves_only_declared_names(
+def test_v3_schema_dump_preserves_only_declared_names(
     example_contract: tuple[dict, dict],
 ) -> None:
     from tools.compare_nodes import compare
@@ -318,15 +318,71 @@ def test_v3_output_dump_preserves_only_declared_names(
 
     reference, native = example_contract
     schema = SimpleNamespace(
-        outputs=[SimpleNamespace(display_name=None), SimpleNamespace(display_name="second")]
+        display_name="Model Attention Backend",
+        outputs=[SimpleNamespace(display_name=None), SimpleNamespace(display_name="second")],
     )
     reference.update(output_contract(schema))
+    assert reference["display_name"] == "Model Attention Backend"
+    native["displayName"] = "Model Attention Backend"
     assert reference["return_names"] == [None, "second"]
     assert compare(reference, native) == []
     native["interface"][1]["id"] = "another_unnamed_output"
     assert compare(reference, native) == []
     native["interface"][2]["id"] = "renamed"
     assert any("outputs[1].name" in difference for difference in compare(reference, native))
+    schema.display_name = None
+    assert "display_name" not in output_contract(schema)
+
+
+@pytest.mark.parametrize("list_inputs", [False, True])
+def test_float_constraints_compare_after_exact_float_projection(list_inputs: bool) -> None:
+    from tools.compare_nodes import compare
+
+    constraints = {"min": -(2**63 - 1), "max": 2**63 - 1, "step": 2**53 + 1, "round": False}
+    reference = {
+        "class_name": "PrimitiveFloat",
+        "input_is_list": list_inputs,
+        "input_types": {"required": {"value": ["FLOAT", constraints]}},
+    }
+    atom = {"kind": "concrete", "types": ["FLOAT"]}
+    native = {
+        "nodeType": "PrimitiveFloat",
+        "interface": [
+            {
+                "role": "input",
+                "id": "value",
+                "type": {"kind": "list", "element": atom} if list_inputs else atom,
+                "widget": {
+                    "type": "NUMBER",
+                    "min": -9.223372036854776e18,
+                    "max": 9.223372036854776e18,
+                    "step": 9007199254740992.0,
+                    "round": False,
+                },
+            }
+        ],
+    }
+    assert compare(reference, native) == []
+    widget = native["interface"][0]["widget"]
+    widget["min"] = -1e20
+    assert any(".min" in difference for difference in compare(reference, native))
+    widget["min"] = -9.223372036854776e18
+    del widget["max"]
+    assert any(".max" in difference for difference in compare(reference, native))
+    widget["max"] = 9.223372036854776e18
+    widget["round"] = 0.0
+    assert any(".round" in difference for difference in compare(reference, native))
+    widget["round"] = False
+    constraints["round"] = 2**53 + 1
+    widget["round"] = 9007199254740992.0
+    assert compare(reference, native) == []
+    reference["input_types"]["required"]["value"][0] = "INT"
+    atom["types"] = ["INT"]
+    constraints.clear()
+    constraints["min"] = 2**63 - 2
+    widget.clear()
+    widget.update(type="NUMBER", min=str(2**63 - 1))
+    assert any(".min" in difference for difference in compare(reference, native))
 
 
 @pytest.mark.parametrize("direction,index", [("input", 0), ("output", 1)])
