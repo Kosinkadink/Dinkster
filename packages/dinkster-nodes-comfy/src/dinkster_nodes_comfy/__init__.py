@@ -6,6 +6,7 @@ from .conditioning import CONDITIONING_NODES
 from .image_core import IMAGE_CORE_NODES
 from .image_transform import IMAGE_TRANSFORM_NODES
 from .latent import LATENT_NODES
+from .latent_advanced import LATENT_ADVANCED_NODES
 from .latent_operations import LATENT_OPERATION_NODES
 from .logic import LOGIC_NODES
 from .mask import MASK_NODES
@@ -36,6 +37,7 @@ COMFY_NODES = (
     *MODEL_MERGE_NODES,
     *MODEL_SPECIFIC_MERGE_NODES,
     *LATENT_NODES,
+    *LATENT_ADVANCED_NODES,
     *LATENT_OPERATION_NODES,
     *CONDITIONING_NODES,
     *MASK_NODES,

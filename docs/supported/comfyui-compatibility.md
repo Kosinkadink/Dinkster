@@ -7,6 +7,8 @@
 - Six native latent operation nodes blend, tonemap, sharpen, apply operations
   directly or within a denoising schedule interval, and replace video frames.
   LATENT_OPERATION uses the same resident-value boundary as model hooks.
+- Nine native advanced latent nodes add, subtract, multiply, interpolate,
+  concatenate, cut, split to batches, join batches, and set batch seed behavior.
 - Ten native conditioning nodes combine, blend, concatenate, multiply, mask,
   zero, and set area or timestep metadata under their exact ComfyUI interfaces.
 - Twelve native mask and composite nodes convert, create, invert, crop, combine,
