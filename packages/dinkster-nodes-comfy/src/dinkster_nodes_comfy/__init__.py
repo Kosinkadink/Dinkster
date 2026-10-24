@@ -19,6 +19,7 @@ from .latent_operations import LATENT_OPERATION_NODES
 from .logic import LOGIC_NODES
 from .mask import MASK_NODES
 from .math import ComfyMathExpression
+from .mochi import EmptyMochiLatentVideo
 from .model_merging import MODEL_MERGE_NODES
 from .model_merging_specific import MODEL_SPECIFIC_MERGE_NODES
 from .morphology import MORPHOLOGY_NODES
@@ -71,6 +72,7 @@ COMFY_NODES = (
     *STABLE_CASCADE_NODES,
     *VIDEO_LATENT_NODES,
     *POST_PROCESSING_NODES,
+    EmptyMochiLatentVideo,
 )
 
 __all__ = ["COMFY_NODES", "register_inference_types"]

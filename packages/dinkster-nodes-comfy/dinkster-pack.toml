@@ -164,6 +164,7 @@ namespaces = [
     "BatchMasksNode",
     "BatchLatentsNode",
     "ColorTransfer",
+    "EmptyMochiLatentVideo",
 ]
 
 [pack.sandbox]
