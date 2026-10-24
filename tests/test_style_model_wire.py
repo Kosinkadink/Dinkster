@@ -6,30 +6,34 @@ import sys
 import pytest
 
 
-@pytest.mark.parametrize("native_first", (True, False))
-def test_style_model_registration_and_schema_discovery_are_runtime_free(native_first: bool) -> None:
+@pytest.mark.parametrize("registration_order", ("shared", "native-first", "shared-first"))
+def test_model_patch_registration_and_schema_discovery_are_runtime_free(
+    registration_order: str,
+) -> None:
     script = f"""
 import sys
 sys.modules['torch'] = None
 sys.modules['dinkster_inference'] = None
-from dinkster_api.v1 import STYLE_MODEL_TYPE, TypeRegistry, register_inference_types
-from dinkster_values import STYLE_MODEL_TYPE as values_type
-from dinkster_values.builtin_types import STYLE_MODEL_TYPE as builtin_type
+from dinkster_api.v1 import MODEL_PATCH_TYPE, TypeRegistry, register_inference_types
+from dinkster_values import MODEL_PATCH_TYPE as values_type
+from dinkster_values.builtin_types import MODEL_PATCH_TYPE as builtin_type
 from dinkster_memory.resident import default_pool
 from dinkster_native.native import register_native_types
 from dinkster_nodes_comfy import COMFY_NODES
-assert STYLE_MODEL_TYPE == values_type == builtin_type == 'STYLE_MODEL'
+assert MODEL_PATCH_TYPE == values_type == builtin_type == 'MODEL_PATCH'
 registry = TypeRegistry()
 registrations = (register_native_types, register_inference_types)
-if not {native_first!r}:
+if {registration_order!r} == 'shared':
+    registrations = (register_inference_types,)
+elif {registration_order!r} == 'shared-first':
     registrations = registrations[::-1]
 for registration in registrations:
     registration(registry)
-spec = registry.spec(STYLE_MODEL_TYPE)
+spec = registry.spec(MODEL_PATCH_TYPE)
 register_inference_types(registry)
-assert registry.spec(STYLE_MODEL_TYPE) is spec
+assert registry.spec(MODEL_PATCH_TYPE) is spec
 assert default_pool() in registry.resident_tables
-assert 'comfy.STYLE_MODEL' not in registry
+assert 'comfy.MODEL_PATCH' not in registry
 for node in COMFY_NODES:
     node.schema()
 source = object()
