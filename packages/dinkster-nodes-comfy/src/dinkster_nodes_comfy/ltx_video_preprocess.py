@@ -55,8 +55,11 @@ def _preprocess(frame: Any, compression: int, torch: Any) -> Any:
     if compression == 0:
         return frame
     image_array = (
-        frame[: (frame.shape[0] // 2) * 2, : (frame.shape[1] // 2) * 2] * 255.0
-    ).byte().cpu().numpy()
+        (frame[: (frame.shape[0] // 2) * 2, : (frame.shape[1] // 2) * 2] * 255.0)
+        .byte()
+        .cpu()
+        .numpy()
+    )
     with BytesIO() as output_file:
         _encode_single_frame(output_file, image_array, compression)
         video_bytes = output_file.getvalue()
@@ -90,7 +93,8 @@ class LTXVPreprocess(Node):
         initialize_inference_process()
         torch = importlib.import_module("torch")
         frames = materialize_image(image)
-        return cls.outputs(IMAGE=torch.stack([_preprocess(frame, img_compression, torch) for frame in frames]))
+        output = [_preprocess(frame, img_compression, torch) for frame in frames]
+        return cls.outputs(IMAGE=torch.stack(output))
 
 
 LTX_VIDEO_PREPROCESS_NODES = (LTXVPreprocess,)
