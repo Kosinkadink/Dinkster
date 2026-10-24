@@ -37,6 +37,7 @@ from .primitive import (
 )
 from .reference_conditioning import REFERENCE_CONDITIONING_NODES
 from .rope_and_mask import ROPE_AND_MASK_NODES
+from .save_text import SaveText
 from .stable_cascade import STABLE_CASCADE_NODES
 from .text import TEXT_NODES
 from .utilities import ComfyNumberConvert, SeedNode
@@ -44,6 +45,7 @@ from .vae import VAE_NODES
 
 COMFY_NODES = (
     *TEXT_NODES,
+    SaveText,
     *DATASET_TEXT_NODES,
     PrimitiveString,
     PrimitiveStringMultiline,
