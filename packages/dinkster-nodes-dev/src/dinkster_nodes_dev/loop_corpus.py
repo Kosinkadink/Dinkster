@@ -164,12 +164,12 @@ def _recorder(
 class Capture(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return _schema("Issue408Capture", (InputSpec("value", ANY),), None, effect=True)
+        return _schema("Issue408Capture", (InputSpec("value", ANY),), INT, effect=True)
 
     @classmethod
     def execute(cls, *, value: object) -> Mapping[str, object]:
         Observations.values["capture_values"].append(value)
-        return {}
+        return cls.outputs(output_0=0)
 
 
 Passthrough = _recorder(

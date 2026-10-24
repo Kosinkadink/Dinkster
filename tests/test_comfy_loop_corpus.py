@@ -6,7 +6,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from dinkster_graph import GraphNode
+from dinkster_graph import GraphNode, Link, RegionNode
 from dinkster_nodes_dev.loop_corpus import Observations
 
 from tools.run_comfy_loop_corpus import compile_prompt, make_engine
@@ -23,7 +23,25 @@ def test_recorded_prompts_compile_to_native_loop_nodes() -> None:
     assert isinstance(inner_close, GraphNode)
     assert outer.node_type == "StartLoop"
     assert inner_close.node_type == "EndLoop"
-    assert all(isinstance(node, GraphNode) for node in graph.nodes.values())
+    assert isinstance(graph.nodes["capture"], RegionNode)
+    assert any(
+        isinstance(node, GraphNode) and node.node_type == "std.list.element"
+        for node in graph.nodes.values()
+    )
+
+
+def test_list_outputs_are_explicitly_flattened_before_map_capture() -> None:
+    workflow = json.loads(
+        (CORPUS / "workflows/accumulate-list-output.json").read_text(encoding="utf-8")
+    )
+    graph = compile_prompt(workflow["extra"]["issue408"]["api_prompt"])
+    capture = graph.nodes["capture"]
+    assert isinstance(capture, RegionNode)
+    capture_input = capture.inputs["item"]
+    assert isinstance(capture_input, Link)
+    concat = graph.nodes[capture_input.node_id]
+    assert isinstance(concat, GraphNode)
+    assert concat.node_type == "std.list.concat"
 
 
 def test_native_loop_compiler_runs_carried_value_fixtures() -> None:

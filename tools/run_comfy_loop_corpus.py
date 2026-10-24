@@ -9,13 +9,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+from dinkster_api.v1 import CORE_INT
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
-from dinkster_graph import Graph, GraphNode, Link
+from dinkster_graph import PORTS_NODE_ID, Graph, GraphNode, Link, RegionNode, RegionOutput
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_dev.loop_corpus import LOOP_CORPUS_NODES, Observations
 from dinkster_nodes_foundation import FOUNDATION_NODES
-from dinkster_schema import build_node_types, build_schemas
+from dinkster_schema import TypeExpr, build_node_types, build_schemas
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 
@@ -27,6 +28,8 @@ OUTPUTS = {
 }
 TYPE_NAMES = {"Issue408LazySwitch": "ComfySwitchNode"}
 RUN_TIMEOUT_SECONDS = 10
+INT = TypeExpr.concrete(CORE_INT)
+VALUE = TypeExpr.concrete("core.value")
 
 
 def _link(value: object) -> object:
@@ -50,11 +53,93 @@ def compile_prompt(prompt: MappingPrompt) -> Graph:
     """Compile the recorded prompt shape; this is test tooling, not an importer."""
     global _active_prompt
     _active_prompt = prompt
-    nodes: dict[str, GraphNode] = {}
+    type_cache: dict[str, TypeExpr] = {}
+    nodes: dict[str, GraphNode | RegionNode] = {}
+    generated = 0
+
+    def reference_type(value: object) -> TypeExpr:
+        if not isinstance(value, list) or len(value) != 2 or not isinstance(value[0], str):
+            raise ValueError(f"corpus compiler expected a prompt link, got {value!r}")
+        return output_type(value[0])
+
+    def output_type(node_id: str) -> TypeExpr:
+        cached = type_cache.get(node_id)
+        if cached is not None:
+            return cached
+        source_type = str(prompt[node_id]["class_type"])
+        if source_type in {
+            "Issue408Constant",
+            "Issue408Increment",
+            "Issue408OuterProbe",
+            "Issue408ExpandIncrement",
+            "Issue408IndexIndependentProbe",
+            "Issue408CapturePassthrough",
+            "Issue408CapturePassthroughFirst",
+            "Issue408CapturePassthroughSecond",
+            "Issue408FalseBranch",
+            "Issue408TrueBranch",
+            "Issue408CaptureLoopState",
+            "Issue408LazySwitch",
+        }:
+            result = INT
+        elif source_type == "Issue408Pair":
+            result = TypeExpr.list_of(VALUE)
+        elif source_type in {
+            "Issue408ListBackedScalar",
+            "Issue408RecordCarried",
+            "Issue408AppendIndex",
+        }:
+            result = VALUE
+        elif source_type == "Issue408EmptyList":
+            result = TypeExpr.list_of(VALUE)
+        elif source_type == "Issue408IntegerList":
+            result = TypeExpr.list_of(INT)
+        elif source_type == "StartLoop":
+            result = INT
+        elif source_type == "EndLoop":
+            source_inputs = cast(dict[str, object], prompt[node_id]["inputs"])
+            output = source_inputs.get("output_value")
+            if output is None:
+                result = TypeExpr.list_of(VALUE)
+            else:
+                payload = reference_type(output)
+                result = TypeExpr.list_of(payload)
+        else:
+            raise ValueError(f"corpus compiler does not know output type for {source_type}")
+        type_cache[node_id] = result
+        return result
+
+    def generated_id(prefix: str) -> str:
+        nonlocal generated
+        generated += 1
+        return f"{prefix}_{generated}"
+
+    def concat(link: Link) -> Link:
+        node_id = generated_id("concat")
+        nodes[node_id] = GraphNode("std.list.concat", {"lists.0": link})
+        return Link(node_id, "list")
+
+    def last_element(link: Link) -> Link:
+        node_id = generated_id("last")
+        nodes[node_id] = GraphNode("std.list.element", {"list": link, "index": -1})
+        return Link(node_id, "item")
+
+    def lower_link(value: object, original: object) -> object:
+        if not isinstance(value, Link) or not isinstance(original, list):
+            return value
+        if str(prompt[value.node_id]["class_type"]) != "EndLoop":
+            return value
+        source_inputs = cast(dict[str, object], prompt[value.node_id]["inputs"])
+        output = source_inputs.get("output_value")
+        if output is not None and reference_type(output).kind == "list":
+            return concat(value)
+        return value
+
     for node_id, spec in prompt.items():
         source_type = str(spec["class_type"])
         inputs = {
-            name: _link(value) for name, value in cast(dict[str, object], spec["inputs"]).items()
+            name: lower_link(_link(value), value)
+            for name, value in cast(dict[str, object], spec["inputs"]).items()
         }
         if source_type == "EndLoop":
             inputs = {
@@ -63,12 +148,46 @@ def compile_prompt(prompt: MappingPrompt) -> Graph:
                 else name: value
                 for name, value in inputs.items()
             }
+            for name in ("output_value", "next_iteration_value"):
+                original = cast(dict[str, object], spec["inputs"]).get(name)
+                value = inputs.get(name)
+                if not isinstance(value, Link) or original is None:
+                    continue
+                if (
+                    name == "next_iteration_value"
+                    and isinstance(original, list)
+                    and str(prompt[original[0]]["class_type"]) == "EndLoop"
+                ):
+                    inputs[name] = last_element(value)
         node_type = TYPE_NAMES.get(source_type, source_type)
         variants: dict[str, str] = {}
         if source_type == "StartLoop":
             variants["mode"] = str(inputs.pop("mode", "simple"))
         elif source_type == "Issue408LazySwitch":
             inputs["switch"] = inputs.pop("switch")
+        if source_type == "Issue408Capture" and isinstance(inputs.get("value"), Link):
+            value = cast(Link, inputs["value"])
+            value_type = reference_type(cast(dict[str, object], spec["inputs"])["value"])
+            while (
+                value_type.kind == "list"
+                and value_type.element is not None
+                and value_type.element.kind == "list"
+            ):
+                value = concat(value)
+                value_type = value_type.element
+            if value_type.kind == "list" and value_type.element is not None:
+                item_type = value_type.element
+                nodes[node_id] = RegionNode(
+                    kind="map",
+                    body=Graph(
+                        {"capture": GraphNode(node_type, {"value": Link(PORTS_NODE_ID, "item")})}
+                    ),
+                    ports={"item": item_type},
+                    inputs={"item": value},
+                    element_ports=("item",),
+                    outputs={"outputs": RegionOutput(Link("capture", "output_0"))},
+                )
+                continue
         nodes[node_id] = GraphNode(node_type, inputs, slot_variants=variants)
     return Graph(nodes)
 
