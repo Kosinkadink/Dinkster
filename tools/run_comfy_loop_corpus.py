@@ -13,7 +13,8 @@ from dinkster_api.v1 import CORE_INT
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import PORTS_NODE_ID, Graph, GraphNode, Link, RegionNode, RegionOutput
-from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.loops import LOOP_NODES
+from dinkster_nodes_comfy.switch import ComfySwitchNode
 from dinkster_nodes_dev.loop_corpus import LOOP_CORPUS_NODES, VALUE_TYPE, Observations
 from dinkster_nodes_foundation import FOUNDATION_NODES
 from dinkster_schema import TypeExpr, build_node_types, build_schemas
@@ -195,7 +196,7 @@ def make_engine() -> Engine:
     registry = TypeRegistry()
     register_core_types(registry)
     registry.register(VALUE_TYPE)
-    nodes = (*COMFY_NODES, *FOUNDATION_NODES, *LOOP_CORPUS_NODES)
+    nodes = (*LOOP_NODES, ComfySwitchNode, *FOUNDATION_NODES, *LOOP_CORPUS_NODES)
     return Engine(
         schemas=build_schemas(nodes),
         registry=registry,
