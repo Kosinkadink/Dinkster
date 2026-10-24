@@ -14,7 +14,7 @@ import json
 import pickle
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from urllib.parse import urlencode
 
 from .absent import CORE_ABSENT
@@ -29,6 +29,9 @@ from .model import (
     stable_hash,
 )
 from .streams import MediaStream, make_stream_value, parse_stream_type_id
+
+if TYPE_CHECKING:
+    from .resident import ResidencyTable
 
 Encoder = Callable[[object], bytes]
 Decoder = Callable[[bytes], object]
@@ -275,6 +278,16 @@ class TypeRegistry:
         self._asset_decoders: dict[TypeId, AssetDecoderSpec] = {}
         self._batch_merges: dict[TypeId, BatchMergeSpec] = {}
         self._type_equivalences: dict[TypeId, tuple[TypeId, str]] = {}
+        self._resident_tables: list[ResidencyTable] = []
+
+    @property
+    def resident_tables(self) -> tuple[ResidencyTable, ...]:
+        """Holding tables used by this registry's resident codecs."""
+        return tuple(self._resident_tables)
+
+    def register_resident_table(self, table: ResidencyTable) -> None:
+        if not any(existing is table for existing in self._resident_tables):
+            self._resident_tables.append(table)
 
     def copy(self) -> TypeRegistry:
         """Return an independent registry with the same registrations."""
@@ -286,6 +299,7 @@ class TypeRegistry:
         copied._asset_decoders = dict(self._asset_decoders)
         copied._batch_merges = dict(self._batch_merges)
         copied._type_equivalences = dict(self._type_equivalences)
+        copied._resident_tables = list(self._resident_tables)
         return copied
 
     def replace_from(self, other: TypeRegistry) -> None:
@@ -297,6 +311,7 @@ class TypeRegistry:
         self._asset_decoders = dict(other._asset_decoders)
         self._batch_merges = dict(other._batch_merges)
         self._type_equivalences = dict(other._type_equivalences)
+        self._resident_tables = list(other._resident_tables)
 
     def register(
         self,

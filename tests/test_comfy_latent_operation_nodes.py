@@ -1,9 +1,18 @@
 """Latent operations preserve metadata, schedule boundaries, and frame ownership."""
 
+import asyncio
+import gc
+import os
+import sys
+import weakref
+from collections.abc import Mapping
+from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
 import pytest
+from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.latent_operations import (
     LATENT_OPERATION_NODES,
     LatentApplyOperation,
@@ -12,6 +21,132 @@ from dinkster_nodes_comfy.latent_operations import (
     ReplaceVideoLatentFrames,
 )
 from test_comfy_latent_nodes import ArrayTensor
+
+from dinkster.compose import PackSpec, ServingComposer
+
+_STORAGE: list[weakref.ReferenceType[Any]] = []
+
+
+class ResidentSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="resident-fixture.source",
+            outputs=(
+                OutputSpec("operation", TypeExpr.concrete("LATENT_OPERATION")),
+                OutputSpec("conditioning", TypeExpr.concrete("CONDITIONING")),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> Mapping[str, object]:
+        captured = np.array([3.0, -8.0])
+        conditioning = np.array([2.0, 9.0])
+        _STORAGE.extend((weakref.ref(captured), weakref.ref(conditioning)))
+
+        def operation(*, latent: object) -> Any:
+            return captured
+
+        return cls.outputs(operation=operation, conditioning=[[conditioning, {}]])
+
+
+class ResidentInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="resident-fixture.inspect",
+            inputs=(
+                InputSpec("operation", TypeExpr.concrete("LATENT_OPERATION")),
+                InputSpec("conditioning", TypeExpr.concrete("CONDITIONING")),
+            ),
+            outputs=(OutputSpec("value", TypeExpr.concrete("FLOAT")),),
+        )
+
+    @classmethod
+    def execute(cls, *, operation: Any, conditioning: Any) -> Mapping[str, object]:
+        return cls.outputs(value=float(operation(latent=None).sum() + conditioning[0][0].sum()))
+
+
+class ResidentStorage(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="resident-fixture.storage",
+            idempotent=False,
+            outputs=(OutputSpec("live", TypeExpr.concrete("INT")),),
+        )
+
+    @classmethod
+    def execute(cls) -> Mapping[str, object]:
+        gc.collect()
+        return cls.outputs(live=sum(reference() is not None for reference in _STORAGE))
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_ordinary_pack_full_release_collects_operation_and_conditioning_storage(
+    tmp_path: Path, in_process: bool
+) -> None:
+    async def scenario() -> None:
+        manifest = (
+            Path(__file__).resolve().parents[1] / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+        )
+        (tmp_path / "resident_fixture_nodes.py").write_text(
+            "from test_comfy_latent_operation_nodes import (\n"
+            "ResidentSource, ResidentInspect, ResidentStorage)\n"
+            "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+            "NODES = (*COMFY_NODES, ResidentSource, ResidentInspect, ResidentStorage)\n",
+            encoding="ascii",
+        )
+        source_manifest = tmp_path / "dinkster-pack.toml"
+        source_manifest.write_text(
+            manifest.read_text(encoding="ascii")
+            .replace("namespaces = [", 'namespaces = ["resident-fixture",')
+            .replace("dinkster_nodes_comfy:COMFY_NODES", "resident_fixture_nodes:NODES")
+            .replace(
+                "dinkster_nodes_comfy:register_inference_types",
+                "resident_fixture_nodes:register_inference_types",
+            ),
+            encoding="ascii",
+        )
+        composer = ServingComposer(
+            worker_env={"PYTHONPATH": os.pathsep.join((str(Path(__file__).parent), *sys.path))}
+        )
+        try:
+            await composer.add_pack(PackSpec(source_manifest, in_process=in_process))
+            engine = composer.composition.make_engine(lambda _event: None)
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("resident-fixture.source"),
+                    "inspect": GraphNode(
+                        "resident-fixture.inspect",
+                        {
+                            "operation": Link("source", "operation"),
+                            "conditioning": Link("source", "conditioning"),
+                        },
+                    ),
+                    "storage": GraphNode("resident-fixture.storage"),
+                }
+            )
+            for _ in range(2):
+                result = await engine.run(graph, ["inspect"])
+                assert result.outputs["inspect"]["value"].resolve() == 6.0
+            live = await engine.run(graph, ["storage"])
+            assert cast(int, live.outputs["storage"]["live"].resolve()) >= 2
+            released = await composer.full_free("ordinary-resident-release")
+            assert all(
+                consumer["status"] == "complete"
+                for worker in released
+                for consumer in cast(list[dict[str, object]], worker["consumers"])
+            )
+            live = await engine.run(graph, ["storage"])
+            assert live.outputs["storage"]["live"].resolve() == 0
+            result = await engine.run(graph, ["inspect"])
+            assert result.outputs["inspect"]["value"].resolve() == 6.0
+        finally:
+            await composer.full_free("ordinary-resident-cleanup")
+            await composer.close()
+
+    asyncio.run(scenario())
 
 
 def test_latent_operation_interfaces_keep_exact_input_order_and_optional_groups() -> None:

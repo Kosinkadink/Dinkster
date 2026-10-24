@@ -19,6 +19,7 @@ from dataclasses import replace
 from typing import cast
 
 from dinkster_memory import FullReleaseConsumer, Shedder
+from dinkster_memory.resident import ResidentPool
 from dinkster_protocol import (
     AttentionCapabilityEvidence,
     AttentionPolicyConfig,
@@ -208,6 +209,15 @@ class InProcessWorker:
         self._combo_choices = dict(combo_choices or {})
         self._lazy_choices = dict(lazy_choices or {})
         self._memory_consumers = dict(memory_consumers or {})
+        for index, table in enumerate(registry.resident_tables):
+            if not isinstance(table, ResidentPool) or any(
+                consumer is table for consumer in self._memory_consumers.values()
+            ):
+                continue
+            name = f"resident-values-{index}"
+            if name in self._memory_consumers:
+                raise ValueError(f"reserved resident consumer name: {name}")
+            self._memory_consumers[name] = table
         with self._pack_context():
             self._schemas: dict[str, NodeSchema] = {
                 node_type: cls.schema() for node_type, cls in self._node_types.items()

@@ -1065,7 +1065,7 @@ def register_conditioning_type(
             return getattr(payload, "_dinkster_input_value", payload)
         return obj
 
-    return registry.register(
+    spec = registry.register(
         CONDITIONING_TYPE_ID,
         encode=encode,
         decode=decode,
@@ -1075,3 +1075,6 @@ def register_conditioning_type(
         input_convert=input_convert,
         validate_encoded=validate_encoded,
     )
+    if resident_table is not None:
+        registry.register_resident_table(resident_table)
+    return spec

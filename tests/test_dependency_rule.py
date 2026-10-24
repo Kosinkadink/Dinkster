@@ -44,11 +44,13 @@ ALLOWED: dict[str, set[str]] = {
     # TypeExpr must use the same one (DESIGN 3.13).
     "dinkster_schema": {"dinkster_values"},
     "dinkster_graph": {"dinkster_schema"},
-    # Native inference contracts contain protocols and frozen data only.
-    # dinkster_schema supplies the closed name grammar for registry ids;
-    # The conditioning carrier uses the bottom-layer dinkster_values package.
-    # Nothing else (and never torch) belongs here.
-    "dinkster_inference_wire": {"dinkster_schema", "dinkster_protocol", "dinkster_values"},
+    # Shared inference codecs use the Torch-free governed resident pool.
+    "dinkster_inference_wire": {
+        "dinkster_schema",
+        "dinkster_protocol",
+        "dinkster_values",
+        "dinkster_memory",
+    },
     # The execution boundary itself (hazard H3): Worker/CacheStore protocols
     # plus the frozen data they exchange. A leaf on purpose - both the engine
     # (consumer) and workers/caches (implementations) depend on it, so a

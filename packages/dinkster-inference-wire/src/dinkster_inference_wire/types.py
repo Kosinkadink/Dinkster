@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dinkster_memory.resident import default_pool
 from dinkster_values import TypeRegistry, TypeSpec, register_resident_type
 
 from .conditioning_wire import CONDITIONING_TYPE_ID, register_conditioning_type
@@ -30,16 +31,17 @@ _SAMPLING_TYPE_IDS = (SAMPLER_TYPE_ID, SIGMAS_TYPE_ID, NOISE_TYPE_ID)
 
 def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
     """Idempotently register shared wire and resident value types."""
+    table = default_pool()
     registered = [
         registry.spec(CONDITIONING_TYPE_ID)
         if CONDITIONING_TYPE_ID in registry
-        else register_conditioning_type(registry)
+        else register_conditioning_type(registry, resident_table=table)
     ]
     for type_id in _RESIDENT_TYPE_IDS:
         registered.append(
             registry.spec(type_id)
             if type_id in registry
-            else register_resident_type(registry, type_id)
+            else register_resident_type(registry, type_id, table=table)
         )
     for type_id in _SAMPLING_TYPE_IDS:
         registered.append(

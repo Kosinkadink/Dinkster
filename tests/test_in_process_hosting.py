@@ -497,7 +497,10 @@ def test_in_process_tenant_registers_on_invocation_unregisters_on_remove_and_ref
         workers = await composer.full_free("in-process-tenants")
         tenant_worker = next(worker for worker in workers if worker["worker"] == "tenantpack")
         assert tenant_worker["status"] == "complete"
-        assert tenant_worker["consumers"] == [{"consumer": "model-tenants", "status": "complete"}]
+        assert tenant_worker["consumers"] == [
+            {"consumer": "resident-values-0", "status": "complete"},
+            {"consumer": "model-tenants", "status": "complete"},
+        ]
         assert registry.live == {}
         await composer.remove_pack("tenantpack")
         assert registry.live == {}
