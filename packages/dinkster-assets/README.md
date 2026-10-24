@@ -79,6 +79,11 @@ safetensors headers before tensor data is materialized.
 inputs into the writer's target. Omitting `mount` uses the snapshot's configured
 output mount; an explicit mount selects that grant instead. Both forms retain
 the writer's prefix validation, live write permissions and containment checks.
+Prefixes expand `%width%` and `%height%` from the optional keyword arguments
+`image_width` and `image_height` (both default to zero). SaveText uses one for
+both dimensions. `%year%`, `%month%`, `%day%`, `%hour%`, `%minute%` and `%second%`
+use local time, with two digits except for the year. Unknown tokens stay literal.
+Expansion happens before the save target is parsed, including directory names.
 
 ## Catalog schema
 
