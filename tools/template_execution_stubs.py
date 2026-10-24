@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -142,18 +143,33 @@ def _stub(row: Mapping[str, Any]) -> type[Node]:
         for section in ("required", "optional")
         for name, descriptor in row["input_types"].get(section, {}).items()
     )
-    inputs = tuple(item for item in entries if isinstance(item, InputSpec))
+    inputs = tuple(
+        replace(item, type=TypeExpr.list_of(item.type))
+        if row.get("input_is_list") and item.widget is None
+        else item
+        for item in entries
+        if isinstance(item, InputSpec)
+    )
     returns = row.get("return_types") or []
     names = row.get("return_names") or returns
     output_metadata = row.get("v3_outputs") or [{} for _ in returns]
+    output_lists = row.get("output_is_list") or [False for _ in returns]
     outputs = tuple(
         OutputSpec(
             name or atom,
-            TypeExpr.variable(metadata["template"]["template_id"])
+            TypeExpr.list_of(
+                TypeExpr.variable(metadata["template"]["template_id"])
+                if atom == "COMFY_MATCHTYPE_V3"
+                else TypeExpr.concrete(atom)
+            )
+            if is_list
+            else TypeExpr.variable(metadata["template"]["template_id"])
             if atom == "COMFY_MATCHTYPE_V3"
             else TypeExpr.concrete(atom),
         )
-        for name, atom, metadata in zip(names, returns, output_metadata, strict=True)
+        for name, atom, metadata, is_list in zip(
+            names, returns, output_metadata, output_lists, strict=True
+        )
     )
     _TYPES.update(atom for atom in returns if atom != "COMFY_MATCHTYPE_V3")
     schema = NodeSchema(
@@ -221,7 +237,7 @@ def _stub(row: Mapping[str, Any]) -> type[Node]:
                 }
             else:
                 value = matching if matching is not None else {"fixtureType": atom}
-            result[output.id] = value
+            result[output.id] = [value] if output.type.kind == "list" else value
         return result
 
     return type(
