@@ -248,26 +248,7 @@ def test_run_control_wait_and_reply_survive_same_daemon_reconnect(
             await wait_for_connected(composer, "control", False)
             outcome = await composer.reattach_remote(spec)
             assert outcome.same_instance is True
-            send = session.send
-            reply_cut = asyncio.Event()
-
-            async def cut_control_reply(
-                header: dict[str, object],
-                blobs: Sequence[bytes],
-                segments: Sequence[SharedMemory] = (),
-            ) -> None:
-                if header.get("type") == "runControlResult" and not reply_cut.is_set():
-                    assert session._writer is not None
-                    session._writer.transport.abort()
-                    reply_cut.set()
-                await send(header, blobs, segments)
-
-            session.send = cut_control_reply  # type: ignore[method-assign]
             continue_dispatch.set()
-            await asyncio.wait_for(reply_cut.wait(), 10)
-            await wait_for_connected(composer, "control", False)
-            outcome = await composer.reattach_remote(spec)
-            assert outcome.same_instance is True
             result = await asyncio.wait_for(run, 10)
             assert result.outputs["waiter"]["value"].resolve() == 23
         finally:

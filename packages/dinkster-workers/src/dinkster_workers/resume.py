@@ -198,8 +198,6 @@ class ResumableConversation:
                     return
                 if frame[0].get("type") == "invoke":
                     self.register(frame[0])
-                elif frame[0].get("type") == "runControlResult":
-                    self.run_control_result_received(frame[0])
                 await self._incoming.put((epoch, frame))
         except BoundaryError:
             return
@@ -331,12 +329,6 @@ class ResumableConversation:
         record = self._record_for_frame({"requestId": invocation_id})
         if record is not None:
             record.reserve = None
-
-    def run_control_result_received(self, header: Mapping[str, object]) -> None:
-        record = self._record_for_frame(header)
-        request_id = header.get("requestId")
-        if record is not None and type(request_id) is str:
-            record.controls.pop(request_id, None)
 
     def acknowledge_result(self, header: Mapping[str, object]) -> None:
         key = InvocationKey.from_header(header)

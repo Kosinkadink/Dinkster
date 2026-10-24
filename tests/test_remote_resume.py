@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Sequence
 from multiprocessing.shared_memory import SharedMemory
+from typing import cast
 
 import dinkster_workers.resume as resume_module
 import pytest
@@ -263,7 +264,7 @@ def test_replayed_memory_reserve_resends_the_retained_decision(
     asyncio.run(scenario())
 
 
-def test_run_control_requests_are_retained_until_their_reply_arrives() -> None:
+def test_run_control_requests_are_retained_until_invocation_acknowledgement() -> None:
     async def scenario() -> None:
         conversation = ResumableConversation("engine-1", "engine", "worker-1")
         key = conversation.register(_key().to_wire())
@@ -289,13 +290,62 @@ def test_run_control_requests_are_retained_until_their_reply_arrives() -> None:
                 [],
             )
         }
-        conversation.run_control_result_received(
+        await conversation.send({"type": "result", "invocationId": key.invocation_id})
+        conversation.acknowledge_result(key.to_wire())
+        assert key not in conversation._records  # noqa: SLF001
+
+    asyncio.run(scenario())
+
+
+def test_run_control_reply_remains_rebindable_until_the_invocation_acknowledges(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        conversation = ResumableConversation("engine-1", "engine", "worker-1")
+        key = conversation.register(_key().to_wire())
+        request_id = f"{key.invocation_id}:control:0"
+        await conversation.send(
             {
-                "type": "runControlResult",
+                "type": "runControl",
                 "invocationId": key.invocation_id,
-                "requestId": f"{key.invocation_id}:control:0",
+                "requestId": request_id,
+                "operation": "awaitRunValue",
+                "nodeId": "publisher",
             }
         )
-        assert record.controls == {}
+        delivered = asyncio.Event()
+        block = asyncio.Event()
+
+        async def read_one(_reader: object) -> tuple[dict[str, object], list[bytes]] | None:
+            if not delivered.is_set():
+                delivered.set()
+                return (
+                    {
+                        "type": "runControlResult",
+                        "invocationId": key.invocation_id,
+                        "requestId": request_id,
+                    },
+                    [],
+                )
+            await block.wait()
+            return None
+
+        monkeypatch.setattr(resume_module, "read_frame", read_one)
+        conversation._owner_epoch = 1  # noqa: SLF001 - exercise pump-to-read ordering
+        pump = asyncio.create_task(conversation._pump(asyncio.StreamReader(), 1))  # noqa: SLF001
+        await delivered.wait()
+        await asyncio.sleep(0)
+        assert request_id in conversation._records[key].controls  # noqa: SLF001
+        response, requested, _ = conversation.plan_rebind(
+            {"ownerEpoch": 1, "invocations": [_entry(key)]}
+        )
+        statuses = cast("list[dict[str, object]]", response["invocations"])
+        assert statuses[0]["status"] == "running"
+        assert requested == (key,)
+        frame = await conversation.read()
+        assert frame is not None and frame[0]["type"] == "runControlResult"
+        assert request_id in conversation._records[key].controls  # noqa: SLF001
+        block.set()
+        await pump
 
     asyncio.run(scenario())
