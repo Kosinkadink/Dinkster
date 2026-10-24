@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 import torch
 from dinkster_api.v1 import (
+    CLIP_TYPE,
     CONDITIONING_TYPE,
     CORE_FLOAT,
     HOOKS_TYPE,
@@ -37,6 +38,25 @@ from dinkster_nodes_comfy.hook_conditioning import (
 )
 
 from dinkster.compose import PackSpec, ServingComposer
+
+
+def _clip() -> Any:
+    initialize_inference_process()
+    from dinkster_inference.model_patcher import ModelPatcher
+    from dinkster_inference.sd import CLIP
+
+    clip = CLIP(no_init=True)
+    clip.cond_stage_model = torch.nn.Linear(2, 3)
+    clip.patcher = ModelPatcher(
+        clip.cond_stage_model, load_device=torch.device("cpu"), offload_device=torch.device("cpu")
+    )
+    clip.patcher.is_clip = True
+    clip.tokenizer = object()
+    clip.layer_idx = None
+    clip.tokenizer_options = {}
+    clip.use_clip_schedule = False
+    clip.apply_hooks_to_conds = None
+    return clip
 
 
 class HookConditioningSource(Node):
@@ -124,6 +144,7 @@ class HookConditioningPropertiesSource(Node):
                 OutputSpec("existing", TypeExpr.concrete(CONDITIONING_TYPE)),
                 OutputSpec("hooks", TypeExpr.concrete(HOOKS_TYPE)),
                 OutputSpec("mask", TypeExpr.concrete(MASK_TYPE)),
+                OutputSpec("clip", TypeExpr.concrete(CLIP_TYPE)),
             ),
         )
 
@@ -134,6 +155,8 @@ class HookConditioningPropertiesSource(Node):
 
         group = hooks.HookGroup()
         hook = hooks.WeightHook(strength_model=0.25, strength_clip=-0.5)
+        hook.need_weight_init = False
+        hook.weights_clip = {}
         keyframes = hooks.HookKeyframeGroup()
         keyframes.add(hooks.HookKeyframe(strength=0.75, start_percent=0.4))
         hook.hook_keyframe = keyframes
@@ -144,6 +167,7 @@ class HookConditioningPropertiesSource(Node):
             existing=[[torch.tensor([[5.0, -6.0]], dtype=torch.float64), {"source": "existing"}]],
             hooks=group,
             mask=torch.tensor([[0.2, 0.8], [0.4, 0.6]], dtype=torch.float64),
+            clip=_clip(),
         )
 
 
@@ -163,6 +187,11 @@ class HookConditioningPropertiesInspect(Node):
                 InputSpec("pair_defaults", TypeExpr.concrete(CONDITIONING_TYPE)),
                 InputSpec("before", TypeExpr.concrete(TIMESTEPS_RANGE_TYPE)),
                 InputSpec("after", TypeExpr.concrete(TIMESTEPS_RANGE_TYPE)),
+                InputSpec("clip", TypeExpr.concrete(CLIP_TYPE)),
+                InputSpec("no_hooks", TypeExpr.concrete(CLIP_TYPE)),
+                InputSpec("scheduled", TypeExpr.concrete(CLIP_TYPE)),
+                InputSpec("unscheduled", TypeExpr.concrete(CLIP_TYPE)),
+                InputSpec("source_hooks", TypeExpr.concrete(HOOKS_TYPE)),
             ),
             outputs=(OutputSpec("strength", TypeExpr.concrete(CORE_FLOAT)),),
         )
@@ -181,6 +210,11 @@ class HookConditioningPropertiesInspect(Node):
         pair_defaults: Any,
         before: tuple[float, float],
         after: tuple[float, float],
+        clip: Any,
+        no_hooks: Any,
+        scheduled: Any,
+        unscheduled: Any,
+        source_hooks: Any,
     ) -> dict[str, object]:
         initialize_inference_process()
         from dinkster_inference import hooks
@@ -212,7 +246,7 @@ class HookConditioningPropertiesInspect(Node):
         assert defaults[1][1]["default"] is True
         assert defaults[1][1]["hooks"].hooks[0].strength_clip == -0.375
         assert torch.equal(single[0][0], torch.tensor([[1.0, 2.0]], dtype=torch.float64))
-        assert single[0][1]["strength"] == 0.9
+        assert "strength" not in single[0][1]
         assert single[0][1]["start_percent"] == 0.0
         assert single[0][1]["end_percent"] == 0.2
         assert [entry[1]["side"] for entry in pair_combined] == ["positive", "negative"]
@@ -220,9 +254,24 @@ class HookConditioningPropertiesInspect(Node):
             "positive",
             "negative",
         ]
-        assert [entry[1]["default"] for entry in pair_defaults] == [True]
+        assert [entry[1].get("default", False) for entry in pair_defaults] == [False, True]
         assert before == (0.0, 0.2)
         assert after == (0.7, 1.0)
+        assert no_hooks is clip
+        assert scheduled is not clip and unscheduled is not clip
+        assert scheduled.cond_stage_model is clip.cond_stage_model
+        assert scheduled.apply_hooks_to_conds is None
+        assert scheduled.use_clip_schedule is True
+        assert len(scheduled.patcher.forced_hooks.hooks[0].hook_keyframe.keyframes) == 1
+        assert scheduled.patcher.forced_hooks.hooks[0].hook_keyframe.keyframes[0].strength == 0.75
+        assert unscheduled.apply_hooks_to_conds is source_hooks
+        assert unscheduled.use_clip_schedule is False
+        assert not unscheduled.patcher.forced_hooks.hooks[0].hook_keyframe.keyframes
+        assert len(scheduled.patcher.hook_patches) == len(unscheduled.patcher.hook_patches) == 1
+        assert clip.patcher.forced_hooks is None
+        assert clip.patcher.hook_patches == {}
+        assert clip.apply_hooks_to_conds is None
+        assert len(source_hooks.hooks[0].hook_keyframe.keyframes) == 1
         return cls.outputs(strength=positive[0][1]["mask_strength"])
 
 
@@ -262,7 +311,6 @@ def test_hook_conditioning_nodes_preserve_asymmetric_values() -> None:
     assert torch.equal(single[0][0], positive[0][0])
     assert single[0][1] == {
         "source": "positive",
-        "strength": 0.9,
         "start_percent": 0.0,
         "end_percent": 0.2,
     }
@@ -305,36 +353,29 @@ def test_hook_conditioning_nodes_preserve_asymmetric_values() -> None:
         is True
     )
 
-    class Patcher:
-        def __init__(self) -> None:
-            self.forced_hooks: Any = None
-            self.calls: list[tuple[object, object]] = []
-
-        def register_all_hook_patches(self, value: object, target: object) -> None:
-            self.calls.append((value, target))
-
-    class Clip:
-        def __init__(self) -> None:
-            self.patcher = Patcher()
-
-        def clone(self, *, disable_dynamic: bool) -> Clip:
-            assert disable_dynamic is True
-            return Clip()
-
-    clip = Clip()
+    group.hooks[0].need_weight_init = False
+    group.hooks[0].weights_clip = {}
+    keyframes = hooks.HookKeyframeGroup()
+    keyframes.add(hooks.HookKeyframe(strength=0.75, start_percent=0.4))
+    group.hooks[0].hook_keyframe = keyframes
+    clip = _clip()
     assert SetClipHooks.execute(clip=clip)["clip"] is clip
     applied = SetClipHooks.execute(
         clip=clip, apply_to_conds=True, schedule_clip=False, hooks=group
     )["clip"]
     assert applied is not clip
     assert applied.apply_hooks_to_conds is group
-    assert len(applied.patcher.calls) == 1
+    assert len(applied.patcher.hook_patches) == 1
+    assert not applied.patcher.forced_hooks.hooks[0].hook_keyframe.keyframes
     scheduled = SetClipHooks.execute(
         clip=clip, apply_to_conds=False, schedule_clip=True, hooks=group
     )["clip"]
     assert scheduled.apply_hooks_to_conds is None
     assert scheduled.use_clip_schedule is True
-    assert scheduled.patcher.forced_hooks.hooks[0].hook_keyframe is not None
+    assert scheduled.patcher.forced_hooks.hooks[0].hook_keyframe is keyframes
+    assert len(keyframes.keyframes) == 1
+    assert clip.patcher.forced_hooks is None
+    assert clip.patcher.hook_patches == {}
 
 
 @pytest.mark.parametrize("in_process", (True, False))
@@ -364,15 +405,42 @@ def test_hook_conditioning_properties_cross_ordinary_hosts_twice(
                 'types = "hook_properties_fixture:register_inference_types"\n',
                 encoding="ascii",
             )
-            await composer.add_pack(
-                PackSpec(manifest=root / "dinkster-pack.toml", in_process=in_process)
-            )
-            await composer.add_pack(PackSpec(manifest=fixture_manifest, in_process=in_process))
+            native_manifest = root / "dinkster-pack.toml"
+            manifests = (native_manifest, fixture_manifest)
+            for manifest in manifests:
+                await composer.add_pack(
+                    PackSpec(manifest=manifest, in_process=True)
+                    if in_process
+                    else PackSpec(
+                        manifest=manifest,
+                        worker_group="hook-properties",
+                        group_manifests=manifests,
+                    )
+                )
             graph = Graph(
                 nodes={
                     "source": GraphNode("hook-properties.source"),
                     "range": GraphNode(
                         "ConditioningTimestepsRange", {"start_percent": 0.2, "end_percent": 0.7}
+                    ),
+                    "no_hooks": GraphNode("SetClipHooks", {"clip": Link("source", "clip")}),
+                    "scheduled": GraphNode(
+                        "SetClipHooks",
+                        {
+                            "clip": Link("source", "clip"),
+                            "hooks": Link("source", "hooks"),
+                            "apply_to_conds": False,
+                            "schedule_clip": True,
+                        },
+                    ),
+                    "unscheduled": GraphNode(
+                        "SetClipHooks",
+                        {
+                            "clip": Link("source", "clip"),
+                            "hooks": Link("source", "hooks"),
+                            "apply_to_conds": True,
+                            "schedule_clip": False,
+                        },
                     ),
                     "properties": GraphNode(
                         "PairConditioningSetProperties",
@@ -458,16 +526,21 @@ def test_hook_conditioning_properties_cross_ordinary_hosts_twice(
                             "pair_defaults": Link("pair_defaults", "positive"),
                             "before": Link("range", "BEFORE_RANGE"),
                             "after": Link("range", "AFTER_RANGE"),
+                            "clip": Link("source", "clip"),
+                            "no_hooks": Link("no_hooks", "clip"),
+                            "scheduled": Link("scheduled", "clip"),
+                            "unscheduled": Link("unscheduled", "clip"),
+                            "source_hooks": Link("source", "hooks"),
                         },
                     ),
                 }
             )
             engine = composer.composition.make_engine(lambda _event: None)
-            for _ in range(2):
+            for attempt in range(2):
                 result = await engine.run(graph, ["inspect"])
                 assert result.outputs["inspect"]["strength"].resolve() == 1.25
-                if _:
-                    assert {"source", "range", "properties", "single"} <= set(result.cached)
+                if attempt:
+                    assert set(result.cached) == set(graph.nodes)
         finally:
             await composer.close()
 
@@ -487,23 +560,29 @@ def test_hook_conditioning_reaches_native_reference_consumer(
             (tmp_path / "hook_fixture.py").write_text(
                 "from test_hook_conditioning_torch import HookConditioningSource\n"
                 "from test_hook_conditioning_torch import HookConditioningInspect\n"
-                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "NODES = (*COMFY_NODES, HookConditioningSource, HookConditioningInspect)\n",
+                "from dinkster_nodes_comfy import register_inference_types\n"
+                "NODES = (HookConditioningSource, HookConditioningInspect)\n",
                 encoding="ascii",
             )
-            manifest = tmp_path / "dinkster-pack.toml"
-            manifest.write_text(
-                (root / "dinkster-pack.toml")
-                .read_text(encoding="ascii")
-                .replace("namespaces = [", 'namespaces = ["hook-fixture",')
-                .replace("dinkster_nodes_comfy:COMFY_NODES", "hook_fixture:NODES")
-                .replace(
-                    "dinkster_nodes_comfy:register_inference_types",
-                    "hook_fixture:register_inference_types",
-                ),
+            fixture_manifest = tmp_path / "hook-fixture-dinkster-pack.toml"
+            fixture_manifest.write_text(
+                '[pack]\nname = "hook-fixture"\npublisher = "dinkster"\n'
+                'namespaces = ["hook-fixture"]\n'
+                '[pack.entry]\nnodes = "hook_fixture:NODES"\n'
+                'types = "hook_fixture:register_inference_types"\n',
                 encoding="ascii",
             )
-            await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
+            manifests = (root / "dinkster-pack.toml", fixture_manifest)
+            for manifest in manifests:
+                await composer.add_pack(
+                    PackSpec(manifest=manifest, in_process=True)
+                    if in_process
+                    else PackSpec(
+                        manifest=manifest,
+                        worker_group="hook-reference",
+                        group_manifests=manifests,
+                    )
+                )
             graph = Graph(
                 nodes={
                     "source": GraphNode("hook-fixture.source"),
@@ -525,9 +604,11 @@ def test_hook_conditioning_reaches_native_reference_consumer(
                 }
             )
             engine = composer.composition.make_engine(lambda _event: None)
-            for _ in range(2):
+            for attempt in range(2):
                 result = await engine.run(graph, ["inspect"])
                 assert result.outputs["inspect"]["strength"].resolve() == 0.6
+                if attempt:
+                    assert set(result.cached) == set(graph.nodes)
         finally:
             await composer.close()
 
