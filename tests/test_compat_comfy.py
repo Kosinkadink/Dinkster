@@ -28,6 +28,7 @@ from dinkster_api.v1 import (
     MOGE_GEOMETRY_TYPE,
     MOGE_MODEL_TYPE,
     SHAPE_SUBDIVIDES_TYPE,
+    STYLE_MODEL_TYPE,
     VIDEO_EDIT_TYPE,
     VIDEO_TYPE,
     VOXEL_TYPE,
@@ -337,6 +338,7 @@ def test_translate_type_rules() -> None:
         ("CONTROL_NET", CONTROL_NET_TYPE),
         ("MODEL_PATCH", MODEL_PATCH_TYPE),
         ("LATENT_UPSCALE_MODEL", LATENT_UPSCALE_MODEL_TYPE),
+        ("STYLE_MODEL", STYLE_MODEL_TYPE),
     ],
 )
 def test_translate_type_keeps_native_media_and_model_labels_bare(
