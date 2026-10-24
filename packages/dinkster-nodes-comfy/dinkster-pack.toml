@@ -146,6 +146,7 @@ namespaces = [
     "CLIPTextEncode",
     "CLIPSetLastLayer",
     "CLIPVisionEncode",
+    "unCLIPConditioning",
     "StyleModelApply",
     "CLIPTextEncodeSDXLRefiner",
     "CLIPTextEncodeSDXL",

@@ -12,6 +12,8 @@
   attention-bias strength behavior.
 - `CLIPVisionEncode` materializes portable image inputs and produces CLIP
   vision outputs with center or no crop selection.
+- `unCLIPConditioning` appends CLIP vision output, strength, and noise
+  augmentation metadata to conditioning records.
 - Native VAEEncode, VAEDecode and their tiled variants preserve the core
   interfaces, including image/video batches and spatial/temporal tile settings.
 - SD1.5 CLIP-L and image VAE components execute through the pinned
