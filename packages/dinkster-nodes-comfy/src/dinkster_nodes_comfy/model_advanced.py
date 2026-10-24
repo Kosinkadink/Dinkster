@@ -63,10 +63,17 @@ def _combo(
     )
 
 
-def _sampling_schema(node_type: str, category: str, inputs: tuple[InputSpec, ...]) -> NodeSchema:
+def _sampling_schema(
+    node_type: str,
+    category: str,
+    inputs: tuple[InputSpec, ...],
+    *,
+    search_terms: tuple[str, ...] = (),
+) -> NodeSchema:
     return NodeSchema(
         node_type=node_type,
         category=category,
+        search_terms=search_terms,
         inputs=(InputSpec("model", _MODEL), *inputs),
         outputs=(OutputSpec("MODEL", _MODEL),),
     )
@@ -303,7 +310,14 @@ class ModelSamplingAuraFlow(Node):
             "model/patch",
             (
                 _float("shift", 1.73),
-                _combo("sampling", ("flow", "img_to_img_velocity"), "flow", advanced=True),
+                InputSpec(
+                    "sampling",
+                    _COMBO,
+                    required=False,
+                    default="flow",
+                    advanced=True,
+                    widget=ComboWidget((ComboOption("flow"), ComboOption("img_to_img_velocity"))),
+                ),
             ),
         )
 
@@ -363,6 +377,7 @@ class ModelNoiseScale(Node):
                     "noise_scale",
                     _FLOAT,
                     default=1.0,
+                    doc="Absolute training noise scale. For example HiDream-O1 base: 8.0, dev: 7.5.",
                     widget=NumberWidget(min=0.0, max=64.0, step=0.01),
                 ),
             ),
@@ -441,6 +456,7 @@ class ModelComputeDtype(Node):
             "ModelComputeDtype",
             "advanced/debug",
             (_combo("dtype", ("default", "fp32", "fp16", "bf16"), "default", advanced=True),),
+            search_terms=("model precision", "change dtype"),
         )
 
     @classmethod
@@ -468,10 +484,32 @@ class ModelAttentionBackend(Node):
                 attention = importlib.import_module("dinkster_inference.ldm.modules.attention")
                 if attention.COMFY_KITCHEN_INT8_ATTENTION_IS_AVAILABLE:
                     backends += ("comfy kitchen attention",)
-        return _sampling_schema(
-            "ModelAttentionBackend",
-            "model/patch",
-            (_combo("attention", backends, "pytorch attention"),),
+        return NodeSchema(
+            node_type="ModelAttentionBackend",
+            display_name="Model Attention Backend",
+            category="model/patch",
+            description=(
+                "Selects the dense attention implementation for the model. When used with Block "
+                "Sparse Attention, this backend is used whenever sparse attention is inactive or unsupported."
+            ),
+            search_terms=("comfy kitchen", "attention", "pytorch", "kitchen attention"),
+            inputs=(
+                InputSpec("model", _MODEL, doc="The model to patch."),
+                InputSpec(
+                    "attention",
+                    _COMBO,
+                    default="pytorch attention",
+                    display_name="backend",
+                    doc=(
+                        "The dense attention backend. Comfy Kitchen attention uses quantized INT8 "
+                        "attention and is available only on Nvidia and AMD GPUs."
+                    ),
+                    widget=ComboWidget(tuple(ComboOption(value) for value in backends)),
+                ),
+            ),
+            outputs=(
+                OutputSpec("MODEL", _MODEL, doc="The model with the selected attention backend."),
+            ),
         )
 
     @classmethod
