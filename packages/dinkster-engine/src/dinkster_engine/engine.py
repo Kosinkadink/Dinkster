@@ -50,6 +50,7 @@ from dinkster_graph import (
     validate,
     validate_loops,
 )
+from dinkster_graph.plan import output_node_targets
 from dinkster_protocol import (
     GRAPH_COMPILE_ERROR_GENERATION_MISMATCH,
     AdmissionInvocation,
@@ -2573,7 +2574,10 @@ class Engine:
         sources = [out.source for out in region.outputs.values()]
         if region.continue_source is not None:
             sources.append(region.continue_source)
-        body_targets = sorted({src.node_id for src in sources if src.node_id != PORTS_NODE_ID})
+        body_targets = sorted(
+            {src.node_id for src in sources if src.node_id != PORTS_NODE_ID}
+            | set(output_node_targets(region.body, self._schemas_for(run_id)))
+        )
         body_order, body_deps = self._strong_plan(region.body, body_targets, body_effective)
 
         broadcast = {

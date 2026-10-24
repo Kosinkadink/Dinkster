@@ -41,7 +41,7 @@ from .model import (
     RegionNode,
     TypedLiteral,
 )
-from .plan import find_cycle
+from .plan import find_cycle, output_node_targets
 
 
 @dataclass(frozen=True)
@@ -1053,7 +1053,7 @@ def _validate_region(
     if region.max_iterations is not None and region.max_iterations < 1:
         shape_error("max_iterations must be >= 1")
 
-    if not region.outputs:
+    if not region.outputs and not output_node_targets(region.body, level.schemas):
         shape_error("region declares no outputs, so nothing in it can execute")
     state_output_keys = {out_id for out_id, out in region.outputs.items() if out.mode == "state"}
     for port in region.state_ports:
@@ -1219,6 +1219,7 @@ def _validate_region(
     _validate_level(body_level, diags)
     if not find_cycle(region.body):
         targets = [output.source.node_id for output in region.outputs.values()]
+        targets.extend(output_node_targets(region.body, level.schemas))
         if region.continue_source is not None:
             targets.append(region.continue_source.node_id)
         _, loop_diags = validate_loops(region.body, targets)

@@ -92,6 +92,9 @@
   gather/compact/state/flatten, including generic body outputs whose type is
   fixed by linked concrete inputs. Gather and flatten preserve whole-output
   absence; compact gathers only present iteration values in iteration order.
+  Declared output nodes in a body execute each iteration, including nested
+  regions containing output nodes. A region needs an exported output or a
+  declared output node; sink-only maps need no dummy exported output.
   Lazy routing resolves independently for each iteration; unselected branch
   nodes and nested regions neither prepare nor execute.
   Each body exposes its immediate zero-based `$region.index`; an explicitly
