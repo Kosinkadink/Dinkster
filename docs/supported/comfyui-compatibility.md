@@ -1,5 +1,8 @@
 ## ComfyUI compatibility
 
+- Native EmptyMochiLatentVideo creates video latents with the core interface.
+  Empty image and Mochi latents honor CPU-only process policy without requiring
+  attention discovery or command-line initialization first.
 - The native core pack exposes eleven latent creation, batch, transform, resize,
   blend, composite, crop, and noise-mask nodes under their exact ComfyUI IDs.
   IMAGE, MASK, and LATENT values cross ordinary pack boundaries without host type

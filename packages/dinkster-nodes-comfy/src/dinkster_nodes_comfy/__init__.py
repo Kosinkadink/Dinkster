@@ -15,6 +15,7 @@ from .latent_operations import LATENT_OPERATION_NODES
 from .logic import LOGIC_NODES
 from .mask import MASK_NODES
 from .math import ComfyMathExpression
+from .mochi import EmptyMochiLatentVideo
 from .model_merging import MODEL_MERGE_NODES
 from .model_merging_specific import MODEL_SPECIFIC_MERGE_NODES
 from .morphology import MORPHOLOGY_NODES
@@ -45,6 +46,7 @@ COMFY_NODES = (
     *MODEL_SPECIFIC_MERGE_NODES,
     *FREEU_NODES,
     *LATENT_NODES,
+    EmptyMochiLatentVideo,
     *LATENT_ADVANCED_NODES,
     *LATENT_OPERATION_NODES,
     *CLIP_NODES,
