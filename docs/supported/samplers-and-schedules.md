@@ -9,3 +9,6 @@ pinned runtime. Layered window plans and RES4LYF samplers are unsupported.
 Native SIGMAS tensors cross worker boundaries as canonical tensor records,
 preserving their dtype, shape, bytes, and fingerprint. Legacy schedule
 settings remain supported.
+
+EasyCache and LazyCache patch a model for approximate denoiser-result reuse
+during a configured portion of sampling.
