@@ -35,25 +35,42 @@ from dinkster_schema import (
     TypeExpr,
     comfy_group_registry_to_wire,
 )
+from dinkster_values import (
+    BACKGROUND_REMOVAL_TYPE,
+    BOUNDING_BOX_TYPE,
+    CORE_BOOLEAN,
+    CORE_COMBO,
+    CORE_FLOAT,
+    CORE_INT,
+    CORE_STRING,
+)
 
 COMFY_REVISION = "c67885b1"
 REPO = Path(__file__).resolve().parent.parent
 OUT = REPO / "packages" / "dinkster-nodes-image" / "comfy-groups.json"
 
-IMAGE = TypeExpr.concrete("comfy.IMAGE")
-MASK = TypeExpr.concrete("comfy.MASK")
-MODEL = TypeExpr.concrete("comfy.MODEL")
-CLIP = TypeExpr.concrete("comfy.CLIP")
-CONDITIONING = TypeExpr.concrete("comfy.CONDITIONING")
-VAE = TypeExpr.concrete("comfy.VAE")
-SAM3_TRACK_DATA = TypeExpr.concrete("comfy.SAM3_TRACK_DATA")
-BACKGROUND_REMOVAL = TypeExpr.concrete("comfy.BACKGROUND_REMOVAL")
-BOUNDING_BOX = TypeExpr.concrete("comfy.BOUNDING_BOX")
-BOOLEAN = TypeExpr.concrete("BOOLEAN")
-COMBO = TypeExpr.concrete("COMBO")
-FLOAT = TypeExpr.concrete("FLOAT")
-INT = TypeExpr.concrete("INT")
-STRING = TypeExpr.concrete("STRING")
+# Historical source schema vocabulary is independent of current runtime types.
+SOURCE_IMAGE = "comfy.IMAGE"
+SOURCE_MASK = "comfy.MASK"
+SOURCE_MODEL = "comfy.MODEL"
+SOURCE_CLIP = "comfy.CLIP"
+SOURCE_CONDITIONING = "comfy.CONDITIONING"
+SOURCE_VAE = "comfy.VAE"
+SOURCE_TRACK_DATA = "comfy.SAM3_TRACK_DATA"
+IMAGE = TypeExpr.concrete(SOURCE_IMAGE)
+MASK = TypeExpr.concrete(SOURCE_MASK)
+MODEL = TypeExpr.concrete(SOURCE_MODEL)
+CLIP = TypeExpr.concrete(SOURCE_CLIP)
+CONDITIONING = TypeExpr.concrete(SOURCE_CONDITIONING)
+VAE = TypeExpr.concrete(SOURCE_VAE)
+SAM3_TRACK_DATA = TypeExpr.concrete(SOURCE_TRACK_DATA)
+BACKGROUND_REMOVAL = TypeExpr.concrete(BACKGROUND_REMOVAL_TYPE)
+BOUNDING_BOX = TypeExpr.concrete(BOUNDING_BOX_TYPE)
+BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
+COMBO = TypeExpr.concrete(CORE_COMBO)
+FLOAT = TypeExpr.concrete(CORE_FLOAT)
+INT = TypeExpr.concrete(CORE_INT)
+STRING = TypeExpr.concrete(CORE_STRING)
 
 COCO_CLASSES = (
     "person",

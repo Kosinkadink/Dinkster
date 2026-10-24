@@ -11,7 +11,11 @@ from typing import Any, cast
 
 import numpy as np
 from dinkster_values import (
+    AUDIO_TYPE,
+    IMAGE_TYPE,
+    LAYERS_TYPE,
     MEBIBYTE,
+    VIDEO_TYPE,
     bind_video_sources,
     edit_video,
     media_semantics,
@@ -77,7 +81,7 @@ class SourceMedia:
     ) -> Generator[tuple[Fraction, Pixels], None, None]:
         from .runtime import iter_video_pixels
 
-        if reference["type"] == "dinkster.layers":
+        if reference["type"] == LAYERS_TYPE:
             from dinkster_image_document import decode_document, render_document
 
             with self._asset(reference["asset"]).open() as handle:
@@ -100,14 +104,14 @@ class SourceMedia:
             with Image.open(io.BytesIO(result.png)) as image:
                 yield start, np.asarray(image.convert("RGBA"), dtype=np.float32) / 255.0
             return
-        if reference["type"] == "IMAGE":
+        if reference["type"] == IMAGE_TYPE:
             with self._asset(reference["asset"]).open() as handle, Image.open(handle) as image:
                 if image.width * image.height > 8192 * 8192:
                     raise TimelineError("document_limit", "$", "image exceeds render budget")
                 pixels = np.asarray(image.convert("RGBA"), dtype=np.float32) / 255.0
             yield start, pixels
             return
-        if reference["type"] != "comfy.VIDEO":
+        if reference["type"] != VIDEO_TYPE:
             raise TimelineError(
                 "unsupported_source", "$", "source needs the canonical layer adapter"
             )
@@ -131,7 +135,7 @@ class SourceMedia:
     ) -> Pixels:
         from .runtime import iter_video_audio
 
-        if reference["type"] == "comfy.AUDIO":
+        if reference["type"] == AUDIO_TYPE:
             import importlib
 
             audio: Any = importlib.import_module("dinkster_values.audio_codec")
@@ -147,7 +151,7 @@ class SourceMedia:
                 self.values[key] = source
             window = audio.audio_window(self.values[key], round(start * rate), count, batch_index=0)
             return np.asarray(window["waveform"][0], dtype=np.float32)
-        if reference["type"] != "comfy.VIDEO":
+        if reference["type"] != VIDEO_TYPE:
             raise TimelineError("unsupported_source", "$", "source needs canonical AUDIO adapter")
         value = edit_video(
             self.video(reference),

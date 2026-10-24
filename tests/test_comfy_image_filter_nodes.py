@@ -40,6 +40,12 @@ def test_image_filter_schemas_match_the_fixed_reference_contract() -> None:
             "image/upscaling",
             ("image", "upscale_method", "megapixels", "resolution_steps"),
         ),
+        (
+            "Canny",
+            "Detect Edges (Canny)",
+            "image/filters",
+            ("image", "low_threshold", "high_threshold"),
+        ),
     )
     actual = tuple(
         (
@@ -55,6 +61,7 @@ def test_image_filter_schemas_match_the_fixed_reference_contract() -> None:
     assert schemas["ImageBlend"].inputs[2].default == 0.5
     assert schemas["ImageSharpen"].inputs[1].advanced is True
     assert schemas["ImageScaleToTotalPixels"].inputs[3].advanced is True
+    assert [item.default for item in schemas["Canny"].inputs[1:]] == [0.4, 0.8]
     for schema in schemas.values():
         assert schema_to_wire(schema)
 

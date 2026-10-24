@@ -641,6 +641,49 @@ def test_v1_widget_v19_declarations_are_preserved_without_inference() -> None:
     assert unknown.inputs[2].widget == ComboWidget(options=("a", "b"))
 
 
+@pytest.mark.parametrize(
+    "node_name,input_name,config,expected",
+    [
+        (
+            "EmptyAudio",
+            "duration",
+            {"default": 60.0, "min": 0.0, "max": 0xFFFFFFFFFFFFFFFF, "step": 0.01},
+            {"type": "NUMBER", "min": 0.0, "max": 1.8446744073709552e19, "step": 0.01},
+        ),
+        (
+            "TrimAudioDuration",
+            "start_index",
+            {"default": 0.0, "min": -0xFFFFFFFFFFFFFFFF, "max": 0xFFFFFFFFFFFFFFFF},
+            {"type": "NUMBER", "min": -1.8446744073709552e19, "max": 1.8446744073709552e19},
+        ),
+    ],
+)
+def test_audio_float_bounds_remain_json_numbers(
+    node_name: str, input_name: str, config: dict[str, object], expected: dict[str, object]
+) -> None:
+    class AudioNode:
+        RETURN_TYPES = ()
+        FUNCTION = "execute"
+
+        @classmethod
+        def INPUT_TYPES(cls):
+            return {"required": {input_name: ("FLOAT", config)}}
+
+        def execute(self, **kwargs):
+            return ()
+
+    schema = translate_node(node_name, AudioNode, CompatTranslation()).schema()
+    wire = schema_to_wire(schema)
+    interface = cast("list[dict[str, Any]]", wire["interface"])
+    assert interface[0]["widget"] == expected
+    assert all(
+        type(value) in (int, float)
+        for key, value in interface[0]["widget"].items()
+        if key != "type"
+    )
+    assert schema_from_wire(wire) == schema
+
+
 def test_ksampler_advanced_filters_unusable_numeric_metadata() -> None:
     class StringSubclass(str):
         pass

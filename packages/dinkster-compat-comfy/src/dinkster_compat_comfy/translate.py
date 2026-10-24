@@ -1547,9 +1547,11 @@ def number_widget(
         if legacy_type == "INT" and abs(value) > 2**53 - 1:
             continue
         try:
+            if legacy_type == "FLOAT":
+                value = float(value)
             candidate = NumberWidget(**{field: value})  # type: ignore[arg-type]
             InputSpec(name, socket, widget=candidate)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
         accepted[field] = value
 

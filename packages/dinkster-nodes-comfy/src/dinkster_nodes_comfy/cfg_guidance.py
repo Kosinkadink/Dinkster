@@ -98,7 +98,9 @@ class CFGNorm(Node):
                     torch.ones_like(combined_norm),
                 )
                 rescaled = combined * rescale
-                return strength * rescaled + (1.0 - strength) * combined
+                if strength != 1.0:
+                    rescaled = strength * rescaled + (1.0 - strength) * combined
+                return rescaled
 
             patched.set_model_sampler_cfg_function(cfg_norm_pre)
         else:
@@ -188,7 +190,9 @@ class APG(Node):
                 norm = guidance.norm(p=2, dim=[-1, -2, -3], keepdim=True)
                 guidance = guidance * torch.minimum(torch.ones_like(norm), norm_threshold / norm)
             parallel, orthogonal = _project(guidance, cond)
-            modified = (uncond + orthogonal + eta * parallel) + (cond - uncond) / args["cond_scale"]
+            modified = (uncond + (orthogonal + eta * parallel)) + (cond - uncond) / args[
+                "cond_scale"
+            ]
             return [modified, uncond] + outputs[2:]
 
         patched = model.clone()

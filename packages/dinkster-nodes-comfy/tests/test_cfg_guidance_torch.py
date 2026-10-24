@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -136,16 +135,11 @@ def test_ordinary_manifest_links_cfg_guidance_producer_and_consumer_twice(
     tmp_path: Path, in_process: bool
 ) -> None:
     async def scenario() -> None:
-        source_root = Path(__file__).resolve().parents[1] / "src"
-        composer = ServingComposer(
-            worker_env={
-                "CUDA_VISIBLE_DEVICES": "",
-                "PYTHONPATH": os.pathsep.join((str(Path(__file__).parent), str(source_root))),
-            }
-        )
+        composer = ServingComposer(worker_env={"PYTHONPATH": str(Path(__file__).parent)})
         try:
             manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
-            (tmp_path / "cfg_guidance_fixture.py").write_text(
+            module = "cfg_guidance_fixture_" + str(in_process)
+            (tmp_path / f"{module}.py").write_text(
                 "from test_cfg_guidance_torch import ModelConsumer, ModelSource\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
                 "NODES = (*COMFY_NODES, ModelSource, ModelConsumer)\n",
@@ -155,10 +149,10 @@ def test_ordinary_manifest_links_cfg_guidance_producer_and_consumer_twice(
             fixture_manifest.write_text(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["cfg-guidance-fixture",')
-                .replace("dinkster_nodes_comfy:COMFY_NODES", "cfg_guidance_fixture:NODES")
+                .replace("dinkster_nodes_comfy:COMFY_NODES", f"{module}:NODES")
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
-                    "cfg_guidance_fixture:register_inference_types",
+                    f"{module}:register_inference_types",
                 ),
                 encoding="ascii",
             )
@@ -176,7 +170,7 @@ def test_ordinary_manifest_links_cfg_guidance_producer_and_consumer_twice(
             for _ in range(2):
                 assert (await engine.run(graph, ["consumer"])).outputs["consumer"][
                     "value"
-                ].resolve() != 9.0
+                ].resolve() == 13.0
         finally:
             await composer.close()
 

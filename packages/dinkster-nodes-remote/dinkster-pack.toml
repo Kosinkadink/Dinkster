@@ -1,5 +1,6 @@
 [pack]
 name = "dinkster-nodes-remote"
+publisher = "dinkster"
 namespaces = ["dinkster.remote"]
 
 [pack.sandbox]

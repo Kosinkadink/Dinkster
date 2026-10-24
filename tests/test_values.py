@@ -12,6 +12,7 @@ from dinkster_values import (
     CORE_FLOAT,
     CORE_INT,
     CORE_STRING,
+    CURVE_TYPE,
     INLINE_STRING_CAP,
     BufferEncoding,
     EncodedPayload,
@@ -29,6 +30,98 @@ def make_registry() -> TypeRegistry:
     registry = TypeRegistry()
     register_core_types(registry)
     return registry
+
+
+def test_type_claims_refuse_overlapping_owners_and_preserve_reference_access() -> None:
+    registry = make_registry()
+    with registry.registering_pack("mypack", ("mypack",)):
+        registry.register("mypack.thing")
+    assert registry.owner_of("mypack.thing") == "mypack"
+    assert registry.owner_of(CORE_INT) == "dinkster-nodes-foundation"
+    for claim in ("mypack", "mypack.child", "mypack-child"):
+        with pytest.raises(ValueError, match="overlaps"):
+            registry.claim_types("other", (claim,))
+    with registry.registering_pack("consumer", ("consumer",)):
+        assert registry.wrap("mypack.thing", {"count": 3}).payload.load() == {"count": 3}
+        with pytest.raises(ValueError, match="must be prefixed"):
+            registry.register("foreign.thing")
+    assert registry.type_owners()["mypack.thing"] == "mypack"
+
+
+def test_type_claims_survive_staging_without_leaking_to_the_live_registry() -> None:
+    live = make_registry()
+    staged = live.copy()
+    with staged.registering_pack("mypack", ("mypack.thing",)):
+        staged.register("mypack.thing")
+    assert live.owner_of("mypack.thing") is None
+    live.replace_from(staged)
+    assert live.owner_of("mypack.thing") == "mypack"
+    with pytest.raises(ValueError, match="overlaps"):
+        live.claim_types("other", ("mypack",))
+
+
+def test_type_registration_enforces_exact_claim_and_pack_prefix() -> None:
+    registry = make_registry()
+    with registry.registering_pack("mypack", ("mypack.thing",)):
+        with pytest.raises(ValueError, match="outside its declared type claims"):
+            registry.register("mypack.other")
+        with pytest.raises(ValueError, match="must be prefixed"):
+            registry.register("THING")
+        registry.register("mypack.thing")
+    with registry.registering_pack("official", ("THING",), allow_bare=True):
+        registry.register("THING")
+    with pytest.raises(ValueError, match="overlaps"):
+        registry.claim_types("another-official", ("THING",))
+
+
+def test_host_codec_does_not_claim_a_pack_type_before_its_owner_announces() -> None:
+    registry = make_registry()
+    registry.register("mypack.thing")
+    assert registry.owner_of("mypack.thing") is None
+    registry.declare_types("mypack", ("mypack",), ("mypack.thing",))
+    assert registry.type_owners()["mypack.thing"] == "mypack"
+    assert registry.wrap("mypack.thing", 19).payload.load() == 19
+    with pytest.raises(ValueError, match="overlaps"):
+        registry.claim_types("other", ("mypack",))
+
+
+def test_declared_type_can_activate_and_release_its_codec_and_providers() -> None:
+    registry = make_registry()
+    registry.declare_types("mypack", ("mypack",), ("mypack.thing",))
+    assert registry.owner_of("mypack.thing") == "mypack"
+    assert "mypack.thing" not in registry
+    with registry.registering_pack("mypack", ("mypack",)):
+        registry.register("mypack.thing")
+    registry.register_asset_decoder(
+        "list<mypack.thing>", provider_id="mypack.decoder", decode=lambda obj: obj
+    )
+    registry.register_batch_merge("mypack.thing", provider_id="mypack.merge", merge=list)
+    registry.remove_pack_types("mypack")
+    assert registry.owner_of("mypack.thing") is None
+    assert "mypack.thing" not in registry
+    assert registry.asset_decoder_for("list<mypack.thing>") is None
+    assert registry.batch_merge_for("mypack.thing") is None
+    assert registry.owner_of(CORE_INT) == "dinkster-nodes-foundation"
+    assert registry.wrap(CORE_INT, 17).payload.load() == 17
+    with registry.registering_pack("mypack", ("mypack",)):
+        registry.register("mypack.thing")
+    assert registry.wrap("mypack.thing", 23).payload.load() == 23
+
+
+def test_builtin_owner_survives_official_codec_registration_and_pack_removal() -> None:
+    registry = make_registry()
+    assert registry.owner_of(CURVE_TYPE) == "dinkster-nodes-foundation"
+    assert CURVE_TYPE not in registry
+    with pytest.raises(ValueError, match="overlaps"):
+        registry.claim_types("another-official", (CURVE_TYPE,))
+    with registry.registering_pack("official-provider", ("official-provider",), allow_bare=True):
+        registry.register(CURVE_TYPE)
+    assert registry.type_owners()[CURVE_TYPE] == "dinkster-nodes-foundation"
+    registry.remove_pack_types("official-provider")
+    registry.remove_pack_types("dinkster-nodes-foundation")
+    assert registry.wrap(CURVE_TYPE, {"points": [2, 7]}).resolve() == {"points": [2, 7]}
+    assert registry.owner_of(CURVE_TYPE) == "dinkster-nodes-foundation"
+    assert registry.wrap(CORE_INT, 17).resolve() == 17
 
 
 def test_encoded_buffer_is_read_only_and_materializes_on_demand() -> None:
