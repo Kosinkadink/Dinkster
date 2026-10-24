@@ -59,6 +59,8 @@ from dinkster_memory import (
 )
 from dinkster_protocol import (
     WORKGROUP_CAPABILITY,
+    AdmissionInvocation,
+    AdmissionWorker,
     AttentionCapabilityEvidence,
     AttentionRouteToken,
     BeginWorkGroup,
@@ -102,6 +104,7 @@ from dinkster_schema import (
     comfy_group_registry_to_wire,
     configure_logging_from_env,
     install_stream_capture,
+    schema_from_wire,
     schema_signature,
     schema_to_wire,
     validate_name,
@@ -1698,6 +1701,52 @@ async def serve_connection(
             if resume is not None and cancellation.is_set():
                 finish_resumable_cancellation(invocation_id)
 
+    async def run_admission(header: dict[str, Any], blobs: list[bytes]) -> None:
+        request_id = str(header.get("requestId", ""))
+        reply: dict[str, object] = {"type": "admissionResult", "requestId": request_id}
+        cancelled = False
+        try:
+            literals = header.get("literalInputs")
+            linked = header.get("linkedInputTypes")
+            schema_wire = header.get("effectiveSchema")
+            if (
+                blobs
+                or not isinstance(literals, dict)
+                or not isinstance(linked, dict)
+                or not isinstance(schema_wire, dict)
+                or not all(isinstance(key, str) for key in cast("dict[object, object]", literals))
+                or not all(
+                    isinstance(key, str) and isinstance(value, str)
+                    for key, value in cast("dict[object, object]", linked).items()
+                )
+            ):
+                raise ValueError("invalid admission inputs or effective schema")
+            invocation = AdmissionInvocation(
+                request_id=request_id,
+                node_id=str(header.get("nodeId", "")),
+                node_type=str(header.get("nodeType", "")),
+                literal_inputs=cast("dict[str, object]", literals),
+                linked_input_types=cast("dict[str, str]", linked),
+                effective_schema=schema_from_wire(cast("dict[str, Any]", schema_wire)),
+            )
+            result = await cast("AdmissionWorker", worker).validate_admission(invocation)
+            reply["explanation"] = result.explanation
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+        except Exception as exc:  # noqa: BLE001 - terminal error for malformed peer requests
+            reply["explanation"] = f"admission-protocol-malformed: {exc}"
+        finally:
+            if not cancelled:
+                try:
+                    await send(reply)
+                except Exception:  # noqa: BLE001 - fail the parent pending request
+                    log.exception("failed to send terminal admission reply")
+                    writer.close()
+                    with contextlib.suppress(Exception):
+                        await writer.wait_closed()
+            tasks.pop(request_id, None)
+
     async def run_lazy_status(header: dict[str, Any], blobs: list[bytes]) -> None:
         request_id = str(header.get("requestId", ""))
         reply: dict[str, object] = {
@@ -2660,6 +2709,24 @@ async def serve_connection(
                 track_resource_task(workgroup_task)
                 workgroup_tasks.add(workgroup_task)
                 workgroup_task.add_done_callback(workgroup_done)
+            elif kind == "validateAdmission":
+                request_id = str(header.get("requestId", ""))
+                if not request_id or request_id in tasks:
+                    await send(
+                        {
+                            "type": "admissionResult",
+                            "requestId": request_id,
+                            "explanation": "admission-protocol-skew: duplicate request id",
+                        }
+                    )
+                else:
+                    tasks[request_id] = track_resource_task(
+                        asyncio.create_task(run_admission(header, blobs))
+                    )
+            elif kind == "cancelAdmission":
+                task = tasks.get(str(header.get("requestId", "")))
+                if task is not None:
+                    task.cancel()
             elif kind == "checkLazyStatus":
                 request_id = str(header.get("requestId", ""))
                 if not request_id or request_id in tasks:

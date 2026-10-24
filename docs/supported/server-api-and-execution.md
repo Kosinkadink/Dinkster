@@ -63,6 +63,9 @@
   `node_blocked` event per origin per run, including cache replay. Silent
   blockers skip without a notice. Explicit accept, omit and fail input
   policies retain their normal behavior.
+- Opted-in native nodes can reject literal inputs and declared linked types
+  before producers execute. Admission validation crosses isolated and remote
+  worker boundaries and follows routing and unpinned placement policies.
 - Runtime expansion preserves child dynamic choices and ordered output
   membership across local, isolated and remote workers and cache replay.
   Expansions may request child reruns without cache hits or coalescing;

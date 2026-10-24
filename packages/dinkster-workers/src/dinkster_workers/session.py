@@ -39,6 +39,8 @@ from dinkster_memory import (
     Shedder,
 )
 from dinkster_protocol import (
+    AdmissionInvocation,
+    AdmissionResult,
     AttentionCapabilityEvidence,
     AttentionPolicyConfig,
     AttentionRouteToken,
@@ -71,6 +73,7 @@ from dinkster_schema import (
     comfy_alias_registry_from_wire,
     comfy_group_registry_from_wire,
     schema_from_wire,
+    schema_to_wire,
     validate_name,
 )
 from dinkster_values import (
@@ -462,6 +465,7 @@ class BoundarySession:
         self._lease_decisions: dict[str, dict[str, object]] = {}
         self._pending: dict[str, asyncio.Future[tuple[dict[str, Any], list[bytes]]]] = {}
         self._lazy_pending: dict[str, asyncio.Future[tuple[dict[str, Any], list[bytes]]]] = {}
+        self._admission_pending: dict[str, asyncio.Future[tuple[dict[str, Any], list[bytes]]]] = {}
         self._conversion_pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._conversion_request_index = 0
         self._route_pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
@@ -1636,6 +1640,51 @@ class BoundarySession:
             )
         return InvocationResult(outputs=outputs, artifacts=artifacts, expansion=decoded.expansion)
 
+    async def validate_admission(
+        self,
+        invocation: AdmissionInvocation,
+        on_event: OnInvocationEvent | None = None,
+    ) -> AdmissionResult:
+        del on_event
+        if not self._alive:
+            return AdmissionResult(explanation=f"{self._role} '{self._pack}' is not running")
+        if invocation.request_id in self._admission_pending:
+            return AdmissionResult(explanation="admission-protocol-skew: duplicate request id")
+        future: asyncio.Future[tuple[dict[str, Any], list[bytes]]] = (
+            asyncio.get_running_loop().create_future()
+        )
+        self._admission_pending[invocation.request_id] = future
+        try:
+            await self.send(
+                {
+                    "type": "validateAdmission",
+                    "requestId": invocation.request_id,
+                    "nodeId": invocation.node_id,
+                    "nodeType": invocation.node_type,
+                    "literalInputs": dict(invocation.literal_inputs),
+                    "linkedInputTypes": dict(invocation.linked_input_types),
+                    "effectiveSchema": schema_to_wire(invocation.effective_schema),
+                },
+                [],
+            )
+            reply, blobs = await future
+            explanation = reply.get("explanation")
+            if blobs or (explanation is not None and not isinstance(explanation, str)):
+                raise BoundaryError(
+                    "admission result requires a string or null explanation and no blobs"
+                )
+            return AdmissionResult(explanation=explanation)
+        except WorkerDied:
+            return AdmissionResult(explanation=f"{self._role} '{self._pack}' is not running")
+        except BoundaryError as exc:
+            return AdmissionResult(explanation=f"admission-protocol-malformed: {exc}")
+        except asyncio.CancelledError:
+            with contextlib.suppress(Exception):
+                await self.send({"type": "cancelAdmission", "requestId": invocation.request_id}, [])
+            raise
+        finally:
+            self._admission_pending.pop(invocation.request_id, None)
+
     async def check_lazy_status(
         self,
         invocation: LazyStatusInvocation,
@@ -1797,6 +1846,10 @@ class BoundarySession:
             if not future.done():
                 future.set_exception(WorkerDied())
         self._lazy_pending.clear()
+        for future in self._admission_pending.values():
+            if not future.done():
+                future.set_exception(WorkerDied())
+        self._admission_pending.clear()
         for future in self._conversion_pending.values():
             if not future.done():
                 future.set_exception(WorkerDied())
@@ -2068,8 +2121,12 @@ class BoundarySession:
                         # Receipt alone cannot release the producer's hold while adoption runs.
                         if invocation_id in self._result_ack_ready:
                             self._resend_result_acknowledgement(key)
-                elif kind == "lazyStatusResult":
-                    future = self._lazy_pending.pop(str(header.get("requestId")), None)
+                elif kind in ("lazyStatusResult", "admissionResult"):
+                    pending = {
+                        "lazyStatusResult": self._lazy_pending,
+                        "admissionResult": self._admission_pending,
+                    }[kind]
+                    future = pending.pop(str(header.get("requestId")), None)
                     if future is not None and not future.done():
                         future.set_result((header, blobs))
                 elif kind == "invocationEvent":
@@ -2344,6 +2401,7 @@ class BoundarySession:
             self._keepalive_task = None
         for pending in (
             self._lazy_pending,
+            self._admission_pending,
             self._conversion_pending,
             self._route_pending,
             self._rendition_pending,

@@ -604,11 +604,22 @@ class Engine:
         self,
         graph: Graph,
         effective: Mapping[str, NodeSchema],
+        *,
+        region_ports: Mapping[str, TypeExpr] | None = None,
+        prefix: str = "",
     ) -> None:
         worker = self._runtime().worker
         validate_admission = getattr(worker, "validate_admission", None)
         for node_id, node in graph.nodes.items():
-            if not isinstance(node, GraphNode):
+            label = prefix + node_id
+            if isinstance(node, RegionNode):
+                body_effective, _ = elaborate_graph(node.body, self._runtime().schemas or {})
+                await self._validate_admission(
+                    node.body,
+                    body_effective,
+                    region_ports=node.ports,
+                    prefix=label + "/",
+                )
                 continue
             schema = effective[node_id]
             if not schema.admission_validation:
@@ -616,25 +627,39 @@ class Engine:
             if not callable(validate_admission):
                 raise ExecutionError(
                     NodeError(
-                        node_id,
+                        label,
                         node.node_type,
                         "admission-protocol-skew: worker does not support admission validation",
                     )
                 )
             linked_types: dict[str, str] = {}
             literal_inputs: dict[str, object] = {}
-            for name, value in node.inputs.items():
+            for spec in schema.inputs:
+                name = spec.id
+                if name not in node.inputs and spec.default is None:
+                    continue
+                value = node.inputs.get(name, spec.default)
                 if isinstance(value, Link):
-                    output = effective[value.node_id].output(value.output_id)
+                    if value.node_id == PORTS_NODE_ID:
+                        source_type = (region_ports or {}).get(value.output_id)
+                        if source_type is None and value.output_id == REGION_INDEX_PORT_ID:
+                            source_type = REGION_INDEX_PORT_TYPE
+                    elif isinstance(source := graph.nodes[value.node_id], RegionNode):
+                        source_type = region_interface(source, self._runtime().schemas or {}).get(
+                            value.output_id
+                        )
+                    else:
+                        output = effective[value.node_id].output(value.output_id)
+                        source_type = output.type if output is not None else None
                     linked_types[name] = (
-                        output.type.runtime_type_id() if output is not None else None
+                        source_type.runtime_type_id() if source_type is not None else None
                     ) or "unknown"
                 else:
-                    literal_inputs[name] = value
+                    literal_inputs[name] = value.value if isinstance(value, TypedLiteral) else value
             result = await cast("AdmissionWorker", worker).validate_admission(
                 AdmissionInvocation(
                     request_id=uuid.uuid4().hex,
-                    node_id=node_id,
+                    node_id=label,
                     node_type=node.node_type,
                     literal_inputs=literal_inputs,
                     linked_input_types=linked_types,
@@ -643,7 +668,7 @@ class Engine:
             )
             if result.explanation is not None:
                 raise GraphValidationError(
-                    [Diagnostic("error", "admission-validation", result.explanation, node_id)]
+                    [Diagnostic("error", "admission-validation", result.explanation, label)]
                 )
 
     def _emit(self, event: EngineEvent) -> None:
@@ -2175,7 +2200,9 @@ class Engine:
                 raise ExecutionError(NodeError(label, parent.node_type, message)) from exc
             graph = overlay
             effective = admitted
-            await self._validate_admission(graph, effective)
+            await self._validate_admission(
+                graph, effective, region_ports=region_ports, prefix=prefix
+            )
             controls.loop_pairs.update(
                 validate_loops(graph, initial_targets, controls.loop_pairs)[0]
             )

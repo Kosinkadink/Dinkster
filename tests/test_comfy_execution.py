@@ -21,6 +21,7 @@ from dinkster_graph import (
     Link,
     RegionNode,
     RegionOutput,
+    TypedLiteral,
     graph_to_wire,
 )
 from dinkster_nodes_dev.execution import EXECUTION_NODES
@@ -243,6 +244,83 @@ def test_validation_error_literal(cache_enabled: bool, value: object, error: boo
         else:
             result = await make_engine().run(graph, ["validation"], cache_enabled=cache_enabled)
             assert result.outputs["validation"]["value"].resolve() == 5.0
+
+    asyncio.run(scenario())
+
+
+def test_admission_receives_plain_typed_literal_and_region_link_types() -> None:
+    async def scenario() -> None:
+        result = await make_engine().run(
+            Graph(
+                {
+                    "check": GraphNode(
+                        "dev.execution.admission", {"value": TypedLiteral("FLOAT", 4.5)}
+                    )
+                }
+            ),
+            ["check"],
+        )
+        assert result.outputs["check"]["value"].resolve() == 4.5
+        region = RegionNode(
+            kind="map",
+            ports={"item": TypeExpr.concrete("FLOAT")},
+            inputs={"item": [2.5, 3.5]},
+            element_ports=("item",),
+            body=Graph(
+                {
+                    "check": GraphNode(
+                        "dev.execution.admission", {"value": Link(PORTS_NODE_ID, "item")}
+                    )
+                }
+            ),
+            outputs={"value": RegionOutput(Link("check", "value"), mode="last")},
+        )
+        result = await make_engine().run(
+            Graph(
+                {
+                    "region": region,
+                    "check": GraphNode(
+                        "dev.execution.admission", {"value": Link("region", "value")}
+                    ),
+                }
+            ),
+            ["check"],
+        )
+        assert result.outputs["check"]["value"].resolve() == 3.5
+
+    asyncio.run(scenario())
+
+
+def test_admission_rejects_inside_region_before_any_producer() -> None:
+    async def scenario() -> None:
+        from dinkster_nodes_dev.execution import ExecutionAdmissionSource
+
+        ExecutionAdmissionSource.executed = False
+        graph = Graph(
+            {
+                "source": GraphNode("dev.execution.admission_source", {"value": 5}),
+                "region": RegionNode(
+                    kind="map",
+                    ports={"item": TypeExpr.concrete("INT")},
+                    inputs={"item": [1]},
+                    element_ports=("item",),
+                    body=Graph(
+                        {
+                            "check": GraphNode(
+                                "dev.execution.admission", {"value": Link(PORTS_NODE_ID, "item")}
+                            )
+                        }
+                    ),
+                    outputs={"value": RegionOutput(Link("check", "value"))},
+                ),
+            }
+        )
+        with pytest.raises(
+            GraphValidationError, match="value must be linked from FLOAT"
+        ) as failure:
+            await make_engine().run(graph, ["source", "region"])
+        assert failure.value.diagnostics[0].node_id == "region/check"
+        assert not ExecutionAdmissionSource.executed
 
     asyncio.run(scenario())
 
