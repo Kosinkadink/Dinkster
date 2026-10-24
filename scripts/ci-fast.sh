@@ -25,6 +25,7 @@ uv run --locked python -m pytest -q \
   tests/test_graph.py \
   tests/test_graph_wire.py \
   tests/test_vision_capability_schemas.py \
+  tests/test_manifest.py::test_extension_contract_fixture_uses_current_public_pack_surfaces \
   tests/test_compose.py::test_compose_dev_pack_adds_scaffold_nodes \
   tests/test_serve.py::test_serve_rejects_removed_dev_argument \
   tests/test_serve.py::test_serve_development_pack_is_explicitly_trusted \
