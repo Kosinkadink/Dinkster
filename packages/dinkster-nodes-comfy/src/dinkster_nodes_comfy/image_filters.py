@@ -240,7 +240,10 @@ class ImageQuantize(Node):
         rgb = image[..., :3]
         result = torch.zeros_like(rgb)
         for batch_index in range(rgb.shape[0]):
-            source = Image.fromarray((rgb[batch_index] * 255).to(torch.uint8).numpy(), mode="RGB")
+            source = Image.fromarray(
+                (rgb[batch_index] * 255).detach().to(device="cpu", dtype=torch.uint8).numpy(),
+                mode="RGB",
+            )
             palette = source.quantize(colors=colors)
             if dither == "none":
                 quantized = source.quantize(palette=palette, dither=Image.Dither.NONE)

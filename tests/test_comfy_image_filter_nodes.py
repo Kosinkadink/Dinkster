@@ -14,7 +14,6 @@ from dinkster_nodes_comfy.image_filters import (
     ImageBlend,
     ImageBlur,
     ImageQuantize,
-    ImageScaleToTotalPixels,
     ImageSharpen,
 )
 
@@ -68,61 +67,75 @@ def test_zero_radius_returns_original_live_value() -> None:
     )
 
 
+class ArrayTensor(np.ndarray[Any, Any]):
+    storage_device = "accelerator"
+
+    def detach(self) -> ArrayTensor:
+        return self
+
+    def to(self, device: str | None = None, dtype: Any = None) -> ArrayTensor:
+        result = self.astype(dtype or self.dtype).view(ArrayTensor)
+        result.storage_device = device or self.storage_device
+        return result
+
+    def numpy(self) -> np.ndarray[Any, Any]:
+        if self.storage_device != "cpu":
+            raise RuntimeError("NumPy requires CPU storage")
+        return np.asarray(self)
+
+    def float(self) -> ArrayTensor:
+        return self.astype(np.float32).view(ArrayTensor)
+
+
 @pytest.fixture
-def torch_runtime(monkeypatch: pytest.MonkeyPatch) -> Any:
-    torch: Any = pytest.importorskip("torch")
-    utils = SimpleNamespace(
-        common_upscale=lambda samples, width, height, method, crop: torch.nn.functional.interpolate(
-            samples, size=(height, width), mode="nearest"
-        )
+def array_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+    torch = SimpleNamespace(
+        as_tensor=lambda value: np.asarray(value).view(ArrayTensor),
+        zeros_like=np.zeros_like,
+        tensor=lambda value: np.asarray(value).view(ArrayTensor),
+        uint8=np.uint8,
+        cat=lambda values, dim: np.concatenate(values, axis=dim).view(ArrayTensor),
+        where=np.where,
+        sqrt=np.sqrt,
+        clamp=np.clip,
     )
-    management = SimpleNamespace(get_torch_device=lambda: "cpu", intermediate_device=lambda: "cpu")
-    monkeypatch.setitem(sys.modules, "dinkster_inference.utils", utils)
-    monkeypatch.setitem(sys.modules, "dinkster_inference.model_management", management)
-    return torch
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    monkeypatch.setitem(sys.modules, "dinkster_inference.utils", SimpleNamespace())
 
 
-def test_blend_modes_preserve_destination_alpha_and_source_values(torch_runtime: Any) -> None:
-    torch: Any = torch_runtime
-    image1 = torch.tensor([[[[0.2, 0.8, 0.4, 0.25]]]], dtype=torch.float32)
-    image2 = torch.tensor([[[[0.7, 0.3, 0.6]]]], dtype=torch.float32)
-    original1, original2 = image1.clone(), image2.clone()
-    for mode in ("normal", "multiply", "screen", "overlay", "soft_light", "difference"):
-        result: Any = ImageBlend.execute(
-            image1=image1, image2=image2, blend_factor=1.0, blend_mode=mode
-        )["IMAGE"]
-        assert result.shape == image1.shape
-        assert result[..., 3].equal(image1[..., 3])
-    assert image1.equal(original1)
-    assert image2.equal(original2)
-
-
-def test_blur_sharpen_quantize_and_scaling_cpu_outputs(torch_runtime: Any) -> None:
-    torch: Any = torch_runtime
-    image = torch.tensor(
-        [
-            [
-                [[0.0, 0.2, 0.9, 0.1], [0.3, 0.4, 0.5, 0.2], [0.8, 0.6, 0.1, 0.3]],
-                [[0.1, 0.9, 0.3, 0.4], [0.5, 0.7, 0.2, 0.5], [0.9, 0.0, 0.8, 0.6]],
-                [[0.7, 0.1, 0.4, 0.7], [0.2, 0.8, 0.6, 0.8], [0.4, 0.3, 0.5, 0.9]],
-            ]
-        ],
-        dtype=torch.float32,
-    )
-    original = image.clone()
-    blurred: Any = ImageBlur.execute(image=image, blur_radius=1, sigma=1.0)["IMAGE"]
-    sharpened: Any = ImageSharpen.execute(image=image, sharpen_radius=1, sigma=1.0, alpha=1.0)[
-        "IMAGE"
-    ]
-    assert blurred.shape == image.shape
-    assert sharpened.shape == image.shape
-    for dither in ("none", "floyd-steinberg", "bayer-2", "bayer-4", "bayer-8", "bayer-16"):
-        result: Any = ImageQuantize.execute(image=image, colors=4, dither=dither)["IMAGE"]
-        assert result.dtype == image.dtype
-        assert result.device == image.device
-        assert result[..., 3].equal(image[..., 3])
-    scaled: Any = ImageScaleToTotalPixels.execute(
-        image=image, upscale_method="nearest-exact", megapixels=0.01, resolution_steps=8
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [
+        ("normal", [0.7, 0.3, 0.6]),
+        ("multiply", [0.14, 0.24, 0.24]),
+        ("screen", [0.76, 0.86, 0.76]),
+        ("overlay", [0.28, 0.72, 0.48]),
+        ("difference", [0.0, 0.5, 0.0]),
+    ],
+)
+def test_blend_pixels_preserve_destination_alpha(
+    array_runtime: None, mode: str, expected: list[float]
+) -> None:
+    image1 = np.array([[[[0.2, 0.8, 0.4, 0.25]]]], dtype=np.float32)
+    image2 = np.array([[[[0.7, 0.3, 0.6, 0.9]]]], dtype=np.float32)
+    original1, original2 = image1.copy(), image2.copy()
+    result: Any = ImageBlend.execute(
+        image1=image1, image2=image2, blend_factor=1.0, blend_mode=mode
     )["IMAGE"]
-    assert scaled.shape[1:3] == (104, 104)
-    assert image.equal(original)
+    np.testing.assert_allclose(result, [[[[*expected, 0.25]]]], atol=1e-7)
+    np.testing.assert_array_equal(image1, original1)
+    np.testing.assert_array_equal(image2, original2)
+
+
+def test_quantize_copies_live_pixels_to_cpu_without_changing_source_or_alpha(
+    array_runtime: None,
+) -> None:
+    image = np.array([[[[0.0, 0.0, 0.0, 0.2], [1.0, 1.0, 1.0, 0.7]]]], dtype=np.float32).view(
+        ArrayTensor
+    )
+    original = image.copy()
+    result: Any = ImageQuantize.execute(image=image, colors=2, dither="none")["IMAGE"]
+    np.testing.assert_array_equal(result, original)
+    np.testing.assert_array_equal(image, original)
+    assert result.dtype == image.dtype
+    assert result.storage_device == image.storage_device

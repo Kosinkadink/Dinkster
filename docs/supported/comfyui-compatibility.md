@@ -15,6 +15,8 @@
   feather, grow, threshold, and composite images or latents under exact core IDs.
 - Six native core image nodes create, resize, invert, batch, and pad images for
   outpainting, preserving source color, alpha, resize, and feathering behavior.
+- Five native image filters blend, blur, quantize, sharpen, and scale to a total
+  pixel count under their exact ComfyUI interfaces.
 - Nine native image transforms crop, repeat and select batches, add seeded noise,
   stitch, resize with padding, rotate, flip, and scale to a maximum dimension.
 - Native morphology applies erosion, dilation, opening, closing, gradients and
