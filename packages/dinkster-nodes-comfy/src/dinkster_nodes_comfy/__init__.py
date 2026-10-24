@@ -12,6 +12,7 @@ from .compositing import COMPOSITING_NODES
 from .conditioning import CONDITIONING_NODES
 from .controlnet import CONTROLNET_NODES
 from .dataset_collections import DATASET_COLLECTION_NODES
+from .dataset_images import DATASET_IMAGE_NODES
 from .dataset_text import DATASET_TEXT_NODES
 from .freeu import FREEU_NODES
 from .image_core import IMAGE_CORE_NODES
@@ -87,6 +88,7 @@ COMFY_NODES = (
     *POST_PROCESSING_NODES,
     EmptyMochiLatentVideo,
     *AUDIO_LATENT_NODES,
+    *DATASET_IMAGE_NODES,
 )
 
 __all__ = ["COMFY_NODES", "register_inference_types"]

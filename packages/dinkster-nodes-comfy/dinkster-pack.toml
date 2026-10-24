@@ -199,6 +199,13 @@ namespaces = [
     "EmptyAceStepLatentAudio",
     "EmptyAceStep1.5LatentAudio",
     "EmptyYuE2LatentAudio",
+    "ResizeImagesByShorterEdge",
+    "ResizeImagesByLongerEdge",
+    "CenterCropImages",
+    "RandomCropImages",
+    "NormalizeImages",
+    "AdjustBrightness",
+    "AdjustContrast",
 ]
 
 [pack.sandbox]
