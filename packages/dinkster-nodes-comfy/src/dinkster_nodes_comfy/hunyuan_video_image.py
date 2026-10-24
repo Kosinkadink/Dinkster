@@ -10,6 +10,7 @@ from dinkster_api.v1 import (
     CLIP_VISION_OUTPUT_TYPE,
     CONDITIONING_TYPE,
     CORE_COMBO,
+    CORE_FLOAT,
     CORE_INT,
     IMAGE_TYPE,
     LATENT_TYPE,
@@ -31,6 +32,7 @@ from .conditioning import conditioning_set_values
 _CLIP_VISION_OUTPUT = TypeExpr.concrete(CLIP_VISION_OUTPUT_TYPE)
 _CONDITIONING = TypeExpr.concrete(CONDITIONING_TYPE)
 _COMBO = TypeExpr.concrete(CORE_COMBO)
+_FLOAT = TypeExpr.concrete(CORE_FLOAT)
 _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 _INT = TypeExpr.concrete(CORE_INT)
 _LATENT = TypeExpr.concrete(LATENT_TYPE)
@@ -201,4 +203,88 @@ class HunyuanVideo15ImageToVideo(Node):
         return cls.outputs(positive=positive, negative=negative, latent={"samples": latent})
 
 
-HUNYUAN_VIDEO_IMAGE_NODES = (HunyuanImageToVideo, HunyuanVideo15ImageToVideo)
+class HunyuanVideo15SuperResolution(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="HunyuanVideo15SuperResolution",
+            display_name="Hunyuan Video 1.5 Super Resolution",
+            category=_CATEGORY,
+            inputs=(
+                InputSpec("positive", _CONDITIONING),
+                InputSpec("negative", _CONDITIONING),
+                InputSpec("vae", _VAE, required=False),
+                InputSpec("start_image", _IMAGE, required=False),
+                InputSpec("clip_vision_output", _CLIP_VISION_OUTPUT, required=False),
+                InputSpec("latent", _LATENT),
+                InputSpec(
+                    "noise_augmentation",
+                    _FLOAT,
+                    default=0.70,
+                    widget=NumberWidget(min=0.0, max=1.0, step=0.01),
+                    advanced=True,
+                ),
+            ),
+            outputs=(
+                OutputSpec("positive", _CONDITIONING),
+                OutputSpec("negative", _CONDITIONING),
+                OutputSpec("latent", _LATENT),
+            ),
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        positive: Sequence[Sequence[Any]],
+        negative: Sequence[Sequence[Any]],
+        latent: Mapping[str, Any],
+        noise_augmentation: float,
+        vae: Any | None = None,
+        start_image: object | None = None,
+        clip_vision_output: object | None = None,
+    ) -> Mapping[str, object]:
+        initialize_inference_process()
+        torch = importlib.import_module("torch")
+        management = importlib.import_module("dinkster_inference.model_management")
+        samples = latent["samples"]
+        channels = samples.shape[1]
+        conditioning_latent = torch.zeros(
+            (samples.shape[0], channels * 2 + 2, *samples.shape[-3:]),
+            device=management.intermediate_device(),
+        )
+        conditioning_latent[:, channels + 1 : 2 * channels + 1] = samples
+        conditioning_latent[:, 2 * channels + 1] = 1
+        if start_image is not None:
+            image = materialize_image(start_image)
+            utils = importlib.import_module("dinkster_inference.utils")
+            image = utils.common_upscale(
+                image.movedim(-1, 1),
+                samples.shape[-1] * 16,
+                samples.shape[-2] * 16,
+                "bilinear",
+                "center",
+            ).movedim(1, -1)
+            if vae is None:
+                raise ValueError("vae is required when start_image is provided")
+            encoded = vae.encode(image[:, :, :, :3])
+            conditioning_latent[:, :channels, : encoded.shape[2]] = encoded
+            conditioning_latent[:, channels + 1, 0] = 1
+        values = {
+            "concat_latent_image": conditioning_latent,
+            "noise_augmentation": noise_augmentation,
+        }
+        positive = conditioning_set_values(positive, values)
+        negative = conditioning_set_values(negative, values)
+        if clip_vision_output is not None:
+            values = {"clip_vision_output": materialize_clip_vision_output(clip_vision_output)}
+            positive = conditioning_set_values(positive, values)
+            negative = conditioning_set_values(negative, values)
+        return cls.outputs(positive=positive, negative=negative, latent=latent)
+
+
+HUNYUAN_VIDEO_IMAGE_NODES = (
+    HunyuanImageToVideo,
+    HunyuanVideo15ImageToVideo,
+    HunyuanVideo15SuperResolution,
+)

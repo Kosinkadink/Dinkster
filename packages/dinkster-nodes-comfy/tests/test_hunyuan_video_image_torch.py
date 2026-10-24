@@ -25,7 +25,11 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.hunyuan_video_image import HunyuanImageToVideo, HunyuanVideo15ImageToVideo
+from dinkster_nodes_comfy.hunyuan_video_image import (
+    HunyuanImageToVideo,
+    HunyuanVideo15ImageToVideo,
+    HunyuanVideo15SuperResolution,
+)
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -200,6 +204,46 @@ def test_hunyuan_video15_materializes_vision_and_preserves_optional_identity() -
             conditioning[0][1]["concat_latent_image"], expected_concat[:1], rtol=0, atol=0
         )
         torch.testing.assert_close(conditioning[0][1]["concat_mask"], expected_mask, rtol=0, atol=0)
+
+
+def test_hunyuan_video15_super_resolution_preserves_latent_and_conditioning_values() -> None:
+    positive, negative = _conditioning(1.0), _conditioning(2.0)
+    samples = torch.arange(16, dtype=torch.float64).reshape(1, 2, 2, 2, 2)
+    latent = {"samples": samples, "source": "preserved"}
+    projected = torch.arange(6, dtype=torch.float64).reshape(1, 2, 3)
+    no_image = HunyuanVideo15SuperResolution.execute(
+        positive=positive,
+        negative=negative,
+        latent=latent,
+        noise_augmentation=0.25,
+        clip_vision_output=SimpleNamespace(mm_projected=projected),
+    )
+    assert no_image["latent"] is latent
+    for conditioning, source in ((no_image["positive"], 1.0), (no_image["negative"], 2.0)):
+        metadata = conditioning[0][1]
+        expected = torch.zeros((1, 6, 2, 2, 2), dtype=torch.float32)
+        expected[:, 3:5] = samples
+        expected[:, 5] = 1
+        assert metadata["source"] == source and metadata["noise_augmentation"] == 0.25
+        torch.testing.assert_close(metadata["concat_latent_image"], expected, rtol=0, atol=0)
+        torch.testing.assert_close(
+            metadata["clip_vision_output"].mm_projected, projected, rtol=0, atol=0
+        )
+    assert positive[0][1] == {"source": 1.0} and negative[0][1] == {"source": 2.0}
+
+    vae = VAE(2)
+    start = HunyuanVideo15SuperResolution.execute(
+        positive=positive,
+        negative=negative,
+        latent=latent,
+        noise_augmentation=0.5,
+        vae=vae,
+        start_image=_image(),
+    )
+    conditioned = start["positive"][0][1]["concat_latent_image"]
+    assert conditioned[:, 3, 0].eq(1).all()
+    torch.testing.assert_close(conditioned[:, 3:5, 1:], samples[:, :, 1:].float(), rtol=0, atol=0)
+    assert conditioned[:, 5].eq(1).all()
 
 
 _CONDITIONING = TypeExpr.concrete(CONDITIONING_TYPE)

@@ -235,6 +235,7 @@ namespaces = [
     "TextEncodeHunyuanVideo_ImageToVideo",
     "HunyuanImageToVideo",
     "HunyuanVideo15ImageToVideo",
+    "HunyuanVideo15SuperResolution",
     "SVD_img2vid_Conditioning",
     "CosmosImageToVideoLatent",
     "CosmosPredict2ImageToVideoLatent",
