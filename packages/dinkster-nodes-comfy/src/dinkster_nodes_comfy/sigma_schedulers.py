@@ -20,6 +20,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
+    initialize_inference_process,
 )
 
 _COMBO = TypeExpr.concrete(CORE_COMBO)
@@ -94,6 +95,7 @@ class BasicScheduler(Node):
         torch = importlib.import_module("torch")
         if denoise <= 0.0:
             return cls.outputs(SIGMAS=torch.FloatTensor([]))
+        initialize_inference_process()
         samplers = importlib.import_module("dinkster_inference.samplers")
         total_steps = int(steps / denoise) if denoise < 1.0 else steps
         sigmas = samplers.calculate_sigmas(
@@ -121,6 +123,7 @@ class KarrasScheduler(Node):
     def execute(
         cls, *, steps: int, sigma_max: float, sigma_min: float, rho: float
     ) -> Mapping[str, object]:
+        initialize_inference_process()
         sampling = importlib.import_module("dinkster_inference.k_diffusion.sampling")
         return cls.outputs(SIGMAS=sampling.get_sigmas_karras(steps, sigma_min, sigma_max, rho=rho))
 
@@ -141,6 +144,7 @@ class ExponentialScheduler(Node):
 
     @classmethod
     def execute(cls, *, steps: int, sigma_max: float, sigma_min: float) -> Mapping[str, object]:
+        initialize_inference_process()
         sampling = importlib.import_module("dinkster_inference.k_diffusion.sampling")
         return cls.outputs(SIGMAS=sampling.get_sigmas_exponential(steps, sigma_min, sigma_max))
 
@@ -164,6 +168,7 @@ class PolyexponentialScheduler(Node):
     def execute(
         cls, *, steps: int, sigma_max: float, sigma_min: float, rho: float
     ) -> Mapping[str, object]:
+        initialize_inference_process()
         sampling = importlib.import_module("dinkster_inference.k_diffusion.sampling")
         return cls.outputs(
             SIGMAS=sampling.get_sigmas_polyexponential(steps, sigma_min, sigma_max, rho=rho)
@@ -190,6 +195,7 @@ class LaplaceScheduler(Node):
     def execute(
         cls, *, steps: int, sigma_max: float, sigma_min: float, mu: float, beta: float
     ) -> Mapping[str, object]:
+        initialize_inference_process()
         sampling = importlib.import_module("dinkster_inference.k_diffusion.sampling")
         return cls.outputs(
             SIGMAS=sampling.get_sigmas_laplace(steps, sigma_min, sigma_max, mu=mu, beta=beta)
@@ -215,6 +221,7 @@ class VPScheduler(Node):
     def execute(
         cls, *, steps: int, beta_d: float, beta_min: float, eps_s: float
     ) -> Mapping[str, object]:
+        initialize_inference_process()
         sampling = importlib.import_module("dinkster_inference.k_diffusion.sampling")
         return cls.outputs(
             SIGMAS=sampling.get_sigmas_vp(steps, beta_d=beta_d, beta_min=beta_min, eps_s=eps_s)
@@ -238,6 +245,7 @@ class BetaSamplingScheduler(Node):
 
     @classmethod
     def execute(cls, *, model: Any, steps: int, alpha: float, beta: float) -> Mapping[str, object]:
+        initialize_inference_process()
         samplers = importlib.import_module("dinkster_inference.samplers")
         return cls.outputs(
             SIGMAS=samplers.beta_scheduler(

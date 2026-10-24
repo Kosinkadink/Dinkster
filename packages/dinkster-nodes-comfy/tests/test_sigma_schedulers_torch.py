@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import sys
 from typing import Any
 
 import torch
+from dinkster_api.v1 import initialize_inference_process
 from dinkster_nodes_comfy.sigma_schedulers import (
     BasicScheduler,
     BetaSamplingScheduler,
@@ -32,10 +32,7 @@ class Model:
 
 
 def _enable_cpu_runtime() -> None:
-    import dinkster_inference.options
-
-    sys.argv = ["test-sigma-schedulers", "--cpu"]
-    dinkster_inference.options.args_parsing = True
+    initialize_inference_process()
 
 
 def test_parameterized_schedulers_match_pinned_runtime_outputs() -> None:
