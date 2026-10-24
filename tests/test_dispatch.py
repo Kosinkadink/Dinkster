@@ -854,6 +854,7 @@ def test_inference_wire_registers_comfy_type_ids_without_legacy_aliases() -> Non
         "SIGMAS",
         "GUIDER",
         "NOISE",
+        "LATENT_OPERATION",
     }
     retired_type_ids = {
         f"dinkster.{atom}"
@@ -879,6 +880,7 @@ def test_inference_wire_registers_comfy_type_ids_without_legacy_aliases() -> Non
         ("SAMPLER", SamplerSelection("dinkster.euler", ())),
         ("SIGMAS", SigmaSchedule((1.0, 0.0))),
         ("NOISE", NoiseSelection(7)),
+        ("LATENT_OPERATION", lambda latent: latent),
     ):
         spec = registry.spec(type_id)
         assert spec.decode(spec.encode(raw)) == raw
