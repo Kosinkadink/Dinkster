@@ -82,6 +82,8 @@ namespaces = [
     "ModelSamplingFlux",
     "ModelNoiseScale",
     "RescaleCFG",
+    "PerpNeg",
+    "PerpNegGuider",
     "ModelComputeDtype",
     "ModelAttentionBackend",
     "MultiGPU_WorkUnits",

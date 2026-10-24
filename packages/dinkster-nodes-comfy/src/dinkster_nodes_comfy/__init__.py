@@ -49,6 +49,7 @@ from .model_merging_specific import MODEL_SPECIFIC_MERGE_NODES
 from .model_specific_schedulers import MODEL_SPECIFIC_SCHEDULER_NODES
 from .morphology import MORPHOLOGY_NODES
 from .noise_guidance import NOISE_GUIDANCE_NODES
+from .perpneg import PERPNEG_NODES
 from .post_processing import POST_PROCESSING_NODES
 from .primitive import (
     PrimitiveBoolean,
@@ -97,6 +98,7 @@ COMFY_NODES = (
     *DEVICE_ROUTING_NODES,
     *MODEL_SPECIFIC_SCHEDULER_NODES,
     *CFG_GUIDANCE_NODES,
+    *PERPNEG_NODES,
     *VIDEO_GUIDANCE_NODES,
     *FREEU_NODES,
     *SPATIAL_MODEL_PATCH_NODES,

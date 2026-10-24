@@ -15,6 +15,9 @@ from a model sampling percentage through the native ComfyUI sigma nodes.
 CFGZeroStar, CFGNorm, APG, TCFG, Mahiro, and NAGuidance patch a model's CFG or
 attention callbacks for the native Comfy guidance interfaces.
 
+Perp-Neg and Perp-Neg Guider use perpendicular negative guidance through the
+pinned CFG guider and conditioning batch interfaces.
+
 Native SIGMAS tensors cross worker boundaries as canonical tensor records,
 preserving their dtype, shape, bytes, and fingerprint. Legacy schedule
 settings remain supported.
