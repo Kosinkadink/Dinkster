@@ -138,10 +138,11 @@ def test_resize_preserves_image_and_mask_shapes_across_asymmetric_boundaries(
             resize_type={"resize_type": "scale shorter dimension", "shorter_size": 4},
         )["resized"],
     ).shape == (1, 4, 7)
+    multiple_input = torch.arange(1 * 5 * 6 * 3, dtype=torch.float32).reshape(1, 5, 6, 3) / 90
     result = cast(
         "Any",
         ResizeImageMaskNode.execute(
-            input=image,
+            input=multiple_input,
             scale_method="nearest-exact",
             resize_type={"resize_type": "scale to multiple", "multiple": 4},
         )["resized"],
