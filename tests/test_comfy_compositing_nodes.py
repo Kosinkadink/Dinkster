@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import torch
 from dinkster_api.v1 import schema_to_wire
+from dinkster_inference import utils
 from dinkster_nodes_comfy.compositing import (
     COMPOSITING_NODES,
     JoinImageWithAlpha,
@@ -11,7 +12,6 @@ from dinkster_nodes_comfy.compositing import (
     PorterDuffMode,
     SplitImageWithAlpha,
 )
-from dinkster_inference import utils
 
 
 def test_compositing_schemas_match_the_fixed_reference_contract() -> None:
@@ -87,6 +87,7 @@ def test_porter_duff_truncates_batches_and_resizes_images_and_masks() -> None:
     expected_image = utils.common_upscale(
         source[:1].movedim(-1, 1), 4, 3, "bicubic", "center"
     ).movedim(1, -1)
+    expected_image = torch.clamp(expected_image, 0, 1)
     expected_mask = utils.common_upscale(
         source_alpha[:1].unsqueeze(1), 4, 3, "bicubic", "center"
     ).squeeze(1)

@@ -51,7 +51,7 @@ def _resize_mask(mask: Any, shape: tuple[int, int]) -> Any:
     torch = importlib.import_module("torch")
     return torch.nn.functional.interpolate(
         mask.reshape((-1, 1, mask.shape[-2], mask.shape[-1])),
-        size=shape,
+        size=(shape[0], shape[1]),
         mode="bilinear",
     ).squeeze(1)
 
@@ -294,7 +294,7 @@ class JoinImageWithAlpha(Node):
         utils = importlib.import_module("dinkster_inference.utils")
         image = materialize_image(image)
         batch_size = max(len(image), len(alpha))
-        alpha = 1.0 - _resize_mask(alpha.to(image), image.shape[1:])
+        alpha = 1.0 - _resize_mask(alpha.to(image), image.shape[1:3])
         alpha = utils.repeat_to_batch_size(alpha, batch_size)
         image = utils.repeat_to_batch_size(image, batch_size)
         return cls.outputs(IMAGE=torch.cat((image[..., :3], alpha.unsqueeze(-1)), dim=-1))
