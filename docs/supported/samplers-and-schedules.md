@@ -18,3 +18,8 @@ settings remain supported.
 
 Native scheduler nodes provide Basic, Karras, Exponential, Polyexponential,
 Laplace, VP, beta sampling, and SD Turbo sigma schedules.
+
+Runtime samplers and noise generators can connect nodes in their holding
+worker without serializing callables or losing sampler options and seeds.
+Portable sampling selections remain supported. Runtime handles cannot be
+resolved in another worker or after their resident state is released.
