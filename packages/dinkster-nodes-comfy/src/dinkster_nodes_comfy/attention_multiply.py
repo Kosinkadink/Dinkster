@@ -47,13 +47,12 @@ def _schema(node_type: str, *, clip: bool = False) -> NodeSchema:
 
 
 def _multiply(model: Any, keys: Iterable[str], strengths: Mapping[str, float]) -> Any:
-    multiplied = model.clone()
     for key in keys:
         for projection, strength in strengths.items():
             if key.endswith(projection):
-                multiplied.add_patches({key: (None,)}, 0.0, strength)
+                model.add_patches({key: (None,)}, 0.0, strength)
                 break
-    return multiplied
+    return model
 
 
 def _unet_attention(model: Any, attention: str, q: float, k: float, v: float, out: float) -> Any:
@@ -67,7 +66,7 @@ def _unet_attention(model: Any, attention: str, q: float, k: float, v: float, ou
         f"{attention}.to_out.0.bias": out,
         f"{attention}.to_out.0.weight": out,
     }
-    return _multiply(model, model.model_state_dict(), strengths)
+    return _multiply(model.clone(), model.model_state_dict(), strengths)
 
 
 class UNetSelfAttentionMultiply(Node):
@@ -103,6 +102,7 @@ class CLIPAttentionMultiply(Node):
     def execute(
         cls, *, clip: Any, q: float, k: float, v: float, out: float
     ) -> Mapping[str, object]:
+        multiplied = clip.clone()
         strengths = {
             "self_attn.q_proj.weight": q,
             "self_attn.q_proj.bias": q,
@@ -113,7 +113,9 @@ class CLIPAttentionMultiply(Node):
             "self_attn.out_proj.weight": out,
             "self_attn.out_proj.bias": out,
         }
-        return cls.outputs(CLIP=_multiply(clip, clip.patcher.model_state_dict(), strengths))
+        return cls.outputs(
+            CLIP=_multiply(multiplied, multiplied.patcher.model_state_dict(), strengths)
+        )
 
 
 class UNetTemporalAttentionMultiply(Node):
