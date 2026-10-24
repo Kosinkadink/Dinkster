@@ -44,6 +44,8 @@ namespaces = [
     "UNetCrossAttentionMultiply",
     "CLIPAttentionMultiply",
     "UNetTemporalAttentionMultiply",
+    "EasyCache",
+    "LazyCache",
     "ModelMergeSimple",
     "ModelMergeSubtract",
     "ModelMergeAdd",
