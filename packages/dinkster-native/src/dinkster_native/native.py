@@ -16,6 +16,7 @@ from dinkster_inference_wire.sampling_wire import register_sampling_type
 from dinkster_schema import Node
 from dinkster_values import TypeRegistry, register_curve_type, register_model3d_type
 
+from .attention_multiply import ATTENTION_MULTIPLY_NODES
 from .audio import register_audio_type
 from .devices import comfy_resident_meta
 from .fork_nodes import FORK_NODES
@@ -47,6 +48,7 @@ from .video import register_video_type
 
 NATIVE_NODES: tuple[type[Node], ...] = (
     *FORK_NODES,
+    *ATTENTION_MULTIPLY_NODES,
     GenerationImageCropToMask,
     GenerationPreviewMask,
     GenerationVoxelToMesh,
