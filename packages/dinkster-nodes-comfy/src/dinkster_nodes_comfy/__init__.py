@@ -2,6 +2,8 @@
 
 from dinkster_api.v1 import register_inference_types
 
+from .conditioning import CONDITIONING_NODES
+from .latent import LATENT_NODES
 from .logic import LOGIC_NODES
 from .math import ComfyMathExpression
 from .model_merging import MODEL_MERGE_NODES
@@ -29,6 +31,8 @@ COMFY_NODES = (
     ComfyMathExpression,
     *MODEL_MERGE_NODES,
     *MODEL_SPECIFIC_MERGE_NODES,
+    *LATENT_NODES,
+    *CONDITIONING_NODES,
 )
 
 __all__ = ["COMFY_NODES", "register_inference_types"]

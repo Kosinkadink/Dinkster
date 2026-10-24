@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
 import pytest
+from dinkster_api.v1 import Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.latent import (
     LATENT_NODES,
     LatentFromBatch,
@@ -13,6 +17,9 @@ from dinkster_nodes_comfy.latent import (
     RepeatLatentBatch,
     SetLatentNoiseMask,
 )
+from dinkster_values import EncodedLatentTensor, decode_latent, encode_latent
+
+from dinkster.compose import PackSpec, ServingComposer
 
 
 @pytest.mark.parametrize(
@@ -131,3 +138,86 @@ def test_zero_size_upscale_returns_the_existing_latent_unchanged() -> None:
         )["LATENT"]
         is latent
     )
+
+
+class PortableLatentSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="latent-fixture.source",
+            outputs=(
+                OutputSpec("samples", TypeExpr.concrete("LATENT")),
+                OutputSpec("mask", TypeExpr.concrete("MASK")),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        return {
+            "samples": {
+                "samples": EncodedLatentTensor(
+                    "float32", (1, 2, 2, 3), np.arange(12, dtype=np.float32).tobytes()
+                ),
+                "note": "keep",
+            },
+            "mask": np.arange(6, dtype=np.float32).reshape(1, 2, 3) / 5,
+        }
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_manifest_executes_latent_and_mask_without_host_types(
+    tmp_path: Path, in_process: bool
+) -> None:
+    async def scenario() -> None:
+        composer = ServingComposer(worker_env={"PYTHONPATH": str(Path(__file__).parent)})
+        try:
+            manifest = (
+                Path(__file__).resolve().parents[1]
+                / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+            )
+            (tmp_path / "latent_fixture_sources.py").write_text(
+                "from test_comfy_latent_nodes import PortableLatentSource\n"
+                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "NODES = (*COMFY_NODES, PortableLatentSource)\n",
+                encoding="ascii",
+            )
+            source_manifest = tmp_path / "dinkster-pack.toml"
+            source_manifest.write_text(
+                manifest.read_text(encoding="ascii")
+                .replace("namespaces = [", 'namespaces = ["latent-fixture",')
+                .replace("dinkster_nodes_comfy:COMFY_NODES", "latent_fixture_sources:NODES")
+                .replace(
+                    "dinkster_nodes_comfy:register_inference_types",
+                    "latent_fixture_sources:register_inference_types",
+                ),
+                encoding="ascii",
+            )
+            await composer.add_pack(PackSpec(manifest=source_manifest, in_process=in_process))
+            tensor = EncodedLatentTensor(
+                dtype="float32", shape=(1, 2, 2, 3), data=np.arange(12, dtype=np.float32).tobytes()
+            )
+            mask = np.arange(6, dtype=np.float32).reshape(1, 2, 3) / 5
+            result = await composer.composition.make_engine(lambda _event: None).run(
+                Graph(
+                    nodes={
+                        "source": GraphNode("latent-fixture.source"),
+                        "masked": GraphNode(
+                            "SetLatentNoiseMask",
+                            {"samples": Link("source", "samples"), "mask": Link("source", "mask")},
+                        ),
+                    }
+                ),
+                ["masked"],
+            )
+            output = cast(
+                dict[str, Any],
+                decode_latent(encode_latent(result.outputs["masked"]["LATENT"].resolve())),
+            )
+            assert output["samples"] == tensor
+            assert output["noise_mask"].shape == (1, 1, 2, 3)
+            assert output["noise_mask"].data == mask.tobytes()
+            assert output["note"] == "keep"
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())

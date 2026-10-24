@@ -16,6 +16,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
+    materialize_latent,
 )
 
 _LATENT = TypeExpr.concrete("LATENT")
@@ -93,6 +94,7 @@ class LatentFromBatch(Node):
     def execute(
         cls, *, samples: dict[str, Any], batch_index: int, length: int
     ) -> Mapping[str, object]:
+        samples = materialize_latent(samples)
         result = samples.copy()
         source = samples["samples"]
         if batch_index < 0:
@@ -129,6 +131,7 @@ class RepeatLatentBatch(Node):
 
     @classmethod
     def execute(cls, *, samples: dict[str, Any], amount: int) -> Mapping[str, object]:
+        samples = materialize_latent(samples)
         result = samples.copy()
         source = samples["samples"]
         result["samples"] = source.repeat((amount,) + (1,) * (source.ndim - 1))
@@ -165,6 +168,7 @@ class LatentUpscale(Node):
     ) -> Mapping[str, object]:
         if width == 0 and height == 0:
             return cls.outputs(LATENT=samples)
+        samples = materialize_latent(samples)
         source = samples["samples"]
         if width == 0:
             height = max(64, height)
@@ -204,6 +208,7 @@ class LatentUpscaleBy(Node):
     def execute(
         cls, *, samples: dict[str, Any], upscale_method: str, scale_by: float
     ) -> Mapping[str, object]:
+        samples = materialize_latent(samples)
         source = samples["samples"]
         utils = importlib.import_module("dinkster_inference.utils")
         result = samples.copy()
@@ -229,6 +234,7 @@ class LatentRotate(Node):
 
     @classmethod
     def execute(cls, *, samples: dict[str, Any], rotation: str) -> Mapping[str, object]:
+        samples = materialize_latent(samples)
         torch = importlib.import_module("torch")
         turns = 0
         for prefix, count in (("90", 1), ("180", 2), ("270", 3)):
@@ -252,6 +258,7 @@ class LatentFlip(Node):
 
     @classmethod
     def execute(cls, *, samples: dict[str, Any], flip_method: str) -> Mapping[str, object]:
+        samples = materialize_latent(samples)
         torch = importlib.import_module("torch")
         result = samples.copy()
         if flip_method.startswith("x"):

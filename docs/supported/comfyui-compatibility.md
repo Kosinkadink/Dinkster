@@ -1,5 +1,10 @@
 ## ComfyUI compatibility
 
+- The native core pack exposes eight latent creation, batch, transform, resize,
+  and noise-mask nodes under their exact ComfyUI IDs. IMAGE, MASK, and LATENT
+  values cross ordinary pack boundaries without host type overrides.
+- Ten native conditioning nodes combine, blend, concatenate, multiply, mask,
+  zero, and set area or timestep metadata under their exact ComfyUI interfaces.
 - `dinkster-serve --comfy-root ... --legacy-pack PATH` runs unmodified v1 and
   pure V3 custom-node packs in quarantined isolated workers under namespaced
   node ids.

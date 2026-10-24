@@ -5,6 +5,7 @@ from __future__ import annotations
 from dinkster_values import TypeRegistry, TypeSpec, register_resident_type
 
 from .conditioning_wire import CONDITIONING_TYPE_ID, register_conditioning_type
+from .media_wire import materialize_latent, register_media_types
 from .sampling_wire import register_sampling_type
 
 MODEL_TYPE_ID = "MODEL"
@@ -45,6 +46,7 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
             if type_id in registry
             else register_sampling_type(registry, type_id)
         )
+    registered.extend(register_media_types(registry))
     return tuple(registered)
 
 
@@ -57,5 +59,6 @@ __all__ = [
     "SAMPLER_TYPE_ID",
     "SIGMAS_TYPE_ID",
     "VAE_TYPE_ID",
+    "materialize_latent",
     "register_inference_types",
 ]
