@@ -14,7 +14,7 @@
     "comfy.COLORS",
     "comfy.COMPOSITOR",
     "comfy.CONDITIONING",
-    "comfy.CONTROL_NET",
+    "CONTROL_NET",
     "comfy.CURVE",
     "comfy.DA3_GEOMETRY",
     "comfy.DA3_MODEL",
@@ -8495,7 +8495,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.CONTROL_NET"
+              "CONTROL_NET"
             ]
           }
         },
@@ -8584,7 +8584,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.CONTROL_NET"
+              "CONTROL_NET"
             ]
           }
         },
@@ -8730,7 +8730,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.CONTROL_NET"
+              "CONTROL_NET"
             ]
           }
         },
@@ -8876,7 +8876,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.CONTROL_NET"
+              "CONTROL_NET"
             ]
           }
         },
@@ -9030,7 +9030,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.CONTROL_NET"
+              "CONTROL_NET"
             ]
           }
         }
@@ -11859,7 +11859,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.CONTROL_NET"
+              "CONTROL_NET"
             ]
           }
         }
@@ -57158,7 +57158,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.CONTROL_NET"
+              "CONTROL_NET"
             ]
           }
         },
@@ -57194,7 +57194,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.CONTROL_NET"
+              "CONTROL_NET"
             ]
           }
         }
