@@ -53,6 +53,19 @@ for (const path of templates) {
   if (imported.document === undefined) {
     throw new Error(`${basename(path)} import failed: ${JSON.stringify(imported.diagnostics)}`)
   }
+  for (const graph of Object.values(imported.document.graphs)) {
+    for (const node of Object.values(graph.nodes)) {
+      if (node.type.startsWith('#') || catalog.schemas.has(node.type) || stubs.has(node.type)) continue
+      stubs.set(node.type, {
+        type: node.type,
+        displayName: node.type,
+        category: 'template smoke stub',
+        source: 'v1',
+        isOutputNode: false,
+        items: [],
+      })
+    }
+  }
   const compiled = compile({
     document: imported.document,
     revision: 1,
@@ -63,5 +76,8 @@ for (const path of templates) {
     graphFeatures: ['regions', 'typedLiteral'],
   })
   if (!compiled.ok) throw new Error(`${basename(path)} compile failed: ${JSON.stringify(compiled.diagnostics)}`)
-  console.log(`${basename(path)} stubs=${stubs.size} nodes=${Object.keys(compiled.artifact.dinksterGraph!.nodes).length}`)
+  const nativeNodes = compiled.artifact.dinksterGraph
+    ? Object.keys(compiled.artifact.dinksterGraph.nodes).length
+    : 0
+  console.log(`${basename(path)} stubs=${stubs.size} nativeNodes=${nativeNodes}`)
 }
