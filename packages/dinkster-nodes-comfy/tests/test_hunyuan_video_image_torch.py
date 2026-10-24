@@ -277,21 +277,24 @@ class Inspect(Node):
         custom = materialize_latent(old_custom_latent)["samples"]
         new_samples = materialize_latent(new_latent)["samples"]
         projected = new_positive[0][1]["clip_vision_output"].mm_projected
-        image = torch.as_tensor(_image(), dtype=torch.float32)[:5]
+        image = torch.as_tensor(_image(), dtype=torch.float32)
         old_pixels = common_upscale(
             image[:, :, :, :3].movedim(-1, 1), 16, 16, "bilinear", "center"
         ).movedim(1, -1)
         old_encoded = old_pixels[::4, ::8, ::8, 0].unsqueeze(0).unsqueeze(0).repeat(1, 16, 1, 1, 1)
-        old_mask = torch.zeros_like(old_concat[0][1]["concat_mask"])
+        old_mask = torch.ones((1, 1, 3, 2, 2), dtype=torch.float32)
+        old_mask[:, :, :2] = 0.0
         new_pixels = common_upscale(image.movedim(-1, 1), 16, 16, "bilinear", "center").movedim(
             1, -1
         )
         new_encoded = new_pixels[:, :, :, :3][::4, ::16, ::16, 0].unsqueeze(0).unsqueeze(0)
         new_encoded = new_encoded.repeat(1, 32, 1, 1, 1)
-        new_concat = new_encoded.float()
-        new_mask = torch.zeros_like(new_positive[0][1]["concat_mask"])
-        assert old_samples.shape == (1, 16, 2, 2, 2)
-        assert new_samples.shape == (1, 32, 2, 1, 1)
+        new_concat = torch.zeros((1, 32, 3, 1, 1), dtype=torch.float32)
+        new_concat[:, :, :2] = new_encoded.float()
+        new_mask = torch.ones((1, 1, 3, 1, 1), dtype=torch.float32)
+        new_mask[:, :, :2] = 0.0
+        assert old_samples.shape == (1, 16, 3, 2, 2)
+        assert new_samples.shape == (1, 32, 3, 1, 1)
         torch.testing.assert_close(
             old_concat[0][1]["concat_latent_image"], old_encoded.float(), rtol=0, atol=0
         )
@@ -363,7 +366,7 @@ def test_production_manifest_registers_both_hunyuan_video_image_nodes_twice(
                             "vae": Link("source", "vae16"),
                             "width": 16,
                             "height": 16,
-                            "length": 5,
+                            "length": 9,
                             "batch_size": 1,
                             "guidance_type": "v1 (concat)",
                             "start_image": Link("source", "image"),
@@ -376,7 +379,7 @@ def test_production_manifest_registers_both_hunyuan_video_image_nodes_twice(
                             "vae": Link("source", "vae16"),
                             "width": 16,
                             "height": 16,
-                            "length": 5,
+                            "length": 9,
                             "batch_size": 1,
                             "guidance_type": "v2 (replace)",
                             "start_image": Link("source", "image"),
@@ -389,7 +392,7 @@ def test_production_manifest_registers_both_hunyuan_video_image_nodes_twice(
                             "vae": Link("source", "vae16"),
                             "width": 16,
                             "height": 16,
-                            "length": 5,
+                            "length": 9,
                             "batch_size": 1,
                             "guidance_type": "custom",
                             "start_image": Link("source", "image"),
@@ -403,7 +406,7 @@ def test_production_manifest_registers_both_hunyuan_video_image_nodes_twice(
                             "vae": Link("source", "vae32"),
                             "width": 16,
                             "height": 16,
-                            "length": 5,
+                            "length": 9,
                             "batch_size": 1,
                             "start_image": Link("source", "image"),
                             "clip_vision_output": Link("source", "vision"),
