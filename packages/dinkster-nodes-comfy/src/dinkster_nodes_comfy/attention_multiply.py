@@ -1,4 +1,4 @@
-"""Native attention projection multiplier nodes."""
+"""Attention projection multiplier nodes."""
 
 from __future__ import annotations
 

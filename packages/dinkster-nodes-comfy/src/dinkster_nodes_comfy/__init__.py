@@ -2,6 +2,7 @@
 
 from dinkster_api.v1 import register_inference_types
 
+from .attention_multiply import ATTENTION_MULTIPLY_NODES
 from .clip import CLIP_NODES
 from .compositing import COMPOSITING_NODES
 from .conditioning import CONDITIONING_NODES
@@ -38,6 +39,7 @@ COMFY_NODES = (
     ComfyNumberConvert,
     SeedNode,
     ComfyMathExpression,
+    *ATTENTION_MULTIPLY_NODES,
     *MODEL_MERGE_NODES,
     *MODEL_SPECIFIC_MERGE_NODES,
     *LATENT_NODES,
