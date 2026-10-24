@@ -8,12 +8,16 @@ from dinkster_values import (
     CLIP_VISION_OUTPUT_TYPE,
     CLIP_VISION_TYPE,
     CONTROL_NET_TYPE,
+    FLOATS_TYPE,
     GUIDER_TYPE,
+    HOOK_KEYFRAMES_TYPE,
+    HOOKS_TYPE,
     INFERENCE_LATENT_OPERATION_TYPE,
     MODEL_TYPE,
     NOISE_TYPE,
     SAMPLER_TYPE,
     SIGMAS_TYPE,
+    TIMESTEPS_RANGE_TYPE,
     VAE_TYPE,
     TypeRegistry,
     TypeSpec,
@@ -21,6 +25,7 @@ from dinkster_values import (
 )
 
 from .conditioning_wire import CONDITIONING_TYPE_ID, register_conditioning_type
+from .hook_values import register_hook_structural_type
 from .media_wire import (
     materialize_audio,
     materialize_image,
@@ -53,8 +58,11 @@ _RESIDENT_TYPE_IDS = (
     GUIDER_TYPE_ID,
     CONTROL_NET_TYPE,
     INFERENCE_LATENT_OPERATION_TYPE,
+    HOOKS_TYPE,
+    HOOK_KEYFRAMES_TYPE,
 )
 _SAMPLING_TYPE_IDS = (SAMPLER_TYPE_ID, SIGMAS_TYPE_ID, NOISE_TYPE_ID)
+_STRUCTURAL_TYPE_IDS = (TIMESTEPS_RANGE_TYPE, FLOATS_TYPE)
 
 
 def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
@@ -76,6 +84,12 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
             registry.spec(type_id)
             if type_id in registry
             else register_sampling_type(registry, type_id)
+        )
+    for type_id in _STRUCTURAL_TYPE_IDS:
+        registered.append(
+            registry.spec(type_id)
+            if type_id in registry
+            else register_hook_structural_type(registry, type_id)
         )
     if CLIP_VISION_OUTPUT_TYPE not in registry:
         registry.register(
