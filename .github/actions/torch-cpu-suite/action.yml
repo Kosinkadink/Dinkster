@@ -59,6 +59,13 @@ runs:
         # is non-asserting, so a probe failure fails instead of being masked.
         MKL_VERBOSE=1 .venv-torch/bin/python -c "import torch; a = torch.randn(512, 512); b = a @ a" > "$RUNNER_TEMP/mkl-verbose.log" 2>&1
         grep -m1 -o 'CNR:[A-Z0-9_,]*' "$RUNNER_TEMP/mkl-verbose.log" || echo 'no MKL verbose GEMM line'
+    - if: env.DINKSTER_MODEL_TEST_GROUP == ''
+      shell: bash
+      run: |
+        uv pip install --python .venv-torch/bin/python \
+          --constraint "${{ runner.temp }}/torch-constraints.txt" \
+          -e . -e packages/dinkster-nodes-comfy
+        .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-comfy/tests
     - name: Acquire pinned line and edge parity artifacts
       if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-fast'
       shell: bash

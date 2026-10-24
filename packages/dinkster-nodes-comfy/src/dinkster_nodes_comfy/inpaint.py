@@ -24,6 +24,8 @@ from dinkster_api.v1 import (
     materialize_image,
 )
 
+from .conditioning import _set_values
+
 _BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
 _CONDITIONING = TypeExpr.concrete(CONDITIONING_TYPE)
 _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
@@ -63,12 +65,6 @@ def _masked_pixels(pixels: Any, mask: Any) -> Any:
         result[:, :, :, channel] *= inverse_mask
         result[:, :, :, channel] += 0.5
     return result
-
-
-def _set_conditioning_values(
-    conditioning: Sequence[Sequence[Any]], values: Mapping[str, object]
-) -> list[list[Any]]:
-    return [[entry[0], {**entry[1], **values}] for entry in conditioning]
 
 
 class VAEEncodeForInpaint(Node):
@@ -165,8 +161,8 @@ class InpaintModelConditioning(Node):
         if noise_mask:
             latent["noise_mask"] = cropped_mask
         return cls.outputs(
-            positive=_set_conditioning_values(positive, values),
-            negative=_set_conditioning_values(negative, values),
+            positive=_set_values(positive, values),
+            negative=_set_values(negative, values),
             latent=latent,
         )
 
