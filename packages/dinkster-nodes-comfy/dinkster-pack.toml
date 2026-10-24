@@ -76,6 +76,8 @@ namespaces = [
     "LatentOperationTonemapReinhard",
     "LatentOperationSharpen",
     "ReplaceVideoLatentFrames",
+    "CLIPTextEncode",
+    "CLIPSetLastLayer",
     "ConditioningAverage",
     "ConditioningCombine",
     "ConditioningConcat",
