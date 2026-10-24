@@ -15,6 +15,7 @@ from .dataset_collections import DATASET_COLLECTION_NODES
 from .dataset_images import DATASET_IMAGE_NODES
 from .dataset_text import DATASET_TEXT_NODES
 from .freeu import FREEU_NODES
+from .hunyuan_latent import HUNYUAN_LATENT_NODES
 from .image_core import IMAGE_CORE_NODES
 from .image_filters import IMAGE_FILTER_NODES
 from .image_transform import IMAGE_TRANSFORM_NODES
@@ -50,6 +51,7 @@ from .text import TEXT_NODES
 from .utilities import ComfyNumberConvert, SeedNode
 from .vae import VAE_NODES
 from .video_latent import VIDEO_LATENT_NODES
+from .video_latent_ops import VIDEO_LATENT_OPERATION_NODES
 
 COMFY_NODES = (
     *TEXT_NODES,
@@ -93,7 +95,9 @@ COMFY_NODES = (
     *MORPHOLOGY_NODES,
     *STABLE_CASCADE_NODES,
     *STABLE3D_NODES,
+    *HUNYUAN_LATENT_NODES,
     *VIDEO_LATENT_NODES,
+    *VIDEO_LATENT_OPERATION_NODES,
     *POST_PROCESSING_NODES,
     EmptyMochiLatentVideo,
     *AUDIO_LATENT_NODES,
