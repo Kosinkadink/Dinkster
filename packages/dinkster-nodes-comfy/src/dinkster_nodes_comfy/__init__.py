@@ -3,6 +3,7 @@
 from dinkster_api.v1 import register_inference_types
 
 from .ace_text_conditioning import ACE_TEXT_CONDITIONING_NODES
+from .advanced_samplers import ADVANCED_SAMPLER_NODES
 from .attention_guidance import ATTENTION_GUIDANCE_NODES
 from .attention_multiply import ATTENTION_MULTIPLY_NODES
 from .audio_combine import AUDIO_COMBINE_NODES
@@ -27,6 +28,7 @@ from .dataset_text import DATASET_TEXT_NODES
 from .freeu import FREEU_NODES
 from .hunyuan_latent import HUNYUAN_LATENT_NODES
 from .hunyuan_text import HUNYUAN_TEXT_NODES
+from .hunyuan_video_image import HUNYUAN_VIDEO_IMAGE_NODES
 from .image_core import IMAGE_CORE_NODES
 from .image_filters import IMAGE_FILTER_NODES
 from .image_transform import IMAGE_TRANSFORM_NODES
@@ -36,6 +38,7 @@ from .latent_advanced import LATENT_ADVANCED_NODES
 from .latent_model_specific import MODEL_LATENT_NODES
 from .latent_operations import LATENT_OPERATION_NODES
 from .logic import LOGIC_NODES
+from .ltx_audio import LTX_AUDIO_NODES
 from .mask import MASK_NODES
 from .math import ComfyMathExpression
 from .mochi import EmptyMochiLatentVideo
@@ -122,6 +125,7 @@ COMFY_NODES = (
     *STABLE3D_NODES,
     *HUNYUAN_LATENT_NODES,
     *HUNYUAN_TEXT_NODES,
+    *HUNYUAN_VIDEO_IMAGE_NODES,
     *VIDEO_CONDITIONING_NODES,
     *COSMOS_CONDITIONING_NODES,
     *VIDEO_LATENT_NODES,
@@ -136,9 +140,11 @@ COMFY_NODES = (
     *AUDIO_MUSIC_CONDITIONING_NODES,
     *AUDIO_TRANSFORM_NODES,
     *AUDIO_VAE_NODES,
+    *LTX_AUDIO_NODES,
     *DATASET_IMAGE_NODES,
     *SIGMA_SCHEDULER_NODES,
     *SAMPLER_FACTORY_NODES,
+    *ADVANCED_SAMPLER_NODES,
 )
 
 __all__ = ["COMFY_NODES", "register_inference_types"]
