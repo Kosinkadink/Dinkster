@@ -238,6 +238,8 @@ namespaces = [
     "JoinAudioChannels",
     "AudioConcat",
     "AudioMerge",
+    "TrimAudioDuration",
+    "AudioEqualizer3Band",
     "EmptyLatentAudio",
     "EmptyAceStepLatentAudio",
     "EmptyAceStep1.5LatentAudio",
