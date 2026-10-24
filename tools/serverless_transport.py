@@ -64,12 +64,9 @@ _DATA_TYPES = frozenset(
         "BOOLEAN",
         "STRING",
         "COMBO",
-        "dinkster.image",
-        "dinkster.mask",
-        "dinkster.latent",
-        "comfy.IMAGE",
-        "comfy.MASK",
-        "comfy.LATENT",
+        "IMAGE",
+        "MASK",
+        "LATENT",
     }
 )
 _RESIDENT_META = frozenset(
