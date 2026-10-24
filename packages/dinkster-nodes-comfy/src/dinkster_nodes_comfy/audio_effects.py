@@ -39,7 +39,9 @@ class TrimAudioDuration(Node):
                     "start_index",
                     _FLOAT,
                     default=0.0,
-                    widget=NumberWidget(step=0.01),
+                    widget=NumberWidget(
+                        min=-float(0xFFFFFFFFFFFFFFFF), max=float(0xFFFFFFFFFFFFFFFF), step=0.01
+                    ),
                     doc=(
                         "Start time in seconds, can be negative to count from the end "
                         "(supports sub-seconds)."

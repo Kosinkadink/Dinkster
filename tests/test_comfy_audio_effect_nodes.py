@@ -35,8 +35,8 @@ def test_audio_effect_schemas_match_comfyui_without_torch() -> None:
         ("duration", (CORE_FLOAT,), 60.0),
     )
     assert isinstance(trim.inputs[1].widget, NumberWidget)
-    assert trim.inputs[1].widget.min is None
-    assert trim.inputs[1].widget.max is None
+    assert trim.inputs[1].widget.min == -float(0xFFFFFFFFFFFFFFFF)
+    assert trim.inputs[1].widget.max == float(0xFFFFFFFFFFFFFFFF)
     assert trim.inputs[1].widget.step == 0.01
     assert trim.inputs[2].widget == NumberWidget(min=0.0, step=0.01)
     assert tuple(output.id for output in trim.outputs) == ("AUDIO",)
