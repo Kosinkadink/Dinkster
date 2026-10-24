@@ -134,7 +134,7 @@ class ExecutionExpand(Node):
         return NodeSchema(
             node_type="dev.execution.expand",
             inputs=(InputSpec("value", INT),),
-            outputs=(OutputSpec("value", INT),),
+            outputs=(OutputSpec("value", INT), OutputSpec("literal", INT)),
             may_expand_graph=True,
         )
 
@@ -142,7 +142,7 @@ class ExecutionExpand(Node):
     def execute(cls, *, value: int) -> Expansion:
         graph = ExpansionBuilder()
         child = graph.node("dev.execution.add", "child", value=value, amount=1)
-        return graph.finalize(value=child.out(0))
+        return graph.finalize(value=child.out(0), literal=99)
 
 
 class ExecutionDynamicCycle(Node):

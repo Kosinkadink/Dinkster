@@ -193,12 +193,14 @@ def test_mixed_expansion_returns(cache_enabled: bool) -> None:
             {
                 "parent": GraphNode("dev.execution.expand", {"value": 4}),
                 "output": GraphNode("dev.execution.output", {"value": Link("parent", "value")}),
+                "literal": GraphNode("dev.execution.output", {"value": Link("parent", "literal")}),
             }
         )
         for index in range(2):
             events.clear()
-            result = await engine.run(graph, ["output"], cache_enabled=cache_enabled)
+            result = await engine.run(graph, ["output", "literal"], cache_enabled=cache_enabled)
             assert result.outputs["output"]["value"].resolve() == 5
+            assert result.outputs["literal"]["value"].resolve() == 99
             assert any(
                 event.kind == "node_expanded" and event.node_id == "parent" for event in events
             )
