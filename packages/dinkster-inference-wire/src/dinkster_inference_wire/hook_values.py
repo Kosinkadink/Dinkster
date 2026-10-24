@@ -1,10 +1,10 @@
-"""Portable structural values used by native hook nodes."""
+"""Structural values and resident dependencies used by native hook nodes."""
 
 from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from typing import cast
+from typing import Any, cast
 
 from dinkster_values import (
     FLOATS_TYPE,
@@ -20,6 +20,30 @@ from dinkster_values import (
 _TENSOR_DTYPES = frozenset(
     {"int8", "int16", "int32", "int64", "float16", "bfloat16", "float32", "float64"}
 )
+
+
+def normalize_hook_owners(group: object) -> object:
+    """Declare the keyframe groups actually retained by this hook group."""
+    hooks = getattr(group, "hooks", None)
+    if hooks is None:
+        return group
+    refs = getattr(group, "_dinkster_resident_refs", ())
+    if not isinstance(refs, tuple):
+        raise TypeError("hook resident references must be a tuple")
+    previous = cast("tuple[object, ...]", getattr(group, "_dinkster_hook_keyframe_refs", ()))
+    # Derived references are replaced, not accumulated across keyframe changes.
+    explicit: list[object] = []
+    for ref in cast("tuple[object, ...]", refs):
+        if not any(ref is old for old in (*previous, *explicit)):
+            explicit.append(ref)
+    retained: list[object] = []
+    for hook in cast("list[Any]", hooks):
+        keyframes = cast("object", hook.hook_keyframe)
+        if not any(keyframes is ref for ref in (*explicit, *retained)):
+            retained.append(keyframes)
+    cast("Any", group)._dinkster_resident_refs = (*explicit, *retained)
+    cast("Any", group)._dinkster_hook_keyframe_refs = tuple(retained)
+    return group
 
 
 def _number(value: object) -> int | float:

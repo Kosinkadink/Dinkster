@@ -218,3 +218,114 @@ def test_ordinary_manifest_transports_float_strengths_twice(
             await composer.close()
 
     asyncio.run(scenario())
+
+
+def test_retained_keyframe_release_invalidates_groups_and_conditioning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_api.v1 import CONDITIONING_TYPE
+    from dinkster_caches import MemoryLRUCache
+    from dinkster_memory.resident import ResidentPool
+    from dinkster_protocol import CacheKey
+    from dinkster_values import (
+        RESOURCE_ID_META_KEY,
+        RESOURCE_REFS_META_KEY,
+        ResidentLookupError,
+        resident_resource_id,
+    )
+
+    initialize_inference_process()
+    from dinkster_inference import hooks
+
+    async def scenario() -> None:
+        pool = ResidentPool(terminal_release=lambda _: True)
+        monkeypatch.setattr("dinkster_inference_wire.types.default_pool", lambda: pool)
+        registry = TypeRegistry()
+        register_inference_types(registry)
+        cache = MemoryLRUCache(max_bytes=16384)
+        pool.register_invalidator(cache.drop_referencing)
+        keyframes = hooks.HookKeyframeGroup()
+        keyframes.add(hooks.HookKeyframe(strength=0.625, start_percent=0.25))
+        group = hooks.HookGroup()
+        hook = hooks.WeightHook()
+        hook.hook_keyframe = keyframes
+        group.add(hook)
+        primary, explicit = object(), object()
+        group._dinkster_resident_owner = primary
+        group._dinkster_resident_refs = (explicit,)
+        group_value = registry.wrap(HOOKS_TYPE, group)
+        for _ in range(2):
+            assert registry.wrap(HOOKS_TYPE, group).meta == group_value.meta
+        assert group_value.resolve() is group
+        assert group_value.meta.get(RESOURCE_ID_META_KEY) == resident_resource_id(
+            pool.rid_for(primary)
+        )
+        assert group_value.meta.get(RESOURCE_REFS_META_KEY) == (
+            resident_resource_id(pool.rid_for(explicit)),
+            resident_resource_id(pool.rid_for(keyframes)),
+        )
+
+        clone = group.clone()
+        assert clone.hooks[0].hook_keyframe is keyframes
+        clone_value = registry.wrap(HOOKS_TYPE, clone)
+        replacement = group.clone()
+        # Normalize before replacement to detect stale automatically derived refs.
+        coerce = registry.spec(HOOKS_TYPE).coerce
+        assert coerce is not None
+        coerce(replacement)
+        supplied = hooks.HookKeyframeGroup()
+        supplied.add(hooks.HookKeyframe(strength=-1.25, start_percent=0.75))
+        replacement.set_keyframes_on_hooks(supplied)
+        retained = replacement.hooks[0].hook_keyframe
+        assert retained is not supplied and retained is not keyframes
+        replacement_value = registry.wrap(HOOKS_TYPE, replacement)
+        assert replacement_value.meta.get(RESOURCE_REFS_META_KEY) == (
+            resident_resource_id(pool.rid_for(retained)),
+        )
+        assert keyframes.keyframes[0].strength == 0.625
+        assert supplied.keyframes[0].strength == -1.25
+
+        embedding = torch.tensor([[2.0, -7.0]], dtype=torch.float64)
+        raw = [[embedding, {"hooks": group, "strength": 0.3}]]
+        cloned_raw = [[embedding, {"hooks": clone, "strength": 0.3}]]
+        replacement_raw = [[embedding, {"hooks": replacement, "strength": 1.7}]]
+        values = {
+            "group": (HOOKS_TYPE, group_value),
+            "clone": (HOOKS_TYPE, clone_value),
+            "conditioning": (CONDITIONING_TYPE, registry.wrap(CONDITIONING_TYPE, raw)),
+            "cloned-conditioning": (
+                CONDITIONING_TYPE,
+                registry.wrap(CONDITIONING_TYPE, cloned_raw),
+            ),
+            "replacement": (HOOKS_TYPE, replacement_value),
+            "replacement-conditioning": (
+                CONDITIONING_TYPE,
+                registry.wrap(CONDITIONING_TYPE, replacement_raw),
+            ),
+        }
+        encoded = {}
+        for name, (type_id, value) in values.items():
+            encoded[name] = registry.spec(type_id).encode(value.resolve())
+            await cache.put(CacheKey(name), {"value": value})
+        # A separately resident keyframe is the release boundary, not the hook group.
+        keyframe_value = registry.wrap(HOOK_KEYFRAMES_TYPE, keyframes)
+        assert keyframe_value.resolve() is keyframes
+        registry.wrap(HOOK_KEYFRAMES_TYPE, supplied)
+        assert pool.release_resident(supplied)
+        assert await cache.get(CacheKey("replacement")) is not None
+        assert pool.release_resident(keyframes)
+        for name in ("group", "clone", "conditioning", "cloned-conditioning"):
+            assert await cache.get(CacheKey(name)) is None
+            with pytest.raises(ResidentLookupError):
+                registry.spec(values[name][0]).decode(encoded[name])
+        for name in ("replacement", "replacement-conditioning"):
+            assert await cache.get(CacheKey(name)) is not None
+            assert registry.spec(values[name][0]).decode(encoded[name]) is values[name][1].resolve()
+        assert pool.get(pool.rid_for(primary)) is primary
+        assert pool.get(pool.rid_for(explicit)) is explicit
+        assert raw[0][1] == {"hooks": group, "strength": 0.3}
+        assert torch.equal(raw[0][0], embedding)
+        assert pool.release_resident(retained)
+        assert await cache.get(CacheKey("replacement-conditioning")) is None
+
+    asyncio.run(scenario())

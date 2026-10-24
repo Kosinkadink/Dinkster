@@ -39,6 +39,7 @@ from .conditioning import (
     TokenSegmentDescriptor,
     canonical_conditioning_set,
 )
+from .hook_values import normalize_hook_owners
 
 CONDITIONING_TYPE_ID = CONDITIONING_TYPE
 CONDITIONING_CARRIER_FORMAT = "dinkster-conditioning-carrier-v1"
@@ -269,7 +270,10 @@ def _conditioning_hooks(payload: object) -> tuple[object, ...]:
         if isinstance(metadata, Mapping):
             hook = cast("Mapping[str, object]", metadata).get("hooks")
             if hook is not None:
-                hooks.append(hook)
+                normalize_hook_owners(hook)
+                for owner in (hook, *resident_owners(hook)):
+                    if not any(owner is existing for existing in hooks):
+                        hooks.append(owner)
     return tuple(hooks)
 
 

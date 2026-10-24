@@ -25,7 +25,7 @@ from dinkster_values import (
 )
 
 from .conditioning_wire import CONDITIONING_TYPE_ID, register_conditioning_type
-from .hook_values import register_hook_structural_type
+from .hook_values import normalize_hook_owners, register_hook_structural_type
 from .media_wire import (
     materialize_audio,
     materialize_image,
@@ -77,7 +77,12 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
         registered.append(
             registry.spec(type_id)
             if type_id in registry
-            else register_resident_type(registry, type_id, table=table)
+            else register_resident_type(
+                registry,
+                type_id,
+                table=table,
+                coerce=normalize_hook_owners if type_id == HOOKS_TYPE else None,
+            )
         )
     for type_id in _SAMPLING_TYPE_IDS:
         registered.append(
