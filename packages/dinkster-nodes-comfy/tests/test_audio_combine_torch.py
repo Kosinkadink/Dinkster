@@ -129,6 +129,38 @@ def test_merge_trims_longer_second_and_returns_first_for_empty_audio() -> None:
     assert result["waveform"] is first["waveform"]
 
 
+def test_combine_preserves_float64_inputs_and_metadata() -> None:
+    first = {
+        "waveform": torch.tensor([[[0.5, -0.25, 0.75]]], dtype=torch.float64),
+        "sample_rate": 8_000,
+        "metadata": object(),
+    }
+    second = {
+        "waveform": torch.tensor([[[0.125, 0.5]]], dtype=torch.float64),
+        "sample_rate": 8_000,
+    }
+    first_before, second_before = first["waveform"].clone(), second["waveform"].clone()
+    results = (
+        JoinAudioChannels.execute(audio_left=first, audio_right=second)["audio"],
+        AudioConcat.execute(audio1=first, audio2=second, direction="before")["AUDIO"],
+        AudioMerge.execute(audio1=first, audio2=second, merge_method="subtract")["AUDIO"],
+    )
+    expected = (
+        [[[0.5, -0.25], [0.125, 0.5]]],
+        [[[0.125, 0.5, 0.5, -0.25, 0.75], [0.125, 0.5, 0.5, -0.25, 0.75]]],
+        [[[0.375, -0.75, 0.75]]],
+    )
+    for result, values in zip(results, expected, strict=True):
+        assert set(result) == {"waveform", "sample_rate"}
+        assert result["sample_rate"] == 8_000
+        assert result["waveform"].dtype is torch.float64
+        assert result["waveform"].device.type == "cpu"
+        assert torch.equal(result["waveform"], torch.tensor(values, dtype=torch.float64))
+    assert set(first) == {"waveform", "sample_rate", "metadata"}
+    assert torch.equal(first["waveform"], first_before)
+    assert torch.equal(second["waveform"], second_before)
+
+
 class AudioSource(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -164,9 +196,15 @@ class AudioInspect(Node):
 
     @classmethod
     def execute(cls, *, joined: Any, concatenated: Any, merged: Any) -> dict[str, object]:
-        joined_waveform = materialize_audio(joined)["waveform"]
-        concatenated_waveform = materialize_audio(concatenated)["waveform"]
-        merged_waveform = materialize_audio(merged)["waveform"]
+        audios = tuple(materialize_audio(audio) for audio in (joined, concatenated, merged))
+        for audio in audios:
+            assert set(audio) == {"waveform", "sample_rate"}
+            assert audio["sample_rate"] == 8_000
+            assert audio["waveform"].dtype is torch.float32
+            assert audio["waveform"].device.type == "cpu"
+        joined_waveform, concatenated_waveform, merged_waveform = (
+            audio["waveform"] for audio in audios
+        )
         assert torch.equal(joined_waveform, torch.tensor([[[1, 2], [4, 5]]], dtype=torch.float32))
         assert torch.equal(
             concatenated_waveform,

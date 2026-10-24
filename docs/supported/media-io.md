@@ -91,7 +91,8 @@
   negative-from-end starts, stereo channel split and mono join, before/after
   concatenation, add/subtract/multiply/mean merging with peak normalization,
   decibel gain, fade in/out with linear or cosine curves, and a three-band
-  shelf/peaking equalizer. Native ComfyUI join, concatenate, and merge nodes
+  shelf/peaking equalizer; mixed sample rates are matched through
+  libswresample. Native ComfyUI join, concatenate, and merge nodes
   materialize bounded AUDIO values, match the lower sample rate to the higher
   rate, and preserve ComfyUI channel, trimming, padding, and normalization
   behavior

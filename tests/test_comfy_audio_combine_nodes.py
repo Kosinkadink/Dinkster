@@ -27,6 +27,15 @@ def test_audio_combine_schemas_match_comfyui() -> None:
     for node in AUDIO_COMBINE_NODES:
         schema = node.schema()
         assert node in COMFY_NODES
+        assert schema.category == "audio"
+        assert (
+            schema.display_name
+            == {
+                "JoinAudioChannels": "Join Audio Channels",
+                "AudioConcat": "Concatenate Audio",
+                "AudioMerge": "Merge Audio",
+            }[schema.node_type]
+        )
         assert all(item.required for item in schema.inputs)
         assert all(item.type.runtime_type_id() == AUDIO_TYPE for item in schema.inputs[:2])
         assert all(item.type.runtime_type_id() == AUDIO_TYPE for item in schema.outputs)
