@@ -7,6 +7,10 @@ from collections.abc import Mapping
 from typing import Any
 
 from dinkster_api.v1 import (
+    CORE_FLOAT,
+    CORE_INT,
+    CORE_STRING,
+    IMAGE_TYPE,
     Deprecation,
     InputSpec,
     Node,
@@ -17,12 +21,11 @@ from dinkster_api.v1 import (
     TypeExpr,
     materialize_image,
 )
-from dinkster_values.builtin_types import CORE_FLOAT, CORE_INT, CORE_STRING, IMAGE_TYPE
 
 _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 _IMAGES = TypeExpr.list_of(_IMAGE)
-_FLOATS = TypeExpr.list_of(TypeExpr.concrete(CORE_FLOAT))
-_INTS = TypeExpr.list_of(TypeExpr.concrete(CORE_INT))
+_FLOAT = TypeExpr.concrete(CORE_FLOAT)
+_INT = TypeExpr.concrete(CORE_INT)
 _STRINGS = TypeExpr.list_of(TypeExpr.concrete(CORE_STRING))
 
 
@@ -31,7 +34,9 @@ def _frames(images: list[Any]) -> list[Any]:
     for value in images:
         image = materialize_image(value)
         if image.ndim != 4:
-            raise ValueError(f"Expected 4D image tensor, got shape {tuple(image.shape)}")
+            raise ValueError(
+                f"Expected 4D image tensor, got {type(image).__name__} shape {image.shape}"
+            )
         frames.extend(image[index : index + 1] for index in range(image.shape[0]))
     return frames
 
@@ -49,7 +54,7 @@ class ShuffleDataset(Node):
                 InputSpec("images", _IMAGES, doc="List of images to process."),
                 InputSpec(
                     "seed",
-                    _INTS,
+                    _INT,
                     default=0,
                     doc="Random seed.",
                     widget=NumberWidget(min=0, max=0xFFFFFFFFFFFFFFFF),
@@ -59,14 +64,11 @@ class ShuffleDataset(Node):
         )
 
     @classmethod
-    def execute(cls, *, images: list[Any], seed: int | list[int]) -> Mapping[str, object]:
+    def execute(cls, *, images: list[Any], seed: int) -> Mapping[str, object]:
         numpy = importlib.import_module("numpy")
         images = _frames(images)
-        value = seed[0] if isinstance(seed, list) else seed
-        numpy.random.seed(value % (2**32 - 1))
-        return cls.outputs(
-            images=[images[index] for index in numpy.random.permutation(len(images))]
-        )
+        indices = numpy.random.RandomState(seed % (2**32 - 1)).permutation(len(images))
+        return cls.outputs(images=[images[index] for index in indices])
 
 
 class ShuffleImageTextDataset(Node):
@@ -83,7 +85,7 @@ class ShuffleImageTextDataset(Node):
                 InputSpec("texts", _STRINGS, doc="List of texts to shuffle.", force_input=True),
                 InputSpec(
                     "seed",
-                    _INTS,
+                    _INT,
                     default=0,
                     doc="Random seed.",
                     widget=NumberWidget(min=0, max=0xFFFFFFFFFFFFFFFF),
@@ -96,13 +98,12 @@ class ShuffleImageTextDataset(Node):
         )
 
     @classmethod
-    def execute(
-        cls, *, images: list[Any], texts: list[str], seed: int | list[int]
-    ) -> Mapping[str, object]:
+    def execute(cls, *, images: list[Any], texts: list[str], seed: int) -> Mapping[str, object]:
         numpy = importlib.import_module("numpy")
-        value = seed[0] if isinstance(seed, list) else seed
-        numpy.random.seed(value % (2**32 - 1))
-        indices = tuple(int(index) for index in numpy.random.permutation(len(images)))
+        indices = tuple(
+            int(index)
+            for index in numpy.random.RandomState(seed % (2**32 - 1)).permutation(len(images))
+        )
         return cls.outputs(
             images=[images[index] for index in indices], texts=[texts[index] for index in indices]
         )
@@ -121,7 +122,7 @@ class ImageDeduplication(Node):
                 InputSpec("images", _IMAGES, doc="List of images to process."),
                 InputSpec(
                     "similarity_threshold",
-                    _FLOATS,
+                    _FLOAT,
                     default=0.95,
                     doc=(
                         "Similarity threshold (0-1). Higher means more similar. Images above this "
@@ -135,17 +136,10 @@ class ImageDeduplication(Node):
         )
 
     @classmethod
-    def execute(
-        cls, *, images: list[Any], similarity_threshold: float | list[float]
-    ) -> Mapping[str, object]:
+    def execute(cls, *, images: list[Any], similarity_threshold: float) -> Mapping[str, object]:
         numpy = importlib.import_module("numpy")
         image_module = importlib.import_module("PIL.Image")
         images = _frames(images)
-        threshold = (
-            similarity_threshold[0]
-            if isinstance(similarity_threshold, list)
-            else similarity_threshold
-        )
         if not images:
             return cls.outputs(images=[])
 
@@ -165,11 +159,11 @@ class ImageDeduplication(Node):
         hashes = [image_hash(image) for image in images]
         kept: list[int] = []
         for index, value in enumerate(hashes):
-            if all(
+            if not any(
                 1.0
                 - sum(left != right for left, right in zip(value, hashes[other], strict=True))
                 / 64.0
-                < threshold
+                >= similarity_threshold
                 for other in kept
             ):
                 kept.append(index)
@@ -187,23 +181,23 @@ class ImageGrid(Node):
             search_terms=("grid", "collage", "combine"),
             inputs=(
                 InputSpec("images", _IMAGES, doc="List of images to process."),
-                InputSpec("columns", _INTS, default=4, widget=NumberWidget(min=1, max=20)),
+                InputSpec("columns", _INT, default=4, widget=NumberWidget(min=1, max=20)),
                 InputSpec(
                     "cell_width",
-                    _INTS,
+                    _INT,
                     default=256,
                     advanced=True,
                     widget=NumberWidget(min=32, max=2048),
                 ),
                 InputSpec(
                     "cell_height",
-                    _INTS,
+                    _INT,
                     default=256,
                     advanced=True,
                     widget=NumberWidget(min=32, max=2048),
                 ),
                 InputSpec(
-                    "padding", _INTS, default=4, advanced=True, widget=NumberWidget(min=0, max=50)
+                    "padding", _INT, default=4, advanced=True, widget=NumberWidget(min=0, max=50)
                 ),
             ),
             outputs=(OutputSpec("images", _IMAGE, doc="Processed images"),),
@@ -214,20 +208,16 @@ class ImageGrid(Node):
         cls,
         *,
         images: list[Any],
-        columns: int | list[int],
-        cell_width: int | list[int],
-        cell_height: int | list[int],
-        padding: int | list[int],
+        columns: int,
+        cell_width: int,
+        cell_height: int,
+        padding: int,
     ) -> Mapping[str, object]:
         image_module = importlib.import_module("PIL.Image")
         numpy = importlib.import_module("numpy")
         images = _frames(images)
         if not images:
             raise ValueError("Cannot create grid from empty image list")
-        columns = columns[0] if isinstance(columns, list) else columns
-        cell_width = cell_width[0] if isinstance(cell_width, list) else cell_width
-        cell_height = cell_height[0] if isinstance(cell_height, list) else cell_height
-        padding = padding[0] if isinstance(padding, list) else padding
         rows = (len(images) + columns - 1) // columns
         grid = image_module.new(
             "RGB",

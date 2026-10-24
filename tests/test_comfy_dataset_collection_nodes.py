@@ -55,11 +55,27 @@ def test_dataset_collection_schemas_match_the_fixed_reference() -> None:
     )
     assert actual == expected
 
+    expected_input_kinds = {
+        "ShuffleDataset": {"images": "list", "seed": "concrete"},
+        "ShuffleImageTextDataset": {"images": "list", "texts": "list", "seed": "concrete"},
+        "ImageDeduplication": {"images": "list", "similarity_threshold": "concrete"},
+        "ImageGrid": {
+            "images": "list",
+            "columns": "concrete",
+            "cell_width": "concrete",
+            "cell_height": "concrete",
+            "padding": "concrete",
+        },
+        "MergeTextLists": {"texts": "list"},
+    }
     for node in DATASET_COLLECTION_NODES:
         wire = cast(dict[str, Any], schema_to_wire(node.schema()))
-        for item in wire["interface"]:
-            if item["role"] == "input":
-                assert item["type"]["kind"] == "list"
+        input_kinds = {
+            item["id"]: item["type"]["kind"]
+            for item in wire["interface"]
+            if item["role"] == "input"
+        }
+        assert input_kinds == expected_input_kinds[node.schema().node_type]
     shuffle = cast(dict[str, Any], schema_to_wire(DATASET_COLLECTION_NODES[0].schema()))
     seed = next(item for item in shuffle["interface"] if item["id"] == "seed")
     assert seed["default"] == 0
