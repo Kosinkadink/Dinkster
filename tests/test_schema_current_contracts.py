@@ -38,6 +38,14 @@ from dinkster_schema import (
     schema_from_wire,
     schema_signature,
     schema_to_wire,
+    type_expr_to_wire,
+)
+from dinkster_values.builtin_types import (
+    CORE_BOOLEAN,
+    CORE_COMBO,
+    CORE_FLOAT,
+    CORE_INT,
+    CORE_STRING,
 )
 
 SCHEMA = NodeSchema(
@@ -914,11 +922,7 @@ def test_widget_representations_authoring_is_closed_and_domain_preserving() -> N
 
 
 def test_widget_socket_binding_enforced() -> None:
-    """NUMBER/STRING descriptors bind to the socket type and constraints
-    interpret in the socket's domain: NUMBER
-    only on concrete INT/FLOAT with integral constraints on int
-    sockets, STRING only on concrete STRING. The backend refuses to
-    emit what the frontend would warn-and-drop."""
+    """Scalar widget constraints use the socket's concrete value domain."""
     # NUMBER on a non-numeric concrete socket.
     with pytest.raises(ValueError, match="number widget requires a concrete"):
         InputSpec("s", TypeExpr.concrete("STRING"), widget=NumberWidget(min=0))
@@ -960,8 +964,7 @@ def test_widget_socket_binding_enforced() -> None:
     with pytest.raises(ValueError, match="color widget requires a concrete STRING"):
         InputSpec("color", TypeExpr.concrete("COMBO"), widget=ColorWidget())
 
-    # COMBO only on concrete COMBO - not string, wildcard, union, or a
-    # list whose element is combo. The descriptor describes one combo socket.
+    # COMBO rejects a different primitive, wildcard, or union domain.
     InputSpec(
         "combo",
         TypeExpr.concrete("COMBO"),
@@ -971,7 +974,6 @@ def test_widget_socket_binding_enforced() -> None:
         TypeExpr.concrete("STRING"),
         TypeExpr.wildcard(),
         TypeExpr.union("COMBO", "STRING"),
-        TypeExpr.list_of(TypeExpr.concrete("COMBO")),
     ):
         with pytest.raises(ValueError, match="combo widget requires a concrete"):
             InputSpec("combo", wrong, widget=ComboWidget(options=("a", "b")))
@@ -988,6 +990,82 @@ def test_combo_widget_binding_is_enforced_during_wire_decode() -> None:
     interface[0]["widget"] = {"type": "COMBO", "options": ["a", "b"]}
     with pytest.raises(ValueError, match="combo widget requires a concrete COMBO"):
         schema_from_wire(wire)
+
+
+@pytest.mark.parametrize(
+    ("element", "widget", "default"),
+    (
+        (CORE_INT, NumberWidget(min=0, max=2**64 - 1, step=1), 1),
+        (CORE_FLOAT, NumberWidget(min=0, max=1, step=0.1, round=0.01), 0.95),
+        (CORE_STRING, StringWidget(multiline=True), ""),
+        (CORE_BOOLEAN, BooleanWidget(label_on="yes"), True),
+        (CORE_COMBO, ComboWidget(options=("first", "second")), "first"),
+        (CORE_STRING, StringWidget(multiline=True), ["caption"]),
+    ),
+)
+def test_primitive_widget_list_binding_roundtrip(
+    element: str, widget: Any, default: object
+) -> None:
+    schema = NodeSchema(
+        "test.list-widget",
+        inputs=(
+            InputSpec(
+                "value",
+                TypeExpr.list_of(TypeExpr.concrete(element)),
+                default=default,
+                widget=widget,
+            ),
+        ),
+    )
+    wire = schema_to_wire(schema)
+    assert schema_from_wire(wire) == schema
+    interface = cast(list[dict[str, Any]], wire["interface"])
+    assert interface[0]["default"] == default
+    assert interface[0]["type"] == {
+        "kind": "list",
+        "element": {"kind": "concrete", "types": [element]},
+    }
+    for wrong in (
+        TypeExpr.list_of(TypeExpr.list_of(TypeExpr.concrete(element))),
+        TypeExpr.list_of(TypeExpr.wildcard()),
+        TypeExpr.list_of(TypeExpr.union(CORE_INT, CORE_STRING)),
+    ):
+        with pytest.raises(ValueError, match="widget requires"):
+            InputSpec("value", wrong, widget=widget)
+        interface[0]["type"] = type_expr_to_wire(wrong)
+        with pytest.raises(ValueError, match="widget requires"):
+            schema_from_wire(wire)
+
+
+def test_primitive_widget_lists_preserve_numeric_and_specialized_rules() -> None:
+    integer = TypeExpr.list_of(TypeExpr.concrete(CORE_INT))
+    for widget in (
+        NumberWidget(min=0.5),
+        NumberWidget(max=2.5),
+        NumberWidget(step=0.25),
+        NumberWidget(min=float(2**54)),
+        NumberWidget(round=0.1),
+    ):
+        with pytest.raises(ValueError, match="integral|exactly representable|round requires"):
+            InputSpec("value", integer, widget=widget)
+    for element, widget in (
+        (CORE_INT, StringWidget()),
+        (CORE_STRING, NumberWidget(min=0)),
+        (CORE_FLOAT, BooleanWidget(label_on="yes")),
+        (CORE_STRING, ComboWidget(options=("a",))),
+    ):
+        with pytest.raises(ValueError, match="widget requires"):
+            InputSpec("value", TypeExpr.list_of(TypeExpr.concrete(element)), widget=widget)
+    for widget, expression in (
+        (
+            MultiComboWidget(options=("a",)),
+            TypeExpr.list_of(TypeExpr.list_of(TypeExpr.concrete(CORE_COMBO))),
+        ),
+        (AssetWidget(), TypeExpr.list_of(TypeExpr.concrete(CORE_STRING))),
+        (ColorWidget(), TypeExpr.list_of(TypeExpr.concrete(CORE_STRING))),
+    ):
+        with pytest.raises(ValueError, match="widget requires"):
+            InputSpec("value", expression, widget=widget)
 
 
 def test_number_widget_rejects_bool_constraints() -> None:

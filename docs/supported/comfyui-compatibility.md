@@ -1,5 +1,8 @@
 ## ComfyUI compatibility
 
+- Seven native dataset text nodes lowercase, uppercase, truncate, prefix,
+  suffix, replace, and strip text under exact core IDs, retaining the fixed
+  reference's one-element list payloads on scalar STRING outputs.
 - The native core pack exposes eleven latent creation, batch, transform, resize,
   blend, composite, crop, and noise-mask nodes under their exact ComfyUI IDs.
   IMAGE, MASK, and LATENT values cross ordinary pack boundaries without host type
@@ -11,8 +14,12 @@
   concatenate, cut, split to batches, join batches, and set batch seed behavior.
 - Native CLIP text encoding preserves scheduled conditioning; layer selection
   clones the encoder without changing the source under exact core interfaces.
+- FreeU and FreeU_V2 clone models and patch UNet output blocks under their
+  exact core interfaces, including CPU Fourier fallback.
 - Ten native conditioning nodes combine, blend, concatenate, multiply, mask,
   zero, and set area or timestep metadata under their exact ComfyUI interfaces.
+- Native VAE inpainting encoding and model conditioning preserve crop, mask,
+  latent, and conditioning metadata behavior under exact ComfyUI interfaces.
 - Fifteen native mask and composite nodes convert, create, invert, crop, combine,
   feather, grow, threshold, Porter-Duff composite, and split or join image alpha
   under exact core IDs.
