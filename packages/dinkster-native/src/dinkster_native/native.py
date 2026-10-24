@@ -22,7 +22,6 @@ from .fork_nodes import FORK_NODES
 from .image import (
     register_image_asset_providers,
     register_image_type,
-    register_image_type_equivalences,
 )
 from .latent import register_latent_type
 from .nodes_model3d import (
@@ -126,8 +125,8 @@ def register_native_types(registry: TypeRegistry) -> None:
     ):
         _register_resident(registry, type_id)
 
-    if "dinkster.latent" not in registry:
-        register_latent_type(registry, "dinkster.latent")
+    if "LATENT" not in registry:
+        register_latent_type(registry, "LATENT")
 
     for type_id in ("SAMPLER", "SIGMAS", "NOISE"):
         register_sampling_type(registry, type_id)
@@ -136,12 +135,11 @@ def register_native_types(registry: TypeRegistry) -> None:
     register_curve_type(registry)
     register_model3d_type(registry, "dinkster.model3d")
 
-    for type_id in ("dinkster.image", "dinkster.mask"):
+    for type_id in ("IMAGE", "MASK"):
         if type_id not in registry:
             register_image_type(registry, type_id)
-    register_image_type_equivalences(registry)
-    if registry.asset_decoder_for("dinkster.image") is None:
-        register_image_asset_providers(registry, "dinkster.image")
+    if registry.asset_decoder_for("IMAGE") is None:
+        register_image_asset_providers(registry, "IMAGE")
 
     if "comfy.AUDIO" not in registry:
         register_audio_type(registry, "comfy.AUDIO")

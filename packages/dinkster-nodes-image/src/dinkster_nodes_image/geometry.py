@@ -55,8 +55,8 @@ from .support import (
 )
 from .types import REGION_TYPE, Region
 
-IMAGE_TYPE = "dinkster.image"
-MASK_TYPE = "dinkster.mask"
+IMAGE_TYPE = "IMAGE"
+MASK_TYPE = "MASK"
 
 IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 MASK = TypeExpr.concrete(MASK_TYPE)

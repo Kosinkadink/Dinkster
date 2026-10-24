@@ -22,8 +22,8 @@ from dinkster_api.v1 import (
     prepare_image_array_encoding,
 )
 
-IMAGE_TYPE = "dinkster.image"
-MASK_TYPE = "dinkster.mask"
+IMAGE_TYPE = "IMAGE"
+MASK_TYPE = "MASK"
 IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 MASK = TypeExpr.concrete(MASK_TYPE)
 COMBO = TypeExpr.concrete(CORE_COMBO)

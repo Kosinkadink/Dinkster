@@ -23,7 +23,7 @@ from dinkster_values import TypeRegistry
 from dinkster_workers.boundary import ValueCodec, decode_invocation, encode_invocation
 from dinkster_workers.catalog import worker_declarations
 
-IMAGE = TypeExpr.concrete("comfy.IMAGE")
+IMAGE = TypeExpr.concrete("IMAGE")
 STRING = TypeExpr.concrete("STRING")
 STREAM = TypeExpr.stream_of(IMAGE)
 
@@ -69,7 +69,7 @@ def test_worker_invocation_retains_stream_schema() -> None:
 
 
 def test_stream_output_variable_is_bound_by_dynamic_slot() -> None:
-    variable = TypeExpr.variable("T", ("comfy.IMAGE",))
+    variable = TypeExpr.variable("T", ("IMAGE",))
     schema = NodeSchema(
         "test.stream-variable",
         slots=(

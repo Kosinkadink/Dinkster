@@ -34,7 +34,7 @@ from .types import (
     PoseSkeleton,
 )
 
-IMAGE = TypeExpr.concrete("dinkster.image")
+IMAGE = TypeExpr.concrete("IMAGE")
 BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
 FLOAT = TypeExpr.concrete(CORE_FLOAT)
 STRING = TypeExpr.concrete(CORE_STRING)

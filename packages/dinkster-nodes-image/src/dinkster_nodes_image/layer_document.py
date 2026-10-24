@@ -22,8 +22,8 @@ from .compositor_types import LayerStack, decode_layer_stack, source_layer_finge
 from .types import Region
 
 LAYERS = TypeExpr.concrete("dinkster.layers")
-IMAGE = TypeExpr.concrete("dinkster.image")
-MASK = TypeExpr.concrete("dinkster.mask")
+IMAGE = TypeExpr.concrete("IMAGE")
+MASK = TypeExpr.concrete("MASK")
 STRING = TypeExpr.concrete("STRING")
 
 

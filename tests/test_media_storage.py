@@ -240,7 +240,7 @@ def test_shared_memory_boundary_preserves_compact_storage(audio: bool) -> None:
     comfy_compose.register_comfy_host_types(registry)
     samples = np.arange(24, dtype=np.int16 if audio else np.uint8).reshape(1, 2, 4, 3)
     obj = {"waveform": samples.reshape(1, 2, 12), "sample_rate": 48000} if audio else samples
-    type_id = "comfy.AUDIO" if audio else "comfy.IMAGE"
+    type_id = "comfy.AUDIO" if audio else "IMAGE"
     codec = ValueCodec(registry, shm_threshold=1)
     blobs: list[bytes] = []
     segments: list[SharedMemory] = []

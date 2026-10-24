@@ -6132,7 +6132,7 @@ def test_values_endpoint_layer_document_rendition(
             node = (
                 GraphNode(
                     "dinkster.layers.add",
-                    {"image": TypedLiteral("dinkster.image", pixels.tolist())},
+                    {"image": TypedLiteral("IMAGE", pixels.tolist())},
                 )
                 if type_id == "dinkster.layers"
                 else GraphNode("test.compat_layers", {})

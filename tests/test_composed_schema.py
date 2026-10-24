@@ -180,18 +180,18 @@ def test_media_policies_compose_with_storage_and_descriptors(schema: NodeSchema)
             schema.inputs[0],
             InputSpec(
                 "image",
-                TypeExpr.concrete("comfy.IMAGE"),
+                TypeExpr.concrete("IMAGE"),
                 accepts_storage=True,
                 alpha_policy="require",
             ),
         ),
-        outputs=(OutputSpec("image", TypeExpr.concrete("comfy.IMAGE"), alpha_policy="drop"),),
+        outputs=(OutputSpec("image", TypeExpr.concrete("IMAGE"), alpha_policy="drop"),),
         output_descriptors=OutputDescriptorsSpec(
             "entries",
             (
                 OutputSpec(
                     "mask",
-                    TypeExpr.concrete("comfy.MASK"),
+                    TypeExpr.concrete("MASK"),
                     mask_polarity="transparency",
                     mask_semantic="alpha",
                 ),

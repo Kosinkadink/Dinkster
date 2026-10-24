@@ -58,8 +58,7 @@ from dinkster_api.v1 import (
     video_from_source,
 )
 
-IMAGE_TYPE = "dinkster.image"
-COMPAT_IMAGE_TYPE = "comfy.IMAGE"
+IMAGE_TYPE = "IMAGE"
 AUDIO_TYPE = "comfy.AUDIO"
 VIDEO_TYPE = "comfy.VIDEO"
 
@@ -938,7 +937,6 @@ VIDEO_NODES = (
 
 __all__ = [
     "AUDIO_TYPE",
-    "COMPAT_IMAGE_TYPE",
     "IMAGE_TYPE",
     "MAX_DECODED_AUDIO_BYTES",
     "MAX_DECODED_FRAME_BYTES",

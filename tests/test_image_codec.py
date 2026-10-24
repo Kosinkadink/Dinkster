@@ -293,7 +293,7 @@ def test_fingerprint_hashes_array_through_a_buffer(
 
 def test_fingerprint_separates_type_dtype_shape_content() -> None:
     array = np.zeros((2, 2), dtype=np.float32)
-    fingerprint = image_array_fingerprint("comfy.IMAGE")
+    fingerprint = image_array_fingerprint("IMAGE")
     assert fingerprint(array) != image_array_fingerprint("dev.image")(array)
     assert fingerprint(array) != fingerprint(array.astype(np.float64))
     assert fingerprint(array) != fingerprint(array.reshape(1, 4))

@@ -59,8 +59,8 @@ from tools.serverless_transport import (
 )
 
 SOURCE = "test-deployment-source-and-lock-digest"
-IMAGE = TypeExpr.concrete("comfy.IMAGE")
-LATENT = TypeExpr.concrete("comfy.LATENT")
+IMAGE = TypeExpr.concrete("IMAGE")
+LATENT = TypeExpr.concrete("LATENT")
 
 
 class Generate(Node):
@@ -146,7 +146,7 @@ class Harness:
             "node-1",
             "test.transform",
             {
-                key: self.registry.wrap("comfy.IMAGE" if key == "image" else "comfy.LATENT", value)
+                key: self.registry.wrap("IMAGE" if key == "image" else "LATENT", value)
                 for key, value in Generate.execute().items()
             },
             Transform.schema(),
@@ -284,7 +284,7 @@ def test_fresh_handlers_and_durable_cas(harness: Harness, reuse_cache: bool) -> 
         result = await fresh_client.invoke(harness.invocation())
         assert result.outputs is not None
         expected = harness.registry.wrap(
-            "comfy.IMAGE", Transform.execute(**Generate.execute())["image"]
+            "IMAGE", Transform.execute(**Generate.execute())["image"]
         )
         assert result.outputs["image"].fingerprint == expected.fingerprint
         actual_meta = dict(result.outputs["image"].meta.entries)

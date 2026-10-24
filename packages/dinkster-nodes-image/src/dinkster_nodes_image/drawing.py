@@ -61,8 +61,8 @@ from .types import REGION_TYPE, Region
 overlay_rgba = image_math.overlay_rgba
 text_coverage = image_math.text_coverage
 
-IMAGE = TypeExpr.concrete("dinkster.image")
-MASK = TypeExpr.concrete("dinkster.mask")
+IMAGE = TypeExpr.concrete("IMAGE")
+MASK = TypeExpr.concrete("MASK")
 REGION = TypeExpr.concrete(REGION_TYPE)
 BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
 INT = TypeExpr.concrete(CORE_INT)

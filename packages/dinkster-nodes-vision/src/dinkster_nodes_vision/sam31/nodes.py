@@ -39,8 +39,8 @@ from dinkster_api.v1 import (
     region_meta,
 )
 
-IMAGE_TYPE = "dinkster.image"
-MASK_TYPE = "dinkster.mask"
+IMAGE_TYPE = "IMAGE"
+MASK_TYPE = "MASK"
 IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 MASK = TypeExpr.concrete(MASK_TYPE)
 MASKS = TypeExpr.list_of(TypeExpr.concrete(MASK_TYPE))

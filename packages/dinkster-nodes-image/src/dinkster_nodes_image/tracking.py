@@ -37,13 +37,13 @@ from .support import (
 )
 from .types import Detection, Region
 
-IMAGE_TYPE = "dinkster.image"
+IMAGE_TYPE = "IMAGE"
 VIDEO_TYPE = "comfy.VIDEO"
 
 MEDIA = TypeExpr.variable("media_type", (IMAGE_TYPE, VIDEO_TYPE))
 BASE_MEDIA = TypeExpr.variable("base_media_type", (IMAGE_TYPE, VIDEO_TYPE))
 IMAGE_OR_VIDEO = TypeExpr.union(IMAGE_TYPE, VIDEO_TYPE)
-MASK = TypeExpr.concrete("dinkster.mask")
+MASK = TypeExpr.concrete("MASK")
 REGION = TypeExpr.concrete("dinkster.region")
 REGION_LIST = TypeExpr.list_of(REGION)
 REGIONS_OR_DETECTIONS = TypeExpr.list_of(TypeExpr.union("dinkster.region", "dinkster.detection"))

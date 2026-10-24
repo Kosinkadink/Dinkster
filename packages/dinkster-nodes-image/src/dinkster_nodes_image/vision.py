@@ -28,7 +28,7 @@ from .support import combo_input as _combo
 from .support import number_input as _number
 from .types import DETECTION_TYPE
 
-MASK = TypeExpr.concrete("dinkster.mask")
+MASK = TypeExpr.concrete("MASK")
 DETECTION = TypeExpr.concrete(DETECTION_TYPE)
 DETECTIONS = TypeExpr.list_of(DETECTION)
 MASKS = TypeExpr.list_of(MASK)

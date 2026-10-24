@@ -81,10 +81,10 @@ class LayerNodeSource(Node):
         return NodeSchema(
             node_type="test.layer-node-source",
             outputs=(
-                OutputSpec("image", TypeExpr.concrete("dinkster.image")),
+                OutputSpec("image", TypeExpr.concrete("IMAGE")),
                 OutputSpec(
                     "mask",
-                    TypeExpr.concrete("dinkster.mask"),
+                    TypeExpr.concrete("MASK"),
                     mask_polarity="transparency",
                     mask_semantic="alpha",
                 ),
@@ -229,7 +229,7 @@ def test_node_build_edit_split_selectors_and_api_flatten_match() -> None:
     source = np.array([[[[1, 0, 0], [0, 1, 0]]]], dtype=np.float32)
     expected_value = AddLayer.execute(image=source)["layers"]
     value = execute_graph_node(
-        AddLayer, {"image": TypedLiteral("dinkster.image", source.tolist())}
+        AddLayer, {"image": TypedLiteral("IMAGE", source.tolist())}
     )["layers"]
     assert isinstance(value, ImageDocument)
     assert isinstance(expected_value, ImageDocument)
@@ -1637,7 +1637,7 @@ def test_isolated_worker_shm_flatten_matches_in_process(
                     nodes={
                         "add": GraphNode(
                             "dinkster.layers.add",
-                            {"image": TypedLiteral("dinkster.image", source.tolist())},
+                            {"image": TypedLiteral("IMAGE", source.tolist())},
                         )
                     }
                 ),

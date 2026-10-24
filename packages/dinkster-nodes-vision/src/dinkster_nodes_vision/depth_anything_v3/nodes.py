@@ -24,7 +24,7 @@ from dinkster_api.v1 import (
     prepare_image_array_encoding,
 )
 
-IMAGE_TYPE = "dinkster.image"
+IMAGE_TYPE = "IMAGE"
 IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 INT = TypeExpr.concrete(CORE_INT)
 COMBO = TypeExpr.concrete(CORE_COMBO)

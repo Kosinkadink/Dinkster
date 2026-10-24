@@ -265,7 +265,7 @@ def test_media_comfy_aliases_preserve_pinned_capture_semantics() -> None:
         assert inputs[name]["widget"]["max"] == 16384
     assert inputs["capture_on_queue"]["default"] is True
     assert set(outputs) == {"image"}
-    assert outputs["image"]["type"] == {"kind": "concrete", "types": ["comfy.IMAGE"]}
+    assert outputs["image"]["type"] == {"kind": "concrete", "types": ["IMAGE"]}
     record = records["WebcamCapture"]
     assert record["confidence"]["tier"] == "parametric"
     case = record["replacement"]["cases"][0]

@@ -18,7 +18,7 @@ from dinkster_api.v1 import (
 from dinkster_image_document import IMAGE_DOCUMENT_MEDIA_TYPE
 from dinkster_image_document.document import ImageDocument, flatten
 
-IMAGE = TypeExpr.concrete("dinkster.image")
+IMAGE = TypeExpr.concrete("IMAGE")
 ASSET = TypeExpr.concrete(ASSET_TYPE)
 STRING = TypeExpr.concrete("STRING")
 

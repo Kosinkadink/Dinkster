@@ -251,7 +251,7 @@ def test_sampler_custom_advanced_accepts_declared_multi_stream_latent(
     result = cast("Mapping[str, object]", node.execute(latent_image=latent))
     registry = TypeRegistry()
     translation.register_types(registry)
-    latent_spec = registry.spec("comfy.LATENT")
+    latent_spec = registry.spec("LATENT")
     assert latent_spec.validate_encoded is not None
     for output_id in ("output", "denoised_output"):
         output = cast("Mapping[str, MultiStreamLatent[object]]", result[output_id])["samples"]
@@ -375,7 +375,7 @@ def test_blend_schema_translation() -> None:
     assert schema.category == "comfy/image/blend"
     by_id = {spec.id: spec for spec in schema.inputs}
     assert set(by_id) == {"image_a", "image_b", "factor", "mode", "label"}
-    assert by_id["image_a"].required and by_id["image_a"].type.types == ("comfy.IMAGE",)
+    assert by_id["image_a"].required and by_id["image_a"].type.types == ("IMAGE",)
     assert by_id["factor"].default == 0.5 and not by_id["factor"].required
     assert by_id["mode"].default == "normal"  # combo defaults to first choice
     # The choice list survives as a static dropdown (wire v9 COMBO) on the
@@ -388,7 +388,7 @@ def test_blend_schema_translation() -> None:
     assert by_id["label"].default == "" and not by_id["label"].required
     assert [out.id for out in schema.outputs] == ["image"]
     assert schema.idempotent
-    assert translation.opaque_types == {"comfy.IMAGE"}
+    assert translation.opaque_types == {"IMAGE"}
 
 
 def test_v3_remote_options_untrusted_route_is_whole_node_classified_skip() -> None:
@@ -1884,7 +1884,7 @@ def test_translated_image_and_mask_share_the_image_array_codec() -> None:
     registry = TypeRegistry()
     register_core_types(registry)
     translation.register_types(registry)
-    for type_id in ("comfy.IMAGE", "comfy.MASK"):
+    for type_id in ("IMAGE", "MASK"):
         assert registry.spec(type_id).prepare_buffer_encoding is prepare_image_array_encoding
 
 

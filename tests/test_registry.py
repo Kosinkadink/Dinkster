@@ -168,7 +168,7 @@ def test_template_catalog_is_versioned_latest_deterministic_and_digest_verified(
         path="templates/starter.json",
         description="Start here",
         tags=("starter",),
-        family="dinkster.image",
+        family="IMAGE",
         models=("model.safetensors",),
         thumbnail_digest=artifact_digest(b"thumbnail"),
         thumbnail_media_type="image/png",

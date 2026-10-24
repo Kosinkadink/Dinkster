@@ -35,7 +35,7 @@ from dinkster_api.v1 import (
 
 from .support import MAX_DIMENSION, check_output_size, image_array, resize_array
 
-IMAGE = TypeExpr.concrete("dinkster.image")
+IMAGE = TypeExpr.concrete("IMAGE")
 CURVE = TypeExpr.concrete("dinkster.curve")
 FLOAT = TypeExpr.concrete(CORE_FLOAT)
 INT = TypeExpr.concrete(CORE_INT)

@@ -179,7 +179,7 @@ def test_type_expressions_roundtrip_and_remain_closed() -> None:
         TypeExpr.wildcard(),
         TypeExpr.variable("T", ("INT",)),
         TypeExpr.list_of(TypeExpr.concrete("INT")),
-        TypeExpr.asset_of(TypeExpr.concrete("dinkster.image")),
+        TypeExpr.asset_of(TypeExpr.concrete("IMAGE")),
     )
     for expression in expressions:
         assert type_expr_from_wire(type_expr_to_wire(expression)) == expression
@@ -201,14 +201,14 @@ def test_output_represents_wire_decode_rejects_unknown_fields_and_bad_shapes() -
         inputs=(
             InputSpec(
                 "image",
-                TypeExpr.asset_of(TypeExpr.concrete("dinkster.image")),
+                TypeExpr.asset_of(TypeExpr.concrete("IMAGE")),
                 widget=AssetWidget(kind="media/image"),
             ),
         ),
         outputs=(
             OutputSpec(
                 "image",
-                TypeExpr.concrete("dinkster.image"),
+                TypeExpr.concrete("IMAGE"),
                 represents=OutputRepresents("image", "decoded-image"),
             ),
         ),

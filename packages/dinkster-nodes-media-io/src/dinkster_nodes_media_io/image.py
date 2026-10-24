@@ -52,8 +52,8 @@ from dinkster_api.v1 import (
 
 from .image_metadata import metadata_document, parse_image_metadata_json, png_metadata
 
-IMAGE_TYPE = "dinkster.image"
-MASK_TYPE = "dinkster.mask"
+IMAGE_TYPE = "IMAGE"
+MASK_TYPE = "MASK"
 
 IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 MASK = TypeExpr.concrete(MASK_TYPE)

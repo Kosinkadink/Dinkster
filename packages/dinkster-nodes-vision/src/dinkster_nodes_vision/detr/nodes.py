@@ -37,7 +37,7 @@ from dinkster_api.v1 import (
     region_meta,
 )
 
-IMAGE_TYPE = "dinkster.image"
+IMAGE_TYPE = "IMAGE"
 IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 DETECTIONS = TypeExpr.list_of(TypeExpr.concrete(DETECTION_TYPE))
 COMBO = TypeExpr.concrete(CORE_COMBO)

@@ -349,8 +349,8 @@ def test_top_level_ordinary_ids_keep_wire_14_permissiveness() -> None:
 
 def test_opaque_io_types_register_comfy_types() -> None:
     translation = CompatTranslation()
-    assert translate_v3_type("LATENT", translation) == TypeExpr.concrete("comfy.LATENT")
-    assert translation.opaque_types == {"comfy.LATENT"}
+    assert translate_v3_type("LATENT", translation) == TypeExpr.concrete("LATENT")
+    assert translation.opaque_types == {"LATENT"}
 
 
 def test_wildcard_and_multitype_unions() -> None:
@@ -778,13 +778,13 @@ def test_autogrow_translates_to_input_family() -> None:
     assert result.inputs == ()
     (family,) = result.input_families
     assert family.id == "images"
-    assert family.type == TypeExpr.concrete("comfy.IMAGE")
+    assert family.type == TypeExpr.concrete("IMAGE")
     assert family.min_members == 1
     assert family.max_members == 10
     assert family.member_prefix == "image"
     assert family.member_names is None
     assert family.doc == "one frame"
-    assert "comfy.IMAGE" in translation.opaque_types
+    assert "IMAGE" in translation.opaque_types
 
     listed = translate(
         FakeSchema(
@@ -793,7 +793,7 @@ def test_autogrow_translates_to_input_family() -> None:
             is_input_list=True,
         )
     )
-    assert listed.input_families[0].type == TypeExpr.list_of(TypeExpr.concrete("comfy.IMAGE"))
+    assert listed.input_families[0].type == TypeExpr.list_of(TypeExpr.concrete("IMAGE"))
 
 
 def test_autogrow_names_template_caps_members() -> None:
@@ -844,7 +844,7 @@ def test_dynamic_combo_and_slot_translate_recursively_from_direct_v3_objects() -
 
     translated_slot = result.slots[0]
     assert isinstance(translated_slot, DynamicSlotSpec)
-    assert translated_slot.slot_type == TypeExpr.concrete("comfy.IMAGE")
+    assert translated_slot.slot_type == TypeExpr.concrete("IMAGE")
     slot_input = translated_slot.inputs[0]
     assert isinstance(slot_input, InputSpec)
     assert slot_input.type == TypeExpr.concrete(CORE_FLOAT)
@@ -852,7 +852,7 @@ def test_dynamic_combo_and_slot_translate_recursively_from_direct_v3_objects() -
     assert translated_slot.force_input is True
 
     listed = translate(FakeSchema("Listed", inputs=[slot], is_input_list=True))
-    assert listed.slots[0].slot_type == TypeExpr.list_of(TypeExpr.concrete("comfy.IMAGE"))
+    assert listed.slots[0].slot_type == TypeExpr.list_of(TypeExpr.concrete("IMAGE"))
     listed_dependent = listed.slots[0].inputs[0]
     assert isinstance(listed_dependent, InputSpec)
     assert listed_dependent.type == TypeExpr.list_of(TypeExpr.concrete(CORE_FLOAT))

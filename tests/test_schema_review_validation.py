@@ -47,13 +47,13 @@ def test_asset_widget_binding_matrix_accepts_assets_and_concrete_scalars() -> No
     """The picker binds to direct asset destinations and concrete scalar
     decode/merge destinations, but never list destinations or unresolved
     asset variables."""
-    image_asset = TypeExpr.asset_of(TypeExpr.concrete("comfy.IMAGE"))
+    image_asset = TypeExpr.asset_of(TypeExpr.concrete("IMAGE"))
     InputSpec("bare", TypeExpr.concrete("dinkster.asset"), widget=AssetWidget())
     InputSpec("typed", image_asset, widget=AssetWidget())
-    InputSpec("scalar", TypeExpr.concrete("comfy.IMAGE"), widget=AssetWidget())
+    InputSpec("scalar", TypeExpr.concrete("IMAGE"), widget=AssetWidget())
     InputSpec(
         "sheet",
-        TypeExpr.asset_of(TypeExpr.list_of(TypeExpr.concrete("comfy.IMAGE"))),
+        TypeExpr.asset_of(TypeExpr.list_of(TypeExpr.concrete("IMAGE"))),
         widget=AssetWidget(),
     )
     with pytest.raises(ValueError, match="asset widget"):
@@ -61,7 +61,7 @@ def test_asset_widget_binding_matrix_accepts_assets_and_concrete_scalars() -> No
     with pytest.raises(ValueError, match="asset widget"):
         InputSpec(
             "values",
-            TypeExpr.list_of(TypeExpr.concrete("comfy.IMAGE")),
+            TypeExpr.list_of(TypeExpr.concrete("IMAGE")),
             widget=AssetWidget(),
         )
     with pytest.raises(ValueError, match="asset widget"):

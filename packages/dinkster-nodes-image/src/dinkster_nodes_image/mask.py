@@ -67,8 +67,8 @@ from .support import (
 )
 from .types import REGION_TYPE, Region
 
-IMAGE = TypeExpr.concrete("dinkster.image")
-MASK = TypeExpr.concrete("dinkster.mask")
+IMAGE = TypeExpr.concrete("IMAGE")
+MASK = TypeExpr.concrete("MASK")
 REGION = TypeExpr.concrete(REGION_TYPE)
 BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
 INT = TypeExpr.concrete(CORE_INT)

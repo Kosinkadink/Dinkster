@@ -163,6 +163,7 @@ from .saved_results import capture_saved_results
 from .video import VIDEO_V1_NAME, register_video_type
 
 COMFY_TYPE_PREFIX = "comfy."
+COMFY_VALUE_TYPE_NAMES = frozenset(("IMAGE", "MASK", "LATENT"))
 V3_AUTOGROW_IO_TYPE = "COMFY_AUTOGROW_V3"
 V3_DYNAMICCOMBO_IO_TYPE = "COMFY_DYNAMICCOMBO_V3"
 V3_DYNAMICSLOT_IO_TYPE = "COMFY_DYNAMICSLOT_V3"
@@ -1214,6 +1215,12 @@ def comfy_type_id(v1_type: str) -> str:
     return COMFY_TYPE_PREFIX + v1_type
 
 
+def comfy_value_type_id(v1_type: str) -> str:
+    if v1_type in COMFY_VALUE_TYPE_NAMES:
+        return v1_type
+    return comfy_type_id(v1_type)
+
+
 def _is_v3_marker(v1_type: object) -> bool:
     return type(v1_type) is str and v1_type.startswith("COMFY_") and v1_type.endswith("_V3")
 
@@ -1374,7 +1381,7 @@ def _member_type_id(io_type: str) -> tuple[str, tuple[str, ...]]:
     primitive = PRIMITIVES.get(io_type)
     if primitive is not None:
         return primitive, ()
-    opaque = comfy_type_id(io_type)
+    opaque = comfy_value_type_id(io_type)
     return opaque, (opaque,)
 
 

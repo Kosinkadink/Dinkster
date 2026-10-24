@@ -349,14 +349,14 @@ def test_untagged_encoded_video_is_rejected_without_inventing_color_metadata() -
     assert video["probe"] == original_probe
 
 
-@pytest.mark.parametrize("type_id", ["dinkster.image", "comfy.VIDEO"])
+@pytest.mark.parametrize("type_id", ["IMAGE", "comfy.VIDEO"])
 def test_registered_schemas_bind_media_output_types_through_graph_execution(type_id: str) -> None:
     registered = {node.schema().node_type: node.schema() for node in IMAGE_NODES}
     crop_schema = registered["dinkster.image.tracked_crop"]
     uncrop_schema = registered["dinkster.image.tracked_uncrop"]
     expected_media = crop_schema.inputs[0].type
     assert expected_media.kind == "variable"
-    assert expected_media.types == ("dinkster.image", "comfy.VIDEO")
+    assert expected_media.types == ("IMAGE", "comfy.VIDEO")
     assert crop_schema.outputs[0].type == expected_media
     assert uncrop_schema.inputs[0].type.kind == "variable"
     assert uncrop_schema.outputs[0].type == uncrop_schema.inputs[0].type
@@ -398,7 +398,7 @@ def test_registered_schemas_bind_media_output_types_through_graph_execution(type
                     "dinkster.image.tracked_crop",
                     {
                         "media": media,
-                        "source.masks": TypedLiteral("dinkster.mask", masks.tolist()),
+                        "source.masks": TypedLiteral("MASK", masks.tolist()),
                     },
                     slot_variants={"source": "masks"},
                 ),

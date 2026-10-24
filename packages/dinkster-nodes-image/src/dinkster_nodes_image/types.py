@@ -309,8 +309,8 @@ def register_image_types(registry: TypeRegistry) -> None:
     if SAVE_TARGET_TYPE not in registry:
         register_save_target_type(registry)
     for type_id, renderer in (
-        ("dinkster.image", render_image_png),
-        ("dinkster.mask", render_mask_png),
+        ("IMAGE", render_image_png),
+        ("MASK", render_mask_png),
     ):
         if type_id not in registry:
             registry.register(
@@ -319,7 +319,7 @@ def register_image_types(registry: TypeRegistry) -> None:
                 decode=decode_image_array,
                 prepare_buffer_encoding=prepare_image_array_encoding,
                 fingerprint=image_array_fingerprint(type_id),
-                meta=mask_array_meta if type_id == "dinkster.mask" else image_array_meta,
+                meta=mask_array_meta if type_id == "MASK" else image_array_meta,
                 validate_encoded=validate_image_encoded,
                 validate_encoded_buffer=validate_image_encoded,
             )

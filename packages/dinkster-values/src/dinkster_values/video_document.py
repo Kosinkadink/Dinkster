@@ -19,7 +19,7 @@ DOCUMENT_TYPE = "dinkster.video_document"
 DOCUMENT_LIMIT = MEBIBYTE
 MAX_ITEMS = 4096
 MAX_DEPTH = 16
-MEDIA_TYPES = frozenset({"comfy.VIDEO", "dinkster.image", "comfy.AUDIO", "dinkster.layers"})
+MEDIA_TYPES = frozenset({"comfy.VIDEO", "IMAGE", "comfy.AUDIO", "dinkster.layers"})
 
 
 class TimelineError(ValueError):

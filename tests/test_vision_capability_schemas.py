@@ -73,7 +73,7 @@ def test_vision_choices_are_declared_empty_and_pack_owned() -> None:
 def test_capability_schemas_share_detection_value_contract() -> None:
     detection = TypeExpr.concrete("dinkster.detection")
     detections = TypeExpr.list_of(detection)
-    mask = TypeExpr.concrete("dinkster.mask")
+    mask = TypeExpr.concrete("MASK")
     masks = TypeExpr.list_of(mask)
 
     detect = DetectObjects.schema()

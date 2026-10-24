@@ -345,7 +345,7 @@ def test_namespace_rejects_core_id_ownership_and_nested_type_prefixes() -> None:
                         "id": "result",
                         "type": {
                             "kind": "list",
-                            "element": {"kind": "concrete", "types": ["comfy.IMAGE"]},
+                            "element": {"kind": "concrete", "types": ["IMAGE"]},
                         },
                     }
                 ],

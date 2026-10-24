@@ -59,7 +59,7 @@ from dinkster_workers import InProcessWorker
 
 def test_asset_type_id_round_trips() -> None:
     for element in (
-        "comfy.IMAGE",
+        "IMAGE",
         "list<comfy.IMAGE>",
         "asset<comfy.IMAGE>",  # grammatical even though registration bans it
     ):
@@ -67,18 +67,18 @@ def test_asset_type_id_round_trips() -> None:
 
 
 def test_parse_asset_type_id_rejects_non_asset_spellings() -> None:
-    for spelling in ("comfy.IMAGE", "list<comfy.IMAGE>", "asset<>", "asset<", "", "x>"):
+    for spelling in ("IMAGE", "list<comfy.IMAGE>", "asset<>", "asset<", "", "x>"):
         assert parse_asset_type_id(spelling) is None
 
 
 def test_runtime_type_atom_peels_the_whole_grammar() -> None:
-    assert runtime_type_atom("comfy.IMAGE") == "comfy.IMAGE"
-    assert runtime_type_atom("asset<comfy.IMAGE>") == "comfy.IMAGE"
-    assert runtime_type_atom("asset<list<comfy.IMAGE>>") == "comfy.IMAGE"
-    assert runtime_type_atom("list<asset<comfy.IMAGE>>") == "comfy.IMAGE"
-    assert runtime_type_atom("list<asset<list<comfy.IMAGE>>>") == "comfy.IMAGE"
-    assert runtime_type_atom("stream<comfy.IMAGE>") == "comfy.IMAGE"
-    assert runtime_type_atom("asset<stream<comfy.IMAGE>>") == "comfy.IMAGE"
+    assert runtime_type_atom("IMAGE") == "IMAGE"
+    assert runtime_type_atom("asset<comfy.IMAGE>") == "IMAGE"
+    assert runtime_type_atom("asset<list<comfy.IMAGE>>") == "IMAGE"
+    assert runtime_type_atom("list<asset<comfy.IMAGE>>") == "IMAGE"
+    assert runtime_type_atom("list<asset<list<comfy.IMAGE>>>") == "IMAGE"
+    assert runtime_type_atom("stream<comfy.IMAGE>") == "IMAGE"
+    assert runtime_type_atom("asset<stream<comfy.IMAGE>>") == "IMAGE"
 
 
 def test_runtime_type_atom_rejects_malformed_ids() -> None:
@@ -101,7 +101,7 @@ def test_runtime_type_atom_rejects_malformed_ids() -> None:
 # TypeExpr model + wire
 
 
-IMAGE = TypeExpr.concrete("comfy.IMAGE")
+IMAGE = TypeExpr.concrete("IMAGE")
 
 
 def test_asset_expr_runtime_ids_and_cardinality() -> None:
@@ -124,7 +124,7 @@ def test_asset_expr_runtime_ids_and_cardinality() -> None:
 def test_asset_expr_accepts_only_matching_asset_ids() -> None:
     expr = TypeExpr.asset_of(IMAGE)
     assert expr.accepts_concrete("asset<comfy.IMAGE>")
-    assert not expr.accepts_concrete("comfy.IMAGE")
+    assert not expr.accepts_concrete("IMAGE")
     assert not expr.accepts_concrete("asset<comfy.LATENT>")
     assert not expr.accepts_concrete("list<asset<comfy.IMAGE>>")
 
@@ -133,7 +133,7 @@ def test_asset_ids_are_never_spelled_concrete() -> None:
     with pytest.raises(ValueError, match="asset types are spelled"):
         TypeExpr.concrete("asset<comfy.IMAGE>")
     with pytest.raises(ValueError, match="asset types are spelled"):
-        TypeExpr.union("comfy.IMAGE", "asset<comfy.IMAGE>")
+        TypeExpr.union("IMAGE", "asset<comfy.IMAGE>")
 
 
 def test_asset_expr_wire_round_trip() -> None:

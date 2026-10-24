@@ -27,7 +27,7 @@ from dinkster_api.v1 import (
     resolver_from_env,
 )
 
-IMAGE_TYPE = "dinkster.image"
+IMAGE_TYPE = "IMAGE"
 IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 ASSET = TypeExpr.concrete(ASSET_TYPE)
 INT = TypeExpr.concrete(CORE_INT)

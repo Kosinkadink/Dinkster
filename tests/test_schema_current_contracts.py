@@ -58,7 +58,7 @@ def _represented_schema(
     represents: OutputRepresents | None = None,
     combos: tuple[DynamicComboSpec, ...] = (),
 ) -> NodeSchema:
-    image = TypeExpr.concrete("dinkster.image")
+    image = TypeExpr.concrete("IMAGE")
     return NodeSchema(
         node_type="test.represented-output",
         inputs=(
@@ -1188,7 +1188,7 @@ def test_output_represents_is_strict_frozen_presentation_metadata() -> None:
     with pytest.raises(ValueError, match="applies must not be empty"):
         OutputRepresents("image", "decoded-image", applies={})
     with pytest.raises(ValueError, match="represents must be an OutputRepresents"):
-        OutputSpec("out", TypeExpr.concrete("dinkster.image"), represents=cast("Any", {}))
+        OutputSpec("out", TypeExpr.concrete("IMAGE"), represents=cast("Any", {}))
 
 
 def test_output_represents_validates_input_and_combo_scope() -> None:

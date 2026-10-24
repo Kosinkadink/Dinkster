@@ -423,12 +423,12 @@ def test_implicit_region_index_wire_roundtrip() -> None:
 
 
 def test_stream_region_port_wire_roundtrip() -> None:
-    stream = TypeExpr.stream_of(TypeExpr.concrete("comfy.IMAGE"))
+    stream = TypeExpr.stream_of(TypeExpr.concrete("IMAGE"))
     graph = Graph(nodes={"m": map_region(ports={"item": stream})})
     wire = graph_to_wire(graph)
     assert wire["nodes"]["m"]["region"]["ports"]["item"] == {
         "kind": "stream",
-        "element": {"kind": "concrete", "types": ["comfy.IMAGE"]},
+        "element": {"kind": "concrete", "types": ["IMAGE"]},
     }
     assert graph_from_wire(wire) == graph
 
@@ -1019,10 +1019,10 @@ def test_map_region_executes_per_element() -> None:
 @pytest.mark.parametrize(
     ("type_id", "payloads"),
     [
-        ("comfy.IMAGE", [[[[0.0, 0.25, 0.5], [0.75, 1.0, 0.125]]], [[[1.0, 0.5, 0.0]]]]),
-        ("comfy.LATENT", [{"samples": [[[[1.5, -2.0], [3.25, 4.5]]]]}, {"samples": [[[[9.0]]]]}]),
+        ("IMAGE", [[[[0.0, 0.25, 0.5], [0.75, 1.0, 0.125]]], [[[1.0, 0.5, 0.0]]]]),
+        ("LATENT", [{"samples": [[[[1.5, -2.0], [3.25, 4.5]]]]}, {"samples": [[[[9.0]]]]}]),
         ("CONDITIONING", [{"tokens": [1, 4], "weight": 0.75}, {"tokens": [9]}]),
-        ("comfy.MASK", [[[0.0, 1.0], [0.25, 0.75]], [[1.0]]]),
+        ("MASK", [[[0.0, 1.0], [0.25, 0.75]], [[1.0]]]),
         (
             "comfy.AUDIO",
             [
