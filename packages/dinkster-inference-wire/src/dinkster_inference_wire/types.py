@@ -13,6 +13,7 @@ from dinkster_values import (
     HOOK_KEYFRAMES_TYPE,
     HOOKS_TYPE,
     INFERENCE_LATENT_OPERATION_TYPE,
+    MODEL_PATCH_TYPE,
     MODEL_TYPE,
     NOISE_TYPE,
     SAMPLER_TYPE,
@@ -26,7 +27,11 @@ from dinkster_values import (
 )
 
 from .conditioning_wire import CONDITIONING_TYPE_ID, register_conditioning_type
-from .hook_values import normalize_hook_owners, register_hook_structural_type
+from .hook_values import (
+    normalize_clip_hook_owners,
+    normalize_hook_owners,
+    register_hook_structural_type,
+)
 from .media_wire import (
     materialize_audio,
     materialize_image,
@@ -53,6 +58,7 @@ NOISE_TYPE_ID = NOISE_TYPE
 
 _RESIDENT_TYPE_IDS = (
     MODEL_TYPE_ID,
+    MODEL_PATCH_TYPE,
     CLIP_TYPE_ID,
     CLIP_VISION_TYPE_ID,
     VAE_TYPE_ID,
@@ -83,7 +89,13 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
                 registry,
                 type_id,
                 table=table,
-                coerce=normalize_hook_owners if type_id == HOOKS_TYPE else None,
+                coerce=(
+                    normalize_hook_owners
+                    if type_id == HOOKS_TYPE
+                    else normalize_clip_hook_owners
+                    if type_id == CLIP_TYPE
+                    else None
+                ),
             )
         )
     for type_id in _SAMPLING_TYPE_IDS:

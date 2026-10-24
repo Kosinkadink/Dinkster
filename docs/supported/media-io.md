@@ -90,7 +90,9 @@
 - Native ComfyUI audio nodes include Trim Audio Duration, Split Audio Channels,
   Adjust Audio Volume, Audio Equalizer (3-Band), Empty Audio with rounded sample
   counts, Empty MiniMax Music3 Latent Audio with frame-aligned duration and batching,
-  VAE Encode Audio, VAE Decode Audio, and tiled VAE Decode Audio.
+  VAE Encode Audio, VAE Decode Audio, tiled VAE Decode Audio, LTXV Audio VAE Encode,
+  LTXV Audio VAE Decode, Empty LTXV Latent Audio, and Get Audio Latent Size for
+  audio and joint AV latents.
   Value-level audio operations on AUDIO values include duration trimming with
   negative-from-end starts, stereo channel split and mono join, before/after
   concatenation, add/subtract/multiply/mean merging with peak normalization,

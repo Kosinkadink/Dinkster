@@ -18,6 +18,8 @@
 - Hunyuan Image text conditioning combines independent BERT and MT5 prompts.
   Hunyuan Video image-to-video text conditioning uses projected vision embeddings
   with the video prompt template and configurable image interleave.
+- Hunyuan Image and Hunyuan Video 1.5 image-to-video conditioning prepare native
+  image latents, masks, and optional vision metadata for their model variants.
 - Native Stable Audio conditioning attaches start and total seconds to both prompt
   streams. Video percentage-area conditioning preserves temporal and spatial bounds.
 - Typed absence remains a Dinkster engine contract: `core.absent` values,
@@ -34,6 +36,8 @@
   unconnected latent leaves conditioning unchanged.
 - `TextEncodeAceStepAudio` and `TextEncodeAceStepAudio1.5` encode ACE Step
   audio tags and lyrics with their native generation controls.
+- `CLIPTextEncodeKandinsky5` combines its CLIP-L and Qwen prompt streams for
+  Kandinsky 5 conditioning.
 - Hook-bearing native conditioning retains its runtime hook groups across node
   links. Releasing a referenced hook invalidates dependent conditioning and caches.
 - Nine native hook conditioning nodes set and combine single or paired prompt
