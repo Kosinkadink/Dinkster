@@ -108,6 +108,7 @@ from .manifest import (
 from .produced_assets import ProducedAssetAuthority, result_asset_digests
 from .relay import MemoryRelay, ReleaseGuard, WorkerFullReleaseResult
 from .resume import InvocationKey
+from .run_control import dispatch_run_control
 from .staging import StageAsset, declared_assets_from_wire
 from .workgroup import ReplicaEndpoint
 from .workgroup_session import WORKGROUP_FRAME_TYPE, WorkGroupSession
@@ -485,6 +486,8 @@ class BoundarySession:
         # Events for an id with no sink (caller passed none, or the result
         # already landed) are dropped - they are chatter by contract.
         self._event_sinks: dict[str, OnInvocationEvent] = {}
+        self._run_controls: dict[str, object] = {}
+        self._run_control_requests: set[tuple[str, str]] = set()
         # Memory leases (DESIGN 3.10): the peer names what it is about to
         # materialize; this side holds the governor-backed reservation until
         # the peer releases it. None means grant-without-accounting - the
@@ -1415,6 +1418,8 @@ class BoundarySession:
         if self._resumable:
             future.add_done_callback(_retrieve_future_exception)
         self._pending[invocation.invocation_id] = future
+        if invocation.run_control is not None:
+            self._run_controls[invocation.invocation_id] = invocation.run_control
         if on_event is not None:
             self._event_sinks[invocation.invocation_id] = on_event
         started_at_ns = time.time_ns()
@@ -1458,6 +1463,10 @@ class BoundarySession:
             raise
         finally:
             self._event_sinks.pop(invocation.invocation_id, None)
+            self._run_controls.pop(invocation.invocation_id, None)
+            self._run_control_requests = {
+                item for item in self._run_control_requests if item[0] != invocation.invocation_id
+            }
         round_trip_ms = (time.perf_counter() - started) * 1000.0
         execute_ms = float(reply_header.get("executeMs", 0.0))
         error_wire = reply_header.get("error")
@@ -1756,6 +1765,8 @@ class BoundarySession:
         self._choices_pending.clear()
         self._stage_event_sinks.clear()
         self._event_sinks.clear()
+        self._run_controls.clear()
+        self._run_control_requests.clear()
         self._invocation_keys.clear()
         self._last_event_sequences.clear()
         self._cancelled_invocations.clear()
@@ -2027,6 +2038,36 @@ class BoundarySession:
                         # (which would take the whole session down with it).
                         with contextlib.suppress(Exception):
                             sink(event)
+                elif kind == "runControl":
+                    invocation_id = header.get("invocationId")
+                    request_id = header.get("requestId")
+                    if type(invocation_id) is not str or type(request_id) is not str:
+                        raise BoundaryError("run control request identity is malformed")
+                    context = self._run_controls.get(invocation_id)
+                    control_key = (invocation_id, request_id)
+                    if context is None or control_key in self._run_control_requests:
+                        raise BoundaryError("run control request names no active invocation")
+                    self._run_control_requests.add(control_key)
+
+                    async def run_control_request(
+                        request_context: object = context,
+                        request_header: dict[str, Any] = header,
+                        request_blobs: list[bytes] = blobs,
+                        request_key: tuple[str, str] = control_key,
+                    ) -> None:
+                        try:
+                            await dispatch_run_control(
+                                cast("Any", request_context),
+                                self._codec,
+                                request_header,
+                                request_blobs,
+                                self.send,
+                            )
+                        finally:
+                            self._run_control_requests.discard(request_key)
+
+                    task = asyncio.create_task(run_control_request())
+                    task.add_done_callback(_retrieve_future_exception)
                 elif kind == "schemaReloadRequest":
                     if not self._schema_reload or blobs:
                         raise BoundaryError("unnegotiated schema reload request")

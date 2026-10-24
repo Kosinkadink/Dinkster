@@ -94,12 +94,13 @@ Once a codec's retained bytes reach this budget, further first-crossings
 still work - they just carry their bytes every time instead of becoming
 digest-only. Bounds the RAM a long-lived connection can pin."""
 
-PROTOCOL_VERSION = 9
+PROTOCOL_VERSION = 10
 """The boundary protocol version. Carried in the remote hello exchange
 (clientHello/hello) so peers built against different wire contracts refuse
 each other explicitly instead of corrupting frames. Local parent/child pairs
 ship together and do not negotiate.
 
+v10: invocation-scoped run-control relay;
 v9: schema declarations and invocation effective schemas;
 v8: stable engine, daemon, job-attempt, and invocation identities with
 same-process rebind, owner fencing, and acknowledged result replay;

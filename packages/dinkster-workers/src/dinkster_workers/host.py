@@ -32,6 +32,7 @@ import threading
 import time
 import traceback
 from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
+from dataclasses import replace
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
 from typing import Any, NamedTuple, TypeAlias, cast
@@ -155,6 +156,7 @@ from .manifest import (
 from .produced_assets import source_asset_files
 from .relay import consumer_item_to_wire
 from .resume import InvocationKey, ResumableConversation
+from .run_control import BoundaryRunContext
 from .staging import AssetStagingService, StageAsset
 from .transport import connect_endpoint
 from .workgroup_session import (
@@ -956,6 +958,7 @@ async def serve_connection(
     sent_segments: dict[str, SharedMemory] = {}
     tasks: dict[str, asyncio.Task[None]] = {}
     cancellation_events: dict[str, threading.Event] = {}
+    run_contexts: dict[str, BoundaryRunContext] = {}
     # In-flight stageAssets requests: requestId -> (task, abort event). The
     # event reaches into the fetch thread (checked between chunks), so a
     # cancelStage stops the download at the next chunk boundary and the
@@ -1361,6 +1364,15 @@ async def serve_connection(
         try:
             consumed: list[str] = []
             invocation = decode_invocation(codec, header, blobs, consumed)
+            run_context = BoundaryRunContext(
+                invocation_id,
+                invocation.node_id,
+                invocation.inputs,
+                codec,
+                send,
+            )
+            run_contexts[invocation_id] = run_context
+            invocation = replace(invocation, run_control=run_context)
             if consumed:
                 await send({"type": "shmAck", "segments": consumed})
             # Memory lease (DESIGN 3.10): the pack's planner names what this
@@ -1597,6 +1609,9 @@ async def serve_connection(
                     }
                 )
         finally:
+            context = run_contexts.pop(invocation_id, None)
+            if context is not None:
+                context.close()
             if result_send_locked:
                 result_transfer_lock.release()
             # Refuse late calls synchronously before cleanup can suspend. A
@@ -2568,6 +2583,13 @@ async def serve_connection(
                 tasks[invocation_id] = track_resource_task(
                     asyncio.create_task(run_invocation(header, blobs, cancellation))
                 )
+            elif kind == "runControlResult":
+                invocation_id = header.get("invocationId")
+                if type(invocation_id) is not str:
+                    raise BoundaryError("run control response identity is malformed")
+                context = run_contexts.get(invocation_id)
+                if context is None or not context.accept(header, blobs):
+                    raise BoundaryError("run control response names no pending request")
             elif kind == "rebind":
                 if resume is None:
                     raise BoundaryError("rebind received on a non-resumable conversation")
