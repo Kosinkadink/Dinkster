@@ -26,3 +26,8 @@ they do not load or apply LoRA weights.
 
 ControlNet values use the native `CONTROL_NET` type and stay resident in their
 owning worker, with the same governed lifetime as other loaded models.
+
+Hook scheduling creates and interpolates keyframes, assigns cloned keyframes to
+hook groups, and combines up to eight hook groups. Hook values remain governed
+resident objects; float-strength tensors are materialized only by the scheduling
+consumer while retaining their dtype and ordering.
