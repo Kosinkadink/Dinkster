@@ -42,7 +42,9 @@ omitted at every depth.
 ```toml
 [pack]
 name = "my-pack"                 # the pack id; also the attribution key
+publisher = "my-publisher"       # checkout publisher identity
 # namespaces = ["my-pack"]       # node-type claims; default: the pack name
+# type-namespaces = ["my-pack"]  # type id or namespace claims; default: the pack name
 requires = ["numpy>=1.26"]       # pip requirements; PIN them (doctor warns)
 
 [pack.sandbox]                   # requests only; the host grants authority
@@ -723,6 +725,35 @@ from signatures:
 ## Value types and codecs
 
 Register pack-owned types in `register_types(registry)`:
+
+Declare the type ids or namespaces you own in `[pack] type-namespaces`.
+The default is your pack name. Claims are exclusive: registering a type
+must fall under your claim, but referencing another pack's type in a schema
+does not claim or register that type. Only publisher `dinkster` may claim
+bare type or node ids and reserved namespaces. The standard selection lock
+chooses default installations, not which publishers are official. Every
+other publisher uses each pack's own pack-name prefix, for example
+`my-pack.SEGS`, not `SEGS` or `IMAGE`.
+
+For packs loaded from a repository checkout, the host trusts the manifest's
+`publisher` field. An omitted publisher grants no first-party privileges.
+Registry-installed packs must instead use the registry's authenticated
+publisher record, carried into local registration by the installer. That
+installer authority is not implemented by the checkout manifest contract;
+do not treat a downloaded manifest's self-declared publisher as authenticated.
+
+A shared type has one definition and one owner. Request promotion of a
+widely shared concept to a bare built-in with an official codec in
+`dinkster-values`. For a niche concept, one pack owns the prefixed type and
+other packs declare that pack in their manifest `dependencies` and reference
+its type in their schemas. A small shared types pack can own the definition
+when neither consuming pack should own it. Ownership restricts registration,
+not reference: any pack may reference a registered type.
+
+Do not declare aliases or structural equivalence between type ids. The id
+selects the codec, cache fingerprint, literal coercion, and renditions;
+there cannot be competing implementations for one shared concept. Use an
+ordinary converter node between genuinely different types.
 
 ```python
 from dinkster_api.v1 import TypeRegistry

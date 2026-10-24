@@ -37,6 +37,7 @@ from dinkster_workers.manifest import (
     COMFY_ALIASES_MAX_ITEMS,
     generation_provider_to_wire,
     generation_providers_from_wire,
+    validate_registration_claims,
     vision_provider_to_wire,
     vision_providers_from_wire,
 )
@@ -69,6 +70,40 @@ def write_manifest(path: Path, handler: object = None) -> Path:
         '[pack]\nname = "test"\n[pack.entry]\nnodes = "test_pack:NODES"\n' + handler_line
     )
     return path
+
+
+@pytest.mark.parametrize("field", ["namespaces", "type-namespaces"])
+def test_registration_requires_pack_prefix_for_non_dinkster_publishers(
+    tmp_path: Path, field: str
+) -> None:
+    path = tmp_path / "dinkster-pack.toml"
+    path.write_text(
+        '[pack]\nname = "mypack"\npublisher = "someone"\n'
+        f'{field} = ["foreign"]\n[pack.entry]\nnodes = "mypack:NODES"\n'
+    )
+    with pytest.raises(ManifestError, match="must be prefixed by pack name"):
+        validate_registration_claims(load_manifest(path))
+    path.write_text(path.read_text().replace('"foreign"', '"mypack.types"'))
+    validate_registration_claims(load_manifest(path))
+    path.write_text(
+        path.read_text().replace('"someone"', '"dinkster"').replace('"mypack.types"', '"foreign"')
+    )
+    validate_registration_claims(load_manifest(path))
+
+
+def test_manifest_type_claims_accept_exact_ids_and_reject_overlaps(tmp_path: Path) -> None:
+    path = tmp_path / "dinkster-pack.toml"
+    path.write_text(
+        '[pack]\nname = "mypack"\ntype-namespaces = ["mypack.Thing", "mypack.Other"]\n'
+        '[pack.entry]\nnodes = "mypack:NODES"\n'
+    )
+    manifest = load_manifest(path)
+    assert manifest.type_namespaces == ("mypack.Thing", "mypack.Other")
+    assert manifest.publisher == ""
+    validate_registration_claims(manifest)
+    path.write_text(path.read_text().replace('"mypack.Other"', '"mypack.Thing-child"'))
+    with pytest.raises(ManifestError, match="overlapping claims"):
+        load_manifest(path)
 
 
 def write_alias_registry(path: Path, *, carrier: str = "test.native") -> None:

@@ -31,6 +31,48 @@ def make_registry() -> TypeRegistry:
     return registry
 
 
+def test_type_claims_refuse_overlapping_owners_and_preserve_reference_access() -> None:
+    registry = make_registry()
+    with registry.registering_pack("mypack", ("mypack",)):
+        registry.register("mypack.thing")
+    assert registry.owner_of("mypack.thing") == "mypack"
+    assert registry.owner_of(CORE_INT) == "dinkster-nodes-foundation"
+    for claim in ("mypack", "mypack.child", "myPack-child"):
+        with pytest.raises(ValueError, match="overlaps"):
+            registry.claim_types("other", (claim,))
+    with registry.registering_pack("consumer", ("consumer",)):
+        assert registry.wrap("mypack.thing", {"count": 3}).payload.load() == {"count": 3}
+        with pytest.raises(ValueError, match="must be prefixed"):
+            registry.register("foreign.thing")
+    assert registry.type_owners()["mypack.thing"] == "mypack"
+
+
+def test_type_claims_survive_staging_without_leaking_to_the_live_registry() -> None:
+    live = make_registry()
+    staged = live.copy()
+    with staged.registering_pack("mypack", ("mypack.thing",)):
+        staged.register("mypack.thing")
+    assert live.owner_of("mypack.thing") is None
+    live.replace_from(staged)
+    assert live.owner_of("mypack.thing") == "mypack"
+    with pytest.raises(ValueError, match="overlaps"):
+        live.claim_types("other", ("mypack",))
+
+
+def test_type_registration_enforces_exact_claim_and_pack_prefix() -> None:
+    registry = make_registry()
+    with registry.registering_pack("mypack", ("mypack.thing",)):
+        with pytest.raises(ValueError, match="outside its declared type claims"):
+            registry.register("mypack.other")
+        with pytest.raises(ValueError, match="must be prefixed"):
+            registry.register("THING")
+        registry.register("mypack.thing")
+    with registry.registering_pack("official", ("THING",), allow_bare=True):
+        registry.register("THING")
+    with pytest.raises(ValueError, match="overlaps"):
+        registry.claim_types("another-official", ("THING",))
+
+
 def test_encoded_buffer_is_read_only_and_materializes_on_demand() -> None:
     backing = bytearray(b"encoded payload")
     released: list[bool] = []

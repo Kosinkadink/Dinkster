@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import json
 import pickle
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import cast
 from urllib.parse import urlencode
@@ -28,6 +29,7 @@ from .model import (
     ValueMeta,
     stable_hash,
 )
+from .names import claim_covers, claims_conflict
 from .streams import MediaStream, make_stream_value, parse_stream_type_id
 
 Encoder = Callable[[object], bytes]
@@ -275,6 +277,10 @@ class TypeRegistry:
         self._asset_decoders: dict[TypeId, AssetDecoderSpec] = {}
         self._batch_merges: dict[TypeId, BatchMergeSpec] = {}
         self._type_equivalences: dict[TypeId, tuple[TypeId, str]] = {}
+        self._claims: dict[str, tuple[str, ...]] = {}
+        self._owners: dict[TypeId, str] = {}
+        self._registering_pack: str | None = None
+        self._allow_bare = False
 
     def copy(self) -> TypeRegistry:
         """Return an independent registry with the same registrations."""
@@ -286,6 +292,8 @@ class TypeRegistry:
         copied._asset_decoders = dict(self._asset_decoders)
         copied._batch_merges = dict(self._batch_merges)
         copied._type_equivalences = dict(self._type_equivalences)
+        copied._claims = dict(self._claims)
+        copied._owners = dict(self._owners)
         return copied
 
     def replace_from(self, other: TypeRegistry) -> None:
@@ -297,6 +305,60 @@ class TypeRegistry:
         self._asset_decoders = dict(other._asset_decoders)
         self._batch_merges = dict(other._batch_merges)
         self._type_equivalences = dict(other._type_equivalences)
+        self._claims = dict(other._claims)
+        self._owners = dict(other._owners)
+
+    def claim_types(self, owner: str, claims: tuple[str, ...]) -> None:
+        """Reserve type ids or namespaces before publishing a pack's codecs."""
+        for claim in claims:
+            for holder, held_claims in self._claims.items():
+                if holder == owner:
+                    continue
+                for held in held_claims:
+                    if claims_conflict(held, claim):
+                        raise ValueError(
+                            f"type claim {claim!r} owned by {owner!r} overlaps "
+                            f"{held!r} owned by {holder!r}"
+                        )
+            for type_id, holder in self._owners.items():
+                if holder != owner and claims_conflict(type_id, claim):
+                    raise ValueError(
+                        f"type claim {claim!r} overlaps {type_id!r} owned by {holder!r}"
+                    )
+        self._claims[owner] = claims
+
+    @contextmanager
+    def registering_pack(
+        self, owner: str, claims: tuple[str, ...], *, allow_bare: bool = False
+    ) -> Generator[None]:
+        """Attribute registrations and enforce the manifest's type claims."""
+        self.claim_types(owner, claims)
+        previous = self._registering_pack
+        previous_bare = self._allow_bare
+        self._registering_pack = owner
+        self._allow_bare = allow_bare
+        try:
+            yield
+        finally:
+            self._registering_pack = previous
+            self._allow_bare = previous_bare
+
+    def owner_of(self, type_id: TypeId) -> str | None:
+        """Return the owner even when a declared codec has not loaded yet."""
+        if owner := self._owners.get(type_id):
+            return owner
+        return next(
+            (
+                owner
+                for owner, claims in self._claims.items()
+                if any(type_id == claim or claim_covers(claim, type_id) for claim in claims)
+            ),
+            None,
+        )
+
+    def type_owners(self) -> dict[TypeId, str]:
+        """Return registered atom owners for registry discovery."""
+        return dict(self._owners)
 
     def register(
         self,
@@ -325,6 +387,17 @@ class TypeRegistry:
             raise ValueError(f"type ids must not contain '<' or '>': {type_id}")
         if type_id in self._types:
             raise ValueError(f"type already registered: {type_id}")
+        owner = self._registering_pack or "dinkster-nodes-foundation"
+        if self._registering_pack is not None and not self._allow_bare:
+            if not claim_covers(owner, type_id):
+                raise ValueError(f"{owner}: type {type_id!r} must be prefixed by its pack name")
+        if self._registering_pack is not None and not any(
+            type_id == claim or claim_covers(claim, type_id) for claim in self._claims[owner]
+        ):
+            raise ValueError(f"{owner}: type {type_id!r} is outside its declared type claims")
+        held_owner = self.owner_of(type_id)
+        if held_owner is not None and held_owner != owner:
+            raise ValueError(f"type {type_id!r} is owned by {held_owner!r}, not {owner!r}")
         spec = TypeSpec(
             type_id=type_id,
             encode=encode if encode is not None else default_encode,
@@ -340,6 +413,7 @@ class TypeRegistry:
             validate_encoded_buffer=validate_encoded_buffer,
         )
         self._types[type_id] = spec
+        self._owners[type_id] = owner
         return spec
 
     def register_rendition(
