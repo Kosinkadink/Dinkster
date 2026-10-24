@@ -78,6 +78,8 @@ namespaces = [
     "ReplaceVideoLatentFrames",
     "CLIPTextEncode",
     "CLIPSetLastLayer",
+    "CLIPTextEncodeSDXLRefiner",
+    "CLIPTextEncodeSDXL",
     "ConditioningAverage",
     "ConditioningCombine",
     "ConditioningConcat",
