@@ -64,7 +64,6 @@ type-namespaces = [
     "comfy.SAMPLER",
     "comfy.SIGMAS",
     "comfy.SPLAT",
-    "comfy.STYLE_MODEL",
     "comfy.SVG",
     "comfy.TIMESTEPS_RANGE",
     "comfy.TRACKS",

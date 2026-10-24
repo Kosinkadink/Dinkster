@@ -72,7 +72,7 @@
     "SHAPE_SUBDIVIDES",
     "comfy.SIGMAS",
     "comfy.SPLAT",
-    "comfy.STYLE_MODEL",
+    "STYLE_MODEL",
     "comfy.SVG",
     "comfy.TIMESTEPS_RANGE",
     "comfy.TRACKS",
@@ -59755,7 +59755,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.STYLE_MODEL"
+              "STYLE_MODEL"
             ]
           }
         },
@@ -59858,7 +59858,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.STYLE_MODEL"
+              "STYLE_MODEL"
             ]
           }
         }

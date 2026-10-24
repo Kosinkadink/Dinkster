@@ -21,6 +21,7 @@ IDENTITIES = {
     "comfy.BOUNDING_BOX": "BOUNDING_BOX",
     "comfy.MODEL_PATCH": "MODEL_PATCH",
     "comfy.LATENT_UPSCALE_MODEL": "LATENT_UPSCALE_MODEL",
+    "comfy.STYLE_MODEL": "STYLE_MODEL",
 }
 ARTIFACT_PATHS = (
     "packages/dinkster-compat-comfy/src/dinkster_compat_comfy/core_schemas.json",
