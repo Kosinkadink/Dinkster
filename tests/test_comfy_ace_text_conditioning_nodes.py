@@ -21,7 +21,7 @@ def test_ace_text_conditioning_schemas_and_registration() -> None:
         ("clip", "CLIP", True, None),
         ("tags", "STRING", True, None),
         ("lyrics", "STRING", True, None),
-        ("lyrics_strength", "FLOAT", False, 1.0),
+        ("lyrics_strength", "FLOAT", True, 1.0),
     ]
     assert [
         (item.id, item.type.runtime_type_id(), item.required, item.default) for item in ace15.inputs
@@ -29,18 +29,18 @@ def test_ace_text_conditioning_schemas_and_registration() -> None:
         ("clip", "CLIP", True, None),
         ("tags", "STRING", True, None),
         ("lyrics", "STRING", True, None),
-        ("seed", "INT", False, 0),
-        ("bpm", "INT", False, 120),
-        ("duration", "FLOAT", False, 120.0),
-        ("timesignature", "COMBO", False, "2"),
-        ("language", "COMBO", False, "en"),
-        ("keyscale", "COMBO", False, "C major"),
+        ("seed", "INT", True, 0),
+        ("bpm", "INT", True, 120),
+        ("duration", "FLOAT", True, 120.0),
+        ("timesignature", "COMBO", True, "2"),
+        ("language", "COMBO", True, "en"),
+        ("keyscale", "COMBO", True, "C major"),
         ("generate_audio_codes", "BOOLEAN", False, True),
-        ("cfg_scale", "FLOAT", False, 2.0),
-        ("temperature", "FLOAT", False, 0.85),
-        ("top_p", "FLOAT", False, 0.9),
-        ("top_k", "INT", False, 0),
-        ("min_p", "FLOAT", False, 0.0),
+        ("cfg_scale", "FLOAT", True, 2.0),
+        ("temperature", "FLOAT", True, 0.85),
+        ("top_p", "FLOAT", True, 0.9),
+        ("top_k", "INT", True, 0),
+        ("min_p", "FLOAT", True, 0.0),
     ]
     seed_widget = ace15.inputs[3].widget
     timesignature_widget = ace15.inputs[6].widget

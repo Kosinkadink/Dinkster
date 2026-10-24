@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from typing import Any
 
 from dinkster_api.v1 import (
@@ -23,6 +23,8 @@ from dinkster_api.v1 import (
     TypeExpr,
     initialize_inference_process,
 )
+
+from .conditioning import conditioning_set_values
 
 _CATEGORY = "model/conditioning/ace"
 _CLIP = TypeExpr.concrete(CLIP_TYPE)
@@ -124,7 +126,6 @@ class TextEncodeAceStepAudio(Node):
                 InputSpec(
                     "lyrics_strength",
                     _FLOAT,
-                    required=False,
                     default=1.0,
                     widget=NumberWidget(min=0.0, max=10.0, step=0.01),
                 ),
@@ -139,7 +140,7 @@ class TextEncodeAceStepAudio(Node):
         initialize_inference_process()
         conditioning = clip.encode_from_tokens_scheduled(clip.tokenize(tags, lyrics=lyrics))
         return cls.outputs(
-            CONDITIONING=_set_values(conditioning, {"lyrics_strength": lyrics_strength})
+            CONDITIONING=conditioning_set_values(conditioning, {"lyrics_strength": lyrics_strength})
         )
 
 
@@ -156,36 +157,28 @@ class TextEncodeAceStepAudio15(Node):
                 InputSpec(
                     "seed",
                     _INT,
-                    required=False,
                     default=0,
                     widget=NumberWidget(
                         min=0, max=0xFFFFFFFFFFFFFFFF, control_after_generate="randomize"
                     ),
                 ),
-                InputSpec(
-                    "bpm", _INT, required=False, default=120, widget=NumberWidget(min=10, max=300)
-                ),
+                InputSpec("bpm", _INT, default=120, widget=NumberWidget(min=10, max=300)),
                 InputSpec(
                     "duration",
                     _FLOAT,
-                    required=False,
                     default=120.0,
                     widget=NumberWidget(min=0.0, max=2000.0, step=0.1),
                 ),
                 InputSpec(
                     "timesignature",
                     _COMBO,
-                    required=False,
                     default="2",
                     widget=ComboWidget(("2", "3", "4", "6")),
                 ),
-                InputSpec(
-                    "language", _COMBO, required=False, default="en", widget=ComboWidget(_LANGUAGES)
-                ),
+                InputSpec("language", _COMBO, default="en", widget=ComboWidget(_LANGUAGES)),
                 InputSpec(
                     "keyscale",
                     _COMBO,
-                    required=False,
                     default="C major",
                     widget=ComboWidget(_KEYSCALES),
                 ),
@@ -204,7 +197,6 @@ class TextEncodeAceStepAudio15(Node):
                 InputSpec(
                     "cfg_scale",
                     _FLOAT,
-                    required=False,
                     default=2.0,
                     advanced=True,
                     widget=NumberWidget(min=0.0, max=100.0, step=0.1),
@@ -212,7 +204,6 @@ class TextEncodeAceStepAudio15(Node):
                 InputSpec(
                     "temperature",
                     _FLOAT,
-                    required=False,
                     default=0.85,
                     advanced=True,
                     widget=NumberWidget(min=0.0, max=2.0, step=0.01),
@@ -220,7 +211,6 @@ class TextEncodeAceStepAudio15(Node):
                 InputSpec(
                     "top_p",
                     _FLOAT,
-                    required=False,
                     default=0.9,
                     advanced=True,
                     widget=NumberWidget(min=0.0, max=2000.0, step=0.01),
@@ -228,7 +218,6 @@ class TextEncodeAceStepAudio15(Node):
                 InputSpec(
                     "top_k",
                     _INT,
-                    required=False,
                     default=0,
                     advanced=True,
                     widget=NumberWidget(min=0, max=100),
@@ -236,7 +225,6 @@ class TextEncodeAceStepAudio15(Node):
                 InputSpec(
                     "min_p",
                     _FLOAT,
-                    required=False,
                     default=0.0,
                     advanced=True,
                     widget=NumberWidget(min=0.0, max=1.0, step=0.001),
@@ -283,12 +271,6 @@ class TextEncodeAceStepAudio15(Node):
             min_p=min_p,
         )
         return cls.outputs(CONDITIONING=clip.encode_from_tokens_scheduled(tokens))
-
-
-def _set_values(
-    conditioning: Sequence[Sequence[Any]], values: Mapping[str, object]
-) -> list[list[Any]]:
-    return [[hidden, {**metadata, **values}] for hidden, metadata in conditioning]
 
 
 ACE_TEXT_CONDITIONING_NODES = (TextEncodeAceStepAudio, TextEncodeAceStepAudio15)

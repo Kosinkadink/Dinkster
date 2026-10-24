@@ -146,7 +146,17 @@ class AceInspect(Node):
     def execute(cls, *, ace: Any, ace15: Any) -> dict[str, object]:
         assert [entry[1]["lyrics_strength"] for entry in ace] == [2.5, 2.5]
         assert [entry[1]["source"] for entry in ace] == ["first", "second"]
+        assert [entry[1]["tags"] for entry in ace] == ["soft", "soft"]
+        assert [entry[1]["lyrics"] for entry in ace] == ["words", "words"]
+        assert torch.equal(ace[0][0], torch.tensor([[1.0, 3.0]], dtype=torch.float64))
+        assert torch.equal(ace[1][0], torch.tensor([[2.0]], dtype=torch.float32))
         assert ace[0][0].dtype is torch.float64 and ace[1][0].dtype is torch.float32
+        assert [entry[1]["tags"] for entry in ace15] == ["bright", "bright"]
+        assert [entry[1]["lyrics"] for entry in ace15] == ["la", "la"]
+        assert [entry[1]["bpm"] for entry in ace15] == [171, 171]
+        assert [entry[1]["duration"] for entry in ace15] == [93.7, 93.7]
+        assert torch.equal(ace15[0][0], torch.tensor([[1.0, 3.0]], dtype=torch.float64))
+        assert torch.equal(ace15[1][0], torch.tensor([[2.0]], dtype=torch.float32))
         assert ace15[0][1]["timesignature"] == 6
         assert ace15[0][1]["seed"] == 0xFFFFFFFFFFFFFFFF
         assert ace15[0][1]["language"] == "yue"
