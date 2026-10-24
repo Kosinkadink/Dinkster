@@ -2,10 +2,25 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
+from pathlib import Path
 from typing import Any
 
+import pytest
 import torch
-from dinkster_api.v1 import initialize_inference_process
+from dinkster_api.v1 import (
+    CORE_STRING,
+    SIGMAS_TYPE,
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+    initialize_inference_process,
+    materialize_latent,
+)
+from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.sigma_schedulers import (
     BasicScheduler,
     BetaSamplingScheduler,
@@ -16,6 +31,30 @@ from dinkster_nodes_comfy.sigma_schedulers import (
     SDTurboScheduler,
     VPScheduler,
 )
+
+from dinkster.compose import PackSpec, ServingComposer
+
+SIGMAS = TypeExpr.concrete(SIGMAS_TYPE)
+STRING = TypeExpr.concrete(CORE_STRING)
+
+
+def _summary(tensor: torch.Tensor) -> str:
+    raw = tensor.contiguous().view(torch.uint8).numpy().tobytes()
+    return f"{tensor.dtype};{tuple(tensor.shape)};{hashlib.sha256(raw).hexdigest()}"
+
+
+class SigmaSummary(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="scheduler-sigmas.summary",
+            inputs=(InputSpec("sigmas", SIGMAS),),
+            outputs=(OutputSpec("summary", STRING),),
+        )
+
+    @classmethod
+    def execute(cls, *, sigmas: Any) -> dict[str, object]:
+        return cls.outputs(summary=_summary(materialize_latent(sigmas)))
 
 
 class ModelSampling:
@@ -90,3 +129,60 @@ def test_model_schedulers_match_denoise_boundaries_and_turbo_timesteps() -> None
     turbo = SDTurboScheduler.execute(model=model, steps=4, denoise=0.6)["SIGMAS"]
     torch.testing.assert_close(turbo, torch.tensor((0.599, 0.499, 0.399, 0.299, 0.0)))
     assert turbo.dtype == torch.float32
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_karras_sigmas_cross_native_and_consumer_pack_hosts(
+    in_process: bool, tmp_path: Path
+) -> None:
+    async def scenario() -> None:
+        composer = ServingComposer(
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "PYTHONPATH": str(Path(__file__).parent),
+            }
+        )
+        try:
+            module = f"scheduler_sigma_consumer_{int(in_process)}"
+            (tmp_path / f"{module}.py").write_text(
+                "from test_sigma_schedulers_torch import SigmaSummary\n"
+                "from dinkster_inference_wire import register_inference_types\n"
+                "NODES = [SigmaSummary]\n",
+                encoding="ascii",
+            )
+            consumer_manifest = tmp_path / "consumer-dinkster-pack.toml"
+            consumer_manifest.write_text(
+                '[pack]\nname = "scheduler-sigmas-consumer"\npublisher = "dinkster"\n'
+                'namespaces = ["scheduler-sigmas"]\n'
+                f'[pack.entry]\nnodes = "{module}:NODES"\n'
+                f'types = "{module}:register_inference_types"\n',
+                encoding="ascii",
+            )
+            native_manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+            await composer.add_pack(PackSpec(manifest=native_manifest, in_process=in_process))
+            await composer.add_pack(PackSpec(manifest=consumer_manifest, in_process=in_process))
+            graph = Graph(
+                nodes={
+                    "scheduler": GraphNode(
+                        "KarrasScheduler",
+                        {"steps": 4, "sigma_max": 3.7, "sigma_min": 0.13, "rho": 3.2},
+                    ),
+                    "consumer": GraphNode(
+                        "scheduler-sigmas.summary", {"sigmas": Link("scheduler", "SIGMAS")}
+                    ),
+                }
+            )
+            engine = composer.composition.make_engine(lambda _event: None)
+            expected = _summary(
+                torch.tensor(
+                    (3.7000005, 1.6964283, 0.60366714, 0.13000005, 0.0), dtype=torch.float32
+                )
+            )
+            for _ in range(2):
+                result = await engine.run(graph, ["consumer"])
+                assert result.outputs["consumer"]["summary"].resolve() == expected
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())

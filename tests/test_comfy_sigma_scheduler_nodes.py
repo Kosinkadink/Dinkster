@@ -1,10 +1,11 @@
 """Public schemas for native ComfyUI sigma scheduler nodes."""
 
 from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.sigma_schedulers import SIGMA_SCHEDULER_NODES
 
 
 def test_native_sigma_scheduler_nodes_are_registered_with_comfy_schemas() -> None:
-    nodes = {node.schema().node_type: node.schema() for node in COMFY_NODES}
+    nodes = {node.schema().node_type: node.schema() for node in SIGMA_SCHEDULER_NODES}
     expected_inputs = {
         "BasicScheduler": ("model", "scheduler", "steps", "denoise"),
         "KarrasScheduler": ("steps", "sigma_max", "sigma_min", "rho"),
@@ -19,3 +20,4 @@ def test_native_sigma_scheduler_nodes_are_registered_with_comfy_schemas() -> Non
         name: tuple(port.id for port in nodes[name].inputs) for name in expected_inputs
     } == expected_inputs
     assert all(nodes[name].outputs[0].id == "SIGMAS" for name in expected_inputs)
+    assert set(SIGMA_SCHEDULER_NODES).issubset(COMFY_NODES)
