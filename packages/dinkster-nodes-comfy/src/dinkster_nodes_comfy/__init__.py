@@ -4,6 +4,7 @@ from dinkster_api.v1 import register_inference_types
 
 from .attention_multiply import ATTENTION_MULTIPLY_NODES
 from .audio_combine import AUDIO_COMBINE_NODES
+from .audio_generators import AUDIO_GENERATOR_NODES
 from .audio_latent import AUDIO_LATENT_NODES
 from .audio_transform import AUDIO_TRANSFORM_NODES
 from .cache import CACHE_NODES
@@ -111,6 +112,7 @@ COMFY_NODES = (
     *POST_PROCESSING_NODES,
     EmptyMochiLatentVideo,
     *AUDIO_COMBINE_NODES,
+    *AUDIO_GENERATOR_NODES,
     *AUDIO_LATENT_NODES,
     *AUDIO_TRANSFORM_NODES,
     *DATASET_IMAGE_NODES,
