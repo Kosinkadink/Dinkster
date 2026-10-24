@@ -27,6 +27,8 @@
   patchers and install their native frame-wise CFG callbacks under exact core IDs.
 - Ten native conditioning nodes combine, blend, concatenate, multiply, mask,
   zero, and set area or timestep metadata under their exact ComfyUI interfaces.
+- Native hook conditioning preserves paired ordering, default records, mask and
+  timestep metadata, and CLIP hook clone scheduling under exact core interfaces.
 - Native VAE inpainting encoding and model conditioning preserve crop, mask,
   latent, and conditioning metadata behavior under exact ComfyUI interfaces.
 - Fifteen native mask and composite nodes convert, create, invert, crop, combine,
