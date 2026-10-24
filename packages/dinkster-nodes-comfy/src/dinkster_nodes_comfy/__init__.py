@@ -49,10 +49,10 @@ from .stable_cascade import STABLE_CASCADE_NODES
 from .text import TEXT_NODES
 from .utilities import ComfyNumberConvert, SeedNode
 from .vae import VAE_NODES
+from .video_conditioning import VIDEO_CONDITIONING_NODES
 from .video_guidance import VIDEO_GUIDANCE_NODES
 from .video_latent import VIDEO_LATENT_NODES
 from .video_latent_ops import VIDEO_LATENT_OPERATION_NODES
-from .video_conditioning import VIDEO_CONDITIONING_NODES
 
 COMFY_NODES = (
     *TEXT_NODES,
