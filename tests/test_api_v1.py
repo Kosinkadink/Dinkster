@@ -30,6 +30,7 @@ from dinkster_workers import InProcessWorker
 
 GOLDEN_V1_SURFACE = (
     "initialize_inference_process",
+    "materialize_audio",
     "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
@@ -399,8 +400,9 @@ loaded = {
     if name.split(".")[0] in {"dinkster_inference_wire", "torch"}
 }
 assert not loaded, sorted(loaded)
-from dinkster_api.v1 import initialize_inference_process
+from dinkster_api.v1 import initialize_inference_process, materialize_audio
 assert callable(initialize_inference_process)
+assert callable(materialize_audio)
 assert not any(name.split('.')[0] in {'torch', 'dinkster_inference'} for name in sys.modules)
 """
     result = subprocess.run(

@@ -374,6 +374,7 @@ def __getattr__(name: str) -> object:
         value = getattr(dinkster_video, name)
     elif name in {
         "register_inference_types",
+        "materialize_audio",
         "materialize_image",
         "materialize_latent",
         "materialize_clip_vision_output",
@@ -397,6 +398,7 @@ def __dir__() -> list[str]:
         | _VIDEO_MODULE_EXPORTS
         | {
             "register_inference_types",
+            "materialize_audio",
             "materialize_image",
             "materialize_latent",
             "materialize_clip_vision_output",
@@ -408,6 +410,7 @@ def __dir__() -> list[str]:
 if TYPE_CHECKING:
     from dinkster_inference_wire.process import initialize_inference_process
     from dinkster_inference_wire.types import (
+        materialize_audio,
         materialize_clip_vision_output,
         materialize_image,
         materialize_latent,
@@ -419,6 +422,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "initialize_inference_process",
+    "materialize_audio",
     "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
