@@ -8,6 +8,7 @@ from .clip_model_specific import MODEL_TEXT_ENCODER_NODES
 from .clip_sdxl import CLIP_SDXL_NODES
 from .compositing import COMPOSITING_NODES
 from .conditioning import CONDITIONING_NODES
+from .controlnet import CONTROLNET_NODES
 from .dataset_text import DATASET_TEXT_NODES
 from .freeu import FREEU_NODES
 from .image_core import IMAGE_CORE_NODES
@@ -64,6 +65,7 @@ COMFY_NODES = (
     *CONDITIONING_NODES,
     *REFERENCE_CONDITIONING_NODES,
     *INPAINT_NODES,
+    *CONTROLNET_NODES,
     *MASK_NODES,
     *COMPOSITING_NODES,
     *IMAGE_CORE_NODES,
