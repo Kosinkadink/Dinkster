@@ -1041,6 +1041,7 @@ class InProcessWorker:
                 return contract_error(f"invalid expansion: {exc}")
             if isinstance(raw, InvocationResult):
                 return raw
+            return InvocationResult(expansion=raw)
 
         if isinstance(raw, ExpandedReturn):
             if not schema.may_expand_graph:
@@ -1055,7 +1056,17 @@ class InProcessWorker:
                         continue
                     if not output.type.accepts_concrete(binding.value.type_id):
                         return contract_error(f"output '{name}' rejects {binding.value.type_id}")
-            return InvocationResult(expansion=raw)
+            outputs = {
+                name: replace(
+                    binding.value,
+                    meta=ValueMeta({**binding.value.meta.entries, "absent.forwarded": True}),
+                )
+                if is_absent(binding.value)
+                else binding.value
+                for name, binding in raw.bindings
+                if isinstance(binding, PresentOutput)
+            }
+            return InvocationResult(outputs=outputs, expansion=raw)
 
         if not isinstance(raw, Mapping):
             return contract_error(

@@ -10,16 +10,19 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from typing import Any
 
 import pytest
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, ExecutionError
 from dinkster_graph import Graph, GraphNode, Link, validate
+from dinkster_protocol import ExpandedReturn, LiteralInput, LocalExpansion, LocalNode, PresentOutput
 from dinkster_schema import (
     ABSENT,
     BLOCKED,
     AbsentOutput,
     AbsentPolicy,
+    ExpansionBuilder,
     InputSpec,
     Node,
     NodeSchema,
@@ -626,7 +629,8 @@ def test_no_warning_for_default_skip_consumer() -> None:
     assert "maybe-absent" not in {d.code for d in diags}
 
 
-def test_cached_forwarded_absence_preserves_source_provenance() -> None:
+@pytest.mark.parametrize("return_kind", ["mapping", "expansion", "wire"])
+def test_cached_forwarded_absence_preserves_source_provenance(return_kind: str) -> None:
     absent = make_absent_value(origin="source/value", reason="missing source", stands_for="INT")
 
     class Forward(Node):
@@ -635,15 +639,31 @@ def test_cached_forwarded_absence_preserves_source_provenance() -> None:
             return NodeSchema(
                 "test.forward_absent",
                 outputs=(OutputSpec("value", TypeExpr.concrete("INT"), optional=True),),
+                may_expand_graph=return_kind != "mapping",
             )
 
         @classmethod
-        def execute(cls):
+        def execute(cls) -> Any:
+            if return_kind == "wire":
+                return ExpandedReturn(
+                    LocalExpansion(
+                        (
+                            LocalNode(
+                                "unused", "test.maybe_produce", (("produce", LiteralInput(False)),)
+                            ),
+                        )
+                    ),
+                    (("value", PresentOutput(absent)),),
+                )
+            if return_kind == "expansion":
+                builder = ExpansionBuilder()
+                builder.node("test.maybe_produce", "unused", produce=False)
+                return builder.finalize(value=absent)
             return cls.outputs(value=absent)
 
     registry = TypeRegistry()
     register_core_types(registry)
-    nodes = [Forward]
+    nodes = [Forward, MaybeProduce]
     engine = Engine(
         schemas=build_schemas(nodes),
         registry=registry,
