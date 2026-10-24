@@ -179,6 +179,7 @@ from .lists import (
     make_list_value,
     parse_list_type_id,
     stamp_resource_producer_arm,
+    value_children,
     value_resource_ids,
     value_resource_provenance_refs,
     value_resource_refs,
@@ -257,6 +258,7 @@ from .splat_codec import (
 )
 from .storage import array_storage_meta, audio_input, byte_storage_meta, image_input, storage_dtype
 from .streams import MediaChunk, MediaStream
+from .tuples import TuplePayload, make_tuple_value, parse_tuple_type_id, tuple_type_id
 from .video_codec import (
     bind_video_sources,
     coerce_video,
@@ -339,6 +341,7 @@ __all__ = [
     "LATENT_UPSCALE_MODEL_TYPE",
     "LAYERS_TYPE",
     "ListPayload",
+    "TuplePayload",
     "MEDIA_AUDIO_UPLOAD_LIMIT_BYTES",
     "MEDIA_IMAGE_UPLOAD_LIMIT_BYTES",
     "MEDIA_MODEL3D_UPLOAD_LIMIT_BYTES",
@@ -480,12 +483,16 @@ __all__ = [
     "list_type_id",
     "make_absent_value",
     "make_list_value",
+    "make_tuple_value",
     "merge_image_batches",
     "model3d_fingerprint",
     "model3d_format",
     "model3d_meta",
     "parse_asset_type_id",
     "parse_list_type_id",
+    "parse_tuple_type_id",
+    "tuple_type_id",
+    "value_children",
     "parse_ply_splat",
     "prepare_image_array_encoding",
     "process_instance_token",

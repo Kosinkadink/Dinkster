@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any, cast
 
 import pytest
@@ -30,6 +31,7 @@ from dinkster_values import (
     CORE_COMBO,
     CORE_INT,
     RESOURCE_HANDLE_TYPE,
+    RESOURCE_OWNER_META_KEY,
     ResourceHandle,
     TypeRegistry,
     ValueMeta,
@@ -37,13 +39,17 @@ from dinkster_values import (
     list_children,
     list_type_id,
     make_list_value,
+    make_tuple_value,
     parse_list_type_id,
     register_core_types,
     register_resource_handle_type,
+    stamp_resource_producer_arm,
+    value_children,
     value_resource_ids,
+    value_resource_provenance_refs,
 )
 from dinkster_workers import InProcessWorker
-from dinkster_workers.boundary import ValueCodec
+from dinkster_workers.boundary import BoundaryError, ValueCodec
 from dinkster_workers.devices import DeviceMap
 
 # -- grammar and TypeExpr ---------------------------------------------------
@@ -177,6 +183,30 @@ def test_make_list_value_rejects_mismatched_children() -> None:
     child = registry.wrap(CORE_INT, 1)
     with pytest.raises(ValueError):
         make_list_value("FLOAT", [child])
+
+
+def test_tuple_values_preserve_position_types_and_nested_containers() -> None:
+    registry = make_registry()
+    value = registry.wrap(
+        "tuple<INT,STRING,list<INT>,tuple<STRING,INT>>", (7, "a", [9, 2], ("b", 4))
+    )
+    assert value.resolve() == (7, "a", [9, 2], ("b", 4))
+    assert list_children(value) is None
+    children = value_children(value)
+    assert children is not None
+    assert tuple(child.type_id for child in children) == (
+        "INT",
+        "STRING",
+        "list<INT>",
+        "tuple<STRING,INT>",
+    )
+    assert value.fingerprint != registry.wrap(value.type_id, (8, "a", [9, 2], ("b", 4))).fingerprint
+    assert registry.wrap("tuple<>", ()).resolve() == ()
+    for invalid in ([7, "a"], (7,), (7, "a", 3)):
+        with pytest.raises(TypeError, match="expects a tuple of 2 positions"):
+            registry.wrap("tuple<INT,STRING>", invalid)
+    with pytest.raises(KeyError, match="unregistered"):
+        registry.wrap("tuple<INT,unknown>", (7, "a"))
 
 
 def _handle_value(registry: TypeRegistry, rid: str, device: str = "cuda:0"):
@@ -429,13 +459,50 @@ def test_device_map_rewrites_list_children() -> None:
     assert DeviceMap(mapping={}).value(lst) is lst
 
 
+def test_tuple_transport_retains_resource_identity_and_projection() -> None:
+    registry = make_registry()
+    register_resource_handle_type(registry)
+    stub = _handle_value(registry, "tuple-model", device="cuda:0")
+    stub = replace(stub, meta=ValueMeta({**stub.meta.entries, RESOURCE_OWNER_META_KEY: "owner"}))
+    value = make_tuple_value(
+        (registry.wrap("STRING", "label"), make_list_value(RESOURCE_HANDLE_TYPE, [stub]))
+    )
+    stamped = stamp_resource_producer_arm(value, "owner", "arm")
+    assert value_resource_provenance_refs(stamped) == (("tuple-model", "owner", "arm", True),)
+    mapped = DeviceMap(mapping={"cuda:0": "cuda:1"}).value(stamped)
+    codec = ValueCodec(registry, use_shm=False, accept_shm=False)
+    blobs: list[bytes] = []
+    wire, stat = codec.encode(mapped, blobs, [])
+    decoded, _ = codec.decode(wire, blobs, [])
+    assert stat.transport == "tuple"
+    assert decoded.type_id == value.type_id
+    assert decoded.fingerprint == value.fingerprint
+    assert list_children(decoded) is None
+    assert value_resource_provenance_refs(decoded) == (("tuple-model", "owner", "arm", True),)
+    leaves = tuple(iter_value_tree(decoded))
+    assert leaves[-1].meta.get("resources") == {"gpu": "cuda:1"}
+    assert encode_entry({"value": decoded}, registry) is None
+    malformed = {**wire, "typeId": "tuple<INT,STRING>"}
+    with pytest.raises(BoundaryError, match="tuple child types"):
+        codec.decode(malformed, blobs, [])
+
+
 # -- persisted cache manifests ----------------------------------------------
 
 
-def test_cache_manifest_roundtrips_lists() -> None:
+@pytest.mark.parametrize(
+    ("type_id", "payload"),
+    [
+        ("list<list<INT>>", [[1], [2, 3]]),
+        ("tuple<INT,STRING,list<INT>>", (7, "label", [2, 3])),
+        ("list<tuple<STRING,INT>>", [("a", 3), ("b", 9)]),
+        ("tuple<>", ()),
+    ],
+)
+def test_cache_manifest_roundtrips_lists(type_id: str, payload: object) -> None:
     async def scenario() -> None:
         registry = make_registry()
-        outputs = {"values": registry.wrap("list<list<INT>>", [[1], [2, 3]])}
+        outputs = {"values": registry.wrap(type_id, payload)}
         encoded = encode_entry(outputs, registry)
         assert encoded is not None
 
@@ -456,7 +523,7 @@ def test_cache_manifest_roundtrips_lists() -> None:
         assert entry is not None
         rehydrated = entry["values"]
         assert rehydrated.fingerprint == outputs["values"].fingerprint
-        assert rehydrated.resolve() == [[1], [2, 3]]
+        assert rehydrated.resolve() == payload
 
     asyncio.run(scenario())
 
@@ -469,7 +536,8 @@ def test_cache_refuses_resource_stubs_inside_lists() -> None:
     assert encode_entry(outputs, registry) is None
 
 
-def test_memory_cache_sees_costs_and_references_through_lists() -> None:
+@pytest.mark.parametrize("container", ["list", "tuple"])
+def test_memory_cache_sees_costs_and_references_through_lists(container: str) -> None:
     async def scenario() -> None:
         registry = make_registry()
         register_resource_handle_type(registry)
@@ -487,6 +555,8 @@ def test_memory_cache_sees_costs_and_references_through_lists() -> None:
             "mixed": make_list_value(CORE_INT, [costed, registry.wrap(CORE_INT, 2)]),
             "models": make_list_value(RESOURCE_HANDLE_TYPE, [stub]),
         }
+        if container == "tuple":
+            entry = {"tuple": make_tuple_value((entry["mixed"], stub))}
         # make_list_value requires matching child types; adjust: separate keys
         await cache.put("k", cast(dict[str, Any], entry))
         assert cache.footprint("ram") == 64  # child cost counted, stub excluded

@@ -67,8 +67,7 @@ shared variables and therefore homogeneous list binding.
 tuple input and a document-stored integer selector. Elaboration uses a missing
 selector's integer default; a non-integer stored selector is rejected. Type
 solving rejects non-tuple sources and out-of-range positions and supports
-negative indices. These declarations are schema and solver contracts, not a
-runtime transport or frontend editor capability.
+negative indices. Schema elaboration and solving never inspect runtime payloads.
 
 ## Stored output descriptors
 

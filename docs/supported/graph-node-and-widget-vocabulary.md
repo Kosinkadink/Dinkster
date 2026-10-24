@@ -6,7 +6,11 @@
   independently typed input families in document order, and select a position's
   type using a stored integer index. Tuple declarations round-trip through the
   schema wire contract; ordinary list families retain homogeneous binding.
-  This does not claim tuple runtime transport or frontend editor support.
+  Tuple values retain independently typed child envelopes across worker and
+  persistent-cache boundaries, including nested lists and tuples. Resource
+  invalidation and device metadata projection inspect every position; persistent
+  caches refuse tuples containing live resident references. This does not claim
+  tuple standard-node, graph-elaboration, or frontend editor support.
 - Required closed dynamic slots can bind their selected variant type to shared
   input and output variables, including list and asset element types
 - Widgets: asset, save-target, combo and multi-combo with optional labels,

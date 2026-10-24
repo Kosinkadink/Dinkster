@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from dataclasses import dataclass
+
+from .model import Value, ValueMeta, stable_hash
+
 
 def tuple_type_id(*elements: str) -> str:
     return f"tuple<{','.join(elements)}>"
@@ -30,3 +35,27 @@ def parse_tuple_type_id(type_id: str) -> tuple[str, ...] | None:
         return None
     positions.append(body[start:])
     return tuple(positions) if all(positions) else None
+
+
+@dataclass(frozen=True)
+class TuplePayload:
+    """Keep each position's full envelope until a node resolves the tuple."""
+
+    children: tuple[Value, ...]
+    transport: str = "tuple"
+
+    def load(self) -> object:
+        return tuple(child.resolve() for child in self.children)
+
+
+def make_tuple_value(children: Sequence[Value]) -> Value:
+    ordered = tuple(children)
+    parts = [b"tuple"]
+    for child in ordered:
+        parts.extend((child.type_id.encode("utf-8"), child.fingerprint.encode("utf-8")))
+    return Value(
+        type_id=tuple_type_id(*(child.type_id for child in ordered)),
+        fingerprint=stable_hash(parts),
+        meta=ValueMeta({"length": len(ordered)}),
+        payload=TuplePayload(ordered),
+    )

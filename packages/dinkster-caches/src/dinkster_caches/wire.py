@@ -28,13 +28,15 @@ from typing import Any, cast
 from dinkster_values import (
     EncodedPayload,
     ListPayload,
+    TuplePayload,
     TypeRegistry,
     Value,
     ValueMeta,
     default_decode,
     default_encode,
-    list_children,
     parse_list_type_id,
+    parse_tuple_type_id,
+    value_children,
     value_resource_ids,
 )
 from dinkster_values.storage import encoded_storage_meta
@@ -67,7 +69,7 @@ class EncodedValue:
 
 
 def _encode_value(value: Value, registry: TypeRegistry) -> EncodedValue | None:
-    children = list_children(value)
+    children = value_children(value)
     if children is not None:
         encoded_children: list[EncodedValue] = []
         for child in children:
@@ -190,7 +192,8 @@ async def _value_from_wire(
     meta = ValueMeta({str(k): v for k, v in cast("Mapping[object, object]", meta_raw).items()})
     elements = out_map.get("elements")
     if elements is not None:
-        if parse_list_type_id(type_id) is None:
+        positions = parse_tuple_type_id(type_id)
+        if parse_list_type_id(type_id) is None and positions is None:
             return None
         if not isinstance(elements, Sequence) or isinstance(elements, str | bytes):
             return None
@@ -202,11 +205,15 @@ async def _value_from_wire(
             if child is None:
                 return None
             children.append(child)
+        if positions is not None and positions != tuple(child.type_id for child in children):
+            return None
         return Value(
             type_id=type_id,
             fingerprint=fingerprint,
             meta=meta,
-            payload=ListPayload(tuple(children)),
+            payload=ListPayload(tuple(children))
+            if positions is None
+            else TuplePayload(tuple(children)),
         )
     try:
         digest = str(out_map["digest"])
