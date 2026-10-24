@@ -126,6 +126,8 @@ class HunyuanImageToVideo(Node):
                 result["noise_mask"] = mask
             elif guidance_type == "custom":
                 values = {"ref_latent": encoded}
+            else:
+                raise ValueError(f"unsupported guidance type: {guidance_type}")
             positive = conditioning_set_values(positive, values)
         return cls.outputs(positive=positive, latent=result)
 
