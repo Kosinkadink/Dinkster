@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -142,14 +143,89 @@ def test_hook_type_registration_is_torch_free() -> None:
     script = """
 import sys
 from dinkster_api.v1 import (
-    FLOATS_TYPE, HOOK_KEYFRAMES_TYPE, HOOKS_TYPE, TIMESTEPS_RANGE_TYPE,
+    CLIP_TYPE, FLOATS_TYPE, HOOK_KEYFRAMES_TYPE, HOOKS_TYPE, TIMESTEPS_RANGE_TYPE,
     TypeRegistry, register_inference_types,
 )
+from dinkster_native.native import register_native_types
 
-registry = TypeRegistry()
-register_inference_types(registry)
-type_ids = (FLOATS_TYPE, HOOK_KEYFRAMES_TYPE, HOOKS_TYPE, TIMESTEPS_RANGE_TYPE)
-assert all(type_id in registry for type_id in type_ids)
+for first, second in ((register_native_types, register_inference_types),
+                      (register_inference_types, register_native_types)):
+    registry = TypeRegistry()
+    first(registry)
+    clip = registry.spec(CLIP_TYPE)
+    second(registry)
+    type_ids = (FLOATS_TYPE, HOOK_KEYFRAMES_TYPE, HOOKS_TYPE, TIMESTEPS_RANGE_TYPE)
+    assert all(type_id in registry for type_id in type_ids)
+    assert registry.spec(CLIP_TYPE) is clip
+    assert clip.coerce is not None
 assert 'torch' not in sys.modules
 """
     subprocess.run([sys.executable, "-c", script], check=True)
+
+
+@pytest.mark.parametrize("native_first", (False, True))
+def test_clip_hook_replacement_preserves_only_current_declared_dependencies(
+    monkeypatch: pytest.MonkeyPatch, native_first: bool
+) -> None:
+    from dinkster_api.v1 import CLIP_TYPE
+    from dinkster_native.native import register_native_types
+    from dinkster_values import RESOURCE_ID_META_KEY, RESOURCE_REFS_META_KEY, resident_resource_id
+
+    pool = ResidencyTable()
+    monkeypatch.setattr("dinkster_inference_wire.types.default_pool", lambda: pool)
+    monkeypatch.setattr("dinkster_native.native.default_pool", lambda: pool)
+    registry = TypeRegistry()
+    first, second = (
+        (register_native_types, register_inference_types)
+        if native_first
+        else (register_inference_types, register_native_types)
+    )
+    first(registry)
+    spec = registry.spec(CLIP_TYPE)
+    second(registry)
+    first(registry)
+    assert registry.spec(CLIP_TYPE) is spec
+    primary, explicit, group_owner, group_ref = (object() for _ in range(4))
+    old_keyframes, new_keyframes = object(), object()
+    old_group = SimpleNamespace(hooks=[SimpleNamespace(hook_keyframe=old_keyframes)])
+    new_group = SimpleNamespace(
+        hooks=[SimpleNamespace(hook_keyframe=new_keyframes)],
+        _dinkster_resident_owner=group_owner,
+        _dinkster_resident_refs=(group_ref, group_ref),
+    )
+    clip = SimpleNamespace(
+        apply_hooks_to_conds=old_group,
+        patcher=SimpleNamespace(forced_hooks=old_group),
+        _dinkster_resident_owner=primary,
+        _dinkster_resident_refs=(explicit, explicit),
+    )
+    assert spec.coerce is not None
+    spec.coerce(clip)
+    clip.apply_hooks_to_conds = new_group
+    value = registry.wrap(CLIP_TYPE, clip)
+    expected = (
+        explicit,
+        new_group,
+        group_owner,
+        group_ref,
+        new_keyframes,
+        old_group,
+        old_keyframes,
+    )
+    assert value.meta.get(RESOURCE_ID_META_KEY) == resident_resource_id(pool.rid_for(primary))
+    assert value.meta.get(RESOURCE_REFS_META_KEY) == tuple(
+        resident_resource_id(pool.rid_for(owner)) for owner in expected
+    )
+    assert registry.wrap(CLIP_TYPE, clip).meta == value.meta
+    clip.patcher.forced_hooks = new_group
+    replaced = registry.wrap(CLIP_TYPE, clip)
+    assert replaced.meta.get(RESOURCE_REFS_META_KEY) == tuple(
+        resident_resource_id(pool.rid_for(owner)) for owner in expected[:-2]
+    )
+    clip.apply_hooks_to_conds = None
+    clip.patcher.forced_hooks = None
+    cleared = registry.wrap(CLIP_TYPE, clip)
+    assert cleared.meta.get(RESOURCE_REFS_META_KEY) == (
+        resident_resource_id(pool.rid_for(explicit)),
+    )
+    assert clip._dinkster_resident_owner is primary

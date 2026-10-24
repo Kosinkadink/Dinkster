@@ -36,3 +36,7 @@ they do not load or apply LoRA weights.
 
 ControlNet values use the native `CONTROL_NET` type and stay resident in their
 owning worker, with the same governed lifetime as other loaded models.
+
+Resident CLIP values retain their conditioning and scheduled hook dependencies.
+Releasing a retained hook group or keyframe group invalidates dependent cached
+CLIP outputs without invalidating unrelated encoders.
