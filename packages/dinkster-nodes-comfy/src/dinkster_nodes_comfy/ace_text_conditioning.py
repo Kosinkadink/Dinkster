@@ -185,7 +185,6 @@ class TextEncodeAceStepAudio15(Node):
                 InputSpec(
                     "generate_audio_codes",
                     _BOOLEAN,
-                    required=False,
                     default=True,
                     advanced=True,
                     doc=(

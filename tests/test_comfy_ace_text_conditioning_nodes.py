@@ -35,7 +35,7 @@ def test_ace_text_conditioning_schemas_and_registration() -> None:
         ("timesignature", "COMBO", True, "2"),
         ("language", "COMBO", True, "en"),
         ("keyscale", "COMBO", True, "C major"),
-        ("generate_audio_codes", "BOOLEAN", False, True),
+        ("generate_audio_codes", "BOOLEAN", True, True),
         ("cfg_scale", "FLOAT", True, 2.0),
         ("temperature", "FLOAT", True, 0.85),
         ("top_p", "FLOAT", True, 0.9),
