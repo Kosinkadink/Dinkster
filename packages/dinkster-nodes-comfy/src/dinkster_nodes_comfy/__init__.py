@@ -17,6 +17,7 @@ from .image_transform import IMAGE_TRANSFORM_NODES
 from .inpaint import INPAINT_NODES
 from .latent import LATENT_NODES
 from .latent_advanced import LATENT_ADVANCED_NODES
+from .latent_model_specific import MODEL_LATENT_NODES
 from .latent_operations import LATENT_OPERATION_NODES
 from .logic import LOGIC_NODES
 from .mask import MASK_NODES
@@ -60,6 +61,7 @@ COMFY_NODES = (
     *LATENT_NODES,
     *LATENT_ADVANCED_NODES,
     *LATENT_OPERATION_NODES,
+    *MODEL_LATENT_NODES,
     *CLIP_NODES,
     *CLIP_SDXL_NODES,
     *MODEL_TEXT_ENCODER_NODES,
