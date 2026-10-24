@@ -36,6 +36,12 @@
   Cached parents replay their declarations without invoking the parent again;
   generated output nodes still run. Expansion also works inside existing graph
   regions without changing their port bindings or iteration isolation.
+- Packs can author expansions through `dinkster_api.v1.ExpansionBuilder`: add
+  local nodes, connect outputs by name or index, and finalize named outputs
+  containing ordinary Python values or child references. Present values use
+  the same wrapping and ownership rules as ordinary node returns. Output
+  indices resolve against the engine's elaborated interface, including when
+  the referenced node belongs to another pack.
 - Model-backed vision provider packs can implement stable owner node schemas.
   Ordinary node cards hide implementation pack ids. A missing selection is
   resolved deterministically from the requested semantic model and compatible

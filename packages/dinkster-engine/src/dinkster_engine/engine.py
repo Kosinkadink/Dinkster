@@ -117,7 +117,7 @@ from .compile import (
     compile_graph,
 )
 from .events import EngineEvent, EventListener
-from .expansion import admit_expansion
+from .expansion import admit_expansion, local_output_id
 
 logger = logging.getLogger(__name__)
 
@@ -2064,7 +2064,8 @@ class Engine:
             outputs = dict(entry.outputs)
             for name, binding in expansion.bindings:
                 if isinstance(binding, LocalOutputRef):
-                    outputs[name] = produced[ids[binding.local_node_id]][binding.output_id]
+                    child = ids[binding.local_node_id]
+                    outputs[name] = produced[child][local_output_id(binding, effective[child])]
                 elif isinstance(binding, CurrentOutputRef):
                     outputs[name] = entry[binding.output_id]
                 elif isinstance(binding, BlockedOutput):

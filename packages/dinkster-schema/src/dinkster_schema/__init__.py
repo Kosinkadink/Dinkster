@@ -49,6 +49,7 @@ from .elaborate import (
     ElaborationError,
     elaborate,
 )
+from .expansion import Expansion, ExpansionBuilder, ExpansionNode, ExpansionOutput
 from .log import (
     LOG_LEVEL_ENV,
     LOG_OVERRIDES_ENV,
@@ -176,6 +177,10 @@ from .wire import (
 )
 
 __all__ = [
+    "Expansion",
+    "ExpansionBuilder",
+    "ExpansionNode",
+    "ExpansionOutput",
     "ABSENT",
     "BLOCKED",
     "COMFY_ALIAS_FORMAT",

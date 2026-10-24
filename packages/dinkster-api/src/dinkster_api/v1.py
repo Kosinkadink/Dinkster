@@ -116,6 +116,7 @@ from dinkster_protocol.pack_surfaces import (
 )
 from dinkster_schema import (
     ABSENT,
+    BLOCKED,
     LOG_EVENT,
     PREVIEW_EVENT,
     PROGRESS_EVENT,
@@ -136,6 +137,10 @@ from dinkster_schema import (
     DynamicComboOption,
     DynamicComboSpec,
     DynamicSlotSpec,
+    Expansion,
+    ExpansionBuilder,
+    ExpansionNode,
+    ExpansionOutput,
     InputFamilyMapping,
     InputFamilyMember,
     InputFamilyOptionSource,
@@ -340,6 +345,10 @@ if TYPE_CHECKING:
     from dinkster_video import timeline as timeline_render
 
 __all__ = [
+    "Expansion",
+    "ExpansionBuilder",
+    "ExpansionNode",
+    "ExpansionOutput",
     "FrontendContribution",
     "FrontendModule",
     "JsonField",
@@ -388,6 +397,7 @@ __all__ = [
     "TrainingSessionHandle",
     # -- node authoring (dinkster-schema)
     "ABSENT",
+    "BLOCKED",
     "AbsentOutput",
     "AbsentPolicy",
     "BooleanWidget",

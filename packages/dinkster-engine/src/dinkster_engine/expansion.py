@@ -25,6 +25,14 @@ def _literal(value: JsonLiteral) -> object:
     return value
 
 
+def local_output_id(binding: LocalOutputRef, schema: NodeSchema) -> str:
+    if isinstance(binding.output_id, int):
+        if binding.output_id >= len(schema.outputs):
+            raise ValueError(f"expansion output index {binding.output_id} is out of range")
+        return schema.outputs[binding.output_id].id
+    return binding.output_id
+
+
 def admit_expansion(
     graph: Graph,
     parent_id: str,
@@ -63,12 +71,21 @@ def admit_expansion(
             elif isinstance(binding, CurrentOutputRef):
                 inputs[name] = Link(parent_id, binding.output_id)
             else:
-                inputs[name] = Link(ids[binding.local_node_id], binding.output_id)
+                inputs[name] = Link(ids[binding.local_node_id], str(binding.output_id))
         node_id = ids[node.local_id]
         nodes[node_id] = GraphNode(node.node_type, inputs)
         origins[node_id] = (metadata(node.parent), metadata(node.display))
     overlay = snapshot_graph(Graph(nodes))
     effective, diagnostics = elaborate_graph(overlay, schemas)
+    for node in expansion.expansion.nodes:
+        node_id = ids[node.local_id]
+        inputs = dict(nodes[node_id].inputs)
+        for name, binding in node.inputs:
+            if isinstance(binding, LocalOutputRef) and isinstance(binding.output_id, int):
+                source = ids[binding.local_node_id]
+                inputs[name] = Link(source, local_output_id(binding, effective[source]))
+        nodes[node_id] = GraphNode(node.node_type, inputs)
+    overlay = snapshot_graph(Graph(nodes))
     diagnostics += validate(overlay, schemas, (), effective, known_types=known_types, ports=ports)
     added = set(ids.values())
     failures = [
@@ -82,7 +99,8 @@ def admit_expansion(
     parent_schema = effective[parent_id]
     for name, binding in expansion.bindings:
         if isinstance(binding, LocalOutputRef):
-            output = effective[ids[binding.local_node_id]].output(binding.output_id)
+            child = effective[ids[binding.local_node_id]]
+            output = child.output(local_output_id(binding, child))
             if output is None:
                 raise ValueError(f"expansion output '{name}' references a missing child output")
             expected = parent_schema.output(name)

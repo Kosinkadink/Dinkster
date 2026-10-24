@@ -2,7 +2,8 @@
 
 A standard node is define_schema() plus an execute() that takes and returns
 plain Python values. Outputs are returned as a mapping keyed by output id -
-never positional tuples. execute() may be sync or async.
+never positional tuples - or as an ``Expansion`` containing named outputs
+and a local graph. execute() may be sync or async.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from collections.abc import Awaitable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from .expansion import Expansion
 from .model import NodeSchema
 
 
@@ -54,7 +56,7 @@ class Node:
     @classmethod
     def execute(
         cls, *args: Any, **inputs: Any
-    ) -> Mapping[str, object] | Awaitable[Mapping[str, object]]:
+    ) -> Mapping[str, object] | Expansion | Awaitable[Mapping[str, object] | Expansion]:
         # (*args: Any, **kwargs: Any) is deliberate: type checkers treat it
         # as a gradual signature, so concrete nodes declare plain named
         # parameters (sync or async) without tripping override checks -

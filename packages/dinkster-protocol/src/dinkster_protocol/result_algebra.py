@@ -124,11 +124,15 @@ class CurrentOutputRef:
 @dataclass(frozen=True)
 class LocalOutputRef:
     local_node_id: str
-    output_id: str
+    output_id: str | int
 
     def __post_init__(self) -> None:
         _identifier(self.local_node_id, "local_node_id")
-        _identifier(self.output_id, "output_id")
+        if type(self.output_id) is int:
+            if not 0 <= self.output_id < RESULT_ALGEBRA_MAX_COUNT:
+                raise ValueError("output index is outside the interface limit")
+        else:
+            _identifier(self.output_id, "output_id")
 
 
 @dataclass(frozen=True)

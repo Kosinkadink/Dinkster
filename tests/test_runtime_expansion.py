@@ -8,6 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+import dinkster_api.v1 as api
 import pytest
 from dinkster_caches import DiskCacheStore, LayeredCache, MemoryLRUCache
 from dinkster_engine import Engine, EngineEvent, ExecutionError
@@ -49,7 +50,13 @@ from dinkster_values import (
     list_children,
     register_core_types,
 )
-from dinkster_workers import GovernedWorker, InProcessWorker, IsolatedWorker, RemoteWorker
+from dinkster_workers import (
+    GovernedWorker,
+    InProcessWorker,
+    IsolatedWorker,
+    RemoteWorker,
+    RoutingWorker,
+)
 
 
 class WireExpansionNode(Node):
@@ -121,19 +128,11 @@ class GraphExpansionNode(WireExpansionNode):
 
     @classmethod
     def execute(cls) -> Any:
-        original = super().execute()
-        return ExpandedReturn(
-            LocalExpansion(
-                (
-                    *original.expansion.nodes,
-                    LocalNode(
-                        "output", "expansion.output", (("value", LocalOutputRef("child", "value")),)
-                    ),
-                    LocalNode("unused", "expansion.unused", (("value", CurrentOutputRef("seed")),)),
-                )
-            ),
-            original.bindings,
-        )
+        graph = api.ExpansionBuilder()
+        child = graph.node("expansion.child", "child", value=graph.current("seed"))
+        graph.node("expansion.output", "output", value=child.out("value"))
+        graph.node("expansion.unused", "unused", value=graph.current("seed"))
+        return graph.finalize(result=child.out(0), seed=17)
 
 
 class NestedExpansionNode(GraphExpansionNode):
@@ -156,6 +155,45 @@ class NonIdempotentExpansionNode(GraphExpansionNode):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         return replace(super().define_schema(), node_type="expansion.repeat", idempotent=False)
+
+
+class TwoOutputChild(ExpansionChild):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return replace(
+            super().define_schema(),
+            node_type="expansion.pair",
+            outputs=(
+                OutputSpec("decoy", TypeExpr.concrete("core.int")),
+                OutputSpec("value", TypeExpr.concrete("core.int")),
+            ),
+        )
+
+    @classmethod
+    def execute(cls, value: int) -> Any:
+        return cls.outputs(decoy=-101, value=value * 3 + 2)
+
+
+class IndexedExpansionNode(GraphExpansionNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return replace(
+            super().define_schema(),
+            node_type="expansion.indexed",
+            inputs=(InputSpec("index", TypeExpr.concrete("core.int"), required=False, default=1),),
+        )
+
+    @classmethod
+    def execute(cls, index: int = 1) -> api.Expansion:
+        graph = api.ExpansionBuilder()
+        child = graph.node("expansion.pair", "pair", value=17)
+        output = graph.node("expansion.output", "output", value=child.out(1))
+        output.set_override_display_id(child.id)
+        child.set_input("unused", 9)
+        child.set_input("unused", None)
+        result = graph.finalize(result=child.out(index), seed=23)
+        child.set_input("value", 999)
+        return result
 
 
 class InvalidExpansionNode(WireExpansionNode):
@@ -205,6 +243,8 @@ PACK_NODES = [
     NonIdempotentExpansionNode,
     InvalidExpansionNode,
     StringExpansionChild,
+    TwoOutputChild,
+    IndexedExpansionNode,
 ]
 
 
@@ -438,8 +478,9 @@ def test_cached_expansion_accounts_and_invalidates_present_values_once(tmp_path:
 
 @pytest.mark.parametrize("worker_kind", ["in-process", "governed", "isolated", "remote"])
 @pytest.mark.parametrize("cache_enabled", [True, False])
+@pytest.mark.parametrize("node_type", ["expansion.graph", "expansion.indexed"])
 def test_expansion_executes_children_through_each_worker(
-    tmp_path: Path, worker_kind: str, cache_enabled: bool
+    tmp_path: Path, worker_kind: str, cache_enabled: bool, node_type: str
 ) -> None:
     from test_remote import TOKEN, start_service, stop_service
 
@@ -484,7 +525,7 @@ def test_expansion_executes_children_through_each_worker(
         )
         graph = Graph(
             {
-                "parent": GraphNode("expansion.graph"),
+                "parent": GraphNode(node_type),
                 "consumer": GraphNode("expansion.child", {"value": Link("parent", "result")}),
             }
         )
@@ -503,7 +544,10 @@ def test_expansion_executes_children_through_each_worker(
                 else:
                     assert "parent" in result.executed
                 expanded = [event for event in events if event.kind == "node_expanded"]
-                assert [(e.node_id, e.detail["childCount"]) for e in expanded] == [("parent", 3)]
+                count = 2 if node_type == "expansion.indexed" else 3
+                assert [(e.node_id, e.detail["childCount"]) for e in expanded] == [
+                    ("parent", count)
+                ]
                 child = next(
                     e
                     for e in events
@@ -524,7 +568,9 @@ def test_expansion_executes_children_through_each_worker(
 
 
 @pytest.mark.parametrize("cache_kind", ["memory", "disk", "layered"])
-@pytest.mark.parametrize("node_type", ["expansion.graph", "expansion.nested", "expansion.repeat"])
+@pytest.mark.parametrize(
+    "node_type", ["expansion.graph", "expansion.nested", "expansion.repeat", "expansion.indexed"]
+)
 def test_engine_replays_cached_expansion_declarations(
     tmp_path: Path, cache_kind: str, node_type: str
 ) -> None:
@@ -551,7 +597,9 @@ def test_engine_replays_cached_expansion_declarations(
                 cache=LayeredCache(MemoryLRUCache(), disk) if cache_kind == "layered" else disk,
             )
         second = await engine.run(graph, ["parent"])
-        assert second.outputs["parent"]["seed"].resolve() == 17
+        assert second.outputs["parent"]["seed"].resolve() == (
+            23 if node_type == "expansion.indexed" else 17
+        )
         assert second.outputs["parent"]["result"].resolve() == 53
         assert any(node_id.endswith(".output") for node_id in second.executed)
         if node_type == "expansion.repeat":
@@ -560,6 +608,46 @@ def test_engine_replays_cached_expansion_declarations(
             assert "parent" in second.cached and "parent" not in second.executed
         if node_type == "expansion.nested":
             assert "parent.0.0.nested" in second.cached
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("index", [-1, 2])
+def test_builder_output_index_is_validated_at_parent(index: int) -> None:
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        engine = Engine(
+            schemas=build_schemas(PACK_NODES),
+            registry=registry,
+            worker=InProcessWorker(build_node_types(PACK_NODES), registry),
+            cache=MemoryLRUCache(),
+        )
+        with pytest.raises(ExecutionError) as error:
+            await engine.run(
+                Graph({"parent": GraphNode("expansion.indexed", {"index": index})}), ["parent"]
+            )
+        assert error.value.error.node_id == "parent"
+        assert "index" in error.value.error.message
+
+    asyncio.run(scenario())
+
+
+def test_builder_can_reference_a_node_outside_its_worker() -> None:
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        producer = InProcessWorker(build_node_types([IndexedExpansionNode]), registry)
+        children = InProcessWorker(build_node_types([TwoOutputChild, ExpansionOutput]), registry)
+        engine = Engine(
+            schemas=build_schemas([IndexedExpansionNode, TwoOutputChild, ExpansionOutput]),
+            registry=registry,
+            worker=RoutingWorker({"expansion.indexed": producer}, default=children),
+            cache=MemoryLRUCache(),
+        )
+        result = await engine.run(Graph({"parent": GraphNode("expansion.indexed")}), ["parent"])
+        assert result.outputs["parent"]["result"].resolve() == 53
+        assert "parent.0.0.output" in result.executed
 
     asyncio.run(scenario())
 

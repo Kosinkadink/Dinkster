@@ -66,8 +66,13 @@ GOLDEN_V1_SURFACE = (
     "SourceFilenameSpec",
     # -- node authoring (dinkster-schema)
     "ABSENT",
+    "BLOCKED",
     "AbsentOutput",
     "AbsentPolicy",
+    "Expansion",
+    "ExpansionBuilder",
+    "ExpansionNode",
+    "ExpansionOutput",
     "BooleanWidget",
     "ColorWidget",
     "CompositorWidget",

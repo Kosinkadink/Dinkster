@@ -278,6 +278,20 @@ def test_expanded_and_error_variants_round_trip() -> None:
     assert decode(error_header, error_blobs) == failure
 
 
+def test_indexed_local_output_references_round_trip() -> None:
+    outcome = expanded_outcome()
+    unit = cast(ExpandedReturn, outcome.batch.units[0])
+    unit = replace(unit, bindings=(("result", LocalOutputRef("child", 1)), unit.bindings[1]))
+    header, blobs = encode(replace(outcome, batch=replace(outcome.batch, units=(unit,))))
+    decoded = cast(InvocationReturn, decode(header, blobs))
+    returned = cast(ExpandedReturn, decoded.batch.units[0])
+    assert returned.bindings[0] == ("result", LocalOutputRef("child", 1))
+    document = json.loads(algebra(header)["document"])
+    document["batch"]["units"][0]["bindings"][0]["value"]["outputId"] = True
+    with pytest.raises(BoundaryError):
+        decode(replace_document(header, document), blobs)
+
+
 @pytest.mark.parametrize(
     "mutation,match",
     [

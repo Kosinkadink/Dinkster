@@ -23,13 +23,21 @@ from dinkster_protocol import (
     AttentionCapabilityEvidence,
     AttentionPolicyConfig,
     AttentionRouteToken,
+    BlockedOutput,
     CompatGateDiagnostic,
+    CurrentNodeRef,
+    CurrentOutputRef,
     ExpandedReturn,
     Invocation,
     InvocationEvent,
     InvocationResult,
     LazyStatusInvocation,
     LazyStatusResult,
+    LiteralInput,
+    LocalExpansion,
+    LocalNode,
+    LocalNodeRef,
+    LocalOutputRef,
     NodeError,
     OnInvocationEvent,
     PresentOutput,
@@ -37,11 +45,21 @@ from dinkster_protocol import (
     canonical_attention_route_token_bytes,
     derive_attention_route_token,
 )
+from dinkster_protocol.result_algebra import (
+    RESULT_ALGEBRA_MAX_LITERAL_DEPTH,
+    RESULT_ALGEBRA_MAX_LITERAL_ITEMS,
+    InputBinding,
+    JsonLiteral,
+    JsonObject,
+    OutputBinding,
+)
 from dinkster_schema import (
     AbsentOutput,
     DynamicComboSpec,
     DynamicEntry,
     DynamicSlotSpec,
+    Expansion,
+    ExpansionOutput,
     InputFamilySpec,
     Node,
     NodeSchema,
@@ -970,6 +988,16 @@ class InProcessWorker:
                 )
             )
 
+        if isinstance(raw, Expansion):
+            if not schema.may_expand_graph:
+                return contract_error("execute() expanded without declaring may_expand_graph")
+            try:
+                raw = self._lower_expansion(invocation, schema, raw, media_inputs)
+            except (KeyError, TypeError, ValueError) as exc:
+                return contract_error(f"invalid expansion: {exc}")
+            if isinstance(raw, InvocationResult):
+                return raw
+
         if isinstance(raw, ExpandedReturn):
             if not schema.may_expand_graph:
                 return contract_error("execute() expanded without declaring may_expand_graph")
@@ -977,10 +1005,12 @@ class InProcessWorker:
                 return contract_error("expansion bindings must match declared outputs")
             declared_outputs = {out.id: out for out in schema.outputs}
             for name, binding in raw.bindings:
-                if isinstance(binding, PresentOutput) and not declared_outputs[
-                    name
-                ].type.accepts_concrete(binding.value.type_id):
-                    return contract_error(f"output '{name}' rejects {binding.value.type_id}")
+                if isinstance(binding, PresentOutput):
+                    output = declared_outputs[name]
+                    if is_absent(binding.value) and output.optional:
+                        continue
+                    if not output.type.accepts_concrete(binding.value.type_id):
+                        return contract_error(f"output '{name}' rejects {binding.value.type_id}")
             return InvocationResult(expansion=raw)
 
         if not isinstance(raw, Mapping):
@@ -1074,3 +1104,92 @@ class InProcessWorker:
                 # are contract errors at this boundary, not engine crashes.
                 return contract_error(f"output '{out.id}': {exc}")
         return InvocationResult(outputs=outputs)
+
+    def _lower_expansion(
+        self,
+        invocation: Invocation,
+        schema: NodeSchema,
+        declaration: Expansion,
+        media_inputs: Mapping[str, Value],
+    ) -> ExpandedReturn | InvocationResult:
+        if set(declaration.outputs) != {output.id for output in schema.outputs}:
+            raise ValueError("expansion bindings must match declared outputs")
+
+        def reference(value: ExpansionOutput) -> CurrentOutputRef | LocalOutputRef:
+            if value.node_id is None:
+                if not isinstance(value.output_id, str):
+                    raise ValueError("current output reference requires an output id")
+                return CurrentOutputRef(value.output_id)
+            return LocalOutputRef(value.node_id, value.output_id)
+
+        literal_items = 0
+
+        def literal(value: object, depth: int = 0) -> JsonLiteral:
+            nonlocal literal_items
+            literal_items += 1
+            if (
+                depth > RESULT_ALGEBRA_MAX_LITERAL_DEPTH
+                or literal_items > RESULT_ALGEBRA_MAX_LITERAL_ITEMS
+            ):
+                raise ValueError("expansion literal exceeds item or depth limit")
+            if value is None or type(value) in (bool, int, float, str):
+                return cast("JsonLiteral", value)
+            if isinstance(value, (list, tuple)):
+                return tuple(literal(item, depth + 1) for item in cast("Sequence[object]", value))
+            if isinstance(value, Mapping):
+                items = cast("Mapping[object, object]", value)
+                if not all(type(key) is str for key in items):
+                    raise ValueError("expansion literal object keys must be strings")
+                return JsonObject(
+                    tuple(sorted((cast("str", k), literal(v, depth + 1)) for k, v in items.items()))
+                )
+            raise ValueError("expansion inputs must be JSON literals or output references")
+
+        nodes: list[LocalNode] = []
+        for local_id, node_type, inputs, display in declaration.nodes:
+            bindings: list[tuple[str, InputBinding]] = []
+            for name, value in inputs:
+                binding = (
+                    reference(value)
+                    if isinstance(value, ExpansionOutput)
+                    else LiteralInput(literal(value))
+                )
+                bindings.append((name, binding))
+            nodes.append(
+                LocalNode(
+                    local_id,
+                    node_type,
+                    tuple(bindings),
+                    display=(
+                        CurrentNodeRef() if display == invocation.node_id else LocalNodeRef(display)
+                    )
+                    if display is not None
+                    else None,
+                )
+            )
+        present = {
+            name: value
+            for name, value in declaration.outputs.items()
+            if not isinstance(value, ExpansionOutput)
+            and not (isinstance(value, AbsentOutput) and value.blocked)
+        }
+        result = self._wrap_outputs(
+            invocation,
+            replace(schema, outputs=tuple(out for out in schema.outputs if out.id in present)),
+            present,
+            media_inputs,
+        )
+        if result.error is not None:
+            return result
+        assert result.outputs is not None
+        outputs: list[tuple[str, OutputBinding]] = []
+        for name, value in sorted(declaration.outputs.items()):
+            returned: OutputBinding
+            if isinstance(value, ExpansionOutput):
+                returned = reference(value)
+            elif isinstance(value, AbsentOutput) and value.blocked:
+                returned = BlockedOutput(value.reason)
+            else:
+                returned = PresentOutput(result.outputs[name])
+            outputs.append((name, returned))
+        return ExpandedReturn(LocalExpansion(tuple(nodes)), tuple(outputs))
