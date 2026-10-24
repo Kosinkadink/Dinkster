@@ -69,6 +69,9 @@
   audio/video concat, separate, visual preview, and audio preview nodes
 - Empty LATENT mappings remain present values through host transport and cache;
   nonempty LATENT mappings still require a samples entry
+- Packs can import `LatentStream` and `MultiStreamLatent` from `dinkster_api.v1`
+  without loading Torch or inference. These are the same ordered, role-labeled
+  values returned by `materialize_latent`, with no wrapper or wire conversion.
 - Asset-backed native Save/Load Latent with deterministic `.latent`
   safetensors, ordered multi-stream roles, VAE provenance hints, and safe
   stock ComfyUI single-latent import; legacy `LoadLatent` prompts resolve

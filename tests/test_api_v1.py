@@ -29,6 +29,8 @@ from dinkster_values import register_core_types
 from dinkster_workers import InProcessWorker
 
 GOLDEN_V1_SURFACE = (
+    "LatentStream",
+    "MultiStreamLatent",
     "initialize_inference_process",
     "materialize_audio",
     "materialize_clip_vision_output",
@@ -412,6 +414,39 @@ assert not any(name.split('.')[0] in {'torch', 'dinkster_inference'} for name in
     assert result.returncode == 0, result.stderr
 
 
+def test_public_multi_stream_latents_are_cold_structural_identities() -> None:
+    script = """
+import importlib.abc
+import sys
+
+class BlockRuntime(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split('.')[0] in {'torch', 'dinkster_inference'}:
+            raise AssertionError(f'runtime imported: {fullname}')
+
+sys.meta_path.insert(0, BlockRuntime())
+import dinkster_api.v1 as api
+assert {'LatentStream', 'MultiStreamLatent'} <= set(dir(api))
+from dinkster_api.v1 import LatentStream, MultiStreamLatent
+from dinkster_inference_wire.latents import LatentStream as InternalStream
+from dinkster_inference_wire.latents import MultiStreamLatent as InternalMulti
+assert LatentStream is InternalStream
+assert MultiStreamLatent is InternalMulti
+audio, video = object(), object()
+value = MultiStreamLatent((LatentStream('audio', audio), LatentStream('video', video)))
+assert value.roles == ('audio', 'video')
+assert value.by_role('audio') is audio
+assert value.streams[-1].payload is video
+reversed_streams = MultiStreamLatent.from_pairs((('video', video), ('audio', audio)))
+assert reversed_streams.roles == ('video', 'audio')
+assert not any(name.split('.')[0] in {'torch', 'dinkster_inference'} for name in sys.modules)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_controlnet_registration_preserves_resident_identity_without_torch() -> None:
     script = """
 import sys
@@ -460,6 +495,7 @@ def test_golden_surface_is_exact() -> None:
 def test_reexports_are_the_internal_objects() -> None:
     """Zero wrappers: the door hands out the internal objects themselves."""
     import dinkster_assets
+    import dinkster_inference_wire.latents as latent_values
     import dinkster_inference_wire.process as inference_process
     import dinkster_inference_wire.types as inference_types
     import dinkster_memory
@@ -469,6 +505,7 @@ def test_reexports_are_the_internal_objects() -> None:
     import dinkster_video
 
     sources = (
+        latent_values,
         inference_process,
         inference_types,
         dinkster_schema,
