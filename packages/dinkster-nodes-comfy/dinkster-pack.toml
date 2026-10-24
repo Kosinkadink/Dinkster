@@ -265,6 +265,8 @@ namespaces = [
     "VAEEncodeAudio",
     "VAEDecodeAudio",
     "VAEDecodeAudioTiled",
+    "LTXVAudioVAEEncode",
+    "LTXVAudioVAEDecode",
     "ResizeImagesByShorterEdge",
     "ResizeImagesByLongerEdge",
     "CenterCropImages",
