@@ -1,5 +1,8 @@
 ## ComfyUI compatibility
 
+- Native EmptyMochiLatentVideo creates video latents with the core interface.
+  Empty image and Mochi latents honor CPU-only process policy without requiring
+  attention discovery or command-line initialization first.
 - Seven native dataset text nodes lowercase, uppercase, truncate, prefix,
   suffix, replace, and strip text under exact core IDs, retaining the fixed
   reference's one-element list payloads on scalar STRING outputs.
