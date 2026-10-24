@@ -13,6 +13,7 @@ from collections.abc import Mapping
 from dinkster_api.v1 import (
     BLOCKED,
     CORE_BOOLEAN,
+    CORE_FLOAT,
     CORE_INT,
     Expansion,
     ExpansionBuilder,
@@ -25,6 +26,7 @@ from dinkster_api.v1 import (
 
 INT = TypeExpr.concrete(CORE_INT)
 BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
+FLOAT = TypeExpr.concrete(CORE_FLOAT)
 
 
 class ExecutionValue(Node):
@@ -53,6 +55,17 @@ class ExecutionAdd(Node):
     @classmethod
     def execute(cls, *, value: int, amount: int) -> Mapping[str, object]:
         return cls.outputs(value=value + amount)
+
+
+class ExecutionVolatile(ExecutionValue):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dev.execution.volatile",
+            inputs=(InputSpec("value", INT),),
+            outputs=(OutputSpec("value", INT),),
+            idempotent=False,
+        )
 
 
 class ExecutionOutput(ExecutionValue):
@@ -155,15 +168,61 @@ class ExecutionSleep(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.execution.sleep",
-            inputs=(InputSpec("value", INT),),
+            inputs=(InputSpec("value", INT), InputSpec("seconds", FLOAT, default=0.1)),
             outputs=(OutputSpec("value", INT),),
             io_bound=True,
         )
 
     @classmethod
-    async def execute(cls, *, value: int) -> Mapping[str, object]:
-        await asyncio.sleep(0)
+    async def execute(cls, *, value: int, seconds: float) -> Mapping[str, object]:
+        await asyncio.sleep(seconds)
         return cls.outputs(value=value)
+
+
+class ExecutionSum(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dev.execution.sum",
+            inputs=(InputSpec("left", INT), InputSpec("middle", INT), InputSpec("right", INT)),
+            outputs=(OutputSpec("value", INT),),
+        )
+
+    @classmethod
+    def execute(cls, *, left: int, middle: int, right: int) -> Mapping[str, object]:
+        return cls.outputs(value=left + middle + right)
+
+
+class ExecutionParallelSleep(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dev.execution.parallel_sleep",
+            inputs=(
+                InputSpec("left", INT),
+                InputSpec("middle", INT),
+                InputSpec("right", INT),
+                InputSpec("seconds", FLOAT, default=0.1),
+            ),
+            outputs=(OutputSpec("value", INT),),
+            may_expand_graph=True,
+        )
+
+    @classmethod
+    def execute(cls, *, left: int, middle: int, right: int, seconds: float) -> Expansion:
+        graph = ExpansionBuilder()
+        slept = [
+            graph.node("dev.execution.sleep", name, value=value, seconds=seconds)
+            for name, value in (("left", left), ("middle", middle), ("right", right))
+        ]
+        total = graph.node(
+            "dev.execution.sum",
+            "sum",
+            left=slept[0].out(0),
+            middle=slept[1].out(0),
+            right=slept[2].out(0),
+        )
+        return graph.finalize(value=total.out(0))
 
 
 class TestForLoopOpen(Node):
@@ -182,14 +241,18 @@ class TestForLoopOpen(Node):
     def execute(cls, *, initial: int, iterations: int) -> Expansion:
         if iterations < 0:
             raise ValueError("iterations must be non-negative")
-        graph = ExpansionBuilder()
-        carried: object = initial
-        for index in range(iterations):
-            iteration = graph.node(
-                "dev.execution.add", f"iteration-{index}", value=carried, amount=1
-            )
-            carried = iteration.out(0)
-        return graph.finalize(value=carried)
+        if iterations == 0:
+            graph = ExpansionBuilder()
+            terminal = graph.node("dev.execution.value", "terminal", value=initial)
+            return graph.finalize(value=terminal.out(0))
+        graph = ExpansionBuilder(cache_policy="rerun")
+        next_iteration = graph.node(
+            "dev.execution.test_for_loop_open",
+            "next",
+            initial=initial + 1,
+            iterations=iterations - 1,
+        )
+        return graph.finalize(value=next_iteration.out(0))
 
 
 class ExecutionFail(Node):
@@ -208,12 +271,15 @@ class ExecutionFail(Node):
 EXECUTION_NODES: tuple[type[Node], ...] = (
     ExecutionValue,
     ExecutionAdd,
+    ExecutionVolatile,
     ExecutionOutput,
     ExecutionLazySelect,
     ExecutionBlock,
     ExecutionExpand,
     ExecutionDynamicCycle,
     ExecutionSleep,
+    ExecutionSum,
+    ExecutionParallelSleep,
     TestForLoopOpen,
     ExecutionFail,
 )
