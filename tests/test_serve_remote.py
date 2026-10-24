@@ -1211,7 +1211,9 @@ def test_computationally_divergent_matching_type_is_refused(tmp_path: Path) -> N
                 await composer.add_pack(PackSpec(DEV_MANIFEST, trust_reserved=True))
                 before = composition_snapshot(composer)
                 with pytest.raises(CompositionError, match="does not match the schema signature"):
-                    await composer.add_remote(remote_spec(host, port, tmp_path, trust_reserved=True))
+                    await composer.add_remote(
+                        remote_spec(host, port, tmp_path, trust_reserved=True)
+                    )
                 assert composition_snapshot(composer) == before
                 await daemon_accepts_a_client(host, port)
             finally:
@@ -1258,8 +1260,7 @@ def test_remote_provider_routes_an_unrouted_schema_owner(tmp_path: Path) -> None
         shutil.copytree(DEV_MANIFEST.parent, owner_root)
         owner_manifest = owner_root / DEV_MANIFEST.name
         owner_manifest.write_text(
-            owner_manifest.read_text(encoding="utf-8")
-            .replace(
+            owner_manifest.read_text(encoding="utf-8").replace(
                 '\nnamespaces = ["dev"]\n',
                 '\nnamespaces = ["dev"]\nschema-only = ["dev.gallery.widgets"]\n',
             ),

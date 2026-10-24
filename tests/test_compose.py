@@ -2351,6 +2351,61 @@ def test_add_pack_applies_host_types_at_commit(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
+def test_reload_preserves_pack_owned_host_codecs_and_providers(tmp_path: Path) -> None:
+    from dinkster_values import TypeRegistry
+
+    def host_types(registry: TypeRegistry) -> None:
+        if "iso.blob" not in registry:
+            registry.register(
+                "iso.blob",
+                encode=lambda obj: b"host:" + json.dumps(obj).encode(),
+                decode=lambda data: json.loads(data.removeprefix(b"host:")),
+            )
+            registry.register_asset_decoder(
+                "iso.blob", provider_id="host.decode", decode=lambda obj: obj
+            )
+            registry.register_batch_merge(
+                "iso.blob", provider_id="host.merge", merge=lambda values: list(values)
+            )
+            registry.register_rendition(
+                "iso.blob", "host", mime="text/plain", render=lambda _obj: b"host rendition"
+            )
+
+    def check_registry(registry: TypeRegistry) -> None:
+        value = registry.wrap("iso.blob", {"n": 17})
+        assert registry.owner_of("iso.blob") == "hostpack"
+        assert registry.spec("iso.blob").encode(value.resolve()) == b'host:{"n": 17}'
+        assert registry.spec("iso.blob").decode(b'host:{"n": 29}') == {"n": 29}
+        decoder = registry.asset_decoder_for("iso.blob")
+        merger = registry.batch_merge_for("iso.blob")
+        assert decoder is not None and decoder.decode({"n": 31}) == {"n": 31}
+        assert merger is not None and merger.merge([7, 19]) == [7, 19]
+        assert registry.render(value, "host").data == b"host rendition"
+
+    async def scenario() -> None:
+        composer = ServingComposer(worker_env=WORKER_ENV)
+        spec = PackSpec(
+            write_iso_manifest(tmp_path / "pack", name="hostpack"), host_types=host_types
+        )
+        try:
+            await composer.add_pack(spec)
+            check_registry(composer.composition._registry)
+            await composer.reload_pack("hostpack")
+            check_registry(composer.composition._registry)
+
+            def failed_host_types(registry: TypeRegistry) -> None:
+                host_types(registry)
+                raise ValueError("host codec refused")
+
+            with pytest.raises(ValueError, match="host codec refused"):
+                await composer.reload_pack("hostpack", replace(spec, host_types=failed_host_types))
+            check_registry(composer.composition._registry)
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
 def test_comfy_compat_specs_carry_host_types(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

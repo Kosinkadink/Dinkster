@@ -6488,6 +6488,11 @@ class ServingComposer:
                 derived_choices = self._validated_derived_choices(
                     sampler_registry, scheduler_registry, staged_records, topology
                 )
+                staged_registry.remove_relayed_renditions(name)
+                if not spec.in_process:
+                    self._register_worker_renditions(staged_registry, manifest.name, worker)
+                if spec.host_types is not None:
+                    spec.host_types(staged_registry)
             except BaseException:
                 if snapshot is not None and topology is not None:
                     await self._rollback_unpublished_generation(snapshot, topology)
@@ -6496,9 +6501,6 @@ class ServingComposer:
                 raise
             old_derived_choices = self._current_derived_choices()
             old_choice_owners = dict(self._choice_owners)
-            staged_registry.remove_relayed_renditions(name)
-            if not spec.in_process:
-                self._register_worker_renditions(staged_registry, manifest.name, worker)
             removed_routes = tuple(
                 node_type
                 for node_type in dict.fromkeys((*old_types, *record.executes, *manifest.executes))
