@@ -10,6 +10,10 @@ model patcher.
 model. `DifferentialDiffusion` applies timestep-dependent denoise masks, with
 optional blending strength, without changing the source model.
 
+`BlockSparseAttention` uses the pinned Comfy Kitchen sparse kernels for eligible
+self-attention calls and preserves the selected dense backend for ineligible
+calls. MiniMax-H3 models use the runtime's chunked sparse producer path.
+
 The native attention multiplier nodes scale self-attention, cross-attention,
 CLIP attention, and temporal-attention projection weights through the model
 patcher. LoRA loading, scheduled patches, context-window patches, and
