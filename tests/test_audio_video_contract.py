@@ -613,8 +613,8 @@ def test_remote_audio_stages_once_and_decodes_exact_edited_window(tmp_path, monk
                             node_type="dinkster.audio.trim",
                             inputs={
                                 "audio": registry.wrap("comfy.AUDIO", source),
-                                "start": registry.wrap("core.float", 0.113),
-                                "duration": registry.wrap("core.float", 0.751),
+                                "start": registry.wrap("FLOAT", 0.113),
+                                "duration": registry.wrap("FLOAT", 0.751),
                             },
                             effective_schema=worker.schemas["dinkster.audio.trim"],
                         )
@@ -630,8 +630,8 @@ def test_remote_audio_stages_once_and_decodes_exact_edited_window(tmp_path, monk
                             node_type="dinkster.audio.fade",
                             inputs={
                                 "audio": trimmed.outputs["audio"],
-                                "fade_in_seconds": registry.wrap("core.float", 0.0),
-                                "fade_out_seconds": registry.wrap("core.float", 0.0),
+                                "fade_in_seconds": registry.wrap("FLOAT", 0.0),
+                                "fade_out_seconds": registry.wrap("FLOAT", 0.0),
                             },
                             effective_schema=worker.schemas["dinkster.audio.fade"],
                         )

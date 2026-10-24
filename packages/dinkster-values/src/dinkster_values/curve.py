@@ -10,9 +10,9 @@ from dataclasses import dataclass, field
 from decimal import Decimal, localcontext
 from typing import Literal, cast
 
+from .builtin_types import CURVE_TYPE
 from .registry import RenditionUnavailable, TypeRegistry
 
-CURVE_TYPE = "dinkster.curve"
 MAX_CURVE_POINTS = 4096
 _CURVE_POINTS_RENDITION = "curve-points"
 

@@ -1,7 +1,7 @@
 """Structural validation and type diagnostics.
 
 Shared principle with Dinkster-Frontend: a graph is rejected only on structural
-grounds and the scoped core.combo boundary; other type mismatches are
+grounds and the scoped COMBO boundary; other type mismatches are
 advisory warnings.
 """
 
@@ -457,7 +457,7 @@ def _check_input_value(
                     )
                 )
             return
-        # Type check: most mismatches stay advisory. core.combo is the one
+        # Type check: most mismatches stay advisory. COMBO is the one
         # hard type boundary; coercible asset sources returned above, so
         # reaching here means no accepted/coercible path exists.
         if out_runtime is not None and not expected.accepts_concrete(out_runtime):
@@ -673,7 +673,7 @@ def _check_typed_literal(
             )
         return
     # Type check, exactly as for links (skipped when the stamp is already an
-    # error-level unknown). Most mismatches warn; core.combo is hard.
+    # error-level unknown). Most mismatches warn; COMBO is hard.
     if known and not expected.accepts_concrete(typed.type_id):
         diags.append(
             Diagnostic(
@@ -1016,8 +1016,8 @@ def _validate_region(
         else:
             cont_type = _body_output_type(region, data, region.continue_source)
             cont_runtime = None if cont_type is None else cont_type.runtime_type_id()
-            if cont_runtime is not None and cont_runtime != "core.boolean":
-                expected_boolean = TypeExpr.concrete("core.boolean")
+            if cont_runtime is not None and cont_runtime != "BOOLEAN":
+                expected_boolean = TypeExpr.concrete("BOOLEAN")
                 diags.append(
                     Diagnostic(
                         (
@@ -1026,7 +1026,7 @@ def _validate_region(
                             else "warning"
                         ),
                         "type-mismatch",
-                        f"continue source produces {cont_runtime}, expected core.boolean",
+                        f"continue source produces {cont_runtime}, expected BOOLEAN",
                         where,
                     )
                 )

@@ -14,6 +14,7 @@ from dinkster_api.v1 import (
     CORE_BOOLEAN,
     CORE_FLOAT,
     CORE_STRING,
+    IMAGE_TYPE,
     MEBIBYTE,
     InputSpec,
     Node,
@@ -32,9 +33,10 @@ from .types import (
     Pose,
     PoseKeypoint,
     PoseSkeleton,
+    validate_pose_json_nesting,
 )
 
-IMAGE = TypeExpr.concrete("dinkster.image")
+IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
 FLOAT = TypeExpr.concrete(CORE_FLOAT)
 STRING = TypeExpr.concrete(CORE_STRING)
@@ -330,6 +332,10 @@ def poses_from_json(text: str) -> list[Pose]:
     try:
         raw = cast("object", json.loads(text, parse_constant=reject_constant))
     except (json.JSONDecodeError, RecursionError) as exc:
+        raise ValueError("invalid pose JSON") from exc
+    try:
+        validate_pose_json_nesting(raw)
+    except ValueError as exc:
         raise ValueError("invalid pose JSON") from exc
     frames: list[object] = list(cast("list[object]", raw)) if isinstance(raw, list) else [raw]
     if not frames:

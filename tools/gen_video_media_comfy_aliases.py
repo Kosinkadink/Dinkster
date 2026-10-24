@@ -92,18 +92,14 @@ def _save_source_schema(schema: NodeSchema) -> NodeSchema:
             *schema.inputs,
             InputSpec(
                 "encoding",
-                TypeExpr.concrete("core.combo"),
+                TypeExpr.concrete("COMBO"),
                 required=False,
                 force_input=True,
                 widget=ComboWidget(options=encoding_options),
             ),
-            InputSpec(
-                "encoding.crf", TypeExpr.concrete("core.float"), required=False, force_input=True
-            ),
-            InputSpec("crf", TypeExpr.concrete("core.float"), required=False, force_input=True),
-            InputSpec(
-                "metadata", TypeExpr.concrete("core.string"), required=False, force_input=True
-            ),
+            InputSpec("encoding.crf", TypeExpr.concrete("FLOAT"), required=False, force_input=True),
+            InputSpec("crf", TypeExpr.concrete("FLOAT"), required=False, force_input=True),
+            InputSpec("metadata", TypeExpr.concrete("STRING"), required=False, force_input=True),
         ),
     )
 

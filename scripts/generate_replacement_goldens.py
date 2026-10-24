@@ -10,7 +10,7 @@ The fixture content is the coverage set agreed with Dinkster-Frontend: every
 predicate/mapping/transform union member, deep predicate nesting,
 multi-successor fan-out, deprecation + searchVisibility + replacements on
 one schema, a two-hop replacement chain with per-hop transforms, and the
-core.combo socket contract with the unchanged ComboWidget shape. The dynamic
+COMBO socket contract with the unchanged ComboWidget shape. The dynamic
 fixture selects nested target constructs and maps their
 materialized input paths.
 """
@@ -47,13 +47,13 @@ from dinkster_schema import (
 
 GOLDENS_DIR = Path(__file__).resolve().parent.parent / "goldens" / "replacements"
 
-_INT = TypeExpr.concrete("core.int")
-_FLOAT = TypeExpr.concrete("core.float")
-_STRING = TypeExpr.concrete("core.string")
-_COMBO = TypeExpr.concrete("core.combo")
+_INT = TypeExpr.concrete("INT")
+_FLOAT = TypeExpr.concrete("FLOAT")
+_STRING = TypeExpr.concrete("STRING")
+_COMBO = TypeExpr.concrete("COMBO")
 _COMBO_LIST = TypeExpr.list_of(_COMBO)
-_BOOLEAN = TypeExpr.concrete("core.boolean")
-_IMAGE_LIST = TypeExpr.list_of(TypeExpr.concrete("core.string"))
+_BOOLEAN = TypeExpr.concrete("BOOLEAN")
+_IMAGE_LIST = TypeExpr.list_of(TypeExpr.concrete("STRING"))
 
 
 def _vocabulary_schemas() -> dict[str, NodeSchema]:

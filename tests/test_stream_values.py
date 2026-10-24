@@ -17,7 +17,7 @@ def stream(
     closed: list[str] | None = None,
 ) -> MediaStream:
     return MediaStream(
-        "comfy.IMAGE",
+        "IMAGE",
         total,
         chunk_size,
         lambda start, stop: (
@@ -118,7 +118,7 @@ def test_collection_closes_source_when_callback_captures_stream() -> None:
         def close() -> None:
             events.extend(("source", value.identity))
 
-        value = MediaStream("comfy.IMAGE", 1, 1, read, identity="source-digest", close=close)
+        value = MediaStream("IMAGE", 1, 1, read, identity="source-digest", close=close)
         value.on_close(lambda: events.append(value.identity))
         return weakref.ref(value)
 
@@ -139,7 +139,7 @@ def test_final_close_waits_for_an_active_read() -> None:
         return tuple(range(start, stop))
 
     value = MediaStream(
-        "comfy.IMAGE", 1, 1, read, identity="serialized", close=lambda: events.append("close")
+        "IMAGE", 1, 1, read, identity="serialized", close=lambda: events.append("close")
     )
     reader = threading.Thread(target=lambda: value.read(0, 1))
     reader.start()
@@ -161,7 +161,7 @@ def test_cleanup_runs_every_callback_when_source_close_fails() -> None:
         events.append("source")
         raise RuntimeError("source failed")
 
-    value = MediaStream("comfy.IMAGE", 1, 1, lambda _a, _b: (), identity="errors", close=fail)
+    value = MediaStream("IMAGE", 1, 1, lambda _a, _b: (), identity="errors", close=fail)
     value.on_close(lambda: events.append("first"))
     value.on_close(lambda: events.append("second"))
     with pytest.raises(RuntimeError, match="source failed"):
@@ -171,10 +171,10 @@ def test_cleanup_runs_every_callback_when_source_close_fails() -> None:
 
 def test_registry_wraps_matching_stream_with_stable_metadata() -> None:
     registry = TypeRegistry()
-    registry.register("comfy.IMAGE")
+    registry.register("IMAGE")
     ref: dict[str, object] = {"digest": "sha256:" + "a" * 64, "size": 12}
     first = MediaStream(
-        "comfy.IMAGE",
+        "IMAGE",
         7,
         3,
         lambda start, stop: tuple(range(start, stop)),
@@ -182,7 +182,7 @@ def test_registry_wraps_matching_stream_with_stable_metadata() -> None:
         asset_refs=[ref],
     )
     second = MediaStream(
-        "comfy.IMAGE",
+        "IMAGE",
         7,
         5,
         lambda start, stop: tuple(range(start, stop)),
@@ -190,10 +190,10 @@ def test_registry_wraps_matching_stream_with_stable_metadata() -> None:
         asset_refs=[dict(ref)],
     )
     try:
-        wrapped = registry.wrap("stream<comfy.IMAGE>", first)
-        same_content = registry.wrap("stream<comfy.IMAGE>", second)
+        wrapped = registry.wrap("stream<IMAGE>", first)
+        same_content = registry.wrap("stream<IMAGE>", second)
         ref["size"] = 99
-        assert wrapped.type_id == "stream<comfy.IMAGE>"
+        assert wrapped.type_id == "stream<IMAGE>"
         assert wrapped.resolve() is first
         assert wrapped.fingerprint == same_content.fingerprint
         assert wrapped.meta.entries == {
@@ -206,9 +206,9 @@ def test_registry_wraps_matching_stream_with_stable_metadata() -> None:
         with pytest.raises(AttributeError):
             first.identity = "replacement"  # type: ignore[misc]
         with pytest.raises(TypeError, match="does not accept"):
-            registry.wrap("comfy.IMAGE", first)
+            registry.wrap("IMAGE", first)
         with pytest.raises(TypeError, match="matching MediaStream"):
-            registry.wrap("stream<comfy.IMAGE>", object())
+            registry.wrap("stream<IMAGE>", object())
         with pytest.raises(KeyError, match="unregistered"):
             registry.wrap("stream<comfy.AUDIO>", first)
     finally:
@@ -216,31 +216,27 @@ def test_registry_wraps_matching_stream_with_stable_metadata() -> None:
         second.close()
 
 
-def test_registry_retypes_equivalent_stream_with_an_independent_lease() -> None:
+def test_registry_wraps_exact_stream_with_an_independent_lease() -> None:
     events: list[str] = []
     registry = TypeRegistry()
-    registry.register("comfy.IMAGE")
-    registry.register("dinkster.image")
-    registry.register_type_equivalence(
-        "comfy.IMAGE", "dinkster.image", provider_id="test.image-equivalence@1"
-    )
+    registry.register("IMAGE")
     original = stream(closed=events)
-    source_fingerprint = registry.wrap("stream<comfy.IMAGE>", original).fingerprint
-    wrapped = registry.wrap("stream<dinkster.image>", original)
+    source_fingerprint = registry.wrap("stream<IMAGE>", original).fingerprint
+    wrapped = registry.wrap("stream<IMAGE>", original)
     retained = wrapped.resolve()
     assert isinstance(retained, MediaStream)
-    assert retained is not original
-    assert retained.type_id == "dinkster.image"
-    assert wrapped.fingerprint != source_fingerprint
+    assert retained is original
+    assert retained.type_id == "IMAGE"
+    assert wrapped.fingerprint == source_fingerprint
     original.close()
-    assert events == []
+    assert events == ["source"]
     retained.close()
     assert events == ["source"]
 
 
 def test_registry_refuses_different_registered_stream_type() -> None:
     registry = TypeRegistry()
-    registry.register("comfy.IMAGE")
+    registry.register("IMAGE")
     registry.register("comfy.AUDIO")
     value = stream()
     try:
@@ -252,11 +248,11 @@ def test_registry_refuses_different_registered_stream_type() -> None:
 
 def test_registry_refuses_closed_stream() -> None:
     registry = TypeRegistry()
-    registry.register("comfy.IMAGE")
+    registry.register("IMAGE")
     value = stream()
     value.close()
     with pytest.raises(ValueError, match="closed"):
-        registry.wrap("stream<comfy.IMAGE>", value)
+        registry.wrap("stream<IMAGE>", value)
 
 
 def test_media_chunk_rejects_noncanonical_ranges() -> None:

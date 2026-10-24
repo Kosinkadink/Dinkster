@@ -24,7 +24,7 @@ from dinkster_values import (
     register_core_types,
 )
 
-INT = TypeExpr.concrete("core.int")
+INT = TypeExpr.concrete("INT")
 SCHEMAS = {
     "step": NodeSchema(
         node_type="step",
@@ -37,7 +37,7 @@ SCHEMAS = {
         inputs=(
             InputSpec("a", INT),
             InputSpec("b", INT, lazy=True),
-            InputSpec("demand", TypeExpr.concrete("core.boolean")),
+            InputSpec("demand", TypeExpr.concrete("BOOLEAN")),
         ),
         outputs=(OutputSpec("out", INT),),
         io_bound=True,
@@ -45,7 +45,7 @@ SCHEMAS = {
     "condition": NodeSchema(
         node_type="condition",
         inputs=(InputSpec("a", INT),),
-        outputs=(OutputSpec("out", TypeExpr.concrete("core.boolean")),),
+        outputs=(OutputSpec("out", TypeExpr.concrete("BOOLEAN")),),
     ),
 }
 
@@ -81,7 +81,7 @@ class LifetimeWorker:
         result = await self.inspect(invocation)
         if result is None:
             result = self.registry.wrap(
-                "core.int",
+                "INT",
                 sum(
                     cast(int, invocation.inputs[name].resolve())
                     for name in ("a", "b")
@@ -333,7 +333,7 @@ def test_produced_release_does_not_shorten_resource_pin_lifetime(fail) -> None:
         async def inspect(invocation):
             if invocation.node_id == "source":
                 return replace(
-                    worker.registry.wrap("core.int", 10),
+                    worker.registry.wrap("INT", 10),
                     meta=ValueMeta({RESOURCE_ID_META_KEY: "resident"}),
                 )
             if invocation.node_id == "tail":
@@ -366,7 +366,7 @@ def test_while_releases_previous_iteration_ports_and_keeps_continue_export() -> 
     async def scenario() -> None:
         async def inspect(invocation):
             if invocation.node_id.endswith("/continue"):
-                return worker.registry.wrap("core.boolean", invocation.inputs["a"].resolve() < 3)
+                return worker.registry.wrap("BOOLEAN", invocation.inputs["a"].resolve() < 3)
             if invocation.node_id == "region[2]/step":
                 assert worker.refs["region[0]/step"]() is None
                 assert worker.refs["region[1]/continue"]() is None
@@ -439,10 +439,10 @@ def test_while_errors_release_iteration_exports_and_prior_state(failure: str) ->
                     if failure == "absent":
                         return make_absent_value(origin=invocation.node_id)
                     if failure == "non-boolean":
-                        return worker.registry.wrap("core.int", 1)
+                        return worker.registry.wrap("INT", 1)
                     if failure == "worker":
                         raise ExecutionError(NodeError(invocation.node_id, "condition", "failure"))
-                return worker.registry.wrap("core.boolean", True)
+                return worker.registry.wrap("BOOLEAN", True)
 
         engine, worker, _ = make_engine(inspect)
         region = RegionNode(

@@ -251,7 +251,7 @@ def test_sampler_custom_advanced_accepts_declared_multi_stream_latent(
     result = cast("Mapping[str, object]", node.execute(latent_image=latent))
     registry = TypeRegistry()
     translation.register_types(registry)
-    latent_spec = registry.spec("comfy.LATENT")
+    latent_spec = registry.spec("LATENT")
     assert latent_spec.validate_encoded is not None
     for output_id in ("output", "denoised_output"):
         output = cast("Mapping[str, MultiStreamLatent[object]]", result[output_id])["samples"]
@@ -375,11 +375,11 @@ def test_blend_schema_translation() -> None:
     assert schema.category == "comfy/image/blend"
     by_id = {spec.id: spec for spec in schema.inputs}
     assert set(by_id) == {"image_a", "image_b", "factor", "mode", "label"}
-    assert by_id["image_a"].required and by_id["image_a"].type.types == ("comfy.IMAGE",)
+    assert by_id["image_a"].required and by_id["image_a"].type.types == ("IMAGE",)
     assert by_id["factor"].default == 0.5 and not by_id["factor"].required
     assert by_id["mode"].default == "normal"  # combo defaults to first choice
     # The choice list survives as a static dropdown (wire v9 COMBO) on the
-    # concrete core.combo socket; its vocabulary remains presentation only.
+    # concrete COMBO socket; its vocabulary remains presentation only.
     widget = by_id["mode"].widget
     assert isinstance(widget, ComboWidget)
     assert widget.options == ("normal", "multiply", "screen")
@@ -388,7 +388,7 @@ def test_blend_schema_translation() -> None:
     assert by_id["label"].default == "" and not by_id["label"].required
     assert [out.id for out in schema.outputs] == ["image"]
     assert schema.idempotent
-    assert translation.opaque_types == {"comfy.IMAGE"}
+    assert translation.opaque_types == {"IMAGE"}
 
 
 def test_v3_remote_options_untrusted_route_is_whole_node_classified_skip() -> None:
@@ -557,7 +557,7 @@ def test_v1_widget_v19_declarations_are_preserved_without_inference() -> None:
     assert by_id["choice"].widget == ComboWidget(
         options=("a", "b"), control_after_generate="randomize"
     )
-    assert by_id["color"].type == TypeExpr.concrete("core.string")
+    assert by_id["color"].type == TypeExpr.concrete("STRING")
     assert by_id["color"].widget == ColorWidget()
     assert by_id["opaque"].type == TypeExpr.concrete("comfy.COLORS")
     assert "comfy.COLOR" not in translation.opaque_types
@@ -851,7 +851,7 @@ def test_numeric_combo_wire_keys_restore_original_choice_types(listed: bool, v3:
     assert result == {"combo": ["10", "2.5"] if listed else "10"}
     registry = TypeRegistry()
     register_core_types(registry)
-    output_type = "list<core.combo>" if listed else CORE_COMBO
+    output_type = "list<COMBO>" if listed else CORE_COMBO
     assert registry.wrap(output_type, result["combo"]).resolve() == result["combo"]
 
 
@@ -959,7 +959,7 @@ def test_v1_multicombo_translates_exact_list_contract_and_refuses_lookalikes() -
 
 def test_boolean_combo_translates_to_labeled_toggle() -> None:
     """A two-option combo that is a disguised boolean (enable/disable and
-    kin, either order, any case) becomes an honest core.boolean wearing
+    kin, either order, any case) becomes an honest BOOLEAN wearing
     the original strings as toggle labels; execute() maps the boolean
     back onto the v1 vocabulary, and a legacy prompt still sending the
     string passes through verbatim. v1 BOOLEAN inputs keep their
@@ -1884,7 +1884,7 @@ def test_translated_image_and_mask_share_the_image_array_codec() -> None:
     registry = TypeRegistry()
     register_core_types(registry)
     translation.register_types(registry)
-    for type_id in ("comfy.IMAGE", "comfy.MASK"):
+    for type_id in ("IMAGE", "MASK"):
         assert registry.spec(type_id).prepare_buffer_encoding is prepare_image_array_encoding
 
 
@@ -2010,7 +2010,7 @@ def test_output_is_list_values_flow_as_native_lists() -> None:
         parts = result.outputs["d"]["doubled"]
         assert parts.resolve() == [0, 2, 4]
         # The envelope carries the canonical runtime list type id.
-        assert parts.type_id == "list<core.int>"
+        assert parts.type_id == "list<INT>"
 
     asyncio.run(scenario())
 
@@ -3688,7 +3688,7 @@ def test_v3_matchtype_autogrow_lists_share_output_variable_and_execute() -> None
         )
         result = await engine.run(graph, ["list"])
         value = result.outputs["list"]["list"]
-        assert value.type_id == "list<core.int>"
+        assert value.type_id == "list<INT>"
         assert value.resolve() == [0, 1, 0, 1, 2]
 
     asyncio.run(scenario())

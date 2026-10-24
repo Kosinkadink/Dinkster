@@ -635,7 +635,7 @@ def test_refused_mutation_rolls_back_all_writes(tmp_path: Path) -> None:
 
 # -- HTTP surface -------------------------------------------------------------
 
-STRING = TypeExpr.concrete("core.string")
+STRING = TypeExpr.concrete("STRING")
 
 
 class Echo(Node):

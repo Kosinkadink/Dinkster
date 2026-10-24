@@ -40,8 +40,8 @@ class Doubler(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="healthy.doubler",
-            inputs=(InputSpec("value", TypeExpr.concrete("core.int")),),
-            outputs=(OutputSpec("doubled", TypeExpr.concrete("core.int")),),
+            inputs=(InputSpec("value", TypeExpr.concrete("INT")),),
+            outputs=(OutputSpec("doubled", TypeExpr.concrete("INT")),),
         )
 
     @classmethod

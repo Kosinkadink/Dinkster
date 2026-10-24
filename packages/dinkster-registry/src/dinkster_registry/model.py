@@ -9,8 +9,8 @@ scaled up to distribution).
 
 Identity decisions, each answering a recorded ComfyUI failure:
 
-- Pack names, publisher ids, and namespace claims share the one closed
-  grammar (``dinkster_schema.names``); uniqueness is ``canonical_name``.
+- Pack names and publisher ids use the closed lowercase grammar. Ownership
+  claims use namespace identity or preserve an exact node ID's spelling.
 - Release versions use normalized public PEP 440 forms. Local version
   segments are excluded because they are not public release identities.
 - Release artifacts are identified by ``blake3:<64 hex>`` to match the
@@ -217,7 +217,7 @@ class Release:
     publisher: str
     """Canonical publisher id."""
     claims: tuple[str, ...]
-    """Canonical namespace claims in force for this release."""
+    """Namespace or exact node claims in canonical_claim form."""
     node_types: tuple[str, ...]
     """Node types the admission probe loaded from the artifact."""
     templates: tuple[ReleaseTemplate, ...] = ()

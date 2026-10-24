@@ -228,7 +228,7 @@ def test_detr_provider_executes_in_an_isolated_worker(tmp_path: Path) -> None:
                     "detect": GraphNode(
                         "dinkster.detection.detect",
                         {
-                            "image": TypedLiteral("dinkster.image", source.tolist()),
+                            "image": TypedLiteral("IMAGE", source.tolist()),
                             "provider": "dinkster-vision-detr",
                             "prompt": "",
                             "min_score": 0.1,

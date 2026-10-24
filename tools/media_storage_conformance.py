@@ -53,7 +53,7 @@ async def measure(frames: int, height: int, width: int) -> dict[str, int]:
     shape = (frames, height, width, 3)
     batch_bytes = frames * height * width * 3
     image_type = TypeExpr.concrete("comfy.IMAGE")
-    integer_type = TypeExpr.concrete("core.int")
+    integer_type = TypeExpr.concrete("INT")
 
     class Source(Node):
         @classmethod

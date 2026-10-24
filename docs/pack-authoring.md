@@ -646,11 +646,11 @@ class Shout(Node):
             display_name="Shout",
             category="text",
             inputs=(
-                InputSpec("text", TypeExpr.concrete("core.string")),
-                InputSpec("times", TypeExpr.concrete("core.int"),
+                InputSpec("text", TypeExpr.concrete("STRING")),
+                InputSpec("times", TypeExpr.concrete("INT"),
                           required=False, default=1),
             ),
-            outputs=(OutputSpec("shouted", TypeExpr.concrete("core.string")),),
+            outputs=(OutputSpec("shouted", TypeExpr.concrete("STRING")),),
         )
 
     @classmethod
@@ -672,12 +672,12 @@ Facts that matter:
 - **execute() may be sync or async.** Declare plain named parameters
   matching your input ids; the shim only ever calls you with
   schema-declared inputs.
-- **Type expressions**: `TypeExpr.concrete("core.int")`,
-  `TypeExpr.union("core.int", "core.float")`, `TypeExpr.wildcard()`,
+- **Type expressions**: `TypeExpr.concrete("INT")`,
+  `TypeExpr.union("INT", "FLOAT")`, `TypeExpr.wildcard()`,
   `TypeExpr.variable("T", allowed=(...))` (same variable id unifies across
   ports), and `TypeExpr.list_of(element)` for typed lists, nestable
-  (`list<list<core.int>>`). Core atoms: `core.int`, `core.float`,
-  `core.bool`, `core.string` (constants `CORE_INT` etc. are exported).
+  (`list<list<INT>>`). Core atoms: `INT`, `FLOAT`,
+  `core.bool`, `STRING` (constants `CORE_INT` etc. are exported).
 - **Caching is automatic and on by default.** Results are keyed by schema
   signature + input fingerprints, never by node id or process (hazard H4).
   A side-effecting node opts out with `NodeSchema(idempotent=False)` - it

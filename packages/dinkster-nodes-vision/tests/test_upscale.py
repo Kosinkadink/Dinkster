@@ -326,7 +326,7 @@ def test_upscale_provider_executes_in_an_isolated_worker(tmp_path: Path) -> None
                     "up": GraphNode(
                         "dinkster.image.upscale_model",
                         {
-                            "image": TypedLiteral("dinkster.image", source.tolist()),
+                            "image": TypedLiteral("IMAGE", source.tolist()),
                             "upscale_model": TypedLiteral(
                                 "dinkster.asset",
                                 {

@@ -100,7 +100,7 @@ class SourceMedia:
             with Image.open(io.BytesIO(result.png)) as image:
                 yield start, np.asarray(image.convert("RGBA"), dtype=np.float32) / 255.0
             return
-        if reference["type"] == "dinkster.image":
+        if reference["type"] == "IMAGE":
             with self._asset(reference["asset"]).open() as handle, Image.open(handle) as image:
                 if image.width * image.height > 8192 * 8192:
                     raise TimelineError("document_limit", "$", "image exceeds render budget")

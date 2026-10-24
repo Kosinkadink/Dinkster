@@ -138,7 +138,7 @@ async def run() -> None:
         print("run 1: everything crosses the boundary")
         result = await engine.run(graph, ["stats", "save", "blended"])
         mean = result.outputs["stats"]["mean"].resolve()
-        print(f"\n  stats.mean = {mean} (core.float: decodable here)")
+        print(f"\n  stats.mean = {mean} (FLOAT: decodable here)")
 
         image = result.outputs["blended"]["image"]
         print(

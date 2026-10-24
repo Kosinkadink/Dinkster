@@ -220,9 +220,32 @@ def _fixture_bytes() -> bytes:
     return zlib.decompress(base64.b85decode(encoded))
 
 
+def _native_scalar_type_expressions(value: Any) -> Any:
+    scalar_types = {
+        "core.int": "INT",
+        "core.float": "FLOAT",
+        "core.string": "STRING",
+        "core.combo": "COMBO",
+        "core.boolean": "BOOLEAN",
+        "dinkster.image": "IMAGE",
+        "dinkster.mask": "MASK",
+    }
+    if isinstance(value, list):
+        return [_native_scalar_type_expressions(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    converted = {key: _native_scalar_type_expressions(item) for key, item in value.items()}
+    types = converted.get("types")
+    if converted.get("kind") == "concrete" and isinstance(types, list):
+        converted["types"] = [scalar_types.get(item, item) for item in types]
+    return converted
+
+
 @cache
 def _v1_schemas() -> dict[str, NodeSchema]:
-    wires = json.loads(_fixture_bytes())
+    wires = cast(
+        "list[dict[str, Any]]", _native_scalar_type_expressions(json.loads(_fixture_bytes()))
+    )
     return {schema.node_type: schema for schema in map(schema_from_wire, wires)}
 
 

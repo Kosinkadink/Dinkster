@@ -691,7 +691,7 @@ def test_remote_never_accepts_shm_descriptors() -> None:
     register_core_types(registry)
     codec = ValueCodec(registry, use_shm=False, accept_shm=False)
     wire = {
-        "typeId": "core.string",
+        "typeId": "STRING",
         "fingerprint": "f",
         "metaBlob": 0,
         "payload": {"transport": "shm", "segment": "dinksterdeadbeef", "size": 4},

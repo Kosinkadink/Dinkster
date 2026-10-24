@@ -882,17 +882,11 @@ def schema_to_wire(
     if type(wire_version) is not int or wire_version != SCHEMA_WIRE_VERSION:
         raise ValueError(f"unsupported schemaVersion: {wire_version!r}")
     interface: list[dict[str, object]] = []
-    for spec in schema.inputs:
+    for spec in schema.input_entries:
         try:
             interface.append(_dynamic_entry_to_wire(spec, wire_version))
         except ValueError as exc:
             raise ValueError(f"node {schema.node_type!r}, {exc}") from exc
-    for fam in schema.input_families:
-        interface.append(_dynamic_entry_to_wire(fam, wire_version))
-    for combo in schema.combos:
-        interface.append(_dynamic_entry_to_wire(combo, wire_version))
-    for slot in schema.slots:
-        interface.append(_dynamic_entry_to_wire(slot, wire_version))
     for out in schema.outputs:
         out_entry: dict[str, object] = {
             "role": "output",
@@ -1528,6 +1522,7 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
     output_descriptors = None
     combos: list[DynamicComboSpec] = []
     slots: list[DynamicSlotSpec] = []
+    input_order: list[str] = []
     for raw_entry in _expect_list(wire.get("interface"), "interface"):
         entry = _expect_object(raw_entry, "interface entry")
         role = _expect_str(entry.get("role"), "interface role")
@@ -1547,6 +1542,7 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
             raise ValueError(f"unsupported interface role: {role!r}")
         if role in {"input", "inputFamily", "dynamicCombo", "dynamicSlot"}:
             dynamic = _dynamic_entry_from_wire(entry, cast("int", wire_version))
+            input_order.append(dynamic.id)
             if isinstance(dynamic, InputSpec):
                 inputs.append(dynamic)
             elif isinstance(dynamic, InputFamilySpec):
@@ -1687,6 +1683,7 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
         output_descriptors=output_descriptors,
         combos=tuple(combos),
         slots=tuple(slots),
+        input_order=tuple(input_order),
         slot_choices=tuple(slot_choices),
         idempotent=_expect_bool(wire.get("idempotent", True), "idempotent"),
         occupies=_expect_strings(wire.get("occupies", []), "occupies"),

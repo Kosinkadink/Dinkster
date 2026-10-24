@@ -58,7 +58,7 @@ from dinkster_workers import InProcessWorker
 
 from dinkster.mounts_api import MountService, add_mount_routes
 
-STRING = TypeExpr.concrete("core.string")
+STRING = TypeExpr.concrete("STRING")
 
 
 class Echo(Node):

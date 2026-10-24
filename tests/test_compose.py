@@ -697,13 +697,13 @@ def test_serving_composer_registers_inference_boundary_types() -> None:
     from dinkster_values import TypeRegistry
 
     inference_types = {
-        "dinkster.conditioning",
-        "dinkster.model",
-        "dinkster.clip",
-        "dinkster.vae",
-        "dinkster.sampler",
-        "dinkster.sigmas",
-        "dinkster.noise",
+        "CONDITIONING",
+        "MODEL",
+        "CLIP",
+        "VAE",
+        "SAMPLER",
+        "SIGMAS",
+        "NOISE",
     }
     default = ServingComposer()
     supplied_registry = TypeRegistry()
@@ -1056,15 +1056,15 @@ def test_compose_serving_default_resolution_is_atomic(
     [
         (
             "dinkster-nodes-foundation",
-            "blake3:62d4ad93db627dd51bb738ea987a2dedd240fc7d6eafd5bf302b66a3d13c23bf",
+            "blake3:9ac4935ed2fb460f09f38875afdd7b65b83c3a86e56b29084f8c80c5fa69e6e3",
         ),
         (
             "dinkster-nodes-media-io",
-            "blake3:1f96fc07b4868b6beb922936d59c93ad53041598ed167320d14d79adf7370c8a",
+            "blake3:0eb7ecfb456171afdeb488cc3f81d168a1d716ac09c9e0448b3a6c81248e5a5c",
         ),
         (
             "dinkster-nodes-image",
-            "blake3:7a44b85c68f0f1e59bdd8eb54a6c8012c82b2b93052f952839c8763a433b3dde",
+            "blake3:193eba9a096ce415066c01784fc4c043ceb4f59af1a7221a5b751e114de4b0b0",
         ),
         (
             "dinkster-nodes-remote",
@@ -1399,7 +1399,7 @@ def test_vision_pack_license_checkout_endings_do_not_change_digest(tmp_path: Pat
     manifest = copied / "dinkster_vision_hed_pack/dinkster-pack.toml"
     module = copied / "src/dinkster_nodes_vision/hed"
     expected = compose._installed_pack_digest(manifest, module)
-    assert expected == ("blake3:da3d4f989afa330e68c479afac8bdc13a5a6df878f56cbf38d0444f1fabd2019")
+    assert expected == ("blake3:b89f948d6ce1607ade7afe66afa556b7bc67d26b75e603378babfe5553001df2")
     license_file = manifest.parent / "MLSD_LICENSE"
     license_bytes = license_file.read_bytes().replace(b"\r\n", b"\n")
     license_file.write_bytes(license_bytes.replace(b"\n", b"\r\n"))
@@ -1613,7 +1613,7 @@ def test_compose_dev_mode(caplog: pytest.LogCaptureFixture) -> None:
         node_id="n",
         node_type="iso.echo",
         pack="isopack",
-        inputs=(EdgeCost("text", "core.string", "inline", 12, 0.2, True, False),),
+        inputs=(EdgeCost("text", "STRING", "inline", 12, 0.2, True, False),),
         outputs=(EdgeCost("out", "iso.blob", "shm", 4096, 1.5, False, False),),
         execute_ms=10.0,
         round_trip_ms=14.0,
@@ -1787,6 +1787,95 @@ def test_compose_rejects_namespace_collision(tmp_path: Path) -> None:
             match="'iso' claimed by 'isopack2' overlaps 'iso' claimed by 'isopack'",
         ):
             await compose_serving([first, second], worker_env=WORKER_ENV)
+
+    asyncio.run(scenario())
+
+
+def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(tmp_path: Path) -> None:
+    from dinkster_nodes_comfy import COMFY_NODES
+
+    claims = tuple(node.schema().node_type for node in COMFY_NODES)
+    manifest = TESTS_DIR.parent / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+    assert load_manifest(manifest).namespaces == claims
+    other_manifest = tmp_path / "dinkster-pack.toml"
+    other_manifest.write_text(
+        '[pack]\nname = "other-owner"\nnamespaces = ["StringLength"]\n'
+        '[pack.entry]\nnodes = "other_owner_fixture:NODES"\n'
+    )
+    (tmp_path / "other_owner_fixture.py").write_text(
+        "from dinkster_nodes_comfy.text import StringLength\nNODES = (StringLength,)\n"
+    )
+
+    async def scenario() -> None:
+        composer = ServingComposer()
+        try:
+            await composer.add_pack(PackSpec(manifest=manifest))
+            assert set(composer.composition.schemas) == set(claims)
+            assert set(composer.composition.node_packs.values()) == {"dinkster-nodes-comfy"}
+            await composer.reload_pack("dinkster-nodes-comfy")
+            result = await composer.composition.make_engine(lambda _event: None).run(
+                Graph(
+                    nodes={
+                        "text": GraphNode("PrimitiveString", {"value": "a\U0001f600"}),
+                        "length": GraphNode("StringLength", {"string": Link("text", "STRING")}),
+                        "false": GraphNode("PrimitiveBoolean", {"value": False}),
+                        "not": GraphNode("ComfyNotNode", {"value": Link("length", "length")}),
+                        "and": GraphNode(
+                            "ComfyAndNode",
+                            {
+                                "values.value0": Link("length", "length"),
+                                "values.value1": Link("false", "BOOLEAN"),
+                            },
+                        ),
+                        "or": GraphNode(
+                            "ComfyOrNode",
+                            {
+                                "values.value0": Link("false", "BOOLEAN"),
+                                "values.value1": Link("length", "length"),
+                            },
+                        ),
+                    }
+                ),
+                ["length", "not", "and", "or"],
+            )
+            assert result.outputs["length"]["length"].resolve() == 2
+            assert result.outputs["not"]["BOOLEAN"].resolve() is False
+            assert result.outputs["and"]["BOOLEAN"].resolve() is False
+            assert result.outputs["or"]["BOOLEAN"].resolve() is True
+            with pytest.raises(CompositionError, match="overlaps"):
+                await composer.add_pack(PackSpec(manifest=other_manifest))
+            assert set(composer.composition.schemas) == set(claims)
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_native_comfy_pack_registers_container_literals(in_process: bool) -> None:
+    async def scenario() -> None:
+        composer = ServingComposer(worker_env=WORKER_ENV)
+        try:
+            manifest = TESTS_DIR.parent / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+            await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
+            result = await composer.composition.make_engine(lambda _event: None).run(
+                Graph(
+                    nodes={
+                        "dictionary": GraphNode(
+                            "ConvertDictionaryToString",
+                            {"dictionary": {"key": [3, True]}, "indent": 0},
+                        ),
+                        "array": GraphNode(
+                            "ConvertArrayToString", {"array": [3, {"key": False}], "indent": 0}
+                        ),
+                    }
+                ),
+                ["dictionary", "array"],
+            )
+            assert result.outputs["dictionary"]["STRING"].resolve() == '{"key": [3, true]}'
+            assert result.outputs["array"]["STRING"].resolve() == '[3, {"key": false}]'
+        finally:
+            await composer.close()
 
     asyncio.run(scenario())
 

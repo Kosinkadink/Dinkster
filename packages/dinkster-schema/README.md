@@ -35,7 +35,7 @@ from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 class Double(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        integer = TypeExpr.concrete("core.int")
+        integer = TypeExpr.concrete("INT")
         return NodeSchema(
             node_type="example.double",
             inputs=(InputSpec("value", integer),),
@@ -54,7 +54,7 @@ plain Python values; workers own envelope and transport details.
 ## Stored output descriptors
 
 `NodeSchema.output_descriptors` and its `OutputDescriptorsSpec`
-names a required top-level `core.string` input containing JSON:
+names a required top-level `STRING` input containing JSON:
 
 ```json
 {"entries":[{"id":"answer","name":"Answer","type":"integer","value":42}]}
@@ -117,8 +117,8 @@ strict and reject unknown or noncanonical fields.
 
 An `OutputSpec` may declare `known_value=OutputKnownValue(input="value")` when
 the output is exactly one of the node's top-level inputs. The input and output
-must share one concrete `core.int`, `core.float`, `core.string`, or
-`core.boolean` type. Clients can present the resolved value downstream before
+must share one concrete `INT`, `FLOAT`, `STRING`, or
+`BOOLEAN` type. Clients can present the resolved value downstream before
 execution without treating it as an estimate or cached result. If the input is
 connected, its upstream execution provenance remains authoritative.
 

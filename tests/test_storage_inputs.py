@@ -65,7 +65,7 @@ class FloatInput(Node):
         return NodeSchema(
             node_type="test.float-input",
             inputs=(InputSpec("image", IMAGE),),
-            outputs=(OutputSpec("dtype", TypeExpr.concrete("core.string")),),
+            outputs=(OutputSpec("dtype", TypeExpr.concrete("STRING")),),
         )
 
     @classmethod

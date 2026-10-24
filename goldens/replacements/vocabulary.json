@@ -15,7 +15,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": true
@@ -26,7 +26,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false
@@ -37,7 +37,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false
@@ -48,7 +48,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false
@@ -59,7 +59,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.boolean"
+              "BOOLEAN"
             ]
           },
           "required": false
@@ -72,7 +72,7 @@
             "element": {
               "kind": "concrete",
               "types": [
-                "core.string"
+                "STRING"
               ]
             }
           },
@@ -84,7 +84,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           }
         },
@@ -94,7 +94,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           }
         }
@@ -115,7 +115,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": true
@@ -126,7 +126,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -141,7 +141,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false
@@ -152,7 +152,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false
@@ -165,7 +165,7 @@
             "element": {
               "kind": "concrete",
               "types": [
-                "core.string"
+                "STRING"
               ]
             }
           },
@@ -177,7 +177,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           }
         },
@@ -187,7 +187,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           }
         }
@@ -320,7 +320,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": true
@@ -331,7 +331,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false
@@ -342,7 +342,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           }
         }

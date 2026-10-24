@@ -9,6 +9,7 @@ from typing import BinaryIO, cast
 
 from dinkster_api.v1 import (
     GIBIBYTE,
+    MODEL3D_TYPE,
     SAVE_TARGET_TYPE,
     AssetError,
     AssetRef,
@@ -26,7 +27,6 @@ from dinkster_api.v1 import (
     encode_model3d,
 )
 
-MODEL3D_TYPE = "dinkster.model3d"
 MODEL3D_MEDIA_TYPE = "model/gltf-binary"
 
 MODEL3D = TypeExpr.concrete(MODEL3D_TYPE)

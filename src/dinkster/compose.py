@@ -87,6 +87,7 @@ from dinkster_memory import (
     TenantRegistration,
     use_model_tenant_registry,
 )
+from dinkster_memory.resident import ResidentPool
 from dinkster_native.memory import plan_reservations
 from dinkster_native.pool import default_pool
 from dinkster_protocol import (
@@ -155,6 +156,7 @@ from dinkster_schema import (
     NodeSchema,
     build_node_types,
     build_schemas,
+    canonical_claim,
     canonical_name,
     claim_covers,
     claims_conflict,
@@ -1323,7 +1325,7 @@ def _installed_pack_spec(
                 f"default suite locks {pack_id} artifact {locked.artifact_digest}, "
                 f"but installed artifact is {digest}"
             )
-        if tuple(canonical_name(claim) for claim in manifest_record.namespaces) != locked.claims:
+        if tuple(canonical_claim(claim) for claim in manifest_record.namespaces) != locked.claims:
             raise CompositionError(
                 f"default suite locks {pack_id} claims {locked.claims!r}, "
                 f"but its manifest claims {manifest_record.namespaces!r}"
@@ -1535,9 +1537,10 @@ class Composition:
                 ),
             )
         pins = self._resource_pins
-        pool = default_pool()
-        pool.register_invalidator(cache.drop_referencing)
-        pool.register_pins(pins)
+        for pool in (default_pool(), *self._registry.resident_tables):
+            if isinstance(pool, ResidentPool):
+                pool.register_invalidator(cache.drop_referencing)
+                pool.register_pins(pins)
         self._engine_caches.add(cache)
         return Engine(
             schemas=self.schemas,
@@ -4071,6 +4074,17 @@ class ServingComposer:
                 **({"error": pool_result.error} if pool_result.error is not None else {}),
             }
         )
+        for index, table in enumerate(self.composition._registry.resident_tables):
+            if not isinstance(table, ResidentPool) or table is default_pool():
+                continue
+            outcome = await table.full_release()
+            local_consumers.append(
+                {
+                    "consumer": f"resident-values-{index}",
+                    "status": outcome.status,
+                    **({"error": outcome.error} if outcome.error is not None else {}),
+                }
+            )
         results: list[dict[str, object]] = [
             {
                 "worker": "local",

@@ -548,7 +548,7 @@ def test_asset_widget_kind_round_trips_on_the_wire() -> None:
                 widget=AssetWidget(accept=("application/octet-stream",), kind="model/lora"),
             ),
         ),
-        outputs=(OutputSpec("out", TypeExpr.concrete("core.int")),),
+        outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
     )
     wire = schema_to_wire(schema)
     entry = next(e for e in wire["interface"] if e["id"] == "model")  # type: ignore[index, union-attr]
@@ -566,7 +566,7 @@ def test_asset_widget_kind_round_trips_on_the_wire() -> None:
         NodeSchema(
             node_type="test.bare",
             inputs=(InputSpec("a", TypeExpr.concrete("dinkster.asset"), widget=AssetWidget()),),
-            outputs=(OutputSpec("out", TypeExpr.concrete("core.int")),),
+            outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
         )
     )
     bare_entry = next(e for e in bare["interface"] if e["id"] == "a")  # type: ignore[index, union-attr]

@@ -6,11 +6,31 @@ from collections.abc import Mapping
 
 from dinkster_api.v1 import (
     ASSET_TYPE,
+    AUDIO_TYPE,
+    CLIP_TYPE,
+    CONDITIONING_TYPE,
+    CONTEXT_WINDOWS_TYPE,
+    CONTROL_NET_TYPE,
     CORE_BOOLEAN,
     CORE_COMBO,
     CORE_FLOAT,
     CORE_INT,
     CORE_STRING,
+    CURVE_TYPE,
+    GUIDER_TYPE,
+    IMAGE_TYPE,
+    IMPACT_BASIC_PIPE_TYPE,
+    INPAINT_CONDITIONING_TYPE,
+    LATENT_OPERATION_TYPE,
+    LATENT_TYPE,
+    LATENT_UPSCALE_MODEL_TYPE,
+    MASK_TYPE,
+    MODEL_PATCH_TYPE,
+    MODEL_TYPE,
+    NOISE_TYPE,
+    SAMPLER_TYPE,
+    SIGMAS_TYPE,
+    VAE_TYPE,
     AssetWidget,
     BooleanWidget,
     ComboOption,
@@ -32,24 +52,6 @@ from dinkster_api.v1 import (
 from .model3d import MODEL3D_GENERATION_NODES
 from .trellis2 import TRELLIS2_NODES
 
-MODEL_TYPE = "dinkster.model"
-CLIP_TYPE = "dinkster.clip"
-VAE_TYPE = "dinkster.vae"
-CONDITIONING_TYPE = "dinkster.conditioning"
-LATENT_TYPE = "dinkster.latent"
-IMAGE_TYPE = "dinkster.image"
-MASK_TYPE = "dinkster.mask"
-SAMPLER_TYPE = "dinkster.sampler"
-SIGMAS_TYPE = "dinkster.sigmas"
-GUIDER_TYPE = "dinkster.guider"
-NOISE_TYPE = "dinkster.noise"
-LATENT_OPERATION_TYPE = "dinkster.latent-operation"
-CONTROL_NET_TYPE = "comfy.CONTROL_NET"
-AUDIO_TYPE = "comfy.AUDIO"
-IMPACT_BASIC_PIPE_TYPE = "comfy.BASIC_PIPE"
-MODEL_PATCH_TYPE = "comfy.MODEL_PATCH"
-LATENT_UPSCALE_MODEL_TYPE = "comfy.LATENT_UPSCALE_MODEL"
-
 ASSET = TypeExpr.concrete(ASSET_TYPE)
 MODEL = TypeExpr.concrete(MODEL_TYPE)
 CLIP = TypeExpr.concrete(CLIP_TYPE)
@@ -58,15 +60,15 @@ CONDITIONING = TypeExpr.concrete(CONDITIONING_TYPE)
 LATENT = TypeExpr.concrete(LATENT_TYPE)
 IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 MASK = TypeExpr.concrete(MASK_TYPE)
-INPAINT_CONDITIONING = TypeExpr.concrete("dinkster.inpaint-conditioning")
-CONTEXT_WINDOWS = TypeExpr.concrete("dinkster.context-windows")
+INPAINT_CONDITIONING = TypeExpr.concrete(INPAINT_CONDITIONING_TYPE)
+CONTEXT_WINDOWS = TypeExpr.concrete(CONTEXT_WINDOWS_TYPE)
 SAMPLER = TypeExpr.concrete(SAMPLER_TYPE)
 SIGMAS = TypeExpr.concrete(SIGMAS_TYPE)
 GUIDER = TypeExpr.concrete(GUIDER_TYPE)
 NOISE = TypeExpr.concrete(NOISE_TYPE)
 LATENT_OPERATION = TypeExpr.concrete(LATENT_OPERATION_TYPE)
 CONTROL_NET = TypeExpr.concrete(CONTROL_NET_TYPE)
-CURVE = TypeExpr.concrete("dinkster.curve")
+CURVE = TypeExpr.concrete(CURVE_TYPE)
 AUDIO = TypeExpr.concrete(AUDIO_TYPE)
 IMPACT_BASIC_PIPE = TypeExpr.concrete(IMPACT_BASIC_PIPE_TYPE)
 MODEL_PATCH = TypeExpr.concrete(MODEL_PATCH_TYPE)
