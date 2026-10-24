@@ -46,7 +46,7 @@ class SplitSigmas(Node):
             category=_CATEGORY,
             inputs=(
                 InputSpec("sigmas", _SIGMAS),
-                InputSpec("step", _INT, default=0, widget=NumberWidget(min=0, max=10_000, step=1)),
+                InputSpec("step", _INT, default=0, widget=NumberWidget(min=0, max=10_000)),
             ),
             outputs=(OutputSpec("high_sigmas", _SIGMAS), OutputSpec("low_sigmas", _SIGMAS)),
         )
@@ -136,7 +136,7 @@ class ExtendIntermediateSigmas(Node):
             search_terms=("interpolate sigmas",),
             inputs=(
                 InputSpec("sigmas", _SIGMAS),
-                InputSpec("steps", _INT, default=2, widget=NumberWidget(min=1, max=100, step=1)),
+                InputSpec("steps", _INT, default=2, widget=NumberWidget(min=1, max=100)),
                 InputSpec(
                     "start_at_sigma",
                     _FLOAT,

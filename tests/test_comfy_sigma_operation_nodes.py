@@ -68,7 +68,7 @@ def test_sigma_operation_schemas_preserve_core_inputs_outputs_and_widgets() -> N
     split = SIGMA_OPERATION_NODES[0].schema()
     assert split.inputs[0].type == sigmas
     assert split.inputs[1].type == scalar_types["step"]
-    assert split.inputs[1].widget == NumberWidget(min=0, max=10_000, step=1)
+    assert split.inputs[1].widget == NumberWidget(min=0, max=10_000)
     denoise = SIGMA_OPERATION_NODES[1].schema().inputs[1]
     assert denoise.type == scalar_types["denoise"]
     assert denoise.default == 1.0
@@ -81,6 +81,7 @@ def test_sigma_operation_schemas_preserve_core_inputs_outputs_and_widgets() -> N
         scalar_types["start_at_sigma"],
         scalar_types["end_at_sigma"],
     ]
+    assert extend.inputs[1].widget == NumberWidget(min=1, max=100)
     assert extend.inputs[2].widget == NumberWidget(min=-1.0, max=20_000.0, step=0.01, round=False)
     assert extend.inputs[3].widget == NumberWidget(min=0.0, max=20_000.0, step=0.01, round=False)
     sampling = SIGMA_OPERATION_NODES[5].schema()
