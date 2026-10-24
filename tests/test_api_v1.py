@@ -21,6 +21,7 @@ import sys
 from collections.abc import Mapping
 
 import dinkster_api.v1 as api
+import pytest
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EngineEvent
 from dinkster_graph import Graph, GraphNode, Link
@@ -447,19 +448,26 @@ assert "torch" not in sys.modules
     assert result.returncode == 0, result.stderr
 
 
-def test_gligen_registration_preserves_resident_identity_without_torch() -> None:
-    script = """
+@pytest.mark.parametrize("native_first", (True, False))
+def test_gligen_registration_preserves_resident_identity_without_torch(native_first: bool) -> None:
+    script = f"""
 import sys
 from dinkster_api.v1 import GLIGEN_TYPE, TypeRegistry, register_inference_types
 from dinkster_memory.resident import default_pool
+from dinkster_native.native import register_native_types
 from dinkster_values import RESOURCE_ID_META_KEY, ResidentLookupError
 
 assert GLIGEN_TYPE == "GLIGEN"
 registry = TypeRegistry()
-register_inference_types(registry)
+registrations = (register_native_types, register_inference_types)
+if not {native_first!r}:
+    registrations = registrations[::-1]
+for registration in registrations:
+    registration(registry)
 spec = registry.spec(GLIGEN_TYPE)
 register_inference_types(registry)
 assert registry.spec(GLIGEN_TYPE) is spec
+assert default_pool() in registry.resident_tables
 assert "comfy.GLIGEN" not in registry
 source = object()
 encoded = spec.encode(source)
