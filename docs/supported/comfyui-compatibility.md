@@ -41,6 +41,8 @@
 - Seven native video latent nodes create Hunyuan Video, Hunyuan Video 1.5, LTXV,
   Cosmos, and autoregressive video samples, trim video frames, and freeze LTXV
   video or audio samples under their exact ComfyUI IDs.
+- Native Hunyuan image latent construction and refiner conditioning retain the
+  source latent metadata while preparing refiner noise latents.
 - Portable masks become Torch tensors at native tensor-consuming nodes, without
   moving already-live tensors or loading Torch in the host decoder.
 - `dinkster-serve --comfy-root ... --legacy-pack PATH` runs unmodified v1 and

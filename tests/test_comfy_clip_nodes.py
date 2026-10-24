@@ -19,7 +19,7 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.clip import CLIPSetLastLayer, CLIPTextEncode
+from dinkster_nodes_comfy.clip import CLIPSetLastLayer, CLIPTextEncode, CLIPVisionEncode
 from dinkster_nodes_comfy.clip_model_specific import (
     CLIPTextEncodeHiDream,
     CLIPTextEncodeLumina2,
@@ -67,6 +67,18 @@ def test_layer_selection_preserves_source_and_scheduled_conditioning(layer: int)
 def test_missing_clip_reports_checkpoint_encoder_error() -> None:
     with pytest.raises(RuntimeError, match="checkpoint does not contain a valid clip"):
         CLIPTextEncode.execute(clip=None, text="prompt")
+
+
+def test_clip_vision_encode_schema_uses_portable_vision_types() -> None:
+    schema = CLIPVisionEncode.define_schema()
+
+    assert schema.node_type == "CLIPVisionEncode"
+    assert [input.id for input in schema.inputs] == ["clip_vision", "image", "crop"]
+    assert schema.inputs[0].type == TypeExpr.concrete("CLIP_VISION")
+    assert schema.inputs[1].type == TypeExpr.concrete("IMAGE")
+    assert schema.inputs[2].default == "center"
+    assert schema.outputs[0].id == "CLIP_VISION_OUTPUT"
+    assert schema.outputs[0].type == TypeExpr.concrete("CLIP_VISION_OUTPUT")
 
 
 class ModelTextEncoder:
