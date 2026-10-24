@@ -54,6 +54,7 @@ from .primitive import (
 )
 from .reference_conditioning import REFERENCE_CONDITIONING_NODES
 from .rope_and_mask import ROPE_AND_MASK_NODES
+from .sampler_factories import SAMPLER_FACTORY_NODES
 from .sigma_operations import SIGMA_OPERATION_NODES
 from .sigma_schedulers import SIGMA_SCHEDULER_NODES
 from .spatial_model_patches import SPATIAL_MODEL_PATCH_NODES
@@ -133,6 +134,7 @@ COMFY_NODES = (
     *AUDIO_VAE_NODES,
     *DATASET_IMAGE_NODES,
     *SIGMA_SCHEDULER_NODES,
+    *SAMPLER_FACTORY_NODES,
 )
 
 __all__ = ["COMFY_NODES", "register_inference_types"]

@@ -282,6 +282,18 @@ namespaces = [
     "VPScheduler",
     "BetaSamplingScheduler",
     "SDTurboScheduler",
+    "KSamplerSelect",
+    "SamplerEulerAncestral",
+    "SamplerEulerAncestralCFGPP",
+    "SamplerLMS",
+    "SamplerDPMPP_3M_SDE",
+    "SamplerDPMPP_2M_SDE",
+    "SamplerDPMPP_SDE",
+    "SamplerDPMPP_2S_Ancestral",
+    "SamplerDPMAdaptative",
+    "SamplerER_SDE",
+    "SamplerSASolver",
+    "SamplerSEEDS2",
 ]
 
 [pack.sandbox]
