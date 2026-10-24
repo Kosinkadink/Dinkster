@@ -228,7 +228,7 @@ class Source(Node):
         return cls.outputs(
             positive=_conditioning(1.0),
             negative=_conditioning(2.0),
-            image=_image(),
+            image=torch.as_tensor(_image(), dtype=torch.float32),
             vae16=VAE(16),
             vae32=VAE(32),
             vision=SimpleNamespace(
@@ -243,8 +243,12 @@ class Inspect(Node):
         return NodeSchema(
             node_type="hunyuan-video-image-fixture.inspect",
             inputs=(
-                InputSpec("old", _CONDITIONING),
-                InputSpec("old_latent", TypeExpr.concrete("LATENT")),
+                InputSpec("old_concat", _CONDITIONING),
+                InputSpec("old_concat_latent", TypeExpr.concrete("LATENT")),
+                InputSpec("old_replace", _CONDITIONING),
+                InputSpec("old_replace_latent", TypeExpr.concrete("LATENT")),
+                InputSpec("old_custom", _CONDITIONING),
+                InputSpec("old_custom_latent", TypeExpr.concrete("LATENT")),
                 InputSpec("new_positive", _CONDITIONING),
                 InputSpec("new_negative", _CONDITIONING),
                 InputSpec("new_latent", TypeExpr.concrete("LATENT")),
@@ -256,19 +260,63 @@ class Inspect(Node):
     def execute(
         cls,
         *,
-        old: Any,
-        old_latent: object,
+        old_concat: Any,
+        old_concat_latent: object,
+        old_replace: Any,
+        old_replace_latent: object,
+        old_custom: Any,
+        old_custom_latent: object,
         new_positive: Any,
         new_negative: Any,
         new_latent: object,
     ) -> dict[str, object]:
-        old_samples = materialize_latent(old_latent)["samples"]
+        from dinkster_inference.utils import common_upscale
+
+        old_samples = materialize_latent(old_concat_latent)["samples"]
+        replaced = materialize_latent(old_replace_latent)
+        custom = materialize_latent(old_custom_latent)["samples"]
         new_samples = materialize_latent(new_latent)["samples"]
+        projected = new_positive[0][1]["clip_vision_output"].mm_projected
+        image = torch.as_tensor(_image(), dtype=torch.float32)[:5]
+        old_pixels = common_upscale(
+            image[:, :, :, :3].movedim(-1, 1), 16, 16, "bilinear", "center"
+        ).movedim(1, -1)
+        old_encoded = old_pixels[::4, ::8, ::8, 0].unsqueeze(0).unsqueeze(0).repeat(1, 16, 1, 1, 1)
+        old_mask = torch.zeros_like(old_concat[0][1]["concat_mask"])
+        new_pixels = common_upscale(image.movedim(-1, 1), 16, 16, "bilinear", "center").movedim(
+            1, -1
+        )
+        new_encoded = new_pixels[:, :, :, :3][::4, ::16, ::16, 0].unsqueeze(0).unsqueeze(0)
+        new_encoded = new_encoded.repeat(1, 32, 1, 1, 1)
+        new_concat = new_encoded.float()
+        new_mask = torch.zeros_like(new_positive[0][1]["concat_mask"])
         assert old_samples.shape == (1, 16, 2, 2, 2)
         assert new_samples.shape == (1, 32, 2, 1, 1)
-        assert old[0][1]["ref_latent"].shape == (1, 16, 2, 2, 2)
-        assert new_positive[0][1]["concat_latent_image"].shape == (1, 32, 2, 1, 1)
-        assert new_negative[0][1]["clip_vision_output"].mm_projected.dtype is torch.float64
+        torch.testing.assert_close(
+            old_concat[0][1]["concat_latent_image"], old_encoded.float(), rtol=0, atol=0
+        )
+        torch.testing.assert_close(old_concat[0][1]["concat_mask"], old_mask, rtol=0, atol=0)
+        assert old_replace[0][1] == {"source": 1.0, "guiding_frame_index": 0}
+        torch.testing.assert_close(replaced["noise_mask"], old_mask, rtol=0, atol=0)
+        torch.testing.assert_close(
+            replaced["samples"][:, :, :2], old_encoded.float(), rtol=0, atol=0
+        )
+        torch.testing.assert_close(custom, torch.zeros_like(custom), rtol=0, atol=0)
+        torch.testing.assert_close(
+            old_custom[0][1]["ref_latent"], old_encoded.float(), rtol=0, atol=0
+        )
+        for conditioning, source in ((new_positive, 1.0), (new_negative, 2.0)):
+            assert conditioning[0][1]["source"] == source
+            torch.testing.assert_close(
+                conditioning[0][1]["concat_latent_image"], new_concat, rtol=0, atol=0
+            )
+            torch.testing.assert_close(conditioning[0][1]["concat_mask"], new_mask, rtol=0, atol=0)
+            torch.testing.assert_close(
+                conditioning[0][1]["clip_vision_output"].mm_projected,
+                torch.arange(6, dtype=projected.dtype).reshape(1, 2, 3),
+                rtol=0,
+                atol=0,
+            )
         return cls.outputs(summary="hunyuan video image")
 
 
@@ -308,7 +356,33 @@ def test_production_manifest_registers_both_hunyuan_video_image_nodes_twice(
             graph = Graph(
                 nodes={
                     "source": GraphNode("hunyuan-video-image-fixture.source"),
-                    "old": GraphNode(
+                    "old_concat": GraphNode(
+                        "HunyuanImageToVideo",
+                        {
+                            "positive": Link("source", "positive"),
+                            "vae": Link("source", "vae16"),
+                            "width": 16,
+                            "height": 16,
+                            "length": 5,
+                            "batch_size": 1,
+                            "guidance_type": "v1 (concat)",
+                            "start_image": Link("source", "image"),
+                        },
+                    ),
+                    "old_replace": GraphNode(
+                        "HunyuanImageToVideo",
+                        {
+                            "positive": Link("source", "positive"),
+                            "vae": Link("source", "vae16"),
+                            "width": 16,
+                            "height": 16,
+                            "length": 5,
+                            "batch_size": 1,
+                            "guidance_type": "v2 (replace)",
+                            "start_image": Link("source", "image"),
+                        },
+                    ),
+                    "old_custom": GraphNode(
                         "HunyuanImageToVideo",
                         {
                             "positive": Link("source", "positive"),
@@ -338,8 +412,12 @@ def test_production_manifest_registers_both_hunyuan_video_image_nodes_twice(
                     "inspect": GraphNode(
                         "hunyuan-video-image-fixture.inspect",
                         {
-                            "old": Link("old", "positive"),
-                            "old_latent": Link("old", "latent"),
+                            "old_concat": Link("old_concat", "positive"),
+                            "old_concat_latent": Link("old_concat", "latent"),
+                            "old_replace": Link("old_replace", "positive"),
+                            "old_replace_latent": Link("old_replace", "latent"),
+                            "old_custom": Link("old_custom", "positive"),
+                            "old_custom_latent": Link("old_custom", "latent"),
                             "new_positive": Link("new", "positive"),
                             "new_negative": Link("new", "negative"),
                             "new_latent": Link("new", "latent"),
