@@ -55,6 +55,14 @@ def _resized_start_image(start_image: object, length: int, width: int, height: i
     )
 
 
+def _resized_old_start_image(start_image: object, length: int, width: int, height: int) -> Any:
+    image = materialize_image(start_image)[:length, :, :, :3]
+    utils = importlib.import_module("dinkster_inference.utils")
+    return utils.common_upscale(image.movedim(-1, 1), width, height, "bilinear", "center").movedim(
+        1, -1
+    )
+
+
 class HunyuanImageToVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -102,7 +110,7 @@ class HunyuanImageToVideo(Node):
         )
         result: dict[str, object] = {"samples": latent}
         if start_image is not None:
-            image = _resized_start_image(start_image, length, width, height)[:, :, :, :3]
+            image = _resized_old_start_image(start_image, length, width, height)
             encoded = vae.encode(image)
             mask = torch.ones(
                 (1, 1, latent.shape[2], encoded.shape[-2], encoded.shape[-1]),
@@ -116,7 +124,7 @@ class HunyuanImageToVideo(Node):
                 values = {"guiding_frame_index": 0}
                 latent[:, :, : encoded.shape[2]] = encoded
                 result["noise_mask"] = mask
-            else:
+            elif guidance_type == "custom":
                 values = {"ref_latent": encoded}
             positive = conditioning_set_values(positive, values)
         return cls.outputs(positive=positive, latent=result)

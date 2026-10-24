@@ -54,6 +54,16 @@ def _conditioning(value: float) -> list[list[Any]]:
 def test_hunyuan_image_to_video_guidance_modes_preserve_asymmetric_values() -> None:
     image = _image()
     source = _conditioning(3.0)
+    from dinkster_inference.utils import common_upscale
+
+    expected_pixels = common_upscale(
+        torch.as_tensor(image)[:9, :, :, :3].movedim(-1, 1), 16, 16, "bilinear", "center"
+    ).movedim(1, -1)
+    expected_encoded = (
+        expected_pixels[::4, ::8, ::8, 0].unsqueeze(0).unsqueeze(0).repeat(1, 16, 1, 1, 1)
+    )
+    expected_mask = torch.ones((1, 1, 3, 2, 2), dtype=torch.float64)
+    expected_mask[:, :, :2] = 0
     for guidance, key in (
         ("v1 (concat)", "concat_latent_image"),
         ("v2 (replace)", "guiding_frame_index"),
@@ -76,19 +86,24 @@ def test_hunyuan_image_to_video_guidance_modes_preserve_asymmetric_values() -> N
         assert samples.dtype == torch.float32 and samples.device.type == "cpu"
         assert metadata["source"] == 3.0 and key in metadata
         assert source[0][1] == {"source": 3.0}
-        assert vae.images[0].shape == (6, 16, 16, 3)
-        assert vae.images[0].dtype is torch.float64
+        torch.testing.assert_close(vae.images[0], expected_pixels, rtol=0, atol=0)
         if guidance == "v1 (concat)":
-            assert metadata["concat_mask"].dtype is torch.float64
-            assert metadata["concat_mask"].device.type == "cpu"
-            assert not metadata["concat_mask"][:, :, :2].count_nonzero()
-            assert metadata["concat_mask"][:, :, 2:].count_nonzero()
+            torch.testing.assert_close(
+                metadata["concat_latent_image"], expected_encoded, rtol=0, atol=0
+            )
+            torch.testing.assert_close(metadata["concat_mask"], expected_mask, rtol=0, atol=0)
         elif guidance == "v2 (replace)":
             assert metadata == {"source": 3.0, "guiding_frame_index": 0}
-            assert result["latent"]["noise_mask"].dtype is torch.float64
-            assert samples[:, :, :2].count_nonzero()
+            torch.testing.assert_close(
+                result["latent"]["noise_mask"], expected_mask, rtol=0, atol=0
+            )
+            torch.testing.assert_close(
+                samples[:, :, :2], expected_encoded.repeat(2, 1, 1, 1, 1).float(), rtol=0, atol=0
+            )
+            assert not samples[:, :, 2:].count_nonzero()
         else:
             assert "noise_mask" not in result["latent"]
+            torch.testing.assert_close(metadata["ref_latent"], expected_encoded, rtol=0, atol=0)
     no_image = HunyuanImageToVideo.execute(
         positive=source,
         vae=VAE(16),
@@ -119,6 +134,16 @@ def test_hunyuan_video15_materializes_vision_and_preserves_optional_identity() -
 
     vae = VAE(32)
     projected = torch.arange(6, dtype=torch.float64).reshape(1, 2, 3)
+    from dinkster_inference.utils import common_upscale
+
+    expected_pixels = common_upscale(
+        torch.as_tensor(_image())[:5].movedim(-1, 1), 16, 16, "bilinear", "center"
+    ).movedim(1, -1)
+    expected_encoded = expected_pixels[:, :, :, :3][::4, ::16, ::16, 0].unsqueeze(0).unsqueeze(0)
+    expected_encoded = expected_encoded.repeat(1, 32, 1, 1, 1)
+    expected_concat = torch.zeros((2, 32, 2, 1, 1), dtype=torch.float32)
+    expected_concat[:, :, :2] = expected_encoded
+    expected_mask = torch.zeros((1, 1, 2, 1, 1), dtype=torch.float64)
     result = HunyuanVideo15ImageToVideo.execute(
         positive=positive,
         negative=negative,
@@ -132,14 +157,49 @@ def test_hunyuan_video15_materializes_vision_and_preserves_optional_identity() -
     )
     samples = result["latent"]["samples"]
     assert samples.shape == (2, 32, 2, 1, 1)
-    assert vae.images[0].shape == (5, 16, 16, 3)
+    torch.testing.assert_close(vae.images[0], expected_pixels[:, :, :, :3], rtol=0, atol=0)
     for conditioning, value in ((result["positive"], 1.0), (result["negative"], 2.0)):
         metadata = conditioning[0][1]
         assert metadata["source"] == value
-        assert metadata["concat_latent_image"].shape == (2, 32, 2, 1, 1)
-        assert metadata["concat_mask"].dtype is torch.float64
-        assert metadata["clip_vision_output"].mm_projected is projected
+        torch.testing.assert_close(metadata["concat_latent_image"], expected_concat, rtol=0, atol=0)
+        torch.testing.assert_close(metadata["concat_mask"], expected_mask, rtol=0, atol=0)
+        torch.testing.assert_close(
+            metadata["clip_vision_output"].mm_projected, projected, rtol=0, atol=0
+        )
     assert positive[0][1] == {"source": 1.0} and negative[0][1] == {"source": 2.0}
+
+    vision_only = HunyuanVideo15ImageToVideo.execute(
+        positive=positive,
+        negative=negative,
+        vae=VAE(32),
+        width=16,
+        height=16,
+        length=5,
+        batch_size=1,
+        clip_vision_output=SimpleNamespace(mm_projected=projected),
+    )
+    for conditioning, value in ((vision_only["positive"], 1.0), (vision_only["negative"], 2.0)):
+        assert conditioning[0][1]["source"] == value
+        torch.testing.assert_close(
+            conditioning[0][1]["clip_vision_output"].mm_projected, projected, rtol=0, atol=0
+        )
+
+    start_only = HunyuanVideo15ImageToVideo.execute(
+        positive=positive,
+        negative=negative,
+        vae=VAE(32),
+        width=16,
+        height=16,
+        length=5,
+        batch_size=1,
+        start_image=_image(),
+    )
+    for conditioning, value in ((start_only["positive"], 1.0), (start_only["negative"], 2.0)):
+        assert conditioning[0][1]["source"] == value
+        torch.testing.assert_close(
+            conditioning[0][1]["concat_latent_image"], expected_concat[:1], rtol=0, atol=0
+        )
+        torch.testing.assert_close(conditioning[0][1]["concat_mask"], expected_mask, rtol=0, atol=0)
 
 
 _CONDITIONING = TypeExpr.concrete(CONDITIONING_TYPE)
