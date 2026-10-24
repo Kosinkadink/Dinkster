@@ -8,6 +8,7 @@ from .compositing import COMPOSITING_NODES
 from .conditioning import CONDITIONING_NODES
 from .freeu import FREEU_NODES
 from .image_core import IMAGE_CORE_NODES
+from .image_dimensions import IMAGE_DIMENSION_NODES
 from .image_filters import IMAGE_FILTER_NODES
 from .image_transform import IMAGE_TRANSFORM_NODES
 from .inpaint import INPAINT_NODES
@@ -28,6 +29,7 @@ from .primitive import (
     PrimitiveString,
     PrimitiveStringMultiline,
 )
+from .rebatch import REBATCH_NODES
 from .stable_cascade import STABLE_CASCADE_NODES
 from .text import TEXT_NODES
 from .utilities import ComfyNumberConvert, SeedNode
@@ -58,11 +60,13 @@ COMFY_NODES = (
     *MASK_NODES,
     *COMPOSITING_NODES,
     *IMAGE_CORE_NODES,
+    *IMAGE_DIMENSION_NODES,
     *IMAGE_FILTER_NODES,
     *IMAGE_TRANSFORM_NODES,
     *MORPHOLOGY_NODES,
     *STABLE_CASCADE_NODES,
     *POST_PROCESSING_NODES,
+    *REBATCH_NODES,
 )
 
 __all__ = ["COMFY_NODES", "register_inference_types"]

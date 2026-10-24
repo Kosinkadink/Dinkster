@@ -57,6 +57,7 @@
 - Mask composition with signed placement; image/mask conversion by channels or
   color distance; mask dimensions, batch count, area, and typed bounds
 - Image width, height, batch count, channel count, min, max, mean, and histogram
+- ComfyUI image and image/video latent width, height, frame, and batch-size inspection
 - Image and mask batch range, repeat, reverse, shuffle, ping-pong loop, count
   expansion, concatenation, insertion, and replacement; image batch/list
   conversion and rebatching
