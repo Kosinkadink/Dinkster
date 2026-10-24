@@ -1,4 +1,4 @@
-"""Immutable declarations for the dormant invocation result algebra."""
+"""Immutable declarations for invocation results and runtime graph expansions."""
 # pyright: reportUnknownArgumentType=false, reportUnknownVariableType=false
 # pyright: reportUnnecessaryIsInstance=false
 
@@ -14,8 +14,8 @@ from dinkster_values import MEBIBYTE, Value
 
 from . import ErrorHint, NodeError
 
-RESULT_ALGEBRA_CAPABILITY = "dinkster.invocation-result-algebra.v1"
-RESULT_ALGEBRA_VERSION = 1
+RESULT_ALGEBRA_CAPABILITY = "dinkster.invocation-result-algebra.v2"
+RESULT_ALGEBRA_VERSION = 2
 RESULT_ALGEBRA_MAX_COUNT = 4096
 RESULT_ALGEBRA_MAX_LITERAL_DEPTH = 32
 RESULT_ALGEBRA_MAX_LITERAL_ITEMS = 16384

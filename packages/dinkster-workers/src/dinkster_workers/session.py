@@ -39,6 +39,7 @@ from dinkster_memory import (
     Shedder,
 )
 from dinkster_protocol import (
+    RESULT_ALGEBRA_CAPABILITY,
     AttentionCapabilityEvidence,
     AttentionPolicyConfig,
     AttentionRouteToken,
@@ -1392,6 +1393,17 @@ class BoundarySession:
     ) -> InvocationResult:
         if not self._alive:
             return self._dead_result(invocation)
+        if (
+            invocation.effective_schema.may_expand_graph
+            and RESULT_ALGEBRA_CAPABILITY not in self._result_capabilities
+        ):
+            return InvocationResult(
+                error=NodeError(
+                    invocation.node_id,
+                    invocation.node_type,
+                    f"runtime expansion requires negotiated capability {RESULT_ALGEBRA_CAPABILITY}",
+                )
+            )
         key = InvocationKey(
             invocation.job_ref or invocation.invocation_id,
             invocation.attempt_id,

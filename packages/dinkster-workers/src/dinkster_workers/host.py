@@ -1384,6 +1384,19 @@ async def serve_connection(
                     )
                     return
             assert selected_worker is not None
+            selected_schema = selected_worker.schemas.get(invocation.node_type)
+            if (
+                selected_schema is not None
+                and selected_schema.may_expand_graph
+                and RESULT_ALGEBRA_CAPABILITY
+                not in negotiate_result_capabilities(header.get("resultCapabilities"))
+            ):
+                await send_error(
+                    invocation_id,
+                    header,
+                    f"runtime expansion requires negotiated capability {RESULT_ALGEBRA_CAPABILITY}",
+                )
+                return
             if not attention_route_token_matches_capabilities(
                 selected_worker.attention_capabilities,
                 invocation.attention_route_token,

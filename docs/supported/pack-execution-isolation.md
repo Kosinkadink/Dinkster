@@ -26,6 +26,8 @@
   values retain ordinary resource ownership, source adoption, saved-artifact
   validation and shared-memory/result acknowledgements. Carrying a fragment
   across a worker boundary does not bypass graph admission by the engine.
+  Expansion requires result-algebra v2; peers advertising only v1 can run
+  ordinary nodes but are refused before expanding nodes execute.
   Cache stores preserve these declarations with their present values across
   memory retention, disk restart, deferred spill and peer promotion. Incomplete
   persisted declarations are whole-entry misses; resident resources remain

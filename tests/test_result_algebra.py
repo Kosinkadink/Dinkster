@@ -9,6 +9,7 @@ from typing import Any, cast
 import pytest
 from dinkster_protocol import (
     RESULT_ALGEBRA_CAPABILITY,
+    RESULT_ALGEBRA_VERSION,
     BlockedOutput,
     CurrentNodeRef,
     CurrentOutputRef,
@@ -16,6 +17,7 @@ from dinkster_protocol import (
     ErrorHint,
     ExpandedReturn,
     ExportSnapshot,
+    ExternalOutputRef,
     Invocation,
     InvocationFailure,
     InvocationResult,
@@ -239,11 +241,51 @@ def test_local_references_are_closed_and_acyclic() -> None:
 def test_capability_negotiation_is_exact_and_strict() -> None:
     assert negotiate_result_capabilities(None) == frozenset()
     assert negotiate_result_capabilities(["unknown"]) == frozenset()
+    assert negotiate_result_capabilities(["dinkster.invocation-result-algebra.v1"]) == frozenset()
     assert negotiate_result_capabilities([RESULT_ALGEBRA_CAPABILITY]) == CAPABILITIES
     with pytest.raises(ValueError, match="unique strings"):
         negotiate_result_capabilities([RESULT_ALGEBRA_CAPABILITY] * 2)
     with pytest.raises(ValueError, match="array or set"):
         negotiate_result_capabilities(RESULT_ALGEBRA_CAPABILITY)
+
+
+def test_external_expansion_cannot_be_encoded_for_a_v1_peer() -> None:
+    unit = ExpandedReturn(
+        LocalExpansion((LocalNode("child", "Example"),)),
+        (("out", ExternalOutputRef("existing", "value")),),
+    )
+    with pytest.raises(BoundaryError, match="not negotiated"):
+        encode_result(
+            ValueCodec(registry(), use_shm=False),
+            InvocationResult(expansion=unit),
+            "external",
+            0.0,
+            negotiated_capabilities=frozenset({"dinkster.invocation-result-algebra.v1"}),
+        )
+    header, blobs = encode(InvocationReturn(ReturnBatch("scalar", (unit,))))
+    algebra(header).update(capability="dinkster.invocation-result-algebra.v1", version=1)
+    with pytest.raises(BoundaryError, match="capability or version"):
+        decode(header, blobs)
+
+
+def test_expanding_invocation_is_not_sent_to_a_v1_peer() -> None:
+    reg = registry()
+    session = BoundarySession(reg, role="test worker", pack="test", codec=ValueCodec(reg))
+    session._alive = True  # noqa: SLF001 - an adopted peer without any supported result capability
+    session._result_capabilities = negotiate_result_capabilities(  # noqa: SLF001
+        ["dinkster.invocation-result-algebra.v1"]
+    )
+    session._writer = cast(Any, object())  # noqa: SLF001 - any attempted write fails the test
+    invocation = Invocation(
+        "external", "node", "Example", {}, NodeSchema("Example", may_expand_graph=True)
+    )
+    result = asyncio.run(session.invoke(invocation))
+    assert result.error is not None
+    assert (
+        result.error.message
+        == f"runtime expansion requires negotiated capability {RESULT_ALGEBRA_CAPABILITY}"
+    )
+    assert session.alive
 
 
 def test_direct_canonical_wire_and_value_blob_round_trip() -> None:
@@ -295,7 +337,7 @@ def test_indexed_local_output_references_round_trip() -> None:
 @pytest.mark.parametrize(
     "mutation,match",
     [
-        (lambda h: algebra(h).update(version=2), "capability or version"),
+        (lambda h: algebra(h).update(version=RESULT_ALGEBRA_VERSION + 1), "capability or version"),
         (lambda h: algebra(h).update(capability="wrong"), "capability or version"),
         (lambda h: algebra(h).update(extra=True), "fields"),
         (lambda h: h.update(extra=True), "typed result frame"),
