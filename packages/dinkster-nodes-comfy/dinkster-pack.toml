@@ -210,6 +210,8 @@ namespaces = [
     "EmptyAceStepLatentAudio",
     "EmptyAceStep1.5LatentAudio",
     "EmptyYuE2LatentAudio",
+    "MergeImageLists",
+    "ResolutionBucket",
     "ResizeImagesByShorterEdge",
     "ResizeImagesByLongerEdge",
     "CenterCropImages",
