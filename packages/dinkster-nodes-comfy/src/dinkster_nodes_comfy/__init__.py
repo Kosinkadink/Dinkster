@@ -49,7 +49,6 @@ COMFY_NODES = (
     *MODEL_SPECIFIC_MERGE_NODES,
     *FREEU_NODES,
     *LATENT_NODES,
-    EmptyMochiLatentVideo,
     *LATENT_ADVANCED_NODES,
     *LATENT_OPERATION_NODES,
     *CLIP_NODES,
@@ -65,6 +64,7 @@ COMFY_NODES = (
     *MORPHOLOGY_NODES,
     *STABLE_CASCADE_NODES,
     *POST_PROCESSING_NODES,
+    EmptyMochiLatentVideo,
 )
 
 __all__ = ["COMFY_NODES", "register_inference_types"]
