@@ -47,6 +47,13 @@
   incompatible output types and dynamic demand cycles fail at the expanding
   parent before its fragment runs. Completed values stay available for later
   fragments until that run ends.
+- In-process nodes can declare `execution_context` to read an immutable live
+  graph snapshot and await or publish typed run values. Expanding nodes can
+  also inhibit or override nodes that have not started. Changes stay within
+  the current run. Waiting releases execution admission and governed memory
+  reservations so a publisher can run at concurrency one. Contexts expire
+  when their invocation ends; these live-state nodes bypass result caches.
+  These control calls are not yet available in isolated or remote workers.
 - Model-backed vision provider packs can implement stable owner node schemas.
   Ordinary node cards hide implementation pack ids. A missing selection is
   resolved deterministically from the requested semantic model and compatible

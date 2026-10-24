@@ -49,6 +49,7 @@ from .elaborate import (
     ElaborationError,
     elaborate,
 )
+from .execution import RunExecutionContext
 from .expansion import Expansion, ExpansionBuilder, ExpansionNode, ExpansionOutput
 from .log import (
     LOG_LEVEL_ENV,
@@ -177,6 +178,7 @@ from .wire import (
 )
 
 __all__ = [
+    "RunExecutionContext",
     "Expansion",
     "ExpansionBuilder",
     "ExpansionNode",

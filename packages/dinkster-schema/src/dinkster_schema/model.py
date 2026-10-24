@@ -1291,10 +1291,11 @@ class OutputSpec:
             raise ValueError(f"output {self.id}: known_value must be an OutputKnownValue")
 
 
-RESERVED_INPUT_IDS = frozenset({"output_spec"})
+RESERVED_INPUT_IDS = frozenset({"output_spec", "execution_context"})
 """Framework-reserved execute() parameter names. ``output_spec`` carries the
 elaborated output interface (an OutputInterface) to nodes that declare output
-families; it is never an input id or input family id."""
+families; ``execution_context`` carries live run control. Neither is an input
+id or input family id."""
 
 SearchVisibility = Literal["normal", "deprecated", "hidden"]
 """How node search lists a type. Presentation/lifecycle metadata, never
@@ -2142,16 +2143,11 @@ class NodeSchema:
     declarative design). Capability metadata only: never validity and
     never part of the schema signature."""
     may_expand_graph: bool = False
-    """This node's execution may return a runtime graph expansion payload
-    that Dinkster cannot execute. Populated only where expansion is provable
-    at translation time: compat marks V3 schemas whose source declares
-    ``enable_expand``, and v1 functions that statically return an "expand"
-    dict plus the enumerated core expanders at the pinned reference revision.
-    Dynamically built or delegated returns are unclassifiable and stay
-    unflagged; the loud runtime refusal is the safety boundary for that tail.
-    Importers use the flag to refuse unsupported structures (such as a
-    Generic Loop region containing such a node) before submission. Capability
-    metadata only: never validity and never part of the schema signature."""
+    """Execution may return a validated runtime graph expansion and inhibit
+    nodes in the run overlay. Capability metadata, not cache identity."""
+    execution_context: bool = False
+    """Inject the hidden run-scoped execution_context parameter. Such nodes
+    observe live run state and therefore never use invocation-result caches."""
     mirror: MirrorSpec | None = None
     """Optional frontend-renderable mirror of this node's transform (see
     MirrorSpec). Presentation metadata only: the engine never reads it,
@@ -2169,6 +2165,8 @@ class NodeSchema:
     def __post_init__(self) -> None:
         if not self.node_type:
             raise ValueError("node_type is required")
+        if type(self.execution_context) is not bool:
+            raise ValueError("execution_context must be a bool")
         if self.editor_role is not None and (
             not isinstance(cast("object", self.editor_role), str) or not self.editor_role
         ):

@@ -42,6 +42,7 @@ from dinkster_graph import (
     TypedLiteral,
     dependency_map,
     elaborate_graph,
+    graph_from_wire,
     has_errors,
     migrate_pure_node_type_replacements,
     region_interface,
@@ -79,9 +80,11 @@ from dinkster_protocol import (
     extension_behavior_hash,
     resolve_attention_runtime_status,
 )
+from dinkster_protocol.run_control import InvocationLease
 from dinkster_schema import (
     InputSpec,
     NodeSchema,
+    RunExecutionContext,
     TypeExpr,
     combo_type_mismatch_is_error,
     plan_asset_coercion,
@@ -117,6 +120,7 @@ from .compile import (
     GraphCompileTransport,
     compile_graph,
 )
+from .control import EngineRunContext, RunControlState
 from .events import EngineEvent, EventListener
 from .expansion import admit_expansion, referenced_output
 
@@ -1343,6 +1347,7 @@ class Engine:
         cache_scope: str | None = None,
         resolve_expansion: Callable[[str, CachedResult], Awaitable[Mapping[str, Value]]]
         | None = None,
+        control_context: Callable[[str, Mapping[str, Value]], RunExecutionContext] | None = None,
     ) -> None:
         """Produce one node's outputs: coalesce, hit cache, or invoke.
 
@@ -1578,7 +1583,11 @@ class Engine:
             if self._explain_misses
             else None
         )
-        use_cache = cache_enabled and (not lazy_consumer or schema.idempotent)
+        use_cache = (
+            cache_enabled
+            and not schema.execution_context
+            and (not lazy_consumer or schema.idempotent)
+        )
 
         while use_cache and (inflight := self._inflight.get(key)) is not None:
             try:
@@ -1766,7 +1775,13 @@ class Engine:
                 branch = selector.branches["true" if selected else "false"]
                 result = InvocationResult(outputs={schema.outputs[0].id: inputs[branch]})
             else:
-                async with self._admission(schema, inputs, selection):
+                async with InvocationLease(
+                    lambda: self._admission(schema, inputs, selection)
+                ) as lease:
+                    if schema.execution_context and control_context is not None:
+                        invocation = replace(
+                            invocation, run_control=lease.bind(control_context(node_id, inputs))
+                        )
                     result = await self._runtime().worker.invoke(
                         invocation,
                         on_event=lambda ev: self._emit_node_event(run_id, label, ev, selection),
@@ -1945,7 +1960,9 @@ class Engine:
             )
             for node_id in order
         )
-        has_expansion = any(schema.may_expand_graph for schema in effective.values())
+        has_expansion = any(
+            schema.may_expand_graph or schema.execution_context for schema in effective.values()
+        )
         if not has_connected_lazy and not has_expansion:
             try:
                 await self._execute_static_dag(
@@ -1984,6 +2001,84 @@ class Engine:
         expansion_scopes: dict[str, str] = {}
         current_dependencies: dict[str, set[str]] = {}
         expansion_demands: dict[str, set[str]] = {}
+        controls = RunControlState()
+        inhibited: set[str] = set()
+        invoking: set[str] = set()
+
+        def control_context(node_id: str, inputs: Mapping[str, Value]) -> RunExecutionContext:
+            def publish(target: str, value: Mapping[str, Value]) -> None:
+                if not self._cache_hit_valid(effective[target], value):
+                    raise ValueError(f"published value does not match {target!r} outputs")
+                if self._dead_owner(value) is not None or not self._pin_outputs(value, pinned):
+                    raise ValueError("published value has an unavailable resource owner")
+
+            def inhibit(nodes: Sequence[str]) -> None:
+                if not effective[node_id].may_expand_graph:
+                    raise ValueError("only expanding nodes may inhibit nodes")
+                for target in nodes:
+                    task = tasks.get(target)
+                    if (
+                        target in invoking
+                        or target in produced
+                        or (task is not None and task.done())
+                    ):
+                        raise ValueError(f"cannot inhibit started node {target!r}")
+                inhibited.update(nodes)
+
+            def override(target: str, inputs: Mapping[str, object]) -> None:
+                nonlocal graph, effective, signatures
+                if not effective[node_id].may_expand_graph:
+                    raise ValueError("only expanding nodes may override nodes")
+                if target in invoking or target in produced:
+                    raise ValueError(f"cannot override started node {target!r}")
+                original = graph.nodes[target]
+                if not isinstance(original, GraphNode):
+                    raise ValueError("run control cannot override a region")
+                replacement = graph_from_wire(
+                    {"nodes": {target: {"nodeType": original.node_type, "inputs": dict(inputs)}}}
+                ).nodes[target]
+                assert isinstance(replacement, GraphNode)
+                overlay = snapshot_graph(
+                    Graph({**graph.nodes, target: replace(original, inputs=replacement.inputs)})
+                )
+                admitted, diagnostics = elaborate_graph(overlay, self._schemas_for(run_id))
+                diagnostics += validate(
+                    overlay,
+                    self._schemas_for(run_id),
+                    initial_targets,
+                    admitted,
+                    known_types=self._runtime().known_types or self._registry,
+                )
+                if has_errors(diagnostics):
+                    raise ValueError(f"invalid run override for {target!r}: {diagnostics}")
+                demand = {
+                    key: {
+                        value.node_id
+                        for value in node.inputs.values()
+                        if isinstance(value, Link)
+                        and value.node_id not in current_dependencies.get(key, set())
+                    }
+                    for key, node in overlay.nodes.items()
+                }
+                for parent in expansion_calls:
+                    demand[parent].update(expansion_demands[parent])
+                pending: list[tuple[str, tuple[str, ...]]] = [
+                    (child, (target,)) for child in demand[target]
+                ]
+                visited: set[str] = set()
+                while pending:
+                    child, path = pending.pop()
+                    if child == target:
+                        raise ValueError("dynamic cycle: " + " -> ".join((*path, child)))
+                    if child not in visited:
+                        visited.add(child)
+                        pending.extend((dep, (*path, child)) for dep in demand.get(child, ()))
+                graph, effective = overlay, admitted
+                signatures = {key: schema_signature(schema) for key, schema in admitted.items()}
+
+            return EngineRunContext(
+                node_id, inputs, controls, lambda: graph, publish, inhibit, override
+            )
 
         async def resolve_expansion(parent_id: str, entry: CachedResult) -> Mapping[str, Value]:
             nonlocal graph, effective, signatures
@@ -2113,9 +2208,28 @@ class Engine:
 
             if isinstance(node, GraphNode) and node_id not in planned:
                 await self._prepare_node_types(run_id, (node.node_type,))
-            await asyncio.gather(
-                *(ensure_node(dep) for dep in sorted(ordinary_dependencies(node_id)))
-            )
+            while True:
+                snapshot = graph
+                await asyncio.gather(
+                    *(ensure_node(dep) for dep in sorted(ordinary_dependencies(node_id)))
+                )
+                if graph is snapshot:
+                    break
+            node = graph.nodes[node_id]
+            if node_id in inhibited:
+                produced[node_id] = {
+                    output.id: make_absent_value(
+                        origin=prefix + node_id,
+                        reason="",
+                        stands_for=output.type.runtime_type_id(),
+                    )
+                    for output in effective[node_id].outputs
+                }
+                skipped.append(prefix + node_id)
+                self._emit(
+                    EngineEvent("node_skipped", run_id, prefix + node_id, {"inhibited": True})
+                )
+                return
             if isinstance(node, RegionNode):
                 await self._run_region(
                     run_id,
@@ -2131,6 +2245,7 @@ class Engine:
                     run_cache_enabled,
                 )
             else:
+                invoking.add(node_id)
                 await self._run_node(
                     run_id,
                     graph,
@@ -2148,6 +2263,7 @@ class Engine:
                     cache_enabled,
                     expansion_scopes.get(node_id, cache_scope),
                     resolve_expansion,
+                    control_context,
                 )
             # A future fragment may refer to any completed node, including a
             # non-idempotent one. Such values must survive until the run ends.
@@ -2170,6 +2286,8 @@ class Engine:
             await asyncio.gather(*tasks.values(), return_exceptions=True)
             produced.clear()
             raise
+        finally:
+            controls.close()
 
     async def _execute_static_dag(
         self,

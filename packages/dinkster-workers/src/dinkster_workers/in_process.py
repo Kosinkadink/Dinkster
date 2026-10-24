@@ -972,6 +972,10 @@ class InProcessWorker:
                 members=invocation.output_members,
                 outputs=invocation.effective_schema.outputs,
             )
+        if base_schema.execution_context:
+            if invocation.run_control is None:
+                raise InputCoercionError("node requires a live run execution context")
+            kwargs["execution_context"] = invocation.run_control
         return kwargs
 
     def _wrap_outputs(
@@ -1098,6 +1102,11 @@ class InProcessWorker:
                 return contract_error(
                     f"output '{out.id}' type could not be resolved from this invocation's inputs"
                 )
+            if isinstance(returned_value, Value):
+                if returned_value.type_id != expected:
+                    return contract_error(f"output '{out.id}' rejects {returned_value.type_id}")
+                outputs[out.id] = returned_value
+                continue
             try:
                 output = prepare_media_output(raw[out.id], expected, out, schema, media_inputs)
                 outputs[out.id] = self._registry.wrap(expected, output)

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import traceback
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import cast
 
 from dinkster_memory import (
@@ -35,6 +36,7 @@ from dinkster_protocol import (
     OnInvocationEvent,
     Worker,
 )
+from dinkster_protocol.run_control import InvocationLease
 
 __all__ = ["GovernedWorker", "ReservationPlanner"]
 
@@ -76,7 +78,9 @@ class GovernedWorker:
         if not requests:
             return await self._inner.invoke(invocation, on_event=on_event)
         try:
-            async with self._reservations.reserve(requests):
+            async with InvocationLease(lambda: self._reservations.reserve(requests)) as lease:
+                if invocation.run_control is not None:
+                    invocation = replace(invocation, run_control=lease.bind(invocation.run_control))
                 return await self._inner.invoke(invocation, on_event=on_event)
         except (BudgetExceeded, ReservationTimeout) as exc:
             return InvocationResult(

@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Literal, Protocol, cast
 
-from dinkster_schema import NodeSchema
+from dinkster_schema import NodeSchema, RunExecutionContext
 from dinkster_values import Value
 
 from .attention import (
@@ -430,6 +430,8 @@ class Invocation:
     job_ref: str | None = None
     attempt_id: int = 1
     """Stable server-job identity used to fence resumable boundary work."""
+    run_control: RunExecutionContext | None = field(default=None, compare=False, repr=False)
+    """Host-local run binding. Worker connections relay calls, never this object."""
 
     def __post_init__(self) -> None:
         if self.job_ref is not None and (type(self.job_ref) is not str or not self.job_ref):

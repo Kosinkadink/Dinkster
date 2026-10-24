@@ -170,6 +170,7 @@ from dinkster_schema import (
     ReplacementNode,
     ReplacementPredicate,
     ReplacementRule,
+    RunExecutionContext,
     SaveTargetWidget,
     SearchVisibility,
     SelectorSpec,
@@ -345,6 +346,7 @@ if TYPE_CHECKING:
     from dinkster_video import timeline as timeline_render
 
 __all__ = [
+    "RunExecutionContext",
     "Expansion",
     "ExpansionBuilder",
     "ExpansionNode",
