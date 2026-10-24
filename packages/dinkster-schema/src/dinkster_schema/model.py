@@ -657,9 +657,9 @@ class NumberWidget:
     ``display`` is an explicit editor presentation when present. Bounds and
     step are independent constraints: they never imply a slider or any other
     presentation. ``round`` is an independent finite positive rendering
-    precision available only on FLOAT; it never implies display or
-    changes bounds/step. ``control_after_generate`` names the INITIAL mode
-    of the seed-style control-after-generate selector; setting it asks the
+    precision, or literal False to disable rounding, available only on FLOAT;
+    it never implies display or changes bounds/step. ``control_after_generate``
+    names the INITIAL mode of the seed-style control-after-generate selector; setting it asks the
     frontend to render that control. Absence of the descriptor means "no
     presentation metadata", and the frontend still renders a number editor
     by primitive type inference; it never means the input is widgetless
@@ -676,7 +676,7 @@ class NumberWidget:
     step: int | float | None = None
     control_after_generate: ControlAfterGenerate | None = None
     display: Literal["number", "slider", "knob", "gradientslider", "color"] | None = None
-    round: int | float | None = None
+    round: int | float | Literal[False] | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -712,11 +712,17 @@ class NumberWidget:
                     f"number widget {name} must fit the supported integer range "
                     f"({_DECIMAL_WIRE_INT_MIN}..{_DECIMAL_WIRE_INT_MAX}), got {bound}"
                 )
-        if self.round is not None and (
-            type(self.round) not in (int, float) or not math.isfinite(self.round) or self.round <= 0
+        if (
+            self.round is not None
+            and self.round is not False
+            and (
+                type(self.round) not in (int, float)
+                or not math.isfinite(self.round)
+                or self.round <= 0
+            )
         ):
             raise ValueError(
-                f"number widget round must be a finite positive number, got {self.round!r}"
+                f"number widget round must be False or a finite positive number, got {self.round!r}"
             )
         if self.min is not None and self.max is not None and self.min > self.max:
             raise ValueError(f"number widget min ({self.min}) must not exceed max ({self.max})")

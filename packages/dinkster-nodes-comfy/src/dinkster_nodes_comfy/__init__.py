@@ -10,6 +10,7 @@ from .clip_sdxl import CLIP_SDXL_NODES
 from .compositing import COMPOSITING_NODES
 from .conditioning import CONDITIONING_NODES
 from .controlnet import CONTROLNET_NODES
+from .dataset_collections import DATASET_COLLECTION_NODES
 from .dataset_groups import DATASET_GROUP_NODES
 from .dataset_text import DATASET_TEXT_NODES
 from .freeu import FREEU_NODES
@@ -46,6 +47,7 @@ from .vae import VAE_NODES
 COMFY_NODES = (
     *TEXT_NODES,
     *DATASET_TEXT_NODES,
+    *DATASET_COLLECTION_NODES,
     PrimitiveString,
     PrimitiveStringMultiline,
     PrimitiveInt,
