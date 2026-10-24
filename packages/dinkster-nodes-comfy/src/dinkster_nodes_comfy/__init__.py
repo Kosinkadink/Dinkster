@@ -25,6 +25,7 @@ from .cosmos_conditioning import COSMOS_CONDITIONING_NODES
 from .dataset_collections import DATASET_COLLECTION_NODES
 from .dataset_images import DATASET_IMAGE_NODES
 from .dataset_text import DATASET_TEXT_NODES
+from .device_routing import DEVICE_ROUTING_NODES
 from .freeu import FREEU_NODES
 from .hunyuan_latent import HUNYUAN_LATENT_NODES
 from .hunyuan_text import HUNYUAN_TEXT_NODES
@@ -93,6 +94,7 @@ COMFY_NODES = (
     *MODEL_MERGE_NODES,
     *MODEL_SPECIFIC_MERGE_NODES,
     *MODEL_ADVANCED_NODES,
+    *DEVICE_ROUTING_NODES,
     *MODEL_SPECIFIC_SCHEDULER_NODES,
     *CFG_GUIDANCE_NODES,
     *VIDEO_GUIDANCE_NODES,
