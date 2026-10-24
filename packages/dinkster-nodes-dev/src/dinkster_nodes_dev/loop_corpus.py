@@ -19,7 +19,8 @@ from dinkster_api.v1 import (
 
 INT = TypeExpr.concrete(CORE_INT)
 BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
-VALUE = TypeExpr.concrete("core.value")
+VALUE_TYPE = "core.value"
+VALUE = TypeExpr.concrete(VALUE_TYPE)
 ANY = TypeExpr.wildcard()
 LIST_INT = TypeExpr.list_of(INT)
 LIST_VALUE = TypeExpr.list_of(VALUE)

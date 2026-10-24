@@ -14,7 +14,7 @@ from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import PORTS_NODE_ID, Graph, GraphNode, Link, RegionNode, RegionOutput
 from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_dev.loop_corpus import LOOP_CORPUS_NODES, Observations
+from dinkster_nodes_dev.loop_corpus import LOOP_CORPUS_NODES, VALUE_TYPE, Observations
 from dinkster_nodes_foundation import FOUNDATION_NODES
 from dinkster_schema import TypeExpr, build_node_types, build_schemas
 from dinkster_values import TypeRegistry, register_core_types
@@ -29,7 +29,7 @@ OUTPUTS = {
 TYPE_NAMES = {"Issue408LazySwitch": "ComfySwitchNode"}
 RUN_TIMEOUT_SECONDS = 10
 INT = TypeExpr.concrete(CORE_INT)
-VALUE = TypeExpr.concrete("core.value")
+VALUE = TypeExpr.concrete(VALUE_TYPE)
 
 
 def _link(value: object) -> object:
@@ -194,7 +194,7 @@ MappingPrompt = dict[str, dict[str, object]]
 def make_engine() -> Engine:
     registry = TypeRegistry()
     register_core_types(registry)
-    registry.register("core.value")
+    registry.register(VALUE_TYPE)
     nodes = (*COMFY_NODES, *FOUNDATION_NODES, *LOOP_CORPUS_NODES)
     return Engine(
         schemas=build_schemas(nodes),

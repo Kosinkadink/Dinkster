@@ -16,6 +16,8 @@ from dinkster_api.v1 import (
     CORE_BOOLEAN,
     CORE_FLOAT,
     CORE_INT,
+    CORE_STRING,
+    MASK_TYPE,
     Expansion,
     ExpansionBuilder,
     InputSpec,
@@ -154,7 +156,7 @@ class ExecutionBlock(Node):
             inputs=(
                 InputSpec("value", INT),
                 InputSpec("block", BOOLEAN),
-                InputSpec("message", TypeExpr.concrete("STRING"), default="blocked"),
+                InputSpec("message", TypeExpr.concrete(CORE_STRING), default="blocked"),
             ),
             outputs=(OutputSpec("value", INT),),
         )
@@ -341,7 +343,7 @@ class ExecutionMaskSource(Node):
         return NodeSchema(
             node_type="dev.execution.mask_source",
             inputs=(InputSpec("value", FLOAT),),
-            outputs=(OutputSpec("value", TypeExpr.concrete("MASK")),),
+            outputs=(OutputSpec("value", TypeExpr.concrete(MASK_TYPE)),),
         )
 
     @classmethod
