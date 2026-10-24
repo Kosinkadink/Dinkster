@@ -5,9 +5,17 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from dinkster_api.v1 import (
+    CLIP_VISION_TYPE,
+    CONDITIONING_TYPE,
     CORE_COMBO,
     CORE_FLOAT,
     CORE_INT,
+    IMAGE_TYPE,
+    LATENT_TYPE,
+    MESH_TYPE,
+    SHAPE_SUBDIVIDES_TYPE,
+    VAE_TYPE,
+    VOXEL_TYPE,
     ComboWidget,
     InputSpec,
     Node,
@@ -17,14 +25,14 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 
-VISION = TypeExpr.concrete("dinkster.clip-vision")
-VAE = TypeExpr.concrete("dinkster.vae")
-CONDITIONING = TypeExpr.concrete("dinkster.conditioning")
-LATENT = TypeExpr.concrete("dinkster.latent")
-IMAGE = TypeExpr.concrete("dinkster.image")
-VOXEL = TypeExpr.concrete("comfy.VOXEL")
-MESH = TypeExpr.concrete("comfy.MESH")
-SHAPE_SUBDIVIDES = TypeExpr.concrete("comfy.SHAPE_SUBDIVIDES")
+VISION = TypeExpr.concrete(CLIP_VISION_TYPE)
+VAE = TypeExpr.concrete(VAE_TYPE)
+CONDITIONING = TypeExpr.concrete(CONDITIONING_TYPE)
+LATENT = TypeExpr.concrete(LATENT_TYPE)
+IMAGE = TypeExpr.concrete(IMAGE_TYPE)
+VOXEL = TypeExpr.concrete(VOXEL_TYPE)
+MESH = TypeExpr.concrete(MESH_TYPE)
+SHAPE_SUBDIVIDES = TypeExpr.concrete(SHAPE_SUBDIVIDES_TYPE)
 COMBO = TypeExpr.concrete(CORE_COMBO)
 FLOAT = TypeExpr.concrete(CORE_FLOAT)
 INT = TypeExpr.concrete(CORE_INT)

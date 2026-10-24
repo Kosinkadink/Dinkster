@@ -29,11 +29,21 @@ def test_pinned_requirement_requires_matching_exact_commits(tmp_path: Path) -> N
         pinned_requirement(tmp_path)
 
 
-def test_source_contracts_reject_an_inference_without_window_execution(tmp_path: Path) -> None:
+def test_source_contracts_accept_upstream_loaders_and_reject_missing_sampler(
+    tmp_path: Path,
+) -> None:
     package = tmp_path / "dinkster_inference"
     package.mkdir()
-    for name in ("window_plan", "window_execution", "sd", "gguf", "gguf_ops"):
-        package.joinpath(f"{name}.py").write_text("")
-
-    with pytest.raises(RuntimeError, match="IntegerAffineIndexMap"):
+    package.joinpath("sd.py").write_text(
+        "def load_checkpoint_guess_config(): pass\n"
+        "def load_diffusion_model(): pass\n"
+        "def load_clip(): pass\n"
+        "class VAE: pass\n"
+    )
+    package.joinpath("sample.py").write_text(
+        "def sample(): pass\ndef prepare_noise(): pass\ndef fix_empty_latent_channels(): pass\n"
+    )
+    verify_source_contracts(package)
+    package.joinpath("sample.py").write_text("def prepare_noise(): pass\n")
+    with pytest.raises(RuntimeError, match="missing sample"):
         verify_source_contracts(package)

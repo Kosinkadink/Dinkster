@@ -1,4 +1,4 @@
-"""Torch-free process bootstrap for dinkster-aimdo residency."""
+"""Torch-free process bootstrap for comfy-aimdo residency."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ def bootstrap_aimdo(
     *,
     simple_vram_headroom: int | None = None,
 ) -> tuple[bool, int | None]:
-    """Initialize dinkster-aimdo before torch and return success plus applied headroom."""
+    """Initialize comfy-aimdo before torch and return success plus applied headroom."""
     effective_headroom = simple_vram_headroom
     if not enabled:
         return False, effective_headroom
@@ -25,10 +25,10 @@ def bootstrap_aimdo(
         )
         return False, effective_headroom
     try:
-        control = importlib.import_module("dinkster_aimdo.control")
+        control = importlib.import_module("comfy_aimdo.control")
     except ImportError:
         log.warning(
-            "dinkster_aimdo.control is unavailable; process continues without "
+            "comfy_aimdo.control is unavailable; process continues without "
             "successful aimdo bootstrap"
         )
         return False, effective_headroom
@@ -44,11 +44,11 @@ def bootstrap_aimdo(
                 if "simple_vram_headroom" not in str(exc):
                     raise
                 log.warning(
-                    "dinkster_aimdo.control.init() does not accept "
-                    "simple_vram_headroom (dinkster-aimdo older than 0.4.10 "
+                    "comfy_aimdo.control.init() does not accept "
+                    "simple_vram_headroom (comfy-aimdo older than 0.4.10 "
                     "installed); requested %d bytes of VRAM headroom are NOT "
                     "applied and runtime headroom is disarmed for this "
-                    "process - upgrade dinkster-aimdo to restore reservation "
+                    "process - upgrade comfy-aimdo to restore reservation "
                     "budgets; retrying init() without the argument",
                     simple_vram_headroom,
                 )
@@ -56,24 +56,23 @@ def bootstrap_aimdo(
                 initialized = control.init()  # type: ignore[attr-defined]
     except Exception:
         log.warning(
-            "dinkster_aimdo.control.init() raised; process continues without "
+            "comfy_aimdo.control.init() raised; process continues without "
             "successful aimdo bootstrap",
             exc_info=True,
         )
         return False, effective_headroom
     if initialized is not True:
         log.warning(
-            "dinkster_aimdo.control.init() returned %r; process continues without "
+            "comfy_aimdo.control.init() returned %r; process continues without "
             "successful aimdo bootstrap",
             initialized,
         )
         return False, effective_headroom
     if effective_headroom is None:
-        log.info("dinkster_aimdo.control.init() completed successfully")
+        log.info("comfy_aimdo.control.init() completed successfully")
     else:
         log.info(
-            "dinkster_aimdo.control.init() completed successfully with "
-            "simple_vram_headroom=%d bytes",
+            "comfy_aimdo.control.init() completed successfully with simple_vram_headroom=%d bytes",
             effective_headroom,
         )
     return True, effective_headroom

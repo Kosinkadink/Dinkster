@@ -691,11 +691,11 @@ def test_recursive_input_selector_generated_prefix_and_output_selector_refusals(
         engine = _engine()
         base = engine.pin_execution()
         assert base.schemas is not None
-        integer = TypeExpr.concrete("core.int")
+        integer = TypeExpr.concrete("INT")
         selector = NodeSchema(
             "test.selector",
             inputs=(
-                InputSpec("switch", TypeExpr.concrete("core.boolean")),
+                InputSpec("switch", TypeExpr.concrete("BOOLEAN")),
                 InputSpec("off", integer),
                 InputSpec("on", integer),
             ),

@@ -26,7 +26,7 @@ from dinkster_schema import (
 from dinkster_values import TypeRegistry, Value, is_absent, register_core_types
 from dinkster_workers import GovernedWorker, InProcessWorker
 
-INT = TypeExpr.concrete("core.int")
+INT = TypeExpr.concrete("INT")
 
 
 class Waiter(Node):

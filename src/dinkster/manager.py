@@ -68,7 +68,7 @@ from dinkster_registry import (
     validate_version,
 )
 from dinkster_registry.artifact import build_artifact
-from dinkster_schema import canonical_name
+from dinkster_schema import canonical_claim, canonical_name
 from dinkster_workers import (
     KNOWN_ACCELERATORS,
     AcceleratorError,
@@ -461,7 +461,7 @@ def _claims_from_manifests(installer: Installer, target: Lockfile) -> Lockfile:
                 f"{canonical_name(manifest.name)!r}; refusing a mislabeled stamp"
             )
         entries.append(
-            replace(entry, claims=tuple(canonical_name(claim) for claim in manifest.namespaces))
+            replace(entry, claims=tuple(canonical_claim(claim) for claim in manifest.namespaces))
         )
     return Lockfile.of(entries)
 

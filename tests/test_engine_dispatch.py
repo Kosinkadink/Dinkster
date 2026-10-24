@@ -48,7 +48,7 @@ from dinkster_values import (
     register_resource_handle_type,
 )
 
-STRING = TypeExpr.concrete("core.string")
+STRING = TypeExpr.concrete("STRING")
 HANDLE_LIST = TypeExpr.list_of(TypeExpr.concrete(RESOURCE_HANDLE_TYPE))
 
 _WRAP_REGISTRY = TypeRegistry()
@@ -80,7 +80,7 @@ class Load(Node):
 
 
 def _string(text: str) -> Value:
-    return _WRAP_REGISTRY.wrap("core.string", text)
+    return _WRAP_REGISTRY.wrap("STRING", text)
 
 
 def _stamped(rid: str, owner: str) -> Value:
@@ -502,7 +502,7 @@ def test_current_wire_sets_the_empty_extension_cache_key() -> None:
         engine = _engine(worker, events=events)
         await engine.run(_graph(), ["p"])
         finished = next(event for event in events if event.kind == "node_finished")
-        assert finished.detail["cache_key"] == "250e1d46c0d7a2c566da1e863ec20a18aa4f45da"
+        assert finished.detail["cache_key"] == "86dabbd3c53e379977e825d25175e98782062319"
         assert worker.invocations[0].extension_snapshot_digest is None
 
     asyncio.run(scenario())

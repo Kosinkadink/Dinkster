@@ -87,6 +87,7 @@ from dinkster_memory import (
     TenantRegistration,
     use_model_tenant_registry,
 )
+from dinkster_memory.resident import ResidentPool
 from dinkster_native.memory import plan_reservations
 from dinkster_native.pool import default_pool
 from dinkster_protocol import (
@@ -155,6 +156,7 @@ from dinkster_schema import (
     NodeSchema,
     build_node_types,
     build_schemas,
+    canonical_claim,
     canonical_name,
     claim_covers,
     claims_conflict,
@@ -1091,7 +1093,7 @@ class PackSpec:
     Other schema-only types still require a provider for a complete generation.
     """
     runtime_pins: Mapping[str, str] = field(default_factory=dict)
-    """Exact torch/dinkster-aimdo baseline recorded by the install generation."""
+    """Exact torch/comfy-aimdo baseline recorded by the install generation."""
     asset_vault_write: bool = False
     """Allow this trusted isolated pack to ingest verified assets into the host vault."""
     replica_cuda_indices: tuple[int, ...] = ()
@@ -1124,7 +1126,7 @@ class PackSpec:
             raise ValueError("replica and single-job CUDA indices are mutually exclusive")
         if self.in_process and self.asset_vault_write:
             raise ValueError("an in-process PackSpec cannot request asset vault write access")
-        if self.single_job_mode not in ("auto", "guidance", "sequence", "window"):
+        if self.single_job_mode not in ("auto", "guidance", "sequence"):
             raise ValueError("PackSpec single_job_mode is invalid")
         budgets: dict[str, int] = {}
         for residency, nbytes in self.vram_budgets.items():
@@ -1323,7 +1325,7 @@ def _installed_pack_spec(
                 f"default suite locks {pack_id} artifact {locked.artifact_digest}, "
                 f"but installed artifact is {digest}"
             )
-        if tuple(canonical_name(claim) for claim in manifest_record.namespaces) != locked.claims:
+        if tuple(canonical_claim(claim) for claim in manifest_record.namespaces) != locked.claims:
             raise CompositionError(
                 f"default suite locks {pack_id} claims {locked.claims!r}, "
                 f"but its manifest claims {manifest_record.namespaces!r}"
@@ -1535,9 +1537,10 @@ class Composition:
                 ),
             )
         pins = self._resource_pins
-        pool = default_pool()
-        pool.register_invalidator(cache.drop_referencing)
-        pool.register_pins(pins)
+        for pool in (default_pool(), *self._registry.resident_tables):
+            if isinstance(pool, ResidentPool):
+                pool.register_invalidator(cache.drop_referencing)
+                pool.register_pins(pins)
         self._engine_caches.add(cache)
         return Engine(
             schemas=self.schemas,
@@ -2414,7 +2417,7 @@ class ServingComposer:
         self._tenant_registry = tenant_registry
         self._torch_capable = torch_capable or _probe_torch_capability
         self._runtime_versions = runtime_versions or (
-            lambda: {name: importlib.metadata.version(name) for name in ("torch", "dinkster-aimdo")}
+            lambda: {name: importlib.metadata.version(name) for name in ("torch", "comfy-aimdo")}
         )
         self._sandbox_policy = sandbox_policy
         self._sandbox_gpu_grants = frozenset(canonical_name(name) for name in sandbox_gpu_grants)
@@ -2449,7 +2452,7 @@ class ServingComposer:
             self._diagnostic_listener = fan_out
         self._worker_env = dict(worker_env or {})
         # The asset base URL composed remote workers offer their daemons
-        # as a staging source (pull-over-HTTP; peer_asset_sources URL
+        # as a staging source (pull-over-HTTP asset endpoint URL
         # shape), plus the bearer credential for it when this engine
         # serves with auth. Engine-global: one advertised surface, every
         # remote hears the same address.
@@ -3630,6 +3633,7 @@ class ServingComposer:
                 inputs,
                 {arm.name: arm.default_cache_tag for arm in arms},
                 attention_routes,
+                self._producer_targets(self._topology if topology is None else topology, arms),
             )
         target = selected.target if selected is not None else first_arm.name
         if provider_target is not None:
@@ -4070,6 +4074,17 @@ class ServingComposer:
                 **({"error": pool_result.error} if pool_result.error is not None else {}),
             }
         )
+        for index, table in enumerate(self.composition._registry.resident_tables):
+            if not isinstance(table, ResidentPool) or table is default_pool():
+                continue
+            outcome = await table.full_release()
+            local_consumers.append(
+                {
+                    "consumer": f"resident-values-{index}",
+                    "status": outcome.status,
+                    **({"error": outcome.error} if outcome.error is not None else {}),
+                }
+            )
         results: list[dict[str, object]] = [
             {
                 "worker": "local",
@@ -4827,6 +4842,21 @@ class ServingComposer:
             {node_type: tuple(arms) for node_type, arms in arms_by_type.items()}
         )
 
+    @staticmethod
+    def _producer_targets(topology: Topology, arms: Sequence[ArmRecord]) -> dict[str, str]:
+        targets = {arm.name: arm.name for arm in arms}
+        for producers in topology.values():
+            for producer in producers:
+                if producer.name in targets or producer.name != producer.default_arm:
+                    continue
+                for arm in arms:
+                    # Default bodies in separate packs can share resident objects,
+                    # but alternate implementations still require exact affinity.
+                    if arm.name == arm.default_arm and arm.domain is producer.domain:
+                        targets[producer.name] = arm.name
+                        break
+        return targets
+
     def _dispatch_routes(self, topology: Topology, node_types: Sequence[str]) -> dict[str, Worker]:
         routes: dict[str, Worker] = {}
         for node_type in node_types:
@@ -4841,6 +4871,7 @@ class ServingComposer:
                 resolve_owner=lambda token, snapshot=topology: self._resolve_owner(snapshot, token),
                 arm_domains={arm.name: arm.domain for arm in arms},
                 default_arms={arm.name: arm.default_arm for arm in arms},
+                producer_targets=self._producer_targets(topology, arms),
             )
         return routes
 
@@ -4993,7 +5024,7 @@ class ServingComposer:
                 )
             if needs_residency and not spec.runtime_pins:
                 raise CompositionError(
-                    f"in-process pack {manifest.name!r} has no exact torch/dinkster-aimdo "
+                    f"in-process pack {manifest.name!r} has no exact torch/comfy-aimdo "
                     "generation baseline"
                 )
             if spec.runtime_pins:
@@ -5002,9 +5033,9 @@ class ServingComposer:
                         f"in-process pack {manifest.name!r} requires a torch-capable "
                         "serve environment"
                     )
-                if set(spec.runtime_pins) != {"torch", "dinkster-aimdo"}:
+                if set(spec.runtime_pins) != {"torch", "comfy-aimdo"}:
                     raise CompositionError(
-                        f"in-process pack {manifest.name!r} has no exact torch/dinkster-aimdo "
+                        f"in-process pack {manifest.name!r} has no exact torch/comfy-aimdo "
                         "generation baseline"
                     )
                 try:

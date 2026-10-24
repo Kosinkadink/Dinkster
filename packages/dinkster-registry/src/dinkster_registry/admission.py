@@ -22,7 +22,13 @@ import json
 from dataclasses import dataclass
 from typing import Literal, cast
 
-from dinkster_schema import canonical_name, claim_covers, validate_name
+from dinkster_schema import (
+    canonical_claim,
+    canonical_name,
+    claim_covers,
+    validate_claim,
+    validate_name,
+)
 
 from .grants import GrantTable
 from .model import (
@@ -164,7 +170,7 @@ def _claims_of(submission: Submission) -> tuple[str, ...]:
     table as everything else - no second, weaker path to a name."""
     seen: dict[str, None] = {}
     for claim in (submission.pack_name, *submission.namespaces):
-        seen.setdefault(canonical_name(claim), None)
+        seen.setdefault(canonical_claim(claim), None)
     return tuple(seen)
 
 
@@ -177,14 +183,14 @@ def admit(submission: Submission, grants: GrantTable, releases: ReleaseIndex) ->
         ("pack name", submission.pack_name),
         *(("namespace claim", claim) for claim in submission.namespaces),
     ):
-        problem = validate_name(name)
+        problem = validate_claim(name) if label == "namespace claim" else validate_name(name)
         if problem is not None:
             findings.append(
                 AdmissionFinding(
                     severity="error",
                     code="registry.invalid-name",
                     message=f"{label} {name!r} {problem}",
-                    fix="use the closed name grammar shared by every registry identifier",
+                    fix="use lowercase pack/publisher names and namespace or exact node claims",
                 )
             )
     version_problem = validate_version(submission.version)
@@ -333,7 +339,7 @@ def record_acceptance(
     if review.state != "accepted":
         raise RegistryError(f"recording requires an accepted review, got {review.state!r}")
     claims = _claims_of(submission)
-    declared_new = {canonical_name(claim) for claim in verdict.new_claims}
+    declared_new = {canonical_claim(claim) for claim in verdict.new_claims}
     required_new = {
         claim for claim in claims if grants.owner_of(claim) != canonical_name(submission.publisher)
     }

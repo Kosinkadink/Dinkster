@@ -71,6 +71,49 @@ def write_manifest(path: Path, handler: object = None) -> Path:
     return path
 
 
+def test_manifest_keeps_exact_node_claims_and_rejects_overlapping_namespace(tmp_path: Path) -> None:
+    path = tmp_path / "dinkster-pack.toml"
+    claims = ["Epsilon Scaling", "Video Slice", "TextEncodeAceStepAudio1.5"]
+    path.write_text(
+        f'[pack]\nname = "test"\nnamespaces = {json.dumps(claims)}\n'
+        '[pack.entry]\nnodes = "test_pack:NODES"\n'
+    )
+    assert load_manifest(path).namespaces == tuple(claims)
+    path.write_text(path.read_text().replace(json.dumps(claims), '["img", "Img.Blur"]'))
+    with pytest.raises(ManifestError, match="overlap"):
+        load_manifest(path)
+
+
+@pytest.mark.parametrize("field", ["nodes", "searchTerms"])
+def test_locale_metadata_preserves_exact_node_and_port_ids(tmp_path: Path, field: str) -> None:
+    path = tmp_path / "dinkster-pack.toml"
+    path.write_text(
+        '[pack]\nname = "test"\nnamespaces = ["Epsilon Scaling"]\n'
+        '[pack.entry]\nnodes = "test_pack:NODES"\n'
+    )
+    locales = tmp_path / "locales"
+    locales.mkdir()
+    catalog = locales / "en.json"
+    record = {
+        "displayName": "Scale epsilon",
+        "inputs": {"blocks.0.": {"displayName": "First block"}},
+        "outputs": {"STRING": {"displayName": "Text"}, "*": {"doc": "Any value"}},
+        "combos": {"Model Choice": {"fast": "Fast"}},
+    }
+    payload = {field: {"Epsilon Scaling": record if field == "nodes" else ["epsilon"]}}
+    data = json.dumps(payload).encode()
+    catalog.write_bytes(data)
+    manifest = load_manifest(path)
+    assert manifest.locale_catalog_problems == ()
+    assert len(manifest.locale_catalogs) == 1
+    assert manifest.locale_catalogs[0].node_references == ("Epsilon Scaling",)
+    assert manifest.locale_catalogs[0].data == data
+    catalog.write_text(json.dumps({field: {"Epsilon scaling": payload[field]["Epsilon Scaling"]}}))
+    unowned = load_manifest(path)
+    assert unowned.locale_catalogs == ()
+    assert any("not owned" in problem for problem in unowned.locale_catalog_problems)
+
+
 def write_alias_registry(path: Path, *, carrier: str = "test.native") -> None:
     source = ComfyAliasSource("comfy-core", "TestNode", "comfy.TestNode", "b78cec87")
     registry = ComfyAliasRegistry(
@@ -108,8 +151,6 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
 
     fork_backed = (
         "dinkster.load_checkpoint",
-        "dinkster.load_model_patch",
-        "dinkster.apply_minimax_h3_fun_controlnet",
         "dinkster.load_diffusion_model",
         "dinkster.clip_text_encode",
         "dinkster.empty_latent_image",
@@ -123,7 +164,7 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
         "dinkster.separate_av_latent",
         "dinkster.vae_decode_audio",
     )
-    default_native = ("comfy.BlockSparseAttention", *fork_backed)
+    default_native = fork_backed
     mesh = (
         "dinkster.image_crop_to_mask",
         "dinkster.preview_mask",
@@ -151,33 +192,13 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
     )
 
     legacy = load_manifest(Path("packages/dinkster-compat-comfy/dinkster-legacy-pack.toml"))
-    legacy_extra = {
-        "dinkster.load_model_patch",
-        "dinkster.apply_minimax_h3_fun_controlnet",
-        "dinkster.temporal_window_plan",
-        "dinkster.spatial_tile_plan",
-        "dinkster.explicit_window_plan",
-        "dinkster.res4lyf_rk_beta_sampler",
-    }
-    legacy_native = set(fork_backed) | legacy_extra
+    legacy_native = set(fork_backed)
     assert set(legacy.executes) == legacy_native | set(mesh)
     assert set(dict(legacy.arms)["native"]) == legacy_native
     assert legacy.arm_nodes_entry == "dinkster_compat_comfy.legacy_entry:ARM_NODES"
 
     native = load_manifest(Path("packages/dinkster-native/dinkster-pack.toml"))
-    retained = set((*default_native, *mesh))
-    native_sampling = {
-        "dinkster.temporal_window_plan",
-        "dinkster.spatial_tile_plan",
-        "dinkster.explicit_window_plan",
-        "dinkster.res4lyf_rk_beta_sampler",
-    }
-    native_model_patches = {
-        "comfy.BlockSparseAttention",
-        "dinkster.load_model_patch",
-        "dinkster.apply_minimax_h3_fun_controlnet",
-    }
-    native_nodes = retained | native_sampling | native_model_patches
+    native_nodes = set((*default_native, *mesh))
     assert native.namespaces == ("comfy", "dinkster")
     assert set(native.executes) == native_nodes
     assert set(dict(native.arms)["native"]) == native_nodes
@@ -185,7 +206,14 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
 
     generation = load_manifest(Path("packages/dinkster-nodes-generation/dinkster-pack.toml"))
     assert generation.namespaces == ("comfy", "dinkster")
-    assert "comfy.BlockSparseAttention" in generation.schema_only
+    assert "comfy.BlockSparseAttention" not in generation.schema_only
+    _worker, _registry, nodes, _arms = load_pack(generation, import_from_pack_root=True)
+    assert {
+        "comfy.BlockSparseAttention",
+        "dinkster.context_windows_manual",
+        "dinkster.wan_context_windows_manual",
+        "dinkster.ltxv_context_windows",
+    }.isdisjoint(node.schema().node_type for node in nodes)
 
 
 def test_manifest_loads_strict_adjacent_comfy_alias_registry_without_importing_code(

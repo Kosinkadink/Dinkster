@@ -10,12 +10,12 @@ never learns v1 existed.
 Translation rules:
 
 - v1 primitive type strings map to core envelope types; combo lists map
-  to core.combo (choice vocabulary is UI affordance within that identity).
+  to COMBO (choice vocabulary is UI affordance within that identity).
   When
   every choice is a non-empty string the list rides along as a
   ComboWidget with baked options, so the native wire renders the same
   dropdown v1 did - except under INPUT_IS_LIST, where the socket is
-  list<core.combo> and a widget on a list socket is undefined in the
+  list<COMBO> and a widget on a list socket is undefined in the
   wire contract. A combo whose choice list IS a filesystem listing (the
   very object folder_paths.get_filename_list returned, observed by an
   injected probe) additionally carries a remote route
@@ -24,7 +24,7 @@ Translation rules:
   the honesty rules.
 - Two-option combos that are disguised booleans (enable/disable, on/off,
   true/false, yes/no - case-insensitive, either order) become honest
-  core.boolean inputs wearing a BooleanWidget whose labels are the
+  BOOLEAN inputs wearing a BooleanWidget whose labels are the
   original option strings. execute() maps the boolean back to the v1
   string, and a legacy prompt still sending the string passes through
   verbatim. v1 BOOLEAN inputs keep their label_on/label_off config as
@@ -109,6 +109,7 @@ from dinkster_assets import (
     ASSET_TYPE,
     AssetError,
     AssetRef,
+    LocalAssetRef,
     MountSnapshotResolver,
     register_asset_type,
     resolver_from_env,
@@ -162,6 +163,7 @@ from .saved_results import capture_saved_results
 from .video import VIDEO_V1_NAME, register_video_type
 
 COMFY_TYPE_PREFIX = "comfy."
+COMFY_VALUE_TYPE_NAMES = frozenset(("IMAGE", "MASK", "LATENT"))
 V3_AUTOGROW_IO_TYPE = "COMFY_AUTOGROW_V3"
 V3_DYNAMICCOMBO_IO_TYPE = "COMFY_DYNAMICCOMBO_V3"
 V3_DYNAMICSLOT_IO_TYPE = "COMFY_DYNAMICSLOT_V3"
@@ -595,19 +597,19 @@ def _stable_sorted_listing(
 
 
 def _asset_to_model_filename(value: object, category: str) -> str:
-    """Convert one digest-backed asset to the exact relative name v1 expects.
+    """Convert a verified asset or local grant to the exact relative name v1 expects.
 
     ComfyUI loader functions do not accept arbitrary paths: they accept a
     relative filename and resolve it again through ``folder_paths``. The
     conversion therefore proves all of the following before returning a
-    name: the category is allowlisted, the verified asset path is under
+    name: the category is allowlisted, the granted asset path is under
     exactly one configured category root, and ComfyUI's own lookup of the
     resulting name resolves back to the same file. Assets in a vault,
     another model category, a shadowed later root, or overlapping roots fail
-    closed instead of making v1 open bytes other than the selected digest."""
-    if not isinstance(value, AssetRef):
+    closed instead of making v1 open a different file."""
+    if not isinstance(value, AssetRef | LocalAssetRef):
         raise AssetError(
-            f"translated model input for {category!r} requires an AssetRef, "
+            f"translated model input for {category!r} requires an asset reference, "
             f"got {type(value).__name__}"
         )
     if category not in MODEL_FILE_CATEGORIES:
@@ -633,7 +635,10 @@ def _asset_to_model_filename(value: object, category: str) -> str:
         raise AssetError(f"folder_paths returned invalid roots for category {category!r}")
 
     snapshot = os.environ.get("DINKSTER_MOUNTS_SNAPSHOT", "")
-    if snapshot:
+    identity = value.digest if isinstance(value, AssetRef) else f"local binding {value.binding}"
+    if isinstance(value, LocalAssetRef):
+        asset_path = value.local_path().resolve()
+    elif snapshot:
         kind = MODEL_FILE_CATEGORIES[category].kind
         resolution = MountSnapshotResolver(snapshot).resolve_asset_for_kind(value.digest, kind)
         if resolution is None:
@@ -649,15 +654,13 @@ def _asset_to_model_filename(value: object, category: str) -> str:
     roots = tuple(dict.fromkeys(Path(root).resolve() for root in cast("Sequence[str]", raw_roots)))
     matches = [root for root in roots if asset_path.is_relative_to(root)]
     if not matches:
-        raise AssetError(f"asset {value.digest} is not under a configured {category!r} model root")
+        raise AssetError(f"asset {identity} is not under a configured {category!r} model root")
     if len(matches) != 1:
-        raise AssetError(f"asset {value.digest} is ambiguous across {category!r} model roots")
+        raise AssetError(f"asset {identity} is ambiguous across {category!r} model roots")
     relative = asset_path.relative_to(matches[0]).as_posix()
     resolved = get_full_path(category, relative)
     if not isinstance(resolved, str) or Path(resolved).resolve() != asset_path:
-        raise AssetError(
-            f"asset {value.digest} is shadowed or unresolved as {category!r}/{relative}"
-        )
+        raise AssetError(f"asset {identity} is shadowed or unresolved as {category!r}/{relative}")
     return relative
 
 
@@ -1212,6 +1215,12 @@ def comfy_type_id(v1_type: str) -> str:
     return COMFY_TYPE_PREFIX + v1_type
 
 
+def comfy_value_type_id(v1_type: str) -> str:
+    if v1_type in COMFY_VALUE_TYPE_NAMES:
+        return v1_type
+    return comfy_type_id(v1_type)
+
+
 def _is_v3_marker(v1_type: object) -> bool:
     return type(v1_type) is str and v1_type.startswith("COMFY_") and v1_type.endswith("_V3")
 
@@ -1372,7 +1381,7 @@ def _member_type_id(io_type: str) -> tuple[str, tuple[str, ...]]:
     primitive = PRIMITIVES.get(io_type)
     if primitive is not None:
         return primitive, ()
-    opaque = comfy_type_id(io_type)
+    opaque = comfy_value_type_id(io_type)
     return opaque, (opaque,)
 
 
@@ -1430,7 +1439,7 @@ def boolean_combo(v1_type: object) -> tuple[str, str] | None:
     a disguised boolean - exactly two string choices matching one of the
     recognized truthy/falsy word pairs, either order - else None.
 
-    These translate to core.boolean with the original strings as toggle
+    These translate to BOOLEAN with the original strings as toggle
     labels; execute() maps the boolean back to the v1 string, so the
     wrapped function never learns the schema got honest."""
     if not isinstance(v1_type, (list, tuple)):
@@ -2548,9 +2557,8 @@ class CompatTranslation:
                 register_resident_type(registry, type_id, table=table, meta=resident_meta)
             elif v1_name in (IMAGE_V1_NAME, MASK_V1_NAME):
                 # Images and masks cross as npy bytes, not pickle, so the
-                # torchless engine can decode and render them, and the two
-                # spellings of each (comfy.IMAGE/dinkster.image, comfy.MASK/
-                # dinkster.mask) stay one value type (image.py has the story).
+                # torchless engine can decode and render their exact type
+                # atoms without compatibility bridges.
                 register_image_type(registry, type_id)
             elif v1_name == AUDIO_V1_NAME:
                 register_audio_type(registry, type_id)
@@ -2797,7 +2805,7 @@ def translate_node(
             default = _combo_token(default)
         required_spec = required and default is None
         # The v1 choice list survives as a static dropdown - except under
-        # INPUT_IS_LIST, where the socket is list<core.combo> and a
+        # INPUT_IS_LIST, where the socket is list<COMBO> and a
         # widget on a list socket is undefined in the wire contract.
         widget: Widget | None = None
         if not input_is_list:
@@ -3034,7 +3042,7 @@ def translate_node(
             if name in restored:
                 restored[name] = _asset_to_model_filename(restored[name], category)
         for name, (on_string, off_string) in boolean_combo_strings.items():
-            # The schema says core.boolean; the v1 function compares
+            # The schema says BOOLEAN; the v1 function compares
             # strings. Convert honest booleans back, and pass a legacy
             # prompt's original string through verbatim.
             if name in restored:

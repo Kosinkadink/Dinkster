@@ -192,7 +192,7 @@ def test_efficient_sam_provider_executes_in_an_isolated_worker(tmp_path: Path) -
                     "segment": GraphNode(
                         "dinkster.detection.segment",
                         {
-                            "image": TypedLiteral("dinkster.image", image.tolist()),
+                            "image": TypedLiteral("IMAGE", image.tolist()),
                             "detections": TypedLiteral(
                                 "list<dinkster.detection>",
                                 [detection.to_record() for detection in detections],

@@ -254,13 +254,13 @@ def test_native_runtime_versions_are_read_from_worker_interpreter(
         return type(
             "Completed",
             (),
-            {"stdout": '{"dinkster-kitchen": "0.2.31", "torch": "2.13.0+cu130"}'},
+            {"stdout": '{"comfy-kitchen": "0.2.31", "torch": "2.13.0+cu130"}'},
         )()
 
     monkeypatch.setattr(serve.subprocess, "run", run)
 
     assert serve.detect_native_runtime_versions("worker-python") == {
-        "dinkster-kitchen": "0.2.31",
+        "comfy-kitchen": "0.2.31",
         "torch": "2.13.0+cu130",
     }
     assert calls[0][:3] == ["worker-python", "-I", "-c"]
@@ -664,6 +664,7 @@ def test_serve_official_bootstrap_configuration_preserves_identity_and_permissio
         source += "?cli=1"
         provider_id = "cli-provider"
         flags += ["--official-resolver-url", source, "--official-resolver-provider-id", provider_id]
+    settings_path.write_text('{"features":{"resolver":{"enabled":true}}}\n', "utf-8")
     original = settings_path.read_bytes() if settings_path.exists() else None
     calls: list[tuple[str | None, str | None]] = []
 
@@ -1878,7 +1879,7 @@ def test_serve_multi_gpu_cli_reaches_compat_worker(
         ("1,0", "sequence"),
         ("3,1,2", "auto"),
         ("0,1", "guidance"),
-        ("3,2,1,0", "window"),
+        ("3,2,1,0", "sequence"),
     ),
 )
 def test_serve_single_job_multi_gpu_preserves_logical_rank_order(
@@ -1920,13 +1921,14 @@ def test_serve_single_job_multi_gpu_preserves_logical_rank_order(
     assert config.mode == mode  # type: ignore[attr-defined]
 
 
-def test_serve_rejects_removed_single_job_model_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("mode", ("model", "window"))
+def test_serve_rejects_removed_single_job_mode(monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
     from dinkster import serve
 
     monkeypatch.setattr(
         sys,
         "argv",
-        ["dinkster-serve", "--single-job-multi-gpu-mode", "model"],
+        ["dinkster-serve", "--single-job-multi-gpu-mode", mode],
     )
     with pytest.raises(SystemExit):
         serve.main()

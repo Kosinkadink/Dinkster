@@ -34,6 +34,7 @@ def select_resident_producer(
     inputs: Mapping[str, Value],
     cache_tags: Mapping[str, str],
     attention_routes: Mapping[str, AttentionRouteToken | None],
+    producer_targets: Mapping[str, str] | None = None,
 ) -> ExecutionSelection | None:
     producer_arms: set[str] = set()
     for value in inputs.values():
@@ -44,6 +45,8 @@ def select_resident_producer(
                 raise RuntimeError(
                     f"resident resource {resource_id!r} has malformed producer arm stamp"
                 )
+            if producer_targets is not None:
+                producer_arm = producer_targets.get(producer_arm, producer_arm)
             if producer_arm not in cache_tags:
                 raise RuntimeError(
                     f"resident resource {resource_id!r} names unknown producer arm {producer_arm!r}"

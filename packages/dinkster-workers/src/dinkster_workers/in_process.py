@@ -19,6 +19,7 @@ from dataclasses import replace
 from typing import cast
 
 from dinkster_memory import FullReleaseConsumer, Shedder
+from dinkster_memory.resident import ResidentPool
 from dinkster_protocol import (
     AttentionCapabilityEvidence,
     AttentionPolicyConfig,
@@ -89,6 +90,7 @@ from dinkster_values import (
     is_absent,
     list_children,
     make_absent_value,
+    process_instance_token,
 )
 
 from .error_hints import hints_for
@@ -144,7 +146,7 @@ def _is_combo_choice(entries: Sequence[DynamicEntry], parts: Sequence[str]) -> b
 class InputCoercionError(Exception):
     """An input failed worker-side admission or asset coercion.
 
-    This includes the hard core.combo boundary and asset inputs whose
+    This includes the hard COMBO boundary and asset inputs whose
     provider is missing or whose decode/merge fails. It is a fact about THIS
     node's inputs, exactly like UnresolvablePayload - reported as a NodeError,
     never a worker crash.
@@ -229,6 +231,15 @@ class InProcessWorker:
         self._combo_choices = dict(combo_choices or {})
         self._lazy_choices = dict(lazy_choices or {})
         self._memory_consumers = dict(memory_consumers or {})
+        for index, table in enumerate(registry.resident_tables):
+            if not isinstance(table, ResidentPool) or any(
+                consumer is table for consumer in self._memory_consumers.values()
+            ):
+                continue
+            name = f"resident-values-{index}"
+            if name in self._memory_consumers:
+                raise ValueError(f"reserved resident consumer name: {name}")
+            self._memory_consumers[name] = table
         with self._pack_context():
             self._schemas: dict[str, NodeSchema] = {
                 node_type: cls.schema() for node_type, cls in self._node_types.items()
@@ -284,7 +295,7 @@ class InProcessWorker:
 
     @property
     def instance_token(self) -> str:
-        return "in-process"
+        return process_instance_token()
 
     @property
     def attention_route_token(self) -> AttentionRouteToken | None:
@@ -834,7 +845,7 @@ class InProcessWorker:
             if combo_type_mismatch_is_error(value.type_id, spec.type):
                 raise InputCoercionError(
                     f"input '{input_id}' rejects runtime type {value.type_id}: "
-                    "core.combo mismatches require an explicit converter"
+                    "COMBO mismatches require an explicit converter"
                 )
             return input_object(value.type_id, value.resolve())
         decoder = self._registry.asset_decoder_for(plan.target_type_id)

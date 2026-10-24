@@ -80,9 +80,7 @@ def test_save_video_source_schema_preserves_positional_branches() -> None:
         ("dynamicCombo", "codec"),
         ("output", "video"),
     ]
-    for entry, kind in zip(
-        interface[2:6], ("core.combo", "core.float", "core.float", "core.string"), strict=True
-    ):
+    for entry, kind in zip(interface[2:6], ("COMBO", "FLOAT", "FLOAT", "STRING"), strict=True):
         assert entry == {
             "role": "input",
             "id": entry["id"],
@@ -120,7 +118,7 @@ def test_save_video_source_schema_preserves_positional_branches() -> None:
             (crf,) = encoding["options"][1]["inputs"]
             default, maximum = (23.0, 51.0) if option["key"] == "h264" else (30.0, 63.0)
             assert crf["role"] == "input" and crf["id"] == "crf"
-            assert crf["type"] == {"kind": "concrete", "types": ["core.float"]}
+            assert crf["type"] == {"kind": "concrete", "types": ["FLOAT"]}
             assert crf["default"] == default
             assert crf["widget"] == {"type": "NUMBER", "min": 0.0, "max": maximum, "step": 1.0}
 
@@ -450,7 +448,7 @@ def test_video_alias_helper_edges_and_combo_outputs_keep_types() -> None:
                 }
             for target, source_id in case.outputs:
                 expected = next(spec.type for spec in source.outputs if spec.id == source_id)
-                if expected.types == ("core.combo",):
+                if expected.types == ("COMBO",):
                     assert port(target, "output").type == expected
 
 

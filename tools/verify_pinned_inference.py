@@ -42,67 +42,14 @@ def _definition(
     raise RuntimeError(f"installed inference is missing {name}")
 
 
-def _require_strings(node: ast.AST, *values: str) -> None:
-    strings = {child.value for child in ast.walk(node) if isinstance(child, ast.Constant)}
-    missing = set(values) - strings
-    if missing:
-        raise RuntimeError(f"installed inference is missing contract strings: {sorted(missing)}")
-
-
 def verify_source_contracts(package_root: Path) -> None:
-    window_plan = _module_tree(package_root, "window_plan")
-    for name in (
-        "IntegerAffineIndexMap",
-        "KindAxisMap",
-        "LayerWindow",
-        "MediaAxis",
-        "MergeDeclaration",
-        "ProportionalRangeIndexMap",
-        "WindowIndexList",
-        "WindowKind",
-        "WindowPlanLayer",
-        "WindowWeightKind",
-        "WindowWeightProfile",
-        "compile_window_plan",
-    ):
-        _definition(window_plan, name, (ast.ClassDef, ast.FunctionDef))
-
-    window_execution = _module_tree(package_root, "window_execution")
-    _definition(window_execution, "WindowTensorLayout", ast.ClassDef)
-    executor = _definition(window_execution, "WindowPlanExecutor", ast.ClassDef)
-    methods = {
-        child.name for child in cast_class(executor).body if isinstance(child, ast.FunctionDef)
-    }
-    missing_methods = {"evaluate_window", "window_latent"} - methods
-    if missing_methods:
-        raise RuntimeError(
-            f"installed inference window executor is missing methods: {sorted(missing_methods)}"
-        )
-
     sd = _module_tree(package_root, "sd")
-    _definition(sd, "load_diffusion_model", ast.FunctionDef)
-    _require_strings(
-        _definition(sd, "load_diffusion_model_state_dict", ast.FunctionDef),
-        "assign_loaded_weights",
-        "gguf_residency",
-    )
-    _require_strings(_definition(sd, "load_clip", ast.FunctionDef), "gguf_residency")
-
-    gguf = _module_tree(package_root, "gguf")
-    for name, kind in (
-        ("GGUFBalancedResidency", ast.ClassDef),
-        ("apply_gguf_residency", ast.FunctionDef),
-        ("load_gguf_state_dict", ast.FunctionDef),
-    ):
-        _definition(gguf, name, kind)
-    _require_strings(gguf, "memory", "balanced", "eager")
-    _definition(_module_tree(package_root, "gguf_ops"), "GGUFOps", ast.ClassDef)
-
-
-def cast_class(node: ast.AST) -> ast.ClassDef:
-    if not isinstance(node, ast.ClassDef):
-        raise TypeError("expected class definition")
-    return node
+    for name in ("load_checkpoint_guess_config", "load_diffusion_model", "load_clip"):
+        _definition(sd, name, ast.FunctionDef)
+    _definition(sd, "VAE", ast.ClassDef)
+    sample = _module_tree(package_root, "sample")
+    for name in ("sample", "prepare_noise", "fix_empty_latent_channels"):
+        _definition(sample, name, ast.FunctionDef)
 
 
 def verify_installed(pin: str) -> None:
@@ -114,14 +61,6 @@ def verify_installed(pin: str) -> None:
 
     package_root = Path(distribution.locate_file("dinkster_inference"))
     verify_source_contracts(package_root)
-
-    window_plan = importlib.import_module("dinkster_inference.window_plan")
-    patcher_extension = importlib.import_module("dinkster_inference.patcher_extension")
-    if window_plan.MediaAxis("width", 4).extent != 4:
-        raise RuntimeError("installed inference window plan smoke failed")
-    wrappers = patcher_extension.WrappersMP
-    if wrappers.CALC_COND_BATCH != "calc_cond_batch" or wrappers.WINDOW_EXECUTE != "window_execute":
-        raise RuntimeError("installed inference multi-GPU wrapper contract is incompatible")
 
 
 def main() -> int:

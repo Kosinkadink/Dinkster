@@ -7,7 +7,14 @@ from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import cast
 
-from dinkster_assets import AssetError, AssetRef, AssetResolver, AssetVault, open_verified
+from dinkster_assets import (
+    AssetError,
+    AssetRef,
+    AssetResolver,
+    AssetVault,
+    LocalAssetRef,
+    open_verified,
+)
 from dinkster_values import (
     ASSET_BASE_TYPE,
     MEBIBYTE,
@@ -26,7 +33,11 @@ def _references(raw: object, resolver: AssetResolver | None = None) -> Iterator[
     for item in cast("list[object]", raw):
         if not isinstance(item, Mapping):
             raise AssetError("asset reference must be a mapping")
-        yield AssetRef.from_wire(cast("Mapping[str, object]", item), resolver)
+        wire = cast("Mapping[str, object]", item)
+        if wire.get("verification") == "unverified":
+            LocalAssetRef.from_wire(wire)
+            continue
+        yield AssetRef.from_wire(wire, resolver)
 
 
 def result_asset_digests(header: Mapping[str, object], blobs: Sequence[bytes]) -> set[str]:
@@ -83,7 +94,11 @@ def _source_references(
             if include_asset_inputs and (
                 child.type_id == ASSET_BASE_TYPE or parse_asset_type_id(child.type_id) is not None
             ):
-                refs.append(AssetRef.from_wire(child.meta.entries))
+                wire = child.meta.entries
+                if wire.get("verification") == "unverified":
+                    LocalAssetRef.from_wire(wire)
+                else:
+                    refs.append(AssetRef.from_wire(wire))
             for ref in refs:
                 previous = references.setdefault(ref.digest, ref)
                 if previous.size != ref.size:

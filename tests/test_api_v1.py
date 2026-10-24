@@ -29,6 +29,9 @@ from dinkster_values import register_core_types
 from dinkster_workers import InProcessWorker
 
 GOLDEN_V1_SURFACE = (
+    "materialize_image",
+    "materialize_latent",
+    "register_inference_types",
     "FrontendContribution",
     "FrontendModule",
     "JsonField",
@@ -147,6 +150,48 @@ GOLDEN_V1_SURFACE = (
     "CORE_FLOAT",
     "CORE_INT",
     "CORE_STRING",
+    "ARRAY_TYPE",
+    "AUDIO_TYPE",
+    "BACKGROUND_REMOVAL_TYPE",
+    "BOUNDING_BOX_TYPE",
+    "CLIP_TYPE",
+    "CLIP_VISION_TYPE",
+    "COMFY_ARRAY_TYPE",
+    "COMPOSITOR_TYPE",
+    "CONDITIONING_TYPE",
+    "CONTEXT_WINDOWS_TYPE",
+    "CONTROL_NET_TYPE",
+    "DICT_TYPE",
+    "GUIDER_TYPE",
+    "IMAGE_TYPE",
+    "IMPACT_BASIC_PIPE_TYPE",
+    "INFERENCE_LATENT_OPERATION_TYPE",
+    "INPAINT_CONDITIONING_TYPE",
+    "LATENT_OPERATION_TYPE",
+    "LATENT_TYPE",
+    "LATENT_UPSCALE_MODEL_TYPE",
+    "LAYERS_TYPE",
+    "MASK_TYPE",
+    "MESH_TYPE",
+    "MODEL3D_TYPE",
+    "MODEL_PATCH_TYPE",
+    "MODEL_TYPE",
+    "MOGE_GEOMETRY_TYPE",
+    "MOGE_MODEL_TYPE",
+    "NOISE_TYPE",
+    "POSE_TYPE",
+    "RESOURCE_HANDLE_TYPE",
+    "SAMPLER_TYPE",
+    "SEGMENTATION_TYPE",
+    "SHAPE_SUBDIVIDES_TYPE",
+    "SIGMAS_TYPE",
+    "SPLAT_TYPE",
+    "VAE_TYPE",
+    "VECTOR_TYPE",
+    "VIDEO_DOCUMENT_TYPE",
+    "VIDEO_EDIT_TYPE",
+    "VIDEO_TYPE",
+    "VOXEL_TYPE",
     "COST_META_KEY",
     "CURVE_TYPE",
     "ENCODED_MEDIA_LIMIT_BYTES",
@@ -275,6 +320,7 @@ GOLDEN_V1_SURFACE = (
     "AssetVault",
     "FolderListing",
     "IndexedAssetResolver",
+    "LocalAssetRef",
     "declared_asset",
     "digest_bytes",
     "digest_file",
@@ -363,6 +409,7 @@ def test_golden_surface_is_exact() -> None:
     update this list deliberately; removals/renames are forbidden within v1
     (they mean a v2 module, not an edit)."""
     assert sorted(api.__all__) == sorted(GOLDEN_V1_SURFACE)
+    assert len(set(api.__all__)) == len(api.__all__)
     assert len(set(GOLDEN_V1_SURFACE)) == len(GOLDEN_V1_SURFACE)
     for name in GOLDEN_V1_SURFACE:
         assert hasattr(api, name), f"exported name missing on module: {name}"
@@ -371,6 +418,7 @@ def test_golden_surface_is_exact() -> None:
 def test_reexports_are_the_internal_objects() -> None:
     """Zero wrappers: the door hands out the internal objects themselves."""
     import dinkster_assets
+    import dinkster_inference_wire.types as inference_types
     import dinkster_memory
     import dinkster_protocol
     import dinkster_schema
@@ -378,6 +426,7 @@ def test_reexports_are_the_internal_objects() -> None:
     import dinkster_video
 
     sources = (
+        inference_types,
         dinkster_schema,
         dinkster_values,
         dinkster_protocol,
@@ -389,7 +438,9 @@ def test_reexports_are_the_internal_objects() -> None:
         exported = getattr(api, name)
         owners = [m for m in sources if name in m.__all__]
         assert owners, f"{name} is not exported by any internal package"
-        expected_owners = 2 if name == "CustomWidgetDescriptor" else 1
+        expected_owners = (
+            2 if name in {"CustomWidgetDescriptor", "ASSET_TYPE", "SAVE_TARGET_TYPE"} else 1
+        )
         assert len(owners) == expected_owners, f"{name} exported by unexpected internal packages"
         assert all(getattr(owner, name) is exported for owner in owners), (
             f"{name} is a wrapper/copy"

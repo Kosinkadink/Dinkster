@@ -2,7 +2,7 @@
 the cross-interpreter contract, PNG as the browser form.
 
 What this proves: the bytes round-trip losslessly through numpy alone (the
-torchless-engine half of the comfy.IMAGE story), torch tensors are accepted
+torchless-engine half of the IMAGE story), torch tensors are accepted
 by duck type without this interpreter ever importing torch, fingerprints
 are runtime-form-independent (hazard H4: a tensor fingerprinted in a worker
 keys the same cache entry as its numpy twin here), and the host-side compat
@@ -293,7 +293,7 @@ def test_fingerprint_hashes_array_through_a_buffer(
 
 def test_fingerprint_separates_type_dtype_shape_content() -> None:
     array = np.zeros((2, 2), dtype=np.float32)
-    fingerprint = image_array_fingerprint("comfy.IMAGE")
+    fingerprint = image_array_fingerprint("IMAGE")
     assert fingerprint(array) != image_array_fingerprint("dev.image")(array)
     assert fingerprint(array) != fingerprint(array.astype(np.float64))
     assert fingerprint(array) != fingerprint(array.reshape(1, 4))
@@ -412,8 +412,7 @@ def test_comfy_host_types_declare_png_rendition() -> None:
 
 
 def test_comfy_host_mask_shares_image_bytes_with_mask_rendition() -> None:
-    """comfy.MASK gets the same image-array byte contract as comfy.IMAGE
-    (one value type with dinkster.mask) but renders through the mask PNG."""
+    """MASK gets IMAGE's byte contract and renders through the mask PNG."""
     registry = make_host_registry()
     assert COMFY_MASK_TYPE in registry
     assert registry.spec(COMFY_MASK_TYPE).prepare_buffer_encoding is prepare_image_array_encoding
@@ -506,8 +505,8 @@ def test_comfy_host_types_wrap_typed_image_asset_without_manual_base_registratio
 
     registry = make_host_registry()
     ref = AssetRef(digest="blake3:" + "a" * 64, name="input.png", size=3)
-    wrapped = registry.wrap("asset<comfy.IMAGE>", ref)
-    assert wrapped.type_id == "asset<comfy.IMAGE>"
+    wrapped = registry.wrap("asset<IMAGE>", ref)
+    assert wrapped.type_id == "asset<IMAGE>"
     assert wrapped.fingerprint == ref.digest
     resolved = wrapped.resolve()
     assert isinstance(resolved, AssetRef)
@@ -515,7 +514,7 @@ def test_comfy_host_types_wrap_typed_image_asset_without_manual_base_registratio
 
 
 def test_encoded_comfy_image_renders_without_torch() -> None:
-    """The /api/values path in miniature: a worker-encoded comfy.IMAGE
+    """The /api/values path in miniature: a worker-encoded IMAGE
     arrives as npy bytes (EncodedPayload, exactly what the boundary builds)
     and the host renders PNG from numpy alone."""
     registry = make_host_registry()
@@ -534,8 +533,8 @@ def test_encoded_comfy_image_renders_without_torch() -> None:
 
 
 def test_comfy_host_types_declare_asset_providers() -> None:
-    """Typed assets: the host registers the asset<comfy.IMAGE> decoder and
-    the comfy.IMAGE batch merge under their canonical provider ids."""
+    """Typed assets: the host registers the asset<IMAGE> decoder and
+    the IMAGE batch merge under their canonical provider ids."""
     from dinkster_values import (
         IMAGE_BATCH_MERGER_ID,
         IMAGE_FILE_DECODER_ID,

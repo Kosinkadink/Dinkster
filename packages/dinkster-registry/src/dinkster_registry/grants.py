@@ -7,8 +7,10 @@ says so. Pack names go through the SAME table (claiming a pack name IS a
 namespace claim), so there is no second, weaker path to squatting a name.
 
 Exclusivity invariant: no two grants held by different publishers may
-conflict under ``dinkster_schema.claims_conflict`` (atom-sequence prefix,
-separator-blind). That is deliberately coarser than node-type coverage:
+conflict under ``dinkster_schema.claims_conflict``. Namespace conflict is
+atom-prefix bounded, exact-node conflict is spelling equality, and a namespace
+conflicts with every exact node it covers. Namespace conflict is deliberately
+coarser than node-type coverage:
 ``img`` and ``img-extra`` cannot belong to different owners because
 separator equivalence makes ``img-extra`` the same claim as ``img.extra``,
 which nests inside ``img``. Nested grants for ONE publisher are legal -
@@ -29,7 +31,15 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal
 
-from dinkster_schema import canonical_name, claims_conflict, reserved_root, validate_name
+from dinkster_schema import (
+    canonical_claim,
+    canonical_name,
+    claim_covers,
+    claims_conflict,
+    reserved_root,
+    validate_claim,
+    validate_name,
+)
 
 from .model import RegistryError
 
@@ -68,7 +78,7 @@ class GrantTable:
 
     def owner_of(self, claim: str) -> str | None:
         """The publisher holding exactly this claim (canonical match)."""
-        canonical = canonical_name(claim)
+        canonical = canonical_claim(claim)
         for grant in self._grants:
             if grant.claim == canonical:
                 return grant.publisher
@@ -80,12 +90,12 @@ class GrantTable:
         Assumes grammar-valid inputs (admission validates grammar first);
         grammar violations here are caller bugs and raise.
         """
-        problem = validate_name(claim)
+        problem = validate_claim(claim)
         if problem is not None:
             raise RegistryError(f"claim {claim!r} {problem}")
         if reserved_root(claim) is not None:
             return "denied-reserved"
-        canonical = canonical_name(claim)
+        canonical = canonical_claim(claim)
         publisher_canonical = canonical_name(publisher)
         conflicting = [g for g in self._grants if claims_conflict(g.claim, canonical)]
         for grant in conflicting:
@@ -100,7 +110,7 @@ class GrantTable:
         """Record a grant; refuses reserved roots and other publishers'
         territory; idempotent for an already-held exact claim."""
         status = self.evaluate(claim, publisher)
-        canonical = canonical_name(claim)
+        canonical = canonical_claim(claim)
         publisher_canonical = canonical_name(publisher)
         if status == "denied-reserved":
             raise RegistryError(
@@ -131,7 +141,7 @@ class GrantTable:
         operation, never a manifest edit. Refused when the transfer would
         split a nested suite across owners (the exclusivity invariant
         must survive every mutation)."""
-        canonical = canonical_name(claim)
+        canonical = canonical_claim(claim)
         to_canonical = canonical_name(to_publisher)
         index = next(
             (i for i, g in enumerate(self._grants) if g.claim == canonical),
@@ -157,7 +167,7 @@ class GrantTable:
         """Atomically reassign a grant and every grant of the same owner
         nested inside it - the only way a nested suite changes hands,
         since any partial transfer would split it across publishers."""
-        canonical = canonical_name(root_claim)
+        canonical = canonical_claim(root_claim)
         to_canonical = canonical_name(to_publisher)
         owner = self.owner_of(canonical)
         if owner is None:
@@ -165,12 +175,16 @@ class GrantTable:
         moved: list[Grant] = []
         proposed: list[Grant] = []
         for grant in self._grants:
-            # Nested inside (or equal to) the root: the root's atoms prefix
-            # the grant's atoms. Canonical forms join atoms with '-', so a
-            # '-'-bounded string prefix is exactly the atom-prefix test.
-            # Deliberately NOT claims_conflict, which is symmetric and would
-            # silently move an ENCLOSING grant when given a leaf as root.
-            nested = grant.claim == canonical or grant.claim.startswith(canonical + "-")
+            # Namespace descendants include exact node grants they cover.
+            # A symmetric conflict check would also move an enclosing grant.
+            nested = grant.claim == canonical or (
+                validate_name(canonical) is None
+                and (
+                    grant.claim.startswith(canonical + "-")
+                    if validate_name(grant.claim) is None
+                    else claim_covers(canonical, grant.claim)
+                )
+            )
             if grant.publisher == owner and nested:
                 replacement = Grant(grant.claim, to_canonical)
                 moved.append(replacement)

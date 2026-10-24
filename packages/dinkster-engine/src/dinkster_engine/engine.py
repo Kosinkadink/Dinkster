@@ -1000,7 +1000,7 @@ class Engine:
                         node_id,
                         node_type,
                         f"input '{spec.id}' rejects runtime type "
-                        f"{value.type_id}: core.combo mismatches require an "
+                        f"{value.type_id}: COMBO mismatches require an "
                         "explicit converter",
                     )
                 )

@@ -97,7 +97,7 @@ def test_end_to_end_and_cache_behavior() -> None:
         first = await engine.run(image_graph(), ["s"])
         assert set(first.executed) == {"g", "i", "b", "s"}
         assert first.outputs["s"]["mean"].resolve() == pytest.approx(0.5)
-        assert first.outputs["s"]["mean"].type_id == "core.float"
+        assert first.outputs["s"]["mean"].type_id == "FLOAT"
 
         second = await engine.run(image_graph(), ["s"])
         assert second.executed == ()
@@ -1181,12 +1181,12 @@ def test_typed_literal_executes_into_nonconcrete_inputs() -> None:
         engine = make_engine()
         graph = Graph(
             nodes={
-                # variable T: the stamp binds T=core.int at the worker.
-                "m": GraphNode("dev.gallery.match", {"var_in": TypedLiteral("core.int", 7)}),
+                # variable T: the stamp binds T=INT at the worker.
+                "m": GraphNode("dev.gallery.match", {"var_in": TypedLiteral("INT", 7)}),
                 # list<T>: a recursively concrete list stamp wraps children.
                 "l": GraphNode(
                     "std.list.length",
-                    {"list": TypedLiteral("list<core.float>", [1.0, 2.0, 3.0])},
+                    {"list": TypedLiteral("list<FLOAT>", [1.0, 2.0, 3.0])},
                 ),
                 # wildcard: the PreviewAny-shaped case that drove the form.
                 "g": GraphNode("dev.image.gradient", {"width": 4, "height": 4}),
@@ -1197,14 +1197,14 @@ def test_typed_literal_executes_into_nonconcrete_inputs() -> None:
                         "union2": Link("g", "image"),
                         "union3": Link("g", "image"),
                         "union4": Link("g", "image"),
-                        "any_in": TypedLiteral("core.int", 7),
+                        "any_in": TypedLiteral("INT", 7),
                     },
                 ),
             }
         )
         result = await engine.run(graph, ["m", "l", "s"])
         assert result.outputs["m"]["var_out"].resolve() == 7
-        assert result.outputs["m"]["var_out"].type_id == "core.int"
+        assert result.outputs["m"]["var_out"].type_id == "INT"
         assert result.outputs["l"]["length"].resolve() == 3
         assert result.outputs["s"]["image"].type_id == "dev.image"
 
@@ -1233,7 +1233,7 @@ def test_typed_literal_unknown_type_fails_validation_not_execution() -> None:
 
 def test_runtime_combo_admission_catches_variable_passthrough() -> None:
     """A generic output has no static runtime id, so validation cannot see
-    the hidden string stamp. Engine admission rejects it before core.combo
+    the hidden string stamp. Engine admission rejects it before COMBO
     node code runs; a plain literal on the concrete combo input stays legal."""
 
     class StringSource(Node):
@@ -1369,7 +1369,7 @@ def test_combo_list_input_forms_converge_on_one_envelope_and_cache_identity() ->
             nodes={
                 "echo": GraphNode(
                     "test.combo_list_echo",
-                    {"values": TypedLiteral("list<core.combo>", values)},
+                    {"values": TypedLiteral("list<COMBO>", values)},
                 )
             }
         ),
@@ -1386,7 +1386,7 @@ def test_combo_list_input_forms_converge_on_one_envelope_and_cache_identity() ->
             (await engine.run(graph, ["echo"])).outputs["echo"]["values"] for graph in graphs
         ]
         assert [value.resolve() for value in envelopes] == [values] * len(graphs)
-        assert {value.type_id for value in envelopes} == {"list<core.combo>"}
+        assert {value.type_id for value in envelopes} == {"list<COMBO>"}
         assert len({value.fingerprint for value in envelopes}) == 1
 
         replay = await engine.run(graphs[1], ["echo"])
@@ -1526,16 +1526,16 @@ def test_node_finished_and_cached_carry_output_summary() -> None:
         engine = make_engine(events)
         await engine.run(graph, ["len"])
         fresh = summaries(events, "node_finished")
-        assert fresh["x"] == {"sum": {"typeId": "core.int", "value": 3}}
-        assert fresh["mk"] == {"list": {"typeId": "list<core.int>", "length": 2}}
-        assert fresh["len"] == {"length": {"typeId": "core.int", "value": 2}}
+        assert fresh["x"] == {"sum": {"typeId": "INT", "value": 3}}
+        assert fresh["mk"] == {"list": {"typeId": "list<INT>", "length": 2}}
+        assert fresh["len"] == {"length": {"typeId": "INT", "value": 2}}
 
         events.clear()
         await engine.run(graph, ["len"])  # everything cached
         hits = summaries(events, "node_cached")
-        assert hits["x"] == {"sum": {"typeId": "core.int", "value": 3}}
-        assert hits["mk"] == {"list": {"typeId": "list<core.int>", "length": 2}}
-        assert hits["len"] == {"length": {"typeId": "core.int", "value": 2}}
+        assert hits["x"] == {"sum": {"typeId": "INT", "value": 3}}
+        assert hits["mk"] == {"list": {"typeId": "list<INT>", "length": 2}}
+        assert hits["len"] == {"length": {"typeId": "INT", "value": 2}}
 
     asyncio.run(scenario())
 
@@ -1642,8 +1642,8 @@ def test_announce_schemas_is_additive_and_atomic() -> None:
     engine = make_engine()
     late = NodeSchema(
         node_type="late.echo",
-        inputs=(InputSpec("text", TypeExpr.concrete("core.string")),),
-        outputs=(OutputSpec("out", TypeExpr.concrete("core.string")),),
+        inputs=(InputSpec("text", TypeExpr.concrete("STRING")),),
+        outputs=(OutputSpec("out", TypeExpr.concrete("STRING")),),
     )
     existing = build_schemas(SCAFFOLD_NODES)["dev.image.gradient"]
 

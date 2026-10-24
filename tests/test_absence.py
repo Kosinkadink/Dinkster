@@ -48,15 +48,15 @@ from dinkster_workers.boundary import ValueCodec
 
 def test_omit_policy_requires_optional_input() -> None:
     with pytest.raises(ValueError, match="omit"):
-        InputSpec("x", TypeExpr.concrete("core.int"), required=True, on_absent="omit")
+        InputSpec("x", TypeExpr.concrete("INT"), required=True, on_absent="omit")
 
 
 def test_absent_policy_defaults() -> None:
-    required = InputSpec("a", TypeExpr.concrete("core.int"))
-    optional = InputSpec("b", TypeExpr.concrete("core.int"), required=False)
+    required = InputSpec("a", TypeExpr.concrete("INT"))
+    optional = InputSpec("b", TypeExpr.concrete("INT"), required=False)
     assert required.absent_policy() == "skip"
     assert optional.absent_policy() == "omit"
-    declared = InputSpec("c", TypeExpr.concrete("core.int"), on_absent="accept")
+    declared = InputSpec("c", TypeExpr.concrete("INT"), on_absent="accept")
     assert declared.absent_policy() == "accept"
 
 
@@ -64,12 +64,12 @@ def test_schema_wire_roundtrip_with_absence_fields() -> None:
     schema = NodeSchema(
         node_type="test.maybe",
         inputs=(
-            InputSpec("strict", TypeExpr.concrete("core.int"), on_absent="fail"),
-            InputSpec("loose", TypeExpr.concrete("core.int"), on_absent="accept"),
+            InputSpec("strict", TypeExpr.concrete("INT"), on_absent="fail"),
+            InputSpec("loose", TypeExpr.concrete("INT"), on_absent="accept"),
         ),
         outputs=(
-            OutputSpec("value", TypeExpr.concrete("core.int"), optional=True),
-            OutputSpec("always", TypeExpr.concrete("core.int")),
+            OutputSpec("value", TypeExpr.concrete("INT"), optional=True),
+            OutputSpec("always", TypeExpr.concrete("INT")),
         ),
     )
     assert schema_from_wire(schema_to_wire(schema)) == schema
@@ -88,16 +88,16 @@ def test_schema_wire_roundtrip_with_absence_fields() -> None:
 
 
 def test_absent_value_is_interrogable_and_deterministic() -> None:
-    value = make_absent_value(origin="n1/vae", reason="no VAE", stands_for="core.int")
+    value = make_absent_value(origin="n1/vae", reason="no VAE", stands_for="INT")
     assert is_absent(value)
     assert value.type_id == CORE_ABSENT
     assert value.meta.get(ABSENT_ORIGIN_META_KEY) == "n1/vae"
     assert value.meta.get(ABSENT_REASON_META_KEY) == "no VAE"
-    assert value.meta.get(ABSENT_STANDS_FOR_META_KEY) == "core.int"
+    assert value.meta.get(ABSENT_STANDS_FOR_META_KEY) == "INT"
     assert value.resolve() is None
-    same = make_absent_value(origin="n1/vae", reason="no VAE", stands_for="core.int")
+    same = make_absent_value(origin="n1/vae", reason="no VAE", stands_for="INT")
     assert same.fingerprint == value.fingerprint
-    other = make_absent_value(origin="n2/vae", reason="no VAE", stands_for="core.int")
+    other = make_absent_value(origin="n2/vae", reason="no VAE", stands_for="INT")
     assert other.fingerprint != value.fingerprint
 
 
@@ -106,7 +106,7 @@ def test_absent_crosses_the_boundary() -> None:
     register_core_types(registry)
     sender = ValueCodec(registry, use_shm=False, accept_shm=False)
     receiver = ValueCodec(registry, use_shm=False, accept_shm=False)
-    value = make_absent_value(origin="n1/out", reason="nothing", stands_for="core.int")
+    value = make_absent_value(origin="n1/out", reason="nothing", stands_for="INT")
     blobs: list[bytes] = []
     wire, _ = sender.encode(value, blobs, [])
     decoded, _ = receiver.decode(wire, blobs, [])
@@ -126,8 +126,8 @@ class MaybeProduce(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.maybe_produce",
-            inputs=(InputSpec("produce", TypeExpr.concrete("core.boolean")),),
-            outputs=(OutputSpec("value", TypeExpr.concrete("core.int"), optional=True),),
+            inputs=(InputSpec("produce", TypeExpr.concrete("BOOLEAN")),),
+            outputs=(OutputSpec("value", TypeExpr.concrete("INT"), optional=True),),
         )
 
     @classmethod
@@ -145,7 +145,7 @@ class IllegalAbsent(Node):
         return NodeSchema(
             node_type="test.illegal_absent",
             inputs=(),
-            outputs=(OutputSpec("value", TypeExpr.concrete("core.int")),),
+            outputs=(OutputSpec("value", TypeExpr.concrete("INT")),),
         )
 
     @classmethod
@@ -162,8 +162,8 @@ class AddOne(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.add_one",
-            inputs=(InputSpec("value", TypeExpr.concrete("core.int")),),
-            outputs=(OutputSpec("out", TypeExpr.concrete("core.int")),),
+            inputs=(InputSpec("value", TypeExpr.concrete("INT")),),
+            outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
         )
 
     @classmethod
@@ -180,10 +180,10 @@ class Coalesce(Node):
         return NodeSchema(
             node_type="test.coalesce",
             inputs=(
-                InputSpec("value", TypeExpr.concrete("core.int"), on_absent="accept"),
-                InputSpec("fallback", TypeExpr.concrete("core.int")),
+                InputSpec("value", TypeExpr.concrete("INT"), on_absent="accept"),
+                InputSpec("fallback", TypeExpr.concrete("INT")),
             ),
-            outputs=(OutputSpec("out", TypeExpr.concrete("core.int")),),
+            outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
         )
 
     @classmethod
@@ -199,10 +199,10 @@ class WithOptional(Node):
         return NodeSchema(
             node_type="test.with_optional",
             inputs=(
-                InputSpec("base", TypeExpr.concrete("core.int")),
-                InputSpec("extra", TypeExpr.concrete("core.int"), required=False),
+                InputSpec("base", TypeExpr.concrete("INT")),
+                InputSpec("extra", TypeExpr.concrete("INT"), required=False),
             ),
-            outputs=(OutputSpec("out", TypeExpr.concrete("core.int")),),
+            outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
         )
 
     @classmethod
@@ -218,10 +218,10 @@ class WithDefault(Node):
         return NodeSchema(
             node_type="test.with_default",
             inputs=(
-                InputSpec("base", TypeExpr.concrete("core.int")),
-                InputSpec("extra", TypeExpr.concrete("core.int"), required=False, default=100),
+                InputSpec("base", TypeExpr.concrete("INT")),
+                InputSpec("extra", TypeExpr.concrete("INT"), required=False, default=100),
             ),
-            outputs=(OutputSpec("out", TypeExpr.concrete("core.int")),),
+            outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
         )
 
     @classmethod
@@ -236,8 +236,8 @@ class Strict(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.strict",
-            inputs=(InputSpec("value", TypeExpr.concrete("core.int"), on_absent="fail"),),
-            outputs=(OutputSpec("out", TypeExpr.concrete("core.int")),),
+            inputs=(InputSpec("value", TypeExpr.concrete("INT"), on_absent="fail"),),
+            outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
         )
 
     @classmethod
@@ -280,7 +280,7 @@ def test_optional_output_carries_provenance_and_caches() -> None:
         assert is_absent(value)
         assert value.meta.get(ABSENT_ORIGIN_META_KEY) == "m/value"
         assert value.meta.get(ABSENT_REASON_META_KEY) == "nothing to produce"
-        assert value.meta.get(ABSENT_STANDS_FOR_META_KEY) == "core.int"
+        assert value.meta.get(ABSENT_STANDS_FOR_META_KEY) == "INT"
 
         # Deliberate absence is an ordinary cached value.
         again = await engine.run(graph, ["m"])
@@ -310,7 +310,7 @@ def test_blocked_required_output_reports_once_per_run(cache_enabled: bool, messa
             return NodeSchema(
                 node_type="test.block",
                 inputs=(),
-                outputs=(OutputSpec("value", TypeExpr.concrete("core.int")),),
+                outputs=(OutputSpec("value", TypeExpr.concrete("INT")),),
             )
 
         @classmethod
@@ -484,13 +484,13 @@ def test_demanded_lazy_absence_uses_existing_policies_and_producer_cache() -> No
                     inputs=(
                         InputSpec(
                             "value",
-                            TypeExpr.concrete("core.int"),
+                            TypeExpr.concrete("INT"),
                             required=policy != "omit",
                             on_absent=policy,
                             lazy=True,
                         ),
                     ),
-                    outputs=(OutputSpec("out", TypeExpr.concrete("core.int")),),
+                    outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
                 )
 
             @classmethod

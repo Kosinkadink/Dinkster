@@ -398,7 +398,7 @@ def test_conversion_curve_schemas_are_consolidated() -> None:
     for node_type in expected:
         assert schemas[node_type].aliases == ()
     convert = schemas["dinkster.value.convert"]
-    assert convert.inputs[0].type.types == ("core.int", "core.float", "core.string", "core.boolean")
+    assert convert.inputs[0].type.types == ("INT", "FLOAT", "STRING", "BOOLEAN")
     assert {output.id for output in convert.outputs if output.optional} == {
         "int",
         "float",

@@ -67,8 +67,8 @@ class WireExpansionNode(Node):
         return NodeSchema(
             "expansion.test",
             outputs=(
-                OutputSpec("result", TypeExpr.concrete("core.int")),
-                OutputSpec("seed", TypeExpr.concrete("core.int")),
+                OutputSpec("result", TypeExpr.concrete("INT")),
+                OutputSpec("seed", TypeExpr.concrete("INT")),
             ),
             may_expand_graph=True,
         )
@@ -83,7 +83,7 @@ class WireExpansionNode(Node):
             ),
             (
                 ("result", LocalOutputRef("child", "value")),
-                ("seed", PresentOutput(values.wrap("core.int", 17))),
+                ("seed", PresentOutput(values.wrap("INT", 17))),
             ),
         )
 
@@ -93,8 +93,8 @@ class ExpansionChild(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             "expansion.child",
-            inputs=(InputSpec("value", TypeExpr.concrete("core.int")),),
-            outputs=(OutputSpec("value", TypeExpr.concrete("core.int")),),
+            inputs=(InputSpec("value", TypeExpr.concrete("INT")),),
+            outputs=(OutputSpec("value", TypeExpr.concrete("INT")),),
         )
 
     @classmethod
@@ -166,8 +166,8 @@ class TwoOutputChild(ExpansionChild):
             super().define_schema(),
             node_type="expansion.pair",
             outputs=(
-                OutputSpec("decoy", TypeExpr.concrete("core.int")),
-                OutputSpec("value", TypeExpr.concrete("core.int")),
+                OutputSpec("decoy", TypeExpr.concrete("INT")),
+                OutputSpec("value", TypeExpr.concrete("INT")),
             ),
         )
 
@@ -182,7 +182,7 @@ class IndexedExpansionNode(GraphExpansionNode):
         return replace(
             super().define_schema(),
             node_type="expansion.indexed",
-            inputs=(InputSpec("index", TypeExpr.concrete("core.int"), required=False, default=1),),
+            inputs=(InputSpec("index", TypeExpr.concrete("INT"), required=False, default=1),),
         )
 
     @classmethod
@@ -204,7 +204,7 @@ class InvalidExpansionNode(WireExpansionNode):
         return replace(
             super().define_schema(),
             node_type="expansion.invalid",
-            inputs=(InputSpec("problem", TypeExpr.concrete("core.string")),),
+            inputs=(InputSpec("problem", TypeExpr.concrete("STRING")),),
         )
 
     @classmethod
@@ -231,7 +231,7 @@ class StringExpansionChild(ExpansionChild):
         return replace(
             super().define_schema(),
             node_type="expansion.string",
-            inputs=(InputSpec("value", TypeExpr.concrete("core.string")),),
+            inputs=(InputSpec("value", TypeExpr.concrete("STRING")),),
         )
 
 
@@ -242,9 +242,9 @@ class ExternalExpansionNode(GraphExpansionNode):
             super().define_schema(),
             node_type="expansion.external",
             inputs=(
-                InputSpec("source", TypeExpr.concrete("core.string"), default="source"),
-                InputSpec("output", TypeExpr.concrete("core.int"), default=1),
-                InputSpec("display", TypeExpr.concrete("core.string"), default="source"),
+                InputSpec("source", TypeExpr.concrete("STRING"), default="source"),
+                InputSpec("output", TypeExpr.concrete("INT"), default=1),
+                InputSpec("display", TypeExpr.concrete("STRING"), default="source"),
             ),
         )
 
@@ -361,7 +361,7 @@ def test_expansion_result_survives_worker_round_trip(
 def cached_expansion(seed: Value) -> CachedResult:
     registry = TypeRegistry()
     register_core_types(registry)
-    other = registry.wrap("core.int", -4)
+    other = registry.wrap("INT", -4)
     return CachedResult(
         {"seed": seed, "other": other},
         ExpandedReturn(
@@ -400,7 +400,7 @@ def test_cached_expansion_survives_persistence_and_promotion(
     async def scenario() -> None:
         registry = TypeRegistry()
         register_core_types(registry)
-        original = cached_expansion(registry.wrap("core.int", 17))
+        original = cached_expansion(registry.wrap("INT", 17))
         memory = MemoryLRUCache(max_bytes=1 if cache_kind == "spill" else 1024)
         disk = DiskCacheStore(tmp_path / "disk", registry)
         server = None
@@ -462,7 +462,7 @@ def test_incomplete_cached_expansion_is_a_whole_entry_miss(tmp_path: Path, damag
         registry = TypeRegistry()
         register_core_types(registry)
         disk = DiskCacheStore(tmp_path, registry)
-        await disk.put("parent", cached_expansion(registry.wrap("core.int", 17)))
+        await disk.put("parent", cached_expansion(registry.wrap("INT", 17)))
         path = next((tmp_path / "entries").glob("*.json"))
         manifest = json.loads(path.read_text())
         if damage == "document":
@@ -487,7 +487,7 @@ def test_cached_expansion_accounts_and_invalidates_present_values_once(tmp_path:
     async def scenario() -> None:
         registry = TypeRegistry()
         register_core_types(registry)
-        seed = registry.wrap("core.int", 17)
+        seed = registry.wrap("INT", 17)
         seed = replace(seed, meta=ValueMeta({COST_META_KEY: {"ram": 50}}))
         memory = MemoryLRUCache(max_bytes=100)
         disk = DiskCacheStore(tmp_path, registry)
@@ -736,7 +736,7 @@ def test_external_reference_reuses_a_completed_non_idempotent_source() -> None:
                     super().define_schema(),
                     node_type="expansion.ordered",
                     inputs=super().define_schema().inputs
-                    + (InputSpec("dependency", TypeExpr.concrete("core.int")),),
+                    + (InputSpec("dependency", TypeExpr.concrete("INT")),),
                 )
 
             @classmethod
@@ -840,7 +840,7 @@ def test_expansion_can_reference_an_existing_region_output() -> None:
         region = RegionNode(
             kind="map",
             body=Graph({"body": GraphNode("expansion.child", {"value": Link("$region", "value")})}),
-            ports={"value": TypeExpr.concrete("core.int")},
+            ports={"value": TypeExpr.concrete("INT")},
             inputs={"value": [5, 11]},
             element_ports=("value",),
             outputs={"last": RegionOutput(Link("body", "value"), "last")},
@@ -1001,7 +1001,7 @@ def test_expansion_preserves_enclosing_region_ports() -> None:
                 "region": RegionNode(
                     kind="map",
                     body=body,
-                    ports={"value": TypeExpr.concrete("core.int")},
+                    ports={"value": TypeExpr.concrete("INT")},
                     inputs={"value": [4, 9]},
                     element_ports=("value",),
                     outputs={

@@ -49,11 +49,11 @@ VAE = TypeExpr.concrete("comfy.VAE")
 SAM3_TRACK_DATA = TypeExpr.concrete("comfy.SAM3_TRACK_DATA")
 BACKGROUND_REMOVAL = TypeExpr.concrete("comfy.BACKGROUND_REMOVAL")
 BOUNDING_BOX = TypeExpr.concrete("comfy.BOUNDING_BOX")
-BOOLEAN = TypeExpr.concrete("core.boolean")
-COMBO = TypeExpr.concrete("core.combo")
-FLOAT = TypeExpr.concrete("core.float")
-INT = TypeExpr.concrete("core.int")
-STRING = TypeExpr.concrete("core.string")
+BOOLEAN = TypeExpr.concrete("BOOLEAN")
+COMBO = TypeExpr.concrete("COMBO")
+FLOAT = TypeExpr.concrete("FLOAT")
+INT = TypeExpr.concrete("INT")
+STRING = TypeExpr.concrete("STRING")
 
 COCO_CLASSES = (
     "person",

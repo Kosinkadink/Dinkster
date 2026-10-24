@@ -430,7 +430,7 @@ def detect_native_runtime_versions(interpreter: str) -> Mapping[str, str]:
 import json
 from importlib.metadata import PackageNotFoundError, version
 result = {}
-for name in ("torch", "dinkster-kitchen"):
+for name in ("torch", "comfy-kitchen"):
     try:
         result[name] = version(name)
     except PackageNotFoundError:
@@ -989,7 +989,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--single-job-multi-gpu-mode",
-        choices=("auto", "guidance", "sequence", "window"),
+        choices=("auto", "guidance", "sequence"),
         default="auto",
         help="single-job rank recipe selection (default: auto)",
     )
@@ -998,8 +998,8 @@ def main(argv: list[str] | None = None) -> None:
         choices=("auto", "on", "off"),
         default=None,
         help="weight residency mechanism for native execution: auto enables "
-        "dinkster-aimdo where upstream ComfyUI would (NVIDIA CUDA, non-WSL), "
-        "on enables dinkster-aimdo wherever the capability chain passes, "
+        "comfy-aimdo where upstream ComfyUI would (NVIDIA CUDA, non-WSL), "
+        "on enables comfy-aimdo wherever the capability chain passes, "
         "off disables dynamic residency (default: auto)",
     )
     parser.add_argument(

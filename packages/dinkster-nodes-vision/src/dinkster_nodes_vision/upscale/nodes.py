@@ -8,6 +8,7 @@ from dinkster_api.v1 import (
     ASSET_TYPE,
     CORE_COMBO,
     CORE_INT,
+    IMAGE_TYPE,
     AssetWidget,
     ComboWidget,
     InputSpec,
@@ -27,7 +28,6 @@ from dinkster_api.v1 import (
     resolver_from_env,
 )
 
-IMAGE_TYPE = "dinkster.image"
 IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 ASSET = TypeExpr.concrete(ASSET_TYPE)
 INT = TypeExpr.concrete(CORE_INT)

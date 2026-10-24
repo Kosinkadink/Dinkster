@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import struct
+import sys
+import types
 from pathlib import Path
 from typing import Any, cast
 
@@ -11,10 +14,7 @@ import pytest
 torch = cast("Any", pytest.importorskip("torch"))
 
 from tools import minimax_h3_multigpu_receipt as receipt  # noqa: E402
-from tools.minimax_h3_multigpu_receipt import (  # noqa: E402
-    _CollectiveTimer,
-    _sparse_quality_oracle,
-)
+from tools.minimax_h3_multigpu_receipt import _CollectiveTimer  # noqa: E402
 
 
 def test_collective_timer_records_and_resets_cuda_event_durations() -> None:
@@ -145,11 +145,127 @@ def test_performance_reports_compute_and_collective_shares_from_slowest_rank() -
 
 def test_pre_reset_baselines_do_not_relabel_bf16_guidance_as_int8() -> None:
     assert receipt.BASELINES[("RipperPC", "guidance", "sdpa", "production")] == 1.802
-    assert ("RipperPC", "guidance", "dinkster_kitchen_int8", "production") not in (
-        receipt.BASELINES
-    )
-    assert ("X570", "sequence", "dinkster_kitchen_int8", "production") not in (receipt.BASELINES)
+    assert ("RipperPC", "guidance", "comfy_kitchen_int8", "production") not in (receipt.BASELINES)
+    assert ("X570", "sequence", "comfy_kitchen_int8", "production") not in (receipt.BASELINES)
     assert receipt.INT8_WEIGHT_BASELINES[("X570", "sequence", "sdpa", "production")] == 1.327
+
+
+def test_worker_aggregates_three_item_sample_results_without_fork_loader_attributes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Model:
+        fast_disk = True
+
+        @staticmethod
+        def is_dynamic() -> bool:
+            return True
+
+        @staticmethod
+        def model_size() -> int:
+            return 100
+
+        @staticmethod
+        def loaded_size() -> int:
+            return 80
+
+    class Cuda:
+        nccl = types.SimpleNamespace(version=lambda: (2, 0))
+
+        @staticmethod
+        def is_available() -> bool:
+            return True
+
+        @staticmethod
+        def get_device_properties(_index: int) -> object:
+            return types.SimpleNamespace(name="test-gpu", uuid="GPU-test")
+
+        @staticmethod
+        def get_device_capability(_index: int) -> tuple[int, int]:
+            return (9, 0)
+
+        @staticmethod
+        def max_memory_allocated() -> int:
+            return 10
+
+        @staticmethod
+        def max_memory_reserved() -> int:
+            return 20
+
+    fake_torch = types.SimpleNamespace(
+        cuda=Cuda(), __version__="test", version=types.SimpleNamespace(cuda="test")
+    )
+    native = types.ModuleType("dinkster_native")
+    attention = cast("Any", types.ModuleType("dinkster_native.attention"))
+    attention.activate_distributed_attention = lambda *_args: None
+    attention.release_distributed_attention = lambda *_args: None
+    fork_nodes = cast("Any", types.ModuleType("dinkster_native.fork_nodes"))
+    fork_nodes.GenerationLoadDiffusionModel = types.SimpleNamespace(
+        execute=lambda **_kwargs: {"model": Model()}
+    )
+    fork_nodes.NativeEmptyMiniMaxH3AV = types.SimpleNamespace(
+        execute=lambda **_kwargs: {"latent": {}}
+    )
+    fork_nodes.NativeLoadVae = types.SimpleNamespace()
+    workers = cast("Any", types.ModuleType("dinkster_workers"))
+    workers.ExecutionContext = lambda **_kwargs: object()
+    workers.use_execution_context = lambda _context: contextlib.nullcontext()
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setitem(sys.modules, "dinkster_native", native)
+    monkeypatch.setitem(sys.modules, "dinkster_native.attention", attention)
+    monkeypatch.setitem(sys.modules, "dinkster_native.fork_nodes", fork_nodes)
+    monkeypatch.setitem(sys.modules, "dinkster_workers", workers)
+    monkeypatch.setattr(receipt, "_inventory", lambda: {})
+    monkeypatch.setattr(
+        receipt, "_route", lambda _policy: (types.SimpleNamespace(capabilities={}), {})
+    )
+    monkeypatch.setattr(receipt, "_conditioning", lambda *_args: [])
+    monkeypatch.setattr(receipt, "_asset", lambda *_args: object())
+    breakdown = {
+        "sample_seconds": 2.0,
+        "whole_job_seconds": 3.0,
+        "decode_seconds": 1.0,
+        "compute_seconds": 1.0,
+        "communication_sync_seconds": 1.0,
+        "compute_share": 0.5,
+        "communication_sync_share": 0.5,
+    }
+    monkeypatch.setattr(
+        receipt,
+        "_run_sample",
+        lambda *_args, **_kwargs: ({"latents": {}}, 3.0, breakdown),
+    )
+    result = tmp_path / "result.json"
+    args = argparse.Namespace(
+        model=tmp_path / "model.safetensors",
+        model_digest="blake3:model",
+        video_vae=None,
+        video_vae_digest=None,
+        audio_vae=None,
+        audio_vae_digest=None,
+        width=64,
+        height=64,
+        frames=5,
+        mode="sequence",
+        policy="sdpa",
+        steps=1,
+        seed=1,
+        warmups=1,
+        repeats=2,
+        result=result,
+    )
+
+    assert receipt.run_worker(args) == 0
+
+    worker_result = json.loads(result.read_text())
+    assert worker_result["loading_route"] == {
+        "loader": "dinkster_native.fork_nodes.GenerationLoadDiffusionModel",
+        "mmap_backed_state_dict": True,
+        "dynamic_weight_loading": True,
+    }
+    assert worker_result["timing"]["warmup_sample_seconds"] == [2.0]
+    assert worker_result["timing"]["sample_seconds"] == [2.0, 2.0]
+    assert worker_result["timing"]["warmup_compute_communication"] == [breakdown]
+    assert worker_result["timing"]["measured_compute_communication"] == [breakdown, breakdown]
 
 
 def test_model_artifact_identifies_int8_convrot_and_excludes_quant_metadata(
@@ -198,7 +314,7 @@ def test_model_artifact_identifies_int8_convrot_and_excludes_quant_metadata(
     )
 
 
-def test_mint_arguments_initialize_worker_only_tensor_output() -> None:
+def test_mint_arguments_reject_removed_sparse_mode() -> None:
     args = receipt._parser().parse_args(  # pyright: ignore[reportPrivateUsage]
         [
             "mint",
@@ -224,8 +340,31 @@ def test_mint_arguments_initialize_worker_only_tensor_output() -> None:
         ]
     )
 
-    assert args.tensor_output is None
     assert args.repeats == 5
+    with pytest.raises(SystemExit):
+        receipt._parser().parse_args(  # pyright: ignore[reportPrivateUsage]
+            [
+                "mint",
+                "--model",
+                "model.safetensors",
+                "--mode",
+                "sparse",
+                "--policy",
+                "sdpa",
+                "--dinkster-root",
+                "Dinkster",
+                "--fork-root",
+                "dinkster-inference",
+                "--model-source-url",
+                "https://models.example/model.safetensors",
+                "--model-source-revision",
+                "revision-test",
+                "--gpu",
+                "GPU-test",
+                "--output",
+                "receipt.json",
+            ]
+        )
 
 
 def _matrix_result(world_size: int, rank: int = 0) -> dict[str, object]:
@@ -421,7 +560,6 @@ def test_matrix_requires_four_unique_gpus_and_both_decoders(tmp_path: Path) -> N
         "candidate_first": False,
         "model_source_url": "https://models.example/model.safetensors",
         "model_source_revision": "revision-test",
-        "tensor_output": None,
     }
     with pytest.raises(receipt.ReceiptError, match="four unique GPU"):
         receipt.run_mint(
@@ -443,105 +581,3 @@ def test_matrix_requires_four_unique_gpus_and_both_decoders(tmp_path: Path) -> N
                 audio_vae=None,
             )
         )
-
-
-def test_sparse_quality_oracle_reports_dense_relative_error_by_role(tmp_path) -> None:
-    reference_path = tmp_path / "reference.pt"
-    candidate_path = tmp_path / "candidate.pt"
-    torch.save(
-        {
-            "audio": torch.tensor([3.0, 4.0]),
-            "video": torch.tensor([[1.0, -2.0], [3.0, -4.0]]),
-        },
-        reference_path,
-    )
-    torch.save(
-        {
-            "audio": torch.tensor([0.0, 4.0]),
-            "video": torch.tensor([[2.0, -2.0], [3.0, -6.0]]),
-        },
-        candidate_path,
-    )
-
-    oracle = _sparse_quality_oracle(reference_path, candidate_path)
-
-    assert oracle["baseline"].startswith("same-session dense SDPA")
-    audio = oracle["metrics_by_role"]["audio"]
-    assert audio["shape"] == [2]
-    assert audio["max_abs"] == 3.0
-    assert audio["rmse"] == pytest.approx(3.0 / 2.0**0.5)
-    assert audio["relative_rmse"] == pytest.approx(0.6)
-    video = oracle["metrics_by_role"]["video"]
-    assert video["shape"] == [2, 2]
-    assert video["max_abs"] == 2.0
-    assert video["rmse"] == pytest.approx(5.0**0.5 / 2.0)
-    assert video["cosine_similarity"] == pytest.approx(39.0 / (30.0 * 53.0) ** 0.5)
-
-
-def test_sparse_mint_reads_quality_tensors_before_scratch_cleanup(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    model = tmp_path / "model.safetensors"
-    model.write_bytes(b"model")
-    dinkster = tmp_path / "dinkster"
-    fork = tmp_path / "fork"
-    dinkster.mkdir()
-    fork.mkdir()
-    observed: list[tuple[bool, bool]] = []
-
-    def run_serial(
-        _args: argparse.Namespace, scratch: Path, *, sparse_enabled: bool = False
-    ) -> dict[str, object]:
-        tensor = scratch / ("sparse.pt" if sparse_enabled else "serial.pt")
-        torch.save({"video": torch.tensor([float(sparse_enabled)])}, tensor)
-        return {"_tensor_output": str(tensor), "output_hashes": {"video": "hash"}}
-
-    def quality(reference: Path, candidate: Path) -> dict[str, object]:
-        observed.append((reference.is_file(), candidate.is_file()))
-        return {"quality": "loaded"}
-
-    monkeypatch.setattr(
-        receipt, "_git", lambda _root, *arguments: "" if arguments[0] == "status" else "head"
-    )
-    monkeypatch.setattr(receipt, "_run_serial", run_serial)
-    monkeypatch.setattr(receipt, "_sparse_quality_oracle", quality)
-    monkeypatch.setattr(receipt, "_performance", lambda *_args: {"speedup": 1.0})
-    monkeypatch.setattr(receipt, "_classify_host", lambda *_args: "test-host")
-    monkeypatch.setattr(receipt, "_nvidia_smi", lambda *_args: "topology")
-    monkeypatch.setattr(
-        receipt,
-        "_model_artifact",
-        lambda *_args: {
-            "sha256": "model-sha256",
-            "provider": "bf16-linear",
-            "logical_weight_bytes": 5,
-            "tensor_dtype_counts": {"BF16": 1},
-            "quantized_linear_weights": 0,
-            "quantization_format": None,
-            "convrot_group_sizes": [],
-        },
-    )
-    output = tmp_path / "receipt.json"
-    args = argparse.Namespace(
-        dinkster_root=dinkster,
-        fork_root=fork,
-        model=model,
-        mode="sparse",
-        policy="sdpa",
-        width=64,
-        height=64,
-        frames=5,
-        steps=1,
-        seed=1,
-        warmups=0,
-        repeats=1,
-        gpu=["GPU-test"],
-        output=output,
-        candidate_first=False,
-        model_source_url="https://models.example/model.safetensors",
-        model_source_revision="revision-test",
-    )
-
-    assert receipt.run_mint(args) == 0
-    assert observed == [(True, True)]
-    assert output.is_file()

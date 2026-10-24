@@ -38,16 +38,24 @@ import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
+
+import sqlalchemy as sa
+from alembic import command
+from sqlalchemy.pool import StaticPool
 
 from .catalog import validate_virtual_path
 from .identity import AssetError, digest_bytes, digest_file, require_digest
 from .media import MediaClassification, classify_media, classify_media_file
+from .schema import migration_config
 
 DEFAULT_SCOPE = "local"
 
 _NAME_LIMIT = 512
 _LABEL_LIMIT = 128
 _LABEL_COUNT_LIMIT = 32
+# Alembic's command API installs process-global environment proxies.
+_migration_lock = threading.Lock()
 
 
 class StaleRevision(AssetError):
@@ -169,52 +177,27 @@ class LibraryStore:
 
     def __init__(self, path: Path | str) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(path), check_same_thread=False)
+        self._engine = sa.create_engine(
+            "sqlite://",
+            creator=lambda: sqlite3.connect(str(path), check_same_thread=False),
+            poolclass=StaticPool,
+        )
+        try:
+            with _migration_lock, self._engine.connect() as connection:
+                connection.exec_driver_sql("PRAGMA journal_mode=WAL")
+                connection.commit()
+                config = migration_config()
+                config.attributes["connection"] = connection
+                command.upgrade(config, "head")
+                connection.commit()
+        except BaseException:
+            self._engine.dispose()
+            raise
+        self._database = self._engine.raw_connection()
+        self._conn = cast(sqlite3.Connection, self._database.driver_connection)
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.Lock()
         with self._lock, self._conn:
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS records (
-                    id TEXT PRIMARY KEY,
-                    scope TEXT NOT NULL,
-                    name TEXT NOT NULL,
-                    digest TEXT NOT NULL,
-                    media_type TEXT NOT NULL,
-                    labels TEXT NOT NULL,
-                    folder TEXT NOT NULL,
-                    created REAL NOT NULL,
-                    modified REAL NOT NULL,
-                    revision INTEGER NOT NULL
-                )
-                """
-            )
-            self._conn.execute(
-                "CREATE INDEX IF NOT EXISTS records_scope_modified"
-                " ON records(scope, modified DESC, id DESC)"
-            )
-            self._conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS media_grants (
-                    scope TEXT NOT NULL,
-                    digest TEXT NOT NULL,
-                    kind TEXT NOT NULL,
-                    media_type TEXT NOT NULL,
-                    extension TEXT NOT NULL,
-                    byte_size INTEGER NOT NULL,
-                    PRIMARY KEY (scope, digest, kind)
-                )
-                """
-            )
-            self._conn.execute(
-                "CREATE TABLE IF NOT EXISTS asset_dependencies ("
-                "digest TEXT PRIMARY KEY, manifest TEXT NOT NULL)"
-            )
-            self._conn.execute(
-                "CREATE TABLE IF NOT EXISTS asset_derivations ("
-                "cache_key TEXT PRIMARY KEY, manifest TEXT NOT NULL)"
-            )
             latest = self._conn.execute("SELECT MAX(modified) FROM records").fetchone()[0]
             self._last_modified = float(latest) if latest is not None else 0.0
 
@@ -230,7 +213,8 @@ class LibraryStore:
 
     def close(self) -> None:
         with self._lock:
-            self._conn.close()
+            self._database.close()
+            self._engine.dispose()
 
     def put_dependencies(self, digest: str, dependencies: Sequence[Mapping[str, object]]) -> bool:
         """Persist one immutable, content-derived dependency manifest."""

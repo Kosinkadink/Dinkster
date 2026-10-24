@@ -66,7 +66,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -84,7 +84,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.int"
+              "INT"
             ]
           },
           "required": false,
@@ -103,7 +103,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.int"
+              "INT"
             ]
           },
           "required": false,
@@ -157,7 +157,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -212,7 +212,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -228,7 +228,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.combo"
+              "COMBO"
             ]
           },
           "required": false,
@@ -287,7 +287,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -303,7 +303,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.combo"
+              "COMBO"
             ]
           },
           "required": false,
@@ -435,7 +435,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -452,7 +452,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -607,7 +607,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.combo"
+              "COMBO"
             ]
           },
           "required": false,
@@ -673,7 +673,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.combo"
+              "COMBO"
             ]
           },
           "required": false,
@@ -730,7 +730,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.int"
+              "INT"
             ]
           },
           "required": false,
@@ -783,7 +783,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -802,7 +802,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.int"
+              "INT"
             ]
           },
           "required": false,
@@ -820,7 +820,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -839,7 +839,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.int"
+              "INT"
             ]
           },
           "required": false,
@@ -857,7 +857,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -876,7 +876,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -895,7 +895,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.int"
+              "INT"
             ]
           },
           "required": false,
@@ -937,7 +937,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": true,
@@ -953,7 +953,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -969,7 +969,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.combo"
+              "COMBO"
             ]
           },
           "required": false,
@@ -990,7 +990,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           }
         }
@@ -1026,7 +1026,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.int"
+              "INT"
             ]
           },
           "required": false,
@@ -1044,7 +1044,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.int"
+              "INT"
             ]
           },
           "required": false,
@@ -1062,7 +1062,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.boolean"
+              "BOOLEAN"
             ]
           },
           "required": false,
@@ -1182,7 +1182,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.combo"
+              "COMBO"
             ]
           },
           "required": false,
@@ -1298,7 +1298,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -1383,7 +1383,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -1399,7 +1399,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -1417,7 +1417,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.int"
+              "INT"
             ]
           },
           "required": false,
@@ -1471,7 +1471,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -1487,7 +1487,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -1505,7 +1505,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.boolean"
+              "BOOLEAN"
             ]
           },
           "required": false,
@@ -1517,7 +1517,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.int"
+              "INT"
             ]
           },
           "required": false,
@@ -1534,7 +1534,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.combo"
+              "COMBO"
             ]
           },
           "required": false,
@@ -1590,7 +1590,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -1606,7 +1606,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.int"
+              "INT"
             ]
           },
           "required": false,
@@ -1623,7 +1623,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.int"
+              "INT"
             ]
           },
           "required": false,
@@ -1675,7 +1675,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -1691,7 +1691,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -1707,7 +1707,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.int"
+              "INT"
             ]
           },
           "required": false,
@@ -1724,7 +1724,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.int"
+              "INT"
             ]
           },
           "required": false,
@@ -1765,7 +1765,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -1777,7 +1777,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -1793,7 +1793,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -1821,7 +1821,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           }
         }
@@ -1845,7 +1845,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.combo"
+              "COMBO"
             ]
           },
           "required": true
@@ -1856,7 +1856,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -1874,7 +1874,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -1902,7 +1902,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           }
         }
@@ -1937,7 +1937,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -1949,7 +1949,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -1997,7 +1997,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -2014,7 +2014,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.combo"
+              "COMBO"
             ]
           },
           "required": false,
@@ -2034,7 +2034,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.combo"
+              "COMBO"
             ]
           },
           "required": false,
@@ -2093,7 +2093,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -2123,7 +2123,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.combo"
+              "COMBO"
             ]
           },
           "required": false,
@@ -2144,7 +2144,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.combo"
+              "COMBO"
             ]
           },
           "required": false,
@@ -2221,7 +2221,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           }
         },
@@ -2231,7 +2231,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.combo"
+              "COMBO"
             ]
           }
         },
@@ -2241,7 +2241,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.combo"
+              "COMBO"
             ]
           }
         }
@@ -2325,7 +2325,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -2342,7 +2342,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.combo"
+              "COMBO"
             ]
           },
           "required": false,
@@ -2361,7 +2361,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -2373,7 +2373,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -2385,7 +2385,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -2426,7 +2426,7 @@
                                   "type": {
                                     "kind": "concrete",
                                     "types": [
-                                      "core.float"
+                                      "FLOAT"
                                     ]
                                   },
                                   "required": false,
@@ -2468,7 +2468,7 @@
                                   "type": {
                                     "kind": "concrete",
                                     "types": [
-                                      "core.float"
+                                      "FLOAT"
                                     ]
                                   },
                                   "required": false,
@@ -2527,7 +2527,7 @@
                                   "type": {
                                     "kind": "concrete",
                                     "types": [
-                                      "core.float"
+                                      "FLOAT"
                                     ]
                                   },
                                   "required": false,
@@ -2569,7 +2569,7 @@
                                   "type": {
                                     "kind": "concrete",
                                     "types": [
-                                      "core.float"
+                                      "FLOAT"
                                     ]
                                   },
                                   "required": false,
@@ -2628,7 +2628,7 @@
                                   "type": {
                                     "kind": "concrete",
                                     "types": [
-                                      "core.float"
+                                      "FLOAT"
                                     ]
                                   },
                                   "required": false,
@@ -2670,7 +2670,7 @@
                                   "type": {
                                     "kind": "concrete",
                                     "types": [
-                                      "core.float"
+                                      "FLOAT"
                                     ]
                                   },
                                   "required": false,
@@ -2729,7 +2729,7 @@
                                   "type": {
                                     "kind": "concrete",
                                     "types": [
-                                      "core.float"
+                                      "FLOAT"
                                     ]
                                   },
                                   "required": false,
@@ -2789,7 +2789,7 @@
                           "type": {
                             "kind": "concrete",
                             "types": [
-                              "core.float"
+                              "FLOAT"
                             ]
                           },
                           "required": false,
@@ -2831,7 +2831,7 @@
                           "type": {
                             "kind": "concrete",
                             "types": [
-                              "core.float"
+                              "FLOAT"
                             ]
                           },
                           "required": false,
@@ -2901,7 +2901,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -2917,7 +2917,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.combo"
+              "COMBO"
             ]
           },
           "required": false,
@@ -2936,7 +2936,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -2954,7 +2954,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -3009,7 +3009,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -3028,7 +3028,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -3046,7 +3046,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.boolean"
+              "BOOLEAN"
             ]
           },
           "required": false,
@@ -3168,7 +3168,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.boolean"
+              "BOOLEAN"
             ]
           },
           "required": false,

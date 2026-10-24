@@ -40,8 +40,8 @@ from dinkster_values import TypeRegistry, Value, register_core_types
 from dinkster_workers import InProcessWorker
 from scaffold_nodes import SCAFFOLD_NODES, register_scaffold_types
 
-STRING = TypeExpr.concrete("core.string")
-FLOAT = TypeExpr.concrete("core.float")
+STRING = TypeExpr.concrete("STRING")
+FLOAT = TypeExpr.concrete("FLOAT")
 
 JOIN_SCHEMA = NodeSchema(
     node_type="test.join",
@@ -147,13 +147,13 @@ def test_recursive_elaboration_uses_construct_paths_without_choice_keys() -> Non
     bindings = bind_type_variables(
         effective.inputs,
         {
-            "combo.subcombo.float_x": "core.string",
-            "combo.frames.beta": "list<core.string>",
-            "combo.frames.alpha": "list<core.string>",
+            "combo.subcombo.float_x": "STRING",
+            "combo.frames.beta": "list<STRING>",
+            "combo.frames.alpha": "list<STRING>",
         },
     )
-    assert bindings == {"T": "core.string"}
-    assert resolved_type_id(effective.outputs[0].type, bindings) == "core.string"
+    assert bindings == {"T": "STRING"}
+    assert resolved_type_id(effective.outputs[0].type, bindings) == "STRING"
 
 
 def test_single_entry_family_omits_leaf_and_keeps_stable_suffixes() -> None:
@@ -512,7 +512,7 @@ def test_worker_validates_against_the_effective_schema() -> None:
         registry = TypeRegistry()
         register_core_types(registry)
         worker = InProcessWorker({"test.wrong_outputs": WrongOutputs}, registry)
-        wrapped = registry.wrap("core.string", "v")
+        wrapped = registry.wrap("STRING", "v")
         effective = elaborate(WrongOutputs.define_schema(), ["a"])
         result = await worker.invoke(
             Invocation(
@@ -570,7 +570,7 @@ def test_output_member_sets_and_order_produce_distinct_signatures() -> None:
 def test_counted_output_family_requires_exact_literal_and_membership() -> None:
     schema = NodeSchema(
         node_type="test.counted",
-        inputs=(InputSpec("count", TypeExpr.concrete("core.int")),),
+        inputs=(InputSpec("count", TypeExpr.concrete("INT")),),
         output_families=(OutputFamilySpec("items", STRING, count=OutputCountSpec("count")),),
     )
     effective = elaborate(
@@ -583,7 +583,7 @@ def test_counted_output_family_requires_exact_literal_and_membership() -> None:
         elaborate(schema, {"count": 1}, {"items": ("0",)})
     )
 
-    for hostile in (None, True, 2.0, Link("n", "out"), TypedLiteral("core.int", 2)):
+    for hostile in (None, True, 2.0, Link("n", "out"), TypedLiteral("INT", 2)):
         with pytest.raises(ElaborationError, match="untyped integer literal"):
             elaborate(
                 schema,
@@ -796,7 +796,7 @@ class CountSpecProbe(Node):
         return NodeSchema(
             node_type="test.count_spec_probe",
             inputs=(
-                InputSpec("count", TypeExpr.concrete("core.int")),
+                InputSpec("count", TypeExpr.concrete("INT")),
                 InputSpec("seed", STRING),
             ),
             output_families=(OutputFamilySpec("results", STRING, count=OutputCountSpec("count")),),
@@ -879,8 +879,8 @@ def test_worker_rejects_invocation_provenance_skew() -> None:
         schema = build_schemas(SCAFFOLD_NODES)["std.string.split"]
         effective = elaborate(schema, ["text", "separator"], {"parts": ("a", "b")})
         inputs = {
-            "text": registry.wrap("core.string", "x y"),
-            "separator": registry.wrap("core.string", " "),
+            "text": registry.wrap("STRING", "x y"),
+            "separator": registry.wrap("STRING", " "),
         }
 
         # Provenance says one member; the effective schema says two.
@@ -934,7 +934,7 @@ def test_cache_hit_with_wrong_dynamic_shape_is_a_miss() -> None:
         register_core_types(registry)
         register_scaffold_types(registry)
         # The stale entry has member "a" only; the document declares a and b.
-        cache = WrongShapeCache({"parts.a": registry.wrap("core.string", "stale")})
+        cache = WrongShapeCache({"parts.a": registry.wrap("STRING", "stale")})
         engine = Engine(
             schemas=build_schemas(SCAFFOLD_NODES),
             registry=registry,

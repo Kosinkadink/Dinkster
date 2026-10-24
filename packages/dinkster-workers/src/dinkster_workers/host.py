@@ -172,7 +172,7 @@ from .workgroup_session import (
 log = logging.getLogger("dinkster.workers.host")
 _ACCELERATOR_BUDGETS_ENV = "DINKSTER_ACCELERATOR_BUDGETS"
 _ACCELERATOR_HEADROOM_ENV = "DINKSTER_ACCELERATOR_HEADROOM_BYTES"
-_AIMDO_HEADROOM_TARGET_ENV = "DINKSTER_AIMDO_HEADROOM_TARGET"
+_AIMDO_HEADROOM_TARGET_ENV = "COMFY_AIMDO_HEADROOM_TARGET"
 
 
 def _legacy_checkpoint_conversion_capable() -> bool:
@@ -2971,7 +2971,7 @@ def main() -> None:
             f"{index}={nbytes}" for index, nbytes in sorted(vram_budgets.items())
         )
     # Only validated argv, including its default, selects the worker policy.
-    os.environ["DINKSTER_AIMDO_ARM"] = args.aimdo_arm
+    os.environ["COMFY_AIMDO_ARM"] = args.aimdo_arm
     # Pin the pack bootstrap's argv to the explicit parent-supplied ComfyUI
     # arguments. This happens after this host parsed its own CLI and applies
     # even to the empty tuple, so no ambient worker argument can leak into

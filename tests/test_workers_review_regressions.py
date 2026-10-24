@@ -382,7 +382,7 @@ def test_worker_preserves_combo_list_order_duplicates_and_fingerprint() -> None:
         register_core_types(registry)
         schema = ComboListAdmissionNode.schema()
         worker = InProcessWorker(build_node_types((ComboListAdmissionNode,)), registry)
-        value = registry.wrap("list<core.combo>", ["b", "a", "b"])
+        value = registry.wrap("list<COMBO>", ["b", "a", "b"])
         result = await worker.invoke(
             Invocation(
                 invocation_id="combo-list",

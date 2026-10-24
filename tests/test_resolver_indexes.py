@@ -40,7 +40,7 @@ from dinkster_assets import (
     resolver_index_from_wire,
 )
 from dinkster_assets import resolver_subscription as resolver_transport
-from dinkster_server import ServerLibrary, create_app
+from dinkster_server import RuntimeSettings, ServerLibrary, create_app
 from test_server import SCHEMAS, make_engine
 
 from dinkster.guess_api import add_guess_routes
@@ -50,6 +50,35 @@ MODEL_BYTES = b"resolver-index model bytes" * 32
 MODEL_DIGEST = digest_bytes(MODEL_BYTES)
 OTHER_BYTES = b"updated resolver-index model bytes" * 32
 OTHER_DIGEST = digest_bytes(OTHER_BYTES)
+
+
+def resolver_settings() -> RuntimeSettings:
+    return RuntimeSettings(
+        {
+            "memory-budgets": {},
+            "memory-headroom": 256 * 1024**2,
+            "aimdo-policy": "auto",
+            "dtype-policy": {"diffusion": "auto", "textEncoder": "auto", "vae": "auto"},
+            "fp8-matmul": False,
+            "worker-comfy-args": (),
+            "jobs": {"maxRunningJobs": 1},
+            "logging": {"level": "info", "overrides": {}},
+        },
+        {
+            category: "default"
+            for category in (
+                "memory-budgets",
+                "memory-headroom",
+                "aimdo-policy",
+                "dtype-policy",
+                "fp8-matmul",
+                "worker-comfy-args",
+                "jobs",
+                "logging",
+            )
+        },
+        features={"resolver": {"enabled": True}},
+    )
 
 
 def resolver_entry(
@@ -1261,7 +1290,7 @@ def test_resolver_management_and_filename_guess_api(tmp_path: Path) -> None:
     )
 
     async def scenario() -> None:
-        app = create_app(make_engine, SCHEMAS, library=library)
+        app = create_app(make_engine, SCHEMAS, library=library, settings=resolver_settings())
         add_resolver_index_routes(app, store)
         add_guess_routes(app)
         client = TestClient(TestServer(app))
@@ -1331,7 +1360,7 @@ def test_resolver_api_refreshes_local_subscriptions_on_startup(tmp_path: Path) -
     )
 
     async def scenario() -> None:
-        app = create_app(make_engine, SCHEMAS)
+        app = create_app(make_engine, SCHEMAS, settings=resolver_settings())
         add_resolver_index_routes(app, store)
         client = TestClient(TestServer(app))
         await client.start_server()
@@ -1392,7 +1421,7 @@ def test_resolver_api_startup_refresh_persistence_failure_is_nonfatal(
     )
 
     async def scenario() -> None:
-        app = create_app(make_engine, SCHEMAS)
+        app = create_app(make_engine, SCHEMAS, settings=resolver_settings())
         add_resolver_index_routes(app, store)
         client = TestClient(TestServer(app))
         await client.start_server()
@@ -1414,7 +1443,7 @@ def test_resolver_management_api_validates_requests(tmp_path: Path) -> None:
     )
 
     async def scenario() -> None:
-        app = create_app(make_engine, SCHEMAS)
+        app = create_app(make_engine, SCHEMAS, settings=resolver_settings())
         add_resolver_index_routes(app, store)
         client = TestClient(TestServer(app))
         await client.start_server()
@@ -2021,7 +2050,7 @@ def test_resolver_api_official_bootstrap_with_fixture_provider(
         state = tmp_path / "subscriptions.json"
         store = ResolverSubscriptionStore(state, ProvenanceStore(tmp_path / "provenance.json"))
         async with resolver_http_server(index) as url:
-            app = create_app(make_engine, SCHEMAS)
+            app = create_app(make_engine, SCHEMAS, settings=resolver_settings())
             source = None if mode == "absent" else url
             if mode == "url-encoding":
                 source = url + "?label=r\u00e9solver"

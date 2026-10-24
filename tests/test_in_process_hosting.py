@@ -66,7 +66,7 @@ def test_in_process_full_release_rejects_malformed_consumer_result() -> None:
     asyncio.run(scenario())
 
 
-PINS = {"torch": "2.13.0", "dinkster-aimdo": "0.4.13"}
+PINS = {"torch": "2.13.0", "comfy-aimdo": "0.4.13"}
 
 
 def _lockfile() -> Lockfile:
@@ -88,7 +88,7 @@ def test_in_process_policy_sidecar_authority_and_group_contradiction(tmp_path: P
     sidecar = tmp_path / "1.hosting.json"
     sidecar.write_text(
         '{"format":"dinkster.hosting/1","inProcess":["alpha"],'
-        '"runtimePins":{"dinkster-aimdo":"0.4.13",'
+        '"runtimePins":{"comfy-aimdo":"0.4.13",'
         '"torch":"2.13.0"},"venvGroups":{}}\n'
     )
     recorded = _decode_hosting_record(sidecar)
@@ -148,7 +148,7 @@ def _placement_manifest(directory: Path) -> Path:
     directory.mkdir()
     (directory / "h31_placement_nodes.py").write_text(
         "from dinkster_schema import InputSpec,Node,NodeSchema,OutputSpec,TypeExpr\n"
-        "STRING=TypeExpr.concrete('core.string')\n"
+        "STRING=TypeExpr.concrete('STRING')\n"
         "class Echo(Node):\n"
         "    @classmethod\n"
         "    def define_schema(cls):\n"
@@ -293,7 +293,7 @@ def test_in_process_installer_skips_venv_and_exact_pin_refusal_is_not_overridabl
         installer.apply(target, allow_doctor_findings=True)
     assert installer.current_number() is None
     assert provisioned == []
-    with pytest.raises(InstallError, match="requires exact torch and dinkster-aimdo"):
+    with pytest.raises(InstallError, match="requires exact torch and comfy-aimdo"):
         installer.apply(
             target,
             hosting_groups=(),
@@ -301,9 +301,9 @@ def test_in_process_installer_skips_venv_and_exact_pin_refusal_is_not_overridabl
             hosting_runtime_pins={},
         )
 
-    aimdo = _install_pack(tmp_path / "aimdo", "alpha", requires='"dinkster-aimdo==0.4.13"')
+    aimdo = _install_pack(tmp_path / "aimdo", "alpha", requires='"comfy-aimdo==0.4.13"')
     aimdo_target = Lockfile.of([lock_local_pack(aimdo, installer.artifacts_dir)[0]])
-    with pytest.raises(InstallError, match="must not declare a dinkster-aimdo dependency"):
+    with pytest.raises(InstallError, match="must not declare a comfy-aimdo dependency"):
         installer.apply(aimdo_target, allow_doctor_findings=True)
 
     probes = iter((PINS, {**PINS, "torch": "2.14.0"}))
@@ -454,7 +454,7 @@ def test_in_process_tenant_registers_on_invocation_unregisters_on_remove_and_ref
         "class TenantNode(Node):\n"
         "    @classmethod\n"
         "    def define_schema(cls):\n"
-        "        output=OutputSpec('device',TypeExpr.concrete('core.string'))\n"
+        "        output=OutputSpec('device',TypeExpr.concrete('STRING'))\n"
         "        return NodeSchema(node_type='tenant.load',outputs=(output,))\n"
         "    @classmethod\n"
         "    async def execute(cls):\n"
@@ -497,7 +497,10 @@ def test_in_process_tenant_registers_on_invocation_unregisters_on_remove_and_ref
         workers = await composer.full_free("in-process-tenants")
         tenant_worker = next(worker for worker in workers if worker["worker"] == "tenantpack")
         assert tenant_worker["status"] == "complete"
-        assert tenant_worker["consumers"] == [{"consumer": "model-tenants", "status": "complete"}]
+        assert tenant_worker["consumers"] == [
+            {"consumer": "resident-values-0", "status": "complete"},
+            {"consumer": "model-tenants", "status": "complete"},
+        ]
         assert registry.live == {}
         await composer.remove_pack("tenantpack")
         assert registry.live == {}

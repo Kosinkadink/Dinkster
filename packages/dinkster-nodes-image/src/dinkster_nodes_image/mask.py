@@ -16,6 +16,8 @@ from dinkster_api.v1 import (
     CORE_FLOAT,
     CORE_INT,
     CORE_STRING,
+    IMAGE_TYPE,
+    MASK_TYPE,
     ColorWidget,
     DynamicComboOption,
     DynamicComboSpec,
@@ -67,8 +69,8 @@ from .support import (
 )
 from .types import REGION_TYPE, Region
 
-IMAGE = TypeExpr.concrete("dinkster.image")
-MASK = TypeExpr.concrete("dinkster.mask")
+IMAGE = TypeExpr.concrete(IMAGE_TYPE)
+MASK = TypeExpr.concrete(MASK_TYPE)
 REGION = TypeExpr.concrete(REGION_TYPE)
 BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
 INT = TypeExpr.concrete(CORE_INT)
