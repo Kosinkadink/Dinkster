@@ -3,7 +3,7 @@
 import subprocess
 import sys
 
-from dinkster_api.v1 import CORE_INT, IMAGE_TYPE, schema_from_wire, schema_to_wire
+from dinkster_api.v1 import CORE_INT, IMAGE_TYPE, NumberWidget, schema_from_wire, schema_to_wire
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.ltx_video_preprocess import LTX_VIDEO_PREPROCESS_NODES, LTXVPreprocess
 
@@ -18,6 +18,7 @@ def test_ltx_video_preprocess_schema() -> None:
         ("img_compression", CORE_INT),
     )
     assert schema.inputs[1].default == 35
+    assert isinstance(schema.inputs[1].widget, NumberWidget)
     assert schema.inputs[1].widget.min == 0
     assert schema.inputs[1].widget.max == 100
     assert schema.outputs[0].id == "IMAGE"
