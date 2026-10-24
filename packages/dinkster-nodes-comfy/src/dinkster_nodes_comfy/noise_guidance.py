@@ -103,20 +103,29 @@ class TemporalScoreRescaling(Node):
         def rescale(args: dict[str, Any]) -> Any:
             sigma = args["sigma"]
             denoised = args["denoised"]
-            if tsr_k == 1 or sigma == 0:
+            if tsr_k == 1:
                 return denoised
             torch = importlib.import_module("torch")
+            nonzero = sigma != 0
+            if not torch.any(nonzero):
+                return denoised
             sampling = args["model"].current_patcher.get_model_object("model_sampling")
             initialize_inference_process()
             kernels = importlib.import_module("dinkster_inference.k_diffusion.sampling")
-            half_log_snr = kernels.sigma_to_half_log_snr(sigma, sampling)
+            safe_sigma = torch.where(nonzero, sigma, torch.ones_like(sigma))
+            half_log_snr = kernels.sigma_to_half_log_snr(safe_sigma, sampling)
             snr = (2 * half_log_snr).exp()
-            if snr == 0:
+            active = nonzero & (snr != 0)
+            if not torch.any(active):
                 return denoised
             ratio = (snr * variance + 1) / (snr * variance / tsr_k + 1)
             ratio = torch.where(torch.isposinf(snr), tsr_k, ratio)
-            alpha = sigma * half_log_snr.exp()
-            return torch.lerp(args["input"] / alpha, denoised, ratio)
+            alpha = torch.where(active, safe_sigma * half_log_snr.exp(), 1)
+            if sigma.ndim == 1:
+                # Sigma indexes samples, never a spatial axis of the latent.
+                shape = (-1,) + (1,) * (denoised.ndim - 1)
+                alpha, ratio, active = (value.reshape(shape) for value in (alpha, ratio, active))
+            return torch.where(active, torch.lerp(args["input"] / alpha, denoised, ratio), denoised)
 
         patched = model.clone()
         patched.set_model_sampler_post_cfg_function(rescale)

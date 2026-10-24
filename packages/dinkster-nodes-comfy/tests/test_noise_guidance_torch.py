@@ -65,6 +65,45 @@ def test_noise_scaling_and_score_rescaling_preserve_source_and_compute_expected_
     assert source.pre is None and source.post is None
 
 
+@pytest.mark.parametrize("flow", (False, True))
+def test_score_rescaling_uses_each_samples_sigma_and_preserves_zero_samples(flow: bool) -> None:
+    from dinkster_api.v1 import initialize_inference_process
+
+    initialize_inference_process()
+    from dinkster_inference.model_sampling import CONST
+
+    source = Patcher()
+    patched = TemporalScoreRescaling.execute(model=source, tsr_k=0.5, tsr_sigma=2.0)["MODEL"]
+    sampling = CONST() if flow else object()
+    model = SimpleNamespace(current_patcher=SimpleNamespace(get_model_object=lambda _: sampling))
+    x = torch.arange(60, dtype=torch.float64).reshape(2, 3, 2, 5) / 7 - 2
+    denoised = torch.flip(x, dims=(-1,)) / 3 + 1
+    x_before, denoised_before = x.clone(), denoised.clone()
+    cases = ((0.25, 0.5), (0.0, 0.5), (0.25, 0.0), (0.0, 0.0), (1.0, 0.5))
+    for sigmas in cases:
+        sigma = torch.tensor(sigmas, dtype=torch.float64)
+        expected = denoised.clone()
+        for index, value in enumerate(sigmas):
+            if value == 0 or (flow and value == 1):
+                continue
+            alpha = 1 - value if flow else 1.0
+            snr = (alpha / value) ** 2
+            ratio = (snr * 4 + 1) / (snr * 8 + 1)
+            expected[index] = x[index] / alpha * (1 - ratio) + denoised[index] * ratio
+        args = {"input": x, "denoised": denoised, "sigma": sigma, "model": model}
+        result = patched.post(args)
+        torch.testing.assert_close(result, expected)
+        for index, value in enumerate(sigmas):
+            if value == 0 or (flow and value == 1):
+                assert torch.equal(result[index], denoised[index])
+        assert torch.equal(sigma, torch.tensor(sigmas, dtype=torch.float64))
+        bypass = TemporalScoreRescaling.execute(model=source, tsr_k=1.0, tsr_sigma=2.0)["MODEL"]
+        assert bypass.post({"sigma": sigma, "denoised": denoised}) is denoised
+    assert torch.equal(x, x_before)
+    assert torch.equal(denoised, denoised_before)
+    assert source.post is None
+
+
 @pytest.mark.parametrize("dtype", (torch.float32, torch.float64))
 def test_frequency_guidance_separates_dc_and_high_frequency_and_preserves_tail(
     dtype: torch.dtype,
@@ -122,6 +161,20 @@ class Result(Node):
             torch.tensor([5.0, -8.0]),
         )
         assert score.post({"sigma": torch.tensor(0.0), "denoised": denoised}) is denoised
+        x = torch.tensor([[[[-2.0, 5.0, 8.0]]], [[[3.0, -1.0, 7.0]]]])
+        predictions = torch.tensor([[[[2.0, -4.0, 1.0]]], [[[-2.0, 5.0, 3.0]]]])
+        result = score.post(
+            {
+                "input": x,
+                "denoised": predictions,
+                "sigma": torch.tensor([0.0, 0.5]),
+                "model": SimpleNamespace(
+                    current_patcher=SimpleNamespace(get_model_object=lambda _: object())
+                ),
+            }
+        )
+        assert torch.equal(result[0], predictions[0])
+        torch.testing.assert_close(result[1], x[1] * (16 / 33) + predictions[1] * (17 / 33))
         inputs = [torch.full((1, 1, 4, 4), 4.0), torch.ones(1, 1, 4, 4)]
         outputs = frequency.pre({"conds_out": inputs, "conds": [object(), object()]})
         assert torch.equal(outputs[0], torch.full((1, 1, 4, 4), 7.0))

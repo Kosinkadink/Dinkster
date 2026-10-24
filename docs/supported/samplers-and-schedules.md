@@ -15,3 +15,5 @@ settings remain supported.
 
 Native Epsilon Scaling and Temporal Score Rescaling patch post-CFG noise
 predictions. FreSca filters low- and high-frequency guidance independently.
+Temporal Score Rescaling supports per-sample sigma tensors, leaving zero-sigma
+samples unchanged while rescaling the other samples independently.

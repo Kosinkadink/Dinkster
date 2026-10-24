@@ -48,7 +48,7 @@ behavior, then keep the file for provenance.
 | [flux2-tekken-tokenizer.md](flux2-tekken-tokenizer.md) | comfy/text_encoders/flux.py | found 2026-08; crash fixed upstream (bbb4b04c); Dinkster self-contained |
 | [cosmos-predict2-retains-forward-activations.md](cosmos-predict2-retains-forward-activations.md) | comfy/ldm/cosmos/predict2.py | found 2026-08 (Dinkster #841); benchmark shim releases through ComfyUI free path |
 | [renorm-cfg-batch-tensor-bool-crash.md](renorm-cfg-batch-tensor-bool-crash.md) | comfy_extras/nodes_lumina2.py | found 2026-08-27; Dinkster mirrors batch-1 contract |
-| [temporal-score-rescaling-batch-tensor-bool-crash.md](temporal-score-rescaling-batch-tensor-bool-crash.md) | comfy_extras/nodes_eps.py | found 2026-08-27; Dinkster immune (scalar sigma contract) |
+| [temporal-score-rescaling-batch-tensor-bool-crash.md](temporal-score-rescaling-batch-tensor-bool-crash.md) | comfy_extras/nodes_eps.py | native per-sample correction; zero-sigma samples unchanged |
 | [flux-normal-collapsed-brownian-interval.md](flux-normal-collapsed-brownian-interval.md) | comfy/k_diffusion/sampling.py + torchsde | executed reference failure on a narrow positive sigma interval |
 | [video-matroska-frame-count.md](video-matroska-frame-count.md) | comfy_api/latest/_input_impl/video_types.py | found at 15eb748b3ec5; Dinkster uses marked container estimates |
 | [ace15-generation-maximum-uses-minimum.md](ace15-generation-maximum-uses-minimum.md) | comfy/text_encoders/ace15.py | verified at 25dfc16f; Dinkster preserves the composer behavior |
