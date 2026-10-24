@@ -10,7 +10,8 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from dataclasses import replace
-from typing import Any, cast
+from pathlib import Path
+from typing import Any, Literal, cast
 
 import pytest
 from dinkster_caches import MemoryLRUCache, encode_entry, entry_from_wire, entry_to_wire
@@ -533,6 +534,60 @@ def test_tuple_positions_prepare_their_host_types_before_output_wrapping() -> No
         )
         assert result.outputs["source"]["value"].type_id == "tuple<test.first,test.second>"
         assert result.outputs["source"]["value"].resolve() == (7, "label")
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("in_process", [False, True])
+@pytest.mark.parametrize("cache_mode", ["memory", "layered"])
+def test_tuple_nodes_preserve_position_types_through_production_hosts(
+    tmp_path: Path, in_process: bool, cache_mode: Literal["memory", "layered"]
+) -> None:
+    from dinkster.compose import PackSpec, compose_serving
+
+    async def scenario() -> None:
+        manifest = (
+            Path(__file__).resolve().parents[1]
+            / "packages/dinkster-nodes-foundation/dinkster-pack.toml"
+        )
+        composition = await compose_serving(
+            [PackSpec(manifest, in_process=in_process, trust_reserved=True)],
+            include_default_packs=False,
+            cache_mode=cache_mode,
+            cache_dir=tmp_path / "cache",
+        )
+        try:
+            engine = composition.make_engine(lambda _event: None)
+            graph = Graph(
+                nodes={
+                    "text": GraphNode("dinkster.string", {"value": "first"}),
+                    "integer": GraphNode("dinkster.int", {"value": 29}),
+                    "pair": GraphNode(
+                        "std.tuple.make",
+                        {
+                            "items.label": Link("text", "value"),
+                            "items.count": Link("integer", "value"),
+                        },
+                    ),
+                    "selected": GraphNode(
+                        "std.tuple.get", {"tuple": Link("pair", "tuple"), "index": -1}
+                    ),
+                }
+            )
+            for run in range(2):
+                if run and cache_mode == "layered":
+                    engine = composition.make_engine(lambda _event: None)
+                result = await engine.run(graph, ["pair", "selected"])
+                pair = result.outputs["pair"]["tuple"]
+                assert pair.type_id == "tuple<STRING,INT>"
+                assert pair.resolve() == ("first", 29)
+                assert result.outputs["selected"]["item"].type_id == "INT"
+                assert result.outputs["selected"]["item"].resolve() == 29
+                if run:
+                    assert result.executed == ()
+                    assert set(result.cached) == set(graph.nodes)
+        finally:
+            await composition.close()
 
     asyncio.run(scenario())
 
