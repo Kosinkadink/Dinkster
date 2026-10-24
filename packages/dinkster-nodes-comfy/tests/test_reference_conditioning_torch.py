@@ -20,11 +20,14 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
+    materialize_image,
+    materialize_latent,
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.reference_conditioning import (
     InstructPixToPixConditioning,
     ReferenceLatent,
+    ReferenceMultiLatent,
 )
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -74,6 +77,62 @@ def test_reference_latent_appends_without_mutating_existing_references(
     assert len(existing or []) == count
 
 
+def test_reference_multi_latent_orders_resizes_and_preserves_inputs() -> None:
+    class RecordingVAE(ImageVAE):
+        def __init__(self) -> None:
+            self.images: list[torch.Tensor] = []
+
+        def encode(self, pixels: torch.Tensor) -> torch.Tensor:
+            self.images.append(pixels.clone())
+            return super().encode(pixels)
+
+    image2 = torch.arange(3 * 5 * 3, dtype=torch.float64).reshape(1, 3, 5, 3) / 45
+    image10 = torch.arange(5 * 3 * 3, dtype=torch.float64).reshape(1, 5, 3, 3) / 30
+    image2_before, image10_before = image2.clone(), image10.clone()
+    existing = torch.tensor([7.0])
+    positive = [[torch.tensor([2.0]), {"reference_latents": [existing], "strength": 0.3}]]
+    negative = [[torch.tensor([-2.0]), {"reference_latents": None, "strength": 0.2}]]
+    vae = RecordingVAE()
+
+    result: Any = ReferenceMultiLatent.execute(
+        positive=positive,
+        negative=negative,
+        vae=vae,
+        images={"image10": image10.numpy(), "image2": image2.numpy(), "image3": None},
+        resolution="resize",
+        **{"resolution.megapixels": 0.01},
+    )
+
+    assert [image.shape for image in vae.images] == [(1, 79, 132, 3), (1, 132, 79, 3)]
+    positive_references = result["positive"][0][1]["reference_latents"]
+    negative_references = result["negative"][0][1]["reference_latents"]
+    assert len(positive_references) == 3
+    assert len(negative_references) == 2
+    assert positive_references[0] is existing
+    torch.testing.assert_close(positive_references[1], vae.images[0].movedim(-1, 1) * 2 - 1)
+    torch.testing.assert_close(positive_references[2], vae.images[1].movedim(-1, 1) * 2 - 1)
+    torch.testing.assert_close(
+        result["empty_latent"]["samples"], torch.zeros_like(positive_references[1])
+    )
+    torch.testing.assert_close(image2, image2_before)
+    torch.testing.assert_close(image10, image10_before)
+    assert positive[0][1] == {"reference_latents": [existing], "strength": 0.3}
+    assert negative[0][1] == {"reference_latents": None, "strength": 0.2}
+
+
+def test_reference_multi_latent_without_vae_or_images_returns_empty_latent() -> None:
+    positive = [[torch.tensor([2.0]), {"strength": 0.3}]]
+    result: Any = ReferenceMultiLatent.execute(
+        positive=positive,
+        resolution={"resolution": "resize", "megapixels": 0.01},
+    )
+
+    assert result["negative"] is result["positive"]
+    assert result["positive"] is positive
+    assert result["empty_latent"]["samples"].shape == (1, 4, 12, 12)
+    assert positive[0][1] == {"strength": 0.3}
+
+
 class ReferenceSource(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -86,6 +145,8 @@ class ReferenceSource(Node):
                     ("negative", CONDITIONING_TYPE),
                     ("vae", VAE_TYPE),
                     ("pixels", IMAGE_TYPE),
+                    ("image2", IMAGE_TYPE),
+                    ("image10", IMAGE_TYPE),
                 )
             ),
         )
@@ -97,6 +158,8 @@ class ReferenceSource(Node):
             negative=[[torch.tensor([-1.0]), {"strength": 0.2}]],
             vae=ImageVAE(),
             pixels=np.arange(11 * 21 * 4, dtype=np.float32).reshape(1, 11, 21, 4) / 1024,
+            image2=np.full((1, 3, 5, 4), 0.25, dtype=np.float32),
+            image10=np.full((1, 5, 3, 4), 0.75, dtype=np.float32),
         )
 
 
@@ -168,6 +231,52 @@ class ReferenceInspect(Node):
         return cls.outputs(pixel=float(encoded[0, 0, 0, 0]))
 
 
+class ReferenceMultiInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="reference-fixture.multi-inspect",
+            inputs=tuple(
+                InputSpec(name, TypeExpr.concrete(type_id))
+                for name, type_id in (
+                    ("conditioning", CONDITIONING_TYPE),
+                    ("negative", CONDITIONING_TYPE),
+                    ("empty_latent", "core.latent"),
+                    ("source_positive", CONDITIONING_TYPE),
+                    ("source_negative", CONDITIONING_TYPE),
+                )
+            ),
+            outputs=(OutputSpec("value", TypeExpr.concrete(CORE_FLOAT)),),
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        conditioning: Any,
+        negative: Any,
+        empty_latent: Any,
+        source_positive: Any,
+        source_negative: Any,
+    ) -> dict[str, object]:
+        references = conditioning[0][1]["reference_latents"]
+        negative_references = negative[0][1]["reference_latents"]
+        assert len(references) == len(negative_references) == 2
+        first = materialize_image(references[0])
+        second = materialize_image(references[1])
+        torch.testing.assert_close(first, torch.full((1, 4, 3, 5), -0.5))
+        torch.testing.assert_close(second, torch.full((1, 4, 5, 3), 0.5))
+        torch.testing.assert_close(
+            materialize_image(materialize_latent(empty_latent)["samples"]),
+            torch.zeros((1, 4, 3, 5)),
+        )
+        assert conditioning[0][1]["strength"] == 2.5
+        assert negative[0][1]["strength"] == 0.2
+        assert source_positive[0][1] == {"strength": 0.7}
+        assert source_negative[0][1] == {"strength": 0.2}
+        return cls.outputs(value=float(first[0, 0, 0, 0]))
+
+
 @pytest.mark.parametrize("in_process", (True, False))
 def test_ordinary_manifest_links_image_edit_and_reference_nodes(
     tmp_path: Path, in_process: bool
@@ -179,10 +288,12 @@ def test_ordinary_manifest_links_image_edit_and_reference_nodes(
         )
         try:
             (tmp_path / "reference_fixture.py").write_text(
-                "from test_reference_conditioning_torch import ReferenceSource, ReferenceInspect\n"
+                "from test_reference_conditioning_torch import (\n"
+                "    ReferenceMultiInspect, ReferenceSource, ReferenceInspect,\n"
+                ")\n"
                 "from test_reference_conditioning_torch import MediaConditioningInspect\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "NODES = (*COMFY_NODES, ReferenceSource, ReferenceInspect,\n"
+                "NODES = (*COMFY_NODES, ReferenceSource, ReferenceInspect, ReferenceMultiInspect,\n"
                 "         MediaConditioningInspect)\n",
                 encoding="ascii",
             )
@@ -248,6 +359,31 @@ def test_ordinary_manifest_links_image_edit_and_reference_nodes(
                             "latent": Link("edit", "latent"),
                         },
                     ),
+                    "multi": GraphNode(
+                        "ReferenceMultiLatent",
+                        {
+                            "positive": Link("source", "positive"),
+                            "negative": Link("source", "negative"),
+                            "vae": Link("source", "vae"),
+                            "images.image10": Link("source", "image10"),
+                            "images.image2": Link("source", "image2"),
+                        },
+                        slot_variants={"resolution": "keep resolution"},
+                    ),
+                    "strength": GraphNode(
+                        "ConditioningSetAreaStrength",
+                        {"conditioning": Link("multi", "positive"), "strength": 2.5},
+                    ),
+                    "multi_inspect": GraphNode(
+                        "reference-fixture.multi-inspect",
+                        {
+                            "conditioning": Link("strength", "CONDITIONING"),
+                            "negative": Link("multi", "negative"),
+                            "empty_latent": Link("multi", "empty_latent"),
+                            "source_positive": Link("source", "positive"),
+                            "source_negative": Link("source", "negative"),
+                        },
+                    ),
                     "inspect": GraphNode(
                         "reference-fixture.inspect",
                         {
@@ -260,9 +396,10 @@ def test_ordinary_manifest_links_image_edit_and_reference_nodes(
             )
             engine = composer.composition.make_engine(lambda _event: None)
             for _ in range(2):
-                result = await engine.run(graph, ["inspect", "media_inspect"])
+                result = await engine.run(graph, ["inspect", "media_inspect", "multi_inspect"])
                 assert result.outputs["inspect"]["pixel"].resolve() == -105 / 128
                 assert result.outputs["media_inspect"]["strength"].resolve() == 2.5
+                assert result.outputs["multi_inspect"]["value"].resolve() == -0.5
         finally:
             await composer.close()
 
