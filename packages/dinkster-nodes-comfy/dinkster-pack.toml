@@ -80,6 +80,12 @@ namespaces = [
     "FeatherMask",
     "GrowMask",
     "ThresholdMask",
+    "ImageScale",
+    "ImageScaleBy",
+    "ImageInvert",
+    "ImageBatch",
+    "EmptyImage",
+    "ImagePadForOutpaint",
 ]
 
 [pack.sandbox]

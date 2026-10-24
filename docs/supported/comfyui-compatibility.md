@@ -7,6 +7,8 @@
   zero, and set area or timestep metadata under their exact ComfyUI interfaces.
 - Twelve native mask and composite nodes convert, create, invert, crop, combine,
   feather, grow, threshold, and composite images or latents under exact core IDs.
+- Six native core image nodes create, resize, invert, batch, and pad images for
+  outpainting, preserving source color, alpha, resize, and feathering behavior.
 - Portable masks become Torch tensors at native tensor-consuming nodes, without
   moving already-live tensors or loading Torch in the host decoder.
 - `dinkster-serve --comfy-root ... --legacy-pack PATH` runs unmodified v1 and
