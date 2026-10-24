@@ -989,6 +989,8 @@ def register_conditioning_type(
     resident_codec = ResidentCodec(resident_table, resident_meta)
 
     def coerce(obj: object) -> object:
+        if type(obj) is list:
+            return cast(object, obj)
         if (
             not isinstance(obj, ConditioningCarrier)
             and type(obj) is not ResidentConditioningCarrier
@@ -999,6 +1001,8 @@ def register_conditioning_type(
         return obj
 
     def fingerprint(obj: object) -> str:
+        if type(obj) is list:
+            return resident_codec.fingerprint(cast(object, obj))
         if type(obj) is ResidentConditioningCarrier:
             return resident_codec.fingerprint(obj)
         carrier = cast("ConditioningCarrier", obj)
@@ -1010,6 +1014,8 @@ def register_conditioning_type(
         return stable_hash([encoded])
 
     def encode(obj: object) -> bytes:
+        if type(obj) is list:
+            return _RESIDENT_MAGIC + resident_codec.encode(cast(object, obj))
         if type(obj) is ResidentConditioningCarrier:
             return _RESIDENT_MAGIC + resident_codec.encode(obj)
         carrier = cast("ConditioningCarrier", obj)
@@ -1022,7 +1028,7 @@ def register_conditioning_type(
     def decode(data: bytes) -> object:
         if data.startswith(_RESIDENT_MAGIC):
             value = resident_codec.decode(data[len(_RESIDENT_MAGIC) :])
-            if type(value) not in (ConditioningCarrier, ResidentConditioningCarrier):
+            if type(value) not in (ConditioningCarrier, ResidentConditioningCarrier, list):
                 raise ConditioningWireError("invalid-resident-carrier")
             return value
         return decode_conditioning_carrier(data)
@@ -1039,6 +1045,11 @@ def register_conditioning_type(
         decode_conditioning_carrier(data, metadata)
 
     def metadata(obj: object) -> Mapping[str, object]:
+        if type(obj) is list:
+            return {
+                **resident_codec.metadata(cast(object, obj)),
+                "format": RESIDENT_CONDITIONING_FORMAT,
+            }
         if type(obj) is ResidentConditioningCarrier or (
             type(obj) is ConditioningCarrier and obj.has_resident_payloads
         ):

@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
 import numpy as np
 import pytest
-from dinkster_api.v1 import schema_to_wire
+from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr, schema_to_wire
+from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.conditioning import (
     CONDITIONING_NODES,
     ConditioningAverage,
@@ -22,6 +25,8 @@ from dinkster_nodes_comfy.conditioning import (
     ConditioningSetTimestepRange,
     ConditioningZeroOut,
 )
+
+from dinkster.compose import PackSpec, ServingComposer
 
 
 @pytest.fixture
@@ -232,3 +237,131 @@ def test_zero_out_zeros_all_supported_payloads_and_leaves_other_metadata(
         np.testing.assert_array_equal(result[0][1][key], np.zeros_like(source[0][1][key]))
     assert result[0][1]["keep"] == "metadata"
     np.testing.assert_array_equal(source[0][0], np.array([[[3.0, -4.0]]]))
+
+
+class ConditioningScalarSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="conditioning-fixture.source",
+            outputs=(OutputSpec("conditioning", TypeExpr.concrete("CONDITIONING")),),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        return {
+            "conditioning": [
+                [
+                    np.array([[3.0, -5.0]], dtype=np.float32),
+                    {"strength": 0.25, "tag": "source"},
+                ]
+            ]
+        }
+
+
+class ConditioningScalarInspector(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="conditioning-fixture.inspect",
+            inputs=(InputSpec("conditioning", TypeExpr.concrete("CONDITIONING")),),
+            outputs=(
+                OutputSpec("payload", TypeExpr.concrete("FLOAT")),
+                OutputSpec("strength", TypeExpr.concrete("FLOAT")),
+            ),
+        )
+
+    @classmethod
+    def execute(cls, conditioning: object) -> dict[str, object]:
+        record = cast(list[list[Any]], conditioning)[0]
+        return {"payload": float(record[0][0][1]), "strength": float(record[1]["strength"])}
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_manifest_links_raw_conditioning_through_the_resident_codec_without_host_types(
+    tmp_path: Path, in_process: bool
+) -> None:
+    async def scenario() -> None:
+        composer = ServingComposer(worker_env={"PYTHONPATH": str(Path(__file__).parent)})
+        try:
+            manifest = (
+                Path(__file__).resolve().parents[1]
+                / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+            )
+            (tmp_path / "conditioning_fixture_sources.py").write_text(
+                "from test_comfy_conditioning_nodes import ConditioningScalarInspector\n"
+                "from test_comfy_conditioning_nodes import ConditioningScalarSource\n"
+                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "NODES = (*COMFY_NODES, ConditioningScalarSource, ConditioningScalarInspector)\n",
+                encoding="ascii",
+            )
+            source_manifest = tmp_path / "dinkster-pack.toml"
+            source_manifest.write_text(
+                manifest.read_text(encoding="ascii")
+                .replace("namespaces = [", 'namespaces = ["conditioning-fixture",')
+                .replace("dinkster_nodes_comfy:COMFY_NODES", "conditioning_fixture_sources:NODES")
+                .replace(
+                    "dinkster_nodes_comfy:register_inference_types",
+                    "conditioning_fixture_sources:register_inference_types",
+                ),
+                encoding="ascii",
+            )
+            await composer.add_pack(PackSpec(manifest=source_manifest, in_process=in_process))
+            nodes = {
+                "source": GraphNode("conditioning-fixture.source"),
+                "source_inspect": GraphNode(
+                    "conditioning-fixture.inspect",
+                    {"conditioning": Link("source", "conditioning")},
+                ),
+                "strength": GraphNode(
+                    "ConditioningSetAreaStrength",
+                    {
+                        "conditioning": Link("source", "conditioning"),
+                        "strength": 3.5,
+                    },
+                ),
+                "strength_inspect": GraphNode(
+                    "conditioning-fixture.inspect",
+                    {"conditioning": Link("strength", "CONDITIONING")},
+                ),
+            }
+            outputs = ["source_inspect", "strength_inspect"]
+            if in_process:
+                outputs.append("source")
+            else:
+                nodes["low_strength"] = GraphNode(
+                    "ConditioningSetAreaStrength",
+                    {
+                        "conditioning": Link("source", "conditioning"),
+                        "strength": 0.125,
+                    },
+                )
+                nodes["low_strength_inspect"] = GraphNode(
+                    "conditioning-fixture.inspect",
+                    {"conditioning": Link("low_strength", "CONDITIONING")},
+                )
+                outputs.append("low_strength_inspect")
+            result = await composer.composition.make_engine(lambda _event: None).run(
+                Graph(nodes=nodes),
+                outputs,
+            )
+            strength_output = result.outputs["strength_inspect"]
+            assert strength_output["payload"].resolve() == -5.0
+            assert strength_output["strength"].resolve() == 3.5
+            source_output = result.outputs["source_inspect"]
+            assert source_output["payload"].resolve() == -5.0
+            assert source_output["strength"].resolve() == 0.25
+            if in_process:
+                source = cast(list[list[Any]], result.outputs["source"]["conditioning"].resolve())
+                np.testing.assert_array_equal(
+                    source[0][0], np.array([[3.0, -5.0]], dtype=np.float32)
+                )
+                assert source[0][1] == {"strength": 0.25, "tag": "source"}
+            else:
+                low_strength_output = result.outputs["low_strength_inspect"]
+                assert low_strength_output["payload"].resolve() == -5.0
+                assert low_strength_output["strength"].resolve() == 0.125
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
