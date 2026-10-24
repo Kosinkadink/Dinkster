@@ -16,5 +16,13 @@ Native SIGMAS tensors cross worker boundaries as canonical tensor records,
 preserving their dtype, shape, bytes, and fingerprint. Legacy schedule
 settings remain supported.
 
+EasyCache and LazyCache patch a model for approximate denoiser-result reuse
+during a configured portion of sampling.
+
 Native scheduler nodes provide Basic, Karras, Exponential, Polyexponential,
 Laplace, VP, beta sampling, and SD Turbo sigma schedules.
+
+Runtime samplers and noise generators can connect nodes in their holding
+worker without serializing callables or losing sampler options and seeds.
+Portable sampling selections remain supported. Runtime handles cannot be
+resolved in another worker or after their resident state is released.

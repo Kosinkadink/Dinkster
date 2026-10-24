@@ -78,8 +78,12 @@ def test_video_latent_schemas_match_the_fixed_reference_contract() -> None:
 
 
 def test_video_latent_transform_schemas_match_the_fixed_reference_contract() -> None:
-    trim, freeze = VIDEO_LATENT_OPERATION_NODES
-    trim_schema, freeze_schema = trim.schema(), freeze.schema()
+    trim, freeze, normalize = VIDEO_LATENT_OPERATION_NODES
+    trim_schema, freeze_schema, normalize_schema = (
+        trim.schema(),
+        freeze.schema(),
+        normalize.schema(),
+    )
 
     assert (trim_schema.node_type, trim_schema.display_name, trim_schema.category) == (
         "TrimVideoLatent",
@@ -103,6 +107,25 @@ def test_video_latent_transform_schemas_match_the_fixed_reference_contract() -> 
     )
     assert [input_spec.id for input_spec in freeze_schema.inputs] == ["latent"]
     assert [output.id for output in freeze_schema.outputs] == ["latent"]
+
+    assert (
+        normalize_schema.node_type,
+        normalize_schema.display_name,
+        normalize_schema.category,
+    ) == (
+        "NormalizeVideoLatentStart",
+        "NormalizeVideoLatentStart",
+        "model/conditioning",
+    )
+    assert [input_spec.id for input_spec in normalize_schema.inputs] == [
+        "latent",
+        "start_frame_count",
+        "reference_frame_count",
+    ]
+    for input_spec, default in zip(normalize_schema.inputs[1:], (4, 5), strict=True):
+        widget = cast(NumberWidget, input_spec.widget)
+        assert (input_spec.default, widget.min, widget.max, widget.step) == (default, 1, 16384, 1)
+    assert [output.id for output in normalize_schema.outputs] == ["latent"]
 
     for node in VIDEO_LATENT_OPERATION_NODES:
         assert node in COMFY_NODES
