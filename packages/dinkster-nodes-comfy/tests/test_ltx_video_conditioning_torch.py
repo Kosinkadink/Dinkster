@@ -2,12 +2,38 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
+from pathlib import Path
+
+import pytest
 import torch
+from dinkster_api.v1 import (
+    CONDITIONING_TYPE,
+    CORE_STRING,
+    IMAGE_TYPE,
+    LATENT_TYPE,
+    VAE_TYPE,
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+    materialize_latent,
+)
+from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.ltx_video_conditioning import (
     LTXVConditioning,
     LTXVImgToVideo,
     LTXVImgToVideoInplace,
 )
+
+from dinkster.compose import PackSpec, ServingComposer
+
+_CONDITIONING = TypeExpr.concrete(CONDITIONING_TYPE)
+_IMAGE = TypeExpr.concrete(IMAGE_TYPE)
+_LATENT = TypeExpr.concrete(LATENT_TYPE)
+_VAE = TypeExpr.concrete(VAE_TYPE)
 
 
 class VAE:
@@ -118,3 +144,144 @@ def test_inplace_creates_float32_noise_mask_and_conditioning_preserves_inputs() 
     assert negative == [["b", {"old": 2}]]
     assert output["positive"] == [["a", {"old": 1, "frame_rate": 23.976}]]
     assert output["negative"] == [["b", {"old": 2, "frame_rate": 23.976}]]
+
+
+class LTXSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="ltx-video-conditioning-fixture.source",
+            outputs=(
+                OutputSpec("vae", _VAE),
+                OutputSpec("image", _IMAGE),
+                OutputSpec("positive", _CONDITIONING),
+                OutputSpec("negative", _CONDITIONING),
+                OutputSpec("latent", _LATENT),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        return cls.outputs(
+            vae=VAE(),
+            image=_image(),
+            positive=[["positive", {"keep": "positive"}]],
+            negative=[["negative", {"keep": "negative"}]],
+            latent={"samples": torch.full((1, 128, 3, 1, 1), 7.0)},
+        )
+
+
+class LTXConsumer(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="ltx-video-conditioning-fixture.consumer",
+            inputs=(
+                InputSpec("positive", _CONDITIONING),
+                InputSpec("negative", _CONDITIONING),
+                InputSpec("latent", _LATENT),
+            ),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, positive: object, negative: object, latent: object) -> dict[str, object]:
+        value = materialize_latent(latent)
+        samples, noise_mask = value["samples"], value["noise_mask"]
+        assert tuple(samples.shape) == (1, 128, 3, 1, 1)
+        assert samples.dtype is torch.float32
+        assert samples.device.type == "cpu"
+        assert torch.equal(samples[0, 0, :, 0, 0], torch.tensor([0.0, 1.0, 2.0]))
+        assert noise_mask.dtype is torch.float32
+        assert torch.equal(noise_mask[0, 0, :, 0, 0], torch.full((3,), 0.5))
+        assert positive == [["positive", {"keep": "positive", "frame_rate": 29.97}]]
+        assert negative == [["negative", {"keep": "negative", "frame_rate": 29.97}]]
+        return cls.outputs(summary="ltx-video-conditioning")
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_ltx_video_conditioning_executes_twice_through_both_production_hosts(
+    tmp_path: Path, in_process: bool
+) -> None:
+    async def scenario() -> None:
+        source_root = Path(__file__).resolve().parents[1] / "src"
+        composer = ServingComposer(
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "PYTHONPATH": os.pathsep.join((str(Path(__file__).parent), str(source_root))),
+            }
+        )
+        try:
+            manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+            (tmp_path / "ltx_video_conditioning_fixture.py").write_text(
+                "from test_ltx_video_conditioning_torch import LTXConsumer, LTXSource\n"
+                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "NODES = (*COMFY_NODES, LTXSource, LTXConsumer)\n",
+                encoding="ascii",
+            )
+            fixture = tmp_path / "dinkster-pack.toml"
+            fixture.write_text(
+                manifest.read_text(encoding="ascii")
+                .replace("namespaces = [", 'namespaces = ["ltx-video-conditioning-fixture",')
+                .replace("dinkster_nodes_comfy:COMFY_NODES", "ltx_video_conditioning_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy:register_inference_types",
+                    "ltx_video_conditioning_fixture:register_inference_types",
+                ),
+                encoding="ascii",
+            )
+            await composer.add_pack(PackSpec(manifest=fixture, in_process=in_process))
+            engine = composer.composition.make_engine(lambda _event: None)
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("ltx-video-conditioning-fixture.source"),
+                    "create": GraphNode(
+                        "LTXVImgToVideo",
+                        {
+                            "positive": Link("source", "positive"),
+                            "negative": Link("source", "negative"),
+                            "vae": Link("source", "vae"),
+                            "image": Link("source", "image"),
+                            "width": 32,
+                            "height": 32,
+                            "length": 17,
+                            "batch_size": 1,
+                            "strength": 0.25,
+                        },
+                    ),
+                    "inplace": GraphNode(
+                        "LTXVImgToVideoInplace",
+                        {
+                            "vae": Link("source", "vae"),
+                            "image": Link("source", "image"),
+                            "latent": Link("create", "latent"),
+                            "strength": 0.5,
+                            "bypass": False,
+                        },
+                    ),
+                    "conditioning": GraphNode(
+                        "LTXVConditioning",
+                        {
+                            "positive": Link("source", "positive"),
+                            "negative": Link("source", "negative"),
+                            "frame_rate": 29.97,
+                        },
+                    ),
+                    "consumer": GraphNode(
+                        "ltx-video-conditioning-fixture.consumer",
+                        {
+                            "positive": Link("conditioning", "positive"),
+                            "negative": Link("conditioning", "negative"),
+                            "latent": Link("inplace", "latent"),
+                        },
+                    ),
+                }
+            )
+            for _ in range(2):
+                result = await engine.run(graph, ["consumer"])
+                assert result.outputs["consumer"]["summary"].resolve() == "ltx-video-conditioning"
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
