@@ -43,6 +43,9 @@
 - Native loop boundaries expand simple counts, For ranges, and typed lists
   into run-local body occurrences. They carry values between iterations,
   collect final or accumulated results, and preserve nested occurrence identity.
+  Absent termination dependencies still complete the loop; an absent collected
+  output propagates absence instead of leaving the closing boundary waiting.
+  Loops can read enclosing region ports, and pending regions can be inhibited.
 - User-declared expression outputs with stable IDs, editable names, and
   independently selected integer, float, boolean, or string outputs
 - Entry-list fan-out with edit-time output count and types. Each entry carries

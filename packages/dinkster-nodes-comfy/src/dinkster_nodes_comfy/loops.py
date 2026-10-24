@@ -35,7 +35,9 @@ ITEM = TypeExpr.variable("list_item")
 CARRY = TypeExpr.variable("carried_value")
 OUTPUT = TypeExpr.variable("output_value")
 DEPENDENCIES = InputFamilySpec(
-    "dependencies", (InputSpec("dependency", ANY, hidden=True),), member_prefix="dependency"
+    "dependencies",
+    (InputSpec("dependency", ANY, hidden=True, on_absent="accept"),),
+    member_prefix="dependency",
 )
 
 
@@ -336,7 +338,7 @@ class LoopResult(Node):
             category="sd",
             inputs=(
                 InputSpec("close_id", STRING, widget=StringWidget(multiline=False)),
-                InputSpec("result", TypeExpr.list_of(ANY), hidden=True),
+                InputSpec("result", TypeExpr.list_of(ANY), hidden=True, on_absent="accept"),
                 InputSpec("progress", INT, required=False, hidden=True),
             ),
             input_families=(DEPENDENCIES,),
@@ -377,7 +379,7 @@ class EndLoop(Node):
                     required=False,
                 ),
             ),
-            outputs=(OutputSpec("outputs", TypeExpr.list_of(OUTPUT)),),
+            outputs=(OutputSpec("outputs", TypeExpr.list_of(OUTPUT), optional=True),),
             execution_context=True,
         )
 

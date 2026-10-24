@@ -7,15 +7,24 @@ from pathlib import Path
 import pytest
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
-from dinkster_graph import Graph, GraphNode, Link, TypedLiteral
+from dinkster_graph import Graph, GraphNode, Link, RegionNode, RegionOutput, TypedLiteral
 from dinkster_memory import GovernorReservationService, MemoryGovernor, ReservationRequest
 from dinkster_nodes_comfy.loops import LOOP_NODES
 from dinkster_nodes_comfy.math import ComfyMathExpression
 from dinkster_nodes_comfy.primitive import PrimitiveBoolean, PrimitiveInt
 from dinkster_nodes_comfy.switch import ComfySwitchNode
 from dinkster_nodes_foundation.lists import ListElement, MakeList
-from dinkster_schema import Node, NodeSchema, OutputSpec, TypeExpr, build_node_types, build_schemas
-from dinkster_values import TypeRegistry, ValueMeta, list_children, register_core_types
+from dinkster_schema import (
+    ABSENT,
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+    build_node_types,
+    build_schemas,
+)
+from dinkster_values import TypeRegistry, ValueMeta, is_absent, list_children, register_core_types
 from dinkster_workers import GovernedWorker, InProcessWorker, IsolatedWorker
 
 NODES = (
@@ -291,3 +300,88 @@ def test_loop_collection_preserves_child_envelopes() -> None:
     assert children is not None and len(children) == 1
     assert children[0].meta == value.meta
     assert children[0].fingerprint == value.fingerprint
+
+
+@pytest.mark.parametrize("cache_enabled", [False, True])
+@pytest.mark.parametrize("absent_input", ["output_value", "terminations.0"])
+def test_absent_loop_dependency_completes(cache_enabled: bool, absent_input: str) -> None:
+    class Empty(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            integer = TypeExpr.concrete("INT")
+            return NodeSchema(
+                "test.empty",
+                inputs=(InputSpec("index", integer),),
+                outputs=(OutputSpec("value", integer, optional=True),),
+            )
+
+        @classmethod
+        def execute(cls, index: int):
+            return cls.outputs(value=ABSENT)
+
+    nodes = (*NODES, Empty)
+    registry = TypeRegistry()
+    register_core_types(registry)
+    engine = Engine(
+        schemas=build_schemas(nodes),
+        registry=registry,
+        worker=InProcessWorker(build_node_types(nodes), registry),
+        cache=MemoryLRUCache(),
+    )
+    graph = Graph(
+        {
+            "start": GraphNode(
+                "StartLoop", {"mode.num_iterations": 1}, slot_variants={"mode": "simple"}
+            ),
+            "empty": GraphNode("test.empty", {"index": Link("start", "iteration_index")}),
+            "end": GraphNode(
+                "EndLoop",
+                {
+                    "output_value": Link("start", "iteration_index"),
+                    absent_input: Link("empty", "value"),
+                },
+            ),
+        }
+    )
+
+    async def scenario() -> None:
+        for _ in range(2):
+            result = await asyncio.wait_for(
+                engine.run(graph, ["end"], cache_enabled=cache_enabled), 3
+            )
+            output = result.outputs["end"]["outputs"]
+            if absent_input == "output_value":
+                assert is_absent(output)
+            else:
+                assert output.resolve() == [0]
+
+    asyncio.run(scenario())
+
+
+def test_loop_inside_map_can_override_its_end() -> None:
+    body = Graph(
+        {
+            "start": GraphNode(
+                "StartLoop",
+                {"mode.num_iterations": Link("$region", "count")},
+                slot_variants={"mode": "simple"},
+            ),
+            "end": GraphNode(
+                "EndLoop", {"output_value": Link("start", "iteration_index"), "accumulate": True}
+            ),
+        }
+    )
+    graph = Graph(
+        {
+            "region": RegionNode(
+                kind="map",
+                ports={"count": TypeExpr.concrete("INT")},
+                inputs={"count": [2]},
+                element_ports=("count",),
+                body=body,
+                outputs={"values": RegionOutput(Link("end", "outputs"))},
+            )
+        }
+    )
+    result = asyncio.run(asyncio.wait_for(make_engine().run(graph, ["region"]), 3))
+    assert result.outputs["region"]["values"].resolve() == [[0, 1]]

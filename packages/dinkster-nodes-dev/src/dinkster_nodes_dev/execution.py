@@ -321,6 +321,34 @@ class ExecutionAdmissionSource(ExecutionValue):
         return cls.outputs(value=value)
 
 
+class ExecutionFloatValue(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dev.execution.float_value",
+            inputs=(InputSpec("value", FLOAT),),
+            outputs=(OutputSpec("value", FLOAT),),
+        )
+
+    @classmethod
+    def execute(cls, *, value: float) -> Mapping[str, object]:
+        return cls.outputs(value=value)
+
+
+class ExecutionMaskSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dev.execution.mask_source",
+            inputs=(InputSpec("value", FLOAT),),
+            outputs=(OutputSpec("value", TypeExpr.concrete("MASK")),),
+        )
+
+    @classmethod
+    def execute(cls, *, value: float) -> Mapping[str, object]:
+        raise AssertionError("MASK source must be rejected before execution")
+
+
 class ExecutionAdmission(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -347,6 +375,29 @@ class ExecutionAdmission(Node):
         return cls.outputs(value=value)
 
 
+class ExecutionAdmissionKwargs(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dev.execution.admission_kwargs",
+            inputs=(InputSpec("input1", FLOAT), InputSpec("input2", FLOAT)),
+            outputs=(OutputSpec("value", FLOAT),),
+            admission_validation=True,
+        )
+
+    @classmethod
+    def validate_admission(
+        cls, *, literal_inputs: Mapping[str, object], linked_input_types: Mapping[str, str]
+    ) -> str | None:
+        if literal_inputs.get("input2") == 7.0:
+            return "7s are not allowed. I've never liked 7s."
+        return None
+
+    @classmethod
+    def execute(cls, *, input1: float, input2: float) -> Mapping[str, object]:
+        return cls.outputs(value=input1 * input2)
+
+
 EXECUTION_NODES: tuple[type[Node], ...] = (
     ExecutionValue,
     ExecutionAdd,
@@ -363,5 +414,8 @@ EXECUTION_NODES: tuple[type[Node], ...] = (
     TestForLoopOpen,
     ExecutionFail,
     ExecutionAdmissionSource,
+    ExecutionFloatValue,
+    ExecutionMaskSource,
     ExecutionAdmission,
+    ExecutionAdmissionKwargs,
 )

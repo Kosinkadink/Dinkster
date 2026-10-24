@@ -2133,6 +2133,7 @@ class Engine:
                     admitted,
                     known_types=self._runtime().known_types or self._registry,
                     loop_pairs=controls.loop_pairs,
+                    ports=region_ports,
                 )
                 if has_errors(diagnostics):
                     raise ValueError(f"invalid run override for {target!r}: {diagnostics}")
@@ -2320,13 +2321,18 @@ class Engine:
                     break
             node = graph.nodes[node_id]
             if node_id in inhibited:
+                output_types = (
+                    region_interface(node, self._schemas_for(run_id))
+                    if isinstance(node, RegionNode)
+                    else {output.id: output.type for output in effective[node_id].outputs}
+                )
                 produced[node_id] = {
-                    output.id: make_absent_value(
+                    output_id: make_absent_value(
                         origin=prefix + node_id,
                         reason="",
-                        stands_for=output.type.runtime_type_id(),
+                        stands_for=None if output_type is None else output_type.runtime_type_id(),
                     )
-                    for output in effective[node_id].outputs
+                    for output_id, output_type in output_types.items()
                 }
                 skipped.append(prefix + node_id)
                 self._emit(

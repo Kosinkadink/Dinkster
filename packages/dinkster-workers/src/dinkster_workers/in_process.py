@@ -1132,6 +1132,9 @@ class InProcessWorker:
                 )
                 continue
             if isinstance(returned_value, Value):
+                if out.optional and is_absent(returned_value):
+                    outputs[out.id] = returned_value
+                    continue
                 if (
                     returned_value.type_id != expected
                     if expected is not None

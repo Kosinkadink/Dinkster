@@ -9,7 +9,7 @@ from typing import Any, cast
 import pytest
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
-from dinkster_graph import Graph, GraphNode, Link
+from dinkster_graph import Graph, GraphNode, Link, RegionNode, RegionOutput
 from dinkster_memory import GovernorReservationService, MemoryGovernor, ReservationRequest
 from dinkster_schema import (
     InputSpec,
@@ -160,6 +160,51 @@ def test_run_value_wait_releases_execution_and_memory_admission(governed: bool) 
                 await Waiter.saved.publish_run_value("waiter", {})
 
     asyncio.run(scenario())
+
+
+def test_inhibit_pending_region_produces_typed_absence() -> None:
+    class RegionController(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                "control.region",
+                outputs=(OutputSpec("value", INT),),
+                execution_context=True,
+                may_expand_graph=True,
+            )
+
+        @classmethod
+        async def execute(cls, execution_context: RunExecutionContext) -> dict[str, object]:
+            await execution_context.inhibit(["region"])
+            return {"value": 7}
+
+    nodes = [*NODES, RegionController]
+    registry = TypeRegistry()
+    register_core_types(registry)
+    engine = Engine(
+        schemas=build_schemas(nodes),
+        worker=InProcessWorker(build_node_types(nodes), registry),
+        cache=MemoryLRUCache(),
+        registry=registry,
+    )
+    graph = Graph(
+        {
+            "controller": GraphNode("control.region"),
+            "region": RegionNode(
+                kind="map",
+                ports={"item": INT, "control": INT},
+                inputs={"item": [1, 2], "control": Link("controller", "value")},
+                element_ports=("item",),
+                body=Graph({"body": GraphNode("control.pass", {"value": Link("$region", "item")})}),
+                outputs={"values": RegionOutput(Link("body", "value"))},
+            ),
+        }
+    )
+    result = asyncio.run(asyncio.wait_for(engine.run(graph, ["region"]), 3))
+    assert is_absent(result.outputs["region"]["values"])
+    assert result.outputs["region"]["values"].meta.get("absent.standsFor") == "list<INT>"
+    assert result.skipped == ("region",)
+    assert not any("body" in node for node in result.executed)
 
 
 def test_control_graph_edits_are_validated_immutable_and_run_local() -> None:
