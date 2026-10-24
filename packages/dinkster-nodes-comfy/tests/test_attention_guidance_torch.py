@@ -188,6 +188,31 @@ def test_active_callbacks_use_pinned_runtime_modules_and_preserve_sources(
     assert original_calc is not _controlled_calc
 
 
+@pytest.mark.parametrize("shape", ((1, 1, 5, 5), (1, 1, 5, 20)))
+@pytest.mark.parametrize("above_threshold", (False, True))
+def test_sag_stored_callback_handles_a_one_by_one_attention_grid(
+    monkeypatch: pytest.MonkeyPatch, shape: tuple[int, int, int, int], above_threshold: bool
+) -> None:
+    _, _, samplers = _runtime()
+    monkeypatch.setattr(samplers, "calc_cond_batch", _controlled_calc)
+    source = Patcher()
+    q_tokens = 4 if above_threshold else 1
+    q = _asymmetric((2, q_tokens, 2), 1.0)
+    k = _asymmetric((2, 1, 2), -3.0)
+    v = _asymmetric((2, 1, 2), 9.0)
+    model = SelfAttentionGuidance.execute(model=source, scale=0.6, blur_sigma=1.5)["MODEL"]
+    model.attention(q, k, v, {"n_heads": 1, "cond_or_uncond": [0, 1], "attn_precision": None})
+    denoised = _asymmetric(shape, -8.0)
+    args = _post_args(denoised, 5.0)
+    actual = model.post[0](args)
+    degraded = _blur(args["uncond_denoised"], 1.5) if above_threshold else args["uncond_denoised"]
+    expected = (
+        denoised
+        + (degraded - ((degraded + args["input"] - args["uncond_denoised"]) * 0.25 - 3.0)) * 0.6
+    )
+    torch.testing.assert_close(actual, expected)
+
+
 def test_skip_layer_callbacks_cover_windows_rescaling_and_missing_uncond(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

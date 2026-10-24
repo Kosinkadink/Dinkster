@@ -88,16 +88,19 @@ def _create_blur_map(x0: Any, attention: Any, sigma: float, threshold: float) ->
     attention = attention.reshape(batch, -1, height_width_1, height_width_2)
     mask = attention.mean(1, keepdim=False).sum(1, keepdim=False) > threshold
     total = mask.shape[-1]
-    x = round(math.sqrt((latent_height / latent_width) * total))
-    for offset in range(math.floor(math.sqrt(total) / 2)):
-        for candidate in (x + offset, max(1, x - offset)):
-            if total % candidate == 0:
-                x = candidate
-                break
-        else:
-            continue
-        break
-    y = total // x
+    if total == 1:
+        x, y = 1, 1
+    else:
+        x = round(math.sqrt((latent_height / latent_width) * total))
+        for offset in range(math.floor(math.sqrt(total) / 2)):
+            for candidate in (x + offset, max(1, x - offset)):
+                if total % candidate == 0:
+                    x = candidate
+                    break
+            else:
+                continue
+            break
+        y = total // x
     mask = mask.reshape(batch, x, y).unsqueeze(1).type(attention.dtype)
     functional = importlib.import_module("torch.nn.functional")
     mask = functional.interpolate(mask, (latent_height, latent_width))
