@@ -191,6 +191,7 @@ namespaces = [
     "ConditioningTimestepsRange",
     "InstructPixToPixConditioning",
     "ReferenceLatent",
+    "ReferenceMultiLatent",
     "VAEEncodeForInpaint",
     "InpaintModelConditioning",
     "ControlNetApply",
