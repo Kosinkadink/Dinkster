@@ -109,7 +109,14 @@ class EmptyHunyuanLatentVideo(Node):
         initialize_inference_process()
         return cls.outputs(
             LATENT=_empty_video_latent(
-                batch_size, 16, length, 4, height, width, 8, downscale_ratio_spacial=8
+                batch_size,
+                16,
+                length,
+                4,
+                height,
+                width,
+                8,
+                downscale_ratio_spacial=8,
             )
         )
 
@@ -135,7 +142,14 @@ class EmptyHunyuanVideo15Latent(Node):
         initialize_inference_process()
         return cls.outputs(
             LATENT=_empty_video_latent(
-                batch_size, 32, length, 4, height, width, 16, downscale_ratio_spacial=16
+                batch_size,
+                32,
+                length,
+                4,
+                height,
+                width,
+                16,
+                downscale_ratio_spacial=16,
             )
         )
 
@@ -164,7 +178,14 @@ class EmptyLTXVLatentVideo(Node):
         initialize_inference_process()
         return cls.outputs(
             LATENT=_empty_video_latent(
-                batch_size, 128, length, 8, height, width, 32, downscale_ratio_spacial=32
+                batch_size,
+                128,
+                length,
+                8,
+                height,
+                width,
+                32,
+                downscale_ratio_spacial=32,
             )
         )
 
