@@ -125,6 +125,8 @@ def test_wan_block_swap_is_a_deprecated_identity_node() -> None:
 
 
 class CompileModelSource(Node):
+    original_compile: Any = None
+
     @classmethod
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
@@ -134,7 +136,16 @@ class CompileModelSource(Node):
 
     @classmethod
     def execute(cls) -> Mapping[str, object]:
-        torch.compile = lambda _model, **_kwargs: torch.nn.Identity()
+        cls.original_compile = torch.compile
+
+        def compile_seam(_model: torch.nn.Module, **_kwargs: object) -> torch.nn.Module:
+            try:
+                return torch.nn.Identity()
+            finally:
+                torch.compile = cls.original_compile
+                cls.original_compile = None
+
+        torch.compile = compile_seam
         return cls.outputs(MODEL=_model_patcher())
 
 
@@ -151,15 +162,22 @@ class CompileModelConsumer(Node):
     def execute(cls, *, model: Any) -> Mapping[str, object]:
         from dinkster_inference.patcher_extension import WrapperExecutor
 
-        value = torch.tensor([[-3.0, 5.0]])
-        wrapper = model.wrappers["apply_model"]["torch.compile"][-1]
-        original = model.model.diffusion_model
-        executor = WrapperExecutor.new_class_executor(
-            lambda current: model.model.diffusion_model(current), model.model, [wrapper]
-        )
-        result = executor.execute(value)
-        assert model.model.diffusion_model is original
-        return cls.outputs(value=float(result.sum()))
+        try:
+            value = torch.tensor([[-3.0, 5.0]])
+            wrapper = model.wrappers["apply_model"]["torch.compile"][-1]
+            original = model.model.diffusion_model
+            executor = WrapperExecutor.new_class_executor(
+                lambda current: model.model.diffusion_model(current), model.model, [wrapper]
+            )
+            result = executor.execute(value)
+            assert torch.equal(result, value)
+            assert model.model.diffusion_model is original
+            assert model.model_options["torch_compile_kwargs"]["backend"] == "inductor"
+            return cls.outputs(value=float(result.sum()))
+        finally:
+            if CompileModelSource.original_compile is not None:
+                torch.compile = CompileModelSource.original_compile
+                CompileModelSource.original_compile = None
 
 
 COMPILE_FIXTURE_NODES = (CompileModelSource, CompileModelConsumer)
@@ -179,27 +197,48 @@ def test_ordinary_manifest_executes_compile_and_noop_nodes_twice(
                 "PYTHONPATH": str(Path(__file__).parent),
             }
         )
+        original_compile = torch.compile
         try:
             manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
             module = "compile_fixture_" + str(in_process)
             (tmp_path / f"{module}.py").write_text(
                 "from test_compile_torch import COMPILE_FIXTURE_NODES\n"
-                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "NODES = (*COMFY_NODES, *COMPILE_FIXTURE_NODES)\n",
+                "from dinkster_nodes_comfy import register_inference_types\n"
+                "NODES = COMPILE_FIXTURE_NODES\n",
                 encoding="ascii",
             )
-            fixture_manifest = tmp_path / "dinkster-pack.toml"
+            fixture_manifest = tmp_path / "compile-fixture-dinkster-pack.toml"
             fixture_manifest.write_text(
-                manifest.read_text(encoding="ascii")
-                .replace("namespaces = [", 'namespaces = ["compile-fixture",')
-                .replace("dinkster_nodes_comfy:COMFY_NODES", f"{module}:NODES")
-                .replace(
-                    "dinkster_nodes_comfy:register_inference_types",
-                    f"{module}:register_inference_types",
-                ),
+                "[pack]\n"
+                'name = "compile-fixture"\n'
+                'publisher = "dinkster"\n'
+                'namespaces = ["compile-fixture"]\n'
+                "\n[pack.entry]\n"
+                f'nodes = "{module}:NODES"\n'
+                f'types = "{module}:register_inference_types"\n',
                 encoding="ascii",
             )
-            await composer.add_pack(PackSpec(manifest=fixture_manifest, in_process=in_process))
+            specs = (
+                (
+                    PackSpec(manifest=manifest, in_process=True),
+                    PackSpec(manifest=fixture_manifest, in_process=True),
+                )
+                if in_process
+                else (
+                    PackSpec(
+                        manifest=manifest,
+                        worker_group="compile-fixture",
+                        group_manifests=(manifest, fixture_manifest),
+                    ),
+                    PackSpec(
+                        manifest=fixture_manifest,
+                        worker_group="compile-fixture",
+                        group_manifests=(manifest, fixture_manifest),
+                    ),
+                )
+            )
+            for spec in specs:
+                await composer.add_pack(spec)
             graph = Graph(
                 nodes={
                     "source": GraphNode("compile-fixture.source"),
@@ -214,10 +253,14 @@ def test_ordinary_manifest_executes_compile_and_noop_nodes_twice(
                 }
             )
             engine = composer.composition.make_engine(lambda _event: None)
-            for _ in range(2):
-                result = await engine.run(graph, ["consumer"])
-                assert result.outputs["consumer"]["value"].resolve() == 2.0
+            first = await engine.run(graph, ["consumer"])
+            assert first.outputs["consumer"]["value"].resolve() == 2.0
+            second = await engine.run(graph, ["consumer"])
+            assert second.outputs["consumer"]["value"].resolve() == 2.0
+            assert set(second.cached) == set(graph.nodes)
         finally:
+            torch.compile = original_compile
+            CompileModelSource.original_compile = None
             await composer.close()
 
     asyncio.run(scenario())
