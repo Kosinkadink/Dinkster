@@ -50,6 +50,7 @@ def engine_semantics(cls: type, source: str) -> list[str]:
 def output_contract(schema: Any) -> dict[str, Any]:
     """Project declared V3 names, not the V1 view's synthesized type labels."""
     return {
+        **({"display_name": schema.display_name} if schema.display_name is not None else {}),
         "return_names": [item.display_name for item in schema.outputs],
         "v3_outputs": [
             {"template": item.template.as_dict()} if hasattr(item, "template") else {}
