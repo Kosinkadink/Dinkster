@@ -5,6 +5,7 @@ from dinkster_api.v1 import register_inference_types
 from .clip import CLIP_NODES
 from .compositing import COMPOSITING_NODES
 from .conditioning import CONDITIONING_NODES
+from .controlnet import CONTROLNET_NODES
 from .freeu import FREEU_NODES
 from .image_core import IMAGE_CORE_NODES
 from .image_filters import IMAGE_FILTER_NODES
@@ -52,6 +53,7 @@ COMFY_NODES = (
     *VAE_NODES,
     *CONDITIONING_NODES,
     *INPAINT_NODES,
+    *CONTROLNET_NODES,
     *MASK_NODES,
     *COMPOSITING_NODES,
     *IMAGE_CORE_NODES,

@@ -7,4 +7,6 @@
   guide conditioning are unsupported.
 - Typed absence remains a Dinkster engine contract: `core.absent` values,
   optional outputs, per-input absence policies, and skip propagation.
+- Native ControlNet application supports both legacy and scheduled positive/negative
+  conditioning, prior-control chaining, union type selection, and AliMama masked hints.
 - Other model-family conditioning surfaces are unsupported.
