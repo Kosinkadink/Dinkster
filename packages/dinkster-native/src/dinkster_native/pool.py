@@ -651,6 +651,9 @@ def memory_consumers() -> dict[str, ResidentPool]:
 
 def resident_advisory_unload(obj: object) -> None:
     """Dispatch advisory VRAM pressure to the configured Comfy backend."""
+    patcher = getattr(obj, "patcher", obj)
+    if not hasattr(patcher, "load_device"):
+        return
     if _compat_unload is None:
         raise TypeError("foreign resident requires a configured compatibility unload hook")
     _compat_unload(obj)

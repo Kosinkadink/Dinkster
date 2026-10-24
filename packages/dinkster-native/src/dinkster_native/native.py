@@ -122,6 +122,7 @@ def register_native_types(registry: TypeRegistry) -> None:
         "CLIP",
         "VAE",
         "comfy.MODEL_PATCH",
+        "LATENT_OPERATION",
     ):
         _register_resident(registry, type_id)
 
