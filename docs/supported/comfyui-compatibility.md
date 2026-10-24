@@ -13,6 +13,8 @@
   clones the encoder without changing the source under exact core interfaces.
 - Ten native conditioning nodes combine, blend, concatenate, multiply, mask,
   zero, and set area or timestep metadata under their exact ComfyUI interfaces.
+- Native VAE inpainting encoding and model conditioning preserve crop, mask,
+  latent, and conditioning metadata behavior under exact ComfyUI interfaces.
 - Twelve native mask and composite nodes convert, create, invert, crop, combine,
   feather, grow, threshold, and composite images or latents under exact core IDs.
 - Six native core image nodes create, resize, invert, batch, and pad images for
