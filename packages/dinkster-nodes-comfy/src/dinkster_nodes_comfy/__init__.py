@@ -52,6 +52,7 @@ from .primitive import (
 )
 from .reference_conditioning import REFERENCE_CONDITIONING_NODES
 from .rope_and_mask import ROPE_AND_MASK_NODES
+from .sparse_attention import SPARSE_ATTENTION_NODES
 from .sigma_operations import SIGMA_OPERATION_NODES
 from .sigma_schedulers import SIGMA_SCHEDULER_NODES
 from .spatial_model_patches import SPATIAL_MODEL_PATCH_NODES
@@ -91,6 +92,7 @@ COMFY_NODES = (
     *SPATIAL_MODEL_PATCH_NODES,
     *ROPE_AND_MASK_NODES,
     *NOISE_GUIDANCE_NODES,
+    *SPARSE_ATTENTION_NODES,
     *SIGMA_OPERATION_NODES,
     *LATENT_NODES,
     *LATENT_ADVANCED_NODES,
