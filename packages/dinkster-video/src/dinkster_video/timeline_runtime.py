@@ -17,6 +17,7 @@ from dinkster_values import (
     media_semantics,
     video_from_source,
 )
+from dinkster_values.builtin_types import AUDIO_TYPE, VIDEO_TYPE
 from dinkster_values.curve import coerce_curve
 from dinkster_values.timeline_video import TimelineVideo
 from dinkster_values.video_document import TimelineError, json_bytes, source_video
@@ -107,7 +108,7 @@ class SourceMedia:
                 pixels = np.asarray(image.convert("RGBA"), dtype=np.float32) / 255.0
             yield start, pixels
             return
-        if reference["type"] != "comfy.VIDEO":
+        if reference["type"] != VIDEO_TYPE:
             raise TimelineError(
                 "unsupported_source", "$", "source needs the canonical layer adapter"
             )
@@ -131,7 +132,7 @@ class SourceMedia:
     ) -> Pixels:
         from .runtime import iter_video_audio
 
-        if reference["type"] == "comfy.AUDIO":
+        if reference["type"] == AUDIO_TYPE:
             import importlib
 
             audio: Any = importlib.import_module("dinkster_values.audio_codec")
@@ -147,7 +148,7 @@ class SourceMedia:
                 self.values[key] = source
             window = audio.audio_window(self.values[key], round(start * rate), count, batch_index=0)
             return np.asarray(window["waveform"][0], dtype=np.float32)
-        if reference["type"] != "comfy.VIDEO":
+        if reference["type"] != VIDEO_TYPE:
             raise TimelineError("unsupported_source", "$", "source needs canonical AUDIO adapter")
         value = edit_video(
             self.video(reference),

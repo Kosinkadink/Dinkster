@@ -35,6 +35,7 @@ from dinkster_schema import (
     TypeExpr,
     comfy_group_registry_to_wire,
 )
+from dinkster_values.builtin_types import BACKGROUND_REMOVAL_TYPE, BOUNDING_BOX_TYPE
 
 COMFY_REVISION = "c67885b1"
 REPO = Path(__file__).resolve().parent.parent
@@ -47,8 +48,8 @@ CLIP = TypeExpr.concrete("comfy.CLIP")
 CONDITIONING = TypeExpr.concrete("comfy.CONDITIONING")
 VAE = TypeExpr.concrete("comfy.VAE")
 SAM3_TRACK_DATA = TypeExpr.concrete("comfy.SAM3_TRACK_DATA")
-BACKGROUND_REMOVAL = TypeExpr.concrete("comfy.BACKGROUND_REMOVAL")
-BOUNDING_BOX = TypeExpr.concrete("comfy.BOUNDING_BOX")
+BACKGROUND_REMOVAL = TypeExpr.concrete(BACKGROUND_REMOVAL_TYPE)
+BOUNDING_BOX = TypeExpr.concrete(BOUNDING_BOX_TYPE)
 BOOLEAN = TypeExpr.concrete("BOOLEAN")
 COMBO = TypeExpr.concrete("COMBO")
 FLOAT = TypeExpr.concrete("FLOAT")

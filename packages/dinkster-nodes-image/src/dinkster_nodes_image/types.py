@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from typing import cast
 
 from dinkster_api.v1 import (
+    BOUNDING_BOX_TYPE,
+    COMFY_ARRAY_TYPE,
     DETECTION_TYPE,
     POSE_TYPE,
     REGION_TYPE,
@@ -416,7 +418,7 @@ def register_image_types(registry: TypeRegistry) -> None:
         )
     register_comfy_layers(registry)
     register_comfy_compositor(registry)
-    for type_id in ("comfy.BOUNDING_BOX", "comfy.ARRAY"):
+    for type_id in (BOUNDING_BOX_TYPE, COMFY_ARRAY_TYPE):
         if type_id not in registry:
             registry.register(type_id)
 

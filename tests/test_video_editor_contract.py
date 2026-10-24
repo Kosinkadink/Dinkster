@@ -14,6 +14,7 @@ import av
 import numpy as np
 import pytest
 from aiohttp import web
+from dinkster_api.v1 import VIDEO_TYPE
 from dinkster_assets import AssetRef, AssetVault, digest_bytes
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
@@ -310,7 +311,7 @@ def test_same_saved_editor_graph_in_process_shm_and_loopback_remote(
         assert isolated_result[0] == expected[0]
         np.testing.assert_array_equal(isolated_result[1], expected[1])
         assert any(
-            crossing.type_id == "comfy.VIDEO" and crossing.transport == "shm"
+            crossing.type_id == VIDEO_TYPE and crossing.transport == "shm"
             for diagnostic in diagnostics
             for crossing in (*diagnostic.inputs, *diagnostic.outputs)
         )

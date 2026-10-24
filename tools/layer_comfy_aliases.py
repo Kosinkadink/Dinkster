@@ -8,6 +8,7 @@ from pathlib import Path
 
 from dinkster_schema import InputSpec, NodeSchema, OutputSpec, TypeExpr, schema_to_wire
 from dinkster_schema.replace import rule_from_wire, rule_to_wire
+from dinkster_values.builtin_types import BOUNDING_BOX_TYPE
 
 REFERENCE = "f00bfd610cb001381603669e2cc01160ae37aaf3"
 
@@ -46,7 +47,7 @@ def layer_alias_data() -> tuple[list[NodeSchema], list[dict[str, object]]]:
             "dinkster.layers.from_bounding_boxes",
             (
                 image,
-                InputSpec("bboxes", TypeExpr.union("comfy.BOUNDING_BOX", "comfy.ARRAY", "STRING")),
+                InputSpec("bboxes", TypeExpr.union(BOUNDING_BOX_TYPE, "comfy.ARRAY", "STRING")),
                 mask,
                 layers,
                 port("crop_to_content", "BOOLEAN", True),

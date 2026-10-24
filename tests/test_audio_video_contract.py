@@ -13,7 +13,7 @@ import av
 import numpy as np
 import pytest
 from aiohttp import web
-from dinkster_api.v1 import ABSENT
+from dinkster_api.v1 import ABSENT, AUDIO_TYPE, VIDEO_TYPE
 from dinkster_assets import (
     AssetError,
     AssetRef,
@@ -530,8 +530,8 @@ def test_nested_audio_roundtrip_binds_without_decoding(tmp_path, monkeypatch, sa
     value = assemble_video(images, audio={"waveform": pcm, "sample_rate": 8000}, fps=8)
     monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "producer"))
     producer = TypeRegistry()
-    register_video_value_type(producer, "comfy.VIDEO")
-    wrapped = producer.wrap("comfy.VIDEO", value)
+    register_video_value_type(producer, VIDEO_TYPE)
+    wrapped = producer.wrap(VIDEO_TYPE, value)
     bound = wrapped.resolve()
     encoded = encode_video(bound)
     refs = cast(list[dict[str, Any]], wrapped.meta.get("asset_refs"))
@@ -592,7 +592,7 @@ def test_remote_audio_stages_once_and_decodes_exact_edited_window(tmp_path, monk
         try:
             registry = TypeRegistry()
             register_core_types(registry)
-            register_audio_value_type(registry, "comfy.AUDIO", asset.resolver)
+            register_audio_value_type(registry, AUDIO_TYPE, asset.resolver)
             register_media_types(registry)
             async with AudioHost() as endpoint:
                 worker = RemoteWorker(
@@ -612,7 +612,7 @@ def test_remote_audio_stages_once_and_decodes_exact_edited_window(tmp_path, monk
                             node_id="trim",
                             node_type="dinkster.audio.trim",
                             inputs={
-                                "audio": registry.wrap("comfy.AUDIO", source),
+                                "audio": registry.wrap(AUDIO_TYPE, source),
                                 "start": registry.wrap("FLOAT", 0.113),
                                 "duration": registry.wrap("FLOAT", 0.751),
                             },

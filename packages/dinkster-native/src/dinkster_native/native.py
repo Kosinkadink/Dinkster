@@ -15,6 +15,7 @@ from dinkster_inference_wire import register_inference_types
 from dinkster_inference_wire.sampling_wire import register_sampling_type
 from dinkster_schema import Node
 from dinkster_values import TypeRegistry, register_curve_type, register_model3d_type
+from dinkster_values.builtin_types import AUDIO_TYPE, MODEL_PATCH_TYPE
 
 from .audio import register_audio_type
 from .devices import comfy_resident_meta
@@ -121,7 +122,7 @@ def register_native_types(registry: TypeRegistry) -> None:
         "MODEL",
         "CLIP",
         "VAE",
-        "comfy.MODEL_PATCH",
+        MODEL_PATCH_TYPE,
         "LATENT_OPERATION",
     ):
         _register_resident(registry, type_id)
@@ -142,7 +143,7 @@ def register_native_types(registry: TypeRegistry) -> None:
     if registry.asset_decoder_for("IMAGE") is None:
         register_image_asset_providers(registry, "IMAGE")
 
-    if "comfy.AUDIO" not in registry:
-        register_audio_type(registry, "comfy.AUDIO")
+    if AUDIO_TYPE not in registry:
+        register_audio_type(registry, AUDIO_TYPE)
     if "dinkster.video" not in registry:
         register_video_type(registry, "dinkster.video")

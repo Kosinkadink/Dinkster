@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 from assetpack_nodes import ReadAssetInput
+from dinkster_api.v1 import AUDIO_TYPE
 from dinkster_assets import AssetVault, MountDef, MountTable, register_asset_type
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, ExecutionError
@@ -175,7 +176,7 @@ def test_held_job_asset_short_circuits_without_transfer(
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("media_type", [None, "comfy.AUDIO", "dinkster.layers", "custom.media"])
+@pytest.mark.parametrize("media_type", [None, AUDIO_TYPE, "dinkster.layers", "custom.media"])
 def test_assets_query_once_deduplicated(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, media_type: str | None
 ) -> None:

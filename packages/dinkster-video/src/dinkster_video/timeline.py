@@ -16,6 +16,7 @@ from dinkster_values import (
     coerce_video,
     edit_video,
 )
+from dinkster_values.builtin_types import VIDEO_TYPE
 from dinkster_values.video_document import (
     TimelineError,
     document,
@@ -161,7 +162,7 @@ def single_clip_video(value: object, media: TimelineMedia) -> dict[str, object] 
     ):
         return None
     reference = source_for(obj, item, "tracks.children[0].children[0]")
-    if reference["type"] != "comfy.VIDEO":
+    if reference["type"] != VIDEO_TYPE:
         return None
     return clip_video(media.video(reference), item)
 
@@ -431,7 +432,7 @@ def iter_timeline_frames(
                     end = start if placement.speed < 0 else placement.source_time(placement.end)
                     try:
                         media_end = None
-                        if reference["type"] == "comfy.VIDEO":
+                        if reference["type"] == VIDEO_TYPE:
                             duration = effective_video_facts(coerce_video(media.video(reference)))[
                                 "duration"
                             ]

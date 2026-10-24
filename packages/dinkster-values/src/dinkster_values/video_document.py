@@ -8,7 +8,7 @@ from collections.abc import Iterator, Mapping
 from fractions import Fraction
 from typing import Any, cast
 
-from .builtin_types import VIDEO_DOCUMENT_TYPE
+from .builtin_types import AUDIO_TYPE, IMAGE_TYPE, LAYERS_TYPE, VIDEO_DOCUMENT_TYPE, VIDEO_TYPE
 from .limits import MEBIBYTE
 from .model import stable_hash
 from .video_codec import asset_reference
@@ -20,7 +20,7 @@ DOCUMENT_TYPE = VIDEO_DOCUMENT_TYPE
 DOCUMENT_LIMIT = MEBIBYTE
 MAX_ITEMS = 4096
 MAX_DEPTH = 16
-MEDIA_TYPES = frozenset({"comfy.VIDEO", "IMAGE", "comfy.AUDIO", "dinkster.layers"})
+MEDIA_TYPES = frozenset({VIDEO_TYPE, IMAGE_TYPE, AUDIO_TYPE, LAYERS_TYPE})
 
 
 class TimelineError(ValueError):
@@ -224,7 +224,7 @@ def document(value: object) -> dict[str, Any]:
         raise TimelineError("document_limit", "sources", "at most 256 declared sources")
     for key, source in sources.items():
         ref = mapping(source, key)
-        if ref.get("type") == "comfy.VIDEO" and set(ref) == {"type", "video"}:
+        if ref.get("type") == VIDEO_TYPE and set(ref) == {"type", "video"}:
             source_video(ref)
         elif set(ref) == {"type", "asset"} and ref["type"] in MEDIA_TYPES:
             asset_reference(ref["asset"])
