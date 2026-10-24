@@ -25,8 +25,10 @@ from dinkster_api.v1 import (
     Node,
     NodeSchema,
     OutputSpec,
+    RunExecutionContext,
     TypeExpr,
 )
+from dinkster_values import list_children
 
 INT = TypeExpr.concrete(CORE_INT)
 T = TypeExpr.variable("T")
@@ -45,11 +47,14 @@ class MakeList(Node):
             input_families=(InputFamilySpec("items", T, min_members=1),),
             outputs=(OutputSpec("list", LIST_T),),
             aliases=("CreateList",),
+            execution_context=True,
         )
 
     @classmethod
-    def execute(cls, *, items: Mapping[str, object]) -> Mapping[str, object]:
-        return cls.outputs(list=list(items.values()))
+    def execute(
+        cls, *, items: Mapping[str, object], execution_context: RunExecutionContext
+    ) -> Mapping[str, object]:
+        return cls.outputs(list=[execution_context.inputs[f"items.{name}"] for name in items])
 
 
 class AppendToList(Node):
@@ -101,12 +106,17 @@ class ListElement(Node):
             category="list",
             inputs=(InputSpec("list", LIST_T), InputSpec("index", INT, default=0)),
             outputs=(OutputSpec("item", T),),
+            execution_context=True,
         )
 
     @classmethod
-    def execute(cls, *, list: Sequence[object], index: int) -> Mapping[str, object]:
+    def execute(
+        cls, *, list: Sequence[object], index: int, execution_context: RunExecutionContext
+    ) -> Mapping[str, object]:
+        children = list_children(execution_context.inputs["list"])
+        assert children is not None
         try:
-            item = list[index]
+            item = children[index]
         except IndexError:
             raise ValueError(f"index {index} out of range for a list of {len(list)}") from None
         return cls.outputs(item=item)

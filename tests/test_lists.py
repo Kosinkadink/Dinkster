@@ -177,6 +177,8 @@ def test_make_list_value_rejects_mismatched_children() -> None:
     child = registry.wrap(CORE_INT, 1)
     with pytest.raises(ValueError):
         make_list_value("FLOAT", [child])
+    with pytest.raises(TypeError, match="rejects envelope"):
+        registry.wrap("list<FLOAT>", [child])
 
 
 def _handle_value(registry: TypeRegistry, rid: str, device: str = "cuda:0"):

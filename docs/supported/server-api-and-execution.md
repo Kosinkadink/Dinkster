@@ -67,6 +67,8 @@
   membership across local, isolated and remote workers and cache replay.
   Expansions may request child reruns without cache hits or coalescing;
   the policy includes nested expansions and survives persistent cache replay.
+- Native loop list selection and result collection preserve child value
+  metadata, including resource ownership and producer execution arms.
 - Memory governance: budgets, headroom, reservations with renewal,
   governed shedding, admission waiting, and item details with Aimdo model-weight
   page residency when the active Aimdo build exposes it

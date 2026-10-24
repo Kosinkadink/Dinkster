@@ -1,6 +1,7 @@
 """Native loop expansion executes body occurrences through the engine."""
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -13,8 +14,8 @@ from dinkster_nodes_comfy.math import ComfyMathExpression
 from dinkster_nodes_comfy.primitive import PrimitiveBoolean, PrimitiveInt
 from dinkster_nodes_comfy.switch import ComfySwitchNode
 from dinkster_nodes_foundation.lists import ListElement, MakeList
-from dinkster_schema import build_node_types, build_schemas
-from dinkster_values import TypeRegistry, register_core_types
+from dinkster_schema import Node, NodeSchema, OutputSpec, TypeExpr, build_node_types, build_schemas
+from dinkster_values import TypeRegistry, ValueMeta, list_children, register_core_types
 from dinkster_workers import GovernedWorker, InProcessWorker, IsolatedWorker
 
 NODES = (
@@ -232,3 +233,48 @@ def test_accumulation_control_reads_its_value(accumulate: bool, linked: bool) ->
     )
     result = asyncio.run(asyncio.wait_for(make_engine().run(graph, ["end"]), 10))
     assert result.outputs["end"]["outputs"].resolve() == ([0, 1, 2] if accumulate else [2])
+
+
+def test_loop_collection_preserves_child_envelopes() -> None:
+    registry = TypeRegistry()
+    register_core_types(registry)
+    value = replace(
+        registry.wrap("INT", 17),
+        meta=ValueMeta({"resourceProducerArm": "producer", "provenance": "original"}),
+    )
+
+    class Source(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                "test.stamped", outputs=(OutputSpec("value", TypeExpr.concrete("INT")),)
+            )
+
+        @classmethod
+        def execute(cls):
+            return cls.outputs(value=value)
+
+    nodes = (*NODES, Source)
+    engine = Engine(
+        schemas=build_schemas(nodes),
+        registry=registry,
+        worker=InProcessWorker(build_node_types(nodes), registry),
+        cache=MemoryLRUCache(),
+    )
+    graph = Graph(
+        {
+            "source": GraphNode("test.stamped", {}),
+            "items": GraphNode("std.list.make", {"items.0": Link("source", "value")}),
+            "start": GraphNode(
+                "StartLoop", {"mode.list": Link("items", "list")}, slot_variants={"mode": "List"}
+            ),
+            "end": GraphNode(
+                "EndLoop", {"output_value": Link("start", "list_item"), "accumulate": True}
+            ),
+        }
+    )
+    result = asyncio.run(asyncio.wait_for(engine.run(graph, ["end"]), 10))
+    children = list_children(result.outputs["end"]["outputs"])
+    assert children is not None and len(children) == 1
+    assert children[0].meta == value.meta
+    assert children[0].fingerprint == value.fingerprint
