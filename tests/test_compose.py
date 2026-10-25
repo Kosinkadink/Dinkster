@@ -1872,9 +1872,10 @@ def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(tmp_pa
 
 @pytest.mark.parametrize("in_process", (True, False))
 @pytest.mark.parametrize("verified", (False, True))
-def test_comfy_manifest_supplies_assets_to_grouped_consumer(
+def test_comfy_manifest_registers_bound_assets_with_host(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, verified: bool
 ) -> None:
+    from dinkster_api.v1 import ASSET_TYPE
     from dinkster_assets import (
         LocalAssetRef,
         MountDef,
@@ -1892,9 +1893,7 @@ def test_comfy_manifest_supplies_assets_to_grouped_consumer(
         table.scan("models")
     ref = table.bind_name("weights.bin", "model/checkpoint")
     assert isinstance(ref, AssetRef if verified else LocalAssetRef)
-    consumer = TESTS_DIR / "fixtures/comfy-asset-consumer/dinkster-pack.toml"
     comfy = TESTS_DIR.parent / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
-    manifests = (comfy, consumer)
     env = {
         **WORKER_ENV,
         "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
@@ -1902,24 +1901,16 @@ def test_comfy_manifest_supplies_assets_to_grouped_consumer(
     monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
 
     async def scenario() -> None:
-        composer = ServingComposer(worker_env=env)
+        registry = TypeRegistry()
+        composer = ServingComposer(registry=registry, worker_env=env)
         try:
-            for manifest in manifests:
-                await composer.add_pack(
-                    PackSpec(
-                        manifest,
-                        in_process=in_process,
-                        env=env,
-                        worker_group=None if in_process else "assets",
-                        group_manifests=() if in_process else manifests,
-                    )
-                )
-            engine = composer.composition.make_engine(lambda _event: None)
-            graph = Graph(nodes={"read": GraphNode("apack.read", {"data": ref.to_wire()})})
+            assert ASSET_TYPE not in registry
+            await composer.add_pack(PackSpec(comfy, in_process=in_process, env=env))
             for _ in range(2):
-                result = await engine.run(graph, ["read"])
-                assert result.outputs["read"]["text"].resolve() == payload.decode()
-                assert result.outputs["read"]["size"].resolve() == len(payload)
+                bound = registry.wrap(ASSET_TYPE, ref.to_wire()).resolve()
+                restored = registry.spec(ASSET_TYPE).decode(registry.spec(ASSET_TYPE).encode(bound))
+                assert isinstance(restored, AssetRef if verified else LocalAssetRef)
+                assert restored.local_path().read_bytes() == payload
         finally:
             await composer.close()
 

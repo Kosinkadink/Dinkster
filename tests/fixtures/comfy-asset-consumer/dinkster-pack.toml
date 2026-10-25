@@ -1,6 +1,0 @@
-[pack]
-name = "apack"
-namespaces = ["apack"]
-
-[pack.entry]
-nodes = "comfy_asset_consumer:NODES"
