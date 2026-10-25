@@ -179,6 +179,7 @@ namespaces = [
     "CLIPVisionEncode",
     "unCLIPConditioning",
     "StyleModelApply",
+    "GLIGENTextBoxApply",
     "CLIPTextEncodeSDXLRefiner",
     "CLIPTextEncodeSDXL",
     "CLIPTextEncodePixArtAlpha",
