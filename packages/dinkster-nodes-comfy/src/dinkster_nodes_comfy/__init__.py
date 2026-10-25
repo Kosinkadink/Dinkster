@@ -59,6 +59,7 @@ from .ltx_video_conditioning import LTX_VIDEO_CONDITIONING_NODES
 from .ltx_video_preprocess import LTX_VIDEO_PREPROCESS_NODES
 from .mask import MASK_NODES
 from .math import ComfyMathExpression
+from .minimax_h3_latent import EmptyMiniMaxH3LatentAV
 from .minimax_h3_sampling import MiniMaxH3SigmaShift
 from .mochi import EmptyMochiLatentVideo
 from .model_advanced import MODEL_ADVANCED_NODES
@@ -171,6 +172,7 @@ COMFY_NODES = (
     SeedVR2Preprocess,
     SeedVR2Conditioning,
     MiniMaxH3SigmaShift,
+    EmptyMiniMaxH3LatentAV,
     *VIDEO_CONDITIONING_NODES,
     *COSMOS_CONDITIONING_NODES,
     *VIDEO_LATENT_NODES,
