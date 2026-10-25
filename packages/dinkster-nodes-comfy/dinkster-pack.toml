@@ -260,6 +260,7 @@ namespaces = [
     "TextEncodeHunyuanVideo_ImageToVideo",
     "HunyuanImageToVideo",
     "HunyuanVideo15ImageToVideo",
+    "HunyuanVideo15SuperResolution",
     "LTXVImgToVideo",
     "LTXVImgToVideoInplace",
     "LTXVConditioning",
