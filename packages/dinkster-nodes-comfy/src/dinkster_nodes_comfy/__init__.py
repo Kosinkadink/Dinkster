@@ -84,6 +84,7 @@ from .sampler_factories import SAMPLER_FACTORY_NODES
 from .save_text import SaveText
 from .seedvr_conditioning import SeedVR2Conditioning
 from .seedvr_preprocess import SeedVR2Preprocess
+from .seedvr_temporal import SEEDVR_TEMPORAL_NODES
 from .sigma_operations import SIGMA_OPERATION_NODES
 from .sigma_schedulers import SIGMA_SCHEDULER_NODES
 from .sparse_attention import SPARSE_ATTENTION_NODES
@@ -171,6 +172,7 @@ COMFY_NODES = (
     *LTX_VIDEO_CONDITIONING_NODES,
     SeedVR2Preprocess,
     SeedVR2Conditioning,
+    *SEEDVR_TEMPORAL_NODES,
     MiniMaxH3SigmaShift,
     EmptyMiniMaxH3LatentAV,
     *VIDEO_CONDITIONING_NODES,
