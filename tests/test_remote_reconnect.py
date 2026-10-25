@@ -218,6 +218,7 @@ def test_run_control_wait_and_reply_survive_same_daemon_reconnect(
         )
         composer = ServingComposer()
         entered = asyncio.Event()
+        publisher_entered = asyncio.Event()
         release_publisher = asyncio.Event()
         operations: list[str] = []
         import dinkster_workers.session as session_module
@@ -234,6 +235,7 @@ def test_run_control_wait_and_reply_survive_same_daemon_reconnect(
             assert type(operation) is str
             operations.append(operation)
             if operation == "publishRunValue":
+                publisher_entered.set()
                 await release_publisher.wait()
             await dispatch_run_control(*args, **kwargs)
 
@@ -256,6 +258,7 @@ def test_run_control_wait_and_reply_survive_same_daemon_reconnect(
                 )
             )
             await asyncio.wait_for(entered.wait(), 10)
+            await asyncio.wait_for(publisher_entered.wait(), 10)
             session = composer._remotes["control"].worker._session
             assert session._writer is not None
             session._writer.transport.abort()
