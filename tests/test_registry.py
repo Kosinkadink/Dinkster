@@ -133,7 +133,7 @@ def test_release_templates_ride_the_record() -> None:
         path="templates/starter.json",
         description="a starting point",
         tags=("video",),
-        family="dinkster.video",
+        family="comfy.VIDEO",
         models=("model.safetensors",),
         assets=("model-a",),
         thumbnail_digest=artifact_digest(b"thumbnail"),

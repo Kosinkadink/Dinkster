@@ -3,6 +3,21 @@
 Derived from the node-interface comparison in comfy-vibe-station issue 504.
 Only exact class ids match. Aliases, labels and namespace rewrites never match
 an id or a value. The only additional input is an appended optional save mount.
+Source-marked file combos may use an ASSET socket and asset picker; ordinary
+combo types, options and defaults remain exact.
+V3 inputs follow the recorded declaration sequence, including optional inputs
+between required inputs. V1 inputs retain required-then-optional group order.
+Hidden inputs are outside the workflow contract on both sides. Output names
+count only when the reference declares RETURN_NAMES (or explicit V3 output
+labels); dumps must leave return_names null when names are synthesized.
+Unnamed outputs compare by type and position. A reference wildcard
+socket matches an unrestricted native type-template socket, not a concrete
+type. List flags never wrap the reference declaration. On a list-flagged
+port only, the native type may be the declared type or one list wrapper
+around it. Unflagged and nested-list differences remain differences.
+Declared FLOAT bounds, step and round compare exactly after projecting the
+reference numbers to float; INT and field presence remain exact. Boolean
+round sentinels are not numeric precision values.
 
 Usage: python tools/compare_nodes.py COMFY_JSON REGISTRY_JSON OUT_CSV OUT_JSON
 """
@@ -16,14 +31,6 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-ENGINE_EXCLUSIONS = {
-    "ComfySwitchNode": "lazy inputs",
-    "StartLoop": "GraphBuilder expansion; loop semantics",
-    "EndLoop": "loop semantics",
-    "LoopIteration": "loop semantics",
-    "LoopProgress": "loop semantics",
-    "LoopResult": "loop semantics",
-}
 FORBIDDEN_PREFIXES = ("dinkster.", "comfy.")
 INPUT_ROLES = {"input", "inputFamily", "dynamicCombo", "dynamicSlot"}
 VALUE_OPTIONS = (
@@ -60,7 +67,7 @@ def _type(expr: dict[str, Any]) -> Any:
 
 def _reference_inputs(groups: dict[str, Any], list_inputs: bool = False) -> list[dict[str, Any]]:
     result = []
-    for group in ("required", "optional", "hidden"):
+    for group in ("required", "optional"):
         for name, spec in groups.get(group, {}).items():
             value_type = spec[0] if isinstance(spec, list) else spec
             options = spec[1] if isinstance(spec, list) and len(spec) > 1 else {}
@@ -104,6 +111,11 @@ def _reference_inputs(groups: dict[str, Any], list_inputs: bool = False) -> list
             for key in VALUE_OPTIONS:
                 if key in options:
                     entry[key] = options[key]
+            if entry["type"] in ("FLOAT", {"list": "FLOAT"}):
+                for key in ("min", "max", "step", "round"):
+                    value = entry.get(key)
+                    if isinstance(value, (int, float)) and not isinstance(value, bool):
+                        entry[key] = float(value)
             if entry.get("control_after_generate") is True:
                 entry["control_after_generate"] = "fixed"
             if entry.get("multiselect") is False:
@@ -112,8 +124,10 @@ def _reference_inputs(groups: dict[str, Any], list_inputs: bool = False) -> list
                 entry["file_input"] = True
             if "options" in entry and entry["type"] == "COMBO" and entry["options"]:
                 entry.setdefault("default", entry["options"][0])
+            if entry["type"] == "inputFamily" and not entry["template"]:
+                continue
             if list_inputs and entry["type"] not in ("inputFamily", "dynamicCombo"):
-                entry["type"] = {"list": entry["type"]}
+                entry["_list_flag"] = True
             result.append(entry)
     return result
 
@@ -122,13 +136,11 @@ def _native_inputs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     result = []
     for item in items:
         role = item["role"]
-        if role not in INPUT_ROLES:
+        if role not in INPUT_ROLES or item.get("hidden"):
             continue
         entry: dict[str, Any] = {
             "name": item["id"],
-            "group": "hidden"
-            if item.get("hidden")
-            else ("required" if item.get("required", True) else "optional"),
+            "group": "required" if item.get("required", True) else "optional",
         }
         if role == "input":
             entry["type"] = _type(item["type"])
@@ -155,6 +167,8 @@ def _native_inputs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     entry["file_picker"] = True
                 if entry.get("options"):
                     entry.setdefault("default", entry["options"][0])
+            elif entry["type"] in ("ASSET", {"list": "ASSET"}) and widget.get("type") == "ASSET":
+                entry["file_picker"] = True
             if entry.get("multiselect") is False:
                 entry.pop("multiselect")
         elif role == "dynamicCombo":
@@ -178,18 +192,44 @@ def _native_inputs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 entry["max"] = item.get("maxMembers")
         else:
             entry.update(type=role, dynamic=item)
+        if entry["type"] == "inputFamily" and not entry["template"]:
+            continue
         result.append(entry)
     return result
 
 
 def _differences(expected: Any, actual: Any, path: str) -> list[str]:
+    if (
+        path.endswith(".type")
+        and expected == "*"
+        and isinstance(actual, dict)
+        and set(actual) == {"template_id", "allowed_types"}
+        and isinstance(actual["template_id"], str)
+        and actual["template_id"]
+        and actual["allowed_types"] == "*"
+    ):
+        return []
     if isinstance(expected, dict) and isinstance(actual, dict):
         expected, actual = dict(expected), dict(actual)
+        list_flag = expected.pop("_list_flag", False)
+        native_type = actual.get("type")
+        if (
+            list_flag
+            and isinstance(native_type, dict)
+            and set(native_type) == {"list"}
+            and not (isinstance(native_type["list"], dict) and "list" in native_type["list"])
+            and not (isinstance(expected.get("type"), dict) and "list" in expected["type"])
+        ):
+            actual["type"] = native_type["list"]
         file_input = expected.pop("file_input", False)
         if actual.pop("file_picker", False):
             if not file_input or expected.get("type") not in ("COMBO", {"list": "COMBO"}):
                 return [f"{path}: asset picker on a non-file input"]
             # Mount contents vary, but the widget still consumes the original file slot.
+            if actual.get("type") == "ASSET":
+                actual["type"] = "COMBO"
+            elif actual.get("type") == {"list": "ASSET"}:
+                actual["type"] = {"list": "COMBO"}
             expected.pop("options", None)
             expected.pop("default", None)
             actual.pop("default", None)
@@ -224,6 +264,22 @@ def compare(row: dict[str, Any], schema: dict[str, Any]) -> list[str]:
     if any(item.get("role") not in INPUT_ROLES | {"output"} for item in schema["interface"]):
         return ["native interface contains an unsupported role or a variable output family"]
     expected = _reference_inputs(row["input_types"], bool(row.get("input_is_list")))
+    if row.get("is_v3") or "v3_inputs" in row:
+        declarations = row.get("v3_inputs")
+        if not isinstance(declarations, list) or any(
+            not isinstance(item, dict) or not isinstance(item.get("id"), str)
+            for item in declarations
+        ):
+            return ["reference V3 input sequence unavailable or malformed"]
+        names = [item["id"] for item in declarations]
+        by_name = {item["name"]: item for item in expected}
+        if (
+            len(names) != len(set(names))
+            or len(names) != len(expected)
+            or set(names) != set(by_name)
+        ):
+            return ["reference V3 input sequence does not match public input groups"]
+        expected = [by_name[name] for name in names]
     actual = _native_inputs(schema.get("interface", []))
     differences = []
     save_node = row["class_name"].startswith("Save") and any(
@@ -231,9 +287,13 @@ def compare(row: dict[str, Any], schema: dict[str, Any]) -> list[str]:
     )
     if actual and actual[-1]["name"] == "mount" and save_node:
         mount = actual.pop()
+        if mount.get("multiline") is False:
+            mount.pop("multiline")
+        # The production serializer omits the configured-output None sentinel.
+        mount.setdefault("default", None)
         differences.extend(
             _differences(
-                {"name": "mount", "group": "optional", "type": "STRING", "default": "output"},
+                {"name": "mount", "group": "optional", "type": "STRING", "default": None},
                 mount,
                 "mount",
             )
@@ -243,21 +303,33 @@ def compare(row: dict[str, Any], schema: dict[str, Any]) -> list[str]:
             item["file_input"] = True
     differences.extend(_differences(expected, actual, "inputs"))
     expected_outputs = []
-    names = row.get("return_names") or row.get("return_types") or []
-    output_lists = row.get("output_is_list") or []
+    names = row.get("return_names")
     output_metadata = row.get("v3_outputs") or []
+    output_list_flags = row.get("output_is_list") or []
     for index, output_type in enumerate(row.get("return_types") or []):
         if output_type == "COMFY_MATCHTYPE_V3":
             metadata = output_metadata[index] if index < len(output_metadata) else {}
             output_type = metadata.get("template", {"missing_output_template": True})
-        is_list = index < len(output_lists) and output_lists[index]
-        expected_outputs.append(
-            {"name": names[index], "type": ({"list": output_type} if is_list else output_type)}
-        )
+        output = {"type": output_type}
+        if index < len(output_list_flags) and output_list_flags[index]:
+            output["_list_flag"] = True
+        if names is not None and names[index] is not None:
+            output["name"] = names[index]
+        expected_outputs.append(output)
     actual_outputs = [
-        {"name": item.get("displayName") or item["id"], "type": _type(item["type"])}
-        for item in schema.get("interface", [])
-        if item["role"] in ("output", "outputFamily")
+        {
+            **(
+                {"name": item.get("displayName") or item["id"]}
+                if names is not None and index < len(names) and names[index] is not None
+                else {}
+            ),
+            "type": _type(item["type"]),
+        }
+        for index, item in enumerate(
+            item
+            for item in schema.get("interface", [])
+            if item["role"] in ("output", "outputFamily")
+        )
     ]
     differences.extend(_differences(expected_outputs, actual_outputs, "outputs"))
     for key, reference, native in (
@@ -284,10 +356,6 @@ def compare_registry(reference: dict[str, Any], registry: dict[str, Any]) -> dic
     served = registry["nodes"]
     results = []
     errors = []
-    if "engine_exclusions" in reference and reference["engine_exclusions"] != {
-        name: semantics.split("; ") for name, semantics in ENGINE_EXCLUSIONS.items()
-    }:
-        errors.append("measured engine exclusions differ from the settled exclusion list")
     ids = set(classes)
     for key, schema in served.items():
         if key != schema.get("nodeType"):
@@ -305,8 +373,6 @@ def compare_registry(reference: dict[str, Any], registry: dict[str, Any]) -> dic
         exclusion = ""
         if row.get("api_node") or str(row.get("file", "")).startswith("comfy_api_nodes/"):
             exclusion = "API node"
-        elif name in ENGINE_EXCLUSIONS:
-            exclusion = ENGINE_EXCLUSIONS[name]
         differences = []
         if exclusion:
             status = "excluded"
@@ -341,7 +407,7 @@ def compare_registry(reference: dict[str, Any], registry: dict[str, Any]) -> dic
     return {
         "reference_commit": reference.get("source_commit"),
         "counts": counts,
-        "engine_exclusions": ENGINE_EXCLUSIONS,
+        "engine_exclusions": {},
         "registry_errors": sorted(set(errors)),
         "rows": results,
         "passed": not errors and not counts.get("differs") and not counts.get("absent"),

@@ -23,7 +23,7 @@ from dinkster.cli import main
 
 HEALTHY_MANIFEST = """\
 [pack]
-name = "healthy-pack"
+name = "healthy"
 namespaces = ["healthy"]
 requires = ["numpy>=1.26"]
 

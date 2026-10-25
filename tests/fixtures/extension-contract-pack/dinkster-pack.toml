@@ -1,5 +1,6 @@
 [pack]
-name = "dinkster-extension-contract-fixture"
+name = "fixture"
+publisher = "fixture-author"
 namespaces = ["fixture"]
 
 [pack.contracts]
@@ -28,12 +29,12 @@ name = "fixture.extension-contract.executed"
 payload = { height = "integer", mean = "number", width = "integer" }
 
 [[pack.extension.frontend-modules]]
-id = "dinkster-extension-contract-fixture.frontend"
+id = "fixture.frontend"
 module = "./frontend.js"
 privileges = ["app-workflow", "event-consumer", "graph-editor-canvas"]
 contributions = [
-  { id = "dinkster-extension-contract-fixture.event", kind = "eventConsumer", event = "fixture.extension-contract.executed" },
-  { id = "dinkster-extension-contract-fixture.status", kind = "hostUi" },
-  { id = "dinkster-extension-contract-fixture.canvas", kind = "canvasLayer" },
-  { id = "dinkster-extension-contract-fixture.node-decoration", kind = "nodeDecoration" },
+  { id = "fixture.event", kind = "eventConsumer", event = "fixture.extension-contract.executed" },
+  { id = "fixture.status", kind = "hostUi" },
+  { id = "fixture.canvas", kind = "canvasLayer" },
+  { id = "fixture.node-decoration", kind = "nodeDecoration" },
 ]

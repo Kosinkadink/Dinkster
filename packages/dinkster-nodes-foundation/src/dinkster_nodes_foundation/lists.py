@@ -7,10 +7,8 @@ invocation at the worker boundary (dinkster_schema.solve), so one MakeList
 serves every value type; variable-typed inputs are connection-fed (literals
 need a concrete-typed input to wrap with).
 
-Zip is deliberately NOT a node: without a tuple constructor there is no
-honest value for it to produce, and zip semantics already live where they
-belong - a region's zip binding over multiple element ports. CrossProduct
-produces two ALIGNED lists (same length, index-matched) for the same reason;
+Zip semantics live in a region's zip binding over multiple element ports.
+CrossProduct produces two aligned lists (same length, index-matched);
 feed them to a zip-binding region's element ports.
 """
 
@@ -26,6 +24,8 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
+    Value,
+    list_children,
 )
 
 INT = TypeExpr.concrete(CORE_INT)
@@ -45,11 +45,14 @@ class MakeList(Node):
             input_families=(InputFamilySpec("items", T, min_members=1),),
             outputs=(OutputSpec("list", LIST_T),),
             aliases=("CreateList",),
+            input_values=True,
         )
 
     @classmethod
-    def execute(cls, *, items: Mapping[str, object]) -> Mapping[str, object]:
-        return cls.outputs(list=list(items.values()))
+    def execute(
+        cls, *, items: Mapping[str, object], input_values: Mapping[str, Value]
+    ) -> Mapping[str, object]:
+        return cls.outputs(list=[input_values[f"items.{name}"] for name in items])
 
 
 class AppendToList(Node):
@@ -101,12 +104,17 @@ class ListElement(Node):
             category="list",
             inputs=(InputSpec("list", LIST_T), InputSpec("index", INT, default=0)),
             outputs=(OutputSpec("item", T),),
+            input_values=True,
         )
 
     @classmethod
-    def execute(cls, *, list: Sequence[object], index: int) -> Mapping[str, object]:
+    def execute(
+        cls, *, list: Sequence[object], index: int, input_values: Mapping[str, Value]
+    ) -> Mapping[str, object]:
+        children = list_children(input_values["list"])
+        assert children is not None
         try:
-            item = list[index]
+            item = children[index]
         except IndexError:
             raise ValueError(f"index {index} out of range for a list of {len(list)}") from None
         return cls.outputs(item=item)

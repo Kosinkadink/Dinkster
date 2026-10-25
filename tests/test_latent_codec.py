@@ -1,9 +1,26 @@
 from __future__ import annotations
 
+import asyncio
 import ctypes
 import json
+import os
+import subprocess
+import sys
+from collections.abc import Mapping
+from pathlib import Path
 
 import pytest
+from dinkster_api.v1 import (
+    CORE_STRING,
+    LATENT_TYPE,
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+    materialize_latent,
+)
+from dinkster_graph import Graph, GraphNode, Link
 from dinkster_values import (
     LATENT_CODEC_MAGIC,
     EncodedLatentTensor,
@@ -13,6 +30,152 @@ from dinkster_values import (
     validate_latent_encoded,
 )
 from dinkster_values.latent_codec import _copy_address
+
+from dinkster.compose import PackSpec, ServingComposer
+
+
+def test_empty_latent_is_a_present_value_without_loading_torch() -> None:
+    value: dict[str, object] = {}
+    encoded = encode_latent(value)
+    assert decode_latent(encoded) == {}
+    validate_latent_encoded(encoded, {})
+    assert materialize_latent(value) is value
+    assert encode_latent(decode_latent(encoded)) == encoded
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; from dinkster_api.v1 import materialize_latent; "
+            "from dinkster_values import encode_latent, decode_latent, validate_latent_encoded; "
+            "value = {}; encoded = encode_latent(value); "
+            "assert decode_latent(encoded) == {}; validate_latent_encoded(encoded, {}); "
+            "assert materialize_latent(value) is value; "
+            "assert not any(n == 'torch' or n.startswith('torch.') "
+            "or n == 'dinkster_inference' or n.startswith('dinkster_inference.') "
+            "for n in sys.modules)",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("value", ({"metadata": {}}, {"noise_mask": None}, None, []))
+def test_empty_latent_does_not_allow_other_sampleless_values(value: object) -> None:
+    encoded = encode_latent(value)
+    with pytest.raises(ValueError, match="samples mapping entry"):
+        decode_latent(encoded)
+    with pytest.raises(ValueError, match="samples mapping entry"):
+        validate_latent_encoded(encoded, {})
+
+
+class EmptyLatentSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="empty-latent-fixture.source",
+            outputs=(OutputSpec("latent", TypeExpr.concrete(LATENT_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls) -> Mapping[str, object]:
+        return cls.outputs(latent={})
+
+
+class EmptyLatentInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="empty-latent-fixture.inspect",
+            inputs=(InputSpec("latent", TypeExpr.concrete(LATENT_TYPE)),),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, latent: object) -> Mapping[str, object]:
+        assert type(latent) is dict and latent == {}
+        assert materialize_latent(latent) is latent
+        return cls.outputs(summary="present empty latent")
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_empty_required_latent_survives_hosts_and_disk_memory_cache(
+    tmp_path: Path, in_process: bool
+) -> None:
+    async def scenario() -> None:
+        media = Path(__file__).resolve().parents[1] / "packages/dinkster-nodes-media-io"
+        (tmp_path / "empty_latent_fixture.py").write_text(
+            "from tests.test_latent_codec import EmptyLatentInspect, EmptyLatentSource\n"
+            "from dinkster_api.v1 import register_inference_types\n"
+            "from dinkster_nodes_media_io import MEDIA_IO_NODES, register_media_types\n"
+            "from dinkster_nodes_media_io import capture_device_choices\n"
+            "NODES = (*MEDIA_IO_NODES, EmptyLatentSource, EmptyLatentInspect)\n"
+            "def register_types(registry):\n"
+            "    register_inference_types(registry)\n"
+            "    register_media_types(registry)\n",
+            encoding="ascii",
+        )
+        manifest = tmp_path / "dinkster-pack.toml"
+        manifest.write_text(
+            (media / "dinkster-pack.toml")
+            .read_text(encoding="ascii")
+            .replace("namespaces = [", 'namespaces = ["empty-latent-fixture",')
+            .replace("dinkster_nodes_media_io:MEDIA_IO_NODES", "empty_latent_fixture:NODES")
+            .replace(
+                "dinkster_nodes_media_io:register_media_types",
+                "empty_latent_fixture:register_types",
+            )
+            .replace(
+                "dinkster_nodes_media_io:capture_device_choices",
+                "empty_latent_fixture:capture_device_choices",
+            ),
+            encoding="ascii",
+        )
+        graph = Graph(
+            nodes={
+                "source": GraphNode("empty-latent-fixture.source"),
+                "inspect": GraphNode(
+                    "empty-latent-fixture.inspect", {"latent": Link("source", "latent")}
+                ),
+            }
+        )
+        for restart in range(2):
+            composer = ServingComposer(
+                cache_mode="layered",
+                cache_dir=tmp_path / "cache",
+                worker_env={"PYTHONPATH": os.pathsep.join((str(tmp_path), str(media.parents[1])))},
+            )
+            try:
+                await composer.add_pack(
+                    PackSpec(manifest, in_process=in_process, trust_reserved=True)
+                )
+                events = []
+                engine = composer.composition.make_engine(events.append)
+                if not restart:
+                    for _ in range(2):
+                        uncached = await engine.run(graph, ["inspect"], cache_enabled=False)
+                        assert set(uncached.executed) == {"source", "inspect"}
+                        assert (
+                            uncached.outputs["inspect"]["summary"].resolve()
+                            == "present empty latent"
+                        )
+                for repeat in range(2):
+                    events.clear()
+                    result = await engine.run(graph, ["source", "inspect"])
+                    assert result.outputs["source"]["latent"].resolve() == {}
+                    assert result.outputs["inspect"]["summary"].resolve() == "present empty latent"
+                    if restart or repeat:
+                        assert set(result.cached) == {"source", "inspect"}
+                        layer = "disk" if restart and not repeat else "memory"
+                        assert {
+                            e.detail["cacheLayer"] for e in events if e.kind == "node_cached"
+                        } == {layer}
+                    else:
+                        assert set(result.executed) == {"source", "inspect"}
+            finally:
+                await composer.close()
+
+    asyncio.run(scenario())
 
 
 def _tensor(*, fill: int, shape: tuple[int, ...]) -> EncodedLatentTensor:

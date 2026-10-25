@@ -1934,10 +1934,11 @@ def test_serve_rejects_removed_single_job_mode(monkeypatch: pytest.MonkeyPatch, 
         serve.main()
 
 
-def test_serve_rejects_removed_dev_argument(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("argument", ["--dev", "--development-pack"])
+def test_serve_rejects_removed_dev_argument(monkeypatch: pytest.MonkeyPatch, argument: str) -> None:
     from dinkster import serve
 
-    monkeypatch.setattr(sys, "argv", ["dinkster-serve", "--dev"])
+    monkeypatch.setattr(sys, "argv", ["dinkster-serve", argument])
     with pytest.raises(SystemExit) as exc:
         serve.main()
     assert exc.value.code == 2
@@ -2411,6 +2412,7 @@ def test_video_preview_pack_route_event_and_module_end_to_end(tmp_path: Path) ->
     (source / "dinkster-pack.toml").write_text("""
 [pack]
 name = "preview-source"
+publisher = "dinkster"
 [pack.entry]
 nodes = "preview_source:NODES"
 types = "preview_source:register_types"
@@ -2418,19 +2420,25 @@ types = "preview_source:register_types"
     (source / "preview_source.py").write_text("""
 from pathlib import Path
 from dinkster_api.v1 import (
-    Node, NodeSchema, OutputSpec, TypeExpr, register_video_value_type, video_from_source,
+    VIDEO_TYPE,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+    register_video_value_type,
+    video_from_source,
 )
 class Source(Node):
     @classmethod
     def define_schema(cls):
         return NodeSchema(node_type="preview-source.clip",
-                          outputs=(OutputSpec("video", TypeExpr.concrete("comfy.VIDEO")),))
+                          outputs=(OutputSpec("video", TypeExpr.concrete(VIDEO_TYPE)),))
     @classmethod
     def execute(cls):
         source = Path(__file__).with_name("clip.mp4").read_bytes()
         return cls.outputs(video=video_from_source(source))
 def register_types(registry):
-    register_video_value_type(registry, "comfy.VIDEO")
+    register_video_value_type(registry, VIDEO_TYPE)
 NODES = [Source]
 """)
     port = free_port()
@@ -2557,7 +2565,7 @@ def write_shutdown_pack(directory: Path, index: int, *, startup_delay: float = 0
     )
     manifest = directory / "dinkster-pack.toml"
     manifest.write_text(
-        f'[pack]\nname = "shutdown-pack-{index}"\n'
+        f'[pack]\nname = "shutdown-pack-{index}"\npublisher = "dinkster"\n'
         f'namespaces = ["{namespace}"]\n\n'
         f'[pack.entry]\nnodes = "{module}:NODES"\n',
         encoding="utf-8",
@@ -2775,6 +2783,28 @@ def test_memory_budget_failure_retains_server_output(tmp_path: Path) -> None:
     process.wait.assert_called_once_with(timeout=30)
 
 
+@pytest.mark.parametrize(
+    "pack_path", ["packages/dinkster-nodes-dev", "packages/dinkster-nodes-dev/dinkster-pack.toml"]
+)
+def test_serve_plain_dev_pack_is_announced(tmp_path: Path, pack_path: str) -> None:
+    port = free_port()
+    pack = Path(__file__).resolve().parent.parent / pack_path
+    process, log = start_logged_serve(
+        serve_command(port, "--no-default-packs", "--pack", str(pack)), tmp_path
+    )
+    pending_error: BaseException | None = None
+    try:
+        report = wait_for_composition(process, port)
+        packs = report["packs"]
+        assert isinstance(packs, dict)
+        assert packs["dinkster-nodes-dev"]["state"] == "announced"
+    except BaseException as error:
+        pending_error = error
+        raise
+    finally:
+        stop_logged_serve(process, log, pending_error)
+
+
 def test_serve_loads_memory_budgets_from_library_config(tmp_path: Path) -> None:
     (tmp_path / "memory.toml").write_text(
         '[budgets]\nram = "64M"\n"vram:cuda:0" = 33554432\n', "utf-8"
@@ -2909,7 +2939,8 @@ def test_degraded_default_ordering_composes_media_io_before_image(
     broken = tmp_path / "ordering-probe"
     broken.mkdir()
     (broken / "dinkster-pack.toml").write_text(
-        '[pack]\nname = "dinkster-ordering-probe"\nnamespaces = ["probe"]\n'
+        '[pack]\nname = "dinkster-ordering-probe"\npublisher = "dinkster"\n'
+        'namespaces = ["probe"]\n'
         "[pack.requirements.capabilities]\n"
         '"dinkster.ordering.probe" = ">=1.0.0,<2.0.0"\n'
         '[pack.entry]\nnodes = "probe_ordering_nodes:NODES"\n',
@@ -2965,7 +2996,8 @@ def test_degraded_default_ordering_retains_generation_pack(tmp_path: Path) -> No
     broken = tmp_path / "ordering-probe"
     broken.mkdir()
     (broken / "dinkster-pack.toml").write_text(
-        '[pack]\nname = "dinkster-ordering-probe"\nnamespaces = ["probe"]\n'
+        '[pack]\nname = "dinkster-ordering-probe"\npublisher = "dinkster"\n'
+        'namespaces = ["probe"]\n'
         "[pack.requirements.capabilities]\n"
         '"dinkster.ordering.probe" = ">=1.0.0,<2.0.0"\n'
         '[pack.entry]\nnodes = "probe_ordering_nodes:NODES"\n',
@@ -3590,7 +3622,7 @@ async def _peek_value(
 
 def test_serve_mounted_save_end_to_end(tmp_path: Path) -> None:
     """The write path, real process to real bytes: grant a readwrite mount
-    over the API while dinkster-serve runs, execute dev.image.save_pgm in
+    over the API while dinkster-serve runs, execute the PGM saver in
     that same process, verify the file landed inside the mount with the
     digest the job reported, stream it back via /api/assets, then revoke
     the mount and prove the very next save job fails - no restart
@@ -3601,6 +3633,28 @@ def test_serve_mounted_save_end_to_end(tmp_path: Path) -> None:
     library_root = tmp_path / "library"
     outdir = tmp_path / "outdir"
     outdir.mkdir()
+    pack = tmp_path / "mounted-save"
+    pack.mkdir()
+    manifest = pack / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname = "mounted-save"\npublisher = "dinkster"\n'
+        'type-namespaces = ["dev"]\n[pack.entry]\n'
+        'nodes = "mounted_save:NODES"\n'
+        'types = "dinkster_nodes_dev.image:register_dev_types"\n'
+    )
+    (pack / "mounted_save.py").write_text(
+        "from dataclasses import replace\n"
+        "from dinkster_nodes_dev.image import GradientImage, SaveImagePGM\n"
+        "class Gradient(GradientImage):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return replace(super().define_schema(), node_type='mounted-save.gradient')\n"
+        "class Save(SaveImagePGM):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return replace(super().define_schema(), node_type='mounted-save.save_pgm')\n"
+        "NODES = [Gradient, Save]\n"
+    )
     port = free_port()
     process, log = start_logged_serve(
         [
@@ -3615,24 +3669,20 @@ def test_serve_mounted_save_end_to_end(tmp_path: Path) -> None:
             str(library_root),
             "--allow-mount-changes",
             "--pack",
-            str(
-                Path(__file__).parent.parent
-                / "packages"
-                / "dinkster-nodes-dev"
-                / "dinkster-pack.toml"
-            ),
+            str(manifest),
             "--event-loop-stall-threshold",
             "4",
         ],
         tmp_path,
+        env={**os.environ, "PYTHONPATH": str(pack)},
     )
 
     def save_job(job_id: str) -> dict[str, object]:
         graph = Graph(
             nodes={
-                "g": GraphNode("dev.image.gradient", {"width": 3, "height": 2}),
+                "g": GraphNode("mounted-save.gradient", {"width": 3, "height": 2}),
                 "save": GraphNode(
-                    "dev.image.save_pgm",
+                    "mounted-save.save_pgm",
                     {
                         "image": Link("g", "image"),
                         "target": {"mount": "renders", "prefix": "shots/frame"},
@@ -3666,7 +3716,7 @@ def test_serve_mounted_save_end_to_end(tmp_path: Path) -> None:
                 while True:
                     async with session.get(base + "/api/nodes?wire=43") as resp:
                         nodes = (await resp.json())["nodes"]
-                    if "dev.image.save_pgm" in nodes:
+                    if "mounted-save.save_pgm" in nodes:
                         break
                     await asyncio.sleep(0.05)
 

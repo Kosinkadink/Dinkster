@@ -5,7 +5,7 @@ all consume these objects. There is no INPUT_TYPES-style dict anywhere.
 
 The type-expression model is deliberately small and closed (one canonical
 representation, mirroring Dinkster-Frontend's TypeExpr):
-concrete | union | wildcard | variable | list | asset | stream.
+concrete | union | wildcard | variable | list | asset | stream | tuple.
 
 Structured kinds use a recursive ``element`` expression instead of flat
 type ids. Lists (DESIGN 3.13): at runtime a list value's
@@ -31,6 +31,15 @@ from typing import Literal, cast
 # reaches sideways in the bottom layer, so expression-level types and
 # runtime type ids can never drift apart.
 from dinkster_values import (
+    ASSET_TYPE,
+    COMPOSITOR_TYPE,
+    CORE_BOOLEAN,
+    CORE_COMBO,
+    CORE_FLOAT,
+    CORE_INT,
+    CORE_STRING,
+    CURVE_TYPE,
+    SAVE_TARGET_TYPE,
     CustomWidgetDescriptor,
     asset_type_id,
     list_type_id,
@@ -40,19 +49,24 @@ from dinkster_values import (
 from dinkster_values import (
     runtime_type_atom as _runtime_type_atom,
 )
-from dinkster_values.builtin_types import (
-    CORE_BOOLEAN,
-    CORE_COMBO,
-    CORE_FLOAT,
-    CORE_INT,
-    CORE_STRING,
-)
 from dinkster_values.streams import parse_stream_type_id, stream_type_id
+from dinkster_values.tuples import parse_tuple_type_id, tuple_type_id
 
 from .names import validate_name
 from .replace import ReplacementRule
 
-TypeExprKind = Literal["concrete", "union", "wildcard", "variable", "list", "asset", "stream"]
+TypeExprKind = Literal[
+    "concrete",
+    "union",
+    "wildcard",
+    "variable",
+    "list",
+    "asset",
+    "stream",
+    "tuple",
+    "family_tuple",
+    "tuple_element",
+]
 
 Cardinality = Literal["scalar", "list", "unknown"]
 
@@ -117,6 +131,9 @@ class TypeExpr:
     types: tuple[str, ...] = ()
     template_id: str = ""
     element: TypeExpr | None = None
+    elements: tuple[TypeExpr, ...] = ()
+    input_id: str = ""
+    index: int | str | None = None
 
     def __post_init__(self) -> None:
         if self.kind not in (
@@ -127,11 +144,16 @@ class TypeExpr:
             "list",
             "asset",
             "stream",
+            "tuple",
+            "family_tuple",
+            "tuple_element",
         ):
             raise ValueError(f"unknown TypeExpr kind: {self.kind!r}")
         if self.kind == "concrete":
             if len(self.types) != 1:
                 raise ValueError("concrete TypeExpr requires exactly one type id")
+            if parse_tuple_type_id(self.types[0]) is not None:
+                raise ValueError("tuple types require TypeExpr.tuple_of(...)")
             if parse_stream_type_id(self.types[0]) is not None:
                 raise ValueError("stream types require TypeExpr.stream_of(...)")
             if parse_list_type_id(self.types[0]) is not None:
@@ -148,6 +170,8 @@ class TypeExpr:
             raise ValueError("union TypeExpr requires at least two type ids")
         if self.kind in ("union", "variable"):
             for entry in self.types:
+                if parse_tuple_type_id(entry) is not None:
+                    raise ValueError(f"{self.kind} entries are atom type ids, not tuple types")
                 if parse_stream_type_id(entry) is not None:
                     raise ValueError(
                         f"{self.kind} TypeExpr entries are atom type ids; stream "
@@ -172,8 +196,29 @@ class TypeExpr:
                 raise ValueError(f"{self.kind} TypeExpr requires an element expression")
             if self.types or self.template_id:
                 raise ValueError(f"{self.kind} TypeExpr carries only an element expression")
-        elif self.element is not None:
+        elif self.element is not None and self.kind != "tuple_element":
             raise ValueError(f"{self.kind} TypeExpr carries no element expression")
+        if self.kind == "tuple":
+            if self.types or self.template_id or not isinstance(cast(object, self.elements), tuple):
+                raise ValueError("tuple TypeExpr carries only an immutable elements tuple")
+            if any(
+                not isinstance(item, TypeExpr) for item in cast(tuple[object, ...], self.elements)
+            ):
+                raise ValueError("tuple positions must be TypeExprs")
+        elif self.elements:
+            raise ValueError(f"{self.kind} TypeExpr carries no positional elements")
+        if self.kind == "family_tuple":
+            if not self.input_id or self.types or self.template_id or self.index is not None:
+                raise ValueError("family tuple requires only a named input family")
+        elif self.kind == "tuple_element":
+            if bool(self.input_id) == (self.element is not None):
+                raise ValueError("tuple element requires one input reference or element expression")
+            if self.types or self.template_id or type(self.index) not in (int, str):
+                raise ValueError("tuple element requires an integer index or named literal input")
+            if self.index == "":
+                raise ValueError("tuple element index input must be nonempty")
+        elif self.input_id or self.index is not None:
+            raise ValueError(f"{self.kind} TypeExpr carries no input or index reference")
 
     @staticmethod
     def concrete(type_id: str) -> TypeExpr:
@@ -196,6 +241,29 @@ class TypeExpr:
         return TypeExpr(kind="list", element=element)
 
     @staticmethod
+    def tuple_of(*elements: TypeExpr) -> TypeExpr:
+        return TypeExpr(kind="tuple", elements=elements)
+
+    @staticmethod
+    def tuple_from_family(input_family: str) -> TypeExpr:
+        """A positional output type derived from one independent input family."""
+        return TypeExpr(kind="family_tuple", input_id=input_family)
+
+    @staticmethod
+    def tuple_element(tuple_input: str, index_input: str) -> TypeExpr:
+        """An output position selected by a document-stored integer input."""
+        return TypeExpr(kind="tuple_element", input_id=tuple_input, index=index_input)
+
+    @property
+    def requires_elaboration(self) -> bool:
+        return bool(
+            self.input_id
+            or isinstance(self.index, str)
+            or (self.element is not None and self.element.requires_elaboration)
+            or any(item.requires_elaboration for item in self.elements)
+        )
+
+    @staticmethod
     def stream_of(element: TypeExpr) -> TypeExpr:
         return TypeExpr(kind="stream", element=element)
 
@@ -214,6 +282,16 @@ class TypeExpr:
             return True
         if self.kind == "variable":
             return not self.types or type_id in self.types
+        if self.kind == "tuple":
+            positions = parse_tuple_type_id(type_id)
+            return (
+                positions is not None
+                and len(positions) == len(self.elements)
+                and all(
+                    expr.accepts_concrete(position)
+                    for expr, position in zip(self.elements, positions, strict=True)
+                )
+            )
         if self.kind == "stream":
             inner = parse_stream_type_id(type_id)
             assert self.element is not None
@@ -235,6 +313,11 @@ class TypeExpr:
         expression level and runtime value type ids."""
         if self.kind == "concrete":
             return self.types[0]
+        if self.kind == "tuple":
+            positions = tuple(item.runtime_type_id() for item in self.elements)
+            if any(item is None for item in positions):
+                return None
+            return tuple_type_id(*cast("tuple[str, ...]", positions))
         if self.kind == "stream":
             assert self.element is not None
             inner = self.element.runtime_type_id()
@@ -278,7 +361,7 @@ class TypeExpr:
         value (scalar) regardless of what it decodes to."""
         if self.kind == "list":
             return "list"
-        if self.kind in ("concrete", "union", "asset", "stream"):
+        if self.kind in ("concrete", "union", "asset", "stream", "tuple"):
             return "scalar"
         return "unknown"
 
@@ -644,8 +727,8 @@ _DECIMAL_WIRE_INT_MAX = 2**64 - 1
 class NumberWidget:
     """Presentation request for a numeric input's editor.
 
-    Only meaningful on ``INT``/``FLOAT`` inputs; the socket type
-    decides integer vs float rendering, so one widget kind covers both.
+    Only meaningful on ``INT``/``FLOAT`` inputs or their exact numeric union;
+    the union uses float presentation, so one widget kind covers both.
     All constraints are UI vocabulary: the runtime value stays a plain
     number and out-of-range stored values are the frontend's diagnostic to
     surface, never a schema error. Absent min/max means unbounded. Integer
@@ -655,17 +738,18 @@ class NumberWidget:
     ``display`` is an explicit editor presentation when present. Bounds and
     step are independent constraints: they never imply a slider or any other
     presentation. ``round`` is an independent finite positive rendering
-    precision available only on FLOAT; it never implies display or
-    changes bounds/step. ``control_after_generate`` names the INITIAL mode
-    of the seed-style control-after-generate selector; setting it asks the
+    precision, or literal False to disable rounding, available only on FLOAT;
+    it never implies display or changes bounds/step. ``control_after_generate``
+    names the INITIAL mode of the seed-style control-after-generate selector; setting it asks the
     frontend to render that control. Absence of the descriptor means "no
     presentation metadata", and the frontend still renders a number editor
     by primitive type inference; it never means the input is widgetless
     (pinned with the frontend).
 
     Socket binding: this descriptor is only
-    legal on concrete ``INT``/``FLOAT`` inputs, and constraints
-    are interpreted in the socket's domain - an int socket with a
+    legal on concrete ``INT``/``FLOAT`` inputs, their one-level lists, and
+    the scalar ``INT``/``FLOAT`` union. Constraints use the socket's domain
+    (FLOAT for the union) - an int socket with a
     fractional min/max/step is malformed. Enforced by InputSpec, which is
     the first place the widget meets its socket type."""
 
@@ -674,7 +758,7 @@ class NumberWidget:
     step: int | float | None = None
     control_after_generate: ControlAfterGenerate | None = None
     display: Literal["number", "slider", "knob", "gradientslider", "color"] | None = None
-    round: int | float | None = None
+    round: int | float | Literal[False] | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -710,11 +794,17 @@ class NumberWidget:
                     f"number widget {name} must fit the supported integer range "
                     f"({_DECIMAL_WIRE_INT_MIN}..{_DECIMAL_WIRE_INT_MAX}), got {bound}"
                 )
-        if self.round is not None and (
-            type(self.round) not in (int, float) or not math.isfinite(self.round) or self.round <= 0
+        if (
+            self.round is not None
+            and self.round is not False
+            and (
+                type(self.round) not in (int, float)
+                or not math.isfinite(self.round)
+                or self.round <= 0
+            )
         ):
             raise ValueError(
-                f"number widget round must be a finite positive number, got {self.round!r}"
+                f"number widget round must be False or a finite positive number, got {self.round!r}"
             )
         if self.min is not None and self.max is not None and self.min > self.max:
             raise ValueError(f"number widget min ({self.min}) must not exceed max ({self.max})")
@@ -981,10 +1071,12 @@ def _validate_widget_binding(input_id: str, input_type: TypeExpr, widget: Widget
     )
     if isinstance(widget, NumberWidget):
         socket = primitive_type.types[0] if primitive_type.kind == "concrete" else None
+        if input_type.kind == "union" and set(input_type.types) == {CORE_INT, CORE_FLOAT}:
+            socket = CORE_FLOAT
         if socket not in (CORE_INT, CORE_FLOAT):
             raise ValueError(
                 f"input {input_id}: number widget requires a concrete "
-                f"INT or FLOAT input, got {input_type.kind} "
+                f"INT or FLOAT input or their scalar union, got {input_type.kind} "
                 f"{socket or ''}".rstrip()
             )
         if socket == CORE_INT:
@@ -1014,50 +1106,43 @@ def _validate_widget_binding(input_id: str, input_type: TypeExpr, widget: Widget
             )
     if isinstance(widget, StringWidget) and primitive_type != TypeExpr.concrete(CORE_STRING):
         raise ValueError(f"input {input_id}: string widget requires a concrete STRING input")
-    if isinstance(widget, ColorWidget) and input_type != TypeExpr.concrete("STRING"):
+    if isinstance(widget, ColorWidget) and input_type != TypeExpr.concrete(CORE_STRING):
         raise ValueError(f"input {input_id}: color widget requires a concrete STRING input")
-    if isinstance(widget, CurveWidget) and input_type != TypeExpr.concrete("dinkster.curve"):
-        raise ValueError(f"input {input_id}: curve widget requires a concrete dinkster.curve input")
-    if isinstance(widget, CompositorWidget) and input_type != TypeExpr.concrete(
-        "dinkster.compositor"
-    ):
+    if isinstance(widget, CurveWidget) and input_type != TypeExpr.concrete(CURVE_TYPE):
+        raise ValueError(f"input {input_id}: curve widget requires a concrete {CURVE_TYPE} input")
+    if isinstance(widget, CompositorWidget) and input_type != TypeExpr.concrete(COMPOSITOR_TYPE):
         raise ValueError(
-            f"input {input_id}: compositor widget requires a concrete dinkster.compositor input"
+            f"input {input_id}: compositor widget requires a concrete {COMPOSITOR_TYPE} input"
         )
     if isinstance(widget, BooleanWidget) and primitive_type != TypeExpr.concrete(CORE_BOOLEAN):
         raise ValueError(f"input {input_id}: boolean widget requires a concrete BOOLEAN input")
     if isinstance(widget, ComboWidget) and primitive_type != TypeExpr.concrete(CORE_COMBO):
         raise ValueError(f"input {input_id}: combo widget requires a concrete COMBO input")
     if isinstance(widget, MultiComboWidget) and input_type != TypeExpr.list_of(
-        TypeExpr.concrete("COMBO")
+        TypeExpr.concrete(CORE_COMBO)
     ):
         raise ValueError(f"input {input_id}: multi combo widget requires a list<COMBO> input")
     if isinstance(widget, AssetWidget) and not (
-        input_type == TypeExpr.concrete("dinkster.asset")
+        input_type == TypeExpr.concrete(ASSET_TYPE)
         or (input_type.kind == "asset" and input_type.runtime_type_id() is not None)
         or input_type.kind == "concrete"
-        or (
-            widget.allow_upload
-            and input_type == TypeExpr.list_of(TypeExpr.concrete("dinkster.asset"))
-        )
+        or (widget.allow_upload and input_type == TypeExpr.list_of(TypeExpr.concrete(ASSET_TYPE)))
     ):
         # Asset destinations receive one ref directly. Concrete scalar
         # destinations receive an asset-stamped literal that the worker
         # decodes (or a stamped list that it terminally merges). The exact
-        # upload-enabled list<dinkster.asset> spelling supports ordered source
+        # upload-enabled list<ASSET> spelling supports ordered source
         # uploads; other lists and unresolved asset variables cannot determine
         # a contract.
         raise ValueError(
             f"input {input_id}: asset widget requires a concrete "
-            "scalar, bare dinkster.asset, upload-enabled list<dinkster.asset>, or "
+            f"scalar, bare {ASSET_TYPE}, upload-enabled list<{ASSET_TYPE}>, or "
             "fully-concrete asset<...> input; other list inputs and "
             "asset<variable> are not supported"
         )
-    if isinstance(widget, SaveTargetWidget) and input_type != TypeExpr.concrete(
-        "dinkster.save_target"
-    ):
+    if isinstance(widget, SaveTargetWidget) and input_type != TypeExpr.concrete(SAVE_TARGET_TYPE):
         raise ValueError(
-            f"input {input_id}: save target widget requires a concrete dinkster.save_target input"
+            f"input {input_id}: save target widget requires a concrete {SAVE_TARGET_TYPE} input"
         )
 
 
@@ -1123,7 +1208,7 @@ class InputSpec:
             else (self.widget,)
         )
         if self.source_filename is not None:
-            source_type = TypeExpr.concrete("dinkster.asset")
+            source_type = TypeExpr.concrete(ASSET_TYPE)
             typed_asset = self.type.kind == "asset" and self.type.runtime_type_id() is not None
             if not typed_asset and self.type not in (source_type, TypeExpr.list_of(source_type)):
                 raise ValueError(
@@ -1301,10 +1386,11 @@ class OutputSpec:
             raise ValueError(f"output {self.id}: known_value must be an OutputKnownValue")
 
 
-RESERVED_INPUT_IDS = frozenset({"output_spec"})
+RESERVED_INPUT_IDS = frozenset({"output_spec", "execution_context", "input_values"})
 """Framework-reserved execute() parameter names. ``output_spec`` carries the
 elaborated output interface (an OutputInterface) to nodes that declare output
-families; it is never an input id or input family id."""
+families; ``execution_context`` carries live run control; ``input_values``
+provides read-only input envelopes. These are not input or family ids."""
 
 SearchVisibility = Literal["normal", "deprecated", "hidden"]
 """How node search lists a type. Presentation/lifecycle metadata, never
@@ -1365,6 +1451,7 @@ class InputFamilySpec:
     required: bool = True
     member_prefix: str | None = None
     member_names: tuple[str, ...] | None = None
+    independent_types: bool = False
 
     def __init__(
         self,
@@ -1377,6 +1464,7 @@ class InputFamilySpec:
         required: bool = True,
         member_prefix: str | None = None,
         member_names: tuple[str, ...] | None = None,
+        independent_types: bool = False,
     ) -> None:
         if member_names is not None and max_members is not None:
             raise ValueError(f"family {id}: max_members is derived from member_names")
@@ -1397,10 +1485,13 @@ class InputFamilySpec:
         object.__setattr__(self, "required", required)
         object.__setattr__(self, "member_prefix", member_prefix)
         object.__setattr__(self, "member_names", member_names)
+        object.__setattr__(self, "independent_types", independent_types)
         self.__post_init__()
 
     def __post_init__(self) -> None:
         _validate_structural_id(self.id, "input family id")
+        if type(self.independent_types) is not bool:
+            raise ValueError(f"family {self.id}: independent_types must be a bool")
         if not self.template:
             raise ValueError(f"family {self.id}: template must not be empty")
         _validate_dynamic_entries(self.template, f"family '{self.id}' template")
@@ -1800,6 +1891,9 @@ def _type_variables(expr: TypeExpr) -> Iterable[TypeExpr]:
     elif expr.kind in ("list", "asset", "stream"):
         assert expr.element is not None
         yield from _type_variables(expr.element)
+    elif expr.kind == "tuple":
+        for position in expr.elements:
+            yield from _type_variables(position)
 
 
 @dataclass(frozen=True)
@@ -2137,10 +2231,10 @@ class NodeSchema:
     unambiguous at use, a search term is free-form discovery data."""
     output_node: bool = False
     """This node acts as a sink/output of a workflow (v1 OUTPUT_NODE, a
-    save/preview node). A hint for submission formats that carry no explicit
-    targets (they target every output_node in the document) and for
-    frontend default-target affordances. Never scheduling, never validity,
-    never part of the schema signature."""
+    save/preview node). Submission formats without explicit targets select
+    these nodes. Region bodies also select them each iteration, and may omit
+    exported outputs when they contain a declared sink. Not part of the
+    schema signature."""
     emits_previews: bool = False
     """This node's execution emits live previews (report_preview during
     sampling or other long-running work). One declaration, two consumers:
@@ -2152,16 +2246,18 @@ class NodeSchema:
     declarative design). Capability metadata only: never validity and
     never part of the schema signature."""
     may_expand_graph: bool = False
-    """This node's execution may return a runtime graph expansion payload
-    that Dinkster cannot execute. Populated only where expansion is provable
-    at translation time: compat marks V3 schemas whose source declares
-    ``enable_expand``, and v1 functions that statically return an "expand"
-    dict plus the enumerated core expanders at the pinned reference revision.
-    Dynamically built or delegated returns are unclassifiable and stay
-    unflagged; the loud runtime refusal is the safety boundary for that tail.
-    Importers use the flag to refuse unsupported structures (such as a
-    Generic Loop region containing such a node) before submission. Capability
-    metadata only: never validity and never part of the schema signature."""
+    """Execution may return a validated runtime graph expansion and inhibit
+    nodes in the run overlay. Capability metadata, not cache identity."""
+    admission_validation: bool = False
+    """Ask the owning native worker to validate literal values and declared
+    linked-input types before producers execute. Opt-in only: nodes without
+    this hook retain advisory declared-type mismatch behavior."""
+    execution_context: bool = False
+    """Inject the hidden run-scoped execution_context parameter. Such nodes
+    observe live run state and therefore never use invocation-result caches."""
+    input_values: bool = False
+    """Inject read-only input envelopes without live run-control access.
+    Caching includes metadata throughout each input value tree."""
     mirror: MirrorSpec | None = None
     """Optional frontend-renderable mirror of this node's transform (see
     MirrorSpec). Presentation metadata only: the engine never reads it,
@@ -2185,6 +2281,10 @@ class NodeSchema:
     def __post_init__(self) -> None:
         if not self.node_type:
             raise ValueError("node_type is required")
+        if type(self.execution_context) is not bool:
+            raise ValueError("execution_context must be a bool")
+        if type(self.input_values) is not bool:
+            raise ValueError("input_values must be a bool")
         if self.editor_role is not None and (
             not isinstance(cast("object", self.editor_role), str) or not self.editor_role
         ):
@@ -2295,7 +2395,7 @@ class NodeSchema:
             ):
                 raise ValueError(f"{self.node_type}: selector schemas require exactly one output")
             selector_input = inputs_by_id.get(selector.input)
-            if selector_input is None or selector_input.type != TypeExpr.concrete("BOOLEAN"):
+            if selector_input is None or selector_input.type != TypeExpr.concrete(CORE_BOOLEAN):
                 raise ValueError(
                     f"{self.node_type}: selector input must name a stored BOOLEAN input"
                 )
@@ -2423,12 +2523,43 @@ class NodeSchema:
                 "top-level inputs"
             )
         inputs_by_id = {spec.id: spec for spec in self.inputs}
+        families_by_id = {family.id: family for family in self.input_families}
+
+        def validate_output_type(expr: TypeExpr) -> None:
+            if expr.kind == "family_tuple":
+                family = families_by_id.get(expr.input_id)
+                if (
+                    family is None
+                    or not family.independent_types
+                    or len(family.template) != 1
+                    or not isinstance(family.template[0], InputSpec)
+                ):
+                    raise ValueError("tuple output requires an independent single-input family")
+            if expr.kind == "tuple_element":
+                if expr.input_id and expr.input_id not in inputs_by_id:
+                    raise ValueError("tuple element references an unknown tuple input")
+                if isinstance(expr.index, str):
+                    selector = inputs_by_id.get(expr.index)
+                    if selector is None or selector.type != TypeExpr.concrete(CORE_INT):
+                        raise ValueError("tuple element selector must reference an INT input")
+            if expr.element is not None:
+                validate_output_type(expr.element)
+            for position in expr.elements:
+                validate_output_type(position)
+
+        for spec in (*self.inputs, *dynamic_specs):
+            if spec.type.requires_elaboration:
+                raise ValueError(
+                    "input types cannot reference family or literal output declarations"
+                )
+        for output in self.outputs:
+            validate_output_type(output.type)
         if self.output_descriptors is not None:
             descriptor_input = inputs_by_id.get(self.output_descriptors.input)
             if (
                 descriptor_input is None
                 or not descriptor_input.required
-                or descriptor_input.type != TypeExpr.concrete("STRING")
+                or descriptor_input.type != TypeExpr.concrete(CORE_STRING)
             ):
                 raise ValueError(
                     f"{self.node_type}: output descriptors require a required top-level "
@@ -2440,10 +2571,10 @@ class NodeSchema:
                 if (
                     asset_input is None
                     or not asset_input.required
-                    or asset_input.type != TypeExpr.concrete("dinkster.asset")
+                    or asset_input.type != TypeExpr.concrete(ASSET_TYPE)
                 ):
                     raise ValueError(
-                        "output probe requires a required top-level dinkster.asset input"
+                        f"output probe requires a required top-level {ASSET_TYPE} input"
                     )
         for output in self.outputs:
             known_value = output.known_value
@@ -2455,10 +2586,10 @@ class NodeSchema:
                         f"{known_value.input!r} is not a declared top-level input"
                     )
                 primitive_types = {
-                    TypeExpr.concrete("INT"),
-                    TypeExpr.concrete("FLOAT"),
-                    TypeExpr.concrete("STRING"),
-                    TypeExpr.concrete("BOOLEAN"),
+                    TypeExpr.concrete(CORE_INT),
+                    TypeExpr.concrete(CORE_FLOAT),
+                    TypeExpr.concrete(CORE_STRING),
+                    TypeExpr.concrete(CORE_BOOLEAN),
                 }
                 if known_input.type != output.type or output.type not in primitive_types:
                     raise ValueError(
@@ -2501,7 +2632,7 @@ class NodeSchema:
             if (
                 count_input is None
                 or not count_input.required
-                or count_input.type != TypeExpr.concrete("INT")
+                or count_input.type != TypeExpr.concrete(CORE_INT)
             ):
                 raise ValueError(
                     f"{self.node_type}: output family count must reference a required "
@@ -2534,6 +2665,7 @@ class NodeSchema:
             and self.output_descriptors is None
             and not self.combos
             and not self.slots
+            and not any(output.type.requires_elaboration for output in self.outputs)
         )
 
     def slot(self, slot_id: str) -> DynamicSlotSpec | None:

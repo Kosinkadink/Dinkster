@@ -32,6 +32,7 @@ import threading
 import time
 import traceback
 from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
+from dataclasses import replace
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
 from typing import Any, NamedTuple, TypeAlias, cast
@@ -58,6 +59,8 @@ from dinkster_memory import (
 )
 from dinkster_protocol import (
     WORKGROUP_CAPABILITY,
+    AdmissionInvocation,
+    AdmissionWorker,
     AttentionCapabilityEvidence,
     AttentionRouteToken,
     BeginWorkGroup,
@@ -101,6 +104,7 @@ from dinkster_schema import (
     comfy_group_registry_to_wire,
     configure_logging_from_env,
     install_stream_capture,
+    schema_from_wire,
     schema_signature,
     schema_to_wire,
     validate_name,
@@ -109,6 +113,7 @@ from dinkster_values import (
     InvalidRenditionRequest,
     RenditionUnavailable,
     TypeRegistry,
+    Value,
     default_decode,
     process_instance_token,
     register_core_types,
@@ -150,11 +155,13 @@ from .manifest import (
     generation_provider_to_wire,
     load_manifest,
     resolve_entry,
+    validate_registration_claims,
     vision_provider_to_wire,
 )
 from .produced_assets import source_asset_files
 from .relay import consumer_item_to_wire
 from .resume import InvocationKey, ResumableConversation
+from .run_control import BoundaryRunContext
 from .staging import AssetStagingService, StageAsset
 from .transport import connect_endpoint
 from .workgroup_session import (
@@ -354,6 +361,7 @@ def load_pack(
     list[type[Node]],
     dict[str, InProcessWorker],
 ]:
+    validate_registration_claims(manifest)
     has_native_arm = any(arm == "native" for arm, _node_types in manifest.arms)
     attention_runtime, attention_capabilities, attention_route_token = (
         _discover_attention_runtime() if has_native_arm else (None, None, None)
@@ -421,12 +429,27 @@ def load_pack(
         if registry is None:
             registry = TypeRegistry()
             register_core_types(registry)
-        if manifest.types_entry is not None:
-            register = resolve_pack_entry(manifest.types_entry)
-            if not callable(register):
-                raise ManifestError(f"entry '{manifest.types_entry}' is not callable")
-            register(registry)
+        previous_types = frozenset(registry.type_ids())
+        with registry.registering_pack(
+            manifest.name,
+            manifest.type_namespaces,
+            allow_bare=manifest.publisher == "dinkster",
+        ):
+            if manifest.types_entry is not None:
+                register = resolve_pack_entry(manifest.types_entry)
+                if not callable(register):
+                    raise ManifestError(f"entry '{manifest.types_entry}' is not callable")
+                register(registry)
         node_classes = _node_classes(manifest.nodes_entry, resolve_pack_entry(manifest.nodes_entry))
+        default_schemas = build_schemas(node_classes)
+        if manifest.publisher != "dinkster":
+            for node_type in default_schemas:
+                if node_type not in manifest.executes and not claim_covers(
+                    manifest.name, node_type
+                ):
+                    raise ManifestError(
+                        f"{manifest.path}: node {node_type!r} must use the pack-name prefix"
+                    )
         # The same startup enumeration as the isolated worker path: static
         # lists are validated now, lazy providers are held uninvoked and
         # served per fetch by the in-process worker itself.
@@ -442,8 +465,18 @@ def load_pack(
             combo_choices=choices.static,
             lazy_choices=choices.lazy,
             memory_consumers=consumers,
+            # Dependency codecs retain their owner's identity in this worker;
+            # installing them does not transfer ownership to the consumer.
+            registered_types=tuple(
+                tid
+                for tid in registry.type_ids()
+                if tid not in previous_types
+                and not any(
+                    dependency.pack == registry.owner_of(tid)
+                    for dependency in manifest.dependencies
+                )
+            ),
         )
-        default_schemas = build_schemas(node_classes)
         if manifest.comfy_aliases is not None:
             for record in manifest.comfy_aliases.records:
                 if not any(claim_covers(claim, record.carrier) for claim in manifest.namespaces):
@@ -956,6 +989,7 @@ async def serve_connection(
     sent_segments: dict[str, SharedMemory] = {}
     tasks: dict[str, asyncio.Task[None]] = {}
     cancellation_events: dict[str, threading.Event] = {}
+    run_contexts: dict[str, BoundaryRunContext] = {}
     # In-flight stageAssets requests: requestId -> (task, abort event). The
     # event reaches into the fetch thread (checked between chunks), so a
     # cancelStage stops the download at the next chunk boundary and the
@@ -972,6 +1006,7 @@ async def serve_connection(
     # a stub it has not decoded yet, so this side must hold the resident until
     # the parent vouches for it (DESIGN 3.10: the in-flight half of the gate).
     inflight_result_refs: dict[str, frozenset[str]] = {}
+    inflight_control_refs: dict[str, set[str]] = {}
     full_release_operations: set[str] = set()
     full_release_commits: set[str] = set()
     connection_token = object()
@@ -1011,6 +1046,8 @@ async def serve_connection(
     def held_resource_ids() -> set[str]:
         held: set[str] = set()
         for refs in inflight_result_refs.values():
+            held.update(refs)
+        for refs in inflight_control_refs.values():
             held.update(refs)
         return held
 
@@ -1143,6 +1180,7 @@ async def serve_connection(
         "type": "hello",
         "pack": pack_name,
         "schemas": {t: schema_to_wire(s) for t, s in schemas.items()},
+        "registeredTypes": list(worker.registered_types),
         "lazyStatus": True,
         # This process lifetime's identity: the same token resident codecs
         # stamp as RESOURCE_OWNER_META_KEY on the envelopes they produce, so
@@ -1403,7 +1441,11 @@ async def serve_connection(
                 if planner is not None
                 else ()
             )
-            if requests:
+
+            async def reserve_memory() -> str | None:
+                nonlocal reserve_sent
+                if not requests:
+                    return None
                 grant: asyncio.Future[str | None] = asyncio.get_running_loop().create_future()
                 pending_grants[invocation_id] = grant
                 reserve_sent = True
@@ -1417,12 +1459,50 @@ async def serve_connection(
                     }
                 )
                 try:
-                    denial = await grant
+                    return await grant
                 finally:
                     pending_grants.pop(invocation_id, None)
+
+            async def suspend_memory() -> None:
+                if requests:
+                    await send({"type": "memoryRelease", "requestId": invocation_id})
+
+            async def resume_memory() -> None:
+                denial = await reserve_memory()
                 if denial is not None:
-                    await send_error(invocation_id, header, f"memory admission failed: {denial}")
-                    return
+                    raise RuntimeError(f"memory admission failed: {denial}")
+
+            async def prepare_control_values(values: Mapping[str, Value]) -> Mapping[str, Value]:
+                arm = pack_name if invocation.arm is None else f"{pack_name}@{invocation.arm}"
+                values = {
+                    name: stamp_resource_producer_arm(value, process_instance_token(), arm)
+                    for name, value in values.items()
+                }
+                refs = inflight_control_refs.setdefault(invocation_id, set())
+                for value in values.values():
+                    refs.update(value_resource_ids(value))
+                if blob_transfer is not None:
+                    files = source_asset_files(values, resolver_from_env())
+                    if files:
+                        await ensure_peer_holds(files)
+                return values
+
+            denial = await reserve_memory()
+            if denial is not None:
+                await send_error(invocation_id, header, f"memory admission failed: {denial}")
+                return
+            run_context = BoundaryRunContext(
+                invocation_id,
+                invocation.node_id,
+                invocation.inputs,
+                codec,
+                send,
+                suspend_memory,
+                resume_memory,
+                prepare_control_values,
+            )
+            run_contexts[invocation_id] = run_context
+            invocation = replace(invocation, run_control=run_context)
             started = time.perf_counter()
             workgroup_cancelled = getattr(workgroup_handler, "invocation_cancelled", None)
             with use_execution_context(
@@ -1492,6 +1572,7 @@ async def serve_connection(
                         for name, value in result.outputs.items()
                     },
                     artifact_candidates=result.artifact_candidates,
+                    expansion=result.expansion,
                 )
             if blob_transfer is not None:
                 await result_transfer_lock.acquire()
@@ -1503,7 +1584,10 @@ async def serve_connection(
             )
             conversation_checkpoint = codec.conversation_checkpoint()
             out_header, out_blobs, out_segments = encode_result(
-                codec, result, invocation_id, execute_ms
+                codec,
+                result,
+                invocation_id,
+                execute_ms,
             )
             pending_blobs: list[tuple[str, bytes | Path]] = list(codec.take_pending_store_blobs())
             pending_blobs.extend(source_files)
@@ -1593,6 +1677,10 @@ async def serve_connection(
                     }
                 )
         finally:
+            context = run_contexts.pop(invocation_id, None)
+            if context is not None:
+                context.close()
+            inflight_control_refs.pop(invocation_id, None)
             if result_send_locked:
                 result_transfer_lock.release()
             # Refuse late calls synchronously before cleanup can suspend. A
@@ -1640,6 +1728,52 @@ async def serve_connection(
             cancellation_events.pop(invocation_id, None)
             if resume is not None and cancellation.is_set():
                 finish_resumable_cancellation(invocation_id)
+
+    async def run_admission(header: dict[str, Any], blobs: list[bytes]) -> None:
+        request_id = str(header.get("requestId", ""))
+        reply: dict[str, object] = {"type": "admissionResult", "requestId": request_id}
+        cancelled = False
+        try:
+            literals = header.get("literalInputs")
+            linked = header.get("linkedInputTypes")
+            schema_wire = header.get("effectiveSchema")
+            if (
+                blobs
+                or not isinstance(literals, dict)
+                or not isinstance(linked, dict)
+                or not isinstance(schema_wire, dict)
+                or not all(isinstance(key, str) for key in cast("dict[object, object]", literals))
+                or not all(
+                    isinstance(key, str) and isinstance(value, str)
+                    for key, value in cast("dict[object, object]", linked).items()
+                )
+            ):
+                raise ValueError("invalid admission inputs or effective schema")
+            invocation = AdmissionInvocation(
+                request_id=request_id,
+                node_id=str(header.get("nodeId", "")),
+                node_type=str(header.get("nodeType", "")),
+                literal_inputs=cast("dict[str, object]", literals),
+                linked_input_types=cast("dict[str, str]", linked),
+                effective_schema=schema_from_wire(cast("dict[str, Any]", schema_wire)),
+            )
+            result = await cast("AdmissionWorker", worker).validate_admission(invocation)
+            reply["explanation"] = result.explanation
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+        except Exception as exc:  # noqa: BLE001 - terminal error for malformed peer requests
+            reply["explanation"] = f"admission-protocol-malformed: {exc}"
+        finally:
+            if not cancelled:
+                try:
+                    await send(reply)
+                except Exception:  # noqa: BLE001 - fail the parent pending request
+                    log.exception("failed to send terminal admission reply")
+                    writer.close()
+                    with contextlib.suppress(Exception):
+                        await writer.wait_closed()
+            tasks.pop(request_id, None)
 
     async def run_lazy_status(header: dict[str, Any], blobs: list[bytes]) -> None:
         request_id = str(header.get("requestId", ""))
@@ -2564,6 +2698,13 @@ async def serve_connection(
                 tasks[invocation_id] = track_resource_task(
                     asyncio.create_task(run_invocation(header, blobs, cancellation))
                 )
+            elif kind == "runControlResult":
+                invocation_id = header.get("invocationId")
+                if type(invocation_id) is not str:
+                    raise BoundaryError("run control response identity is malformed")
+                context = run_contexts.get(invocation_id)
+                if context is None or not context.accept(header, blobs):
+                    raise BoundaryError("run control response names no pending request")
             elif kind == "rebind":
                 if resume is None:
                     raise BoundaryError("rebind received on a non-resumable conversation")
@@ -2596,6 +2737,24 @@ async def serve_connection(
                 track_resource_task(workgroup_task)
                 workgroup_tasks.add(workgroup_task)
                 workgroup_task.add_done_callback(workgroup_done)
+            elif kind == "validateAdmission":
+                request_id = str(header.get("requestId", ""))
+                if not request_id or request_id in tasks:
+                    await send(
+                        {
+                            "type": "admissionResult",
+                            "requestId": request_id,
+                            "explanation": "admission-protocol-skew: duplicate request id",
+                        }
+                    )
+                else:
+                    tasks[request_id] = track_resource_task(
+                        asyncio.create_task(run_admission(header, blobs))
+                    )
+            elif kind == "cancelAdmission":
+                task = tasks.get(str(header.get("requestId", "")))
+                if task is not None:
+                    task.cancel()
             elif kind == "checkLazyStatus":
                 request_id = str(header.get("requestId", ""))
                 if not request_id or request_id in tasks:

@@ -32,6 +32,9 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import cast
 
 from dinkster_protocol import (
+    AdmissionInvocation,
+    AdmissionResult,
+    AdmissionWorker,
     Invocation,
     InvocationResult,
     LazyStatusInvocation,
@@ -183,5 +186,30 @@ class PlacementWorker:
                 )
             )
         return await cast("LazyStatusWorker", worker).check_lazy_status(
+            invocation, on_event=on_event
+        )
+
+    async def validate_admission(
+        self,
+        invocation: AdmissionInvocation,
+        on_event: OnInvocationEvent | None = None,
+    ) -> AdmissionResult:
+        # Admission has no resident values: use the unpinned placement policy.
+        ordinary = Invocation(
+            invocation_id=invocation.request_id,
+            node_id=invocation.node_id,
+            node_type=invocation.node_type,
+            inputs={},
+            effective_schema=invocation.effective_schema,
+        )
+        worker = self._worker_for(ordinary)
+        if isinstance(worker, InvocationResult):
+            assert worker.error is not None
+            return AdmissionResult(explanation=worker.error.message)
+        if not callable(getattr(worker, "validate_admission", None)):
+            return AdmissionResult(
+                explanation="admission-protocol-skew: placed worker does not support admission"
+            )
+        return await cast("AdmissionWorker", worker).validate_admission(
             invocation, on_event=on_event
         )

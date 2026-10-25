@@ -46,6 +46,8 @@ from types import MappingProxyType
 from dinkster_assets import resolver_from_env
 from dinkster_memory import MemoryGovernor, ReportedTelemetry, ReservationService
 from dinkster_protocol import (
+    AdmissionInvocation,
+    AdmissionResult,
     CompatGateDiagnostic,
     Invocation,
     InvocationResult,
@@ -239,6 +241,10 @@ class IsolatedWorker:
     @property
     def renditions(self) -> tuple[RenditionDeclaration, ...]:
         return self._session.renditions
+
+    @property
+    def registered_types(self) -> tuple[str, ...]:
+        return self._session.registered_types
 
     async def resolve_rendition(
         self,
@@ -439,6 +445,13 @@ class IsolatedWorker:
     ) -> LazyStatusResult:
         return await self._session.check_lazy_status(invocation, on_event=on_event)
 
+    async def validate_admission(
+        self,
+        invocation: AdmissionInvocation,
+        on_event: OnInvocationEvent | None = None,
+    ) -> AdmissionResult:
+        return await self._session.validate_admission(invocation, on_event=on_event)
+
     async def close(self) -> None:
         if self._close_task is None:
             self._close_task = asyncio.create_task(self._close())
@@ -531,6 +544,10 @@ class GroupMemberWorker:
     @property
     def renditions(self):
         return self._session.renditions
+
+    @property
+    def registered_types(self):
+        return self._session.registered_types
 
     async def resolve_rendition(
         self,
@@ -627,6 +644,13 @@ class GroupMemberWorker:
         on_event: OnInvocationEvent | None = None,
     ) -> LazyStatusResult:
         return await self._session.check_lazy_status(invocation, on_event=on_event)
+
+    async def validate_admission(
+        self,
+        invocation: AdmissionInvocation,
+        on_event: OnInvocationEvent | None = None,
+    ) -> AdmissionResult:
+        return await self._session.validate_admission(invocation, on_event=on_event)
 
 
 class GroupIsolatedWorker:

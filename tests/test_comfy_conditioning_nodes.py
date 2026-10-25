@@ -20,9 +20,11 @@ from dinkster_nodes_comfy.conditioning import (
     ConditioningMultiply,
     ConditioningSetArea,
     ConditioningSetAreaPercentage,
+    ConditioningSetAreaPercentageVideo,
     ConditioningSetAreaStrength,
     ConditioningSetMask,
     ConditioningSetTimestepRange,
+    ConditioningStableAudio,
     ConditioningZeroOut,
 )
 
@@ -107,6 +109,11 @@ def test_registered_classes_have_exact_ids_atoms_and_ordered_interfaces() -> Non
             ("conditioning", "width", "height", "x", "y", "strength"),
         ),
         (
+            "ConditioningSetAreaPercentageVideo",
+            "Conditioning (Set Area with Percentage for Video)",
+            ("conditioning", "width", "height", "temporal", "x", "y", "z", "strength"),
+        ),
+        (
             "ConditioningSetAreaStrength",
             "Conditioning (Set Area Strength)",
             ("conditioning", "strength"),
@@ -122,15 +129,29 @@ def test_registered_classes_have_exact_ids_atoms_and_ordered_interfaces() -> Non
             "ConditioningSetTimestepRange",
             ("conditioning", "start", "end"),
         ),
+        (
+            "ConditioningStableAudio",
+            "ConditioningStableAudio",
+            ("positive", "negative", "seconds_start", "seconds_total"),
+        ),
     )
-    assert len(CONDITIONING_NODES) == 10
+    assert len(CONDITIONING_NODES) == 12
     for node, (node_type, display_name, inputs) in zip(CONDITIONING_NODES, expected, strict=True):
         schema = node.schema()
         assert schema.node_type == node_type
         assert (schema.display_name or schema.node_type) == display_name
-        assert schema.category == "model/conditioning/transform"
+        assert schema.category == (
+            "model/conditioning/stable audio"
+            if node_type == "ConditioningStableAudio"
+            else "model/conditioning/transform"
+        )
         assert tuple(input_spec.id for input_spec in schema.inputs) == inputs
-        assert tuple(output.type.types for output in schema.outputs) == (("CONDITIONING",),)
+        assert all(output.type.types == ("CONDITIONING",) for output in schema.outputs)
+        assert tuple(output.id for output in schema.outputs) == (
+            ("positive", "negative")
+            if node_type == "ConditioningStableAudio"
+            else ("CONDITIONING",)
+        )
     mask_wire = schema_to_wire(ConditioningSetMask.schema())
     interface = cast(list[dict[str, object]], mask_wire["interface"])
     mask_input = next(item for item in interface if item["id"] == "set_cond_area")
@@ -230,6 +251,50 @@ def test_area_strength_mask_and_timestep_transforms_copy_metadata_at_boundaries(
     assert (timestep[0][1]["start_percent"], timestep[0][1]["end_percent"]) == (0.125, 0.875)
     assert original[0][1] == {"preserve": {"nested": True}, "strength": 0.5}
     assert area[0][1]["preserve"] is original[0][1]["preserve"]
+
+
+def test_audio_timing_and_video_percentage_area_preserve_sources() -> None:
+    positive = [[np.array([[[2.0, -7.0]]]), {"tag": "positive", "seconds_total": 999.0}]]
+    negative = [[np.array([[[5.0, -3.0]]]), {"tag": "negative", "seconds_start": 100.0}]]
+    timed = cast(
+        dict[str, list[list[Any]]],
+        ConditioningStableAudio.execute(
+            positive=positive, negative=negative, seconds_start=2.25, seconds_total=37.5
+        ),
+    )
+    for name, source in (("positive", positive), ("negative", negative)):
+        result = timed[name]
+        assert result[0][0] is source[0][0]
+        assert result[0][1] == {"tag": name, "seconds_start": 2.25, "seconds_total": 37.5}
+        assert result[0][1] is not source[0][1]
+    area = cast(
+        list[list[Any]],
+        ConditioningSetAreaPercentageVideo.execute(
+            conditioning=timed["positive"],
+            width=0.75,
+            height=0.5,
+            temporal=0.25,
+            x=0.125,
+            y=0.375,
+            z=0.625,
+            strength=2.5,
+        )["CONDITIONING"],
+    )
+    assert area[0][0] is positive[0][0]
+    assert area[0][1] == {
+        "tag": "positive",
+        "seconds_start": 2.25,
+        "seconds_total": 37.5,
+        "area": ("percentage", 0.25, 0.5, 0.75, 0.625, 0.375, 0.125),
+        "strength": 2.5,
+        "set_area_to_bounds": False,
+    }
+    assert "area" not in timed["positive"][0][1]
+    assert positive[0][1] == {"tag": "positive", "seconds_total": 999.0}
+    assert negative[0][1] == {"tag": "negative", "seconds_start": 100.0}
+    assert ConditioningStableAudio.execute(
+        positive=[], negative=[], seconds_start=0.0, seconds_total=0.0
+    ) == {"positive": [], "negative": []}
 
 
 def test_zero_out_zeros_all_supported_payloads_and_leaves_other_metadata(

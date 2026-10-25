@@ -2370,6 +2370,9 @@ def test_nodes_envelope_lists_mergeable_types_sorted() -> None:
             assert resp.status == 200
             data = await resp.json()
             assert data["dinkster"]["mergeableTypes"] == []
+            assert data["typeOwners"]["INT"] == "dinkster-nodes-foundation"
+            with registry.registering_pack("mypack", ("mypack",)):
+                registry.register("mypack.thing")
             # Post-startup registration, deliberately in non-sorted order
             # to pin the sort.
             registry.register_batch_merge(
@@ -2384,6 +2387,7 @@ def test_nodes_envelope_lists_mergeable_types_sorted() -> None:
             assert resp.status == 200
             data = await resp.json()
             assert data["dinkster"]["mergeableTypes"] == ["INT", "STRING"]
+            assert data["typeOwners"]["mypack.thing"] == "mypack"
         finally:
             await client.close()
 
@@ -6077,7 +6081,7 @@ def test_values_endpoint_image_png_rendition() -> None:
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("type_id", ["dinkster.layers", "comfy.LAYERS"])
+@pytest.mark.parametrize("type_id", ["LAYERS", "comfy.LAYERS"])
 def test_values_endpoint_layer_document_rendition(
     type_id: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -6104,13 +6108,13 @@ def test_values_endpoint_layer_document_rendition(
         def execute(cls) -> Mapping[str, object]:
             return AddLayer.execute(image=pixels)
 
-    nodes: list[type[Node]] = [AddLayer] if type_id == "dinkster.layers" else [CompatLayers]
+    nodes: list[type[Node]] = [AddLayer] if type_id == "LAYERS" else [CompatLayers]
     schemas = build_schemas(nodes)
 
     def factory(on_event: EventListener) -> Engine:
         registry = TypeRegistry()
         register_core_types(registry)
-        if type_id == "dinkster.layers":
+        if type_id == "LAYERS":
             register_image_types(registry)
         else:
             register_comfy_host_types(registry)
@@ -6134,7 +6138,7 @@ def test_values_endpoint_layer_document_rendition(
                     "dinkster.layers.add",
                     {"image": TypedLiteral("IMAGE", pixels.tolist())},
                 )
-                if type_id == "dinkster.layers"
+                if type_id == "LAYERS"
                 else GraphNode("test.compat_layers", {})
             )
             await finish_job(client, Graph(nodes={"layers": node}), ["layers"])
@@ -6155,7 +6159,7 @@ def test_values_endpoint_layer_document_rendition(
                     "cacheKey": "image",
                 }
             ]
-            assert data["renditions"] == (renditions if type_id == "dinkster.layers" else []) + [
+            assert data["renditions"] == (renditions if type_id == "LAYERS" else []) + [
                 {
                     "kind": "document",
                     "mime": IMAGE_DOCUMENT_MEDIA_TYPE,
@@ -6268,16 +6272,17 @@ def test_values_endpoint_comfy_image_png_rendition() -> None:
 
 def test_values_endpoint_omits_original_rendition_for_component_video() -> None:
     import numpy as np
+    from dinkster_api.v1 import VIDEO_TYPE
     from dinkster_nodes_media_io.video_ops import AssembleVideo
 
-    from dinkster.comfy_compose import COMFY_VIDEO_TYPE, register_comfy_host_types
+    from dinkster.comfy_compose import register_comfy_host_types
 
     class ComponentVideo(Node):
         @classmethod
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.component_video",
-                outputs=(OutputSpec("video", TypeExpr.concrete(COMFY_VIDEO_TYPE)),),
+                outputs=(OutputSpec("video", TypeExpr.concrete(VIDEO_TYPE)),),
             )
 
         @classmethod
@@ -6311,7 +6316,7 @@ def test_values_endpoint_omits_original_rendition_for_component_video() -> None:
             response = await client.get(url)
             data = await response.json()
             assert response.status == 200
-            assert data["descriptor"]["typeId"] == COMFY_VIDEO_TYPE
+            assert data["descriptor"]["typeId"] == VIDEO_TYPE
             assert data["renditions"] == []
 
             response = await client.get(url + "&rendition=original")
@@ -6331,12 +6336,9 @@ def test_values_endpoint_av_renditions_share_discovery_and_response_mime(
     import struct
 
     import numpy as np
+    from dinkster_api.v1 import AUDIO_TYPE, VIDEO_TYPE
 
-    from dinkster.comfy_compose import (
-        COMFY_AUDIO_TYPE,
-        COMFY_VIDEO_TYPE,
-        register_comfy_host_types,
-    )
+    from dinkster.comfy_compose import register_comfy_host_types
     from tests.test_video_probe import _encode
 
     mp4 = _encode("mp4", "libx264", "yuv420p")
@@ -6349,9 +6351,9 @@ def test_values_endpoint_av_renditions_share_discovery_and_response_mime(
             return NodeSchema(
                 node_type="test.av_outputs",
                 outputs=(
-                    OutputSpec("audio", TypeExpr.concrete(COMFY_AUDIO_TYPE), preview=True),
-                    OutputSpec("mp4", TypeExpr.concrete(COMFY_VIDEO_TYPE), preview=True),
-                    OutputSpec("webm", TypeExpr.concrete(COMFY_VIDEO_TYPE), preview=True),
+                    OutputSpec("audio", TypeExpr.concrete(AUDIO_TYPE), preview=True),
+                    OutputSpec("mp4", TypeExpr.concrete(VIDEO_TYPE), preview=True),
+                    OutputSpec("webm", TypeExpr.concrete(VIDEO_TYPE), preview=True),
                 ),
             )
 
@@ -6370,13 +6372,11 @@ def test_values_endpoint_av_renditions_share_discovery_and_response_mime(
     register_comfy_host_types(expected_registry)
     expected_fingerprints = {
         "audio": expected_registry.wrap(
-            COMFY_AUDIO_TYPE, {"waveform": waveform, "sample_rate": 8_000}
+            AUDIO_TYPE, {"waveform": waveform, "sample_rate": 8_000}
         ).fingerprint,
-        "mp4": expected_registry.wrap(
-            COMFY_VIDEO_TYPE, {"container": "mp4", "bytes": mp4}
-        ).fingerprint,
+        "mp4": expected_registry.wrap(VIDEO_TYPE, {"container": "mp4", "bytes": mp4}).fingerprint,
         "webm": expected_registry.wrap(
-            COMFY_VIDEO_TYPE, {"container": "webm", "bytes": webm}
+            VIDEO_TYPE, {"container": "webm", "bytes": webm}
         ).fingerprint,
     }
 
