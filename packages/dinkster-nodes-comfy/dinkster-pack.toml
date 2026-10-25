@@ -167,6 +167,8 @@ namespaces = [
     "LatentOperationTonemapReinhard",
     "LatentOperationSharpen",
     "ReplaceVideoLatentFrames",
+    "HunyuanVideo15LatentUpscaleWithModel",
+    "LTXVLatentUpsampler",
     "EmptySD3LatentImage",
     "EmptyFlux2LatentImage",
     "EmptyChromaRadianceLatentImage",
