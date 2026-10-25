@@ -49,3 +49,7 @@ consumer while retaining their dtype and ordering.
 Resident CLIP values retain their conditioning and scheduled hook dependencies.
 Releasing a retained hook group or keyframe group invalidates dependent cached
 CLIP outputs without invalidating unrelated encoders.
+
+Hook scheduling, combinations, CLIP schedules, and conditioning preserve retained
+weight dependencies. Releasing those weights invalidates dependent outputs;
+replacing a schedule releases the output's dependency on the old keyframes.
