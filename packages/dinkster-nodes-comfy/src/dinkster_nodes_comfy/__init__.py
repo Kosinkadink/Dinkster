@@ -26,6 +26,7 @@ from .context_windows import CONTEXT_WINDOW_NODES
 from .controlnet import CONTROLNET_NODES
 from .cosmos_conditioning import COSMOS_CONDITIONING_NODES
 from .dataset_collections import DATASET_COLLECTION_NODES
+from .dataset_groups import DATASET_GROUP_NODES
 from .dataset_images import DATASET_IMAGE_NODES
 from .dataset_text import DATASET_TEXT_NODES
 from .device_routing import DEVICE_ROUTING_NODES
@@ -37,7 +38,9 @@ from .hunyuan3d import HUNYUAN3D_CONDITIONING_NODES
 from .hunyuan_latent import HUNYUAN_LATENT_NODES
 from .hunyuan_text import HUNYUAN_TEXT_NODES
 from .hunyuan_video_image import HUNYUAN_VIDEO_IMAGE_NODES
+from .image_color_conversion import IMAGE_COLOR_CONVERSION_NODES
 from .image_core import IMAGE_CORE_NODES
+from .image_dimensions import IMAGE_DIMENSION_NODES
 from .image_filters import IMAGE_FILTER_NODES
 from .image_transform import IMAGE_TRANSFORM_NODES
 from .inpaint import INPAINT_NODES
@@ -72,10 +75,12 @@ from .primitive import (
     PrimitiveString,
     PrimitiveStringMultiline,
 )
+from .rebatch import REBATCH_NODES
 from .reference_conditioning import REFERENCE_CONDITIONING_NODES
 from .rope_and_mask import ROPE_AND_MASK_NODES
 from .sampler_factories import SAMPLER_FACTORY_NODES
 from .save_text import SaveText
+from .seedvr_conditioning import SeedVR2Conditioning
 from .seedvr_preprocess import SeedVR2Preprocess
 from .seedvr_temporal import SEEDVR_TEMPORAL_NODES
 from .sigma_operations import SIGMA_OPERATION_NODES
@@ -150,6 +155,8 @@ COMFY_NODES = (
     *MASK_NODES,
     *COMPOSITING_NODES,
     *IMAGE_CORE_NODES,
+    *IMAGE_DIMENSION_NODES,
+    *IMAGE_COLOR_CONVERSION_NODES,
     *IMAGE_FILTER_NODES,
     *IMAGE_TRANSFORM_NODES,
     *MORPHOLOGY_NODES,
@@ -161,6 +168,7 @@ COMFY_NODES = (
     Kandinsky5ImageToVideo,
     *LTX_VIDEO_CONDITIONING_NODES,
     SeedVR2Preprocess,
+    SeedVR2Conditioning,
     *SEEDVR_TEMPORAL_NODES,
     MiniMaxH3SigmaShift,
     *VIDEO_CONDITIONING_NODES,
@@ -168,11 +176,13 @@ COMFY_NODES = (
     *VIDEO_LATENT_NODES,
     *VIDEO_LATENT_OPERATION_NODES,
     *POST_PROCESSING_NODES,
+    *REBATCH_NODES,
     EmptyMochiLatentVideo,
     *AUDIO_COMBINE_NODES,
     *AUDIO_EFFECT_NODES,
     *AUDIO_GENERATOR_NODES,
     *AUDIO_LATENT_NODES,
+    *DATASET_GROUP_NODES,
     *ACE_TEXT_CONDITIONING_NODES,
     *AUDIO_MUSIC_CONDITIONING_NODES,
     *AUDIO_TRANSFORM_NODES,
