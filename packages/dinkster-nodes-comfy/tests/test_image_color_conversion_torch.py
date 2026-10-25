@@ -110,17 +110,15 @@ def test_color_conversion_returns_intermediate_float32_for_identity_and_hdr() ->
 def _assert_hdr(result: Any) -> None:
     assert result.dtype == torch.float32
     assert result.device == torch.device("cpu")
-    torch.testing.assert_close(
-        result[:, 0, 0],
-        torch.tensor(
-            [
-                [0.17928335070610046, 0.11021348834037781, 0.7042750120162964, 0.1300048828125],
-                [0.3791734576225281, 0.5923642516136169, 0.3126797378063202, 0.469970703125],
-            ]
-        ),
-        rtol=0,
-        atol=0,
+    expected = torch.tensor(
+        [
+            [0.17928335070610046, 0.11021348834037781, 0.7042750120162964, 0.1300048828125],
+            [0.3791734576225281, 0.5923642516136169, 0.3126797378063202, 0.469970703125],
+        ]
     )
+    # Positive float32 Lottes/HLG output differs by one ULP across AMD/Intel CPU runs.
+    ulp_error = result[:, 0, 0].view(torch.int32).to(torch.int64) - expected.view(torch.int32)
+    assert ulp_error.abs().max().item() <= 1, ulp_error
     assert torch.equal(result[..., 3], _image().half().float()[..., 3])
 
 
