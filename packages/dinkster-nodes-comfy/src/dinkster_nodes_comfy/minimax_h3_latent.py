@@ -234,11 +234,17 @@ class MiniMaxH3AddGuide(Node):
         if type(samples) is not MultiStreamLatent:
             raise ValueError("MiniMaxH3AddGuide expects a MiniMax H3 AV latent")
         streams = cast("MultiStreamLatent[Any]", samples)
-        if len(streams.streams) != 2:
+        if set(streams.roles) != {"video", "audio"}:
             raise ValueError("MiniMaxH3AddGuide expects a MiniMax H3 AV latent")
         video = streams.by_role("video")
         audio_samples = streams.by_role("audio")
-        if video.ndim != 5 or video.shape[1] != 24:
+        if (
+            video.ndim != 5
+            or video.shape[1] != 24
+            or audio_samples.ndim != 4
+            or audio_samples.shape[1] != 32
+            or audio_samples.shape[2] != 2
+        ):
             raise ValueError("MiniMaxH3AddGuide expects a MiniMax H3 AV latent")
         if image is None and audio is None:
             raise ValueError("MiniMaxH3AddGuide needs an image or an audio to anchor")

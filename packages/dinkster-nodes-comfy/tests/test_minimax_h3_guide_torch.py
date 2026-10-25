@@ -87,12 +87,18 @@ def test_image_only_guide_uses_valid_clip_lengths(frames: int, expected: int) ->
     assert torch.equal(encoded, torch.ones_like(encoded))
 
 
-def test_audio_only_uses_first_batch_and_default_sample_rate() -> None:
+@pytest.mark.parametrize("reverse_streams", (False, True))
+def test_audio_only_uses_first_batch_and_default_sample_rate(reverse_streams: bool) -> None:
     waveform = torch.arange(2 * 2 * 7, dtype=torch.float32).reshape(2, 2, 7)
     audio_vae = DefaultRateAudioVae()
+    latent = _latent()
+    if reverse_streams:
+        samples = latent["samples"]
+        assert isinstance(samples, MultiStreamLatent)
+        latent = {"samples": MultiStreamLatent(tuple(reversed(samples.streams)))}
     result = MiniMaxH3AddGuide.execute(
         positive=[[torch.tensor([1.0]), {}]],
-        latent=_latent(),
+        latent=latent,
         frame_idx=-1,
         audio_vae=audio_vae,
         audio={"waveform": waveform, "sample_rate": 32000},
@@ -100,6 +106,36 @@ def test_audio_only_uses_first_batch_and_default_sample_rate() -> None:
     keyframe = result[0][1]["minimax_keyframes"][0]
     assert keyframe["resolved_frame_index"] == 21
     assert torch.equal(keyframe["audio_latent"], waveform[:1, :, :2].unsqueeze(2))
+
+
+@pytest.mark.parametrize(
+    ("roles", "audio_shape"),
+    (
+        (("video", "other"), (1, 32, 2, 37)),
+        (("other", "audio"), (1, 32, 2, 37)),
+        (("video", "audio"), ()),
+        (("video", "audio"), (1, 32, 37)),
+        (("video", "audio"), (1, 31, 2, 37)),
+        (("video", "audio"), (1, 32, 1, 37)),
+    ),
+)
+def test_guide_rejects_wrong_av_roles_and_audio_layout(
+    roles: tuple[str, str], audio_shape: tuple[int, ...]
+) -> None:
+    samples = MultiStreamLatent(
+        (
+            LatentStream(roles[0], torch.zeros((1, 24, 7, 2, 3))),
+            LatentStream(roles[1], torch.zeros(audio_shape)),
+        )
+    )
+    with pytest.raises(ValueError, match="expects a MiniMax H3 AV latent"):
+        MiniMaxH3AddGuide.execute(
+            positive=[[torch.tensor([1.0]), {}]],
+            latent={"samples": samples},
+            frame_idx=0,
+            audio_vae=AudioVae(),
+            audio={"waveform": torch.ones((1, 1, 5)), "sample_rate": 32000},
+        )
 
 
 @pytest.mark.parametrize(
