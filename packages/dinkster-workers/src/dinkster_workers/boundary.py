@@ -64,14 +64,16 @@ from dinkster_values import (
     BufferEncoding,
     EncodedPayload,
     ListPayload,
+    TuplePayload,
     TypeRegistry,
     Value,
     ValueMeta,
     default_decode,
     default_encode,
-    list_children,
     parse_list_type_id,
+    parse_tuple_type_id,
     stable_hash,
+    value_children,
 )
 from dinkster_values.storage import encoded_storage_meta
 
@@ -435,9 +437,9 @@ class ValueCodec:
     def encode(
         self, value: Value, blobs: list[bytes], segments: list[SharedMemory]
     ) -> tuple[dict[str, object], TransferStat]:
-        children = list_children(value)
+        children = value_children(value)
         if children is not None:
-            # Lists cross as recursive descriptors: each child is a full
+            # Containers cross as recursive descriptors: each child is a full
             # value descriptor with its own payload transport, so child
             # envelopes (resource stubs, residency, cost) survive the
             # boundary exactly like top-level values (DESIGN 3.13).
@@ -460,7 +462,9 @@ class ValueCodec:
                 "elements": element_wires,
             }
             blobs.append(default_encode(dict(value.meta.entries)))
-            return wire, TransferStat("list", total_size, total_ms, all_declared, all_reused)
+            return wire, TransferStat(
+                value.payload.transport, total_size, total_ms, all_declared, all_reused
+            )
         started = time.perf_counter()
         payload = value.payload
         reused = isinstance(payload, EncodedPayload) and payload.type_id == value.type_id
@@ -595,11 +599,12 @@ class ValueCodec:
         }
         meta = ValueMeta(meta_entries)
         if "elements" in wire:
-            # Recursive list descriptor (see encode): rebuild the child
-            # envelopes, then the list envelope around them. Identity crosses
+            # Recursive container descriptor: rebuild the child envelopes
+            # and their positional or homogeneous parent. Identity crosses
             # verbatim like every fingerprint does (hazard H4).
-            if parse_list_type_id(type_id) is None:
-                raise BoundaryError(f"elements on a non-list type id: {type_id!r}")
+            positions = parse_tuple_type_id(type_id)
+            if parse_list_type_id(type_id) is None and positions is None:
+                raise BoundaryError(f"elements on a non-container type id: {type_id!r}")
             child_values: list[Value] = []
             total_size = 0
             total_ms = 0.0
@@ -611,13 +616,24 @@ class ValueCodec:
                 total_size += child_stat.size_bytes
                 total_ms += child_stat.codec_ms
                 all_declared = all_declared and child_stat.declared_codec
-            list_value = Value(
+            if positions is not None and positions != tuple(
+                child.type_id for child in child_values
+            ):
+                raise BoundaryError("tuple child types do not match their envelope positions")
+            payload = (
+                ListPayload(tuple(child_values))
+                if positions is None
+                else TuplePayload(tuple(child_values))
+            )
+            container_value = Value(
                 type_id=type_id,
                 fingerprint=fingerprint,
                 meta=meta,
-                payload=ListPayload(tuple(child_values)),
+                payload=payload,
             )
-            return list_value, TransferStat("list", total_size, total_ms, all_declared, False)
+            return container_value, TransferStat(
+                payload.transport, total_size, total_ms, all_declared, False
+            )
         payload_wire = cast("Mapping[str, Any]", wire["payload"])
         transport = str(payload_wire["transport"])
         started = time.perf_counter()
@@ -1353,7 +1369,7 @@ def _literal_to_json(value: object) -> object:
 
 
 def _preflight_value_tree(root: Value, budget: list[int]) -> None:
-    """Bound recursive ValueCodec work and prove canonical list envelopes."""
+    """Bound recursive ValueCodec work and prove canonical container envelopes."""
     from dinkster_protocol import RESULT_ALGEBRA_MAX_NESTING
 
     pending: list[tuple[Value, int]] = [(root, 0)]
@@ -1362,12 +1378,20 @@ def _preflight_value_tree(root: Value, budget: list[int]) -> None:
         budget[0] -= 1
         if budget[0] < 0 or depth > RESULT_ALGEBRA_MAX_NESTING:
             raise BoundaryError("result algebra value tree is excessive")
-        children = list_children(value)
+        children = value_children(value)
         element_type = parse_list_type_id(value.type_id)
-        if (children is None) != (element_type is None):
-            raise BoundaryError("result algebra value has a noncanonical list envelope")
+        positions = parse_tuple_type_id(value.type_id)
+        if (children is None) != (element_type is None and positions is None):
+            raise BoundaryError("result algebra value has a noncanonical container envelope")
         if children is not None:
-            if any(child.type_id != element_type for child in children):
+            if positions is not None:
+                if not isinstance(value.payload, TuplePayload) or positions != tuple(
+                    child.type_id for child in children
+                ):
+                    raise BoundaryError("result algebra tuple child types do not match positions")
+            elif not isinstance(value.payload, ListPayload) or any(
+                child.type_id != element_type for child in children
+            ):
                 raise BoundaryError("result algebra list child type does not match its envelope")
             pending.extend((child, depth + 1) for child in children)
 
@@ -1606,8 +1630,9 @@ def _validate_value_descriptor(
         raise BoundaryError("result algebra list child type does not match its envelope")
     _blob_index(wire.get("metaBlob"), blobs, used)
     element_type = parse_list_type_id(wire["typeId"])
+    positions = parse_tuple_type_id(wire["typeId"])
     if "elements" in wire:
-        if element_type is None or set(wire) != {
+        if (element_type is None and positions is None) or set(wire) != {
             "typeId",
             "fingerprint",
             "metaBlob",
@@ -1617,7 +1642,9 @@ def _validate_value_descriptor(
         elements = wire["elements"]
         if type(elements) is not list or len(elements) > RESULT_ALGEBRA_MAX_COUNT:
             raise BoundaryError("invalid list value descriptor elements")
-        for child in elements:
+        if positions is not None and len(elements) != len(positions):
+            raise BoundaryError("tuple value descriptor arity does not match its envelope")
+        for index, child in enumerate(elements):
             if type(child) is not dict:
                 raise BoundaryError("invalid list child value descriptor")
             _validate_value_descriptor(
@@ -1626,10 +1653,14 @@ def _validate_value_descriptor(
                 used,
                 budget=budget,
                 depth=depth + 1,
-                expected_type=element_type,
+                expected_type=positions[index] if positions is not None else element_type,
             )
         return
-    if element_type is not None or set(wire) != {"typeId", "fingerprint", "metaBlob", "payload"}:
+    if (
+        element_type is not None
+        or positions is not None
+        or set(wire) != {"typeId", "fingerprint", "metaBlob", "payload"}
+    ):
         raise BoundaryError("invalid value descriptor fields")
     payload = wire["payload"]
     if type(payload) is not dict or type(payload.get("transport")) is not str:

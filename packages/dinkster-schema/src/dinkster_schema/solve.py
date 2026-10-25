@@ -36,6 +36,7 @@ from collections.abc import Iterable, Mapping
 
 from dinkster_values import parse_asset_type_id, parse_list_type_id
 from dinkster_values.streams import parse_stream_type_id
+from dinkster_values.tuples import parse_tuple_type_id
 
 from .model import InputSpec, TypeExpr
 
@@ -80,6 +81,22 @@ def resolved_type_expr(expr: TypeExpr, bindings: Mapping[str, str]) -> TypeExpr 
     if expr.kind == "variable":
         type_id = bindings.get(expr.template_id)
         return None if type_id is None else _type_expr_from_runtime_id(type_id)
+    if expr.kind == "tuple":
+        positions = tuple(resolved_type_expr(item, bindings) for item in expr.elements)
+        if any(item is None for item in positions):
+            return None
+        return TypeExpr.tuple_of(*(item for item in positions if item is not None))
+    if expr.kind == "tuple_element":
+        if expr.element is None or type(expr.index) is not int:
+            raise TypeSolveError("tuple element must be elaborated before type solving")
+        source = resolved_type_expr(expr.element, bindings)
+        if source is None:
+            return None
+        if source.kind != "tuple":
+            raise TypeSolveError("tuple element requires a tuple input")
+        if not -len(source.elements) <= expr.index < len(source.elements):
+            raise TypeSolveError(f"tuple index {expr.index} is out of range")
+        return source.elements[expr.index]
     if expr.kind == "stream":
         assert expr.element is not None
         inner = resolved_type_expr(expr.element, bindings)
@@ -96,6 +113,8 @@ def resolved_type_expr(expr: TypeExpr, bindings: Mapping[str, str]) -> TypeExpr 
 
 
 def _type_expr_from_runtime_id(type_id: str) -> TypeExpr:
+    if (positions := parse_tuple_type_id(type_id)) is not None:
+        return TypeExpr.tuple_of(*(_type_expr_from_runtime_id(item) for item in positions))
     if (inner := parse_stream_type_id(type_id)) is not None:
         return TypeExpr.stream_of(_type_expr_from_runtime_id(inner))
     if (inner := parse_list_type_id(type_id)) is not None:
@@ -106,6 +125,16 @@ def _type_expr_from_runtime_id(type_id: str) -> TypeExpr:
 
 
 def _unify(input_id: str, expr: TypeExpr, type_id: str, bindings: dict[str, str]) -> None:
+    if expr.kind == "tuple":
+        positions = parse_tuple_type_id(type_id)
+        if positions is None or len(positions) != len(expr.elements):
+            raise TypeSolveError(
+                f"input '{input_id}': expected a tuple of {len(expr.elements)} positions, "
+                f"got {type_id}"
+            )
+        for item, position in zip(expr.elements, positions, strict=True):
+            _unify(input_id, item, position, bindings)
+        return
     if expr.kind == "variable":
         if expr.types and type_id not in expr.types:
             raise TypeSolveError(

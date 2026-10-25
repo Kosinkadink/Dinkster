@@ -112,6 +112,8 @@ def _atoms_of(expr: Any) -> set[str]:
     atoms: set[str] = set(expr.types)
     if expr.element is not None:
         atoms |= _atoms_of(expr.element)
+    for position in expr.elements:
+        atoms |= _atoms_of(position)
     return atoms
 
 

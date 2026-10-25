@@ -264,6 +264,7 @@ namespaces = [
     "HunyuanImageToVideo",
     "HunyuanVideo15ImageToVideo",
     "HunyuanVideo15SuperResolution",
+    "Kandinsky5ImageToVideo",
     "LTXVImgToVideo",
     "LTXVImgToVideoInplace",
     "LTXVConditioning",

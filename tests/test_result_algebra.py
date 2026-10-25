@@ -131,6 +131,28 @@ def decode(header: dict[str, object], blobs: list[bytes]) -> object:
     )[0]
 
 
+def test_positional_tuple_result_roundtrip_and_envelope_validation() -> None:
+    reg = registry()
+    value = reg.wrap("tuple<INT,STRING>", (7, "label"))
+    outcome = InvocationReturn(
+        ReturnBatch("scalar", (DirectReturn((("out", PresentOutput(value)),)),))
+    )
+    header, blobs = encode(outcome)
+    restored = decode(header, blobs)
+    assert isinstance(restored, InvocationReturn)
+    returned = restored.batch.units[0]
+    assert isinstance(returned, DirectReturn)
+    present = dict(returned.bindings)["out"]
+    assert isinstance(present, PresentOutput)
+    assert present.value.type_id == "tuple<INT,STRING>"
+    assert present.value.resolve() == (7, "label")
+    for type_id in ("tuple<STRING,INT>", "tuple<INT>"):
+        changed = copy.deepcopy(header)
+        algebra(changed)["values"][0]["typeId"] = type_id
+        with pytest.raises(BoundaryError):
+            decode(changed, blobs)
+
+
 def algebra(header: dict[str, object]) -> dict[str, Any]:
     return cast("dict[str, Any]", header["resultAlgebra"])
 
