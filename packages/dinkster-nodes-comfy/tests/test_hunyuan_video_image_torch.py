@@ -25,7 +25,11 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.hunyuan_video_image import HunyuanImageToVideo, HunyuanVideo15ImageToVideo
+from dinkster_nodes_comfy.hunyuan_video_image import (
+    HunyuanImageToVideo,
+    HunyuanVideo15ImageToVideo,
+    HunyuanVideo15SuperResolution,
+)
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -202,6 +206,64 @@ def test_hunyuan_video15_materializes_vision_and_preserves_optional_identity() -
         torch.testing.assert_close(conditioning[0][1]["concat_mask"], expected_mask, rtol=0, atol=0)
 
 
+def test_hunyuan_video15_super_resolution_preserves_latent_and_conditioning_values() -> None:
+    positive, negative = _conditioning(1.0), _conditioning(2.0)
+    samples = torch.arange(16, dtype=torch.float64).reshape(1, 2, 2, 2, 2)
+    latent = {"samples": samples, "source": "preserved"}
+    projected = torch.arange(6, dtype=torch.float64).reshape(1, 2, 3)
+    no_image = HunyuanVideo15SuperResolution.execute(
+        positive=positive,
+        negative=negative,
+        latent=latent,
+        noise_augmentation=0.25,
+        clip_vision_output=SimpleNamespace(mm_projected=projected),
+    )
+    assert no_image["latent"] is latent
+    for conditioning, source in ((no_image["positive"], 1.0), (no_image["negative"], 2.0)):
+        metadata = conditioning[0][1]
+        expected = torch.zeros((1, 6, 2, 2, 2), dtype=torch.float32)
+        expected[:, 3:5] = samples
+        expected[:, 5] = 1
+        assert metadata["source"] == source and metadata["noise_augmentation"] == 0.25
+        torch.testing.assert_close(metadata["concat_latent_image"], expected, rtol=0, atol=0)
+        torch.testing.assert_close(
+            metadata["clip_vision_output"].mm_projected, projected, rtol=0, atol=0
+        )
+    assert positive[0][1] == {"source": 1.0} and negative[0][1] == {"source": 2.0}
+
+    vae = VAE(2)
+    start = HunyuanVideo15SuperResolution.execute(
+        positive=positive,
+        negative=negative,
+        latent=latent,
+        noise_augmentation=0.5,
+        vae=vae,
+        start_image=_image(),
+    )
+    conditioned = start["positive"][0][1]["concat_latent_image"]
+    assert conditioned[:, 3, 0].eq(1).all()
+    torch.testing.assert_close(conditioned[:, 3:5, 1:], samples[:, :, 1:].float(), rtol=0, atol=0)
+    assert conditioned[:, 5].eq(1).all()
+
+    both = HunyuanVideo15SuperResolution.execute(
+        positive=positive,
+        negative=negative,
+        latent=latent,
+        noise_augmentation=0.5,
+        vae=VAE(2),
+        start_image=_image(),
+        clip_vision_output=SimpleNamespace(mm_projected=projected),
+    )
+    assert both["latent"] is latent
+    for conditioning in (both["positive"], both["negative"]):
+        torch.testing.assert_close(
+            conditioning[0][1]["concat_latent_image"], conditioned, rtol=0, atol=0
+        )
+        torch.testing.assert_close(
+            conditioning[0][1]["clip_vision_output"].mm_projected, projected, rtol=0, atol=0
+        )
+
+
 _CONDITIONING = TypeExpr.concrete(CONDITIONING_TYPE)
 _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 _VAE = TypeExpr.concrete(VAE_TYPE)
@@ -219,7 +281,9 @@ class Source(Node):
                 OutputSpec("image", _IMAGE),
                 OutputSpec("vae16", _VAE),
                 OutputSpec("vae32", _VAE),
+                OutputSpec("vae2", _VAE),
                 OutputSpec("vision", _VISION),
+                OutputSpec("latent", TypeExpr.concrete("LATENT")),
             ),
         )
 
@@ -231,9 +295,14 @@ class Source(Node):
             image=torch.as_tensor(_image(), dtype=torch.float32),
             vae16=VAE(16),
             vae32=VAE(32),
+            vae2=VAE(2),
             vision=SimpleNamespace(
                 mm_projected=torch.arange(6, dtype=torch.float64).reshape(1, 2, 3)
             ),
+            latent={
+                "samples": torch.arange(16, dtype=torch.float64).reshape(1, 2, 2, 2, 2),
+                "source": "fixture",
+            },
         )
 
 
@@ -323,6 +392,90 @@ class Inspect(Node):
         return cls.outputs(summary="hunyuan video image")
 
 
+class InspectSuperResolution(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="hunyuan-video-image-fixture.inspect-super-resolution",
+            inputs=(
+                InputSpec("positive", _CONDITIONING),
+                InputSpec("negative", _CONDITIONING),
+                InputSpec("latent", TypeExpr.concrete("LATENT")),
+            ),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, positive: Any, negative: Any, latent: object) -> dict[str, object]:
+        result = materialize_latent(latent)
+        expected_samples = torch.arange(16, dtype=torch.float64).reshape(1, 2, 2, 2, 2)
+        torch.testing.assert_close(result["samples"], expected_samples, rtol=0, atol=0)
+        assert result["source"] == "fixture"
+        expected = torch.zeros((1, 6, 2, 2, 2), dtype=torch.float32)
+        expected[:, 3:5] = expected_samples
+        expected[:, 5] = 1
+        for conditioning, source in ((positive, 1.0), (negative, 2.0)):
+            metadata = conditioning[0][1]
+            assert metadata["source"] == source
+            assert metadata["noise_augmentation"] == 0.25
+            torch.testing.assert_close(metadata["concat_latent_image"], expected, rtol=0, atol=0)
+            torch.testing.assert_close(
+                metadata["clip_vision_output"].mm_projected,
+                torch.arange(6, dtype=torch.float64).reshape(1, 2, 3),
+                rtol=0,
+                atol=0,
+            )
+        return cls.outputs(summary="hunyuan video super resolution")
+
+
+class InspectSuperResolutionStartImage(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="hunyuan-video-image-fixture.inspect-super-resolution-start-image",
+            inputs=(
+                InputSpec("positive", _CONDITIONING),
+                InputSpec("negative", _CONDITIONING),
+                InputSpec("latent", TypeExpr.concrete("LATENT")),
+            ),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, positive: Any, negative: Any, latent: object) -> dict[str, object]:
+        from dinkster_inference.utils import common_upscale
+
+        result = materialize_latent(latent)
+        expected_samples = torch.arange(16, dtype=torch.float64).reshape(1, 2, 2, 2, 2)
+        torch.testing.assert_close(result["samples"], expected_samples, rtol=0, atol=0)
+        assert result["source"] == "fixture"
+        pixels = common_upscale(
+            torch.as_tensor(_image(), dtype=torch.float32).movedim(-1, 1),
+            32,
+            32,
+            "bilinear",
+            "center",
+        ).movedim(1, -1)
+        encoded = pixels[:, :, :, :3][::4, ::16, ::16, 0].unsqueeze(0).unsqueeze(0)
+        expected = torch.zeros((1, 6, 2, 2, 2), dtype=torch.float32)
+        expected[:, :2, : encoded.shape[2]] = encoded.repeat(1, 2, 1, 1, 1)
+        expected[:, 3:5] = expected_samples
+        expected[:, 5] = 1
+        expected[:, 3, 0] = 1
+        for conditioning, source in ((positive, 1.0), (negative, 2.0)):
+            metadata = conditioning[0][1]
+            assert metadata["source"] == source
+            assert metadata["noise_augmentation"] == 0.5
+            torch.testing.assert_close(metadata["concat_latent_image"], expected, rtol=0, atol=0)
+            torch.testing.assert_close(
+                metadata["clip_vision_output"].mm_projected,
+                torch.arange(6, dtype=torch.float64).reshape(1, 2, 3),
+                rtol=0,
+                atol=0,
+            )
+        return cls.outputs(summary="hunyuan video super resolution start image")
+
+
 @pytest.mark.parametrize("in_process", (True, False))
 def test_production_manifest_registers_both_hunyuan_video_image_nodes_twice(
     tmp_path: Path, in_process: bool
@@ -338,9 +491,12 @@ def test_production_manifest_registers_both_hunyuan_video_image_nodes_twice(
         )
         try:
             (tmp_path / "hunyuan_video_image_fixture.py").write_text(
-                "from test_hunyuan_video_image_torch import Inspect, Source\n"
+                "from test_hunyuan_video_image_torch import (\n"
+                "    Inspect, InspectSuperResolution, InspectSuperResolutionStartImage, Source\n"
+                ")\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "NODES = (*COMFY_NODES, Source, Inspect)\n",
+                "NODES = (*COMFY_NODES, Source, Inspect, InspectSuperResolution, "
+                "InspectSuperResolutionStartImage)\n",
                 encoding="ascii",
             )
             manifest = tmp_path / "dinkster-pack.toml"
@@ -412,6 +568,28 @@ def test_production_manifest_registers_both_hunyuan_video_image_nodes_twice(
                             "clip_vision_output": Link("source", "vision"),
                         },
                     ),
+                    "super_vision": GraphNode(
+                        "HunyuanVideo15SuperResolution",
+                        {
+                            "positive": Link("source", "positive"),
+                            "negative": Link("source", "negative"),
+                            "latent": Link("source", "latent"),
+                            "noise_augmentation": 0.25,
+                            "clip_vision_output": Link("source", "vision"),
+                        },
+                    ),
+                    "super_start": GraphNode(
+                        "HunyuanVideo15SuperResolution",
+                        {
+                            "positive": Link("source", "positive"),
+                            "negative": Link("source", "negative"),
+                            "latent": Link("source", "latent"),
+                            "noise_augmentation": 0.5,
+                            "vae": Link("source", "vae2"),
+                            "start_image": Link("source", "image"),
+                            "clip_vision_output": Link("source", "vision"),
+                        },
+                    ),
                     "inspect": GraphNode(
                         "hunyuan-video-image-fixture.inspect",
                         {
@@ -426,12 +604,38 @@ def test_production_manifest_registers_both_hunyuan_video_image_nodes_twice(
                             "new_latent": Link("new", "latent"),
                         },
                     ),
+                    "inspect_super_vision": GraphNode(
+                        "hunyuan-video-image-fixture.inspect-super-resolution",
+                        {
+                            "positive": Link("super_vision", "positive"),
+                            "negative": Link("super_vision", "negative"),
+                            "latent": Link("super_vision", "latent"),
+                        },
+                    ),
+                    "inspect_super_start": GraphNode(
+                        "hunyuan-video-image-fixture.inspect-super-resolution-start-image",
+                        {
+                            "positive": Link("super_start", "positive"),
+                            "negative": Link("super_start", "negative"),
+                            "latent": Link("super_start", "latent"),
+                        },
+                    ),
                 }
             )
             engine = composer.composition.make_engine(lambda _event: None)
             for _ in range(2):
-                result = await engine.run(graph, ["inspect"])
+                result = await engine.run(
+                    graph, ["inspect", "inspect_super_vision", "inspect_super_start"]
+                )
                 assert result.outputs["inspect"]["summary"].resolve() == "hunyuan video image"
+                assert (
+                    result.outputs["inspect_super_vision"]["summary"].resolve()
+                    == "hunyuan video super resolution"
+                )
+                assert (
+                    result.outputs["inspect_super_start"]["summary"].resolve()
+                    == "hunyuan video super resolution start image"
+                )
         finally:
             await composer.close()
 

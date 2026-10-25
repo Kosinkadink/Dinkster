@@ -277,6 +277,27 @@ def _conditioning_hooks(payload: object) -> tuple[object, ...]:
     return tuple(hooks)
 
 
+def _conditioning_gligens(payload: object) -> tuple[object, ...]:
+    if type(payload) is not list:
+        return ()
+    models: list[object] = []
+    for entry in cast("list[object]", payload):
+        if not isinstance(entry, (list, tuple)):
+            continue
+        pair = cast("Sequence[object]", entry)
+        if len(pair) != 2 or not isinstance(pair[1], Mapping):
+            continue
+        gligen_value = cast("Mapping[str, object]", pair[1]).get("gligen")
+        gligen = cast("tuple[object, ...]", gligen_value)
+        if type(gligen_value) is not tuple or len(gligen) < 2:
+            continue
+        model = gligen[1]
+        for owner in (model, *resident_owners(model)):
+            if not any(owner is existing for existing in models):
+                models.append(owner)
+    return tuple(models)
+
+
 @dataclass(frozen=True, slots=True)
 class ResidentConditioningCarrier:
     """Typed conditioning whose opaque payload remains in its worker process."""
@@ -304,7 +325,11 @@ class ResidentConditioningCarrier:
         refs = getattr(self.payload, "_dinkster_resident_refs", ())
         if not isinstance(refs, tuple):
             raise TypeError("resident conditioning payload references must be a tuple")
-        return (*cast("tuple[object, ...]", refs), *_conditioning_hooks(self.payload))
+        return (
+            *cast("tuple[object, ...]", refs),
+            *_conditioning_hooks(self.payload),
+            *_conditioning_gligens(self.payload),
+        )
 
     @property
     def _dinkster_resident_fingerprint(self) -> str | None:
@@ -1017,7 +1042,11 @@ def register_conditioning_type(
     def coerce(obj: object) -> object:
         if type(obj) is list:
             payload = cast("list[object]", obj)
-            return ResidentConditioningCarrier(payload) if _conditioning_hooks(payload) else payload
+            return (
+                ResidentConditioningCarrier(payload)
+                if _conditioning_hooks(payload) or _conditioning_gligens(payload)
+                else payload
+            )
         if (
             not isinstance(obj, ConditioningCarrier)
             and type(obj) is not ResidentConditioningCarrier

@@ -16,6 +16,10 @@ offer CPU.
 model. `DifferentialDiffusion` applies timestep-dependent denoise masks, with
 optional blending strength, without changing the source model.
 
+`TorchCompileModel` clones a model, compiles its diffusion model with the
+selected backend, and applies the compiled module only for model execution.
+`wanBlockSwap` is retained as a deprecated no-op for existing workflows.
+
 `TomePatchModel` merges self-attention tokens, `HyperTile` tiles compatible
 self-attention layers, and `PatchModelAddDownscale` applies sigma-windowed U-Net
 block downscaling with a matching skip-path resize. Each creates a cloned model.

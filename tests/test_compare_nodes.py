@@ -214,7 +214,8 @@ def test_save_mount_is_not_an_arbitrary_extra_input(field: str, value: object) -
 
 
 @pytest.mark.parametrize("list_inputs", [False, True])
-def test_exact_ids_and_file_widget_exemption(list_inputs: bool) -> None:
+@pytest.mark.parametrize("native_type", ["COMBO", "ASSET"])
+def test_exact_ids_and_file_widget_exemption(list_inputs: bool, native_type: str) -> None:
     from tools.compare_nodes import compare_registry
 
     reference = {
@@ -237,7 +238,7 @@ def test_exact_ids_and_file_widget_exemption(list_inputs: bool) -> None:
                 "role": "input",
                 "id": "file",
                 "required": True,
-                "type": {"kind": "concrete", "types": ["COMBO"]},
+                "type": {"kind": "concrete", "types": [native_type]},
                 "widget": {"type": "ASSET"},
             },
             {
@@ -251,6 +252,54 @@ def test_exact_ids_and_file_widget_exemption(list_inputs: bool) -> None:
     summary = compare_registry(reference, registry)
     assert summary["passed"]
     assert summary["counts"] == {"identical": 1, "Dinkster-only": 1}
+
+    file_input = schema["interface"][0]
+    reference["nodes"][0]["file_inputs"] = []
+    assert not compare_registry(reference, registry)["passed"]
+    reference["nodes"][0]["file_inputs"] = ["file"]
+    if native_type == "ASSET":
+        from dinkster_schema import AssetWidget, InputSpec, NodeSchema, TypeExpr, schema_to_wire
+
+        wire = schema_to_wire(
+            NodeSchema(
+                node_type="LoadExample",
+                inputs=(
+                    InputSpec(
+                        "file",
+                        TypeExpr.concrete("ASSET"),
+                        widget=AssetWidget(kind="model/lora", accept=("application/octet-stream",)),
+                    ),
+                ),
+            )
+        )
+        interface = wire["interface"]
+        assert isinstance(interface, list)
+        file_input = interface[0]
+        assert isinstance(file_input, dict)
+        schema["interface"][0] = file_input
+        assert compare_registry(reference, registry)["passed"]
+        widget = file_input.pop("widget")
+        assert not compare_registry(reference, registry)["passed"]
+        file_input["widget"] = widget
+    file_input["id"] = "renamed"
+    assert not compare_registry(reference, registry)["passed"]
+    file_input["id"] = "file"
+    file_input["type"] = {"kind": "concrete", "types": ["STRING"]}
+    assert not compare_registry(reference, registry)["passed"]
+    file_input["type"] = {"kind": "concrete", "types": [native_type]}
+    file_input["required"] = False
+    assert not compare_registry(reference, registry)["passed"]
+    file_input["required"] = True
+    file_input["type"] = {"kind": "list", "element": file_input["type"]}
+    assert compare_registry(reference, registry)["passed"] is list_inputs
+    original_spec = reference["nodes"][0]["input_types"]["required"]["file"]
+    reference["nodes"][0]["input_types"]["required"]["file"] = [{"list": "COMBO"}]
+    assert compare_registry(reference, registry)["passed"]
+    reference["nodes"][0]["input_types"]["required"]["file"] = original_spec
+    file_input["type"] = {"kind": "concrete", "types": [native_type]}
+    file_input["default"] = "another-mount/file.safetensors"
+    assert compare_registry(reference, registry)["passed"]
+    file_input.pop("default")
 
     schema["interface"][1]["type"] = {
         "kind": "list",
@@ -484,7 +533,10 @@ def test_list_flags_do_not_hide_element_type_or_unflagged_output_drift(
 
 
 @pytest.mark.parametrize("kind", ["autogrow", "group", "combo"])
-def test_nested_inputs_preserve_file_slots_and_detect_child_drift(kind: str) -> None:
+@pytest.mark.parametrize("native_type", ["COMBO", "ASSET"])
+def test_nested_inputs_preserve_file_slots_and_detect_child_drift(
+    kind: str, native_type: str
+) -> None:
     from tools.compare_nodes import compare_registry
 
     reference_children = {
@@ -498,7 +550,7 @@ def test_nested_inputs_preserve_file_slots_and_detect_child_drift(kind: str) -> 
             "role": "input",
             "id": "file",
             "required": True,
-            "type": {"kind": "concrete", "types": ["COMBO"]},
+            "type": {"kind": "concrete", "types": [native_type]},
             "widget": {"type": "ASSET"},
         },
         {
@@ -574,6 +626,10 @@ def test_nested_inputs_preserve_file_slots_and_detect_child_drift(kind: str) -> 
     registry = {"nodes": {"Example": {"nodeType": "Example", "interface": [native_input]}}}
     assert compare_registry(reference, registry)["passed"]
 
+    if kind != "autogrow":
+        native_children.reverse()
+        assert not compare_registry(reference, registry)["passed"]
+        native_children.reverse()
     native_children[-1]["default"] = 0.5
     result = compare_registry(reference, registry)
     assert not result["passed"]
