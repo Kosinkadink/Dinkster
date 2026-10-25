@@ -1,4 +1,4 @@
-"""Native LTXV image and frame-rate conditioning nodes."""
+"""Native LTXV image, frame-rate and guide-tail conditioning nodes."""
 
 from __future__ import annotations
 
@@ -197,4 +197,73 @@ class LTXVConditioning(Node):
         )
 
 
-LTX_VIDEO_CONDITIONING_NODES = (LTXVImgToVideo, LTXVImgToVideoInplace, LTXVConditioning)
+class LTXVCropGuides(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="LTXVCropGuides",
+            category=_CATEGORY,
+            inputs=(
+                InputSpec("positive", _CONDITIONING),
+                InputSpec("negative", _CONDITIONING),
+                InputSpec("latent", _LATENT),
+            ),
+            outputs=(
+                OutputSpec("positive", _CONDITIONING, display_name="positive"),
+                OutputSpec("negative", _CONDITIONING, display_name="negative"),
+                OutputSpec("latent", _LATENT, display_name="latent"),
+            ),
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        positive: Sequence[Sequence[Any]],
+        negative: Sequence[Sequence[Any]],
+        latent: object,
+    ) -> Mapping[str, object]:
+        torch = importlib.import_module("torch")
+        source = materialize_latent(latent)
+        samples = source["samples"].clone()
+        noise_mask = _noise_mask(source, torch)
+        indices = next(
+            (entry[1]["keyframe_idxs"] for entry in positive if "keyframe_idxs" in entry[1]), None
+        )
+        count = 0
+        if indices is not None:
+            if samples.ndim == 5:
+                count = indices.shape[2] // (samples.shape[-2] * samples.shape[-1])
+            else:
+                entries = next(
+                    (
+                        entry[1]["guide_attention_entries"]
+                        for entry in positive
+                        if "guide_attention_entries" in entry[1]
+                    ),
+                    None,
+                )
+                count = (
+                    sum(entry["latent_shape"][0] for entry in entries)
+                    if entries
+                    else torch.unique(indices[:, 0, :, 0]).shape[0]
+                )
+        if count:
+            samples = samples[:, :, :-count]
+            noise_mask = noise_mask[:, :, :-count]
+            cleared = {"keyframe_idxs": None, "guide_attention_entries": None}
+            positive = conditioning_set_values(positive, cleared)
+            negative = conditioning_set_values(negative, cleared)
+        return cls.outputs(
+            positive=positive,
+            negative=negative,
+            latent={"samples": samples, "noise_mask": noise_mask},
+        )
+
+
+LTX_VIDEO_CONDITIONING_NODES = (
+    LTXVImgToVideo,
+    LTXVImgToVideoInplace,
+    LTXVConditioning,
+    LTXVCropGuides,
+)
