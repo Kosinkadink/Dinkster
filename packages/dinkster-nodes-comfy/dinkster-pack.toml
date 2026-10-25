@@ -218,6 +218,8 @@ namespaces = [
     "ConditioningTimestepsRange",
     "InstructPixToPixConditioning",
     "ReferenceLatent",
+    "Hunyuan3Dv2Conditioning",
+    "Hunyuan3Dv2ConditioningMultiView",
     "ReferenceMultiLatent",
     "VAEEncodeForInpaint",
     "InpaintModelConditioning",

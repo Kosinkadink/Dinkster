@@ -33,6 +33,7 @@ from .freeu import FREEU_NODES
 from .gligen_conditioning import GLIGENTextBoxApply
 from .hook_conditioning import HOOK_CONDITIONING_NODES
 from .hook_scheduling import HOOK_SCHEDULING_NODES
+from .hunyuan3d import HUNYUAN3D_CONDITIONING_NODES
 from .hunyuan_latent import HUNYUAN_LATENT_NODES
 from .hunyuan_text import HUNYUAN_TEXT_NODES
 from .hunyuan_video_image import HUNYUAN_VIDEO_IMAGE_NODES
@@ -142,6 +143,7 @@ COMFY_NODES = (
     *CONTEXT_WINDOW_NODES,
     *HOOK_CONDITIONING_NODES,
     *REFERENCE_CONDITIONING_NODES,
+    *HUNYUAN3D_CONDITIONING_NODES,
     *INPAINT_NODES,
     *CONTROLNET_NODES,
     *MASK_NODES,
