@@ -288,6 +288,7 @@ namespaces = [
     "LTXVConditioning",
     "SeedVR2Preprocess",
     "MiniMaxH3SigmaShift",
+    "EmptyMiniMaxH3LatentAV",
     "SVD_img2vid_Conditioning",
     "CosmosImageToVideoLatent",
     "CosmosPredict2ImageToVideoLatent",
