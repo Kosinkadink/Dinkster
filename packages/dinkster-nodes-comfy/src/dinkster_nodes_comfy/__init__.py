@@ -38,6 +38,7 @@ from .hunyuan3d import HUNYUAN3D_CONDITIONING_NODES
 from .hunyuan_latent import HUNYUAN_LATENT_NODES
 from .hunyuan_text import HUNYUAN_TEXT_NODES
 from .hunyuan_video_image import HUNYUAN_VIDEO_IMAGE_NODES
+from .image_color_conversion import IMAGE_COLOR_CONVERSION_NODES
 from .image_core import IMAGE_CORE_NODES
 from .image_dimensions import IMAGE_DIMENSION_NODES
 from .image_filters import IMAGE_FILTER_NODES
@@ -48,6 +49,7 @@ from .latent import LATENT_NODES
 from .latent_advanced import LATENT_ADVANCED_NODES
 from .latent_model_specific import MODEL_LATENT_NODES
 from .latent_operations import LATENT_OPERATION_NODES
+from .latent_upscale import LATENT_UPSCALE_NODES
 from .logic import LOGIC_NODES
 from .loops import LOOP_NODES
 from .ltx_audio import LTX_AUDIO_NODES
@@ -80,6 +82,7 @@ from .reference_conditioning import REFERENCE_CONDITIONING_NODES
 from .rope_and_mask import ROPE_AND_MASK_NODES
 from .sampler_factories import SAMPLER_FACTORY_NODES
 from .save_text import SaveText
+from .seedvr_conditioning import SeedVR2Conditioning
 from .seedvr_preprocess import SeedVR2Preprocess
 from .sigma_operations import SIGMA_OPERATION_NODES
 from .sigma_schedulers import SIGMA_SCHEDULER_NODES
@@ -136,6 +139,7 @@ COMFY_NODES = (
     *LATENT_NODES,
     *LATENT_ADVANCED_NODES,
     *LATENT_OPERATION_NODES,
+    *LATENT_UPSCALE_NODES,
     *MODEL_LATENT_NODES,
     *CLIP_NODES,
     *STYLE_MODEL_NODES,
@@ -154,6 +158,7 @@ COMFY_NODES = (
     *COMPOSITING_NODES,
     *IMAGE_CORE_NODES,
     *IMAGE_DIMENSION_NODES,
+    *IMAGE_COLOR_CONVERSION_NODES,
     *IMAGE_FILTER_NODES,
     *IMAGE_TRANSFORM_NODES,
     *MORPHOLOGY_NODES,
@@ -165,6 +170,7 @@ COMFY_NODES = (
     Kandinsky5ImageToVideo,
     *LTX_VIDEO_CONDITIONING_NODES,
     SeedVR2Preprocess,
+    SeedVR2Conditioning,
     MiniMaxH3SigmaShift,
     EmptyMiniMaxH3LatentAV,
     *VIDEO_CONDITIONING_NODES,
