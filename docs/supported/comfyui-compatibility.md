@@ -1,5 +1,7 @@
 ## ComfyUI compatibility
 
+- Native Sampler AR Video constructs the autoregressive video sampler with
+  the workflow's frame-block size under its exact core interface.
 - Native LTXV sampling patches cloned models and constructs shifted sigma
   schedules from latent token counts, with optional terminal stretching.
 - Four native audio latent constructors preserve Stable Audio, ACE-Step 1.0,
