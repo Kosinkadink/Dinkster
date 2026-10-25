@@ -11,6 +11,7 @@ from .declared import (
     clear_declared_assets,
     declared_asset,
     install_declared_assets,
+    mount_roots_for_kind,
     resolver_from_env,
     use_declared_asset_pack,
 )
@@ -244,6 +245,7 @@ __all__ = [
     "MountTable",
     "MountWriteAuthority",
     "MountsError",
+    "mount_roots_for_kind",
     "KnownTransports",
     "PackAssetCatalog",
     "PackagedSource",

@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, cast
 
+from dinkster_api.v1 import mount_roots_for_kind
 from dinkster_assets import AssetRef, LocalAssetRef
 from dinkster_nodes_generation.nodes import (
     CLIPTextEncode,
@@ -110,7 +111,7 @@ class GenerationLoadCheckpoint(LoadCheckpoint):
             str(checkpoint.local_path()),
             output_vae=True,
             output_clip=True,
-            embedding_directory=[],
+            embedding_directory=[str(root) for root in mount_roots_for_kind("model/embedding")],
         )
         return cls.outputs(model=model, clip=clip, vae=vae)
 
@@ -168,7 +169,7 @@ class NativeLoadClip(LoadClip):
             paths.append(text_encoder_2.local_path())
         clip = sd.load_clip(
             ckpt_paths=[str(path) for path in paths],
-            embedding_directory=[],
+            embedding_directory=[str(root) for root in mount_roots_for_kind("model/embedding")],
             clip_type=clip_type,
             model_options=options,
         )

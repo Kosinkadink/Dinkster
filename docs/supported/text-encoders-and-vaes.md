@@ -1,5 +1,7 @@
 ## Text encoders and VAEs
 
+- Native checkpoint and text-encoder loading uses the configured embedding
+  directory roots in mount priority order, restricted to embedding grants.
 - Native PixArt Alpha, Lumina 2, and HiDream prompt nodes preserve resolution,
   system prompts, and per-encoder text when supplied a matching CLIP model.
   Controlnet text conditioning keeps existing embeddings and metadata; T5
