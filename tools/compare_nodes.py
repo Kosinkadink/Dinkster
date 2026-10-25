@@ -5,6 +5,8 @@ Only exact class ids match. Aliases, labels and namespace rewrites never match
 an id or a value. The only additional input is an appended optional save mount.
 Source-marked file combos may use an ASSET socket and asset picker; ordinary
 combo types, options and defaults remain exact.
+V3 inputs follow the recorded declaration sequence, including optional inputs
+between required inputs. V1 inputs retain required-then-optional group order.
 Hidden inputs are outside the workflow contract on both sides. Output names
 count only when the reference declares RETURN_NAMES (or explicit V3 output
 labels); dumps must leave return_names null when names are synthesized.
@@ -270,6 +272,22 @@ def compare(row: dict[str, Any], schema: dict[str, Any]) -> list[str]:
     if any(item.get("role") not in INPUT_ROLES | {"output"} for item in schema["interface"]):
         return ["native interface contains an unsupported role or a variable output family"]
     expected = _reference_inputs(row["input_types"], bool(row.get("input_is_list")))
+    if row.get("is_v3") or "v3_inputs" in row:
+        declarations = row.get("v3_inputs")
+        if not isinstance(declarations, list) or any(
+            not isinstance(item, dict) or not isinstance(item.get("id"), str)
+            for item in declarations
+        ):
+            return ["reference V3 input sequence unavailable or malformed"]
+        names = [item["id"] for item in declarations]
+        by_name = {item["name"]: item for item in expected}
+        if (
+            len(names) != len(set(names))
+            or len(names) != len(expected)
+            or set(names) != set(by_name)
+        ):
+            return ["reference V3 input sequence does not match public input groups"]
+        expected = [by_name[name] for name in names]
     actual = _native_inputs(schema.get("interface", []))
     differences = []
     save_node = row["class_name"].startswith("Save") and any(

@@ -340,6 +340,58 @@ def example_contract() -> tuple[dict, dict]:
     )
 
 
+def test_v3_input_order_preserves_interleaved_optional_inputs() -> None:
+    from tools.compare_nodes import compare
+
+    reference = {
+        "class_name": "Example",
+        "is_v3": True,
+        "v3_inputs": [{"id": name} for name in ("first", "optional", "last")],
+        "input_types": {
+            "required": {"first": ["INT"], "last": ["FLOAT"]},
+            "optional": {"optional": ["STRING"]},
+        },
+    }
+    native = {
+        "nodeType": "Example",
+        "interface": [
+            {
+                "role": "input",
+                "id": name,
+                "required": required,
+                "type": {"kind": "concrete", "types": [kind]},
+            }
+            for name, required, kind in (
+                ("first", True, "INT"),
+                ("optional", False, "STRING"),
+                ("last", True, "FLOAT"),
+            )
+        ],
+    }
+    assert compare(reference, native) == []
+    native["interface"][1:] = reversed(native["interface"][1:])
+    assert compare(reference, native)
+    del reference["is_v3"]
+    del reference["v3_inputs"]
+    assert compare(reference, native) == []
+    native["interface"][0], native["interface"][1] = (
+        native["interface"][1],
+        native["interface"][0],
+    )
+    assert compare(reference, native)
+
+
+@pytest.mark.parametrize("order", [None, [], [{"id": "other"}], [{"id": "value"}] * 2])
+def test_v3_input_order_requires_exact_membership(
+    example_contract: tuple[dict, dict], order: list[dict] | None
+) -> None:
+    from tools.compare_nodes import compare
+
+    reference, native = example_contract
+    reference.update(is_v3=True, v3_inputs=order)
+    assert compare(reference, native)
+
+
 def test_hidden_inputs_do_not_hide_public_input_drift(example_contract: tuple[dict, dict]) -> None:
     from tools.compare_nodes import compare
 
