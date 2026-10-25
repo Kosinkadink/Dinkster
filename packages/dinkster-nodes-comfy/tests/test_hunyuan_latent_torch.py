@@ -135,7 +135,7 @@ def test_ordinary_manifest_executes_hunyuan_latents_twice(in_process: bool, tmp_
         )
         try:
             manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
-            (tmp_path / "hunyuan_fixture.py").write_text(
+            (tmp_path / "hunyuan_latent_fixture.py").write_text(
                 "from test_hunyuan_latent_torch import HunyuanInspect, HunyuanSource\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
                 "NODES = (*COMFY_NODES, HunyuanSource, HunyuanInspect)\n",
@@ -145,10 +145,10 @@ def test_ordinary_manifest_executes_hunyuan_latents_twice(in_process: bool, tmp_
             source_manifest.write_text(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["hunyuan-fixture",')
-                .replace("dinkster_nodes_comfy:COMFY_NODES", "hunyuan_fixture:NODES")
+                .replace("dinkster_nodes_comfy:COMFY_NODES", "hunyuan_latent_fixture:NODES")
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
-                    "hunyuan_fixture:register_inference_types",
+                    "hunyuan_latent_fixture:register_inference_types",
                 ),
                 encoding="ascii",
             )

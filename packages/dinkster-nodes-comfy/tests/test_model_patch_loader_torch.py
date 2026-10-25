@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,8 +15,20 @@ os.environ["DINKSTER_ACCELERATOR"] = "cpu"
 
 import dinkster_nodes_comfy.model_patch_loader as loader
 import torch
-from dinkster_api.v1 import AssetRef, LocalAssetRef
+from dinkster_api.v1 import (
+    CORE_STRING,
+    MODEL_PATCH_TYPE,
+    AssetRef,
+    InputSpec,
+    LocalAssetRef,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+)
+from dinkster_assets import MountDef, MountTable
 from dinkster_assets.identity import digest_file
+from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.model_patch_loader import (
     ModelPatchLoader,
     _multi_talk_patch,
@@ -23,6 +36,8 @@ from dinkster_nodes_comfy.model_patch_loader import (
     _siglip_multi_feat_projector,
     _z_image_convert,
 )
+
+from dinkster.compose import PackSpec, ServingComposer
 
 
 class LocalResolver:
@@ -115,9 +130,11 @@ def test_loader_builds_duration_head_from_safe_unverified_asset(tmp_path: Path) 
     checkpoint = tmp_path / "duration.safetensors"
     original = DurationHead()
     state = {
-        f"model.diffusion_model.duration_head.{key}": torch.full_like(value, 0.125)
+        f"model.diffusion_model.duration_head.{key}": torch.full_like(value, 0.001)
         for key, value in original.state_dict().items()
     }
+    state["model.diffusion_model.duration_head.mlp_out.weight"].zero_()
+    state["model.diffusion_model.duration_head.mlp_out.bias"].fill_(0.5)
     save_file(state, str(checkpoint), metadata={"format": "pt", "source": "duration-test"})
     with safe_open(checkpoint, framework="pt", device="cpu") as handle:
         assert handle.metadata() == {"format": "pt", "source": "duration-test"}
@@ -146,6 +163,7 @@ def test_loader_builds_duration_head_from_safe_unverified_asset(tmp_path: Path) 
     )
     video = torch.full((1, 1, 4096), 0.25)
     assert torch.equal(patcher.model(video_tokens=video), reference(video_tokens=video))
+    assert torch.equal(patcher.model(video_tokens=video), torch.tensor([0.5]).exp())
     verified = AssetRef(
         digest_file(checkpoint),
         checkpoint.name,
@@ -488,3 +506,107 @@ def test_loader_filters_supir_state_and_retains_denoise_encoder(
         "project_modules.project.weight",
     }
     assert model.denoise_encoder_sd == {"weight": state["first_stage_model.denoise_encoder.weight"]}
+
+
+class ModelPatchInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="model-patch-fixture.inspect",
+            inputs=(InputSpec("patch", TypeExpr.concrete(MODEL_PATCH_TYPE)),),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, patch: Any) -> dict[str, object]:
+        from dinkster_inference.ldm.lightricks.duration_head import DurationHead
+        from dinkster_inference.model_patcher import ModelPatcher
+
+        assert isinstance(patch, ModelPatcher)
+        assert isinstance(patch.model, DurationHead)
+        weights = patch.model.state_dict()
+        for key, value in weights.items():
+            assert value.dtype == torch.float32
+            expected = 0.0 if key == "mlp_out.weight" else 0.5 if key == "mlp_out.bias" else 0.001
+            assert torch.equal(value, torch.full_like(value, expected))
+        output = patch.model(video_tokens=torch.full((1, 2, 4096), 0.25))
+        assert torch.equal(output, torch.tensor([0.5]).exp())
+        return cls.outputs(summary="duration checkpoint retained")
+
+
+MODEL_PATCH_FIXTURES = (ModelPatchInspect,)
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("verified", (False, True))
+def test_model_patch_loader_both_ordinary_hosts_twice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, verified: bool
+) -> None:
+    from dinkster_inference.ldm.lightricks.duration_head import DurationHead
+    from safetensors.torch import save_file
+
+    checkpoint = tmp_path / "duration.safetensors"
+    state = {
+        f"duration_head.{key}": torch.full_like(value, 0.001)
+        for key, value in DurationHead().state_dict().items()
+    }
+    state["duration_head.mlp_out.weight"].zero_()
+    state["duration_head.mlp_out.bias"].fill_(0.5)
+    save_file(
+        state,
+        str(checkpoint),
+        metadata={"format": "pt"},
+    )
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot, index_root=tmp_path / "index")
+    table.add(MountDef(id="patches", path=tmp_path), kind="model/model-patch")
+    if verified:
+        table.scan("patches")
+    asset = table.bind_name(checkpoint.name, "model/model-patch")
+    assert isinstance(asset, AssetRef if verified else LocalAssetRef)
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+
+    async def scenario() -> None:
+        root = Path(__file__).resolve().parents[1]
+        manifests = (
+            root / "dinkster-pack.toml",
+            root / "tests/fixtures/model_patch/dinkster-pack.toml",
+        )
+        composer = ServingComposer(
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
+                "PYTHONPATH": os.pathsep.join((str(root / "tests"), str(root / "src"))),
+            }
+        )
+        try:
+            for manifest in manifests:
+                await composer.add_pack(
+                    PackSpec(manifest=manifest, in_process=True)
+                    if in_process
+                    else PackSpec(
+                        manifest=manifest,
+                        worker_group="model-patch-fixture",
+                        group_manifests=manifests,
+                    )
+                )
+            graph = Graph(
+                nodes={
+                    "load": GraphNode("ModelPatchLoader", {"name": asset.to_wire()}),
+                    "inspect": GraphNode(
+                        "model-patch-fixture.inspect", {"patch": Link("load", "MODEL_PATCH")}
+                    ),
+                }
+            )
+            engine = composer.composition.make_engine(lambda _: None)
+            for attempt in range(2):
+                result = await engine.run(graph, ["inspect"])
+                assert (
+                    result.outputs["inspect"]["summary"].resolve() == "duration checkpoint retained"
+                )
+                assert set(result.cached) == (set(graph.nodes) if attempt else set())
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())

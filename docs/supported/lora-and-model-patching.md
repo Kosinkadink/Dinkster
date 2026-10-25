@@ -30,8 +30,14 @@ calls. MiniMax-H3 models use the runtime's chunked sparse producer path.
 
 The native attention multiplier nodes scale self-attention, cross-attention,
 CLIP attention, and temporal-attention projection weights through the model
-patcher. LoRA loading, scheduled patches, context-window patches, and
-model-family patch formats are not currently exposed by Dinkster.
+patcher. LoRA loading, scheduled patches, and context-window patches are not
+currently exposed by Dinkster.
+
+`ModelPatchLoader` loads bound model-patch assets as governed `MODEL_PATCH`
+values. Supported checkpoint formats include Anima LLLite, Qwen blockwise and
+Qwen Image 2.1 control, SigLIP feature projection, ZImage control, MiniMax H3
+control, Wan Uni3C and MultiTalk, LTX duration heads, and SUPIR. Loading a patch
+does not apply it to a model.
 
 Self-Attention Guidance, Perturbed Attention Guidance, and both Skip Layer
 Guidance DiT nodes clone a model and install sampler or attention callbacks.

@@ -1,9 +1,16 @@
 """Native Dinkster implementations of ComfyUI core nodes."""
 
-from dinkster_api.v1 import register_inference_types
+from dinkster_api.v1 import (
+    ASSET_TYPE,
+    TypeRegistry,
+    register_asset_type,
+    resolver_from_env,
+)
+from dinkster_api.v1 import register_inference_types as _register_inference_types
 
 from .ace_text_conditioning import ACE_TEXT_CONDITIONING_NODES
 from .advanced_samplers import ADVANCED_SAMPLER_NODES
+from .ar_video import SamplerARVideo
 from .attention_guidance import ATTENTION_GUIDANCE_NODES
 from .attention_multiply import ATTENTION_MULTIPLY_NODES
 from .audio_combine import AUDIO_COMBINE_NODES
@@ -59,11 +66,13 @@ from .ltx_video_conditioning import LTX_VIDEO_CONDITIONING_NODES
 from .ltx_video_preprocess import LTX_VIDEO_PREPROCESS_NODES
 from .mask import MASK_NODES
 from .math import ComfyMathExpression
+from .minimax_h3_latent import EmptyMiniMaxH3LatentAV
 from .minimax_h3_sampling import MiniMaxH3SigmaShift
 from .mochi import EmptyMochiLatentVideo
 from .model_advanced import MODEL_ADVANCED_NODES
 from .model_merging import MODEL_MERGE_NODES
 from .model_merging_specific import MODEL_SPECIFIC_MERGE_NODES
+from .model_patch_loader import MODEL_PATCH_LOADER_NODES
 from .model_specific_schedulers import MODEL_SPECIFIC_SCHEDULER_NODES
 from .morphology import MORPHOLOGY_NODES
 from .noise_guidance import NOISE_GUIDANCE_NODES
@@ -83,6 +92,7 @@ from .sampler_factories import SAMPLER_FACTORY_NODES
 from .save_text import SaveText
 from .seedvr_conditioning import SeedVR2Conditioning
 from .seedvr_preprocess import SeedVR2Preprocess
+from .seedvr_temporal import SEEDVR_TEMPORAL_NODES
 from .sigma_operations import SIGMA_OPERATION_NODES
 from .sigma_schedulers import SIGMA_SCHEDULER_NODES
 from .sparse_attention import SPARSE_ATTENTION_NODES
@@ -121,6 +131,7 @@ COMFY_NODES = (
     *MODEL_MERGE_NODES,
     *MODEL_SPECIFIC_MERGE_NODES,
     *MODEL_ADVANCED_NODES,
+    *MODEL_PATCH_LOADER_NODES,
     *DEVICE_ROUTING_NODES,
     *COMPILE_NODES,
     *MODEL_SPECIFIC_SCHEDULER_NODES,
@@ -170,7 +181,9 @@ COMFY_NODES = (
     *LTX_VIDEO_CONDITIONING_NODES,
     SeedVR2Preprocess,
     SeedVR2Conditioning,
+    *SEEDVR_TEMPORAL_NODES,
     MiniMaxH3SigmaShift,
+    EmptyMiniMaxH3LatentAV,
     *VIDEO_CONDITIONING_NODES,
     *COSMOS_CONDITIONING_NODES,
     *VIDEO_LATENT_NODES,
@@ -196,6 +209,14 @@ COMFY_NODES = (
     *SIGMA_SCHEDULER_NODES,
     *SAMPLER_FACTORY_NODES,
     *ADVANCED_SAMPLER_NODES,
+    SamplerARVideo,
 )
+
+
+def register_inference_types(registry: TypeRegistry) -> None:
+    if ASSET_TYPE not in registry:
+        register_asset_type(registry, resolver_from_env())
+    _register_inference_types(registry)
+
 
 __all__ = ["COMFY_NODES", "register_inference_types"]
