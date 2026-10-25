@@ -32,6 +32,9 @@
   lists of their matching primitive type, retaining numeric constraints and wire
   defaults unchanged. This schema support does not provide frontend list-value
   submission or scalar-to-list execution coercion.
+- Backend color widgets accept scalar COLOR or STRING sockets, retaining the
+  declared type and stored color text. Palettes, lists, and unions are rejected.
+  This does not claim frontend COLOR editor support.
 - FLOAT number descriptors, including one-level FLOAT lists, accept `round: false`
   for explicit no-round presentation, or a positive finite numeric precision.
   Omission leaves precision unspecified; false is distinct from numeric zero.

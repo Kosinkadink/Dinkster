@@ -3,6 +3,7 @@ import json
 from typing import Any, cast
 
 import pytest
+from dinkster_api.v1 import COLOR_TYPE, COLORS_TYPE
 from dinkster_schema import (
     OPTION_KEY_PATTERN,
     AssetWidget,
@@ -1006,6 +1007,37 @@ def test_combo_widget_binding_is_enforced_during_wire_decode() -> None:
     interface[0]["widget"] = {"type": "COMBO", "options": ["a", "b"]}
     with pytest.raises(ValueError, match="combo widget requires a concrete COMBO"):
         schema_from_wire(wire)
+
+
+@pytest.mark.parametrize("color_type", (CORE_STRING, COLOR_TYPE))
+def test_color_widget_scalar_domains_roundtrip(color_type: str) -> None:
+    schema = NodeSchema(
+        "test.color-widget",
+        inputs=(
+            InputSpec(
+                "color", TypeExpr.concrete(color_type), default="#aB12CD80", widget=ColorWidget()
+            ),
+        ),
+    )
+    wire = schema_to_wire(schema)
+    interface = cast(list[dict[str, Any]], wire["interface"])
+    assert interface[0]["type"] == {"kind": "concrete", "types": [color_type]}
+    assert interface[0]["widget"] == {"type": "COLOR"}
+    assert interface[0]["default"] == "#aB12CD80"
+    assert schema_from_wire(wire) == schema
+    for wrong in (
+        TypeExpr.concrete(COLORS_TYPE),
+        TypeExpr.concrete(CORE_COMBO),
+        TypeExpr.concrete(CORE_INT),
+        TypeExpr.list_of(TypeExpr.concrete(color_type)),
+        TypeExpr.union(COLOR_TYPE, CORE_STRING),
+        TypeExpr.wildcard(),
+    ):
+        with pytest.raises(ValueError, match="color widget requires a concrete"):
+            InputSpec("color", wrong, widget=ColorWidget())
+        interface[0]["type"] = type_expr_to_wire(wrong)
+        with pytest.raises(ValueError, match="color widget requires a concrete"):
+            schema_from_wire(wire)
 
 
 @pytest.mark.parametrize(
