@@ -307,6 +307,8 @@ namespaces = [
     "LTXVAudioVAEEncode",
     "LTXVAudioVAEDecode",
     "LTXVEmptyLatentAudio",
+    "LTXVConcatAVLatent",
+    "LTXVSeparateAVLatent",
     "LTXVPreprocess",
     "ModelSamplingLTXV",
     "LTXVScheduler",
