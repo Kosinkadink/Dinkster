@@ -30,6 +30,8 @@
   exact core interfaces, including CPU Fourier fallback.
 - Video Linear CFG Guidance and Video Triangle CFG Guidance clone model
   patchers and install their native frame-wise CFG callbacks under exact core IDs.
+- Native Context Windows nodes clone model patchers and configure manual, Wan,
+  and LTXV context-window sampling under exact core IDs.
 - Ten native conditioning nodes combine, blend, concatenate, multiply, mask,
   zero, and set area or timestep metadata under their exact ComfyUI interfaces.
 - Native hook conditioning preserves paired ordering, default records, mask and
