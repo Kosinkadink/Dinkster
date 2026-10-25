@@ -65,6 +65,7 @@ from .ltx_video_conditioning import LTX_VIDEO_CONDITIONING_NODES
 from .ltx_video_preprocess import LTX_VIDEO_PREPROCESS_NODES
 from .mask import MASK_NODES
 from .math import ComfyMathExpression
+from .minimax_h3_latent import EmptyMiniMaxH3LatentAV
 from .minimax_h3_sampling import MiniMaxH3SigmaShift
 from .mochi import EmptyMochiLatentVideo
 from .model_advanced import MODEL_ADVANCED_NODES
@@ -89,6 +90,7 @@ from .sampler_factories import SAMPLER_FACTORY_NODES
 from .save_text import SaveText
 from .seedvr_conditioning import SeedVR2Conditioning
 from .seedvr_preprocess import SeedVR2Preprocess
+from .seedvr_temporal import SEEDVR_TEMPORAL_NODES
 from .sigma_operations import SIGMA_OPERATION_NODES
 from .sigma_schedulers import SIGMA_SCHEDULER_NODES
 from .sparse_attention import SPARSE_ATTENTION_NODES
@@ -176,7 +178,9 @@ COMFY_NODES = (
     *LTX_VIDEO_CONDITIONING_NODES,
     SeedVR2Preprocess,
     SeedVR2Conditioning,
+    *SEEDVR_TEMPORAL_NODES,
     MiniMaxH3SigmaShift,
+    EmptyMiniMaxH3LatentAV,
     *VIDEO_CONDITIONING_NODES,
     *COSMOS_CONDITIONING_NODES,
     *VIDEO_LATENT_NODES,
