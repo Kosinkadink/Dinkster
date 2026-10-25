@@ -7,6 +7,7 @@ import logging
 import threading
 import weakref
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import Future
 from typing import Any, cast
 
 from dinkster_values import (
@@ -92,6 +93,50 @@ class ResidentPool(ResidencyTable):
         self._invalidators: list[InvalidateFn | weakref.WeakMethod[Any]] = []
         self._pin_registries: list[weakref.ReferenceType[ResourcePins]] = []
         self._coordination_lock = threading.RLock()
+        self._keyed: dict[str, str] = {}
+        self._loading: dict[str, Future[object]] = {}
+
+    def obtain[T](
+        self,
+        key: str,
+        load: Callable[[], T],
+        *,
+        ram_bytes: Callable[[T], int],
+    ) -> T:
+        """Reuse a resident by a caller's authority-checked loading key.
+
+        Keys include the loader purpose and all loading parameters, not cheap
+        transforms applied after loading. Factories run outside the pool lock
+        because backend loading may acquire mechanism locks before this lock.
+        """
+        with self._coordination_lock:
+            rid = self._keyed.get(key)
+            if rid is not None:
+                return cast("T", self.get(rid))
+            pending = self._loading.get(key)
+            loading = pending is None
+            if pending is None:
+                pending = self._loading[key] = Future()
+        if not loading:
+            return cast("T", pending.result())
+        try:
+            value = load()
+            nbytes = ram_bytes(value)
+            if type(nbytes) is not int or nbytes < 0:
+                raise ValueError("resident RAM cost must be a nonnegative integer")
+            with self._coordination_lock:
+                rid = self.rid_for(value)
+                owner_rid = self.rid_for(resident_owners(value)[0])
+                self._entries[owner_rid].cost["ram"] = nbytes
+                self._keyed[key] = rid
+                self._loading.pop(key)
+        except BaseException as exc:
+            with self._coordination_lock:
+                self._loading.pop(key, None)
+            pending.set_exception(exc)
+            raise
+        pending.set_result(value)
+        return value
 
     def register_invalidator(self, invalidate: InvalidateFn) -> None:
         """Register a holder of resident references (a cache's
@@ -184,6 +229,7 @@ class ResidentPool(ResidencyTable):
             self._remove_tree(dependent_rid, removing)
         obj = super().remove(rid)
         self._entries.pop(rid, None)
+        self._keyed = {key: value for key, value in self._keyed.items() if value != rid}
         self._removed(rid, obj)
         return obj
 
@@ -527,11 +573,28 @@ class ResidentPool(ResidencyTable):
 
 
 _pool: ResidentPool | None = None
+_pool_lock = threading.Lock()
 
 
 def default_pool() -> ResidentPool:
     """The process-local generic pool for shared inference registration."""
     global _pool  # noqa: PLW0603 - process-local singleton
-    if _pool is None:
-        _pool = ResidentPool()
-    return _pool
+    with _pool_lock:
+        if _pool is None:
+            _pool = ResidentPool()
+        return _pool
+
+
+def obtain_resident[T](
+    key: str,
+    load: Callable[[], T],
+    *,
+    ram_bytes: Callable[[T], int],
+) -> T:
+    """Obtain a keyed value in the shared inference pool.
+
+    Validate bound asset access before every call, including cache hits. Keys
+    must distinguish the loader purpose, asset digest or local binding, and
+    every loading parameter. The lookup holds ids, not extra value references.
+    """
+    return default_pool().obtain(key, load, ram_bytes=ram_bytes)
