@@ -8,7 +8,18 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr, materialize_latent
+from dinkster_api.v1 import (
+    CORE_FLOAT,
+    LATENT_TYPE,
+    MODEL_TYPE,
+    SIGMAS_TYPE,
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+    materialize_latent,
+)
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.noise import AddNoise, DisableNoise, RandomNoise
 
@@ -129,9 +140,9 @@ class _Source(Node):
         return NodeSchema(
             node_type="noise-fixture.source",
             outputs=(
-                OutputSpec("model", TypeExpr.concrete("MODEL")),
-                OutputSpec("sigmas", TypeExpr.concrete("SIGMAS")),
-                OutputSpec("latent", TypeExpr.concrete("LATENT")),
+                OutputSpec("model", TypeExpr.concrete(MODEL_TYPE)),
+                OutputSpec("sigmas", TypeExpr.concrete(SIGMAS_TYPE)),
+                OutputSpec("latent", TypeExpr.concrete(LATENT_TYPE)),
             ),
         )
 
@@ -153,8 +164,8 @@ class _Consumer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="noise-fixture.consumer",
-            inputs=(InputSpec("latent", TypeExpr.concrete("LATENT")),),
-            outputs=(OutputSpec("value", TypeExpr.concrete("FLOAT")),),
+            inputs=(InputSpec("latent", TypeExpr.concrete(LATENT_TYPE)),),
+            outputs=(OutputSpec("value", TypeExpr.concrete(CORE_FLOAT)),),
         )
 
     @classmethod
@@ -170,19 +181,17 @@ def test_noise_nodes_cross_an_ordinary_complete_pack_twice_in_both_hosts(tmp_pat
         fixture_module = f"noise_fixture_{in_process}_{noise_node.lower()}"
         (tmp_path / f"{fixture_module}.py").write_text(
             "from test_noise_torch import _Consumer, _Source\n"
-            "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-            "NODES = (*COMFY_NODES, _Source, _Consumer)\n",
+            "from dinkster_api.v1 import register_inference_types\n"
+            "NODES = (_Source, _Consumer)\n",
             encoding="ascii",
         )
         fixture_manifest = tmp_path / f"{fixture_module}.toml"
         fixture_manifest.write_text(
-            manifest.read_text(encoding="ascii")
-            .replace("namespaces = [", 'namespaces = ["noise-fixture",')
-            .replace("dinkster_nodes_comfy:COMFY_NODES", f"{fixture_module}:NODES")
-            .replace(
-                "dinkster_nodes_comfy:register_inference_types",
-                f"{fixture_module}:register_inference_types",
-            ),
+            '[pack]\nname = "noise-fixture"\npublisher = "dinkster"\n'
+            'namespaces = ["noise-fixture"]\n'
+            '[pack.contracts]\nhost = "dinkster-pack-host/1"\napi = "dinkster-api/v1"\n'
+            f'[pack.entry]\nnodes = "{fixture_module}:NODES"\n'
+            f'types = "{fixture_module}:register_inference_types"\n',
             encoding="ascii",
         )
         composer = ServingComposer(
@@ -192,7 +201,17 @@ def test_noise_nodes_cross_an_ordinary_complete_pack_twice_in_both_hosts(tmp_pat
             }
         )
         try:
-            await composer.add_pack(PackSpec(fixture_manifest, in_process=in_process))
+            manifests = (manifest, fixture_manifest)
+            if in_process:
+                await composer.add_pack(PackSpec(manifest, in_process=True))
+                await composer.add_pack(PackSpec(fixture_manifest, in_process=True))
+            else:
+                await composer.add_pack(
+                    PackSpec(manifest, worker_group="noise", group_manifests=manifests)
+                )
+                await composer.add_pack(
+                    PackSpec(fixture_manifest, worker_group="noise", group_manifests=manifests)
+                )
             graph = Graph(
                 nodes={
                     "source": GraphNode("noise-fixture.source"),
@@ -217,6 +236,8 @@ def test_noise_nodes_cross_an_ordinary_complete_pack_twice_in_both_hosts(tmp_pat
             for _ in range(2):
                 result = await engine.run(graph, ["consumer"])
                 assert isinstance(result.outputs["consumer"]["value"].resolve(), float)
+                if _:
+                    assert set(result.cached) == set(graph.nodes)
         finally:
             await composer.close()
 
