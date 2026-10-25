@@ -2,15 +2,195 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
+from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import torch
-from dinkster_api.v1 import initialize_inference_process
+from dinkster_api.v1 import (
+    CORE_STRING,
+    LATENT_TYPE,
+    LATENT_UPSCALE_MODEL_TYPE,
+    VAE_TYPE,
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+    initialize_inference_process,
+    materialize_latent,
+)
+from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.latent_upscale import (
     HunyuanVideo15LatentUpscaleWithModel,
     LTXVLatentUpsampler,
 )
+
+from dinkster.compose import PackSpec, ServingComposer
+
+_LATENT = TypeExpr.concrete(LATENT_TYPE)
+_UPSCALE_MODEL = TypeExpr.concrete(LATENT_UPSCALE_MODEL_TYPE)
+_VAE = TypeExpr.concrete(VAE_TYPE)
+
+
+class _Statistics:
+    def un_normalize(self, value: torch.Tensor) -> torch.Tensor:
+        return value + 3
+
+    def normalize(self, value: torch.Tensor) -> torch.Tensor:
+        return value - 1
+
+
+class LatentUpscaleSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="latent-upscale-fixture.source",
+            outputs=(
+                OutputSpec("hunyuan_model", _UPSCALE_MODEL),
+                OutputSpec("ltx_model", _UPSCALE_MODEL),
+                OutputSpec("vae", _VAE),
+                OutputSpec("hunyuan_latent", _LATENT),
+                OutputSpec("ltx_latent", _LATENT),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        initialize_inference_process()
+        from dinkster_inference.ldm.hunyuan_video.upsampler import HunyuanVideo15SRModel
+        from dinkster_inference.model_patcher import CoreModelPatcher
+
+        return cls.outputs(
+            hunyuan_model=HunyuanVideo15SRModel(
+                "720p", {"in_channels": 1, "out_channels": 1, "hidden_channels": 1, "num_blocks": 0}
+            ),
+            ltx_model=CoreModelPatcher(
+                torch.nn.Identity(), torch.device("cpu"), torch.device("cpu")
+            ),
+            vae=SimpleNamespace(
+                first_stage_model=SimpleNamespace(per_channel_statistics=_Statistics())
+            ),
+            hunyuan_latent={
+                "samples": torch.arange(30, dtype=torch.float32).reshape(1, 1, 2, 3, 5)
+            },
+            ltx_latent={
+                "samples": torch.tensor([[[[2.0]]]], dtype=torch.float64),
+                "noise_mask": "drop",
+                "metadata": "keep",
+            },
+        )
+
+
+class LatentUpscaleConsumer(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="latent-upscale-fixture.consumer",
+            inputs=(InputSpec("hunyuan", _LATENT), InputSpec("ltx", _LATENT)),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, hunyuan: object, ltx: object) -> dict[str, object]:
+        hunyuan_value = materialize_latent(hunyuan)
+        ltx_value = materialize_latent(ltx)
+        assert hunyuan_value["samples"].shape == (1, 1, 2, 4, 6)
+        assert hunyuan_value["samples"].dtype is torch.float32
+        assert ltx_value["samples"].dtype is torch.float64
+        torch.testing.assert_close(
+            ltx_value["samples"], torch.tensor([[[[4.0]]]], dtype=torch.float64)
+        )
+        assert ltx_value["metadata"] == "keep" and "noise_mask" not in ltx_value
+        return cls.outputs(summary="latent-upscale")
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_latent_upscale_nodes_execute_twice_in_ordinary_hosts(
+    tmp_path: Path, in_process: bool
+) -> None:
+    async def scenario() -> None:
+        native_manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+        source_root = Path(__file__).resolve().parents[1] / "src"
+        fixture_module = "latent_upscale_fixture"
+        (tmp_path / f"{fixture_module}.py").write_text(
+            "from test_latent_upscale_torch import LatentUpscaleConsumer, LatentUpscaleSource\n"
+            "from dinkster_nodes_comfy import register_inference_types\n"
+            "NODES = (LatentUpscaleSource, LatentUpscaleConsumer)\n",
+            encoding="ascii",
+        )
+        fixture_manifest = tmp_path / "dinkster-pack.toml"
+        fixture_manifest.write_text(
+            '[pack]\nname = "latent-upscale-fixture"\npublisher = "dinkster"\n'
+            'namespaces = ["latent-upscale-fixture"]\n\n[pack.entry]\n'
+            f'nodes = "{fixture_module}:NODES"\n'
+            f'types = "{fixture_module}:register_inference_types"\n',
+            encoding="ascii",
+        )
+        composer = ServingComposer(
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "PYTHONPATH": os.pathsep.join(
+                    (str(tmp_path), str(Path(__file__).parent), str(source_root))
+                ),
+            }
+        )
+        try:
+            if in_process:
+                await composer.add_pack(PackSpec(native_manifest, in_process=True))
+                await composer.add_pack(PackSpec(fixture_manifest, in_process=True))
+            else:
+                manifests = (native_manifest, fixture_manifest)
+                await composer.add_pack(
+                    PackSpec(
+                        native_manifest, worker_group="latent-upscale", group_manifests=manifests
+                    )
+                )
+                await composer.add_pack(
+                    PackSpec(
+                        fixture_manifest, worker_group="latent-upscale", group_manifests=manifests
+                    )
+                )
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("latent-upscale-fixture.source"),
+                    "hunyuan": GraphNode(
+                        "HunyuanVideo15LatentUpscaleWithModel",
+                        {
+                            "model": Link("source", "hunyuan_model"),
+                            "samples": Link("source", "hunyuan_latent"),
+                            "upscale_method": "nearest-exact",
+                            "width": 96,
+                            "height": 64,
+                            "crop": "disabled",
+                        },
+                    ),
+                    "ltx": GraphNode(
+                        "LTXVLatentUpsampler",
+                        {
+                            "samples": Link("source", "ltx_latent"),
+                            "upscale_model": Link("source", "ltx_model"),
+                            "vae": Link("source", "vae"),
+                        },
+                    ),
+                    "consumer": GraphNode(
+                        "latent-upscale-fixture.consumer",
+                        {"hunyuan": Link("hunyuan", "LATENT"), "ltx": Link("ltx", "LATENT")},
+                    ),
+                }
+            )
+            engine = composer.composition.make_engine(lambda _event: None)
+            for _ in range(2):
+                result = await engine.run(graph, ["consumer"])
+                assert result.outputs["consumer"]["summary"].resolve() == "latent-upscale"
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
 
 
 def test_native_runtime_models_execute_cpu_latent_upscale_contracts() -> None:
