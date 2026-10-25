@@ -3,11 +3,14 @@ from __future__ import annotations
 import asyncio
 import base64
 import os
+from collections.abc import MutableMapping
 from pathlib import Path
+from typing import cast
 
+import pytest
 from dinkster_caches import DiskCacheStore, DiskCAS, MemoryLRUCache
 from dinkster_caches.wire import entry_from_wire
-from dinkster_values import RESOURCES_META_KEY, ResourceHandle, TypeRegistry, ValueMeta
+from dinkster_values import RESOURCES_META_KEY, ResourceHandle, TypeRegistry, Value, ValueMeta
 
 
 def test_cas_put_restores_corrupt_existing_blob(tmp_path: Path) -> None:
@@ -108,8 +111,8 @@ def test_memory_cache_hit_cannot_mutate_stored_outputs() -> None:
         await cache.put("key", {"out": registry.wrap("test.value", 1)})
         first = await cache.get("key")
         assert first is not None
-        assert isinstance(first, dict)
-        first.clear()
+        with pytest.raises(TypeError):
+            cast("MutableMapping[str, Value]", first)["out"] = registry.wrap("test.value", 2)
         second = await cache.get("key")
         assert second is not None
         assert second["out"].resolve() == 1

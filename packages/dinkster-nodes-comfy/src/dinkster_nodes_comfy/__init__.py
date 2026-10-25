@@ -45,6 +45,7 @@ from .latent_advanced import LATENT_ADVANCED_NODES
 from .latent_model_specific import MODEL_LATENT_NODES
 from .latent_operations import LATENT_OPERATION_NODES
 from .logic import LOGIC_NODES
+from .loops import LOOP_NODES
 from .ltx_audio import LTX_AUDIO_NODES
 from .ltx_av_latent import LTX_AV_LATENT_NODES
 from .ltx_sampling import LTX_SAMPLING_NODES
@@ -80,6 +81,7 @@ from .spatial_model_patches import SPATIAL_MODEL_PATCH_NODES
 from .stable3d import STABLE3D_NODES
 from .stable_cascade import STABLE_CASCADE_NODES
 from .style_model import STYLE_MODEL_NODES
+from .switch import ComfySwitchNode
 from .text import TEXT_NODES
 from .utilities import ComfyNumberConvert, SeedNode
 from .vae import VAE_NODES
@@ -99,6 +101,8 @@ COMFY_NODES = (
     PrimitiveFloat,
     PrimitiveBoolean,
     *LOGIC_NODES,
+    ComfySwitchNode,
+    *LOOP_NODES,
     ComfyNumberConvert,
     SeedNode,
     ComfyMathExpression,

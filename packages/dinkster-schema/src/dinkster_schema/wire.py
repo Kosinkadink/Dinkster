@@ -1028,6 +1028,12 @@ def schema_to_wire(
         wire["emitsPreviews"] = True
     if schema.may_expand_graph:
         wire["mayExpandGraph"] = True
+    if schema.admission_validation:
+        wire["admissionValidation"] = True
+    if schema.execution_context:
+        wire["executionContext"] = True
+    if schema.input_values:
+        wire["inputValues"] = True
     if schema.widget_groups:
         groups: list[dict[str, object]] = []
         for group in schema.widget_groups:
@@ -1731,6 +1737,11 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
         output_node=_expect_bool(wire.get("outputNode", False), "outputNode"),
         emits_previews=_expect_bool(wire.get("emitsPreviews", False), "emitsPreviews"),
         may_expand_graph=_expect_bool(wire.get("mayExpandGraph", False), "mayExpandGraph"),
+        admission_validation=_expect_bool(
+            wire.get("admissionValidation", False), "admissionValidation"
+        ),
+        execution_context=_expect_bool(wire.get("executionContext", False), "executionContext"),
+        input_values=_expect_bool(wire.get("inputValues", False), "inputValues"),
         mirror=_mirror_from_wire(wire.get("mirror"), wire_version),
         selector=selector,
         widget_groups=widget_groups,

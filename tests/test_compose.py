@@ -1054,7 +1054,7 @@ def test_compose_serving_default_resolution_is_atomic(
     [
         (
             "dinkster-nodes-foundation",
-            "blake3:a46cff25a5c34f39d5fa0f3e8376e10aa6e97e356bccfad7205c52a04c1134b5",
+            "blake3:0bf806a210d79b1a1f2c74f6a135cdc92f5dad7cb8e7a50984cdc28644749caf",
         ),
         (
             "dinkster-nodes-media-io",
@@ -1066,7 +1066,7 @@ def test_compose_serving_default_resolution_is_atomic(
         ),
         (
             "dinkster-nodes-remote",
-            "blake3:f0ce94b80269b35e0532fd16d987c867102db1c3c721c44fe64458ab5c6dc48a",
+            "blake3:580eee23612ab4193cf4b636a9c7e87452f8d8ebacd16632b6aca2e68c052e39",
         ),
     ],
 )

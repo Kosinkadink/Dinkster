@@ -58,6 +58,22 @@
   execution that recomputes every node without restarting the server or
   releasing loaded model consumers; partial execution (execute up/between/from
   via target outputs), binary WebSocket preview frames
+- Nodes may return `BLOCKED(message)` on any output. Default-policy consumers
+  skip without failing the run; a nonempty absence reason produces one
+  `node_blocked` event per origin per run, including cache replay. Silent
+  blockers skip without a notice. Explicit accept, omit and fail input
+  policies retain their normal behavior.
+- Opted-in native nodes can reject literal inputs and declared linked types
+  before producers execute. Admission validation crosses isolated and remote
+  worker boundaries and follows routing and unpinned placement policies.
+- Runtime expansion preserves child dynamic choices and ordered output
+  membership across local, isolated and remote workers and cache replay.
+  Expansions may request child reruns without cache hits or coalescing;
+  nested expansions inherit that policy unless they explicitly request reuse
+  or rerun. The policy survives persistent cache replay.
+- Native loop list selection and result collection preserve child value
+  metadata, including resource ownership and producer execution arms.
+  Pure list construction and element selection retain cross-run cache reuse.
 - Memory governance: budgets, headroom, reservations with renewal,
   governed shedding, admission waiting, and item details with Aimdo model-weight
   page residency when the active Aimdo build exposes it

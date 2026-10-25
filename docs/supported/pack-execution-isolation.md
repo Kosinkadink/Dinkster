@@ -38,6 +38,40 @@
   user's filesystem and network authority.
 - In-process packs and remote worker daemons are outside the local serving
   sandbox on every platform.
+- Worker conversations carry typed runtime-expansion results. Present
+  values retain ordinary resource ownership, source adoption, saved-artifact
+  validation and shared-memory/result acknowledgements. Carrying a fragment
+  across a worker boundary does not bypass graph admission by the engine.
+  Cache stores preserve these declarations with their present values across
+  memory retention, disk restart, deferred spill and peer promotion. Incomplete
+  persisted declarations are whole-entry misses; resident resources remain
+  memory-only and invalidate the entire entry when released.
+- Runtime-expanding nodes can return nested child graphs. The engine validates
+  each fragment before execution, runs demanded children and generated output
+  nodes, and attributes child events to their declared parent and display node.
+  Cached parents replay their declarations without invoking the parent again;
+  generated output nodes still run. Expansion also works inside existing graph
+  regions without changing their port bindings or iteration isolation.
+- Packs can author expansions through `dinkster_api.v1.ExpansionBuilder`: add
+  local nodes, connect outputs by name or index, and finalize named outputs
+  containing ordinary Python values or child references. Present values use
+  the same wrapping and ownership rules as ordinary node returns. Output
+  indices resolve against the engine's elaborated interface, including when
+  the referenced node belongs to another pack.
+- Expansion fragments can explicitly reference existing nodes in the same
+  run for inputs, returned outputs and display attribution. Missing references,
+  incompatible output types and dynamic demand cycles fail at the expanding
+  parent before its fragment runs. Completed values stay available for later
+  fragments until that run ends.
+- Nodes can declare `execution_context` to read an immutable live
+  graph snapshot and await or publish typed run values. Expanding nodes can
+  also inhibit or override nodes that have not started. Changes stay within
+  the current run. Waiting releases execution admission and governed memory
+  reservations so a publisher can run at concurrency one. Contexts expire
+  when their invocation ends; these live-state nodes bypass result caches.
+  Control calls also cross isolated and remote worker conversations. Typed
+  publications use ordinary source adoption, resource handoff pins and
+  shared-memory acknowledgements; waiting suspends the child reservation.
 - Model-backed vision provider packs can implement stable owner node schemas.
   Ordinary node cards hide implementation pack ids. A missing selection is
   resolved deterministically from the requested semantic model and compatible

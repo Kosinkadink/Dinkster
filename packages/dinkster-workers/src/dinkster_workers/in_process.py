@@ -16,31 +16,56 @@ import time
 import traceback
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
+from types import MappingProxyType
 from typing import cast
 
 from dinkster_memory import FullReleaseConsumer, Shedder
 from dinkster_memory.resident import ResidentPool
 from dinkster_protocol import (
+    AdmissionInvocation,
+    AdmissionResult,
     AttentionCapabilityEvidence,
     AttentionPolicyConfig,
     AttentionRouteToken,
+    BlockedOutput,
     CompatGateDiagnostic,
+    CurrentNodeRef,
+    CurrentOutputRef,
+    ExpandedReturn,
+    ExternalNodeRef,
+    ExternalOutputRef,
     Invocation,
     InvocationEvent,
     InvocationResult,
     LazyStatusInvocation,
     LazyStatusResult,
+    LiteralInput,
+    LocalExpansion,
+    LocalNode,
+    LocalNodeRef,
+    LocalOutputRef,
     NodeError,
     OnInvocationEvent,
+    PresentOutput,
     SavedArtifactCandidate,
     canonical_attention_route_token_bytes,
     derive_attention_route_token,
+)
+from dinkster_protocol.result_algebra import (
+    RESULT_ALGEBRA_MAX_LITERAL_DEPTH,
+    RESULT_ALGEBRA_MAX_LITERAL_ITEMS,
+    InputBinding,
+    JsonLiteral,
+    JsonObject,
+    OutputBinding,
 )
 from dinkster_schema import (
     AbsentOutput,
     DynamicComboSpec,
     DynamicEntry,
     DynamicSlotSpec,
+    Expansion,
+    ExpansionOutput,
     InputFamilySpec,
     Node,
     NodeSchema,
@@ -383,6 +408,7 @@ class InProcessWorker:
                     "lazy-dispatch-unsupported: lazy hooks require the default owner body",
                 )
             )
+
         cls = self._node_types.get(invocation.node_type)
         if cls is None:
             return LazyStatusResult(
@@ -457,6 +483,28 @@ class InProcessWorker:
                     traceback=traceback.format_exc(),
                 )
             )
+
+    async def validate_admission(
+        self,
+        invocation: AdmissionInvocation,
+        on_event: OnInvocationEvent | None = None,
+    ) -> AdmissionResult:
+        del on_event
+        cls = self._node_types.get(invocation.node_type)
+        if cls is None:
+            return AdmissionResult("admission-protocol-skew: unknown node type")
+        if not invocation.effective_schema.admission_validation:
+            return AdmissionResult(
+                "admission-protocol-skew: node did not opt into admission validation"
+            )
+        try:
+            explanation = cls.validate_admission(
+                literal_inputs=dict(invocation.literal_inputs),
+                linked_input_types=dict(invocation.linked_input_types),
+            )
+        except Exception as exc:  # noqa: BLE001 - hook failures refuse admission
+            return AdmissionResult(f"admission-hook-failed: {exc}")
+        return AdmissionResult(explanation)
 
     async def _invoke_in_context(
         self,
@@ -963,6 +1011,12 @@ class InProcessWorker:
                 members=invocation.output_members,
                 outputs=invocation.effective_schema.outputs,
             )
+        if base_schema.execution_context:
+            if invocation.run_control is None:
+                raise InputCoercionError("node requires a live run execution context")
+            kwargs["execution_context"] = invocation.run_control
+        if base_schema.input_values:
+            kwargs["input_values"] = MappingProxyType(dict(invocation.inputs))
         return kwargs
 
     def _wrap_outputs(
@@ -980,6 +1034,42 @@ class InProcessWorker:
                     message=message,
                 )
             )
+
+        if isinstance(raw, Expansion):
+            if not schema.may_expand_graph:
+                return contract_error("execute() expanded without declaring may_expand_graph")
+            try:
+                raw = self._lower_expansion(invocation, schema, raw, media_inputs)
+            except (KeyError, TypeError, ValueError) as exc:
+                return contract_error(f"invalid expansion: {exc}")
+            if isinstance(raw, InvocationResult):
+                return raw
+            return InvocationResult(expansion=raw)
+
+        if isinstance(raw, ExpandedReturn):
+            if not schema.may_expand_graph:
+                return contract_error("execute() expanded without declaring may_expand_graph")
+            if {name for name, _ in raw.bindings} != {out.id for out in schema.outputs}:
+                return contract_error("expansion bindings must match declared outputs")
+            declared_outputs = {out.id: out for out in schema.outputs}
+            for name, binding in raw.bindings:
+                if isinstance(binding, PresentOutput):
+                    output = declared_outputs[name]
+                    if is_absent(binding.value) and output.optional:
+                        continue
+                    if not output.type.accepts_concrete(binding.value.type_id):
+                        return contract_error(f"output '{name}' rejects {binding.value.type_id}")
+            outputs = {
+                name: replace(
+                    binding.value,
+                    meta=ValueMeta({**binding.value.meta.entries, "absent.forwarded": True}),
+                )
+                if is_absent(binding.value)
+                else binding.value
+                for name, binding in raw.bindings
+                if isinstance(binding, PresentOutput)
+            }
+            return InvocationResult(outputs=outputs, expansion=raw)
 
         if not isinstance(raw, Mapping):
             return contract_error(
@@ -1045,10 +1135,9 @@ class InProcessWorker:
                 expected = resolved_type_id(out.type, bindings)
             returned_value = raw[out.id]
             if isinstance(returned_value, AbsentOutput):
-                # Deliberate absence (DESIGN 3.15): only outputs declared
-                # optional may carry it, and this node is the origin - the
-                # provenance downstream diagnostics will name.
-                if not out.optional:
+                # Blocking applies to required outputs too; ordinary absence
+                # still requires an optional output declaration.
+                if not out.optional and not returned_value.blocked:
                     return contract_error(
                         f"output '{out.id}' returned ABSENT but is not declared optional"
                     )
@@ -1058,10 +1147,24 @@ class InProcessWorker:
                     stands_for=expected,
                 )
                 continue
+            if isinstance(returned_value, Value):
+                if out.optional and is_absent(returned_value):
+                    outputs[out.id] = replace(
+                        returned_value,
+                        meta=ValueMeta({**returned_value.meta.entries, "absent.forwarded": True}),
+                    )
+                    continue
+                if (
+                    returned_value.type_id != expected
+                    if expected is not None
+                    else not out.type.accepts_concrete(returned_value.type_id)
+                ):
+                    return contract_error(f"output '{out.id}' rejects {returned_value.type_id}")
+                outputs[out.id] = returned_value
+                continue
             if expected is None:
-                # Workers wrap outputs by declared type: after variable
-                # solving, anything still unresolved (an unmentioned variable,
-                # a wildcard/union output) is a schema bug in the node.
+                # Plain results need a resolved type to wrap. A forwarded
+                # envelope already carries its type and ownership unchanged.
                 return contract_error(
                     f"output '{out.id}' type could not be resolved from this invocation's inputs"
                 )
@@ -1073,3 +1176,107 @@ class InProcessWorker:
                 # are contract errors at this boundary, not engine crashes.
                 return contract_error(f"output '{out.id}': {exc}")
         return InvocationResult(outputs=outputs)
+
+    def _lower_expansion(
+        self,
+        invocation: Invocation,
+        schema: NodeSchema,
+        declaration: Expansion,
+        media_inputs: Mapping[str, Value],
+    ) -> ExpandedReturn | InvocationResult:
+        if set(declaration.outputs) != {output.id for output in schema.outputs}:
+            raise ValueError("expansion bindings must match declared outputs")
+
+        def reference(
+            value: ExpansionOutput,
+        ) -> CurrentOutputRef | LocalOutputRef | ExternalOutputRef:
+            if value.external:
+                if value.node_id is None:
+                    raise ValueError("external reference requires a node id")
+                return ExternalOutputRef(value.node_id, value.output_id)
+            if value.node_id is None:
+                if not isinstance(value.output_id, str):
+                    raise ValueError("current output reference requires an output id")
+                return CurrentOutputRef(value.output_id)
+            return LocalOutputRef(value.node_id, value.output_id)
+
+        literal_items = 0
+
+        def literal(value: object, depth: int = 0) -> JsonLiteral:
+            nonlocal literal_items
+            literal_items += 1
+            if (
+                depth > RESULT_ALGEBRA_MAX_LITERAL_DEPTH
+                or literal_items > RESULT_ALGEBRA_MAX_LITERAL_ITEMS
+            ):
+                raise ValueError("expansion literal exceeds item or depth limit")
+            if value is None or type(value) in (bool, int, float, str):
+                return cast("JsonLiteral", value)
+            if isinstance(value, (list, tuple)):
+                return tuple(literal(item, depth + 1) for item in cast("Sequence[object]", value))
+            if isinstance(value, Mapping):
+                items = cast("Mapping[object, object]", value)
+                if not all(type(key) is str for key in items):
+                    raise ValueError("expansion literal object keys must be strings")
+                return JsonObject(
+                    tuple(sorted((cast("str", k), literal(v, depth + 1)) for k, v in items.items()))
+                )
+            raise ValueError("expansion inputs must be JSON literals or output references")
+
+        nodes: list[LocalNode] = []
+        for node in declaration.nodes:
+            display = node.display
+            bindings: list[tuple[str, InputBinding]] = []
+            for name, value in node.inputs:
+                binding = (
+                    reference(value)
+                    if isinstance(value, ExpansionOutput)
+                    else LiteralInput(literal(value))
+                )
+                bindings.append((name, binding))
+            nodes.append(
+                LocalNode(
+                    node.local_id,
+                    node.node_type,
+                    tuple(bindings),
+                    display=(
+                        ExternalNodeRef(display[0])
+                        if display[1]
+                        else CurrentNodeRef()
+                        if display[0] == invocation.node_id
+                        else LocalNodeRef(display[0])
+                    )
+                    if display is not None
+                    else None,
+                    output_members=node.output_members,
+                    slot_variants=node.slot_variants,
+                )
+            )
+        present = {
+            name: value
+            for name, value in declaration.outputs.items()
+            if not isinstance(value, ExpansionOutput)
+            and not (isinstance(value, AbsentOutput) and value.blocked)
+        }
+        result = self._wrap_outputs(
+            invocation,
+            replace(schema, outputs=tuple(out for out in schema.outputs if out.id in present)),
+            present,
+            media_inputs,
+        )
+        if result.error is not None:
+            return result
+        assert result.outputs is not None
+        outputs: list[tuple[str, OutputBinding]] = []
+        for name, value in sorted(declaration.outputs.items()):
+            returned: OutputBinding
+            if isinstance(value, ExpansionOutput):
+                returned = reference(value)
+            elif isinstance(value, AbsentOutput) and value.blocked:
+                returned = BlockedOutput(value.reason)
+            else:
+                returned = PresentOutput(result.outputs[name])
+            outputs.append((name, returned))
+        return ExpandedReturn(
+            LocalExpansion(tuple(nodes), declaration.cache_policy), tuple(outputs)
+        )

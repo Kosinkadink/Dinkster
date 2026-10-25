@@ -31,14 +31,6 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-ENGINE_EXCLUSIONS = {
-    "ComfySwitchNode": "lazy inputs",
-    "StartLoop": "GraphBuilder expansion; loop semantics",
-    "EndLoop": "loop semantics",
-    "LoopIteration": "loop semantics",
-    "LoopProgress": "loop semantics",
-    "LoopResult": "loop semantics",
-}
 FORBIDDEN_PREFIXES = ("dinkster.", "comfy.")
 INPUT_ROLES = {"input", "inputFamily", "dynamicCombo", "dynamicSlot"}
 VALUE_OPTIONS = (
@@ -364,10 +356,6 @@ def compare_registry(reference: dict[str, Any], registry: dict[str, Any]) -> dic
     served = registry["nodes"]
     results = []
     errors = []
-    if "engine_exclusions" in reference and reference["engine_exclusions"] != {
-        name: semantics.split("; ") for name, semantics in ENGINE_EXCLUSIONS.items()
-    }:
-        errors.append("measured engine exclusions differ from the settled exclusion list")
     ids = set(classes)
     for key, schema in served.items():
         if key != schema.get("nodeType"):
@@ -385,8 +373,6 @@ def compare_registry(reference: dict[str, Any], registry: dict[str, Any]) -> dic
         exclusion = ""
         if row.get("api_node") or str(row.get("file", "")).startswith("comfy_api_nodes/"):
             exclusion = "API node"
-        elif name in ENGINE_EXCLUSIONS:
-            exclusion = ENGINE_EXCLUSIONS[name]
         differences = []
         if exclusion:
             status = "excluded"
@@ -421,7 +407,7 @@ def compare_registry(reference: dict[str, Any], registry: dict[str, Any]) -> dic
     return {
         "reference_commit": reference.get("source_commit"),
         "counts": counts,
-        "engine_exclusions": ENGINE_EXCLUSIONS,
+        "engine_exclusions": {},
         "registry_errors": sorted(set(errors)),
         "rows": results,
         "passed": not errors and not counts.get("differs") and not counts.get("absent"),

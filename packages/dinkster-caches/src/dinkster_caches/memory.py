@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable, Iterable, Mapping
 from typing import cast
 
 from dinkster_memory import PressureSignal, system_memory_snapshot
-from dinkster_protocol import CacheKey
+from dinkster_protocol import CachedResult, CacheKey
 from dinkster_values import (
     COST_META_KEY,
     RESOURCE_ID_META_KEY,
@@ -65,7 +65,7 @@ class MemoryLRUCache:
             raise ValueError("max_bytes must be >= 0")
         self._max_entries = max_entries
         self._max_bytes = max_bytes
-        self._entries: OrderedDict[CacheKey, Mapping[str, Value]] = OrderedDict()
+        self._entries: OrderedDict[CacheKey, CachedResult] = OrderedDict()
         self._clean: set[CacheKey] = set()
         self._persist: Callable[[CacheKey, Mapping[str, Value], bool], Awaitable[bool]] | None = (
             None
@@ -91,14 +91,14 @@ class MemoryLRUCache:
             raise ValueError("memory cache already belongs to a spill policy")
         self._persist = handler
 
-    async def get(self, key: CacheKey) -> Mapping[str, Value] | None:
+    async def get(self, key: CacheKey) -> CachedResult | None:
         entry = self._entries.get(key)
         if entry is None:
             self.misses += 1
             return None
         self._entries.move_to_end(key)
         self.hits += 1
-        return dict(entry)
+        return entry
 
     async def put(self, key: CacheKey, outputs: Mapping[str, Value]) -> None:
         await self._put(key, outputs, persisted=False)
@@ -108,17 +108,17 @@ class MemoryLRUCache:
         await self._put(key, outputs, persisted=True)
 
     async def _put(self, key: CacheKey, outputs: Mapping[str, Value], *, persisted: bool) -> None:
+        entry = CachedResult(outputs)
         generation = self._generation
         async with self._mutation_lock:
             if generation != self._generation:
                 return
             if not persisted and self._persist is not None:
                 self._clean.discard(key)
-                persisted = await self._persist(key, outputs, False)
+                persisted = await self._persist(key, entry, False)
                 if generation != self._generation:
                     return
             previous = self._entries.get(key)
-            entry = dict(outputs)
             self._entries[key] = entry
             self._entries.move_to_end(key)
             self._clean.discard(key)
