@@ -345,6 +345,7 @@ GOLDEN_V1_SURFACE = (
     "digest_bytes",
     "digest_file",
     "is_digest",
+    "mount_roots_for_kind",
     "register_asset_type",
     "resolver_from_env",
     # -- mounted saves (dinkster-assets + current dinkster-schema widgets)

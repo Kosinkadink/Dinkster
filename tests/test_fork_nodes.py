@@ -280,9 +280,26 @@ def test_compat_sampler_boundary_values_remain_process_resident() -> None:
 
 
 @pytest.mark.parametrize("verified", [False, True])
+@pytest.mark.parametrize("embedding_roots", [False, True])
 def test_fork_loaders_call_dinkster_inference(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, verified: bool
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, verified: bool, embedding_roots: bool
 ) -> None:
+    monkeypatch.delenv("DINKSTER_MOUNTS_SNAPSHOT", raising=False)
+    expected_roots: list[str] = []
+    if embedding_roots:
+        snapshot = tmp_path / "snapshot.json"
+        table = MountTable(snapshot)
+        for name, priority, kind in (
+            ("embeddings", 5, "model/embedding"),
+            ("checkpoint", -10, "model/checkpoint"),
+            ("preferred", -1, "model/embedding"),
+        ):
+            root = tmp_path / name
+            root.mkdir()
+            table.add(MountDef(id=name, path=root, priority=priority), kind=kind)
+            table.scan(name)
+        monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+        expected_roots = [str(tmp_path / "preferred"), str(tmp_path / "embeddings")]
     path = tmp_path / "weights.safetensors"
     path.write_bytes(b"weights")
     asset: AssetRef | LocalAssetRef
@@ -358,6 +375,8 @@ def test_fork_loaders_call_dinkster_inference(
     assert cast("dict[str, object]", calls[1][2])["model_options"] == {}
     assert cast("dict[str, object]", calls[2][2])["clip_type"] == "h3"
     assert cast("dict[str, object]", calls[2][2])["ckpt_paths"] == [str(path), str(path)]
+    assert cast("dict[str, object]", calls[0][2])["embedding_directory"] == expected_roots
+    assert cast("dict[str, object]", calls[2][2])["embedding_directory"] == expected_roots
     assert calls[0][1] == (str(path),)
     assert calls[1][1] == (str(path),)
     assert calls[3][1] == (str(path),)

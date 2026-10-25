@@ -2,6 +2,14 @@
 
 - Native WanDancer keyframe padding places reference frames and masks into
   video segments, with matching audio slices and scalar or list outputs.
+- Native ComfyUI AUDIO sockets retain the first registered audio authority
+  and work across isolated pack processes without a companion media pack.
+- Native LTXVCropGuides removes appended guide frames and their conditioning
+  metadata while preserving the remaining video latent and noise mask.
+- Native SeedVR2 output post-processing aligns video frames, restores alpha
+  and applies LAB, wavelet or AdaIN color matching with bounded chunks.
+- Native ARVideoI2V encodes the first start-image frame into a cloned model's
+  autoregressive configuration and creates the requested empty video latent.
 - Native Sampler AR Video constructs the autoregressive video sampler with
   the workflow's frame-block size under its exact core interface.
 - Native LTXV sampling patches cloned models and constructs shifted sigma

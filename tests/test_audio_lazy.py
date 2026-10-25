@@ -927,6 +927,62 @@ def test_registry_audio_wire_admission_and_receiving_host_binding(source) -> Non
     )
 
 
+@pytest.mark.parametrize("preexisting", (False, True))
+def test_native_comfy_audio_registration_preserves_first_authority(
+    source, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, preexisting: bool
+) -> None:
+    from dinkster_values import register_core_types
+    from dinkster_workers import load_manifest
+    from dinkster_workers.manifest import resolve_entry
+
+    asset, expected = source
+    registry = TypeRegistry()
+    register_core_types(registry)
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "vault"))
+    if preexisting:
+        register_audio_value_type(registry, AUDIO_TYPE, asset.resolver)
+        original = registry.spec(AUDIO_TYPE)
+        monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "empty-vault"))
+    else:
+        original = None
+    manifest = load_manifest(
+        Path(__file__).parents[1] / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+    )
+    assert manifest.types_entry is not None
+    register = resolve_entry(manifest.types_entry)
+    assert callable(register)
+    register(registry)
+    first = registry.spec(AUDIO_TYPE)
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "other-vault"))
+    register(registry)
+    assert registry.spec(AUDIO_TYPE) is first
+    if original is not None:
+        assert first is original
+    unbound = {**audio_from_source(asset), "source": AssetRef.from_wire(asset.to_wire())}
+    value = registry.wrap(AUDIO_TYPE, unbound).resolve()
+    received = first.decode(first.encode(value))
+    window = audio_window(received, 712, 29)
+    assert window["sample_rate"] == 8000
+    np.testing.assert_array_equal(window["waveform"], expected[..., 712:741])
+
+
+def test_native_comfy_audio_registration_is_torch_free() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; from dinkster_api.v1 import AUDIO_TYPE, TypeRegistry; "
+            "from dinkster_nodes_comfy import register_inference_types; "
+            "registry=TypeRegistry(); register_inference_types(registry); "
+            "assert AUDIO_TYPE in registry; assert 'torch' not in sys.modules; "
+            "assert 'dinkster_inference' not in sys.modules",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 @pytest.mark.parametrize("concat", [False, True])
 def test_lazy_audio_chain_matches_across_worker_shared_memory(source, concat) -> None:
     from dinkster_nodes_media_io import MEDIA_IO_NODES, register_media_types

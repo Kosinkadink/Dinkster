@@ -2,15 +2,17 @@
 
 from dinkster_api.v1 import (
     ASSET_TYPE,
+    AUDIO_TYPE,
     TypeRegistry,
     register_asset_type,
+    register_audio_value_type,
     resolver_from_env,
 )
 from dinkster_api.v1 import register_inference_types as _register_inference_types
 
 from .ace_text_conditioning import ACE_TEXT_CONDITIONING_NODES
 from .advanced_samplers import ADVANCED_SAMPLER_NODES
-from .ar_video import SamplerARVideo
+from .ar_video import ARVideoI2V, SamplerARVideo
 from .attention_guidance import ATTENTION_GUIDANCE_NODES
 from .attention_multiply import ATTENTION_MULTIPLY_NODES
 from .audio_combine import AUDIO_COMBINE_NODES
@@ -73,6 +75,7 @@ from .mochi import EmptyMochiLatentVideo
 from .model_advanced import MODEL_ADVANCED_NODES
 from .model_merging import MODEL_MERGE_NODES
 from .model_merging_specific import MODEL_SPECIFIC_MERGE_NODES
+from .model_patch_loader import MODEL_PATCH_LOADER_NODES
 from .model_specific_schedulers import MODEL_SPECIFIC_SCHEDULER_NODES
 from .morphology import MORPHOLOGY_NODES
 from .noise_guidance import NOISE_GUIDANCE_NODES
@@ -91,6 +94,7 @@ from .rope_and_mask import ROPE_AND_MASK_NODES
 from .sampler_factories import SAMPLER_FACTORY_NODES
 from .save_text import SaveText
 from .seedvr_conditioning import SeedVR2Conditioning
+from .seedvr_postprocess import SeedVR2PostProcessing
 from .seedvr_preprocess import SeedVR2Preprocess
 from .seedvr_temporal import SEEDVR_TEMPORAL_NODES
 from .sigma_operations import SIGMA_OPERATION_NODES
@@ -133,6 +137,7 @@ COMFY_NODES = (
     *MODEL_SPECIFIC_MERGE_NODES,
     *MODEL_ADVANCED_NODES,
     HypernetworkLoader,
+    *MODEL_PATCH_LOADER_NODES,
     *DEVICE_ROUTING_NODES,
     *COMPILE_NODES,
     *MODEL_SPECIFIC_SCHEDULER_NODES,
@@ -211,6 +216,8 @@ COMFY_NODES = (
     *SAMPLER_FACTORY_NODES,
     *ADVANCED_SAMPLER_NODES,
     SamplerARVideo,
+    ARVideoI2V,
+    SeedVR2PostProcessing,
     *WANDANCER_KEYFRAME_NODES,
 )
 
@@ -218,6 +225,8 @@ COMFY_NODES = (
 def register_inference_types(registry: TypeRegistry) -> None:
     if ASSET_TYPE not in registry:
         register_asset_type(registry, resolver_from_env())
+    if AUDIO_TYPE not in registry:
+        register_audio_value_type(registry, AUDIO_TYPE, resolver_from_env())
     _register_inference_types(registry)
 
 
