@@ -273,6 +273,7 @@ namespaces = [
     "LTXVImgToVideoInplace",
     "LTXVConditioning",
     "SeedVR2Preprocess",
+    "SeedVR2Conditioning",
     "SVD_img2vid_Conditioning",
     "CosmosImageToVideoLatent",
     "CosmosPredict2ImageToVideoLatent",
