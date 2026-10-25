@@ -26,6 +26,7 @@ from .context_windows import CONTEXT_WINDOW_NODES
 from .controlnet import CONTROLNET_NODES
 from .cosmos_conditioning import COSMOS_CONDITIONING_NODES
 from .dataset_collections import DATASET_COLLECTION_NODES
+from .dataset_groups import DATASET_GROUP_NODES
 from .dataset_images import DATASET_IMAGE_NODES
 from .dataset_text import DATASET_TEXT_NODES
 from .device_routing import DEVICE_ROUTING_NODES
@@ -175,6 +176,7 @@ COMFY_NODES = (
     *AUDIO_EFFECT_NODES,
     *AUDIO_GENERATOR_NODES,
     *AUDIO_LATENT_NODES,
+    *DATASET_GROUP_NODES,
     *ACE_TEXT_CONDITIONING_NODES,
     *AUDIO_MUSIC_CONDITIONING_NODES,
     *AUDIO_TRANSFORM_NODES,

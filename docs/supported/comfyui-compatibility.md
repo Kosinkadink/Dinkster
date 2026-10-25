@@ -53,6 +53,8 @@
   stitch, resize with padding, rotate, flip, and scale to a maximum dimension.
 - Native morphology applies erosion, dilation, opening, closing, gradients and
   top/bottom hats; RGB/YUV conversion splits and joins three image channels.
+- Native dataset nodes merge image batches into frame lists and bucket training
+  latents with their paired conditioning by resolution in first-seen order.
 - Eight native video latent nodes create Hunyuan Video, Hunyuan Video 1.5, LTXV,
   Cosmos, and autoregressive video samples, trim video frames, freeze LTXV video
   or audio samples, and normalize video latent starts under their exact ComfyUI IDs.
