@@ -5,11 +5,54 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import torch
+from dinkster_api.v1 import initialize_inference_process
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.latent_upscale import (
     HunyuanVideo15LatentUpscaleWithModel,
     LTXVLatentUpsampler,
 )
+
+
+def test_native_runtime_models_execute_cpu_latent_upscale_contracts() -> None:
+    initialize_inference_process()
+    from dinkster_inference.ldm.hunyuan_video.upsampler import HunyuanVideo15SRModel
+    from dinkster_inference.model_patcher import CoreModelPatcher
+
+    hunyuan = HunyuanVideo15SRModel(
+        "720p", {"in_channels": 1, "out_channels": 1, "hidden_channels": 1, "num_blocks": 0}
+    )
+    assert type(hunyuan.patcher) is CoreModelPatcher
+    source = {
+        "samples": torch.arange(1 * 1 * 2 * 3 * 5, dtype=torch.float32).reshape(1, 1, 2, 3, 5)
+    }
+    result = HunyuanVideo15LatentUpscaleWithModel.execute(
+        model=hunyuan,
+        samples=source,
+        upscale_method="nearest-exact",
+        width=96,
+        height=64,
+        crop="disabled",
+    )["LATENT"]
+    assert result["samples"].shape == (1, 1, 2, 4, 6)
+    assert result["samples"].dtype is torch.float32
+
+    class Statistics:
+        def un_normalize(self, value: torch.Tensor) -> torch.Tensor:
+            return value + 3
+
+        def normalize(self, value: torch.Tensor) -> torch.Tensor:
+            return value - 1
+
+    ltx = CoreModelPatcher(torch.nn.Identity(), torch.device("cpu"), torch.device("cpu"))
+    assert type(ltx) is CoreModelPatcher
+    input_latent = {"samples": torch.tensor([[[[2.0]]]], dtype=torch.float64), "noise_mask": "drop"}
+    vae = SimpleNamespace(first_stage_model=SimpleNamespace(per_channel_statistics=Statistics()))
+    upsampled = LTXVLatentUpsampler.execute(samples=input_latent, upscale_model=ltx, vae=vae)[
+        "LATENT"
+    ]
+    assert upsampled["samples"].dtype is torch.float64
+    torch.testing.assert_close(upsampled["samples"], torch.tensor([[[[4.0]]]], dtype=torch.float64))
+    assert "noise_mask" not in upsampled
 
 
 def test_registry_and_schemas_are_core_compatible_without_torch_runtime() -> None:
