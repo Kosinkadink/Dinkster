@@ -1,5 +1,7 @@
 ## ComfyUI compatibility
 
+- Native LTXVCropGuides removes appended guide frames and their conditioning
+  metadata while preserving the remaining video latent and noise mask.
 - Native ARVideoI2V encodes the first start-image frame into a cloned model's
   autoregressive configuration and creates the requested empty video latent.
 - Native Sampler AR Video constructs the autoregressive video sampler with
