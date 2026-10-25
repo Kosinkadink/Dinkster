@@ -979,7 +979,19 @@ class MountSnapshotResolver:
         self._lock = threading.Lock()
         self._stamp: tuple[int, int] | None = None
         self._resolvers: list[tuple[str, IndexedAssetResolver]] = []
+        self._roots: tuple[tuple[str, Path], ...] = ()
         self._local_bindings: dict[str, object] = {}
+
+    def roots_for_kind(self, kind: str) -> tuple[Path, ...]:
+        """Authorized directory roots in priority then mount-id order.
+
+        Directory grants do not require a readable file index. Only exact
+        kind matches in the current snapshot participate; nothing is discovered.
+        """
+        require_asset_kind(kind)
+        with self._lock:
+            self._refresh_locked()
+            return tuple(root for row_kind, root in self._roots if row_kind == kind)
 
     def resolve(self, digest: str) -> Path | None:
         for _kind, resolver in self._refresh():
@@ -1077,6 +1089,7 @@ class MountSnapshotResolver:
             return
         self._stamp = stamp
         self._resolvers = []
+        self._roots = ()
         self._local_bindings = {}
         if stamp is None:
             return
@@ -1115,7 +1128,9 @@ class MountSnapshotResolver:
             if not isinstance(kind, str):
                 kind = ""
             prepared.append((priority, mount_id, kind, root, index))
-        for _priority, _mount_id, kind, root, index in sorted(prepared):
+        ordered = sorted(prepared)
+        self._roots = tuple((kind, Path(root)) for _, _, kind, root, _ in ordered if root)
+        for _priority, _mount_id, kind, root, index in ordered:
             try:
                 self._resolvers.append((kind, IndexedAssetResolver(root, index_path=index)))
             except AssetError:
