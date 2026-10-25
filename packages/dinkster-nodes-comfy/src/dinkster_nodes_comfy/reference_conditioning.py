@@ -3,25 +3,46 @@
 from __future__ import annotations
 
 import importlib
+import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 
 from dinkster_api.v1 import (
     CONDITIONING_TYPE,
+    CORE_FLOAT,
     IMAGE_TYPE,
     LATENT_TYPE,
     VAE_TYPE,
+    DynamicComboOption,
+    DynamicComboSpec,
+    InputFamilySpec,
     InputSpec,
     Node,
     NodeSchema,
+    NumberWidget,
     OutputSpec,
     TypeExpr,
+    initialize_inference_process,
     materialize_image,
     materialize_latent,
 )
 
 _CONDITIONING = TypeExpr.concrete(CONDITIONING_TYPE)
+_FLOAT = TypeExpr.concrete(CORE_FLOAT)
+_IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 _LATENT = TypeExpr.concrete(LATENT_TYPE)
+
+
+def _combo_values(
+    combo_id: str, selected: str | Mapping[str, Any], values: Mapping[str, Any]
+) -> Mapping[str, Any]:
+    if isinstance(selected, Mapping):
+        return selected
+    prefix = f"{combo_id}."
+    return {
+        combo_id: selected,
+        **{input_id.removeprefix(prefix): value for input_id, value in values.items()},
+    }
 
 
 class InstructPixToPixConditioning(Node):
@@ -105,4 +126,149 @@ class ReferenceLatent(Node):
         return cls.outputs(CONDITIONING=result)
 
 
-REFERENCE_CONDITIONING_NODES = (InstructPixToPixConditioning, ReferenceLatent)
+class ReferenceMultiLatent(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="ReferenceMultiLatent",
+            display_name="Set Reference Multi Latent",
+            category="model/conditioning",
+            description=(
+                "Encodes reference images and appends their latents to positive and optional "
+                "negative conditioning for edit models."
+            ),
+            inputs=(
+                InputSpec("positive", _CONDITIONING),
+                InputSpec("negative", _CONDITIONING, required=False),
+                InputSpec(
+                    "vae",
+                    TypeExpr.concrete(VAE_TYPE),
+                    required=False,
+                    doc="Reference images are ignored when no VAE is connected.",
+                ),
+            ),
+            combos=(
+                DynamicComboSpec(
+                    "resolution",
+                    (
+                        DynamicComboOption("keep resolution"),
+                        DynamicComboOption(
+                            "resize",
+                            (
+                                InputSpec(
+                                    "megapixels",
+                                    _FLOAT,
+                                    default=1.0,
+                                    widget=NumberWidget(min=0.01, max=16.0, step=0.01),
+                                    doc=(
+                                        "Target size of each reference image, preserving aspect "
+                                        "ratio. "
+                                        "1.0 is about 1024 x 1024 pixels."
+                                    ),
+                                ),
+                            ),
+                        ),
+                    ),
+                    default="keep resolution",
+                ),
+            ),
+            input_families=(
+                InputFamilySpec(
+                    "images",
+                    (InputSpec("image", _IMAGE, required=False),),
+                    min_members=1,
+                    max_members=100,
+                    required=False,
+                    member_prefix="image",
+                ),
+            ),
+            outputs=(
+                OutputSpec("positive", _CONDITIONING),
+                OutputSpec("negative", _CONDITIONING),
+                OutputSpec("empty_latent", _LATENT),
+            ),
+            input_order=("positive", "negative", "vae", "resolution", "images"),
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        positive: Sequence[Sequence[Any]],
+        resolution: str | Mapping[str, Any],
+        negative: Sequence[Sequence[Any]] | None = None,
+        vae: Any = None,
+        images: Mapping[str, object] | None = None,
+        **values: Any,
+    ) -> Mapping[str, object]:
+        resolution = _combo_values("resolution", resolution, values)
+        references: list[Any] = []
+        if vae is not None:
+            initialize_inference_process()
+            for _, pixels in sorted(
+                (images or {}).items(), key=lambda item: int(item[0].removeprefix("image"))
+            ):
+                if pixels is None:
+                    continue
+                image = materialize_image(pixels)
+                if resolution["resolution"] == "resize":
+                    height, width = image.shape[1:3]
+                    scale = math.sqrt(resolution["megapixels"] * 1024.0 * 1024.0 / (width * height))
+                    image = (
+                        importlib.import_module("dinkster_inference.utils")
+                        .common_upscale(
+                            image.movedim(-1, 1),
+                            max(1, round(width * scale)),
+                            max(1, round(height * scale)),
+                            "lanczos",
+                            "disabled",
+                        )
+                        .movedim(1, -1)
+                    )
+                references.append(materialize_image(vae.encode(image)))
+
+        if references:
+            empty_latent: Mapping[str, object] = {"samples": references[0] * 0.0}
+        else:
+            from .latent import EmptyLatentImage
+
+            size = 1024
+            if resolution["resolution"] == "resize":
+                size = round(math.sqrt(resolution["megapixels"] * 1024.0 * 1024.0))
+            empty_latent = materialize_latent(
+                EmptyLatentImage.execute(width=size, height=size, batch_size=1)["LATENT"]
+            )
+
+        def append_references(conditioning: Sequence[Sequence[Any]]) -> list[list[Any]]:
+            result: list[list[Any]] = []
+            for text, metadata in conditioning:
+                result.append(
+                    [
+                        text,
+                        {
+                            **metadata,
+                            "reference_latents": [
+                                *(metadata.get("reference_latents") or ()),
+                                *references,
+                            ],
+                        },
+                    ]
+                )
+            return result
+
+        result_positive = append_references(positive) if references else positive
+        result_negative = (
+            append_references(negative)
+            if references and negative is not None
+            else negative
+            if negative is not None
+            else result_positive
+        )
+        return cls.outputs(
+            positive=result_positive,
+            negative=result_negative,
+            empty_latent=empty_latent,
+        )
+
+
+REFERENCE_CONDITIONING_NODES = (InstructPixToPixConditioning, ReferenceLatent, ReferenceMultiLatent)

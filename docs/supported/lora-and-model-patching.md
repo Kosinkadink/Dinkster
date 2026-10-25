@@ -6,9 +6,19 @@ rescale classifier-free guidance; select compute dtype; and select a supported
 dense attention backend. They use the pinned `dinkster_inference` sampler and
 model patcher.
 
+`MultiGPU_WorkUnits` creates reusable model deep clones for the visible devices.
+`SelectModelDevice`, `SelectCLIPDevice`, and `SelectVAEDevice` route their
+resident values to the selected default, CPU, or portable `gpu:N` device where
+supported. Unavailable devices leave the value unchanged; VAE routing does not
+offer CPU.
+
 `ScaleROPE` scales and shifts spatial and temporal rotary coordinates on a cloned
 model. `DifferentialDiffusion` applies timestep-dependent denoise masks, with
 optional blending strength, without changing the source model.
+
+`TorchCompileModel` clones a model, compiles its diffusion model with the
+selected backend, and applies the compiled module only for model execution.
+`wanBlockSwap` is retained as a deprecated no-op for existing workflows.
 
 `TomePatchModel` merges self-attention tokens, `HyperTile` tiles compatible
 self-attention layers, and `PatchModelAddDownscale` applies sigma-windowed U-Net
@@ -30,3 +40,7 @@ they do not load or apply LoRA weights.
 
 ControlNet values use the native `CONTROL_NET` type and stay resident in their
 owning worker, with the same governed lifetime as other loaded models.
+
+Resident CLIP values retain their conditioning and scheduled hook dependencies.
+Releasing a retained hook group or keyframe group invalidates dependent cached
+CLIP outputs without invalidating unrelated encoders.

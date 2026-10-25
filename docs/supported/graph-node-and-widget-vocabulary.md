@@ -92,6 +92,8 @@
   and strict numeric schedule parsing
 - Role-labeled multi-stream values inside ordinary `comfy.LATENT`, with generic
   audio/video concat, separate, visual preview, and audio preview nodes
+- Empty LATENT mappings remain present values through host transport and cache;
+  nonempty LATENT mappings still require a samples entry
 - Packs can import `LatentStream` and `MultiStreamLatent` from `dinkster_api.v1`
   without loading Torch or inference. These are the same ordered, role-labeled
   values returned by `materialize_latent`, with no wrapper or wire conversion.

@@ -9,15 +9,17 @@ from .attention_multiply import ATTENTION_MULTIPLY_NODES
 from .audio_combine import AUDIO_COMBINE_NODES
 from .audio_effects import AUDIO_EFFECT_NODES
 from .audio_generators import AUDIO_GENERATOR_NODES
-from .audio_latent import AUDIO_LATENT_NODES
+from .audio_latent import AUDIO_LATENT_NODES, GetAudioLatentSize
 from .audio_music_conditioning import AUDIO_MUSIC_CONDITIONING_NODES
 from .audio_transform import AUDIO_TRANSFORM_NODES
 from .audio_vae import AUDIO_VAE_NODES
 from .cache import CACHE_NODES
 from .cfg_guidance import CFG_GUIDANCE_NODES
+from .cfg_guiders import CFG_GUIDER_NODES
 from .clip import CLIP_NODES
 from .clip_model_specific import MODEL_TEXT_ENCODER_NODES
 from .clip_sdxl import CLIP_SDXL_NODES
+from .compile import COMPILE_NODES
 from .compositing import COMPOSITING_NODES
 from .conditioning import CONDITIONING_NODES
 from .controlnet import CONTROLNET_NODES
@@ -25,7 +27,9 @@ from .cosmos_conditioning import COSMOS_CONDITIONING_NODES
 from .dataset_collections import DATASET_COLLECTION_NODES
 from .dataset_images import DATASET_IMAGE_NODES
 from .dataset_text import DATASET_TEXT_NODES
+from .device_routing import DEVICE_ROUTING_NODES
 from .freeu import FREEU_NODES
+from .hook_conditioning import HOOK_CONDITIONING_NODES
 from .hunyuan_latent import HUNYUAN_LATENT_NODES
 from .hunyuan_text import HUNYUAN_TEXT_NODES
 from .hunyuan_video_image import HUNYUAN_VIDEO_IMAGE_NODES
@@ -33,6 +37,7 @@ from .image_core import IMAGE_CORE_NODES
 from .image_filters import IMAGE_FILTER_NODES
 from .image_transform import IMAGE_TRANSFORM_NODES
 from .inpaint import INPAINT_NODES
+from .kandinsky_video import Kandinsky5ImageToVideo
 from .latent import LATENT_NODES
 from .latent_advanced import LATENT_ADVANCED_NODES
 from .latent_model_specific import MODEL_LATENT_NODES
@@ -40,6 +45,10 @@ from .latent_operations import LATENT_OPERATION_NODES
 from .logic import LOGIC_NODES
 from .loops import LOOP_NODES
 from .ltx_audio import LTX_AUDIO_NODES
+from .ltx_av_latent import LTX_AV_LATENT_NODES
+from .ltx_sampling import LTX_SAMPLING_NODES
+from .ltx_video_conditioning import LTX_VIDEO_CONDITIONING_NODES
+from .ltx_video_preprocess import LTX_VIDEO_PREPROCESS_NODES
 from .mask import MASK_NODES
 from .math import ComfyMathExpression
 from .mochi import EmptyMochiLatentVideo
@@ -49,6 +58,7 @@ from .model_merging_specific import MODEL_SPECIFIC_MERGE_NODES
 from .model_specific_schedulers import MODEL_SPECIFIC_SCHEDULER_NODES
 from .morphology import MORPHOLOGY_NODES
 from .noise_guidance import NOISE_GUIDANCE_NODES
+from .perpneg import PERPNEG_NODES
 from .post_processing import POST_PROCESSING_NODES
 from .primitive import (
     PrimitiveBoolean,
@@ -60,6 +70,8 @@ from .primitive import (
 from .reference_conditioning import REFERENCE_CONDITIONING_NODES
 from .rope_and_mask import ROPE_AND_MASK_NODES
 from .sampler_factories import SAMPLER_FACTORY_NODES
+from .save_text import SaveText
+from .seedvr_preprocess import SeedVR2Preprocess
 from .sigma_operations import SIGMA_OPERATION_NODES
 from .sigma_schedulers import SIGMA_SCHEDULER_NODES
 from .sparse_attention import SPARSE_ATTENTION_NODES
@@ -79,6 +91,7 @@ from .video_latent_ops import VIDEO_LATENT_OPERATION_NODES
 COMFY_NODES = (
     *TEXT_NODES,
     *DATASET_TEXT_NODES,
+    SaveText,
     *DATASET_COLLECTION_NODES,
     PrimitiveString,
     PrimitiveStringMultiline,
@@ -97,8 +110,12 @@ COMFY_NODES = (
     *MODEL_MERGE_NODES,
     *MODEL_SPECIFIC_MERGE_NODES,
     *MODEL_ADVANCED_NODES,
+    *DEVICE_ROUTING_NODES,
+    *COMPILE_NODES,
     *MODEL_SPECIFIC_SCHEDULER_NODES,
+    *CFG_GUIDER_NODES,
     *CFG_GUIDANCE_NODES,
+    *PERPNEG_NODES,
     *VIDEO_GUIDANCE_NODES,
     *FREEU_NODES,
     *SPATIAL_MODEL_PATCH_NODES,
@@ -116,6 +133,7 @@ COMFY_NODES = (
     *MODEL_TEXT_ENCODER_NODES,
     *VAE_NODES,
     *CONDITIONING_NODES,
+    *HOOK_CONDITIONING_NODES,
     *REFERENCE_CONDITIONING_NODES,
     *INPAINT_NODES,
     *CONTROLNET_NODES,
@@ -130,6 +148,9 @@ COMFY_NODES = (
     *HUNYUAN_LATENT_NODES,
     *HUNYUAN_TEXT_NODES,
     *HUNYUAN_VIDEO_IMAGE_NODES,
+    Kandinsky5ImageToVideo,
+    *LTX_VIDEO_CONDITIONING_NODES,
+    SeedVR2Preprocess,
     *VIDEO_CONDITIONING_NODES,
     *COSMOS_CONDITIONING_NODES,
     *VIDEO_LATENT_NODES,
@@ -144,7 +165,11 @@ COMFY_NODES = (
     *AUDIO_MUSIC_CONDITIONING_NODES,
     *AUDIO_TRANSFORM_NODES,
     *AUDIO_VAE_NODES,
+    GetAudioLatentSize,
     *LTX_AUDIO_NODES,
+    *LTX_AV_LATENT_NODES,
+    *LTX_VIDEO_PREPROCESS_NODES,
+    *LTX_SAMPLING_NODES,
     *DATASET_IMAGE_NODES,
     *SIGMA_SCHEDULER_NODES,
     *SAMPLER_FACTORY_NODES,

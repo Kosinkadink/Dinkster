@@ -3,6 +3,8 @@
 Derived from the node-interface comparison in comfy-vibe-station issue 504.
 Only exact class ids match. Aliases, labels and namespace rewrites never match
 an id or a value. The only additional input is an appended optional save mount.
+Source-marked file combos may use an ASSET socket and asset picker; ordinary
+combo types, options and defaults remain exact.
 Hidden inputs are outside the workflow contract on both sides. Output names
 count only when the reference declares RETURN_NAMES (or explicit V3 output
 labels); dumps must leave return_names null when names are synthesized.
@@ -163,6 +165,8 @@ def _native_inputs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     entry["file_picker"] = True
                 if entry.get("options"):
                     entry.setdefault("default", entry["options"][0])
+            elif entry["type"] in ("ASSET", {"list": "ASSET"}) and widget.get("type") == "ASSET":
+                entry["file_picker"] = True
             if entry.get("multiselect") is False:
                 entry.pop("multiselect")
         elif role == "dynamicCombo":
@@ -220,6 +224,10 @@ def _differences(expected: Any, actual: Any, path: str) -> list[str]:
             if not file_input or expected.get("type") not in ("COMBO", {"list": "COMBO"}):
                 return [f"{path}: asset picker on a non-file input"]
             # Mount contents vary, but the widget still consumes the original file slot.
+            if actual.get("type") == "ASSET":
+                actual["type"] = "COMBO"
+            elif actual.get("type") == {"list": "ASSET"}:
+                actual["type"] = {"list": "COMBO"}
             expected.pop("options", None)
             expected.pop("default", None)
             actual.pop("default", None)
