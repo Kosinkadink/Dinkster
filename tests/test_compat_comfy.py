@@ -12,10 +12,28 @@ import sys
 from collections.abc import Mapping
 from decimal import Decimal
 from fractions import Fraction
+from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
 import pytest
+from dinkster_api.v1 import (
+    AUDIO_TYPE,
+    BACKGROUND_REMOVAL_TYPE,
+    BOUNDING_BOX_TYPE,
+    CONTROL_NET_TYPE,
+    GLIGEN_TYPE,
+    LATENT_UPSCALE_MODEL_TYPE,
+    MESH_TYPE,
+    MODEL_PATCH_TYPE,
+    MOGE_GEOMETRY_TYPE,
+    MOGE_MODEL_TYPE,
+    SHAPE_SUBDIVIDES_TYPE,
+    STYLE_MODEL_TYPE,
+    VIDEO_EDIT_TYPE,
+    VIDEO_TYPE,
+    VOXEL_TYPE,
+)
 from dinkster_caches import MemoryLRUCache
 from dinkster_compat_comfy import (
     NATIVE_NODES,
@@ -303,6 +321,84 @@ def test_translate_type_rules() -> None:
     assert translate_type("*")[0].kind == "wildcard"
     expr, opaque_types = translate_type("MODEL")
     assert expr.types == ("comfy.MODEL",) and opaque_types == ("comfy.MODEL",)
+
+
+@pytest.mark.parametrize(
+    ("raw_type", "canonical_type"),
+    [
+        ("AUDIO", AUDIO_TYPE),
+        ("VIDEO", VIDEO_TYPE),
+        ("VIDEO_EDIT", VIDEO_EDIT_TYPE),
+        ("MOGE_MODEL", MOGE_MODEL_TYPE),
+        ("MOGE_GEOMETRY", MOGE_GEOMETRY_TYPE),
+        ("BACKGROUND_REMOVAL", BACKGROUND_REMOVAL_TYPE),
+        ("VOXEL", VOXEL_TYPE),
+        ("MESH", MESH_TYPE),
+        ("SHAPE_SUBDIVIDES", SHAPE_SUBDIVIDES_TYPE),
+        ("BOUNDING_BOX", BOUNDING_BOX_TYPE),
+        ("CONTROL_NET", CONTROL_NET_TYPE),
+        ("GLIGEN", GLIGEN_TYPE),
+        ("MODEL_PATCH", MODEL_PATCH_TYPE),
+        ("LATENT_UPSCALE_MODEL", LATENT_UPSCALE_MODEL_TYPE),
+        ("STYLE_MODEL", STYLE_MODEL_TYPE),
+    ],
+)
+def test_translate_type_keeps_native_media_and_model_labels_bare(
+    raw_type: str, canonical_type: str
+) -> None:
+    assert translate_type(raw_type) == (TypeExpr.concrete(canonical_type), (canonical_type,))
+
+
+@pytest.mark.parametrize("raw_type", ["AUDIO_RECORD", "AUDIO_ENCODER"])
+def test_translate_type_keeps_unmigrated_audio_labels_prefixed(raw_type: str) -> None:
+    expected = f"comfy.{raw_type}"
+    assert translate_type(raw_type) == (TypeExpr.concrete(expected), (expected,))
+
+
+def test_compat_worker_type_ownership_preserves_image_dependency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_compat_comfy.schema_snapshot import core_schema_snapshot
+    from dinkster_workers import host, load_manifest
+
+    root = Path(__file__).parents[1] / "packages"
+    manifest = load_manifest(root / "dinkster-compat-comfy/dinkster-pack.toml")
+    assert "comfy.CONTROL_NET" not in manifest.type_namespaces
+    assert "comfy.GLIGEN" not in manifest.type_namespaces
+    translation = CompatTranslation()
+    translation.opaque_types.update(core_schema_snapshot()["opaqueTypes"])
+    manifest = dataclasses.replace(
+        manifest,
+        nodes_entry="fixture:nodes",
+        types_entry="fixture:types",
+        choices_entry=None,
+        consumers_entry=None,
+        arms=(),
+        arm_nodes_entry=None,
+    )
+    entries = {"fixture:nodes": [], "fixture:types": translation.register_types}
+    monkeypatch.setattr(host, "resolve_entry", entries.__getitem__)
+    worker, registry, _, _ = host.load_pack(manifest)
+    assert "comfy.AUDIO_ENCODER" in registry
+    assert registry.owner_of("comfy.AUDIO_ENCODER") == manifest.name
+    assert registry.owner_of("comfy.LAYERS") == "dinkster-nodes-image"
+    assert registry.owner_of("comfy.COMPOSITOR") == "dinkster-nodes-image"
+
+    published = TypeRegistry()
+    register_core_types(published)
+    image = load_manifest(root / "dinkster-nodes-image/dinkster-pack.toml")
+    published.claim_types(image.name, image.type_namespaces)
+    published.declare_types(
+        manifest.name, manifest.type_namespaces, worker.registered_types, allow_bare=True
+    )
+    assert published.owner_of("comfy.AUDIO_ENCODER") == manifest.name
+    assert published.owner_of("comfy.LAYERS") == image.name
+    assert published.owner_of("comfy.COMPOSITOR") == image.name
+    assert published.owner_of(CONTROL_NET_TYPE) == "dinkster-nodes-foundation"
+    assert published.owner_of(GLIGEN_TYPE) == "dinkster-nodes-foundation"
+    with registry.registering_pack(manifest.name, manifest.type_namespaces, allow_bare=True):
+        with pytest.raises(ValueError, match="outside its declared type claims"):
+            registry.register("comfy.UNDECLARED")
 
 
 def test_translate_type_comma_unions() -> None:
@@ -682,6 +778,44 @@ def test_audio_float_bounds_remain_json_numbers(
         if key != "type"
     )
     assert schema_from_wire(wire) == schema
+
+
+@pytest.mark.parametrize("socket", ["FLOAT", "INT"])
+@pytest.mark.parametrize(
+    "precision", [False, True, 0, 0.0, -1, float("nan"), float("inf"), None, 0.01]
+)
+def test_translated_round_preserves_only_float_no_round_or_positive_precision(
+    socket: str, precision: object
+) -> None:
+    class AngleNode:
+        RETURN_TYPES = ()
+        FUNCTION = "execute"
+
+        @classmethod
+        def INPUT_TYPES(cls):
+            return {
+                "required": {
+                    "angle": (
+                        socket,
+                        {"round": precision, "min": False, "max": True, "step": False},
+                    )
+                }
+            }
+
+        def execute(self, **kwargs):
+            return ()
+
+    schema = translate_node("AngleNode", AngleNode, CompatTranslation()).schema()
+    wire = schema_to_wire(schema)
+    entry = cast("list[dict[str, Any]]", wire["interface"])[0]
+    if socket == "FLOAT" and (precision is False or precision == 0.01):
+        assert entry["widget"] == {"type": "NUMBER", "round": precision}
+        assert type(entry["widget"]["round"]) is type(precision)
+        restored = schema_from_wire(wire)
+        assert isinstance(restored.inputs[0].widget, NumberWidget)
+        assert type(restored.inputs[0].widget.round) is type(precision)
+    else:
+        assert "widget" not in entry
 
 
 def test_ksampler_advanced_filters_unusable_numeric_metadata() -> None:

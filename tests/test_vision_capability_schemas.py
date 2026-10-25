@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import sys
+from importlib import import_module
+from pathlib import Path
 
 import pytest
+from dinkster_graph import Graph, GraphNode, TypedLiteral, validate
 from dinkster_nodes_image import (
     DETECT_PROVIDER_CHOICE,
     IMAGE_NODES,
@@ -22,6 +26,8 @@ from dinkster_nodes_image import (
     vision_choices,
 )
 from dinkster_schema import ComboWidget, NumberWidget, TypeExpr
+from dinkster_values import TypeRegistry, register_core_types
+from dinkster_workers import IsolatedWorker
 
 from dinkster.compose import compose_serving
 
@@ -71,7 +77,7 @@ def test_vision_choices_are_declared_empty_and_pack_owned() -> None:
 
 
 def test_capability_schemas_share_detection_value_contract() -> None:
-    detection = TypeExpr.concrete("dinkster.detection")
+    detection = TypeExpr.concrete("DETECTION")
     detections = TypeExpr.list_of(detection)
     mask = TypeExpr.concrete("MASK")
     masks = TypeExpr.list_of(mask)
@@ -158,5 +164,75 @@ def test_default_composition_serves_standard_capability_choices() -> None:
                 assert composition.choices[choice] == ("dinkster-vision-hed",)
         finally:
             await composition.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("provider", "node_type", "input_id", "type_id", "obsolete_type_id"),
+    (
+        ("upscale", "dinkster.image.upscale_model", "upscale_model", "ASSET", "dinkster.asset"),
+        (
+            "sam31",
+            "dinkster.detection.segment",
+            "detections",
+            "list<DETECTION>",
+            "list<dinkster.detection>",
+        ),
+        (
+            "efficient_sam",
+            "dinkster.detection.segment",
+            "detections",
+            "list<DETECTION>",
+            "list<dinkster.detection>",
+        ),
+    ),
+)
+def test_isolated_vision_accepts_canonical_typed_literals_without_aliases(
+    provider: str, node_type: str, input_id: str, type_id: str, obsolete_type_id: str
+) -> None:
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        import_module(f"dinkster_nodes_vision.{provider}").register_types(registry)
+        manifest = (
+            Path(__file__).parent.parent
+            / "packages/dinkster-nodes-vision"
+            / f"dinkster_vision_{provider}_pack/dinkster-pack.toml"
+        )
+        worker = IsolatedWorker(manifest, registry, python=sys.executable)
+        await worker.start()
+        try:
+            for stamp in (type_id, obsolete_type_id):
+                graph = Graph(
+                    nodes={
+                        "vision": GraphNode(
+                            node_type,
+                            {
+                                "image": TypedLiteral("IMAGE", [[[[0.0, 0.25, 1.0]]]]),
+                                input_id: TypedLiteral(
+                                    stamp,
+                                    []
+                                    if input_id == "detections"
+                                    else {
+                                        "digest": "blake3:" + "a" * 64,
+                                        "name": "upscale.pth",
+                                    },
+                                ),
+                            },
+                        ),
+                    }
+                )
+                errors = [
+                    d
+                    for d in validate(graph, worker.schemas, ["vision"], known_types=registry)
+                    if d.severity == "error"
+                ]
+                if stamp == type_id:
+                    assert errors == []
+                else:
+                    assert [d.code for d in errors] == ["typed-literal-unknown-type"]
+        finally:
+            await worker.close()
 
     asyncio.run(scenario())

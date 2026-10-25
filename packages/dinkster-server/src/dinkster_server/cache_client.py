@@ -31,7 +31,7 @@ from urllib.parse import quote
 import aiohttp
 from dinkster_assets import digest_bytes
 from dinkster_caches import entry_from_wire
-from dinkster_protocol import CacheKey
+from dinkster_protocol import CachedResult, CacheKey
 from dinkster_values import MEBIBYTE, PEER_CACHE_BLOB_LIMIT_BYTES, TypeRegistry, Value
 
 _MAX_MANIFEST_BYTES = 4 * MEBIBYTE
@@ -85,7 +85,7 @@ class PeerCacheStore:
 
     # -- CacheStore -------------------------------------------------------
 
-    async def get(self, key: CacheKey) -> Mapping[str, Value] | None:
+    async def get(self, key: CacheKey) -> CachedResult | None:
         try:
             async with self._http().get(
                 f"{self._endpoint}/cache/entry/{quote(key, safe='')}",

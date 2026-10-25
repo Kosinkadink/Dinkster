@@ -2,6 +2,19 @@
 
 - Input types: concrete, union, wildcard, variable, list, asset;
   scalar/list cardinality; required/advanced/hidden/lazy input flags
+- Backend schemas describe fixed positional tuples, derive tuple outputs from
+  independently typed input families in document order, and select a position's
+  type using a stored integer index. Tuple declarations round-trip through the
+  schema wire contract; ordinary list families retain homogeneous binding.
+  Tuple values retain independently typed child envelopes across worker and
+  persistent-cache boundaries, including nested lists and tuples. Resource
+  invalidation and device metadata projection inspect every position; persistent
+  caches refuse tuples containing live resident references. Foundation tuple
+  nodes collect independently typed connected values and select a position with
+  a document-stored integer index, including negative indices. Graph validation
+  rejects non-tuple sources and out-of-range indices at any region depth. Host
+  preparation and COMBO checks inspect every position. This does not claim
+  frontend editor or importer support.
 - Required closed dynamic slots can bind their selected variant type to shared
   input and output variables, including list and asset element types
 - Widgets: asset, save-target, combo and multi-combo with optional labels,
@@ -19,6 +32,14 @@
   lists of their matching primitive type, retaining numeric constraints and wire
   defaults unchanged. This schema support does not provide frontend list-value
   submission or scalar-to-list execution coercion.
+- FLOAT number descriptors, including one-level FLOAT lists, accept `round: false`
+  for explicit no-round presentation, or a positive finite numeric precision.
+  Omission leaves precision unspecified; false is distinct from numeric zero.
+  This backend schema support does not claim frontend editor support.
+- Backend number descriptors also accept the scalar union of exactly INT and
+  FLOAT, in either order, with FLOAT constraint and rounding semantics. Socket
+  types and numeric defaults remain unchanged, including with named widget
+  representations. This does not claim frontend numeric-union editor support.
 - Node schemas can declare presentation-only editor roles and JSON-safe custom
   widget descriptors. Clients use these declarations without matching node IDs;
   native video trim and crop declare their exact `VIDEO_EDIT` features.
@@ -34,6 +55,18 @@
   with numeric epsilon; lazy typed selection;
   variadic boolean logic; clamping; range remapping with easing curves; and
   deterministic seeded integer or float random values
+- Native `ComfySwitchNode` uses ComfyUI's `switch`, `on_false`, and `on_true`
+  inputs. Only the selected branch executes; an unconnected selected input
+  produces an absent output. The two arms share one type template.
+- Loop boundary validation rejects unmatched starts or ends, ambiguous nesting,
+  body escape paths, and accumulation controls fed from their own body,
+  including boundaries inside region bodies.
+- Native loop boundaries expand simple counts, For ranges, and typed lists
+  into run-local body occurrences. They carry values between iterations,
+  collect final or accumulated results, and preserve nested occurrence identity.
+  Absent termination dependencies still complete the loop; an absent collected
+  output propagates absence instead of leaving the closing boundary waiting.
+  Loops can read enclosing region ports, and pending regions can be inhibited.
 - User-declared expression outputs with stable IDs, editable names, and
   independently selected integer, float, boolean, or string outputs
 - Entry-list fan-out with edit-time output count and types. Each entry carries
@@ -59,6 +92,11 @@
   and strict numeric schedule parsing
 - Role-labeled multi-stream values inside ordinary `comfy.LATENT`, with generic
   audio/video concat, separate, visual preview, and audio preview nodes
+- Empty LATENT mappings remain present values through host transport and cache;
+  nonempty LATENT mappings still require a samples entry
+- Packs can import `LatentStream` and `MultiStreamLatent` from `dinkster_api.v1`
+  without loading Torch or inference. These are the same ordered, role-labeled
+  values returned by `materialize_latent`, with no wrapper or wire conversion.
 - Asset-backed native Save/Load Latent with deterministic `.latent`
   safetensors, ordered multi-stream roles, VAE provenance hints, and safe
   stock ComfyUI single-latent import; legacy `LoadLatent` prompts resolve
@@ -72,6 +110,9 @@
   gather/compact/state/flatten, including generic body outputs whose type is
   fixed by linked concrete inputs. Gather and flatten preserve whole-output
   absence; compact gathers only present iteration values in iteration order.
+  Declared output nodes in a body execute each iteration, including nested
+  regions containing output nodes. A region needs an exported output or a
+  declared output node; sink-only maps need no dummy exported output.
   Lazy routing resolves independently for each iteration; unselected branch
   nodes and nested regions neither prepare nor execute.
   Each body exposes its immediate zero-based `$region.index`; an explicitly

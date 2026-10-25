@@ -117,6 +117,7 @@ from dinkster_protocol.pack_surfaces import (
 )
 from dinkster_schema import (
     ABSENT,
+    BLOCKED,
     LOG_EVENT,
     PREVIEW_EVENT,
     PROGRESS_EVENT,
@@ -137,6 +138,10 @@ from dinkster_schema import (
     DynamicComboOption,
     DynamicComboSpec,
     DynamicSlotSpec,
+    Expansion,
+    ExpansionBuilder,
+    ExpansionNode,
+    ExpansionOutput,
     InputFamilyMapping,
     InputFamilyMember,
     InputFamilyOptionSource,
@@ -166,6 +171,7 @@ from dinkster_schema import (
     ReplacementNode,
     ReplacementPredicate,
     ReplacementRule,
+    RunExecutionContext,
     SaveTargetWidget,
     SearchVisibility,
     SelectorSpec,
@@ -214,8 +220,12 @@ from dinkster_values import (
     DETECTION_TYPE,
     DICT_TYPE,
     ENCODED_MEDIA_LIMIT_BYTES,
+    FLOATS_TYPE,
     GIBIBYTE,
+    GLIGEN_TYPE,
     GUIDER_TYPE,
+    HOOK_KEYFRAMES_TYPE,
+    HOOKS_TYPE,
     IMAGE_BATCH_MERGER_ID,
     IMAGE_TYPE,
     IMAGE_WORKING_SET_LIMIT_BYTES,
@@ -252,6 +262,8 @@ from dinkster_values import (
     SPLAT_FILE_DECODER_ID,
     SPLAT_PLY_MIME,
     SPLAT_TYPE,
+    STYLE_MODEL_TYPE,
+    TIMESTEPS_RANGE_TYPE,
     VAE_TYPE,
     VECTOR_TYPE,
     VIDEO_AUDIO_WORKING_SET_LIMIT_BYTES,
@@ -271,6 +283,7 @@ from dinkster_values import (
     TypeId,
     TypeRegistry,
     TypeSpec,
+    Value,
     annotate_image,
     annotate_mask,
     array_storage_meta,
@@ -306,6 +319,7 @@ from dinkster_values import (
     image_array_fingerprint,
     image_array_meta,
     image_input,
+    list_children,
     mask_array_meta,
     media_semantics,
     merge_image_batches,
@@ -368,8 +382,13 @@ def __getattr__(name: str) -> object:
         import dinkster_video
 
         value = getattr(dinkster_video, name)
+    elif name in {"LatentStream", "MultiStreamLatent"}:
+        from dinkster_inference_wire import latents
+
+        value = getattr(latents, name)
     elif name in {
         "register_inference_types",
+        "materialize_audio",
         "materialize_image",
         "materialize_latent",
         "materialize_clip_vision_output",
@@ -392,7 +411,10 @@ def __dir__() -> list[str]:
         set(globals())
         | _VIDEO_MODULE_EXPORTS
         | {
+            "LatentStream",
+            "MultiStreamLatent",
             "register_inference_types",
+            "materialize_audio",
             "materialize_image",
             "materialize_latent",
             "materialize_clip_vision_output",
@@ -402,8 +424,10 @@ def __dir__() -> list[str]:
 
 
 if TYPE_CHECKING:
+    from dinkster_inference_wire.latents import LatentStream, MultiStreamLatent
     from dinkster_inference_wire.process import initialize_inference_process
     from dinkster_inference_wire.types import (
+        materialize_audio,
         materialize_clip_vision_output,
         materialize_image,
         materialize_latent,
@@ -414,7 +438,15 @@ if TYPE_CHECKING:
     from dinkster_video import timeline as timeline_render
 
 __all__ = [
+    "RunExecutionContext",
+    "Expansion",
+    "ExpansionBuilder",
+    "ExpansionNode",
+    "ExpansionOutput",
+    "LatentStream",
+    "MultiStreamLatent",
     "initialize_inference_process",
+    "materialize_audio",
     "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
@@ -467,6 +499,7 @@ __all__ = [
     "TrainingSessionHandle",
     # -- node authoring (dinkster-schema)
     "ABSENT",
+    "BLOCKED",
     "AbsentOutput",
     "AbsentPolicy",
     "BooleanWidget",
@@ -559,7 +592,11 @@ __all__ = [
     "CURVE_TYPE",
     "DETECTION_TYPE",
     "DICT_TYPE",
+    "FLOATS_TYPE",
+    "GLIGEN_TYPE",
     "GUIDER_TYPE",
+    "HOOK_KEYFRAMES_TYPE",
+    "HOOKS_TYPE",
     "IMAGE_TYPE",
     "IMPACT_BASIC_PIPE_TYPE",
     "INFERENCE_LATENT_OPERATION_TYPE",
@@ -586,6 +623,8 @@ __all__ = [
     "SEGMENTATION_TYPE",
     "SIGMAS_TYPE",
     "SPLAT_TYPE",
+    "STYLE_MODEL_TYPE",
+    "TIMESTEPS_RANGE_TYPE",
     "VAE_TYPE",
     "VECTOR_TYPE",
     "VIDEO_DOCUMENT_TYPE",
@@ -653,6 +692,8 @@ __all__ = [
     "image_array_fingerprint",
     "image_array_meta",
     "image_input",
+    "list_children",
+    "Value",
     "annotate_image",
     "annotate_mask",
     "copy_media_semantics",

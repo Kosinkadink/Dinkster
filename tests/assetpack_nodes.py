@@ -1,4 +1,4 @@
-"""Test pack whose node takes a ``dinkster.asset`` INPUT - a job-referenced
+"""Test pack whose node takes an ``ASSET`` INPUT - a job-referenced
 asset, not a ``[[pack.assets]]`` declaration. Imported by the worker HOST
 process (via a manifest entry), never by the test process's engine side
 (hazard H5). The node reads the asset's bytes, so it fails loudly unless

@@ -22,6 +22,7 @@ from typing import Any
 
 import numpy as np
 import pytest
+from dinkster_api.v1 import AUDIO_TYPE
 from dinkster_assets import (
     AssetRef,
     AssetVault,
@@ -172,7 +173,7 @@ def _run_case(node_class: str, inputs: dict[str, Any]) -> tuple[dict[str, Any], 
         or inputs.get(case["when"]["input"]) == case["when"]["value"]
     )
     value = inputs.get("audio", inputs.get("audio_file"))
-    audio_type = TypeExpr.concrete("comfy.AUDIO")
+    audio_type = TypeExpr.concrete(AUDIO_TYPE)
     value_type = TypeExpr.asset_of(audio_type) if isinstance(value, AssetRef) else audio_type
 
     class Fixture(Node):
@@ -219,7 +220,7 @@ def _run_case(node_class: str, inputs: dict[str, Any]) -> tuple[dict[str, Any], 
     register_core_types(registry)
     resolver = value.resolver if isinstance(value, AssetRef) else resolver_from_env()
     register_asset_type(registry, resolver)
-    register_audio_value_type(registry, "comfy.AUDIO", resolver)
+    register_audio_value_type(registry, AUDIO_TYPE, resolver)
     register_media_types(registry)
     engine = Engine(
         schemas=schemas,

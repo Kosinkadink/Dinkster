@@ -895,7 +895,7 @@ def test_sam31_provider_nodes_execute_in_an_isolated_worker(tmp_path: Path) -> N
                         {
                             "image": TypedLiteral("IMAGE", source.tolist()),
                             "detections": TypedLiteral(
-                                "list<dinkster.detection>",
+                                "list<DETECTION>",
                                 [detection.to_record()],
                             ),
                             "provider": "dinkster-vision-sam31",

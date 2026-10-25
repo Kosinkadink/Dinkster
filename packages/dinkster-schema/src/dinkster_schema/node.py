@@ -2,7 +2,8 @@
 
 A standard node is define_schema() plus an execute() that takes and returns
 plain Python values. Outputs are returned as a mapping keyed by output id -
-never positional tuples. execute() may be sync or async.
+never positional tuples - or as an ``Expansion`` containing named outputs
+and a local graph. execute() may be sync or async.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from collections.abc import Awaitable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from .expansion import Expansion
 from .model import NodeSchema
 
 
@@ -24,13 +26,24 @@ class AbsentOutput:
     (DESIGN 3.15): ``return cls.outputs(vae=ABSENT)`` or
     ``cls.outputs(vae=AbsentOutput("model has no VAE"))``. The worker turns
     it into a typed absent envelope carrying this node as the origin;
-    returning it for a non-optional output is a contract error."""
+    returning it for a non-optional output is a contract error unless
+    ``blocked`` is set by ``BLOCKED(message)``."""
 
     reason: str = ""
+    blocked: bool = False
 
 
 ABSENT = AbsentOutput()
 """The bare marker for reason-less absence."""
+
+
+def BLOCKED(message: str = "") -> AbsentOutput:
+    """Block any output, including a required one, without failing the run.
+
+    Consumers apply their absent-input policy. The first skipped consumer
+    reports a nonempty message once per origin in that run.
+    """
+    return AbsentOutput(reason=message, blocked=True)
 
 
 class Node:
@@ -43,13 +56,20 @@ class Node:
     @classmethod
     def execute(
         cls, *args: Any, **inputs: Any
-    ) -> Mapping[str, object] | Awaitable[Mapping[str, object]]:
+    ) -> Mapping[str, object] | Expansion | Awaitable[Mapping[str, object] | Expansion]:
         # (*args: Any, **kwargs: Any) is deliberate: type checkers treat it
         # as a gradual signature, so concrete nodes declare plain named
         # parameters (sync or async) without tripping override checks -
         # zero typing ceremony for node authors (hazard H9). Nodes are only
         # ever invoked with their schema-declared inputs by the worker shim,
         # never polymorphically through this base signature.
+        raise NotImplementedError
+
+    @classmethod
+    def validate_admission(
+        cls, *, literal_inputs: Mapping[str, object], linked_input_types: Mapping[str, str]
+    ) -> str | None:
+        """Optionally explain why a node must not be admitted for execution."""
         raise NotImplementedError
 
     @classmethod

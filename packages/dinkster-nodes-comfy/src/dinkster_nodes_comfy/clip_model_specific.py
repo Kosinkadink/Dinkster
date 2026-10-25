@@ -148,6 +148,35 @@ class CLIPTextEncodeHiDream(Node):
         return cls.outputs(CONDITIONING=clip.encode_from_tokens_scheduled(tokens))
 
 
+class CLIPTextEncodeKandinsky5(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="CLIPTextEncodeKandinsky5",
+            display_name="CLIP Text Encode (Kandinsky 5)",
+            category="model/conditioning/kandinsky",
+            search_terms=("kandinsky prompt",),
+            inputs=(
+                InputSpec("clip", TypeExpr.concrete(CLIP_TYPE)),
+                *(
+                    InputSpec(
+                        name,
+                        TypeExpr.concrete(CORE_STRING),
+                        widget=StringWidget(multiline=True, dynamic_prompts=True),
+                    )
+                    for name in ("clip_l", "qwen25_7b")
+                ),
+            ),
+            outputs=(OutputSpec("CONDITIONING", TypeExpr.concrete(CONDITIONING_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls, *, clip: Any, clip_l: str, qwen25_7b: str) -> Mapping[str, object]:
+        tokens = clip.tokenize(clip_l)
+        tokens["qwen25_7b"] = clip.tokenize(qwen25_7b)["qwen25_7b"]
+        return cls.outputs(CONDITIONING=clip.encode_from_tokens_scheduled(tokens))
+
+
 class CLIPTextEncodeControlnet(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -214,6 +243,7 @@ MODEL_TEXT_ENCODER_NODES = (
     CLIPTextEncodePixArtAlpha,
     CLIPTextEncodeLumina2,
     CLIPTextEncodeHiDream,
+    CLIPTextEncodeKandinsky5,
     CLIPTextEncodeControlnet,
     T5TokenizerOptions,
 )

@@ -1,5 +1,6 @@
 [pack]
 name = "dinkster-vision-detr"
+publisher = "dinkster"
 namespaces = []
 executes = ["dinkster.detection.detect"]
 requires = [

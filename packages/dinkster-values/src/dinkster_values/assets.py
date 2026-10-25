@@ -20,6 +20,7 @@ from __future__ import annotations
 from .builtin_types import ASSET_TYPE
 from .lists import parse_list_type_id
 from .streams import parse_stream_type_id
+from .tuples import parse_tuple_type_id
 
 ASSET_TYPE_PREFIX = "asset<"
 ASSET_TYPE_SUFFIX = ">"
@@ -75,3 +76,27 @@ def runtime_type_atom(type_id: str) -> str | None:
     if not atom or "<" in atom or ">" in atom:
         return None
     return atom
+
+
+def runtime_type_atoms(type_id: str) -> tuple[str, ...] | None:
+    """All leaf atoms in a valid structured type, in first-position order."""
+    pending = [type_id]
+    atoms: dict[str, None] = {}
+    while pending:
+        current = pending.pop()
+        positions = parse_tuple_type_id(current)
+        if positions is not None:
+            pending.extend(reversed(positions))
+            continue
+        inner = parse_list_type_id(current)
+        if inner is None:
+            inner = parse_asset_type_id(current)
+        if inner is None:
+            inner = parse_stream_type_id(current)
+        if inner is not None:
+            pending.append(inner)
+        elif not current or any(char in current for char in "<>,"):
+            return None
+        else:
+            atoms.setdefault(current, None)
+    return tuple(atoms)

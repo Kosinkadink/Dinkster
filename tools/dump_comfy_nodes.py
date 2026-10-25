@@ -47,6 +47,18 @@ def engine_semantics(cls: type, source: str) -> list[str]:
     return sorted(semantics)
 
 
+def output_contract(schema: Any) -> dict[str, Any]:
+    """Project declared V3 names, not the V1 view's synthesized type labels."""
+    return {
+        **({"display_name": schema.display_name} if schema.display_name is not None else {}),
+        "return_names": [item.display_name for item in schema.outputs],
+        "v3_outputs": [
+            {"template": item.template.as_dict()} if hasattr(item, "template") else {}
+            for item in schema.outputs
+        ],
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("checkout", type=Path)
@@ -137,11 +149,7 @@ def main() -> None:
                 row[attribute.lower()] = getattr(cls, attribute, None)
             if hasattr(cls, "GET_SCHEMA"):
                 try:
-                    schema = cls.GET_SCHEMA()
-                    row["v3_outputs"] = [
-                        {"template": item.template.as_dict()} if hasattr(item, "template") else {}
-                        for item in schema.outputs
-                    ]
+                    row.update(output_contract(cls.GET_SCHEMA()))
                 except Exception as exc:
                     row["v3_error"] = f"{type(exc).__name__}: {exc}"
             rows.append(row)

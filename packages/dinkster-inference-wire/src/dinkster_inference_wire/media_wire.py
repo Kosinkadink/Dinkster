@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import importlib
+from collections.abc import Mapping
 from typing import Any, cast
 
 from dinkster_values import (
     IMAGE_BATCH_MERGER_ID,
     IMAGE_FILE_DECODER_ID,
+    IMAGE_TYPE,
+    LATENT_TYPE,
+    MASK_TYPE,
     PNG_CONTAINER_VERSION,
     EncodedLatentTensor,
     EncodedMultiStreamLatent,
     TypeRegistry,
     TypeSpec,
+    audio_input,
     decode_image_array,
     decode_image_file,
     decode_latent,
@@ -30,6 +35,8 @@ from dinkster_values import (
     validate_image_encoded,
     validate_latent_encoded,
 )
+from dinkster_values.audio_codec import audio_window, effective_audio_facts
+from dinkster_values.audio_lazy import AUDIO_WINDOW_LIMIT
 
 from .latents import MultiStreamLatent
 
@@ -74,12 +81,36 @@ def materialize_latent(value: object) -> Any:
     return value
 
 
+def materialize_audio(value: object) -> Mapping[str, object]:
+    """Materialize a complete bounded AUDIO waveform for a Torch consumer."""
+    if not isinstance(value, Mapping):
+        raise TypeError("audio value must be a mapping")
+    audio = cast("Mapping[str, object]", value)
+    if "waveform" in audio:
+        normalized = cast("Mapping[str, object]", audio_input(audio))
+        waveform = normalized["waveform"]
+        if hasattr(waveform, "detach"):
+            return normalized
+        torch = importlib.import_module("torch")
+        return {**normalized, "waveform": torch.as_tensor(waveform)}
+
+    facts = effective_audio_facts(audio)
+    frames = facts["frames"]
+    if frames is None:
+        raise ValueError("AUDIO has unknown extent and cannot be fully materialized")
+    if frames * facts["batch"] * facts["channels"] * 4 > AUDIO_WINDOW_LIMIT:
+        raise ValueError("AUDIO whole waveform exceeds the 32 MiB allocation budget")
+    window = audio_window(audio, 0, frames)
+    torch = importlib.import_module("torch")
+    return {**window, "waveform": torch.as_tensor(window["waveform"])}
+
+
 def register_media_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
     """Register exact media atoms with process-independent byte contracts."""
     registered: list[TypeSpec] = []
     for type_id, meta, render in (
-        ("IMAGE", image_array_meta, render_image_png),
-        ("MASK", mask_array_meta, render_mask_png),
+        (IMAGE_TYPE, image_array_meta, render_image_png),
+        (MASK_TYPE, mask_array_meta, render_mask_png),
     ):
         if type_id not in registry:
             registry.register(
@@ -98,24 +129,24 @@ def register_media_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
             registry.register_rendition(
                 type_id, "png", mime="image/png", render=render, version=PNG_CONTAINER_VERSION
             )
-    if registry.asset_decoder_for("IMAGE") is None:
+    if registry.asset_decoder_for(IMAGE_TYPE) is None:
         registry.register_asset_decoder(
-            "IMAGE", provider_id=IMAGE_FILE_DECODER_ID, decode=decode_image_file
+            IMAGE_TYPE, provider_id=IMAGE_FILE_DECODER_ID, decode=decode_image_file
         )
-    if registry.batch_merge_for("IMAGE") is None:
+    if registry.batch_merge_for(IMAGE_TYPE) is None:
         registry.register_batch_merge(
-            "IMAGE", provider_id=IMAGE_BATCH_MERGER_ID, merge=merge_image_batches
+            IMAGE_TYPE, provider_id=IMAGE_BATCH_MERGER_ID, merge=merge_image_batches
         )
-    if "LATENT" not in registry:
+    if LATENT_TYPE not in registry:
         registry.register(
-            "LATENT",
+            LATENT_TYPE,
             encode=encode_latent,
             decode=decode_latent,
-            fingerprint=latent_fingerprint("LATENT"),
+            fingerprint=latent_fingerprint(LATENT_TYPE),
             validate_encoded=validate_latent_encoded,
         )
-    registered.append(registry.spec("LATENT"))
+    registered.append(registry.spec(LATENT_TYPE))
     return tuple(registered)
 
 
-__all__ = ["materialize_image", "materialize_latent", "register_media_types"]
+__all__ = ["materialize_audio", "materialize_image", "materialize_latent", "register_media_types"]

@@ -1,4 +1,4 @@
-"""Value-level video operations over frame batches and comfy.VIDEO values."""
+"""Value-level video operations over frame batches and VIDEO values."""
 # pyright: reportUnknownArgumentType=false, reportUnknownMemberType=false, reportUnknownVariableType=false
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ def _video_value(video: object) -> dict[str, object]:
     try:
         return coerce_video(video)
     except (TypeError, ValueError) as exc:
-        raise ValueError(f"video is not a valid comfy.VIDEO value: {exc}") from exc
+        raise ValueError(f"video is not a valid VIDEO value: {exc}") from exc
 
 
 class VideoFrameWindow(Node):

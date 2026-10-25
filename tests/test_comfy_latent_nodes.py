@@ -23,6 +23,7 @@ from dinkster_nodes_comfy.latent import (
     RepeatLatentBatch,
     SetLatentNoiseMask,
 )
+from dinkster_nodes_comfy.latent_model_specific import MODEL_LATENT_NODES
 from dinkster_nodes_comfy.mochi import EmptyMochiLatentVideo
 from dinkster_values import EncodedLatentTensor, decode_latent, encode_latent
 
@@ -47,6 +48,48 @@ def test_mochi_interface_is_registered_with_temporal_widget_defaults() -> None:
     ("node_id", "display", "category", "inputs"),
     [
         ("EmptyLatentImage", "Empty Latent Image", "", ("width", "height", "batch_size")),
+        (
+            "EmptySD3LatentImage",
+            "EmptySD3LatentImage",
+            "/stable diffusion",
+            ("width", "height", "batch_size"),
+        ),
+        (
+            "EmptyFlux2LatentImage",
+            "Empty Flux 2 Latent",
+            "/flux",
+            ("width", "height", "batch_size"),
+        ),
+        (
+            "EmptyChromaRadianceLatentImage",
+            "EmptyChromaRadianceLatentImage",
+            "/chroma radiance",
+            ("width", "height", "batch_size"),
+        ),
+        (
+            "EmptyHiDreamO1LatentImage",
+            "Empty HiDream-O1 Latent Image",
+            "/hidream",
+            ("width", "height", "batch_size"),
+        ),
+        (
+            "EmptyQwenImageLayeredLatentImage",
+            "Empty Qwen Image Layered Latent",
+            "/qwen",
+            ("width", "height", "layers", "batch_size"),
+        ),
+        (
+            "EmptyLatentHunyuan3Dv2",
+            "Empty Hunyuan 3D v2 Latent",
+            "/hunyuan 3d",
+            ("resolution", "batch_size"),
+        ),
+        (
+            "EmptyTrellis2LatentStructure",
+            "Empty Trellis2 Latent Structure",
+            "/trellis",
+            ("batch_size",),
+        ),
         (
             "LatentFromBatch",
             "Get Latent From Batch",
@@ -77,7 +120,9 @@ def test_mochi_interface_is_registered_with_temporal_widget_defaults() -> None:
 def test_latent_schemas_use_exact_core_interfaces(
     node_id: str, display: str, category: str, inputs: tuple[str, ...]
 ) -> None:
-    node = next(node for node in LATENT_NODES if node.schema().node_type == node_id)
+    node = next(
+        node for node in (*LATENT_NODES, *MODEL_LATENT_NODES) if node.schema().node_type == node_id
+    )
     schema = node.schema()
     assert schema.display_name == display
     assert schema.category == (
@@ -264,7 +309,15 @@ class PortableLatentSource(Node):
 def test_manifest_executes_latent_and_mask_without_host_types(
     tmp_path: Path, in_process: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(as_tensor=np.asarray))
+    monkeypatch.setitem(
+        sys.modules,
+        "torch",
+        SimpleNamespace(
+            as_tensor=np.asarray,
+            cuda=SimpleNamespace(is_available=lambda: False),
+            version=SimpleNamespace(hip=None),
+        ),
+    )
 
     async def scenario() -> None:
         composer = ServingComposer(worker_env={"PYTHONPATH": str(Path(__file__).parent)})
@@ -278,7 +331,9 @@ def test_manifest_executes_latent_and_mask_without_host_types(
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
                 "import sys, numpy as np\n"
                 "from types import SimpleNamespace\n"
-                "sys.modules.setdefault('torch', SimpleNamespace(as_tensor=np.asarray))\n"
+                "sys.modules.setdefault('torch', SimpleNamespace(as_tensor=np.asarray, "
+                "cuda=SimpleNamespace(is_available=lambda: False), "
+                "version=SimpleNamespace(hip=None)))\n"
                 "NODES = (*COMFY_NODES, PortableLatentSource)\n",
                 encoding="ascii",
             )

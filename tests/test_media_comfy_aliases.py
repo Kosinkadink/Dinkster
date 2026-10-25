@@ -10,6 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
+from dinkster_api.v1 import AUDIO_TYPE
 from dinkster_nodes_foundation import FOUNDATION_NODES
 from dinkster_nodes_foundation.combo import StringToCombo
 from dinkster_nodes_foundation.conversion import ValueConvert
@@ -168,12 +169,12 @@ def test_trellis2_3d_output_aliases_preserve_models() -> None:
         inputs = {item["id"]: item for item in source["interface"] if item["role"] == "input"}
         assert inputs["model_3d"]["type"] == {
             "kind": "concrete",
-            "types": ["dinkster.model3d"],
+            "types": ["MODEL3D"],
         }
         assert inputs["viewport_state"]["widget"]["multiline"] is False
         assert source["interface"][-1]["type"] == {
             "kind": "concrete",
-            "types": ["dinkster.model3d"],
+            "types": ["MODEL3D"],
         }
 
     save_source = source_schemas[save["source"]["nodeType"]]
@@ -241,7 +242,7 @@ def test_media_comfy_aliases_preserve_pinned_capture_semantics() -> None:
     assert inputs["audio"]["type"] == {"kind": "concrete", "types": ["comfy.AUDIO_RECORD"]}
     assert "widget" not in inputs["audio"]
     assert set(outputs) == {"_0_AUDIO_"}
-    assert outputs["_0_AUDIO_"]["type"] == {"kind": "concrete", "types": ["comfy.AUDIO"]}
+    assert outputs["_0_AUDIO_"]["type"] == {"kind": "concrete", "types": [AUDIO_TYPE]}
     record = records["RecordAudio"]
     assert record["confidence"]["tier"] == "parametric"
     case = record["replacement"]["cases"][0]
