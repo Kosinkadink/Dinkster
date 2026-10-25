@@ -197,21 +197,21 @@ class ModelPatchLoader(Node):
         return NodeSchema(
             node_type="ModelPatchLoader",
             category="model/loaders",
-            inputs=(InputSpec("model", _ASSET, widget=AssetWidget(kind="model/model-patch")),),
+            inputs=(InputSpec("name", _ASSET, widget=AssetWidget(kind="model/model-patch")),),
             outputs=(OutputSpec("MODEL_PATCH", _MODEL_PATCH),),
         )
 
     @classmethod
-    def execute(cls, *, model: object) -> Mapping[str, object]:
-        if not isinstance(model, (AssetRef, LocalAssetRef)):
-            raise TypeError("model must be an AssetRef or LocalAssetRef")
+    def execute(cls, *, name: object) -> Mapping[str, object]:
+        if not isinstance(name, (AssetRef, LocalAssetRef)):
+            raise TypeError("name must be an AssetRef or LocalAssetRef")
         initialize_inference_process()
         torch = importlib.import_module("torch")
         utils = importlib.import_module("dinkster_inference.utils")
         management = importlib.import_module("dinkster_inference.model_management")
         ops = importlib.import_module("dinkster_inference.ops")
         state_dict, metadata = utils.load_torch_file(
-            str(model.local_path()), safe_load=True, return_metadata=True
+            str(name.local_path()), safe_load=True, return_metadata=True
         )
         dtype = utils.weight_dtype(state_dict)
         offload_device = management.unet_offload_device()
@@ -266,9 +266,7 @@ class ModelPatchLoader(Node):
             patch_model = importlib.import_module(
                 "dinkster_inference.ldm.qwen_image21.model"
             ).QwenImage21FunControl(
-                num_blocks=cls._block_count(
-                    state_dict, "control_blocks.{} .after_proj.weight".replace(" ", "")
-                ),
+                num_blocks=cls._block_count(state_dict, "control_blocks.{}.after_proj.weight"),
                 control_in_dim=129,
                 inner_dim=inner_dim,
                 attention_head_dim=state_dict["control_blocks.0.attn.norm_q.weight"].shape[0],
@@ -283,9 +281,7 @@ class ModelPatchLoader(Node):
         ).is_minimax_h3_fun_state_dict(state_dict):
             minimax = importlib.import_module("dinkster_inference.ldm.minimax.controlnet")
             dtype, operations = cls._dit_operations(state_dict, torch, utils, management, ops)
-            num_blocks = cls._block_count(
-                state_dict, "control_blocks.{} .after_proj.weight".replace(" ", "")
-            )
+            num_blocks = cls._block_count(state_dict, "control_blocks.{}.after_proj.weight")
             injection_layers = tuple(range(0, 50, 50 // num_blocks))
             if metadata is not None and "control_blocks_places" in metadata:
                 injection_layers = tuple(json.loads(metadata["control_blocks_places"]))
