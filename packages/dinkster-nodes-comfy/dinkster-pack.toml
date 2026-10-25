@@ -378,6 +378,8 @@ namespaces = [
     "SamplerLCM",
     "SamplerEulerCFGpp",
     "SamplerARVideo",
+    "WanDancerPadKeyframes",
+    "WanDancerPadKeyframesList",
 ]
 
 [pack.sandbox]

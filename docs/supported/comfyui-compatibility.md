@@ -1,5 +1,7 @@
 ## ComfyUI compatibility
 
+- Native WanDancer keyframe padding places reference frames and masks into
+  video segments, with matching audio slices and scalar or list outputs.
 - Native Sampler AR Video constructs the autoregressive video sampler with
   the workflow's frame-block size under its exact core interface.
 - Native LTXV sampling patches cloned models and constructs shifted sigma

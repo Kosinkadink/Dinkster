@@ -108,6 +108,7 @@ from .video_conditioning import VIDEO_CONDITIONING_NODES
 from .video_guidance import VIDEO_GUIDANCE_NODES
 from .video_latent import VIDEO_LATENT_NODES
 from .video_latent_ops import VIDEO_LATENT_OPERATION_NODES
+from .wandancer_keyframes import WANDANCER_KEYFRAME_NODES
 
 COMFY_NODES = (
     *TEXT_NODES,
@@ -210,6 +211,7 @@ COMFY_NODES = (
     *SAMPLER_FACTORY_NODES,
     *ADVANCED_SAMPLER_NODES,
     SamplerARVideo,
+    *WANDANCER_KEYFRAME_NODES,
 )
 
 
