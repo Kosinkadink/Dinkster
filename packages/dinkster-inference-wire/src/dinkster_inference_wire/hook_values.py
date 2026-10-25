@@ -14,6 +14,7 @@ from dinkster_values import (
     TypeSpec,
     decode_latent,
     encode_latent,
+    resident_owners,
     stable_hash,
 )
 
@@ -44,6 +45,35 @@ def normalize_hook_owners(group: object) -> object:
     cast("Any", group)._dinkster_resident_refs = (*explicit, *retained)
     cast("Any", group)._dinkster_hook_keyframe_refs = tuple(retained)
     return group
+
+
+def normalize_clip_hook_owners(clip: object) -> object:
+    """Declare only hook groups actually retained by the CLIP and its patcher."""
+    groups = (
+        getattr(clip, "apply_hooks_to_conds", None),
+        getattr(getattr(clip, "patcher", None), "forced_hooks", None),
+    )
+    previous = cast("tuple[object, ...]", getattr(clip, "_dinkster_clip_hook_refs", ()))
+    if all(group is None for group in groups) and not previous:
+        return clip
+    refs = getattr(clip, "_dinkster_resident_refs", ())
+    if not isinstance(refs, tuple):
+        raise TypeError("CLIP resident references must be a tuple")
+    explicit: list[object] = []
+    for ref in cast("tuple[object, ...]", refs):
+        if not any(ref is old for old in (*previous, *explicit)):
+            explicit.append(ref)
+    retained: list[object] = []
+    for group in groups:
+        if group is None:
+            continue
+        normalize_hook_owners(group)
+        for ref in (group, *resident_owners(group)):
+            if not any(ref is old for old in (*explicit, *retained)):
+                retained.append(ref)
+    cast("Any", clip)._dinkster_resident_refs = (*explicit, *retained)
+    cast("Any", clip)._dinkster_clip_hook_refs = tuple(retained)
+    return clip
 
 
 def _number(value: object) -> int | float:
