@@ -299,6 +299,7 @@ namespaces = [
     "SeedVR2TemporalMerge",
     "MiniMaxH3SigmaShift",
     "EmptyMiniMaxH3LatentAV",
+    "MiniMaxH3ImageToVideo",
     "SVD_img2vid_Conditioning",
     "CosmosImageToVideoLatent",
     "CosmosPredict2ImageToVideoLatent",
