@@ -106,20 +106,21 @@ def test_local_architecture_helpers_construct_without_production_weights() -> No
 
     class MultiTalk:
         @staticmethod
-        def MultiTalkAudioProjModel(**kwargs: Any) -> torch.nn.Identity:
+        def MultiTalkAudioProjModel(**kwargs: Any) -> torch.nn.Linear:
             assert kwargs["seq_len"] == 5
             assert kwargs["context_tokens"] == 32
-            return torch.nn.Identity()
+            return torch.nn.Linear(2, 3, device=kwargs["device"], dtype=kwargs.get("dtype"))
 
         @staticmethod
-        def WanMultiTalkAttentionBlock(*args: Any, **kwargs: Any) -> torch.nn.Identity:
+        def WanMultiTalkAttentionBlock(*args: Any, **kwargs: Any) -> torch.nn.Linear:
             assert args == (5, 7)
-            return torch.nn.Identity()
+            return torch.nn.Linear(3, 2, device=kwargs["device"], dtype=kwargs.get("dtype"))
 
     multitalk = _multi_talk_patch(MultiTalk, SmallOperations)(
-        in_dim=5, intermediate_dim=6, out_dim=7, device="cpu"
+        in_dim=5, intermediate_dim=6, out_dim=7, device="cpu", dtype=torch.bfloat16
     )
     assert len(multitalk.blocks) == 40
+    assert {parameter.dtype for parameter in multitalk.parameters()} == {torch.bfloat16}
 
 
 def test_loader_builds_duration_head_from_safe_unverified_asset(tmp_path: Path) -> None:
@@ -345,7 +346,7 @@ def test_loader_dispatches_anima_qwen_siglip_and_multitalk_with_controlled_const
                 "blocks.0.audio_cross_attn.proj.weight": torch.empty(19, 1),
             },
             None,
-            {"in_dim": 19, "intermediate_dim": 13, "out_dim": 17},
+            {"in_dim": 19, "intermediate_dim": 13, "out_dim": 17, "dtype": torch.float16},
         ),
     )
     for index, (state, metadata, expected) in enumerate(cases):

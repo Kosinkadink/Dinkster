@@ -169,7 +169,7 @@ def _multi_talk_patch(multitalk: Any, operations: Any) -> type[Any]:
 
     class MultiTalkModelPatch(module_base):
         def __init__(
-            self, *, in_dim: int, intermediate_dim: int, out_dim: int, device: Any
+            self, *, in_dim: int, intermediate_dim: int, out_dim: int, device: Any, dtype: Any
         ) -> None:
             super().__init__()
             self.audio_proj = multitalk.MultiTalkAudioProjModel(
@@ -179,11 +179,12 @@ def _multi_talk_patch(multitalk: Any, operations: Any) -> type[Any]:
                 out_dim=out_dim,
                 context_tokens=32,
                 device=device,
+                dtype=dtype,
                 operations=operations,
             )
             self.blocks = nn.ModuleList(
                 multitalk.WanMultiTalkAttentionBlock(
-                    in_dim, out_dim, device=device, operations=operations
+                    in_dim, out_dim, device=device, dtype=dtype, operations=operations
                 )
                 for _ in range(40)
             )
@@ -359,6 +360,7 @@ class ModelPatchLoader(Node):
                 intermediate_dim=state_dict["audio_proj.proj1.weight"].shape[0],
                 out_dim=state_dict["audio_proj.norm.weight"].shape[0],
                 device=offload_device,
+                dtype=dtype,
             )
         elif (
             "model.control_model.input_hint_block.0.weight" in state_dict
