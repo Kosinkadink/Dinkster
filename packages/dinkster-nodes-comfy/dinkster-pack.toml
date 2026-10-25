@@ -382,6 +382,7 @@ namespaces = [
     "SamplerARVideo",
     "ARVideoI2V",
     "SeedVR2PostProcessing",
+    "LTXVDurationPredictor",
 ]
 
 [pack.sandbox]
