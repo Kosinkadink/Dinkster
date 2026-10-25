@@ -69,6 +69,7 @@ from .rope_and_mask import ROPE_AND_MASK_NODES
 from .sampler_factories import SAMPLER_FACTORY_NODES
 from .save_text import SaveText
 from .seedvr_preprocess import SeedVR2Preprocess
+from .seedvr_temporal import SEEDVR_TEMPORAL_NODES
 from .sigma_operations import SIGMA_OPERATION_NODES
 from .sigma_schedulers import SIGMA_SCHEDULER_NODES
 from .sparse_attention import SPARSE_ATTENTION_NODES
@@ -144,6 +145,7 @@ COMFY_NODES = (
     *HUNYUAN_VIDEO_IMAGE_NODES,
     *LTX_VIDEO_CONDITIONING_NODES,
     SeedVR2Preprocess,
+    *SEEDVR_TEMPORAL_NODES,
     *VIDEO_CONDITIONING_NODES,
     *COSMOS_CONDITIONING_NODES,
     *VIDEO_LATENT_NODES,
