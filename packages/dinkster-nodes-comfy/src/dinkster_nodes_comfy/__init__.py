@@ -91,6 +91,7 @@ from .rope_and_mask import ROPE_AND_MASK_NODES
 from .sampler_factories import SAMPLER_FACTORY_NODES
 from .save_text import SaveText
 from .seedvr_conditioning import SeedVR2Conditioning
+from .seedvr_postprocess import SeedVR2PostProcessing
 from .seedvr_preprocess import SeedVR2Preprocess
 from .seedvr_temporal import SEEDVR_TEMPORAL_NODES
 from .sigma_operations import SIGMA_OPERATION_NODES
@@ -211,6 +212,7 @@ COMFY_NODES = (
     *ADVANCED_SAMPLER_NODES,
     SamplerARVideo,
     ARVideoI2V,
+    SeedVR2PostProcessing,
 )
 
 
