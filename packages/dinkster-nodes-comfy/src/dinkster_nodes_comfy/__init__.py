@@ -22,6 +22,7 @@ from .clip_sdxl import CLIP_SDXL_NODES
 from .compile import COMPILE_NODES
 from .compositing import COMPOSITING_NODES
 from .conditioning import CONDITIONING_NODES
+from .context_windows import CONTEXT_WINDOW_NODES
 from .controlnet import CONTROLNET_NODES
 from .cosmos_conditioning import COSMOS_CONDITIONING_NODES
 from .dataset_collections import DATASET_COLLECTION_NODES
@@ -29,6 +30,7 @@ from .dataset_images import DATASET_IMAGE_NODES
 from .dataset_text import DATASET_TEXT_NODES
 from .device_routing import DEVICE_ROUTING_NODES
 from .freeu import FREEU_NODES
+from .gligen_conditioning import GLIGENTextBoxApply
 from .hook_conditioning import HOOK_CONDITIONING_NODES
 from .hook_scheduling import HOOK_SCHEDULING_NODES
 from .hunyuan_latent import HUNYUAN_LATENT_NODES
@@ -44,6 +46,7 @@ from .latent_advanced import LATENT_ADVANCED_NODES
 from .latent_model_specific import MODEL_LATENT_NODES
 from .latent_operations import LATENT_OPERATION_NODES
 from .logic import LOGIC_NODES
+from .loops import LOOP_NODES
 from .ltx_audio import LTX_AUDIO_NODES
 from .ltx_av_latent import LTX_AV_LATENT_NODES
 from .ltx_sampling import LTX_SAMPLING_NODES
@@ -51,6 +54,7 @@ from .ltx_video_conditioning import LTX_VIDEO_CONDITIONING_NODES
 from .ltx_video_preprocess import LTX_VIDEO_PREPROCESS_NODES
 from .mask import MASK_NODES
 from .math import ComfyMathExpression
+from .minimax_h3_sampling import MiniMaxH3SigmaShift
 from .mochi import EmptyMochiLatentVideo
 from .model_advanced import MODEL_ADVANCED_NODES
 from .model_merging import MODEL_MERGE_NODES
@@ -80,6 +84,7 @@ from .spatial_model_patches import SPATIAL_MODEL_PATCH_NODES
 from .stable3d import STABLE3D_NODES
 from .stable_cascade import STABLE_CASCADE_NODES
 from .style_model import STYLE_MODEL_NODES
+from .switch import ComfySwitchNode
 from .text import TEXT_NODES
 from .utilities import ComfyNumberConvert, SeedNode
 from .vae import VAE_NODES
@@ -99,6 +104,8 @@ COMFY_NODES = (
     PrimitiveFloat,
     PrimitiveBoolean,
     *LOGIC_NODES,
+    ComfySwitchNode,
+    *LOOP_NODES,
     ComfyNumberConvert,
     SeedNode,
     ComfyMathExpression,
@@ -128,10 +135,12 @@ COMFY_NODES = (
     *MODEL_LATENT_NODES,
     *CLIP_NODES,
     *STYLE_MODEL_NODES,
+    GLIGENTextBoxApply,
     *CLIP_SDXL_NODES,
     *MODEL_TEXT_ENCODER_NODES,
     *VAE_NODES,
     *CONDITIONING_NODES,
+    *CONTEXT_WINDOW_NODES,
     *HOOK_CONDITIONING_NODES,
     *REFERENCE_CONDITIONING_NODES,
     *INPAINT_NODES,
@@ -151,6 +160,7 @@ COMFY_NODES = (
     *LTX_VIDEO_CONDITIONING_NODES,
     SeedVR2Preprocess,
     SeedVR2Conditioning,
+    MiniMaxH3SigmaShift,
     *VIDEO_CONDITIONING_NODES,
     *COSMOS_CONDITIONING_NODES,
     *VIDEO_LATENT_NODES,

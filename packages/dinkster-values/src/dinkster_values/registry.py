@@ -937,6 +937,10 @@ class TypeRegistry:
         children stay full envelopes inside the list value (DESIGN 3.13).
         Asset ids (``asset<target>``) wrap through the base asset spec but
         keep the parametric stamp."""
+        if isinstance(obj, Value):
+            if obj.type_id != type_id:
+                raise TypeError(f"{type_id} rejects envelope of type {obj.type_id}")
+            return obj
         positions = parse_tuple_type_id(type_id)
         if positions is not None:
             if not isinstance(obj, tuple) or len(cast(tuple[object, ...], obj)) != len(positions):

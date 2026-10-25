@@ -186,6 +186,8 @@ def test_make_list_value_rejects_mismatched_children() -> None:
     child = registry.wrap(CORE_INT, 1)
     with pytest.raises(ValueError):
         make_list_value("FLOAT", [child])
+    with pytest.raises(TypeError, match="rejects envelope"):
+        registry.wrap("list<FLOAT>", [child])
 
 
 def test_tuple_values_preserve_position_types_and_nested_containers() -> None:
@@ -761,7 +763,7 @@ def test_cache_manifest_roundtrips_lists(type_id: str, payload: object) -> None:
             return digest
 
         manifest = entry_to_wire("key1", encoded, store)
-        assert manifest["version"] == 2
+        assert manifest["version"] == 3
 
         async def fetch(digest: str, size: int) -> bytes | None:
             return blob_store.get(digest)

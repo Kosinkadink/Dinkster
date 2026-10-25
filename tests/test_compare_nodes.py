@@ -48,7 +48,7 @@ def test_comparison_cli(tmp_path: Path) -> None:
                 "return_types": ["IMAGE", "MASK"],
                 "return_names": ["image", "mask"],
             },
-            {"class_name": "ComfySwitchNode"},
+            {"class_name": "ApiExample", "api_node": True},
         ]
     }
     native = {
@@ -338,6 +338,58 @@ def example_contract() -> tuple[dict, dict]:
             ],
         },
     )
+
+
+def test_v3_input_order_preserves_interleaved_optional_inputs() -> None:
+    from tools.compare_nodes import compare
+
+    reference = {
+        "class_name": "Example",
+        "is_v3": True,
+        "v3_inputs": [{"id": name} for name in ("first", "optional", "last")],
+        "input_types": {
+            "required": {"first": ["INT"], "last": ["FLOAT"]},
+            "optional": {"optional": ["STRING"]},
+        },
+    }
+    native = {
+        "nodeType": "Example",
+        "interface": [
+            {
+                "role": "input",
+                "id": name,
+                "required": required,
+                "type": {"kind": "concrete", "types": [kind]},
+            }
+            for name, required, kind in (
+                ("first", True, "INT"),
+                ("optional", False, "STRING"),
+                ("last", True, "FLOAT"),
+            )
+        ],
+    }
+    assert compare(reference, native) == []
+    native["interface"][1:] = reversed(native["interface"][1:])
+    assert compare(reference, native)
+    del reference["is_v3"]
+    del reference["v3_inputs"]
+    assert compare(reference, native) == []
+    native["interface"][0], native["interface"][1] = (
+        native["interface"][1],
+        native["interface"][0],
+    )
+    assert compare(reference, native)
+
+
+@pytest.mark.parametrize("order", [None, [], [{"id": "other"}], [{"id": "value"}] * 2])
+def test_v3_input_order_requires_exact_membership(
+    example_contract: tuple[dict, dict], order: list[dict] | None
+) -> None:
+    from tools.compare_nodes import compare
+
+    reference, native = example_contract
+    reference.update(is_v3=True, v3_inputs=order)
+    assert compare(reference, native)
 
 
 def test_hidden_inputs_do_not_hide_public_input_drift(example_contract: tuple[dict, dict]) -> None:
@@ -666,46 +718,28 @@ def test_namespace_rejects_core_id_ownership_and_nested_type_prefixes() -> None:
     ]
 
 
-def test_cli_rejects_changed_engine_exclusion_semantics(tmp_path: Path) -> None:
-    exclusions = {
-        "ComfySwitchNode": ["lazy inputs"],
-        "StartLoop": ["GraphBuilder expansion", "loop semantics"],
-        "EndLoop": ["loop semantics"],
-        "LoopIteration": ["loop semantics"],
-        "LoopProgress": ["loop semantics"],
-        "LoopResult": ["loop semantics"],
-    }
+@pytest.mark.parametrize(
+    "name",
+    ["ComfySwitchNode", "StartLoop", "EndLoop", "LoopIteration", "LoopProgress", "LoopResult"],
+)
+def test_engine_nodes_are_compared_despite_historical_exclusion_metadata(name: str) -> None:
+    from tools.compare_nodes import compare_registry
+
     reference = {
-        "nodes": [{"class_name": "Example", "input_types": {}, "return_types": []}],
-        "engine_exclusions": exclusions,
+        "nodes": [{"class_name": name, "input_types": {}, "return_types": ["INT"]}],
+        "engine_exclusions": {name: ["loop semantics"]},
     }
-    source = tmp_path / "reference.json"
-    registry = tmp_path / "registry.json"
-    registry.write_text(
-        json.dumps({"nodes": {"Example": {"nodeType": "Example", "interface": []}}})
-    )
-    summary = tmp_path / "summary.json"
-
-    def run() -> subprocess.CompletedProcess[str]:
-        source.write_text(json.dumps(reference))
-        return subprocess.run(
-            [
-                sys.executable,
-                "tools/compare_nodes.py",
-                str(source),
-                str(registry),
-                str(tmp_path / "comparison.csv"),
-                str(summary),
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-
-    assert run().returncode == 0
-    for semantics in ([], ["loop semantics"], ["lazy inputs", "ExecutionBlocker"]):
-        exclusions["ComfySwitchNode"] = semantics
-        assert run().returncode == 1
-        assert json.loads(summary.read_text())["registry_errors"] == [
-            "measured engine exclusions differ from the settled exclusion list"
-        ]
+    schema = {
+        "nodeType": name,
+        "interface": [
+            {"role": "output", "id": "value", "type": {"kind": "concrete", "types": ["INT"]}}
+        ],
+    }
+    registry = {"nodes": {name: schema}}
+    assert compare_registry(reference, registry)["counts"] == {"identical": 1}
+    schema["interface"][0]["type"]["types"] = ["FLOAT"]
+    result = compare_registry(reference, registry)
+    assert not result["passed"]
+    assert result["counts"] == {"differs": 1}
+    assert result["engine_exclusions"] == {}
+    assert compare_registry(reference, {"nodes": {}})["counts"] == {"absent": 1}

@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 from dinkster_caches import MemoryLRUCache
-from dinkster_engine import Engine, ExecutionError
+from dinkster_engine import Engine, ExecutionError, GraphValidationError
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_memory import MemoryGovernor
 from dinkster_protocol import (
@@ -121,6 +121,36 @@ def make_engine(registry: TypeRegistry, worker: RemoteWorker) -> Engine:
         worker=worker,
         cache=MemoryLRUCache(),
     )
+
+
+def test_remote_admission_rejects_and_same_connection_accepts(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        proc, host, port = await start_service(DEV_MANIFEST, tmp_path)
+        try:
+            registry = core_registry()
+            worker = remote_worker(host, port, registry)
+            await worker.start()
+            try:
+                engine = make_engine(registry, worker)
+                with pytest.raises(GraphValidationError, match="value must be a float literal"):
+                    await asyncio.wait_for(
+                        engine.run(
+                            Graph({"check": GraphNode("dev.execution.admission", {"value": 9})}),
+                            ["check"],
+                        ),
+                        timeout=5,
+                    )
+                result = await engine.run(
+                    Graph({"check": GraphNode("dev.execution.admission", {"value": 9.25})}),
+                    ["check"],
+                )
+                assert result.outputs["check"]["value"].resolve() == 9.25
+            finally:
+                await worker.close()
+        finally:
+            await stop_service(proc)
+
+    asyncio.run(scenario())
 
 
 def big_image_graph() -> Graph:

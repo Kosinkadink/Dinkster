@@ -11,8 +11,24 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from dinkster_engine import Invocation, InvocationResult, OnInvocationEvent
-from dinkster_schema import InputSpec, NodeSchema, OutputSpec, TypeExpr
+from dinkster_caches import MemoryLRUCache
+from dinkster_engine import (
+    Engine,
+    GraphValidationError,
+    Invocation,
+    InvocationResult,
+    OnInvocationEvent,
+)
+from dinkster_graph import Graph, GraphNode
+from dinkster_nodes_dev.execution import EXECUTION_NODES
+from dinkster_schema import (
+    InputSpec,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+    build_node_types,
+    build_schemas,
+)
 from dinkster_values import (
     CORE_STRING,
     RESOURCES_META_KEY,
@@ -20,7 +36,7 @@ from dinkster_values import (
     Value,
     register_core_types,
 )
-from dinkster_workers import PlacementWorker
+from dinkster_workers import InProcessWorker, PlacementWorker, RoutingWorker
 
 STRING = TypeExpr.concrete(CORE_STRING)
 SCHEMA = NodeSchema(
@@ -95,6 +111,31 @@ def placed_on(result: InvocationResult) -> str:
 
 
 # -- construction ---------------------------------------------------------
+
+
+@pytest.mark.parametrize("route", [False, True])
+def test_placed_admission_uses_unpinned_policy(route: bool) -> None:
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        worker = InProcessWorker(build_node_types(EXECUTION_NODES), registry)
+        placement = PlacementWorker({"cpu": worker}, devices={}, place=lambda _: "cpu")
+        engine = Engine(
+            schemas=build_schemas(EXECUTION_NODES),
+            registry=registry,
+            worker=RoutingWorker({}, default=placement) if route else placement,
+            cache=MemoryLRUCache(),
+        )
+        with pytest.raises(GraphValidationError, match="value must be a float literal"):
+            await engine.run(
+                Graph({"check": GraphNode("dev.execution.admission", {"value": 3})}), ["check"]
+            )
+        result = await engine.run(
+            Graph({"check": GraphNode("dev.execution.admission", {"value": 3.5})}), ["check"]
+        )
+        assert result.outputs["check"]["value"].resolve() == 3.5
+
+    asyncio.run(scenario())
 
 
 def test_unknown_device_owner_fails_at_construction() -> None:
