@@ -60,6 +60,7 @@ from .latent_advanced import LATENT_ADVANCED_NODES
 from .latent_model_specific import MODEL_LATENT_NODES
 from .latent_operations import LATENT_OPERATION_NODES
 from .latent_upscale import LATENT_UPSCALE_NODES
+from .latent_upscale_loader import LATENT_UPSCALE_LOADER_NODES
 from .logic import LOGIC_NODES
 from .loops import LOOP_NODES
 from .ltx_audio import LTX_AUDIO_NODES
@@ -157,6 +158,7 @@ COMFY_NODES = (
     *LATENT_ADVANCED_NODES,
     *LATENT_OPERATION_NODES,
     *LATENT_UPSCALE_NODES,
+    *LATENT_UPSCALE_LOADER_NODES,
     *MODEL_LATENT_NODES,
     *CLIP_NODES,
     *STYLE_MODEL_NODES,
