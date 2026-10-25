@@ -4,17 +4,23 @@ import subprocess
 import sys
 
 from dinkster_api.v1 import (
+    CLIP_TYPE,
+    CONDITIONING_TYPE,
     CORE_INT,
+    CORE_STRING,
+    IMAGE_TYPE,
     LATENT_TYPE,
+    VAE_TYPE,
     InputSpec,
     NumberWidget,
     OutputSpec,
+    StringWidget,
     TypeExpr,
     schema_from_wire,
     schema_to_wire,
 )
 from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.minimax_h3_latent import EmptyMiniMaxH3LatentAV
+from dinkster_nodes_comfy.minimax_h3_latent import EmptyMiniMaxH3LatentAV, MiniMaxH3ImageToVideo
 from dinkster_workers import load_manifest
 
 
@@ -51,3 +57,40 @@ def test_minimax_h3_empty_av_schema_and_cold_discovery() -> None:
 def test_minimax_h3_empty_av_complete_registry_matches_manifest() -> None:
     manifest = load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml")
     assert tuple(node.schema().node_type for node in COMFY_NODES) == manifest.namespaces
+
+
+def test_minimax_h3_image_schema_and_cold_discovery() -> None:
+    schema = MiniMaxH3ImageToVideo.schema()
+    assert schema.node_type == "MiniMaxH3ImageToVideo"
+    assert schema.display_name == "MiniMax H3 Image to Video"
+    assert schema.category == "model/conditioning/minimax"
+    assert schema.inputs == (
+        InputSpec("clip", TypeExpr.concrete(CLIP_TYPE)),
+        InputSpec("vae", TypeExpr.concrete(VAE_TYPE)),
+        InputSpec(
+            "prompt",
+            TypeExpr.concrete(CORE_STRING),
+            widget=StringWidget(multiline=True, dynamic_prompts=True),
+        ),
+        *EmptyMiniMaxH3LatentAV.schema().inputs,
+        InputSpec("first_frame", TypeExpr.concrete(IMAGE_TYPE), required=False),
+        InputSpec("last_frame", TypeExpr.concrete(IMAGE_TYPE), required=False),
+    )
+    assert schema.outputs == (
+        OutputSpec("positive", TypeExpr.concrete(CONDITIONING_TYPE)),
+        OutputSpec("LATENT", TypeExpr.concrete(LATENT_TYPE)),
+    )
+    assert schema_from_wire(schema_to_wire(schema)) == schema
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; from dinkster_nodes_comfy import COMFY_NODES; "
+            "from dinkster_nodes_comfy.minimax_h3_latent import MiniMaxH3ImageToVideo; "
+            "assert MiniMaxH3ImageToVideo in COMFY_NODES; MiniMaxH3ImageToVideo.schema(); "
+            "assert 'torch' not in sys.modules; assert 'dinkster_inference' not in sys.modules",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr

@@ -2,8 +2,10 @@
 
 from dinkster_api.v1 import (
     ASSET_TYPE,
+    AUDIO_TYPE,
     TypeRegistry,
     register_asset_type,
+    register_audio_value_type,
     resolver_from_env,
 )
 from dinkster_api.v1 import register_inference_types as _register_inference_types
@@ -59,21 +61,24 @@ from .latent_advanced import LATENT_ADVANCED_NODES
 from .latent_model_specific import MODEL_LATENT_NODES
 from .latent_operations import LATENT_OPERATION_NODES
 from .latent_upscale import LATENT_UPSCALE_NODES
+from .latent_upscale_loader import LATENT_UPSCALE_LOADER_NODES
 from .logic import LOGIC_NODES
 from .loops import LOOP_NODES
 from .ltx_audio import LTX_AUDIO_NODES
 from .ltx_av_latent import LTX_AV_LATENT_NODES
+from .ltx_duration import LTXVDurationPredictor
 from .ltx_sampling import LTX_SAMPLING_NODES
 from .ltx_video_conditioning import LTX_VIDEO_CONDITIONING_NODES
 from .ltx_video_preprocess import LTX_VIDEO_PREPROCESS_NODES
 from .mask import MASK_NODES
 from .math import ComfyMathExpression
-from .minimax_h3_latent import EmptyMiniMaxH3LatentAV
+from .minimax_h3_latent import EmptyMiniMaxH3LatentAV, MiniMaxH3ImageToVideo
 from .minimax_h3_sampling import MiniMaxH3SigmaShift
 from .mochi import EmptyMochiLatentVideo
 from .model_advanced import MODEL_ADVANCED_NODES
 from .model_merging import MODEL_MERGE_NODES
 from .model_merging_specific import MODEL_SPECIFIC_MERGE_NODES
+from .model_patch_loader import MODEL_PATCH_LOADER_NODES
 from .model_specific_schedulers import MODEL_SPECIFIC_SCHEDULER_NODES
 from .morphology import MORPHOLOGY_NODES
 from .noise_guidance import NOISE_GUIDANCE_NODES
@@ -110,6 +115,7 @@ from .video_conditioning import VIDEO_CONDITIONING_NODES
 from .video_guidance import VIDEO_GUIDANCE_NODES
 from .video_latent import VIDEO_LATENT_NODES
 from .video_latent_ops import VIDEO_LATENT_OPERATION_NODES
+from .wandancer_keyframes import WANDANCER_KEYFRAME_NODES
 
 COMFY_NODES = (
     *TEXT_NODES,
@@ -134,6 +140,7 @@ COMFY_NODES = (
     *MODEL_SPECIFIC_MERGE_NODES,
     *MODEL_ADVANCED_NODES,
     HypernetworkLoader,
+    *MODEL_PATCH_LOADER_NODES,
     *DEVICE_ROUTING_NODES,
     *COMPILE_NODES,
     *MODEL_SPECIFIC_SCHEDULER_NODES,
@@ -152,6 +159,7 @@ COMFY_NODES = (
     *LATENT_ADVANCED_NODES,
     *LATENT_OPERATION_NODES,
     *LATENT_UPSCALE_NODES,
+    *LATENT_UPSCALE_LOADER_NODES,
     *MODEL_LATENT_NODES,
     *CLIP_NODES,
     *STYLE_MODEL_NODES,
@@ -187,6 +195,7 @@ COMFY_NODES = (
     *SEEDVR_TEMPORAL_NODES,
     MiniMaxH3SigmaShift,
     EmptyMiniMaxH3LatentAV,
+    MiniMaxH3ImageToVideo,
     *VIDEO_CONDITIONING_NODES,
     *COSMOS_CONDITIONING_NODES,
     *VIDEO_LATENT_NODES,
@@ -215,12 +224,16 @@ COMFY_NODES = (
     SamplerARVideo,
     ARVideoI2V,
     SeedVR2PostProcessing,
+    *WANDANCER_KEYFRAME_NODES,
+    LTXVDurationPredictor,
 )
 
 
 def register_inference_types(registry: TypeRegistry) -> None:
     if ASSET_TYPE not in registry:
         register_asset_type(registry, resolver_from_env())
+    if AUDIO_TYPE not in registry:
+        register_audio_value_type(registry, AUDIO_TYPE, resolver_from_env())
     _register_inference_types(registry)
 
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -9,12 +11,26 @@ from typing import Any
 import pytest
 import torch
 from dinkster_api import v1
-from dinkster_api.v1 import AssetRef, LocalAssetRef, initialize_inference_process
+from dinkster_api.v1 import (
+    CORE_STRING,
+    HOOKS_TYPE,
+    AssetRef,
+    InputSpec,
+    LocalAssetRef,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+    initialize_inference_process,
+)
 from dinkster_assets import AssetError, MountDef, MountTable, digest_file
+from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.hook_checkpoint import (
     CreateHookModelAsLora,
     CreateHookModelAsLoraModelOnly,
 )
+
+from dinkster.compose import PackSpec, ServingComposer
 
 
 class _Resolver:
@@ -206,3 +222,189 @@ def test_checkpoint_weights_share_residency_across_assets_nodes_and_strengths(
 def test_checkpoint_hook_rejects_unbound_filename() -> None:
     with pytest.raises(TypeError, match="AssetRef or LocalAssetRef"):
         CreateHookModelAsLoraModelOnly.execute(ckpt_name="unbound.ckpt", strength_model=1.0)
+
+
+class CheckpointHookSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="checkpoint-hooks-fixture.source",
+            inputs=(InputSpec("embedding_root", TypeExpr.concrete(CORE_STRING)),),
+            outputs=(OutputSpec("hooks", TypeExpr.concrete(HOOKS_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls, *, embedding_root: str) -> dict[str, object]:
+        initialize_inference_process()
+        from dinkster_inference import hooks, sd, utils
+
+        calls: list[str] = []
+
+        # Keep checkpoint architecture construction controlled, but read real
+        # safe tensor bytes through the bound path and the production roots API.
+        def load(path: str, **options: Any) -> tuple[Any, Any, object, None]:
+            assert options == {
+                "output_vae": True,
+                "output_clip": True,
+                "embedding_directory": [embedding_root],
+            }, repr(options)
+            actual_roots = v1.mount_roots_for_kind("model/embedding")
+            assert actual_roots == (Path(embedding_root),), repr(actual_roots)
+            state = utils.load_torch_file(path, safe_load=True)
+            model = _patcher(state["model"].tolist())
+            clip = _patcher(state["clip"].tolist())
+            calls.append(path)
+            return model, SimpleNamespace(patcher=clip), object(), None
+
+        load.calls = calls  # type: ignore[attr-defined]
+        sd.load_checkpoint_guess_config = load
+        previous = hooks.HookGroup()
+        previous.add(hooks.WeightHook(strength_model=-0.25, strength_clip=0.75))
+        return cls.outputs(hooks=previous)
+
+
+class CheckpointHookInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="checkpoint-hooks-fixture.inspect",
+            inputs=tuple(
+                InputSpec(name, TypeExpr.concrete(HOOKS_TYPE))
+                for name in ("source", "full", "model_only")
+            ),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, source: Any, full: Any, model_only: Any) -> dict[str, object]:
+        from dinkster_inference import sd
+
+        assert len(source.hooks) == 1
+        assert source.hooks[0].strength_model == -0.25
+        owners = []
+        for group, strengths in ((full, (-0.7, 1.3)), (model_only, (0.0, 0.0))):
+            assert len(group.hooks) == 2
+            assert group.hooks[0] is not source.hooks[0]
+            assert group.hooks[0] == source.hooks[0]
+            added = group.hooks[1]
+            assert (added.strength_model, added.strength_clip) == strengths
+            assert set(added.weights) == {"weight"}
+            assert set(added.weights_clip) == {"weight"}
+            assert added.weights["weight"][0] == "model_as_lora"
+            assert torch.equal(
+                added.weights["weight"][1][0], torch.tensor([[2.0, -7.0], [11.0, 0.5]])
+            )
+            assert torch.equal(added.weights_clip["weight"][1][0], torch.tensor([[-3.0, 13.0]]))
+            explicit = [
+                owner
+                for owner in group._dinkster_resident_refs
+                if not any(owner is keyframes for keyframes in group._dinkster_hook_keyframe_refs)
+            ]
+            assert len(explicit) == 1, repr(explicit)
+            owners.append(explicit[0])
+        assert owners[0] is owners[1]
+        assert len(sd.load_checkpoint_guess_config.calls) == 1
+        return cls.outputs(summary="checkpoint weights and roots preserved")
+
+
+CHECKPOINT_HOOK_FIXTURES = (CheckpointHookSource, CheckpointHookInspect)
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("verified", (False, True))
+def test_checkpoint_hooks_ordinary_hosts_use_snapshot_roots_and_resident_pair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, verified: bool
+) -> None:
+    initialize_inference_process()
+    from dinkster_inference import sd
+    from safetensors.torch import save_file
+
+    original_loader = sd.load_checkpoint_guess_config
+    checkpoint = tmp_path / "checkpoint.safetensors"
+    save_file(
+        {"model": torch.tensor([[2.0, -7.0], [11.0, 0.5]]), "clip": torch.tensor([[-3.0, 13.0]])},
+        str(checkpoint),
+    )
+    embedding_root = tmp_path / "embeddings"
+    embedding_root.mkdir()
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot, index_root=tmp_path / "index")
+    table.add(MountDef(id="checkpoints", path=tmp_path), kind="model/checkpoint")
+    table.add(MountDef(id="embeddings", path=embedding_root), kind="model/embedding")
+    table.scan("embeddings")
+    if verified:
+        table.scan("checkpoints")
+    asset = table.bind_name(checkpoint.name, "model/checkpoint")
+    assert isinstance(asset, AssetRef if verified else LocalAssetRef)
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+
+    async def scenario() -> None:
+        root = Path(__file__).resolve().parents[1]
+        manifests = (
+            root / "dinkster-pack.toml",
+            root / "tests/fixtures/checkpoint_hooks/dinkster-pack.toml",
+        )
+        composer = ServingComposer(
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
+                "PYTHONPATH": os.pathsep.join((str(root / "tests"), str(root / "src"))),
+            }
+        )
+        try:
+            for manifest in manifests:
+                await composer.add_pack(
+                    PackSpec(manifest=manifest, in_process=True)
+                    if in_process
+                    else PackSpec(
+                        manifest=manifest,
+                        worker_group="checkpoint-hooks-fixture",
+                        group_manifests=manifests,
+                    )
+                )
+            graph = Graph(
+                nodes={
+                    "source": GraphNode(
+                        "checkpoint-hooks-fixture.source", {"embedding_root": str(embedding_root)}
+                    ),
+                    "full": GraphNode(
+                        "CreateHookModelAsLora",
+                        {
+                            "ckpt_name": asset.to_wire(),
+                            "strength_model": -0.7,
+                            "strength_clip": 1.3,
+                            "prev_hooks": Link("source", "hooks"),
+                        },
+                    ),
+                    "model_only": GraphNode(
+                        "CreateHookModelAsLoraModelOnly",
+                        {
+                            "ckpt_name": asset.to_wire(),
+                            "strength_model": 0.0,
+                            "prev_hooks": Link("source", "hooks"),
+                        },
+                    ),
+                    "inspect": GraphNode(
+                        "checkpoint-hooks-fixture.inspect",
+                        {
+                            "source": Link("source", "hooks"),
+                            "full": Link("full", "HOOKS"),
+                            "model_only": Link("model_only", "HOOKS"),
+                        },
+                    ),
+                }
+            )
+            engine = composer.composition.make_engine(lambda _: None)
+            for attempt in range(2):
+                result = await engine.run(graph, ["inspect"])
+                assert (
+                    result.outputs["inspect"]["summary"].resolve()
+                    == "checkpoint weights and roots preserved"
+                )
+                assert set(result.cached) == (set(graph.nodes) if attempt else set())
+        finally:
+            await composer.close()
+            sd.load_checkpoint_guess_config = original_loader
+
+    asyncio.run(scenario())

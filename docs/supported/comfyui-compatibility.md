@@ -1,5 +1,11 @@
 ## ComfyUI compatibility
 
+- Native WanDancer keyframe padding places reference frames and masks into
+  video segments, with matching audio slices and scalar or list outputs.
+- Native LTXV duration prediction uses caption connectors and the duration head,
+  returning raw seconds and a frame count snapped to the causal VAE grid.
+- Native ComfyUI AUDIO sockets retain the first registered audio authority
+  and work across isolated pack processes without a companion media pack.
 - Native LTXVCropGuides removes appended guide frames and their conditioning
   metadata while preserving the remaining video latent and noise mask.
 - Native SeedVR2 output post-processing aligns video frames, restores alpha
@@ -30,6 +36,9 @@
 - Six native latent operation nodes blend, tonemap, sharpen, apply operations
   directly or within a denoising schedule interval, and replace video frames.
   LATENT_OPERATION uses the same resident-value boundary as model hooks.
+- LatentUpscaleModelLoader loads Hunyuan Video 1.5 and LTXV latent-upscale checkpoints
+  into LATENT_UPSCALE_MODEL resident values across ordinary native pack hosts without
+  loading Torch during registration.
 - LATENT_UPSCALE_MODEL preserves resident identity, ownership, and cache lifetime
   across ordinary native pack hosts without loading Torch during registration.
 - Hunyuan Video 1.5 and LTXV latent upscale consumers preserve core resize,
@@ -46,6 +55,8 @@
   and LTXV context-window sampling under exact core IDs.
 - MiniMax H3 sigma shifts clone model patchers, preserve noise scale, and set
   independent video/audio flow shifts without modifying the source model.
+- MiniMax H3 image-to-video conditioning encodes optional first and last
+  keyframes and scheduled text while creating paired zero audio/video latents.
 - Ten native conditioning nodes combine, blend, concatenate, multiply, mask,
   zero, and set area or timestep metadata under their exact ComfyUI interfaces.
 - Native hook conditioning preserves paired ordering, default records, mask and

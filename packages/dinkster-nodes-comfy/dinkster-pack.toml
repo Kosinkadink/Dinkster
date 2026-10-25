@@ -92,6 +92,7 @@ namespaces = [
     "ModelComputeDtype",
     "ModelAttentionBackend",
     "HypernetworkLoader",
+    "ModelPatchLoader",
     "MultiGPU_WorkUnits",
     "SelectModelDevice",
     "SelectCLIPDevice",
@@ -170,6 +171,7 @@ namespaces = [
     "ReplaceVideoLatentFrames",
     "HunyuanVideo15LatentUpscaleWithModel",
     "LTXVLatentUpsampler",
+    "LatentUpscaleModelLoader",
     "EmptySD3LatentImage",
     "EmptyFlux2LatentImage",
     "EmptyChromaRadianceLatentImage",
@@ -300,6 +302,7 @@ namespaces = [
     "SeedVR2TemporalMerge",
     "MiniMaxH3SigmaShift",
     "EmptyMiniMaxH3LatentAV",
+    "MiniMaxH3ImageToVideo",
     "SVD_img2vid_Conditioning",
     "CosmosImageToVideoLatent",
     "CosmosPredict2ImageToVideoLatent",
@@ -383,6 +386,9 @@ namespaces = [
     "SamplerARVideo",
     "ARVideoI2V",
     "SeedVR2PostProcessing",
+    "WanDancerPadKeyframes",
+    "WanDancerPadKeyframesList",
+    "LTXVDurationPredictor",
 ]
 
 [pack.sandbox]
