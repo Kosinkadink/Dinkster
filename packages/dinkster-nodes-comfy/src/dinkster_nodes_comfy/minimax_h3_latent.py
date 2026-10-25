@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import importlib
+import math
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from dinkster_api.v1 import (
+    AUDIO_TYPE,
     CLIP_TYPE,
     CONDITIONING_TYPE,
     CORE_INT,
@@ -24,7 +26,9 @@ from dinkster_api.v1 import (
     StringWidget,
     TypeExpr,
     initialize_inference_process,
+    materialize_audio,
     materialize_image,
+    materialize_latent,
 )
 
 from .conditioning import conditioning_set_values
@@ -150,3 +154,160 @@ class MiniMaxH3ImageToVideo(Node):
                 keyframe["latent"] = vae.encode(keyframe.pop("image"))
             conditioning = conditioning_set_values(conditioning, {"minimax_keyframes": keyframes})
         return cls.outputs(positive=conditioning, LATENT=latent)
+
+
+class MiniMaxH3AddGuide(Node):
+    """Anchor image and/or audio guides at an arbitrary pixel frame of the target video."""
+
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="MiniMaxH3AddGuide",
+            display_name="Add Guide for MiniMax H3",
+            category="model/conditioning/minimax",
+            description=(
+                "Anchor an image, a short clip, audio, or a clip with its soundtrack at any "
+                "frame of a MiniMax H3 video. Chain several nodes to anchor several frames."
+            ),
+            inputs=(
+                InputSpec("positive", TypeExpr.concrete(CONDITIONING_TYPE)),
+                InputSpec(
+                    "vae",
+                    TypeExpr.concrete(VAE_TYPE),
+                    required=False,
+                    doc="Video VAE, needed when an image is connected.",
+                ),
+                InputSpec(
+                    "audio_vae",
+                    TypeExpr.concrete(VAE_TYPE),
+                    required=False,
+                    doc="Audio VAE, needed when an audio is connected.",
+                ),
+                InputSpec("latent", TypeExpr.concrete(LATENT_TYPE)),
+                InputSpec(
+                    "image",
+                    TypeExpr.concrete(IMAGE_TYPE),
+                    required=False,
+                    doc=(
+                        "Image or video frames to anchor. Multi-frame batches are anchored as a "
+                        "clip and cropped down to the model's valid clip lengths: 5, 22, 39... "
+                        "(17k + 5) frames. Batches shorter than 5 frames use only the first image."
+                    ),
+                ),
+                InputSpec(
+                    "audio",
+                    TypeExpr.concrete(AUDIO_TYPE),
+                    required=False,
+                    doc=(
+                        "Soundtrack to anchor starting at the same frame index, cropped to the "
+                        "video's remaining duration."
+                    ),
+                ),
+                InputSpec(
+                    "frame_idx",
+                    TypeExpr.concrete(CORE_INT),
+                    default=0,
+                    widget=NumberWidget(min=-9999, max=9999),
+                    doc=(
+                        "Frame index to anchor the image or the clip's first frame at. Negative "
+                        "values are counted from the end of the video."
+                    ),
+                ),
+            ),
+            outputs=(OutputSpec("positive", TypeExpr.concrete(CONDITIONING_TYPE)),),
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        positive: Any,
+        latent: object,
+        frame_idx: int,
+        vae: Any = None,
+        audio_vae: Any = None,
+        image: object = None,
+        audio: object = None,
+    ) -> Mapping[str, object]:
+        initialize_inference_process()
+        samples = materialize_latent(latent)["samples"]
+        if type(samples) is not MultiStreamLatent:
+            raise ValueError("MiniMaxH3AddGuide expects a MiniMax H3 AV latent")
+        streams = cast("MultiStreamLatent[Any]", samples)
+        if set(streams.roles) != {"video", "audio"}:
+            raise ValueError("MiniMaxH3AddGuide expects a MiniMax H3 AV latent")
+        video = streams.by_role("video")
+        audio_samples = streams.by_role("audio")
+        if (
+            video.ndim != 5
+            or video.shape[1] != 24
+            or audio_samples.ndim != 4
+            or audio_samples.shape[1] != 32
+            or audio_samples.shape[2] != 2
+        ):
+            raise ValueError("MiniMaxH3AddGuide expects a MiniMax H3 AV latent")
+        if image is None and audio is None:
+            raise ValueError("MiniMaxH3AddGuide needs an image or an audio to anchor")
+
+        model = importlib.import_module("dinkster_inference.ldm.minimax.model")
+        frame_count = sum(model.FRAME_PER_TOKEN[index % 5] for index in range(video.shape[2]))
+        guide_frames = 1
+        pixels = None
+        if image is not None:
+            if vae is None:
+                raise ValueError("anchoring guide frames needs the vae input")
+            pixels = materialize_image(image)
+            guide_frames = pixels.shape[0]
+            if guide_frames < 5:
+                guide_frames = 1
+            else:
+                guide_frames -= (guide_frames - 5) % 17
+
+        resolved_frame_index = frame_idx if frame_idx >= 0 else frame_count + frame_idx
+        if resolved_frame_index < 0 or resolved_frame_index + guide_frames > frame_count:
+            if guide_frames == 1:
+                raise ValueError(
+                    f"frame_idx {frame_idx} is outside the video's {frame_count} frames"
+                )
+            raise ValueError(
+                f"a {guide_frames} frame guide clip at frame_idx {frame_idx} does not fit in "
+                f"the video's {frame_count} frames"
+            )
+
+        keyframe: dict[str, Any] = {"resolved_frame_index": resolved_frame_index}
+        if pixels is not None:
+            utils = importlib.import_module("dinkster_inference.utils")
+            frames = pixels[:guide_frames, ..., :3].movedim(-1, 1)
+            frames = utils.common_upscale(
+                frames, video.shape[4] * 16, video.shape[3] * 16, "lanczos", "center"
+            ).movedim(1, -1)
+            keyframe["latent"] = vae.encode(frames)
+
+        if audio is not None:
+            if audio_vae is None:
+                raise ValueError("anchoring guide audio needs the audio_vae input")
+            source = materialize_audio(audio)
+            waveform = cast("Any", source["waveform"])
+            sample_rate = source["sample_rate"]
+            vae_rate = getattr(audio_vae, "audio_sample_rate", 32000)
+            if sample_rate != vae_rate:
+                waveform = importlib.import_module("dinkster_inference.audio").resample(
+                    waveform, sample_rate, vae_rate
+                )
+            audio_latent = audio_vae.encode(waveform[:1].movedim(1, -1))
+            max_audio_frames = math.floor(
+                audio_samples.shape[-1] - model.FRAME_RESCALE * resolved_frame_index
+            )
+            if max_audio_frames < 1:
+                raise ValueError(
+                    f"frame_idx {frame_idx} is past the end of the video's audio track"
+                )
+            if audio_latent.shape[-1] > max_audio_frames:
+                audio_latent = audio_latent[..., :max_audio_frames].clone()
+            keyframe["audio_latent"] = audio_latent
+
+        keyframes = list(positive[0][1].get("minimax_keyframes", []))
+        keyframes.append(keyframe)
+        return cls.outputs(
+            positive=conditioning_set_values(positive, {"minimax_keyframes": keyframes})
+        )

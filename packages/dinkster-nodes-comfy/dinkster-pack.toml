@@ -387,6 +387,7 @@ namespaces = [
     "WanDancerPadKeyframes",
     "WanDancerPadKeyframesList",
     "LTXVDurationPredictor",
+    "MiniMaxH3AddGuide",
 ]
 
 [pack.sandbox]
