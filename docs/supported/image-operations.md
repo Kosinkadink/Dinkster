@@ -39,6 +39,9 @@
   are supported, while unavailable platforms refuse explicitly
 - Pointwise invert, normalize, brightness, and contrast adjustment; Gaussian
   blur, sharpen, quantize, seeded noise, and bounded image morphology
+- ComfyUI SDR-to-HDR and image color-space conversion with Rec.2020 HLG/PQ,
+  Rec.709 linear, ACEScg/ACEScct, and LogC3 transforms; straight alpha is
+  preserved and results use the inference intermediate device and dtype
 - RGB and YCbCr channel split/merge plus explicit alpha extraction and joining
 - Explicit coverage/transparency mask polarity, with migration of saved polarity
   controls; mask polarity inversion and RGBA premultiply/unpremultiply nodes
@@ -62,6 +65,10 @@
 - Mask composition with signed placement; image/mask conversion by channels or
   color distance; mask dimensions, batch count, area, and typed bounds
 - Image width, height, batch count, channel count, min, max, mean, and histogram
+- ComfyUI image and image/video latent width, height, frame, and batch-size
+  inspection with node-attributed dimension progress text
+- ComfyUI rebatching of image and latent lists into target-size batches,
+  retaining frame order and latent batch indices
 - Image and mask batch range, repeat, reverse, shuffle, ping-pong loop, count
   expansion, concatenation, insertion, and replacement; image batch/list
   conversion and rebatching

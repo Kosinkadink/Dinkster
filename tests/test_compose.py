@@ -1870,6 +1870,122 @@ def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(tmp_pa
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize(
+    ("in_process", "supplied_registry"), ((True, False), (False, False), (False, True))
+)
+@pytest.mark.parametrize("verified", (False, True))
+def test_asset_literals_use_host_and_worker_resolvers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    in_process: bool,
+    supplied_registry: bool,
+    verified: bool,
+) -> None:
+    from dinkster_assets import (
+        LocalAssetRef,
+        MountDef,
+        MountSnapshotResolver,
+        MountTable,
+        register_asset_type,
+    )
+    from dinkster_values import register_core_types
+
+    root = tmp_path / "models"
+    root.mkdir()
+    payload = b"model bytes for the ordinary asset input"
+    (root / "weights.bin").write_bytes(payload)
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot, index_root=tmp_path / "indexes")
+    table.add(MountDef(id="models", path=root), kind="model/checkpoint")
+    if verified:
+        table.scan("models")
+    ref = table.bind_name("weights.bin", "model/checkpoint")
+    assert isinstance(ref, AssetRef if verified else LocalAssetRef)
+    module = f"asset_input_{in_process}_{supplied_registry}_{verified}"
+    (tmp_path / f"{module}.py").write_text(
+        "from assetpack_nodes import NODES, register_types\n", encoding="ascii"
+    )
+    manifest = tmp_path / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname = "apack"\npublisher = "dinkster"\nnamespaces = ["apack"]\n'
+        f'[pack.entry]\nnodes = "{module}:NODES"\ntypes = "{module}:register_types"\n',
+        encoding="ascii",
+    )
+    env = {
+        **WORKER_ENV,
+        "PYTHONPATH": os.pathsep.join((str(tmp_path), WORKER_ENV["PYTHONPATH"])),
+        "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
+    }
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+    registry = None
+    if supplied_registry:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        register_asset_type(registry, MountSnapshotResolver(snapshot))
+
+    async def scenario() -> None:
+        composer = ServingComposer(worker_env=env, registry=registry)
+        try:
+            await composer.add_pack(PackSpec(manifest, in_process=in_process, env=env))
+            engine = composer.composition.make_engine(lambda _event: None)
+            graph = Graph(nodes={"read": GraphNode("apack.read", {"data": ref.to_wire()})})
+            for _ in range(2):
+                result = await engine.run(graph, ["read"])
+                assert result.outputs["read"]["text"].resolve() == payload.decode()
+                assert result.outputs["read"]["size"].resolve() == len(payload)
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("verified", (False, True))
+def test_comfy_manifest_registers_bound_assets_with_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, verified: bool
+) -> None:
+    from dinkster_api.v1 import ASSET_TYPE
+    from dinkster_assets import (
+        LocalAssetRef,
+        MountDef,
+        MountTable,
+    )
+
+    root = tmp_path / "models"
+    root.mkdir()
+    payload = b"bound model bytes"
+    (root / "weights.bin").write_bytes(payload)
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot, index_root=tmp_path / "indexes")
+    table.add(MountDef(id="models", path=root), kind="model/checkpoint")
+    if verified:
+        table.scan("models")
+    ref = table.bind_name("weights.bin", "model/checkpoint")
+    assert isinstance(ref, AssetRef if verified else LocalAssetRef)
+    comfy = TESTS_DIR.parent / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+    env = {
+        **WORKER_ENV,
+        "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
+    }
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        composer = ServingComposer(registry=registry, worker_env=env)
+        try:
+            assert ASSET_TYPE not in registry
+            await composer.add_pack(PackSpec(comfy, in_process=in_process, env=env))
+            for _ in range(2):
+                bound = registry.wrap(ASSET_TYPE, ref.to_wire()).resolve()
+                restored = registry.spec(ASSET_TYPE).decode(registry.spec(ASSET_TYPE).encode(bound))
+                assert isinstance(restored, AssetRef if verified else LocalAssetRef)
+                assert restored.local_path().read_bytes() == payload
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("in_process", (True, False))
 def test_native_comfy_pack_registers_container_literals(in_process: bool) -> None:
     async def scenario() -> None:

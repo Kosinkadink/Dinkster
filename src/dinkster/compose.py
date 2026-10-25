@@ -56,7 +56,13 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal, TypeVar, cast
 
-from dinkster_assets import DeclaredAsset, PackAssetCatalog
+from dinkster_assets import (
+    ASSET_TYPE,
+    DeclaredAsset,
+    PackAssetCatalog,
+    register_asset_type,
+    resolver_from_env,
+)
 from dinkster_caches import (
     DEFAULT_DISK_CACHE_BYTES,
     DiskCacheStore,
@@ -7581,6 +7587,8 @@ class ServingComposer:
             )
         except ValueError as exc:
             raise CompositionError(str(exc)) from exc
+        if ASSET_TYPE in type_ids and ASSET_TYPE not in registry:
+            register_asset_type(registry, resolver_from_env())
 
     @staticmethod
     def _register_worker_renditions(registry: TypeRegistry, owner: str, worker: Any) -> None:
