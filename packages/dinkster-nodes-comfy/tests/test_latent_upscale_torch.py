@@ -168,7 +168,7 @@ def test_latent_upscale_nodes_execute_twice_in_ordinary_hosts(
     async def scenario() -> None:
         native_manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
         source_root = Path(__file__).resolve().parents[1] / "src"
-        fixture_module = "latent_upscale_fixture"
+        fixture_module = "latent_upscale_consumer_fixture"
         (tmp_path / f"{fixture_module}.py").write_text(
             "from test_latent_upscale_torch import LatentUpscaleConsumer, LatentUpscaleSource\n"
             "from dinkster_nodes_comfy import register_inference_types\n"
