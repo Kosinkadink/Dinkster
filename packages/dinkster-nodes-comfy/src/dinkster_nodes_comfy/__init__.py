@@ -1,6 +1,12 @@
 """Native Dinkster implementations of ComfyUI core nodes."""
 
-from dinkster_api.v1 import register_inference_types
+from dinkster_api.v1 import (
+    ASSET_TYPE,
+    TypeRegistry,
+    register_asset_type,
+    resolver_from_env,
+)
+from dinkster_api.v1 import register_inference_types as _register_inference_types
 
 from .ace_text_conditioning import ACE_TEXT_CONDITIONING_NODES
 from .advanced_samplers import ADVANCED_SAMPLER_NODES
@@ -191,5 +197,12 @@ COMFY_NODES = (
     *SAMPLER_FACTORY_NODES,
     *ADVANCED_SAMPLER_NODES,
 )
+
+
+def register_inference_types(registry: TypeRegistry) -> None:
+    if ASSET_TYPE not in registry:
+        register_asset_type(registry, resolver_from_env())
+    _register_inference_types(registry)
+
 
 __all__ = ["COMFY_NODES", "register_inference_types"]

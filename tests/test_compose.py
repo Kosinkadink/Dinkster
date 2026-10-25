@@ -1871,6 +1871,76 @@ def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(tmp_pa
 
 
 @pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("verified", (False, True))
+def test_comfy_manifest_supplies_assets_to_grouped_consumer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, verified: bool
+) -> None:
+    from dinkster_assets import (
+        LocalAssetRef,
+        MountDef,
+        MountTable,
+    )
+
+    from dinkster.comfy_compose import register_comfy_host_types
+
+    root = tmp_path / "models"
+    root.mkdir()
+    payload = b"bound model bytes"
+    (root / "weights.bin").write_bytes(payload)
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot, index_root=tmp_path / "indexes")
+    table.add(MountDef(id="models", path=root), kind="model/checkpoint")
+    if verified:
+        table.scan("models")
+    ref = table.bind_name("weights.bin", "model/checkpoint")
+    assert isinstance(ref, AssetRef if verified else LocalAssetRef)
+    consumer = tmp_path / "dinkster-pack.toml"
+    module = f"comfy_asset_consumer_{in_process}_{verified}"
+    (tmp_path / f"{module}.py").write_text(
+        "from assetpack_nodes import NODES\n"
+        "from dinkster_nodes_comfy import register_inference_types\n"
+    )
+    consumer.write_text(
+        '[pack]\nname = "apack"\npublisher = "dinkster"\nnamespaces = ["apack"]\n'
+        f'[pack.entry]\nnodes = "{module}:NODES"\n'
+        f'types = "{module}:register_inference_types"\n'
+    )
+    comfy = TESTS_DIR.parent / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+    manifests = (comfy, consumer)
+    env = {
+        **WORKER_ENV,
+        "PYTHONPATH": os.pathsep.join((str(tmp_path), WORKER_ENV["PYTHONPATH"])),
+        "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
+    }
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+
+    async def scenario() -> None:
+        composer = ServingComposer(worker_env=env)
+        try:
+            for manifest in manifests:
+                await composer.add_pack(
+                    PackSpec(
+                        manifest,
+                        in_process=in_process,
+                        env=env,
+                        worker_group=None if in_process else "assets",
+                        group_manifests=() if in_process else manifests,
+                        host_types=register_comfy_host_types,
+                    )
+                )
+            engine = composer.composition.make_engine(lambda _event: None)
+            graph = Graph(nodes={"read": GraphNode("apack.read", {"data": ref.to_wire()})})
+            for _ in range(2):
+                result = await engine.run(graph, ["read"])
+                assert result.outputs["read"]["text"].resolve() == payload.decode()
+                assert result.outputs["read"]["size"].resolve() == len(payload)
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("in_process", (True, False))
 def test_native_comfy_pack_registers_container_literals(in_process: bool) -> None:
     async def scenario() -> None:
         composer = ServingComposer(worker_env=WORKER_ENV)
