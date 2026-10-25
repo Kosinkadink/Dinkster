@@ -8,6 +8,7 @@ from typing import Any, cast
 
 from dinkster_api.v1 import (
     CORE_INT,
+    GIBIBYTE,
     LATENT_TYPE,
     DynamicComboOption,
     DynamicComboSpec,
@@ -138,7 +139,7 @@ class SeedVR2TemporalChunk(Node):
         pixel_frames = 4 * (latent_frames - 1) + 1
         if mode == "auto":
             management = importlib.import_module("dinkster_inference.model_management")
-            free_gib = management.get_free_memory(management.get_torch_device()) / (1024**3)
+            free_gib = management.get_free_memory(management.get_torch_device()) / GIBIBYTE
             mpx_per_frame = (
                 samples.shape[0]
                 * samples.shape[3]
