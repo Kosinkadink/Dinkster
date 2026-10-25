@@ -43,6 +43,7 @@ from .latent_model_specific import MODEL_LATENT_NODES
 from .latent_operations import LATENT_OPERATION_NODES
 from .logic import LOGIC_NODES
 from .ltx_audio import LTX_AUDIO_NODES
+from .ltx_sampling import LTX_SAMPLING_NODES
 from .ltx_video_conditioning import LTX_VIDEO_CONDITIONING_NODES
 from .ltx_video_preprocess import LTX_VIDEO_PREPROCESS_NODES
 from .mask import MASK_NODES
@@ -54,6 +55,7 @@ from .model_merging_specific import MODEL_SPECIFIC_MERGE_NODES
 from .model_specific_schedulers import MODEL_SPECIFIC_SCHEDULER_NODES
 from .morphology import MORPHOLOGY_NODES
 from .noise_guidance import NOISE_GUIDANCE_NODES
+from .perpneg import PERPNEG_NODES
 from .post_processing import POST_PROCESSING_NODES
 from .primitive import (
     PrimitiveBoolean,
@@ -66,6 +68,7 @@ from .reference_conditioning import REFERENCE_CONDITIONING_NODES
 from .rope_and_mask import ROPE_AND_MASK_NODES
 from .sampler_factories import SAMPLER_FACTORY_NODES
 from .save_text import SaveText
+from .seedvr_preprocess import SeedVR2Preprocess
 from .sigma_operations import SIGMA_OPERATION_NODES
 from .sigma_schedulers import SIGMA_SCHEDULER_NODES
 from .sparse_attention import SPARSE_ATTENTION_NODES
@@ -106,6 +109,7 @@ COMFY_NODES = (
     *MODEL_SPECIFIC_SCHEDULER_NODES,
     *CFG_GUIDER_NODES,
     *CFG_GUIDANCE_NODES,
+    *PERPNEG_NODES,
     *VIDEO_GUIDANCE_NODES,
     *FREEU_NODES,
     *SPATIAL_MODEL_PATCH_NODES,
@@ -139,6 +143,7 @@ COMFY_NODES = (
     *HUNYUAN_TEXT_NODES,
     *HUNYUAN_VIDEO_IMAGE_NODES,
     *LTX_VIDEO_CONDITIONING_NODES,
+    SeedVR2Preprocess,
     *VIDEO_CONDITIONING_NODES,
     *COSMOS_CONDITIONING_NODES,
     *VIDEO_LATENT_NODES,
@@ -156,6 +161,7 @@ COMFY_NODES = (
     GetAudioLatentSize,
     *LTX_AUDIO_NODES,
     *LTX_VIDEO_PREPROCESS_NODES,
+    *LTX_SAMPLING_NODES,
     *DATASET_IMAGE_NODES,
     *SIGMA_SCHEDULER_NODES,
     *SAMPLER_FACTORY_NODES,
