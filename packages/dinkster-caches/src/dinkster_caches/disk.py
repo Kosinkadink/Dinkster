@@ -50,12 +50,12 @@ if os.name == "nt":
 else:
     import fcntl
 
-from dinkster_protocol import CacheKey
+from dinkster_protocol import CachedResult, CacheKey
 from dinkster_values import TypeRegistry, Value, stable_hash
 
 from .cas import DiskCAS
 from .wire import (
-    EncodedValue,
+    EncodedEntry,
     encode_entry,
     entry_from_wire,
     entry_to_wire,
@@ -138,7 +138,7 @@ class DiskCacheStore:
 
     # -- CacheStore -------------------------------------------------------
 
-    async def get(self, key: CacheKey) -> Mapping[str, Value] | None:
+    async def get(self, key: CacheKey) -> CachedResult | None:
         entry = await asyncio.to_thread(self._with_lock, self._get, key)
         if entry is None:
             self.misses += 1
@@ -158,7 +158,7 @@ class DiskCacheStore:
             if self._pending_writes.get(key) is token:
                 del self._pending_writes[key]
 
-    def _put_pending(self, key: CacheKey, encoded: dict[str, EncodedValue], token: object) -> None:
+    def _put_pending(self, key: CacheKey, encoded: EncodedEntry, token: object) -> None:
         # This store's invalidation can precede a queued writer taking the lock.
         if self._pending_writes.get(key) is token:
             self._put(key, encoded)
@@ -202,7 +202,7 @@ class DiskCacheStore:
         with self._thread_lock, _exclusive_file_lock(self._lock_path):
             return operation(*args)
 
-    def _get(self, key: CacheKey) -> Mapping[str, Value] | None:
+    def _get(self, key: CacheKey) -> CachedResult | None:
         path = self._entry_path(key)
         wire = self._read_manifest(path)
         if wire is None or wire.get("key") != key:
@@ -226,7 +226,7 @@ class DiskCacheStore:
             os.utime(path)  # LRU clock
         return entry
 
-    def _put(self, key: CacheKey, encoded: dict[str, EncodedValue]) -> None:
+    def _put(self, key: CacheKey, encoded: EncodedEntry) -> None:
         try:
             self._write_entry(key, encoded)
         except BaseException:
@@ -258,7 +258,7 @@ class DiskCacheStore:
         with contextlib.suppress(FileNotFoundError):
             path.unlink()
 
-    def _write_entry(self, key: CacheKey, encoded: dict[str, EncodedValue]) -> None:
+    def _write_entry(self, key: CacheKey, encoded: EncodedEntry) -> None:
         manifest = entry_to_wire(key, encoded, self._cas.put)
         path = self._entry_path(key)
         tmp = self._entries_dir / f".{path.name}.{uuid.uuid4().hex}.tmp"

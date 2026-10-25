@@ -2,6 +2,19 @@
 
 - Input types: concrete, union, wildcard, variable, list, asset;
   scalar/list cardinality; required/advanced/hidden/lazy input flags
+- Backend schemas describe fixed positional tuples, derive tuple outputs from
+  independently typed input families in document order, and select a position's
+  type using a stored integer index. Tuple declarations round-trip through the
+  schema wire contract; ordinary list families retain homogeneous binding.
+  Tuple values retain independently typed child envelopes across worker and
+  persistent-cache boundaries, including nested lists and tuples. Resource
+  invalidation and device metadata projection inspect every position; persistent
+  caches refuse tuples containing live resident references. Foundation tuple
+  nodes collect independently typed connected values and select a position with
+  a document-stored integer index, including negative indices. Graph validation
+  rejects non-tuple sources and out-of-range indices at any region depth. Host
+  preparation and COMBO checks inspect every position. This does not claim
+  frontend editor or importer support.
 - Required closed dynamic slots can bind their selected variant type to shared
   input and output variables, including list and asset element types
 - Widgets: asset, save-target, combo and multi-combo with optional labels,
@@ -42,6 +55,18 @@
   with numeric epsilon; lazy typed selection;
   variadic boolean logic; clamping; range remapping with easing curves; and
   deterministic seeded integer or float random values
+- Native `ComfySwitchNode` uses ComfyUI's `switch`, `on_false`, and `on_true`
+  inputs. Only the selected branch executes; an unconnected selected input
+  produces an absent output. The two arms share one type template.
+- Loop boundary validation rejects unmatched starts or ends, ambiguous nesting,
+  body escape paths, and accumulation controls fed from their own body,
+  including boundaries inside region bodies.
+- Native loop boundaries expand simple counts, For ranges, and typed lists
+  into run-local body occurrences. They carry values between iterations,
+  collect final or accumulated results, and preserve nested occurrence identity.
+  Absent termination dependencies still complete the loop; an absent collected
+  output propagates absence instead of leaving the closing boundary waiting.
+  Loops can read enclosing region ports, and pending regions can be inhibited.
 - User-declared expression outputs with stable IDs, editable names, and
   independently selected integer, float, boolean, or string outputs
 - Entry-list fan-out with edit-time output count and types. Each entry carries
@@ -85,6 +110,9 @@
   gather/compact/state/flatten, including generic body outputs whose type is
   fixed by linked concrete inputs. Gather and flatten preserve whole-output
   absence; compact gathers only present iteration values in iteration order.
+  Declared output nodes in a body execute each iteration, including nested
+  regions containing output nodes. A region needs an exported output or a
+  declared output node; sink-only maps need no dummy exported output.
   Lazy routing resolves independently for each iteration; unselected branch
   nodes and nested regions neither prepare nor execute.
   Each body exposes its immediate zero-based `$region.index`; an explicitly

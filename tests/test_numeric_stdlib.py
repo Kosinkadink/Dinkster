@@ -316,7 +316,7 @@ def test_foundation_comfy_alias_records() -> None:
     expected_aliases = {
         "dinkster.math.expression": ("ComfyMathExpression",),
         "dinkster.value.compare": (),
-        "dinkster.value.select": ("ComfySwitchNode",),
+        "dinkster.value.select": (),
         "dinkster.bool.logic": (),
         "dinkster.value.clamp": (),
         "dinkster.value.remap": (),

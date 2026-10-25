@@ -39,6 +39,8 @@ from dinkster_memory import (
     Shedder,
 )
 from dinkster_protocol import (
+    AdmissionInvocation,
+    AdmissionResult,
     AttentionCapabilityEvidence,
     AttentionPolicyConfig,
     AttentionRouteToken,
@@ -72,6 +74,7 @@ from dinkster_schema import (
     comfy_alias_registry_from_wire,
     comfy_group_registry_from_wire,
     schema_from_wire,
+    schema_to_wire,
     validate_name,
 )
 from dinkster_values import (
@@ -90,8 +93,8 @@ from .boundary import (
     TransferStat,
     ValueCodec,
     ValueStore,
+    decode_result,
     decode_result_artifact_candidates,
-    decode_result_outputs,
     encode_invocation,
     error_from_wire,
     read_frame,
@@ -106,9 +109,10 @@ from .manifest import (
     generation_providers_from_wire,
     vision_providers_from_wire,
 )
-from .produced_assets import ProducedAssetAuthority, result_asset_digests
+from .produced_assets import ProducedAssetAuthority, result_asset_digests, source_asset_files
 from .relay import MemoryRelay, ReleaseGuard, WorkerFullReleaseResult
 from .resume import InvocationKey
+from .run_control import dispatch_run_control
 from .staging import StageAsset, declared_assets_from_wire
 from .workgroup import ReplicaEndpoint
 from .workgroup_session import WORKGROUP_FRAME_TYPE, WorkGroupSession
@@ -469,6 +473,7 @@ class BoundarySession:
         self._lease_decisions: dict[str, dict[str, object]] = {}
         self._pending: dict[str, asyncio.Future[tuple[dict[str, Any], list[bytes]]]] = {}
         self._lazy_pending: dict[str, asyncio.Future[tuple[dict[str, Any], list[bytes]]]] = {}
+        self._admission_pending: dict[str, asyncio.Future[tuple[dict[str, Any], list[bytes]]]] = {}
         self._conversion_pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._conversion_request_index = 0
         self._route_pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
@@ -493,6 +498,10 @@ class BoundarySession:
         # Events for an id with no sink (caller passed none, or the result
         # already landed) are dropped - they are chatter by contract.
         self._event_sinks: dict[str, OnInvocationEvent] = {}
+        self._run_controls: dict[str, Invocation] = {}
+        self._run_control_requests: set[tuple[str, str]] = set()
+        self._run_control_tasks: dict[tuple[str, str], asyncio.Task[None]] = {}
+        self._run_control_replies: dict[tuple[str, str], tuple[dict[str, object], list[bytes]]] = {}
         # Memory leases (DESIGN 3.10): the peer names what it is about to
         # materialize; this side holds the governor-backed reservation until
         # the peer releases it. None means grant-without-accounting - the
@@ -1398,6 +1407,44 @@ class BoundarySession:
             self._staging_pending.pop(request_id, None)
             self._stage_event_sinks.pop(request_id, None)
 
+    async def _publish_control_value(
+        self, invocation: Invocation, node_id: str, values: Mapping[str, Value]
+    ) -> None:
+        if self._device_map is not None:
+            values = {name: self._device_map.value(value) for name, value in values.items()}
+        handoff: list[str] = []
+        if self._release_guard is not None:
+            handoff = [
+                rid
+                for value in values.values()
+                for rid in value_resource_ids(value)
+                if self._release_guard.pins.pin(rid)
+            ]
+        try:
+            adoption = asyncio.create_task(
+                asyncio.to_thread(
+                    self._produced_assets.capture,
+                    values,
+                    self._blob_store,
+                    invocation.inputs,
+                )
+            )
+            self._asset_adoptions.add(adoption)
+            adoption.add_done_callback(self._asset_adoptions.discard)
+            await await_file_operation(adoption)
+            assert invocation.run_control is not None
+            await invocation.run_control.publish_run_value(node_id, values)
+        finally:
+            if self._release_guard is not None:
+                for rid in handoff:
+                    self._release_guard.pins.unpin(rid)
+
+    async def _prepare_control_values(self, values: Mapping[str, Value]) -> None:
+        if self._blob_transfer is not None:
+            files = source_asset_files(values, resolver_from_env())
+            if files:
+                await self._blob_transfer.ensure_peer_holds(files)
+
     async def invoke(
         self,
         invocation: Invocation,
@@ -1431,6 +1478,8 @@ class BoundarySession:
         if self._resumable:
             future.add_done_callback(_retrieve_future_exception)
         self._pending[invocation.invocation_id] = future
+        if invocation.run_control is not None:
+            self._run_controls[invocation.invocation_id] = invocation
         if on_event is not None:
             self._event_sinks[invocation.invocation_id] = on_event
         started_at_ns = time.time_ns()
@@ -1474,6 +1523,24 @@ class BoundarySession:
             raise
         finally:
             self._event_sinks.pop(invocation.invocation_id, None)
+            self._run_controls.pop(invocation.invocation_id, None)
+            control_tasks = [
+                task
+                for key, task in self._run_control_tasks.items()
+                if key[0] == invocation.invocation_id
+            ]
+            for task in control_tasks:
+                task.cancel()
+            if control_tasks:
+                await asyncio.gather(*control_tasks, return_exceptions=True)
+            self._run_control_requests = {
+                item for item in self._run_control_requests if item[0] != invocation.invocation_id
+            }
+            self._run_control_replies = {
+                item: reply
+                for item, reply in self._run_control_replies.items()
+                if item[0] != invocation.invocation_id
+            }
         round_trip_ms = (time.perf_counter() - started) * 1000.0
         execute_ms = float(reply_header.get("executeMs", 0.0))
         error_wire = reply_header.get("error")
@@ -1494,9 +1561,14 @@ class BoundarySession:
 
         consumed: list[str] = []
         try:
-            outputs, output_stats = decode_result_outputs(
-                self._codec, reply_header, reply_blobs, consumed
+            decoded, output_stats = decode_result(
+                self._codec,
+                reply_header,
+                reply_blobs,
+                consumed,
             )
+            assert decoded.outputs is not None
+            outputs = decoded.outputs
             if self._device_map is not None:
                 outputs = {name: self._device_map.value(value) for name, value in outputs.items()}
             # Handoff pins (DESIGN 3.10): from the moment this side can see the
@@ -1582,7 +1654,56 @@ class BoundarySession:
             return InvocationResult(
                 error=NodeError(invocation.node_id, invocation.node_type, str(exc))
             )
-        return InvocationResult(outputs=outputs, artifacts=artifacts)
+        return InvocationResult(outputs=outputs, artifacts=artifacts, expansion=decoded.expansion)
+
+    async def validate_admission(
+        self,
+        invocation: AdmissionInvocation,
+        on_event: OnInvocationEvent | None = None,
+    ) -> AdmissionResult:
+        del on_event
+        if not self._alive:
+            return AdmissionResult(explanation=f"{self._role} '{self._pack}' is not running")
+        if invocation.request_id in self._admission_pending:
+            return AdmissionResult(explanation="admission-protocol-skew: duplicate request id")
+        future: asyncio.Future[tuple[dict[str, Any], list[bytes]]] = (
+            asyncio.get_running_loop().create_future()
+        )
+        self._admission_pending[invocation.request_id] = future
+        try:
+            await self.send(
+                {
+                    "type": "validateAdmission",
+                    "requestId": invocation.request_id,
+                    "nodeId": invocation.node_id,
+                    "nodeType": invocation.node_type,
+                    "literalInputs": dict(invocation.literal_inputs),
+                    "linkedInputTypes": dict(invocation.linked_input_types),
+                    "effectiveSchema": schema_to_wire(invocation.effective_schema),
+                },
+                [],
+            )
+            reply, blobs = await future
+            explanation = reply.get("explanation")
+            if (
+                blobs
+                or "explanation" not in reply
+                or (explanation is not None and not isinstance(explanation, str))
+            ):
+                raise BoundaryError(
+                    "admission result requires a string or null explanation and no blobs"
+                )
+            return AdmissionResult(explanation=explanation)
+        except WorkerDied:
+            return AdmissionResult(explanation=f"{self._role} '{self._pack}' is not running")
+        except BoundaryError as exc:
+            return AdmissionResult(explanation=f"admission-protocol-malformed: {exc}")
+        except asyncio.CancelledError:
+            with contextlib.suppress(Exception):
+                await self.send({"type": "cancelAdmission", "requestId": invocation.request_id}, [])
+            raise
+        finally:
+            self._admission_pending.pop(invocation.request_id, None)
 
     async def check_lazy_status(
         self,
@@ -1745,6 +1866,10 @@ class BoundarySession:
             if not future.done():
                 future.set_exception(WorkerDied())
         self._lazy_pending.clear()
+        for future in self._admission_pending.values():
+            if not future.done():
+                future.set_exception(WorkerDied())
+        self._admission_pending.clear()
         for future in self._conversion_pending.values():
             if not future.done():
                 future.set_exception(WorkerDied())
@@ -1767,6 +1892,15 @@ class BoundarySession:
         self._choices_pending.clear()
         self._stage_event_sinks.clear()
         self._event_sinks.clear()
+        self._run_controls.clear()
+        control_tasks = list(self._run_control_tasks.values())
+        for task in control_tasks:
+            task.cancel()
+        if control_tasks:
+            await asyncio.gather(*control_tasks, return_exceptions=True)
+        self._run_control_tasks.clear()
+        self._run_control_requests.clear()
+        self._run_control_replies.clear()
         self._invocation_keys.clear()
         self._last_event_sequences.clear()
         self._cancelled_invocations.clear()
@@ -1835,9 +1969,12 @@ class BoundarySession:
     ) -> None:
         body = dict(header)
         kind = body.get("type")
-        resumable_control = kind in ("memoryGrant", "memoryDeny")
+        resumable_control = kind in ("memoryGrant", "memoryDeny", "runControlResult")
         if resumable_control:
-            key = self._invocation_keys.get(str(body.get("requestId")))
+            invocation_id = (
+                body.get("invocationId") if kind == "runControlResult" else body.get("requestId")
+            )
+            key = self._invocation_keys.get(str(invocation_id))
             if key is not None:
                 body.update(key.to_wire())
         if resumable_control and (self._writer is None or self._rebinding):
@@ -1974,7 +2111,7 @@ class BoundarySession:
                 header, blobs = frame
                 kind = header.get("type")
                 if kind == "result":
-                    if "resultAlgebra" in header:
+                    if "resultAlgebra" in header and "error" in header:
                         raise BoundaryError("unexpected result algebra frame")
                     invocation_id = str(header.get("invocationId"))
                     key: InvocationKey | None = None
@@ -2004,8 +2141,12 @@ class BoundarySession:
                         # Receipt alone cannot release the producer's hold while adoption runs.
                         if invocation_id in self._result_ack_ready:
                             self._resend_result_acknowledgement(key)
-                elif kind == "lazyStatusResult":
-                    future = self._lazy_pending.pop(str(header.get("requestId")), None)
+                elif kind in ("lazyStatusResult", "admissionResult"):
+                    pending = {
+                        "lazyStatusResult": self._lazy_pending,
+                        "admissionResult": self._admission_pending,
+                    }[kind]
+                    future = pending.pop(str(header.get("requestId")), None)
                     if future is not None and not future.done():
                         future.set_result((header, blobs))
                 elif kind == "invocationEvent":
@@ -2038,6 +2179,83 @@ class BoundarySession:
                         # (which would take the whole session down with it).
                         with contextlib.suppress(Exception):
                             sink(event)
+                elif kind == "runControl":
+                    invocation_id = header.get("invocationId")
+                    request_id = header.get("requestId")
+                    if type(invocation_id) is not str or type(request_id) is not str:
+                        raise BoundaryError("run control request identity is malformed")
+                    context = self._run_controls.get(invocation_id)
+                    if self._resumable:
+                        key = InvocationKey.from_header(header)
+                        if self._invocation_keys.get(invocation_id) != key:
+                            raise BoundaryError("run control request names no invocation")
+                    if invocation_id in self._cancelled_invocations:
+                        consumed: list[str] = []
+                        decode_result(
+                            self._codec, {"outputs": header.get("values", {})}, blobs, consumed
+                        )
+                        if consumed:
+                            await self.send({"type": "shmAck", "segments": consumed}, [])
+                        continue
+                    control_key = (invocation_id, request_id)
+                    if context is None:
+                        raise BoundaryError("run control request names no active invocation")
+                    if control_key in self._run_control_requests:
+                        cached_reply = self._run_control_replies.get(control_key)
+                        if cached_reply is not None:
+                            await self.send(cached_reply[0], cached_reply[1])
+                        continue
+                    self._run_control_requests.add(control_key)
+                    asset_owner = object()
+                    if self._blob_store is not None:
+                        digests = result_asset_digests({"outputs": header.get("values", {})}, blobs)
+                        self._blob_store.pin(asset_owner, digests)
+
+                    async def run_control_request(
+                        request_invocation: Invocation = context,
+                        request_header: dict[str, Any] = header,
+                        request_blobs: list[bytes] = blobs,
+                        request_key: tuple[str, str] = control_key,
+                        request_asset_owner: object = asset_owner,
+                    ) -> None:
+                        async def publish(node_id: str, values: Mapping[str, Value]) -> None:
+                            await self._publish_control_value(request_invocation, node_id, values)
+
+                        async def send_control_reply(
+                            response: dict[str, object],
+                            reply_blobs: Sequence[bytes],
+                            reply_segments: Sequence[SharedMemory],
+                        ) -> None:
+                            if self._resumable and response.get("type") == "runControlResult":
+                                if reply_segments:
+                                    raise BoundaryError(
+                                        "resumable run control replies cannot use shared memory"
+                                    )
+                                self._run_control_replies[request_key] = (
+                                    response,
+                                    list(reply_blobs),
+                                )
+                            await self.send(response, reply_blobs, reply_segments)
+
+                        try:
+                            assert request_invocation.run_control is not None
+                            await dispatch_run_control(
+                                request_invocation.run_control,
+                                self._codec,
+                                request_header,
+                                request_blobs,
+                                send_control_reply,
+                                publish,
+                                self._prepare_control_values,
+                            )
+                        finally:
+                            self._run_control_tasks.pop(request_key, None)
+                            if self._blob_store is not None:
+                                self._blob_store.unpin(request_asset_owner)
+
+                    task = asyncio.create_task(run_control_request())
+                    self._run_control_tasks[control_key] = task
+                    task.add_done_callback(_retrieve_future_exception)
                 elif kind == "schemaReloadRequest":
                     if not self._schema_reload or blobs:
                         raise BoundaryError("unnegotiated schema reload request")
@@ -2090,6 +2308,9 @@ class BoundarySession:
                     lease = self._leases.get(str(header.get("requestId")))
                     if lease is not None:
                         lease[1].set()
+                        decision = self._lease_decisions.get(str(header.get("requestId")))
+                        if decision is not None and decision.get("type") == "memoryGrant":
+                            await lease[0]
                     self._lease_decisions.pop(str(header.get("requestId")), None)
                 elif kind == "memoryReport":
                     consumers = header.get("consumers")
@@ -2133,8 +2354,11 @@ class BoundarySession:
                         raise BoundaryError("unexpected rebind result")
                     future.set_result(header)
                 elif kind == "cancelAck":
+                    if not self._resumable:
+                        continue
                     key = InvocationKey.from_header(header)
-                    if self._invocation_keys.get(key.invocation_id) != key:
+                    registered = self._invocation_keys.get(key.invocation_id)
+                    if registered != key:
                         raise BoundaryError("cancel acknowledgement names no invocation")
                     pending = self._pending.pop(key.invocation_id, None)
                     if pending is not None and not pending.done():
@@ -2197,6 +2421,7 @@ class BoundarySession:
             self._keepalive_task = None
         for pending in (
             self._lazy_pending,
+            self._admission_pending,
             self._conversion_pending,
             self._route_pending,
             self._rendition_pending,
