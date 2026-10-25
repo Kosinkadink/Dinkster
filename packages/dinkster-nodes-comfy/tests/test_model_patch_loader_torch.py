@@ -560,10 +560,10 @@ def test_model_patch_loader_both_ordinary_hosts_twice(
     )
     snapshot = tmp_path / "mounts.json"
     table = MountTable(snapshot, index_root=tmp_path / "index")
-    table.add(MountDef(id="patches", path=tmp_path), kind="model/model-patch")
+    table.add(MountDef(id="patches", path=tmp_path), kind="model/patch")
     if verified:
         table.scan("patches")
-    asset = table.bind_name(checkpoint.name, "model/model-patch")
+    asset = table.bind_name(checkpoint.name, "model/patch")
     assert isinstance(asset, AssetRef if verified else LocalAssetRef)
     monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
 

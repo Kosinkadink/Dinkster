@@ -198,7 +198,7 @@ class ModelPatchLoader(Node):
         return NodeSchema(
             node_type="ModelPatchLoader",
             category="model/loaders",
-            inputs=(InputSpec("name", _ASSET, widget=AssetWidget(kind="model/model-patch")),),
+            inputs=(InputSpec("name", _ASSET, widget=AssetWidget(kind="model/patch")),),
             outputs=(OutputSpec("MODEL_PATCH", _MODEL_PATCH),),
         )
 
