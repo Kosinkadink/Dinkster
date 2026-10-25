@@ -385,6 +385,7 @@ namespaces = [
     "SeedVR2PostProcessing",
     "WanDancerPadKeyframes",
     "WanDancerPadKeyframesList",
+    "LTXVDurationPredictor",
 ]
 
 [pack.sandbox]

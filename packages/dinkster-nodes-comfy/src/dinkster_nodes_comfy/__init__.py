@@ -64,6 +64,7 @@ from .logic import LOGIC_NODES
 from .loops import LOOP_NODES
 from .ltx_audio import LTX_AUDIO_NODES
 from .ltx_av_latent import LTX_AV_LATENT_NODES
+from .ltx_duration import LTXVDurationPredictor
 from .ltx_sampling import LTX_SAMPLING_NODES
 from .ltx_video_conditioning import LTX_VIDEO_CONDITIONING_NODES
 from .ltx_video_preprocess import LTX_VIDEO_PREPROCESS_NODES
@@ -220,6 +221,7 @@ COMFY_NODES = (
     ARVideoI2V,
     SeedVR2PostProcessing,
     *WANDANCER_KEYFRAME_NODES,
+    LTXVDurationPredictor,
 )
 
 
