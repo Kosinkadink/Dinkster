@@ -26,7 +26,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     TypeExpr,
 )
-from dinkster_assets import MountDef, MountTable
+from dinkster_assets import AssetVault, MountDef, MountTable
 from dinkster_assets.identity import digest_file
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.model_patch_loader import (
@@ -123,7 +123,8 @@ def test_local_architecture_helpers_construct_without_production_weights() -> No
     assert {parameter.dtype for parameter in multitalk.parameters()} == {torch.bfloat16}
 
 
-def test_loader_builds_duration_head_from_safe_unverified_asset(tmp_path: Path) -> None:
+@pytest.mark.parametrize("vault_backed", [False, True])
+def test_loader_builds_duration_head_from_safe_asset(tmp_path: Path, vault_backed: bool) -> None:
     from dinkster_inference.ldm.lightricks.duration_head import DurationHead
     from safetensors import safe_open
     from safetensors.torch import save_file
@@ -147,7 +148,16 @@ def test_loader_builds_duration_head_from_safe_unverified_asset(tmp_path: Path) 
         checkpoint.name,
         resolver=resolver,
     )
-    patcher = ModelPatchLoader.execute(name=asset)["MODEL_PATCH"]
+    loaded_asset: AssetRef | LocalAssetRef = asset
+    if vault_backed:
+        vault = AssetVault(tmp_path / "vault")
+        digest = digest_file(checkpoint)
+        with vault.writer(digest) as writer:
+            writer.write(checkpoint.read_bytes())
+            writer.commit()
+        loaded_asset = AssetRef(digest, checkpoint.name, checkpoint.stat().st_size, resolver=vault)
+        assert not loaded_asset.local_path().suffix
+    patcher = ModelPatchLoader.execute(name=loaded_asset)["MODEL_PATCH"]
     assert type(patcher).__name__ == "ModelPatcher"
     assert type(patcher.model).__name__ == "DurationHead"
     assert patcher.model.attention_pooler.query_tokens.dtype is torch.float32
