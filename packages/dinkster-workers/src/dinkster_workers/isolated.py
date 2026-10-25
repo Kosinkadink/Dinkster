@@ -46,6 +46,8 @@ from types import MappingProxyType
 from dinkster_assets import resolver_from_env
 from dinkster_memory import MemoryGovernor, ReportedTelemetry, ReservationService
 from dinkster_protocol import (
+    AdmissionInvocation,
+    AdmissionResult,
     CompatGateDiagnostic,
     Invocation,
     InvocationResult,
@@ -443,6 +445,13 @@ class IsolatedWorker:
     ) -> LazyStatusResult:
         return await self._session.check_lazy_status(invocation, on_event=on_event)
 
+    async def validate_admission(
+        self,
+        invocation: AdmissionInvocation,
+        on_event: OnInvocationEvent | None = None,
+    ) -> AdmissionResult:
+        return await self._session.validate_admission(invocation, on_event=on_event)
+
     async def close(self) -> None:
         if self._close_task is None:
             self._close_task = asyncio.create_task(self._close())
@@ -635,6 +644,13 @@ class GroupMemberWorker:
         on_event: OnInvocationEvent | None = None,
     ) -> LazyStatusResult:
         return await self._session.check_lazy_status(invocation, on_event=on_event)
+
+    async def validate_admission(
+        self,
+        invocation: AdmissionInvocation,
+        on_event: OnInvocationEvent | None = None,
+    ) -> AdmissionResult:
+        return await self._session.validate_admission(invocation, on_event=on_event)
 
 
 class GroupIsolatedWorker:

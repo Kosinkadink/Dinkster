@@ -25,6 +25,8 @@ from dinkster_api.v1 import (
     AUDIO_TYPE,
     BACKGROUND_REMOVAL_TYPE,
     BOUNDING_BOX_TYPE,
+    CONTROL_NET_TYPE,
+    GLIGEN_TYPE,
     LATENT_UPSCALE_MODEL_TYPE,
     MESH_TYPE,
     MODEL_PATCH_TYPE,
@@ -390,6 +392,8 @@ def test_v3_native_types_stay_bare_in_list_union_and_template_structures() -> No
         "MESH",
         "SHAPE_SUBDIVIDES",
         "BOUNDING_BOX",
+        "CONTROL_NET",
+        "GLIGEN",
         "MODEL_PATCH",
         "LATENT_UPSCALE_MODEL",
     )
@@ -404,6 +408,8 @@ def test_v3_native_types_stay_bare_in_list_union_and_template_structures() -> No
         MESH_TYPE,
         SHAPE_SUBDIVIDES_TYPE,
         BOUNDING_BOX_TYPE,
+        CONTROL_NET_TYPE,
+        GLIGEN_TYPE,
         MODEL_PATCH_TYPE,
         LATENT_UPSCALE_MODEL_TYPE,
     )

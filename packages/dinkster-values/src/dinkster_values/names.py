@@ -39,7 +39,7 @@ import re
 
 NAME_MAX = 64
 
-RESERVED_NAMESPACES: frozenset[str] = frozenset({"std", "comfy", "core", "dinkster", "dev"})
+RESERVED_NAMESPACES: frozenset[str] = frozenset({"std", "comfy", "core", "dinkster"})
 
 _NAME_RE = re.compile(r"^[a-z][a-z0-9]*(?:[-_.][a-z0-9]+)*$")
 _CLAIM_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*(?:[-_. ][A-Za-z0-9]+)*$")

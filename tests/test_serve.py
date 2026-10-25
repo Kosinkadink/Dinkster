@@ -1934,10 +1934,11 @@ def test_serve_rejects_removed_single_job_mode(monkeypatch: pytest.MonkeyPatch, 
         serve.main()
 
 
-def test_serve_rejects_removed_dev_argument(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("argument", ["--dev", "--development-pack"])
+def test_serve_rejects_removed_dev_argument(monkeypatch: pytest.MonkeyPatch, argument: str) -> None:
     from dinkster import serve
 
-    monkeypatch.setattr(sys, "argv", ["dinkster-serve", "--dev"])
+    monkeypatch.setattr(sys, "argv", ["dinkster-serve", argument])
     with pytest.raises(SystemExit) as exc:
         serve.main()
     assert exc.value.code == 2
@@ -2780,6 +2781,28 @@ def test_memory_budget_failure_retains_server_output(tmp_path: Path) -> None:
     assert "server output:\nstartup reached readiness check" in "\n".join(raised.value.__notes__)
     process.terminate.assert_not_called()
     process.wait.assert_called_once_with(timeout=30)
+
+
+@pytest.mark.parametrize(
+    "pack_path", ["packages/dinkster-nodes-dev", "packages/dinkster-nodes-dev/dinkster-pack.toml"]
+)
+def test_serve_plain_dev_pack_is_announced(tmp_path: Path, pack_path: str) -> None:
+    port = free_port()
+    pack = Path(__file__).resolve().parent.parent / pack_path
+    process, log = start_logged_serve(
+        serve_command(port, "--no-default-packs", "--pack", str(pack)), tmp_path
+    )
+    pending_error: BaseException | None = None
+    try:
+        report = wait_for_composition(process, port)
+        packs = report["packs"]
+        assert isinstance(packs, dict)
+        assert packs["dinkster-nodes-dev"]["state"] == "announced"
+    except BaseException as error:
+        pending_error = error
+        raise
+    finally:
+        stop_logged_serve(process, log, pending_error)
 
 
 def test_serve_loads_memory_budgets_from_library_config(tmp_path: Path) -> None:

@@ -1,6 +1,6 @@
 export const frontendExtension = {
   activate(context) {
-    const statusId = 'dinkster-extension-contract-fixture.status';
+    const statusId = 'fixture.status';
     let routeMessage = 'Loading third-party pack route';
     let latest;
     const refresh = () => context.invalidateHostUi(statusId);
@@ -18,12 +18,12 @@ export const frontendExtension = {
       },
     }), 0, 'Extension contract proof');
 
-    context.eventConsumer('dinkster-extension-contract-fixture.event', (event) => {
+    context.eventConsumer('fixture.event', (event) => {
       latest = event;
       refresh();
     });
-    context.canvasLayer('dinkster-extension-contract-fixture.canvas', {
-      id: 'dinkster-extension-contract-fixture.canvas',
+    context.canvasLayer('fixture.canvas', {
+      id: 'fixture.canvas',
       position: 'foreground',
       draw({ context: canvas, nodes }) {
         const proof = nodes.find((node) => node.id === 'proof');
@@ -38,13 +38,13 @@ export const frontendExtension = {
         canvas.strokeRect(proof.x - 8, proof.y - 8, proof.width + 16, proof.height + 16);
       },
     });
-    context.nodeDecoration('dinkster-extension-contract-fixture.node-decoration', {
-      id: 'dinkster-extension-contract-fixture.node-decoration',
+    context.nodeDecoration('fixture.node-decoration', {
+      id: 'fixture.node-decoration',
       decorate(node) {
         if (node.id !== 'proof') return;
         return {
           badges: [{
-            id: 'dinkster-extension-contract-fixture.proof-badge',
+            id: 'fixture.proof-badge',
             glyph: 'Pack',
             variant: 'label',
             interactive: false,

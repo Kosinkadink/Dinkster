@@ -41,7 +41,7 @@ from dinkster_values import (
     list_type_id,
     parse_asset_type_id,
     parse_list_type_id,
-    runtime_type_atom,
+    runtime_type_atoms,
 )
 
 from .model import TypeExpr
@@ -62,6 +62,8 @@ def _expr_mentions_combo(expr: TypeExpr) -> bool:
     if expr.kind in ("list", "asset", "stream"):
         assert expr.element is not None
         return _expr_mentions_combo(expr.element)
+    if expr.kind == "tuple":
+        return any(_expr_mentions_combo(position) for position in expr.elements)
     return False
 
 
@@ -71,11 +73,13 @@ def combo_type_mismatch_is_error(source_type_id: str, expected: TypeExpr) -> boo
 
     Callers first honor ``expected.accepts_concrete(source_type_id)`` and
     ``plan_asset_coercion``. This function only classifies a mismatch after
-    those normal acceptance paths fail. Peeling the runtime atom makes the
-    exception apply recursively to list<COMBO>, asset<COMBO>, and
-    stream<COMBO>.
+    those normal acceptance paths fail. Inspecting every runtime atom makes
+    the exception apply recursively through lists, assets, streams, and
+    tuple positions.
     """
-    return runtime_type_atom(source_type_id) == CORE_COMBO or _expr_mentions_combo(expected)
+    return CORE_COMBO in (runtime_type_atoms(source_type_id) or ()) or _expr_mentions_combo(
+        expected
+    )
 
 
 @runtime_checkable

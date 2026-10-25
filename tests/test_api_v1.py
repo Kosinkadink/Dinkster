@@ -21,6 +21,7 @@ import sys
 from collections.abc import Mapping
 
 import dinkster_api.v1 as api
+import pytest
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EngineEvent
 from dinkster_graph import Graph, GraphNode, Link
@@ -29,7 +30,10 @@ from dinkster_values import register_core_types
 from dinkster_workers import InProcessWorker
 
 GOLDEN_V1_SURFACE = (
+    "LatentStream",
+    "MultiStreamLatent",
     "initialize_inference_process",
+    "materialize_audio",
     "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
@@ -71,8 +75,13 @@ GOLDEN_V1_SURFACE = (
     "SourceFilenameSpec",
     # -- node authoring (dinkster-schema)
     "ABSENT",
+    "BLOCKED",
     "AbsentOutput",
     "AbsentPolicy",
+    "Expansion",
+    "ExpansionBuilder",
+    "ExpansionNode",
+    "ExpansionOutput",
     "BooleanWidget",
     "ColorWidget",
     "CompositorWidget",
@@ -114,6 +123,7 @@ GOLDEN_V1_SURFACE = (
     "ReplacementNode",
     "ReplacementPredicate",
     "ReplacementRule",
+    "RunExecutionContext",
     "SearchVisibility",
     "SelectorSpec",
     "SlotValue",
@@ -160,7 +170,11 @@ GOLDEN_V1_SURFACE = (
     "CONTEXT_WINDOWS_TYPE",
     "CONTROL_NET_TYPE",
     "DICT_TYPE",
+    "FLOATS_TYPE",
+    "GLIGEN_TYPE",
     "GUIDER_TYPE",
+    "HOOK_KEYFRAMES_TYPE",
+    "HOOKS_TYPE",
     "IMAGE_TYPE",
     "IMPACT_BASIC_PIPE_TYPE",
     "INFERENCE_LATENT_OPERATION_TYPE",
@@ -184,6 +198,8 @@ GOLDEN_V1_SURFACE = (
     "SHAPE_SUBDIVIDES_TYPE",
     "SIGMAS_TYPE",
     "SPLAT_TYPE",
+    "STYLE_MODEL_TYPE",
+    "TIMESTEPS_RANGE_TYPE",
     "VAE_TYPE",
     "VECTOR_TYPE",
     "VIDEO_DOCUMENT_TYPE",
@@ -222,6 +238,8 @@ GOLDEN_V1_SURFACE = (
     "audio_input",
     "byte_storage_meta",
     "coerce_audio",
+    "list_children",
+    "Value",
     "effective_audio_facts",
     "decode_audio",
     "encode_audio",
@@ -395,8 +413,42 @@ loaded = {
     if name.split(".")[0] in {"dinkster_inference_wire", "torch"}
 }
 assert not loaded, sorted(loaded)
-from dinkster_api.v1 import initialize_inference_process
+from dinkster_api.v1 import initialize_inference_process, materialize_audio
 assert callable(initialize_inference_process)
+assert callable(materialize_audio)
+assert not any(name.split('.')[0] in {'torch', 'dinkster_inference'} for name in sys.modules)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_public_multi_stream_latents_are_cold_structural_identities() -> None:
+    script = """
+import importlib.abc
+import sys
+
+class BlockRuntime(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split('.')[0] in {'torch', 'dinkster_inference'}:
+            raise AssertionError(f'runtime imported: {fullname}')
+
+sys.meta_path.insert(0, BlockRuntime())
+import dinkster_api.v1 as api
+assert {'LatentStream', 'MultiStreamLatent'} <= set(dir(api))
+from dinkster_api.v1 import LatentStream, MultiStreamLatent
+from dinkster_inference_wire.latents import LatentStream as InternalStream
+from dinkster_inference_wire.latents import MultiStreamLatent as InternalMulti
+assert LatentStream is InternalStream
+assert MultiStreamLatent is InternalMulti
+audio, video = object(), object()
+value = MultiStreamLatent((LatentStream('audio', audio), LatentStream('video', video)))
+assert value.roles == ('audio', 'video')
+assert value.by_role('audio') is audio
+assert value.streams[-1].payload is video
+reversed_streams = MultiStreamLatent.from_pairs((('video', video), ('audio', audio)))
+assert reversed_streams.roles == ('video', 'audio')
 assert not any(name.split('.')[0] in {'torch', 'dinkster_inference'} for name in sys.modules)
 """
     result = subprocess.run(
@@ -439,6 +491,48 @@ assert "torch" not in sys.modules
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.parametrize("native_first", (True, False))
+def test_gligen_registration_preserves_resident_identity_without_torch(native_first: bool) -> None:
+    script = f"""
+import sys
+from dinkster_api.v1 import GLIGEN_TYPE, TypeRegistry, register_inference_types
+from dinkster_memory.resident import default_pool
+from dinkster_native.native import register_native_types
+from dinkster_values import RESOURCE_ID_META_KEY, ResidentLookupError
+
+assert GLIGEN_TYPE == "GLIGEN"
+registry = TypeRegistry()
+registrations = (register_native_types, register_inference_types)
+if not {native_first!r}:
+    registrations = registrations[::-1]
+registrations[0](registry)
+spec = registry.spec(GLIGEN_TYPE)
+registrations[1](registry)
+assert registry.spec(GLIGEN_TYPE) is spec
+register_inference_types(registry)
+assert registry.spec(GLIGEN_TYPE) is spec
+assert default_pool() in registry.resident_tables
+assert "comfy.GLIGEN" not in registry
+source = object()
+encoded = spec.encode(source)
+assert spec.decode(encoded) is source
+assert spec.fingerprint(source) == spec.fingerprint(spec.decode(encoded))
+assert spec.meta(source)[RESOURCE_ID_META_KEY].startswith("resident:")
+assert default_pool().release_resident(source)
+try:
+    spec.decode(encoded)
+except ResidentLookupError:
+    pass
+else:
+    raise AssertionError("released GLIGEN remained resolvable")
+assert "torch" not in sys.modules
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_golden_surface_is_exact() -> None:
     """The frozen v1 surface. A failure here is a compat event: additions
     update this list deliberately; removals/renames are forbidden within v1
@@ -453,6 +547,7 @@ def test_golden_surface_is_exact() -> None:
 def test_reexports_are_the_internal_objects() -> None:
     """Zero wrappers: the door hands out the internal objects themselves."""
     import dinkster_assets
+    import dinkster_inference_wire.latents as latent_values
     import dinkster_inference_wire.process as inference_process
     import dinkster_inference_wire.types as inference_types
     import dinkster_memory
@@ -462,6 +557,7 @@ def test_reexports_are_the_internal_objects() -> None:
     import dinkster_video
 
     sources = (
+        latent_values,
         inference_process,
         inference_types,
         dinkster_schema,

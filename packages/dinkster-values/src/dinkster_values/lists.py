@@ -30,6 +30,7 @@ from .model import (
     ValueMeta,
     stable_hash,
 )
+from .tuples import TuplePayload
 
 LIST_TYPE_PREFIX = "list<"
 LIST_TYPE_SUFFIX = ">"
@@ -108,14 +109,20 @@ def list_children(value: Value) -> tuple[Value, ...] | None:
     return payload.children if isinstance(payload, ListPayload) else None
 
 
+def value_children(value: Value) -> tuple[Value, ...] | None:
+    """Children of either structural container, without list coercion."""
+    payload = value.payload
+    return payload.children if isinstance(payload, ListPayload | TuplePayload) else None
+
+
 def iter_value_tree(value: Value) -> Iterator[Value]:
-    """The value and every descendant envelope, depth-first in list order.
+    """The value and every descendant envelope, depth-first in position order.
 
     THE way to read envelope metadata that may live on children: residency
     (RESOURCES_META_KEY), cost (COST_META_KEY), resource references. Any
     consumer that reads only the top envelope will silently miss children."""
     yield value
-    children = list_children(value)
+    children = value_children(value)
     if children is not None:
         for child in children:
             yield from iter_value_tree(child)
@@ -191,12 +198,12 @@ def stamp_resource_producer_arm(value: Value, owner: str, arm: str) -> Value:
     exactly. Fingerprints do not change because both stamps are ephemeral
     routing metadata, not computation identity.
     """
-    children = list_children(value)
+    children = value_children(value)
     if children is not None:
         stamped = tuple(stamp_resource_producer_arm(child, owner, arm) for child in children)
         if stamped != children:
             payload = value.payload
-            assert isinstance(payload, ListPayload)
+            assert isinstance(payload, ListPayload | TuplePayload)
             value = replace(value, payload=replace(payload, children=stamped))
     if (
         _local_resource_ids(value)

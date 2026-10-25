@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 import uuid
 from pathlib import Path
 from typing import BinaryIO, Protocol, cast
@@ -120,12 +121,33 @@ class AssetWriter:
     def __init__(self, authority: MountWriteAuthority) -> None:
         self._authority = authority
 
-    def output_target(self, prefix: str, mount: str | None = None) -> dict[str, str]:
+    def output_target(
+        self,
+        prefix: str,
+        mount: str | None = None,
+        *,
+        image_width: int = 0,
+        image_height: int = 0,
+    ) -> dict[str, str]:
         """Combine separate node inputs without resolving a host path or granting writes."""
         if mount is None:
             if not isinstance(self._authority, MountSnapshotWriter):
                 raise AssetError("default output selection requires a mounts snapshot")
             mount = self._authority.output_mount()
+        if "%" in prefix:
+            now = time.localtime()
+            variables = {
+                "width": str(image_width),
+                "height": str(image_height),
+                "year": str(now.tm_year),
+                "month": f"{now.tm_mon:02}",
+                "day": f"{now.tm_mday:02}",
+                "hour": f"{now.tm_hour:02}",
+                "minute": f"{now.tm_min:02}",
+                "second": f"{now.tm_sec:02}",
+            }
+            for name, value in variables.items():
+                prefix = prefix.replace(f"%{name}%", value)
         return {"mount": mount, "prefix": prefix}
 
     def save_bytes(

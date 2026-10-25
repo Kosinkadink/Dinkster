@@ -41,6 +41,7 @@ from .model import (
 )
 from .names import claim_covers, claims_conflict
 from .streams import MediaStream, make_stream_value, parse_stream_type_id
+from .tuples import make_tuple_value, parse_tuple_type_id
 
 if TYPE_CHECKING:
     from .resident import ResidencyTable
@@ -912,6 +913,12 @@ class TypeRegistry:
         Asset references stay references until worker-side decoding supplies
         the target type. Unknown types keep the default pass-through behavior.
         """
+        positions = parse_tuple_type_id(type_id)
+        if positions is not None:
+            return tuple(
+                self.input_object(position, item)
+                for position, item in zip(positions, cast(Sequence[object], obj), strict=True)
+            )
         element = parse_list_type_id(type_id)
         if element is not None:
             return [self.input_object(element, item) for item in cast(Sequence[object], obj)]
@@ -930,6 +937,20 @@ class TypeRegistry:
         children stay full envelopes inside the list value (DESIGN 3.13).
         Asset ids (``asset<target>``) wrap through the base asset spec but
         keep the parametric stamp."""
+        if isinstance(obj, Value):
+            if obj.type_id != type_id:
+                raise TypeError(f"{type_id} rejects envelope of type {obj.type_id}")
+            return obj
+        positions = parse_tuple_type_id(type_id)
+        if positions is not None:
+            if not isinstance(obj, tuple) or len(cast(tuple[object, ...], obj)) != len(positions):
+                raise TypeError(f"{type_id} expects a tuple of {len(positions)} positions")
+            return make_tuple_value(
+                tuple(
+                    self.wrap(position, item)
+                    for position, item in zip(positions, cast(tuple[object, ...], obj), strict=True)
+                )
+            )
         stream_element = parse_stream_type_id(type_id)
         if stream_element is not None:
             if not isinstance(obj, MediaStream):

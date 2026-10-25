@@ -12,7 +12,7 @@ from dinkster_assets import (
     resolver_from_env,
 )
 from dinkster_inference_wire import register_inference_types
-from dinkster_inference_wire.sampling_wire import register_sampling_type
+from dinkster_inference_wire.hook_values import normalize_clip_hook_owners
 from dinkster_schema import Node
 from dinkster_values import (
     AUDIO_TYPE,
@@ -24,9 +24,6 @@ from dinkster_values import (
     MODEL3D_TYPE,
     MODEL_PATCH_TYPE,
     MODEL_TYPE,
-    NOISE_TYPE,
-    SAMPLER_TYPE,
-    SIGMAS_TYPE,
     VAE_TYPE,
     VIDEO_TYPE,
     TypeRegistry,
@@ -93,7 +90,6 @@ FOUNDATION_CLAIMED_V1_NAMES: tuple[str, ...] = (
     "PrimitiveBoolean",
     "CreateList",
     "ComfyMathExpression",
-    "ComfySwitchNode",
 )
 MEDIA_IO_CLAIMED_V1_NAMES: tuple[str, ...] = (
     "LoadImage",
@@ -125,6 +121,7 @@ def _register_resident(registry: TypeRegistry, type_id: str) -> None:
             type_id,
             table=default_pool(),
             meta=comfy_resident_meta,
+            coerce=normalize_clip_hook_owners if type_id == CLIP_TYPE else None,
         )
 
 
@@ -146,9 +143,6 @@ def register_native_types(registry: TypeRegistry) -> None:
 
     if LATENT_TYPE not in registry:
         register_latent_type(registry, LATENT_TYPE)
-
-    for type_id in (SAMPLER_TYPE, SIGMAS_TYPE, NOISE_TYPE):
-        register_sampling_type(registry, type_id)
 
     register_inference_types(registry)
     register_curve_type(registry)

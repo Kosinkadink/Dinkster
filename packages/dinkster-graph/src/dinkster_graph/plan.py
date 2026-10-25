@@ -2,13 +2,29 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
-from .model import Graph, Link
+from dinkster_schema import NodeSchema
+
+from .model import Graph, Link, RegionNode
 
 
 class GraphCycleError(Exception):
     pass
+
+
+def output_node_targets(graph: Graph, schemas: Mapping[str, NodeSchema]) -> list[str]:
+    """Declared sinks, including regions containing sinks, at this graph level."""
+    targets: list[str] = []
+    for node_id, node in graph.nodes.items():
+        if isinstance(node, RegionNode):
+            if output_node_targets(node.body, schemas):
+                targets.append(node_id)
+        else:
+            schema = schemas.get(node.node_type)
+            if schema is not None and schema.output_node:
+                targets.append(node_id)
+    return targets
 
 
 def _dependencies(graph: Graph, node_id: str) -> set[str]:
