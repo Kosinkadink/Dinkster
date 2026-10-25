@@ -223,13 +223,26 @@ def test_exact_ids_and_file_widget_exemption(list_inputs: bool) -> None:
                 "class_name": "LoadExample",
                 "file_inputs": ["file"],
                 "input_is_list": list_inputs,
-                "input_types": {"required": {"file": [["original.safetensors"]]}},
+                "input_types": {
+                    "required": {
+                        "file": [["original.safetensors"]],
+                        "mode": ["STRING"],
+                    }
+                },
                 "return_types": ["MODEL"],
                 "return_names": ["model"],
                 "output_is_list": [True],
             }
         ]
     }
+    file_type = (
+        {
+            "kind": "list",
+            "element": {"kind": "concrete", "types": ["ASSET"]},
+        }
+        if list_inputs
+        else {"kind": "concrete", "types": ["ASSET"]}
+    )
     schema = {
         "nodeType": "LoadExample",
         "interface": [
@@ -237,8 +250,15 @@ def test_exact_ids_and_file_widget_exemption(list_inputs: bool) -> None:
                 "role": "input",
                 "id": "file",
                 "required": True,
-                "type": {"kind": "concrete", "types": ["COMBO"]},
+                "type": file_type,
                 "widget": {"type": "ASSET"},
+                "default": "mounted.safetensors",
+            },
+            {
+                "role": "input",
+                "id": "mode",
+                "required": True,
+                "type": {"kind": "concrete", "types": ["STRING"]},
             },
             {
                 "role": "output",
@@ -252,7 +272,36 @@ def test_exact_ids_and_file_widget_exemption(list_inputs: bool) -> None:
     assert summary["passed"]
     assert summary["counts"] == {"identical": 1, "Dinkster-only": 1}
 
-    schema["interface"][1]["type"] = {
+    file_input = schema["interface"][0]
+    file_input["widget"] = {}
+    assert not compare_registry(reference, registry)["passed"]
+    file_input["widget"] = {"type": "ASSET"}
+    reference["nodes"][0]["file_inputs"] = []
+    summary = compare_registry(reference, registry)
+    assert not summary["passed"]
+    assert "asset picker on a non-file input" in summary["rows"][0]["differences"]
+    reference["nodes"][0]["file_inputs"] = ["file"]
+    file_input["id"] = "renamed_file"
+    assert not compare_registry(reference, registry)["passed"]
+    file_input["id"] = "file"
+    file_input["required"] = False
+    assert not compare_registry(reference, registry)["passed"]
+    file_input["required"] = True
+    schema["interface"][0], schema["interface"][1] = schema["interface"][1], schema["interface"][0]
+    assert not compare_registry(reference, registry)["passed"]
+    schema["interface"][0], schema["interface"][1] = schema["interface"][1], schema["interface"][0]
+    schema["interface"].insert(
+        2,
+        {
+            "role": "input",
+            "id": "extra",
+            "type": {"kind": "concrete", "types": ["STRING"]},
+        },
+    )
+    assert not compare_registry(reference, registry)["passed"]
+    del schema["interface"][2]
+
+    schema["interface"][2]["type"] = {
         "kind": "list",
         "element": {"kind": "concrete", "types": ["MODEL"]},
     }

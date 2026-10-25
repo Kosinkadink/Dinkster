@@ -167,10 +167,10 @@ def _native_inputs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
                         option["value"] if isinstance(option, dict) else option
                         for option in widget["options"]
                     ]
-                elif widget.get("type") == "ASSET":
-                    entry["file_picker"] = True
                 if entry.get("options"):
                     entry.setdefault("default", entry["options"][0])
+            if widget.get("type") == "ASSET":
+                entry["asset_widget"] = True
             if entry.get("multiselect") is False:
                 entry.pop("multiselect")
         elif role == "dynamicCombo":
@@ -224,13 +224,15 @@ def _differences(expected: Any, actual: Any, path: str) -> list[str]:
         ):
             actual["type"] = native_type["list"]
         file_input = expected.pop("file_input", False)
-        if actual.pop("file_picker", False):
+        if actual.pop("asset_widget", False):
             if not file_input or expected.get("type") not in ("COMBO", {"list": "COMBO"}):
                 return [f"{path}: asset picker on a non-file input"]
             # Mount contents vary, but the widget still consumes the original file slot.
             expected.pop("options", None)
             expected.pop("default", None)
             actual.pop("default", None)
+            if actual.get("type") == "ASSET":
+                actual["type"] = expected["type"]
         missing = expected.keys() ^ actual.keys()
         result = [
             f"{path}.{key}: missing {'native' if key in expected else 'reference'} field"
