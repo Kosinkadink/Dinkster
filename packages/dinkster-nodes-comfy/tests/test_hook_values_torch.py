@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,7 @@ import pytest
 import torch
 from dinkster_api.v1 import (
     CLIP_TYPE,
+    CONDITIONING_TYPE,
     CORE_STRING,
     FLOATS_TYPE,
     HOOK_KEYFRAMES_TYPE,
@@ -143,6 +145,114 @@ class HookConsumer(Node):
         )
 
 
+class HookOwnershipConsumer(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="hook-ownership-fixture.inspect",
+            inputs=(
+                InputSpec("original", TypeExpr.concrete(HOOKS_TYPE)),
+                InputSpec("hooks", TypeExpr.concrete(HOOKS_TYPE)),
+                InputSpec("clip", TypeExpr.concrete(CLIP_TYPE)),
+                InputSpec("conditioning", TypeExpr.concrete(CONDITIONING_TYPE)),
+            ),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(
+        cls, *, original: Any, hooks: Any, clip: Any, conditioning: Any
+    ) -> dict[str, object]:
+        initialize_inference_process()
+
+        assert len(hooks.hooks) == 1
+        hook = hooks.hooks[0]
+        assert hook._strength_model == 0.75
+        assert hook._strength_clip == -1.25
+        hook_frames = [
+            (frame.strength, frame.start_percent) for frame in hook.hook_keyframe.keyframes
+        ]
+        assert hook_frames == [(0.625, 0.25)]
+        assert clip.apply_hooks_to_conds is None
+        assert clip.use_clip_schedule is True
+        forced = clip.patcher.forced_hooks
+        assert forced is not hooks
+        assert len(forced.hooks) == 1
+        forced_hook = forced.hooks[0]
+        assert forced_hook._strength_model == 0.75
+        assert forced_hook._strength_clip == -1.25
+        forced_frames = [
+            (frame.strength, frame.start_percent) for frame in forced_hook.hook_keyframe.keyframes
+        ]
+        assert forced_frames == [(0.625, 0.25)]
+        pair = original._dinkster_resident_refs[0]
+        conditioned = conditioning[0][1]["hooks"]
+        for group in (hooks, forced, conditioned):
+            assert sum(owner is pair for owner in group._dinkster_resident_refs) == 1
+            assert group.hooks[0].weights["weight"][1][0] is pair[0]["weight"]
+            assert group.hooks[0].weights_clip["weight"][1][0] is pair[1]["weight"]
+        assert torch.equal(conditioning[0][0], torch.tensor([[2.0, -7.0]]))
+        return cls.outputs(summary="0.75;-1.25;0.625;0.25")
+
+
+class HookOwnershipSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="hook-ownership-fixture.source",
+            outputs=(
+                OutputSpec("hooks", TypeExpr.concrete(HOOKS_TYPE)),
+                OutputSpec("clip", TypeExpr.concrete(CLIP_TYPE)),
+                OutputSpec("conditioning", TypeExpr.concrete(CONDITIONING_TYPE)),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        initialize_inference_process()
+        from dinkster_inference import hooks
+
+        return cls.outputs(
+            hooks=_declared_weight_group()[0],
+            clip=_clip(),
+            conditioning=[[torch.tensor([[2.0, -7.0]]), {"hooks": hooks.HookGroup()}]],
+        )
+
+
+def _clip() -> Any:
+    initialize_inference_process()
+    from dinkster_inference.model_patcher import ModelPatcher
+    from dinkster_inference.sd import CLIP
+
+    clip = CLIP(no_init=True)
+    clip.patcher = ModelPatcher(torch.nn.Linear(2, 3), "cpu", "cpu")
+    clip.cond_stage_model = clip.patcher.model
+    clip.tokenizer = object()
+    clip.layer_idx = None
+    clip.tokenizer_options = {}
+    clip.use_clip_schedule = False
+    clip.apply_hooks_to_conds = None
+    clip.patcher.forced_hooks = None
+    return clip
+
+
+def _declared_weight_group() -> tuple[Any, object, Any]:
+    initialize_inference_process()
+    from dinkster_inference import hooks
+
+    weight_pair = (
+        {"weight": torch.tensor([[0.25, -1.0], [2.0, 0.5], [-0.75, 3.0]])},
+        {"weight": torch.tensor([[-0.5, 1.25], [0.75, -2.0], [3.5, 0.25]])},
+    )
+    keyframes = hooks.HookKeyframeGroup()
+    keyframes.add(hooks.HookKeyframe(strength=-0.375, start_percent=0.1))
+    group = hooks.create_hook_model_as_lora(*weight_pair, strength_model=0.75, strength_clip=-1.25)
+    hook = group.hooks[0]
+    hook.hook_keyframe = keyframes
+    group._dinkster_resident_refs = (weight_pair,)
+    return group, weight_pair, keyframes
+
+
 def test_floats_tensor_codec_preserves_dtype_and_bytes() -> None:
     source = torch.tensor([0.5, -3.25], dtype=torch.bfloat16)
     registry = TypeRegistry()
@@ -235,6 +345,112 @@ def test_ordinary_manifest_transports_float_strengths_twice(
                         "hook-source",
                         "hook-consumer",
                     }
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_ordinary_hosts_retain_weight_owners_through_public_hook_nodes(
+    tmp_path: Path, in_process: bool
+) -> None:
+    async def scenario() -> None:
+        root = Path(__file__).resolve().parents[1]
+        manifest = root / "dinkster-pack.toml"
+        composer = ServingComposer(
+            worker_env={"PYTHONPATH": os.pathsep.join((str(root / "tests"), str(root / "src")))}
+        )
+        try:
+            (tmp_path / "hook_ownership_fixture.py").write_text(
+                "from test_hook_values_torch import HookOwnershipConsumer, HookOwnershipSource\n"
+                "from dinkster_inference_wire import register_inference_types\n"
+                "NODES = (HookOwnershipSource, HookOwnershipConsumer)\n",
+                encoding="ascii",
+            )
+            fixture_manifest = tmp_path / "hook-ownership-fixture-dinkster-pack.toml"
+            fixture_manifest.write_text(
+                '[pack]\nname = "hook-ownership-fixture"\npublisher = "dinkster"\n'
+                'namespaces = ["hook-ownership-fixture"]\n'
+                '[pack.entry]\nnodes = "hook_ownership_fixture:NODES"\n'
+                'types = "hook_ownership_fixture:register_inference_types"\n',
+                encoding="ascii",
+            )
+            manifests = (manifest, fixture_manifest)
+            for pack_manifest in manifests:
+                await composer.add_pack(
+                    PackSpec(manifest=pack_manifest, in_process=True)
+                    if in_process
+                    else PackSpec(
+                        manifest=pack_manifest,
+                        worker_group="hook-ownership",
+                        group_manifests=manifests,
+                    )
+                )
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("hook-ownership-fixture.source", {}),
+                    "keyframes": GraphNode(
+                        "CreateHookKeyframe", {"strength_mult": 0.625, "start_percent": 0.25}
+                    ),
+                    "set": GraphNode(
+                        "SetHookKeyframes",
+                        {
+                            "hooks": Link("source", "hooks"),
+                            "hook_kf": Link("keyframes", "HOOK_KF"),
+                        },
+                    ),
+                    "combined-two": GraphNode(
+                        "CombineHooks2",
+                        {"hooks_A": Link("set", "HOOKS"), "hooks_B": Link("set", "HOOKS")},
+                    ),
+                    "combined-four": GraphNode(
+                        "CombineHooks4",
+                        {
+                            "hooks_A": Link("combined-two", "HOOKS"),
+                            "hooks_D": Link("combined-two", "HOOKS"),
+                        },
+                    ),
+                    "combined-eight": GraphNode(
+                        "CombineHooks8",
+                        {
+                            "hooks_A": Link("combined-four", "HOOKS"),
+                            "hooks_H": Link("combined-four", "HOOKS"),
+                        },
+                    ),
+                    "clip": GraphNode(
+                        "SetClipHooks",
+                        {
+                            "clip": Link("source", "clip"),
+                            "hooks": Link("combined-eight", "HOOKS"),
+                            "apply_to_conds": False,
+                            "schedule_clip": True,
+                        },
+                    ),
+                    "conditioning": GraphNode(
+                        "ConditioningSetProperties",
+                        {
+                            "cond_NEW": Link("source", "conditioning"),
+                            "hooks": Link("combined-eight", "HOOKS"),
+                        },
+                    ),
+                    "inspect": GraphNode(
+                        "hook-ownership-fixture.inspect",
+                        {
+                            "original": Link("source", "hooks"),
+                            "hooks": Link("combined-eight", "HOOKS"),
+                            "clip": Link("clip", "clip"),
+                            "conditioning": Link("conditioning", "conditioning"),
+                        },
+                    ),
+                }
+            )
+            engine = composer.composition.make_engine(lambda _event: None)
+            for attempt in range(2):
+                result = await engine.run(graph, ["inspect"])
+                assert result.outputs["inspect"]["summary"].resolve() == "0.75;-1.25;0.625;0.25"
+                if attempt:
+                    assert set(result.cached) == set(graph.nodes)
         finally:
             await composer.close()
 
@@ -500,5 +716,148 @@ def test_retained_keyframe_release_invalidates_groups_and_conditioning(
         assert torch.equal(raw[0][0], embedding)
         assert pool.release_resident(retained)
         assert await cache.get(CacheKey("replacement-conditioning")) is None
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("native_first", (False, True))
+@pytest.mark.parametrize("schedule_clip", (False, True))
+def test_weight_pair_ownership_survives_hook_clones_and_invalidates_dependents(
+    monkeypatch: pytest.MonkeyPatch, native_first: bool, schedule_clip: bool
+) -> None:
+    from dinkster_api.v1 import CONDITIONING_TYPE
+    from dinkster_caches import MemoryLRUCache
+    from dinkster_memory.resident import ResidentPool
+    from dinkster_native.native import register_native_types
+    from dinkster_nodes_comfy.hook_conditioning import ConditioningSetProperties, SetClipHooks
+    from dinkster_nodes_comfy.hook_scheduling import (
+        CombineHooks2,
+        CombineHooks4,
+        CombineHooks8,
+        SetHookKeyframes,
+    )
+    from dinkster_protocol import CacheKey
+    from dinkster_values import ResidentLookupError
+
+    initialize_inference_process()
+    from dinkster_inference import hooks
+
+    async def scenario() -> None:
+        pool = ResidentPool(terminal_release=lambda _: True)
+        monkeypatch.setattr("dinkster_inference_wire.types.default_pool", lambda: pool)
+        monkeypatch.setattr("dinkster_native.native.default_pool", lambda: pool)
+        registry = TypeRegistry()
+        first, second = (
+            (register_native_types, register_inference_types)
+            if native_first
+            else (register_inference_types, register_native_types)
+        )
+        first(registry)
+        second(registry)
+        cache = MemoryLRUCache(max_bytes=16384)
+        pool.register_invalidator(cache.drop_referencing)
+
+        source, weight_pair, old_keyframes = _declared_weight_group()
+        registry.wrap(HOOKS_TYPE, source)
+        replacement = hooks.HookKeyframeGroup()
+        replacement.add(hooks.HookKeyframe(strength=0.625, start_percent=0.25))
+        scheduled = SetHookKeyframes.execute(hooks=source, hook_kf=replacement)["HOOKS"]
+        retained_keyframes = scheduled.hooks[0].hook_keyframe
+        assert retained_keyframes is not replacement and retained_keyframes is not old_keyframes
+        assert [(frame.strength, frame.start_percent) for frame in old_keyframes.keyframes] == [
+            (-0.375, 0.1)
+        ]
+        retained_frames = [
+            (frame.strength, frame.start_percent) for frame in retained_keyframes.keyframes
+        ]
+        assert retained_frames == [(0.625, 0.25)]
+
+        shared = hooks.HookGroup()
+        shared_hook = hooks.WeightHook(strength_model=0.75, strength_clip=-1.25)
+        shared_hook.need_weight_init = False
+        shared_hook.weights_clip = scheduled.hooks[0].weights_clip
+        shared_hook.hook_keyframe = retained_keyframes
+        shared.add(shared_hook)
+        shared._dinkster_resident_refs = (weight_pair,)
+        replaced = scheduled.clone()
+        replaced_owner = object()
+        replaced.hooks[0].weights_clip = object()
+        replaced._dinkster_resident_refs = (replaced_owner,)
+        empty = hooks.HookGroup()
+        empty_owner = object()
+        empty._dinkster_resident_refs = (empty_owner,)
+
+        combined = CombineHooks2.execute(hooks_A=scheduled, hooks_B=shared)["HOOKS"]
+        assert len(combined.hooks) == 2
+        assert sum(owner is weight_pair for owner in combined._dinkster_resident_refs) == 1
+        combined = CombineHooks4.execute(hooks_A=combined, hooks_B=replaced, hooks_C=empty)["HOOKS"]
+        combined = CombineHooks8.execute(hooks_A=combined, hooks_H=combined)["HOOKS"]
+        assert len(combined.hooks) == 2
+        assert combined.hooks[0]._strength_model == 0.75
+        assert combined.hooks[0]._strength_clip == -1.25
+        assert sum(owner is weight_pair for owner in combined._dinkster_resident_refs) == 1
+        assert not any(owner is old_keyframes for owner in combined._dinkster_resident_refs)
+        assert not any(owner is replaced_owner for owner in combined._dinkster_resident_refs)
+        assert not any(owner is empty_owner for owner in combined._dinkster_resident_refs)
+
+        clip = SetClipHooks.execute(
+            clip=_clip(), hooks=combined, apply_to_conds=False, schedule_clip=schedule_clip
+        )["clip"]
+        forced = clip.patcher.forced_hooks
+        assert clip.apply_hooks_to_conds is None
+        assert forced is not combined
+        if schedule_clip:
+            assert all(hook.hook_keyframe is retained_keyframes for hook in forced.hooks)
+        else:
+            assert all(not hook.hook_keyframe.keyframes for hook in forced.hooks)
+        conditioning_input = [[torch.tensor([[2.0, -7.0]], dtype=torch.float64), {"hooks": shared}]]
+        conditioning = ConditioningSetProperties.execute(
+            cond_NEW=conditioning_input,
+            hooks=combined,
+        )["conditioning"]
+        conditioned_group = conditioning[0][1]["hooks"]
+        assert conditioned_group is not combined
+        assert conditioning_input[0][1]["hooks"] is shared
+        assert conditioned_group.hooks[0].hook_keyframe is retained_keyframes
+
+        clip_value = registry.wrap(CLIP_TYPE, clip)
+        conditioning_value = registry.wrap(CONDITIONING_TYPE, conditioning)
+        assert sum(owner is weight_pair for owner in clip._dinkster_resident_refs) == 1
+        assert sum(owner is weight_pair for owner in conditioned_group._dinkster_resident_refs) == 1
+        assert not any(owner is old_keyframes for owner in clip._dinkster_resident_refs)
+        assert not any(
+            owner is old_keyframes for owner in conditioned_group._dinkster_resident_refs
+        )
+        encoded = {
+            "clip": registry.spec(CLIP_TYPE).encode(clip_value.resolve()),
+            "conditioning": registry.spec(CONDITIONING_TYPE).encode(conditioning_value.resolve()),
+        }
+        await cache.put(CacheKey("clip"), {"value": clip_value})
+        await cache.put(CacheKey("conditioning"), {"value": conditioning_value})
+
+        assert pool.release_resident(old_keyframes)
+        assert await cache.get(CacheKey("clip")) is not None
+        assert await cache.get(CacheKey("conditioning")) is not None
+        assert registry.spec(CLIP_TYPE).decode(encoded["clip"]) is clip
+        assert (
+            registry.spec(CONDITIONING_TYPE).decode(encoded["conditioning"])
+            is conditioning_value.resolve()
+        )
+
+        unrelated = (torch.nn.Linear(2, 3), torch.nn.Linear(2, 3))
+        pool.rid_for(unrelated)
+        assert pool.release_resident(unrelated)
+        assert await cache.get(CacheKey("clip")) is not None
+        assert await cache.get(CacheKey("conditioning")) is not None
+        assert registry.spec(CLIP_TYPE).decode(encoded["clip"]) is clip
+
+        assert pool.release_resident(weight_pair)
+        for name, (type_id, _) in {
+            "clip": (CLIP_TYPE, clip_value),
+            "conditioning": (CONDITIONING_TYPE, conditioning_value),
+        }.items():
+            assert await cache.get(CacheKey(name)) is None
+            with pytest.raises(ResidentLookupError):
+                registry.spec(type_id).decode(encoded[name])
 
     asyncio.run(scenario())
