@@ -89,6 +89,7 @@ from dinkster_memory import (
     ReservationRequest,
     Shedder,
 )
+from dinkster_memory.resident import obtain_resident
 from dinkster_protocol import (
     EXTENSION_CAPABILITIES,
     EXTENSION_SCOPES,
@@ -442,6 +443,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "RunExecutionContext",
+    "obtain_resident",
     "Expansion",
     "ExpansionBuilder",
     "ExpansionNode",
