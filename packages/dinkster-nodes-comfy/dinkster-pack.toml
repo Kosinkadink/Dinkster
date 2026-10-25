@@ -379,6 +379,7 @@ namespaces = [
     "SamplerEulerCFGpp",
     "SamplerARVideo",
     "ARVideoI2V",
+    "SeedVR2PostProcessing",
 ]
 
 [pack.sandbox]
