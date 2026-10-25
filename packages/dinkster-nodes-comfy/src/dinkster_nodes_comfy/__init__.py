@@ -10,7 +10,7 @@ from dinkster_api.v1 import register_inference_types as _register_inference_type
 
 from .ace_text_conditioning import ACE_TEXT_CONDITIONING_NODES
 from .advanced_samplers import ADVANCED_SAMPLER_NODES
-from .ar_video import SamplerARVideo
+from .ar_video import ARVideoI2V, SamplerARVideo
 from .attention_guidance import ATTENTION_GUIDANCE_NODES
 from .attention_multiply import ATTENTION_MULTIPLY_NODES
 from .audio_combine import AUDIO_COMBINE_NODES
@@ -92,6 +92,7 @@ from .rope_and_mask import ROPE_AND_MASK_NODES
 from .sampler_factories import SAMPLER_FACTORY_NODES
 from .save_text import SaveText
 from .seedvr_conditioning import SeedVR2Conditioning
+from .seedvr_postprocess import SeedVR2PostProcessing
 from .seedvr_preprocess import SeedVR2Preprocess
 from .seedvr_temporal import SEEDVR_TEMPORAL_NODES
 from .sigma_operations import SIGMA_OPERATION_NODES
@@ -212,6 +213,8 @@ COMFY_NODES = (
     *SAMPLER_FACTORY_NODES,
     *ADVANCED_SAMPLER_NODES,
     SamplerARVideo,
+    ARVideoI2V,
+    SeedVR2PostProcessing,
 )
 
 

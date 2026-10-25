@@ -292,6 +292,7 @@ namespaces = [
     "LTXVImgToVideo",
     "LTXVImgToVideoInplace",
     "LTXVConditioning",
+    "LTXVCropGuides",
     "SeedVR2Preprocess",
     "SeedVR2Conditioning",
     "SeedVR2TemporalChunk",
@@ -379,6 +380,8 @@ namespaces = [
     "SamplerLCM",
     "SamplerEulerCFGpp",
     "SamplerARVideo",
+    "ARVideoI2V",
+    "SeedVR2PostProcessing",
 ]
 
 [pack.sandbox]

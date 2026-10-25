@@ -35,6 +35,7 @@ from pathlib import Path
 
 from .fetch import ChainResolver
 from .identity import AssetError
+from .kind import require_asset_kind
 from .library import IndexedAssetResolver
 from .model import AssetRef, AssetResolver
 from .mounts import MountSnapshotResolver
@@ -45,6 +46,7 @@ __all__ = [
     "clear_declared_assets",
     "declared_asset",
     "install_declared_assets",
+    "mount_roots_for_kind",
     "resolver_from_env",
     "use_declared_asset_pack",
 ]
@@ -52,6 +54,18 @@ __all__ = [
 VAULT_ENV = "DINKSTER_ASSET_VAULT"
 MOUNTS_ENV = "DINKSTER_MOUNTS_SNAPSHOT"
 ROOT_ENV = "DINKSTER_ASSET_ROOT"
+
+
+def mount_roots_for_kind(kind: str, *, env: Mapping[str, str] | None = None) -> tuple[Path, ...]:
+    """Read exact-kind directory grants from the worker's live mounts snapshot.
+
+    Ordered by ascending priority then mount id. Unconfigured or missing
+    authority returns no roots, with no vault, library or filesystem fallback.
+    """
+    require_asset_kind(kind)
+    environment = os.environ if env is None else env
+    snapshot = environment.get(MOUNTS_ENV)
+    return MountSnapshotResolver(snapshot).roots_for_kind(kind) if snapshot else ()
 
 
 def produced_asset_vault(env: Mapping[str, str] | None = None) -> AssetVault | None:

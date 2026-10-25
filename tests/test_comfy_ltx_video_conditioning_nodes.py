@@ -16,6 +16,7 @@ from dinkster_api.v1 import (
 )
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.ltx_video_conditioning import LTX_VIDEO_CONDITIONING_NODES
+from dinkster_workers import load_manifest
 
 
 def test_ltx_video_conditioning_schemas() -> None:
@@ -59,6 +60,19 @@ def test_ltx_video_conditioning_schemas() -> None:
             ),
             (("positive", CONDITIONING_TYPE), ("negative", CONDITIONING_TYPE)),
         ),
+        (
+            "LTXVCropGuides",
+            (
+                ("positive", CONDITIONING_TYPE),
+                ("negative", CONDITIONING_TYPE),
+                ("latent", LATENT_TYPE),
+            ),
+            (
+                ("positive", CONDITIONING_TYPE),
+                ("negative", CONDITIONING_TYPE),
+                ("latent", LATENT_TYPE),
+            ),
+        ),
     )
     assert len(LTX_VIDEO_CONDITIONING_NODES) == len(expected)
     for node, (name, inputs, outputs) in zip(LTX_VIDEO_CONDITIONING_NODES, expected, strict=True):
@@ -78,9 +92,16 @@ def test_ltx_video_conditioning_cold_discovery() -> None:
             "-c",
             "import sys; from dinkster_nodes_comfy.ltx_video_conditioning "
             "import LTX_VIDEO_CONDITIONING_NODES; "
-            "assert len(LTX_VIDEO_CONDITIONING_NODES) == 3; assert 'torch' not in sys.modules",
+            "assert len(LTX_VIDEO_CONDITIONING_NODES) == 4; "
+            "[node.schema() for node in LTX_VIDEO_CONDITIONING_NODES]; "
+            "assert 'torch' not in sys.modules; assert 'dinkster_inference' not in sys.modules",
         ],
         capture_output=True,
         text=True,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_ltx_crop_complete_manifest_order() -> None:
+    manifest = load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml")
+    assert tuple(node.schema().node_type for node in COMFY_NODES) == manifest.namespaces
