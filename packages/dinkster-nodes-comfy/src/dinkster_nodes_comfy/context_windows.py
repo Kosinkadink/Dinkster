@@ -130,7 +130,12 @@ class WanContextWindowsManual(ContextWindowsManual):
             description="Set context windows for Wan-like models.",
             inputs=(
                 InputSpec("model", _MODEL),
-                InputSpec("context_length", _INT, default=81, widget=NumberWidget(min=1, step=4)),
+                InputSpec(
+                    "context_length",
+                    _INT,
+                    default=81,
+                    widget=NumberWidget(min=1, max=16384, step=4),
+                ),
                 InputSpec("context_overlap", _INT, default=30, widget=NumberWidget(min=0)),
                 InputSpec(
                     "context_schedule",
@@ -180,7 +185,12 @@ class LTXVContextWindows(ContextWindowsManual):
             description="Set context windows for LTXV-like models.",
             inputs=(
                 InputSpec("model", _MODEL),
-                InputSpec("context_length", _INT, default=145, widget=NumberWidget(min=1, step=8)),
+                InputSpec(
+                    "context_length",
+                    _INT,
+                    default=145,
+                    widget=NumberWidget(min=1, max=16384, step=8),
+                ),
                 InputSpec("context_overlap", _INT, default=40, widget=NumberWidget(min=0, step=8)),
                 InputSpec(
                     "context_schedule",
