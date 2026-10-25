@@ -32,6 +32,8 @@
   patchers and install their native frame-wise CFG callbacks under exact core IDs.
 - Native Context Windows nodes clone model patchers and configure manual, Wan,
   and LTXV context-window sampling under exact core IDs.
+- MiniMax H3 sigma shifts clone model patchers, preserve noise scale, and set
+  independent video/audio flow shifts without modifying the source model.
 - Ten native conditioning nodes combine, blend, concatenate, multiply, mask,
   zero, and set area or timestep metadata under their exact ComfyUI interfaces.
 - Native hook conditioning preserves paired ordering, default records, mask and
