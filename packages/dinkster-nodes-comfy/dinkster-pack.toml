@@ -146,6 +146,7 @@ namespaces = [
     "RepeatLatentBatch",
     "LatentUpscale",
     "LatentUpscaleBy",
+    "LatentUpscaleModelLoader",
     "LatentRotate",
     "LatentFlip",
     "SetLatentNoiseMask",

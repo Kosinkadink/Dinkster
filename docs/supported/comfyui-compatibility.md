@@ -22,8 +22,9 @@
 - Six native latent operation nodes blend, tonemap, sharpen, apply operations
   directly or within a denoising schedule interval, and replace video frames.
   LATENT_OPERATION uses the same resident-value boundary as model hooks.
-- LATENT_UPSCALE_MODEL preserves resident identity, ownership, and cache lifetime
-  across ordinary native pack hosts without loading Torch during registration.
+- LatentUpscaleModelLoader loads Hunyuan Video 1.5 and LTXV latent-upscale checkpoints
+  into LATENT_UPSCALE_MODEL resident values across ordinary native pack hosts without
+  loading Torch during registration.
 - Nine native advanced latent nodes add, subtract, multiply, interpolate,
   concatenate, cut, split to batches, join batches, and set batch seed behavior.
 - Native CLIP text encoding preserves scheduled conditioning; layer selection
