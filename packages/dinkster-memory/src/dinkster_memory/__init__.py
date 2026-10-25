@@ -34,6 +34,7 @@ from .reservations import (
     ReservationRequest,
     ReservationService,
 )
+from .resident import obtain_resident
 from .system import SystemMemorySnapshot, system_memory_snapshot
 from .tenants import (
     ModelTenantHandle,
@@ -85,6 +86,7 @@ __all__ = [
     "parse_budgets",
     "parse_size",
     "model_tenant_registry",
+    "obtain_resident",
     "system_memory_snapshot",
     "use_model_tenant_registry",
 ]
