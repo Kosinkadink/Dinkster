@@ -38,6 +38,7 @@ from .hunyuan3d import HUNYUAN3D_CONDITIONING_NODES
 from .hunyuan_latent import HUNYUAN_LATENT_NODES
 from .hunyuan_text import HUNYUAN_TEXT_NODES
 from .hunyuan_video_image import HUNYUAN_VIDEO_IMAGE_NODES
+from .image_color_conversion import IMAGE_COLOR_CONVERSION_NODES
 from .image_core import IMAGE_CORE_NODES
 from .image_dimensions import IMAGE_DIMENSION_NODES
 from .image_filters import IMAGE_FILTER_NODES
@@ -154,6 +155,7 @@ COMFY_NODES = (
     *COMPOSITING_NODES,
     *IMAGE_CORE_NODES,
     *IMAGE_DIMENSION_NODES,
+    *IMAGE_COLOR_CONVERSION_NODES,
     *IMAGE_FILTER_NODES,
     *IMAGE_TRANSFORM_NODES,
     *MORPHOLOGY_NODES,
