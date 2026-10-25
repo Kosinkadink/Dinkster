@@ -20,6 +20,7 @@ from .clip_model_specific import MODEL_TEXT_ENCODER_NODES
 from .clip_sdxl import CLIP_SDXL_NODES
 from .compositing import COMPOSITING_NODES
 from .conditioning import CONDITIONING_NODES
+from .context_windows import CONTEXT_WINDOW_NODES
 from .controlnet import CONTROLNET_NODES
 from .cosmos_conditioning import COSMOS_CONDITIONING_NODES
 from .dataset_collections import DATASET_COLLECTION_NODES
@@ -116,6 +117,7 @@ COMFY_NODES = (
     *MODEL_TEXT_ENCODER_NODES,
     *VAE_NODES,
     *CONDITIONING_NODES,
+    *CONTEXT_WINDOW_NODES,
     *HOOK_CONDITIONING_NODES,
     *REFERENCE_CONDITIONING_NODES,
     *INPAINT_NODES,
