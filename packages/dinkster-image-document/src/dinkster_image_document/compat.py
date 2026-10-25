@@ -10,7 +10,13 @@ from typing import Any, cast
 
 import numpy as np
 from dinkster_assets import AssetRef, resolver_from_env
-from dinkster_values import TypeRegistry, copy_media_semantics, media_semantics
+from dinkster_values import (
+    COMPOSITOR_TYPE,
+    LAYERS_TYPE,
+    TypeRegistry,
+    copy_media_semantics,
+    media_semantics,
+)
 
 from .document import ImageDocument, append_raster, document_meta, empty_document, raster_png
 from .format import IMAGE_DOCUMENT_MEDIA_TYPE, canonical_json
@@ -147,22 +153,25 @@ def register_comfy_layers(registry: TypeRegistry) -> None:
         return ImageDocument(data, lambda wire: AssetRef.from_wire(wire, resolver_from_env()))
 
     if "comfy.LAYERS" not in registry:
-        registry.register(
-            "comfy.LAYERS",
-            coerce=coerce,
-            encode=lambda obj: coerce(obj).data,
-            decode=decode,
-            meta=lambda obj: document_meta(coerce(obj)),
-        )
+        with registry.registering_pack(
+            "dinkster-nodes-image", ("comfy.LAYERS", "comfy.COMPOSITOR"), allow_bare=True
+        ):
+            registry.register(
+                "comfy.LAYERS",
+                coerce=coerce,
+                encode=lambda obj: coerce(obj).data,
+                decode=decode,
+                meta=lambda obj: document_meta(coerce(obj)),
+            )
         registry.register_rendition(
             "comfy.LAYERS",
             "document",
             mime=IMAGE_DOCUMENT_MEDIA_TYPE,
             render=lambda obj: coerce(obj).data,
         )
-    if "dinkster.layers" in registry:
+    if LAYERS_TYPE in registry:
         registry.register_type_equivalence(
-            "comfy.LAYERS", "dinkster.layers", provider_id="dinkster.layer-document-equivalence@2"
+            "comfy.LAYERS", LAYERS_TYPE, provider_id="dinkster.layer-document-equivalence@2"
         )
 
 
@@ -185,15 +194,18 @@ def register_comfy_compositor(registry: TypeRegistry) -> None:
         return json.loads(canonical_json(value))
 
     if "comfy.COMPOSITOR" not in registry:
-        registry.register(
-            "comfy.COMPOSITOR",
-            coerce=coerce,
-            encode=lambda obj: canonical_json(coerce(obj)).encode("utf-8"),
-            decode=lambda data: coerce(json.loads(data)),
-        )
-    if "dinkster.compositor" in registry:
+        with registry.registering_pack(
+            "dinkster-nodes-image", ("comfy.LAYERS", "comfy.COMPOSITOR"), allow_bare=True
+        ):
+            registry.register(
+                "comfy.COMPOSITOR",
+                coerce=coerce,
+                encode=lambda obj: canonical_json(coerce(obj)).encode("utf-8"),
+                decode=lambda data: coerce(json.loads(data)),
+            )
+    if COMPOSITOR_TYPE in registry:
         registry.register_type_equivalence(
             "comfy.COMPOSITOR",
-            "dinkster.compositor",
+            COMPOSITOR_TYPE,
             provider_id="dinkster.compositor-equivalence@2",
         )

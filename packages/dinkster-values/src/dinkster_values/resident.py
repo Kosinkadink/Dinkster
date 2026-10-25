@@ -177,6 +177,8 @@ def register_resident_type(
     type_id: str,
     table: ResidencyTable | None = None,
     meta: Callable[[object], Mapping[str, object]] | None = None,
+    *,
+    coerce: Callable[[object], object] | None = None,
 ) -> TypeSpec:
     """``meta`` publishes residency/cost for the live object (device lanes,
     VRAM cost) - it rides the envelope across the boundary even though the
@@ -192,6 +194,7 @@ def register_resident_type(
         decode=codec.decode,
         fingerprint=codec.fingerprint,
         meta=codec.metadata,
+        coerce=coerce,
     )
     registry.register_resident_table(table if table is not None else _TABLE)
     return spec

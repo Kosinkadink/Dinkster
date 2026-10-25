@@ -345,14 +345,14 @@ def test_region_codec_rejects_invalid_records() -> None:
         spec.coerce([])
     with pytest.raises(ValueError, match="requires exactly"):
         spec.coerce({"x": 1, "y": 2, "width": 3})
-    with pytest.raises(ValueError, match="invalid dinkster.region payload"):
+    with pytest.raises(ValueError, match="invalid REGION payload"):
         spec.decode(b"not json")
 
 
 def test_future_spatial_type_names_are_reserved() -> None:
-    assert VECTOR_TYPE == "dinkster.vector"
-    assert SEGMENTATION_TYPE == "dinkster.segmentation"
-    assert DETECTION_TYPE == "dinkster.detection"
+    assert VECTOR_TYPE == "VECTOR"
+    assert SEGMENTATION_TYPE == "SEGMENTATION"
+    assert DETECTION_TYPE == "DETECTION"
     assert RESERVED_TYPE_IDS == {VECTOR_TYPE, SEGMENTATION_TYPE}
 
 

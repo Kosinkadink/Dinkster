@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 from typing import cast
 
 import numpy as np
 import pytest
+from dinkster_caches import MemoryLRUCache
+from dinkster_engine import Engine
+from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_foundation import ListElement
 from dinkster_nodes_image import (
+    DETECTION_TYPE,
     Detection,
     DetectionFilter,
     DetectionInfo,
@@ -13,7 +18,11 @@ from dinkster_nodes_image import (
     DetectionsToMasks,
     MakeDetection,
     Region,
+    register_image_types,
 )
+from dinkster_schema import Node, NodeSchema, OutputSpec, TypeExpr, build_node_types, build_schemas
+from dinkster_values import TypeRegistry, register_core_types
+from dinkster_workers import InProcessWorker
 
 
 def _detection(
@@ -222,5 +231,37 @@ def test_detections_to_masks_handles_an_empty_list() -> None:
 def test_list_element_selects_a_detection() -> None:
     detections = [_detection("cat"), _detection("dog")]
     filtered = DetectionFilter.execute(detections=detections, labels="dog")
-    selected = ListElement.execute(list=cast("list[object]", filtered["detections"]), index=0)
-    assert cast("Detection", selected["item"]).label == "dog"
+
+    class Source(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                "test.detections",
+                outputs=(OutputSpec("items", TypeExpr.list_of(TypeExpr.concrete(DETECTION_TYPE))),),
+            )
+
+        @classmethod
+        def execute(cls):
+            return cls.outputs(items=filtered["detections"])
+
+    nodes = (Source, ListElement)
+    registry = TypeRegistry()
+    register_core_types(registry)
+    register_image_types(registry)
+    engine = Engine(
+        schemas=build_schemas(nodes),
+        registry=registry,
+        worker=InProcessWorker(build_node_types(nodes), registry),
+        cache=MemoryLRUCache(),
+    )
+    graph = Graph(
+        {
+            "source": GraphNode("test.detections", {}),
+            "select": GraphNode(
+                "std.list.element",
+                {"list": Link("source", "items"), "index": 0},
+            ),
+        }
+    )
+    result = asyncio.run(engine.run(graph, ["select"]))
+    assert cast("Detection", result.outputs["select"]["item"].resolve()).label == "dog"

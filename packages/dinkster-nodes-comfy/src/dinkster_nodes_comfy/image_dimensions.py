@@ -16,6 +16,7 @@ from dinkster_api.v1 import (
     TypeExpr,
     materialize_image,
     materialize_latent,
+    report_progress,
 )
 
 _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
@@ -43,7 +44,9 @@ class GetImageSize(Node):
     @classmethod
     def execute(cls, *, image: Any) -> Mapping[str, object]:
         image = materialize_image(image)
-        return cls.outputs(width=image.shape[2], height=image.shape[1], batch_size=image.shape[0])
+        batch_size, height, width = image.shape[:3]
+        report_progress(1, 1, text=f"width: {width}, height: {height}\n batch size: {batch_size}")
+        return cls.outputs(width=width, height=height, batch_size=batch_size)
 
 
 class GetLatentSize(Node):
@@ -79,6 +82,11 @@ class GetLatentSize(Node):
         else:
             batch_size, _, height, width = samples.shape
             frames = 1
+        report_progress(
+            1,
+            1,
+            text=f"width: {width}, height: {height}\n frames: {frames}, batch size: {batch_size}",
+        )
         return cls.outputs(width=width, height=height, frames=frames, batch_size=batch_size)
 
 

@@ -6,6 +6,7 @@ import weakref
 from typing import cast
 
 import pytest
+from dinkster_api.v1 import AUDIO_TYPE
 from dinkster_values import MediaChunk, MediaStream, TypeRegistry
 
 
@@ -210,7 +211,7 @@ def test_registry_wraps_matching_stream_with_stable_metadata() -> None:
         with pytest.raises(TypeError, match="matching MediaStream"):
             registry.wrap("stream<IMAGE>", object())
         with pytest.raises(KeyError, match="unregistered"):
-            registry.wrap("stream<comfy.AUDIO>", first)
+            registry.wrap(f"stream<{AUDIO_TYPE}>", first)
     finally:
         first.close()
         second.close()
@@ -237,11 +238,11 @@ def test_registry_wraps_exact_stream_with_an_independent_lease() -> None:
 def test_registry_refuses_different_registered_stream_type() -> None:
     registry = TypeRegistry()
     registry.register("IMAGE")
-    registry.register("comfy.AUDIO")
+    registry.register(AUDIO_TYPE)
     value = stream()
     try:
         with pytest.raises(TypeError, match="matching MediaStream"):
-            registry.wrap("stream<comfy.AUDIO>", value)
+            registry.wrap(f"stream<{AUDIO_TYPE}>", value)
     finally:
         value.close()
 

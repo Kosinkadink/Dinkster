@@ -1,5 +1,6 @@
 ## Image operations
 
+- Native `Canny` edge detection with low/high hysteresis thresholds and RGB output
 - Native Stable Cascade stage C/B latent creation, stage C VAE encoding,
   stage B prior conditioning, and super-resolution control inputs
 - Typed `dinkster.region` rectangle values for shared crop and placement geometry
@@ -43,6 +44,8 @@
   paired comparison previews accept either, both, or neither image
 - ComfyUI ResizeImageMaskNode, BatchImagesNode, BatchMasksNode, BatchLatentsNode,
   and ColorTransfer native nodes
+- ComfyUI dataset image transforms for shorter/longer-edge resize, center/random
+  crop, normalization, brightness, and contrast adjustment
 - Alpha premultiply/unpremultiply and mask polarity conversion are native-only
   operations without fabricated ComfyUI aliases
 - Image operations declare alpha preservation, required alpha, creation, or
@@ -57,12 +60,15 @@
 - Mask composition with signed placement; image/mask conversion by channels or
   color distance; mask dimensions, batch count, area, and typed bounds
 - Image width, height, batch count, channel count, min, max, mean, and histogram
-- ComfyUI image and image/video latent width, height, frame, and batch-size inspection
+- ComfyUI image and image/video latent width, height, frame, and batch-size
+  inspection with node-attributed dimension progress text
 - ComfyUI rebatching of image and latent lists into target-size batches,
   retaining frame order and latent batch indices
 - Image and mask batch range, repeat, reverse, shuffle, ping-pong loop, count
   expansion, concatenation, insertion, and replacement; image batch/list
   conversion and rebatching
+- Dataset image and image-text pair shuffling, perceptual-hash deduplication,
+  row-major image grids, and deprecated text-list merging
 - Row-major image grid composition and decomposition; image stitching; split
   and merge with overlapping tiles
 - Image transitions between inputs, within a batch, or while joining batches,

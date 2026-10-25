@@ -20,12 +20,13 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 from dinkster_caches import MemoryLRUCache
-from dinkster_engine import Engine, EngineEvent, ExecutionError
+from dinkster_engine import Engine, EngineEvent, ExecutionError, GraphValidationError
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_memory import DEFAULT_INFERENCE_RESERVE_BYTES, InvocationView, MemoryGovernor
 from dinkster_nodes_dev import PACK_NODES
 from dinkster_protocol import (
     WORKGROUP_CAPABILITY,
+    AdmissionInvocation,
     AttentionCapabilityEvidence,
     AttentionPolicyConfig,
     AttentionRouteToken,
@@ -147,7 +148,8 @@ def write_iso_manifest(
 ) -> Path:
     manifest = tmp_path / "dinkster-pack.toml"
     manifest.write_text(
-        f'[pack]\nname = "{name}"\n\n[pack.entry]\n'
+        f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
+        'type-namespaces = ["iso"]\n\n[pack.entry]\n'
         f'nodes = "{module_name}:NODES"\ntypes = "{module_name}:register_types"\n'
     )
     return manifest
@@ -291,7 +293,8 @@ def test_isolated_worker_uses_interpreter_entry_for_split_package(tmp_path: Path
     (pack_root / "isopack_nodes" / "__init__.py").write_text("\n")
     manifest = pack_root / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname = "isopack"\n\n[pack.entry]\n'
+        '[pack]\nname = "isopack"\npublisher = "dinkster"\n'
+        'type-namespaces = ["iso"]\n\n[pack.entry]\n'
         'nodes = "isopack_nodes.entries:NODES"\n'
         'types = "isopack_nodes.entries:register_types"\n'
     )
@@ -1811,6 +1814,54 @@ def test_worker_converter_delegates_retryable_classification_to_compat(
     assert len(classified) == 1 and isinstance(classified[0], Refusal)
 
 
+@pytest.mark.parametrize("finish", ["close", "cancel", "malformed", "missing"])
+def test_admission_session_pending_request_terminates(
+    finish: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def scenario() -> None:
+        session = negotiated_session()
+        sent = asyncio.Event()
+
+        async def send(header: dict[str, object], blobs: list[bytes]) -> None:
+            del blobs
+            if header["type"] == "validateAdmission":
+                sent.set()
+                if finish in ("malformed", "missing"):
+                    session._admission_pending[str(header["requestId"])].set_result(  # noqa: SLF001
+                        ({"explanation": 42} if finish == "malformed" else {}, [])
+                    )
+
+        monkeypatch.setattr(session, "send", send)
+        request = asyncio.create_task(
+            session.validate_admission(
+                AdmissionInvocation(
+                    request_id="admit",
+                    node_id="n",
+                    node_type="test.admission",
+                    literal_inputs={"value": 7.0},
+                    linked_input_types={},
+                    effective_schema=NodeSchema(
+                        node_type="test.admission", admission_validation=True
+                    ),
+                )
+            )
+        )
+        await sent.wait()
+        if finish == "cancel":
+            request.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(request, 1)
+        else:
+            if finish == "close":
+                await session.close()
+            result = await asyncio.wait_for(request, 1)
+            assert result.explanation is not None
+            assert ("not running" if finish == "close" else "malformed") in result.explanation
+        await session.close()
+
+    asyncio.run(scenario())
+
+
 def test_conversion_pending_rpc_fails_with_worker_died_on_session_close(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2120,7 +2171,8 @@ def test_group_isolated_close_is_idempotent(tmp_path: Path) -> None:
             directory.mkdir()
             manifest = directory / "dinkster-pack.toml"
             manifest.write_text(
-                f'[pack]\nname = "{name}"\nnamespaces = ["iso"]\n\n'
+                f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
+                'type-namespaces = ["iso"]\nnamespaces = ["iso"]\n\n'
                 '[pack.entry]\nnodes = "isopack_nodes:NODES"\n'
                 'types = "isopack_nodes:register_types"\n',
                 encoding="utf-8",
@@ -2270,6 +2322,52 @@ def test_node_error_carries_message_and_worker_survives(tmp_path: Path) -> None:
             ok = Graph(nodes={"s": GraphNode("iso.sleepy", {"value": "hi", "seconds": 0.0})})
             result = await engine.run(ok, ["s"])
             assert result.outputs["s"]["value"].resolve() == "hi"
+        finally:
+            await worker.close()
+
+    asyncio.run(scenario())
+
+
+def test_isolated_admission_rejects_before_execution_and_recovers() -> None:
+    async def scenario() -> None:
+        registry = core_registry()
+        worker = IsolatedWorker(DEV_MANIFEST, registry)
+        await worker.start()
+        try:
+            engine = Engine(
+                schemas=dict(worker.schemas),
+                registry=registry,
+                worker=worker,
+                cache=MemoryLRUCache(),
+            )
+            for value in (5, "not a float"):
+                with pytest.raises(GraphValidationError, match="value must be a float literal"):
+                    await asyncio.wait_for(
+                        engine.run(
+                            Graph(
+                                {"check": GraphNode("dev.execution.admission", {"value": value})}
+                            ),
+                            ["check"],
+                        ),
+                        timeout=5,
+                    )
+            with pytest.raises(GraphValidationError, match="value must be linked from FLOAT"):
+                await engine.run(
+                    Graph(
+                        {
+                            "producer": GraphNode("dev.execution.fail"),
+                            "check": GraphNode(
+                                "dev.execution.admission", {"value": Link("producer", "value")}
+                            ),
+                        }
+                    ),
+                    ["check"],
+                )
+            result = await engine.run(
+                Graph({"check": GraphNode("dev.execution.admission", {"value": 7.5})}),
+                ["check"],
+            )
+            assert result.outputs["check"]["value"].resolve() == 7.5
         finally:
             await worker.close()
 

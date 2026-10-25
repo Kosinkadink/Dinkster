@@ -5,13 +5,13 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import cast
 
-from dinkster_values import Value, iter_value_tree
+from dinkster_values import IMAGE_TYPE, MASK_TYPE, Value, iter_value_tree
 
 from .model import NodeSchema
 
 
 def _has_alpha(value: Value) -> bool:
-    if value.type_id != "IMAGE":
+    if value.type_id != IMAGE_TYPE:
         return False
     channels = value.meta.get("channels")
     if isinstance(channels, Mapping):
@@ -41,13 +41,13 @@ def media_diagnostics(
         value.fingerprint
         for root in inputs.values()
         for value in iter_value_tree(root)
-        if value.type_id == "IMAGE" and not _has_alpha(value)
+        if value.type_id == IMAGE_TYPE and not _has_alpha(value)
     }
     for spec in schema.inputs:
         if spec.mask_polarity is None or spec.id not in inputs:
             continue
         for value in iter_value_tree(inputs[spec.id]):
-            if value.type_id != "MASK":
+            if value.type_id != MASK_TYPE:
                 continue
             actual = value.meta.get("polarity", "coverage")
             if actual != spec.mask_polarity:
@@ -66,7 +66,7 @@ def media_diagnostics(
         value = outputs[spec.id]
         if spec.alpha_policy != "drop" and alpha_inputs:
             if any(
-                child.type_id == "IMAGE"
+                child.type_id == IMAGE_TYPE
                 and not _has_alpha(child)
                 and child.fingerprint not in opaque_inputs
                 for child in iter_value_tree(value)

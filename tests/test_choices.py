@@ -74,7 +74,7 @@ def write_choice_manifest(
     directory.mkdir(parents=True, exist_ok=True)
     claims = "namespaces = [" + ", ".join(f'"{c}"' for c in namespaces) + "]\n"
     body = (
-        f'[pack]\nname = "{name}"\n{claims}\n[pack.entry]\n'
+        f'[pack]\nname = "{name}"\npublisher = "dinkster"\n{claims}\n[pack.entry]\n'
         f'nodes = "{nodes}"\n'
         'types = "choicepack_nodes:register_types"\n'
     )

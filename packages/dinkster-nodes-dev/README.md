@@ -33,11 +33,14 @@ result = asyncio.run(Delay.execute(value="ready", seconds=0.01))
 assert result == {"value": "ready"}
 ```
 
-Compose the pack explicitly with its manifest:
+Compose the pack explicitly from the repository root:
 
 ```console
-uv run dinkster-serve --pack packages/dinkster-nodes-dev/dinkster-pack.toml
+uv run dinkster-serve --pack packages/dinkster-nodes-dev
 ```
+
+The pack stays outside the default pack set. Its `dev` namespace is ordinary;
+another pack claiming the same namespace is refused by the overlap rule.
 
 ## The widget/socket gallery
 

@@ -46,5 +46,15 @@ batched sigma.
 
 ## Dinkster handling
 
-Dinkster delegates TemporalScoreRescaling execution to `dinkster_inference`, whose
-current behavior matches the upstream behavior described above.
+The native TemporalScoreRescaling callback deliberately corrects this crash.
+Sigma indexes samples: nonzero-sigma samples use the reference rescaling
+formula, while zero-sigma and zero-SNR samples keep their denoised prediction
+unchanged. Per-sample factors broadcast across channel and spatial dimensions.
+The scalar-sigma formula and `tsr_k == 1` bypass are unchanged.
+
+The inherited reference bc5f880dbdd43e426077f42ccec53bb577ffee9f retains both
+tensor truth tests. Batched behavior is an intentional native difference under
+the [approved per-sample contract](https://github.com/Kosinkadink/comfy-vibe-station/issues/511#issuecomment-6385874194),
+not evidence of bit-exact batched reference parity. Existing accepted scalar
+reference evidence is retained without regeneration or rerun. Inference kernels
+and the inference pin are unchanged.

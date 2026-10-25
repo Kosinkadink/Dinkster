@@ -115,7 +115,7 @@ def test_federated_asset_dto_v1_all_optional_request_fields_round_trip() -> None
             "schema": {
                 "nodeType": "dinkster.load",
                 "inputId": "model",
-                "typeId": "dinkster.asset",
+                "typeId": "ASSET",
             },
             "accept": ["application/safetensors", "model/*"],
         },

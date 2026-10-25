@@ -115,6 +115,8 @@ def test_reserved_roots() -> None:
     assert reserved_root("dinkster-nodes-foundation") == "dinkster"
     assert reserved_root("standard") is None
     assert reserved_root("my-pack") is None
+    assert reserved_root("dev") is None
+    assert reserved_root("dev.image") is None
 
 
 @pytest.mark.parametrize(

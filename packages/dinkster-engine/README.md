@@ -41,6 +41,15 @@ delta. It accepts graph wire plus complete origin records and explicit virtual
 joins, then returns an immutable complete candidate or `GraphAdmissionError`.
 It does not schedule or execute the candidate.
 
+Expanding nodes build children with `ExpansionBuilder`. Children retain their
+`output_members` and `slot_variants` through worker handoff and cache replay.
+`ExpansionBuilder(cache_policy="rerun")` disables cache hits and single-flight
+coalescing for its children. The default `inherit` policy carries an enclosing
+expansion's policy, or uses ordinary content-key reuse at the root. An explicit
+`reuse` overrides inherited reruns for that fragment and its descendants.
+Admitted loop pair metadata is available in the run context's immutable graph
+view even after an end node's body-linked inputs are removed.
+
 An event listener can observe progress without changing execution:
 
 ```python

@@ -13,6 +13,7 @@ from collections.abc import Mapping, Sequence
 from typing import Literal, cast
 
 import pytest
+from dinkster_api.v1 import AUDIO_TYPE, VIDEO_TYPE
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EngineEvent, ExecutionError
 from dinkster_graph import (
@@ -973,6 +974,49 @@ def test_nested_region_bodies_validate_recursively() -> None:
 # -- engine: map -------------------------------------------------------------
 
 
+@pytest.mark.parametrize("items", [[3, 11, 7], []])
+@pytest.mark.parametrize("nested", [False, True])
+def test_output_only_map_executes_declared_sink(items: list[int], nested: bool) -> None:
+    seen: list[int] = []
+
+    class Sink(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                node_type="test.sink",
+                inputs=(InputSpec("value", INT),),
+                outputs=(),
+                output_node=True,
+                idempotent=False,
+            )
+
+        @classmethod
+        def execute(cls, value: int) -> Mapping[str, object]:
+            seen.append(value)
+            return cls.outputs()
+
+    async def scenario() -> None:
+        sink_body = Graph(nodes={"save": GraphNode("test.sink", {"value": port("item")})})
+        body = sink_body
+        if nested:
+            body = Graph(
+                nodes={"inner": map_region(body=sink_body, outputs={}, inputs={"item": [5, 19]})}
+            )
+        region = map_region(body=body, outputs={}, inputs={"item": items})
+        result = await make_engine(extra_nodes=(Sink,)).run(Graph(nodes={"m": region}), ["m"])
+        assert result.outputs["m"] == {}
+        expected = [5, 19] * len(items) if nested else items
+        assert sorted(seen) == sorted(expected)
+
+    asyncio.run(scenario())
+
+
+def test_outputless_sinkless_region_is_rejected() -> None:
+    for body in (Graph(nodes={}), map_region().body):
+        region = map_region(body=body, outputs={})
+        assert "region-shape" in codes(Graph(nodes={"m": region}), ["m"])
+
+
 def test_map_region_executes_per_element() -> None:
     async def scenario() -> None:
         AddOne.ran.clear()
@@ -1024,15 +1068,15 @@ def test_map_region_executes_per_element() -> None:
         ("CONDITIONING", [{"tokens": [1, 4], "weight": 0.75}, {"tokens": [9]}]),
         ("MASK", [[[0.0, 1.0], [0.25, 0.75]], [[1.0]]]),
         (
-            "comfy.AUDIO",
+            AUDIO_TYPE,
             [
                 {"waveform": [[0.0, -0.5, 0.5]], "sample_rate": 48000},
                 {"waveform": [[1.0]], "sample_rate": 44100},
             ],
         ),
-        ("comfy.VIDEO", [{"frames": ["a", "b"], "fps": 24.0}, {"frames": ["c"], "fps": 30.0}]),
+        (VIDEO_TYPE, [{"frames": ["a", "b"], "fps": 24.0}, {"frames": ["c"], "fps": 30.0}]),
         (
-            "dinkster.asset",
+            "ASSET",
             [
                 {"digest": "blake3:" + "1" * 64, "name": "one.png"},
                 {"digest": "blake3:" + "2" * 64, "name": "two.wav"},

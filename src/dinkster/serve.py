@@ -838,7 +838,8 @@ def _resolve_pack_argument(value: str) -> Path:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        description="Run a Dinkster server from its installed defaults plus configured packs"
+        description="Run a Dinkster server from its installed defaults plus configured packs",
+        allow_abbrev=False,
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=3639)

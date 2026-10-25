@@ -20,6 +20,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     TypeExpr,
 )
+from dinkster_engine import EngineEvent
 from dinkster_graph import PORTS_NODE_ID, Graph, GraphNode, Link, RegionNode, RegionOutput
 from dinkster_nodes_comfy.rebatch import RebatchImages, RebatchLatents
 
@@ -110,8 +111,10 @@ def test_image_dimensions_ordinary_manifest_twice(
                     "latent": GraphNode("GetLatentSize", {"latent": Link("source", "latent")}),
                 }
             )
-            engine = composer.composition.make_engine(lambda _event: None)
+            events: list[EngineEvent] = []
             for _ in range(2):
+                events.clear()
+                engine = composer.composition.make_engine(events.append)
                 result = await engine.run(graph, ["image", "latent"])
                 assert {
                     name: {key: value.resolve() for key, value in outputs.items()}
@@ -125,6 +128,35 @@ def test_image_dimensions_ordinary_manifest_twice(
                         "batch_size": 3,
                     },
                 }
+                reports = [event for event in events if event.kind == "node_event"]
+                assert {
+                    event.node_id: {
+                        "name": event.detail["name"],
+                        "data": event.detail["data"],
+                    }
+                    for event in reports
+                } == {
+                    "image": {
+                        "name": "progress",
+                        "data": {
+                            "step": 1,
+                            "total": 1,
+                            "text": "width: 7, height: 3\n batch size: 2",
+                        },
+                    },
+                    "latent": {
+                        "name": "progress",
+                        "data": {
+                            "step": 1,
+                            "total": 1,
+                            "text": (
+                                f"width: 9, height: 6\n frames: {5 if video else 1}, batch size: 3"
+                            ),
+                        },
+                    },
+                }
+                assert len(reports) == 2
+                assert all(event.run_id == result.run_id for event in reports)
         finally:
             await composer.close()
 
