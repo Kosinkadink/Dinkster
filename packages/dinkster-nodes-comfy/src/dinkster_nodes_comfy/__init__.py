@@ -38,6 +38,7 @@ from .hunyuan_latent import HUNYUAN_LATENT_NODES
 from .hunyuan_text import HUNYUAN_TEXT_NODES
 from .hunyuan_video_image import HUNYUAN_VIDEO_IMAGE_NODES
 from .image_core import IMAGE_CORE_NODES
+from .image_dimensions import IMAGE_DIMENSION_NODES
 from .image_filters import IMAGE_FILTER_NODES
 from .image_transform import IMAGE_TRANSFORM_NODES
 from .inpaint import INPAINT_NODES
@@ -72,6 +73,7 @@ from .primitive import (
     PrimitiveString,
     PrimitiveStringMultiline,
 )
+from .rebatch import REBATCH_NODES
 from .reference_conditioning import REFERENCE_CONDITIONING_NODES
 from .rope_and_mask import ROPE_AND_MASK_NODES
 from .sampler_factories import SAMPLER_FACTORY_NODES
@@ -149,6 +151,7 @@ COMFY_NODES = (
     *MASK_NODES,
     *COMPOSITING_NODES,
     *IMAGE_CORE_NODES,
+    *IMAGE_DIMENSION_NODES,
     *IMAGE_FILTER_NODES,
     *IMAGE_TRANSFORM_NODES,
     *MORPHOLOGY_NODES,
@@ -166,6 +169,7 @@ COMFY_NODES = (
     *VIDEO_LATENT_NODES,
     *VIDEO_LATENT_OPERATION_NODES,
     *POST_PROCESSING_NODES,
+    *REBATCH_NODES,
     EmptyMochiLatentVideo,
     *AUDIO_COMBINE_NODES,
     *AUDIO_EFFECT_NODES,
