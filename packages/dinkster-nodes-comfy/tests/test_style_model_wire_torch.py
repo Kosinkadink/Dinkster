@@ -10,6 +10,7 @@ import pytest
 import torch
 from dinkster_api.v1 import (
     CORE_STRING,
+    LATENT_UPSCALE_MODEL_TYPE,
     MODEL_PATCH_TYPE,
     STYLE_MODEL_TYPE,
     InputSpec,
@@ -185,16 +186,21 @@ def _model_patch() -> Any:
     return ModelPatcher(projection, torch.device("cpu"), torch.device("cpu"))
 
 
-def test_actual_model_patch_identity_cache_and_independent_release() -> None:
+@pytest.mark.parametrize("value_type", (MODEL_PATCH_TYPE, LATENT_UPSCALE_MODEL_TYPE))
+@pytest.mark.parametrize("release_target", ("self", "owner", "reference"))
+def test_actual_model_patch_identity_cache_and_independent_release(
+    value_type: str, release_target: str
+) -> None:
     async def scenario() -> None:
         registry = TypeRegistry()
         register_inference_types(registry)
-        spec = registry.spec(MODEL_PATCH_TYPE)
+        spec = registry.spec(value_type)
         source = _model_patch()
         unrelated = _model_patch()
         owner, reference = object(), object()
-        source._dinkster_resident_owner = owner
-        source._dinkster_resident_refs = (reference,)
+        if release_target != "self":
+            source._dinkster_resident_owner = owner
+            source._dinkster_resident_refs = (reference,)
         assert (
             type(source) is importlib.import_module("dinkster_inference.model_patcher").ModelPatcher
         )
@@ -204,24 +210,30 @@ def test_actual_model_patch_identity_cache_and_independent_release() -> None:
         metadata = spec.meta(source)
         assert spec.fingerprint is not None
         assert spec.fingerprint(source) == resident_resource_id(default_pool().rid_for(source))
-        assert metadata[RESOURCE_ID_META_KEY] == resident_resource_id(default_pool().rid_for(owner))
-        assert metadata[RESOURCE_REFS_META_KEY] == (
-            resident_resource_id(default_pool().rid_for(reference)),
-        )
+        if release_target == "self":
+            assert metadata[RESOURCE_ID_META_KEY] == spec.fingerprint(source)
+        else:
+            assert metadata[RESOURCE_ID_META_KEY] == resident_resource_id(
+                default_pool().rid_for(owner)
+            )
+            assert metadata[RESOURCE_REFS_META_KEY] == (
+                resident_resource_id(default_pool().rid_for(reference)),
+            )
         assert metadata[RESOURCE_OWNER_META_KEY] == process_instance_token()
         assert set(json.loads(encoded)) == {"residentId"}
-        foreign = register_resident_type(TypeRegistry(), MODEL_PATCH_TYPE, table=ResidentPool())
+        foreign = register_resident_type(TypeRegistry(), value_type, table=ResidentPool())
         with pytest.raises(
             ResidentLookupError, match="another worker or an earlier worker lifetime"
         ):
             foreign.decode(encoded)
         cache = MemoryLRUCache()
         default_pool().register_invalidator(cache.drop_referencing)
-        await cache.put("patch", {"patch": registry.wrap(MODEL_PATCH_TYPE, source)})
-        await cache.put("unrelated", {"patch": registry.wrap(MODEL_PATCH_TYPE, unrelated)})
+        await cache.put("patch", {"patch": registry.wrap(value_type, source)})
+        await cache.put("unrelated", {"patch": registry.wrap(value_type, unrelated)})
         assert await cache.get("patch") is not None
         assert await cache.get("unrelated") is not None
-        assert default_pool().release_resident(reference)
+        released = {"self": source, "owner": owner, "reference": reference}[release_target]
+        assert default_pool().release_resident(released)
         assert await cache.get("patch") is None
         assert await cache.get("unrelated") is not None
         with pytest.raises(
@@ -240,11 +252,13 @@ def test_actual_model_patch_identity_cache_and_independent_release() -> None:
 
 
 class ModelPatchSource(Node):
+    value_type = MODEL_PATCH_TYPE
+
     @classmethod
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="model-patch-fixture.source",
-            outputs=(OutputSpec("model_patch", TypeExpr.concrete(MODEL_PATCH_TYPE)),),
+            outputs=(OutputSpec("model_patch", TypeExpr.concrete(cls.value_type)),),
         )
 
     @classmethod
@@ -253,11 +267,13 @@ class ModelPatchSource(Node):
 
 
 class ModelPatchConsumer(Node):
+    value_type = MODEL_PATCH_TYPE
+
     @classmethod
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="model-patch-fixture.consume",
-            inputs=(InputSpec("model_patch", TypeExpr.concrete(MODEL_PATCH_TYPE)),),
+            inputs=(InputSpec("model_patch", TypeExpr.concrete(cls.value_type)),),
             outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
         )
 
@@ -273,19 +289,24 @@ class ModelPatchConsumer(Node):
 
 
 @pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("value_type", (MODEL_PATCH_TYPE, LATENT_UPSCALE_MODEL_TYPE))
 def test_model_patch_full_native_manifest_and_fixture_hosts(
-    tmp_path: Path, in_process: bool
+    tmp_path: Path, in_process: bool, value_type: str
 ) -> None:
     async def scenario() -> None:
         composer = ServingComposer(
             worker_env={"PYTHONPATH": str(Path(__file__).parent), "CUDA_VISIBLE_DEVICES": ""}
         )
         try:
-            module = "model_patch_fixture_" + str(in_process)
+            module = "model_patch_fixture_" + str(in_process) + "_" + value_type.lower()
             (tmp_path / f"{module}.py").write_text(
                 "from test_style_model_wire_torch import ModelPatchConsumer, ModelPatchSource\n"
                 "from dinkster_inference_wire import register_inference_types\n"
-                "NODES = [ModelPatchSource, ModelPatchConsumer]\n",
+                "class Source(ModelPatchSource):\n"
+                f"    value_type = {value_type!r}\n"
+                "class Consumer(ModelPatchConsumer):\n"
+                f"    value_type = {value_type!r}\n"
+                "NODES = [Source, Consumer]\n",
                 encoding="ascii",
             )
             fixture_manifest = tmp_path / "dinkster-pack.toml"
