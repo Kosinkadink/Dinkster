@@ -717,6 +717,8 @@ def _widget_from_wire(widget_wire: object, wire_version: int) -> Widget:
 
 def type_expr_to_wire(expr: TypeExpr, wire_version: int = SCHEMA_WIRE_VERSION) -> dict[str, object]:
     wire: dict[str, object] = {"kind": expr.kind}
+    if expr.kind == "tuple":
+        wire["elements"] = [type_expr_to_wire(item, wire_version) for item in expr.elements]
     if expr.kind == "variable":
         wire["templateId"] = expr.template_id
         if expr.types:
@@ -728,6 +730,10 @@ def type_expr_to_wire(expr: TypeExpr, wire_version: int = SCHEMA_WIRE_VERSION) -
         wire["templateId"] = expr.template_id
     if expr.element is not None:
         wire["element"] = type_expr_to_wire(expr.element, wire_version)
+    if expr.input_id:
+        wire["input"] = expr.input_id
+    if expr.index is not None:
+        wire["index"] = expr.index
     return wire
 
 
@@ -809,6 +815,8 @@ def _dynamic_entry_to_wire(
             "minMembers": spec.min_members,
             "required": spec.required,
         }
+        if spec.independent_types:
+            entry["independentTypes"] = True
         if spec.member_prefix is not None:
             entry["memberPrefix"] = spec.member_prefix
         if spec.member_names is not None:
@@ -1127,6 +1135,7 @@ def schema_signature(schema: NodeSchema) -> str:
                 required=entry.required,
                 member_prefix=entry.member_prefix,
                 member_names=entry.member_names,
+                independent_types=entry.independent_types,
             )
         if isinstance(entry, DynamicComboSpec):
             options = tuple(
@@ -1296,7 +1305,22 @@ def type_expr_from_wire(wire: dict[str, Any], wire_version: int = SCHEMA_WIRE_VE
         if element_wire is None
         else type_expr_from_wire(_expect_object(element_wire, "type.element"), wire_version)
     )
-    return TypeExpr(kind=cast("Any", kind), types=types, template_id=template_id, element=element)
+    elements_wire = wire.get("elements", [])
+    if not isinstance(elements_wire, list):
+        raise ValueError("type.elements must be an array")
+    elements = tuple(
+        type_expr_from_wire(_expect_object(item, "type.elements position"), wire_version)
+        for item in cast(list[object], elements_wire)
+    )
+    return TypeExpr(
+        kind=cast("Any", kind),
+        types=types,
+        template_id=template_id,
+        element=element,
+        elements=elements,
+        input_id=_expect_str(wire.get("input", ""), "type.input"),
+        index=wire.get("index"),
+    )
 
 
 def _input_entry_from_wire(entry: dict[str, Any], wire_version: int) -> InputSpec:
@@ -1375,6 +1399,9 @@ def _dynamic_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Dynami
             doc=_expect_str(entry.get("doc", ""), "inputFamily.doc"),
             display_name=_expect_str(entry.get("displayName", ""), "inputFamily.displayName"),
             required=_expect_bool(entry.get("required", True), "inputFamily.required"),
+            independent_types=_expect_bool(
+                entry.get("independentTypes", False), "inputFamily.independentTypes"
+            ),
             member_prefix=None
             if prefix is None
             else _expect_str(prefix, "inputFamily.memberPrefix"),

@@ -99,6 +99,7 @@ from dinkster_values import (
     make_absent_value,
     make_list_value,
     parse_list_type_id,
+    runtime_type_atoms,
     stable_hash,
     value_resource_ids,
     value_resource_refs,
@@ -1124,12 +1125,14 @@ class Engine:
                 atoms.add(ASSET_BASE_TYPE)
             if expression.element is not None:
                 pending.append(expression.element)
+            pending.extend(expression.elements)
         for value in values:
-            if isinstance(value, (TypedLiteral, Value)):
-                if (atom := TypeExpr.runtime_type_atom(value.type_id)) is not None:
-                    atoms.add(atom)
-                if "asset<" in value.type_id:
-                    atoms.add(ASSET_BASE_TYPE)
+            candidates = iter_value_tree(value) if isinstance(value, Value) else (value,)
+            for candidate in candidates:
+                if isinstance(candidate, (TypedLiteral, Value)):
+                    atoms.update(runtime_type_atoms(candidate.type_id) or ())
+                    if "asset<" in candidate.type_id:
+                        atoms.add(ASSET_BASE_TYPE)
         await prepare(atoms)
 
     async def _resolve_inputs_lazy(

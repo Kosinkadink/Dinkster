@@ -128,6 +128,12 @@ def elaborate(
         ]
     _validate_projected_namespace(schema, inputs)
     outputs = _elaborate_outputs(schema, output_members or {}, stored_values)
+    outputs = [
+        replace(output, type=_project_tuple_output(output.type, inputs, stored_values))
+        if output.type.requires_elaboration
+        else output
+        for output in outputs
+    ]
     if type_bindings:
         outputs = [
             replace(
@@ -250,6 +256,53 @@ def _slot_type_bindings(
     return bindings
 
 
+def _project_tuple_output(
+    expr: TypeExpr,
+    inputs: Sequence[InputSpec],
+    stored: Mapping[str, object] | None,
+) -> TypeExpr:
+    if expr.kind == "family_tuple":
+        return TypeExpr.tuple_of(
+            *(spec.type for spec in inputs if spec.id.startswith(expr.input_id + "."))
+        )
+    if expr.kind == "tuple_element":
+        element = (
+            next(spec.type for spec in inputs if spec.id == expr.input_id)
+            if expr.input_id
+            else expr.element
+        )
+        assert element is not None
+        index = expr.index
+        if isinstance(index, str):
+            if stored is None:
+                raise ElaborationError("tuple index requires stored literal input values")
+            selector = next(spec for spec in inputs if spec.id == index)
+            value = stored.get(index, selector.default)
+            if type(value) is not int:
+                raise ElaborationError(
+                    "tuple index must be a constant INT; use a list for same-typed items"
+                )
+            index = value
+        return TypeExpr(kind="tuple_element", element=element, index=index)
+    return replace(
+        expr,
+        element=None
+        if expr.element is None
+        else _project_tuple_output(expr.element, inputs, stored),
+        elements=tuple(_project_tuple_output(item, inputs, stored) for item in expr.elements),
+    )
+
+
+def _scope_member_type(expr: TypeExpr, member: str) -> TypeExpr:
+    if expr.kind == "variable":
+        return replace(expr, template_id=f"{member}:{expr.template_id}")
+    return replace(
+        expr,
+        element=None if expr.element is None else _scope_member_type(expr.element, member),
+        elements=tuple(_scope_member_type(item, member) for item in expr.elements),
+    )
+
+
 def _substitute_type(
     expr: TypeExpr,
     bindings: Mapping[str, TypeExpr],
@@ -267,7 +320,12 @@ def _substitute_type(
                 f"{type_id!r}"
             )
         return bound
-    if expr.kind in ("list", "asset", "stream"):
+    if expr.kind == "tuple":
+        return replace(
+            expr,
+            elements=tuple(_substitute_type(item, bindings, subject) for item in expr.elements),
+        )
+    if expr.kind in ("list", "asset", "stream", "tuple_element"):
         assert expr.element is not None
         element = _substitute_type(expr.element, bindings, subject)
         return expr if element is expr.element else replace(expr, element=element)
@@ -355,12 +413,26 @@ def _elaborate_family(
             )
         member_path = _join_path(path, suffix)
         if len(family.template) == 1 and isinstance(family.template[0], InputSpec):
-            inputs.append(replace(family.template[0], id=member_path))
+            spec = family.template[0]
+            inputs.append(
+                replace(
+                    spec,
+                    id=member_path,
+                    type=_scope_member_type(spec.type, member_path)
+                    if family.independent_types
+                    else spec.type,
+                )
+            )
             continue
         nested_inputs, nested_active, nested_consumed = _elaborate_dynamic_entries(
             family.template, member_path, stored_input_ids, choices
         )
-        inputs.extend(nested_inputs)
+        inputs.extend(
+            replace(spec, type=_scope_member_type(spec.type, member_path))
+            if family.independent_types
+            else spec
+            for spec in nested_inputs
+        )
         active.extend(nested_active)
         consumed.update(nested_consumed)
     return inputs, tuple(active), consumed
