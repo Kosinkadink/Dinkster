@@ -7,8 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, cast
 
-from dinkster_api.v1 import mount_roots_for_kind
-from dinkster_assets import AssetRef, LocalAssetRef
+from dinkster_assets import AssetRef, LocalAssetRef, mount_roots_for_kind
 from dinkster_nodes_generation.nodes import (
     CLIPTextEncode,
     EmptyLatentImage,
