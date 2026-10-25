@@ -110,7 +110,9 @@ def test_keyed_resident_failed_load_is_retryable() -> None:
     assert pool.footprint("ram") == 7
 
 
-def test_public_keyed_residents_share_first_concurrent_load(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_public_keyed_residents_share_first_concurrent_load(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     constructors = Barrier(2)
 
     def slow_pool() -> ResidentPool:
