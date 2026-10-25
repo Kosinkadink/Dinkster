@@ -1,6 +1,7 @@
 """SeedVR2 temporal chunking and merging."""
 
 import asyncio
+import math
 import os
 from pathlib import Path
 
@@ -53,15 +54,22 @@ def test_manual_chunks_and_merges_with_runt_final_chunk(monkeypatch) -> None:
 
 def test_hann_crossfade_weights_overlap(monkeypatch) -> None:
     monkeypatch.setattr(seedvr_temporal, "initialize_inference_process", lambda: None)
-    first = {"samples": torch.zeros((1, 16, 3, 1, 1), dtype=torch.float32)}
-    second = {"samples": torch.ones((1, 16, 3, 1, 1), dtype=torch.float32)}
-    merged = SeedVR2TemporalMerge.execute(latents=[first, second], temporal_overlap=2)["latent"][
-        "samples"
-    ]
+    overlap = 6
+    first = {"samples": torch.zeros((1, 16, 7, 1, 1), dtype=torch.float64)}
+    second = {"samples": torch.ones((1, 16, 7, 1, 1), dtype=torch.float64)}
+    merged = SeedVR2TemporalMerge.execute(latents=[first, second], temporal_overlap=overlap)[
+        "latent"
+    ]["samples"]
     assert torch.equal(merged[:, :, 0], first["samples"][:, :, 0])
     assert torch.equal(merged[:, :, -1], second["samples"][:, :, -1])
-    assert torch.allclose(merged[:, :, 1], torch.zeros((1, 16, 1, 1)))
-    assert torch.allclose(merged[:, :, 2], torch.ones((1, 16, 1, 1)))
+    expected = []
+    for index in range(overlap):
+        ramp = min(1.0, max(0.0, (index / (overlap - 1) - 1.0 / 3.0) / (1.0 / 3.0)))
+        previous = 0.5 + 0.5 * math.cos(math.pi * ramp)
+        expected.append(1.0 - previous)
+    actual = merged[0, 0, 1 : 1 + overlap, 0, 0].tolist()
+    assert actual == pytest.approx(expected)
+    assert actual[3] != pytest.approx(3 / (overlap - 1))
 
 
 def test_auto_chunking_uses_free_memory_boundary(monkeypatch) -> None:
@@ -120,9 +128,8 @@ class TemporalConsumer(Node):
         samples = value["samples"]
         assert samples.shape == (1, 16, 7, 2, 2)
         assert samples.dtype is torch.float64 and samples.device.type == "cpu"
-        source = _latent()["samples"]
-        assert torch.equal(samples[:, :, 0], source[:, :, 0])
-        assert torch.equal(samples[:, :, -1], source[:, :, -1])
+        expected = _latent()["samples"]
+        assert torch.equal(samples, expected)
         return cls.outputs(summary="seedvr-temporal")
 
 

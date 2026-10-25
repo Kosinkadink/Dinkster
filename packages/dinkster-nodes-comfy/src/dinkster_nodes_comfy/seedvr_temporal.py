@@ -183,7 +183,13 @@ class SeedVR2TemporalMerge(Node):
                 InputSpec(
                     "latents", _LATENT_LIST, doc="Sampled temporal chunks in sequence order."
                 ),
-                InputSpec("temporal_overlap", _INT, default=0, force_input=True),
+                InputSpec(
+                    "temporal_overlap",
+                    _INT,
+                    default=0,
+                    widget=NumberWidget(min=0, max=_MAX_FRAMES),
+                    force_input=True,
+                ),
             ),
             outputs=(OutputSpec("latent", _LATENT, doc="The recombined latent."),),
         )
