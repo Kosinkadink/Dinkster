@@ -27,6 +27,7 @@ from .release import (
     ReleaseCandidate,
 )
 from .reported import ReportedTelemetry
+from .resident import obtain_resident
 from .reservations import (
     GovernorReservationService,
     InvocationView,
@@ -85,6 +86,7 @@ __all__ = [
     "parse_budgets",
     "parse_size",
     "model_tenant_registry",
+    "obtain_resident",
     "system_memory_snapshot",
     "use_model_tenant_registry",
 ]

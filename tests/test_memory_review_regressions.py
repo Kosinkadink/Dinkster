@@ -10,6 +10,7 @@ from dinkster_memory import (
     PressureSignal,
     ReservationTimeout,
 )
+from dinkster_memory.resident import ResidentPool
 
 
 class HungShedder:
@@ -55,3 +56,51 @@ def test_consumer_item_snapshots_residency_mapping() -> None:
     item = ConsumerItem("item", "Item", sizes)
     sizes["ram"] = 20
     assert item.bytes_by_residency["ram"] == 10
+
+
+def test_keyed_residents_share_alternating_loads_and_reload_after_pressure() -> None:
+    pool = ResidentPool()
+    loads: list[str] = []
+
+    def obtain(key: str) -> tuple[dict[str, bytes], dict[str, bytes]]:
+        def load() -> tuple[dict[str, bytes], dict[str, bytes]]:
+            loads.append(key)
+            return ({"model": key.encode()}, {"clip": b"xyz"})
+
+        return pool.obtain(
+            key,
+            load,
+            ram_bytes=lambda value: len(value[0]["model"]) + len(value[1]["clip"]),
+        )
+
+    first = obtain("checkpoint-a")
+    second = obtain("checkpoint-bb")
+    assert first != second
+    assert obtain("checkpoint-a") is first
+    assert obtain("checkpoint-bb") is second
+    assert loads == ["checkpoint-a", "checkpoint-bb"]
+    assert pool.footprint("ram") == 31
+
+    async def release() -> None:
+        candidates = pool.propose_release(PressureSignal("ram", 1))
+        assert len(candidates) == 1
+        assert await pool.release("ram", candidates) == {candidates[0].item_id: 15}
+
+    asyncio.run(release())
+    assert pool.footprint("ram") == 16
+    assert obtain("checkpoint-bb") is second
+    assert obtain("checkpoint-a") == first
+    assert loads == ["checkpoint-a", "checkpoint-bb", "checkpoint-a"]
+
+
+def test_keyed_resident_failed_load_is_retryable() -> None:
+    pool = ResidentPool()
+
+    def fail() -> bytes:
+        raise ValueError("bad checkpoint")
+
+    with pytest.raises(ValueError, match="bad checkpoint"):
+        pool.obtain("checkpoint", fail, ram_bytes=len)
+    assert pool.footprint("ram") == 0
+    assert pool.obtain("checkpoint", lambda: b"weights", ram_bytes=len) == b"weights"
+    assert pool.footprint("ram") == 7
