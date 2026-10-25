@@ -1881,8 +1881,6 @@ def test_comfy_manifest_supplies_assets_to_grouped_consumer(
         MountTable,
     )
 
-    from dinkster.comfy_compose import register_comfy_host_types
-
     root = tmp_path / "models"
     root.mkdir()
     payload = b"bound model bytes"
@@ -1894,22 +1892,11 @@ def test_comfy_manifest_supplies_assets_to_grouped_consumer(
         table.scan("models")
     ref = table.bind_name("weights.bin", "model/checkpoint")
     assert isinstance(ref, AssetRef if verified else LocalAssetRef)
-    consumer = tmp_path / "dinkster-pack.toml"
-    module = f"comfy_asset_consumer_{in_process}_{verified}"
-    (tmp_path / f"{module}.py").write_text(
-        "from assetpack_nodes import NODES\n"
-        "from dinkster_nodes_comfy import register_inference_types\n"
-    )
-    consumer.write_text(
-        '[pack]\nname = "apack"\npublisher = "dinkster"\nnamespaces = ["apack"]\n'
-        f'[pack.entry]\nnodes = "{module}:NODES"\n'
-        f'types = "{module}:register_inference_types"\n'
-    )
+    consumer = TESTS_DIR / "fixtures/comfy-asset-consumer/dinkster-pack.toml"
     comfy = TESTS_DIR.parent / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
     manifests = (comfy, consumer)
     env = {
         **WORKER_ENV,
-        "PYTHONPATH": os.pathsep.join((str(tmp_path), WORKER_ENV["PYTHONPATH"])),
         "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
     }
     monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
@@ -1925,7 +1912,6 @@ def test_comfy_manifest_supplies_assets_to_grouped_consumer(
                         env=env,
                         worker_group=None if in_process else "assets",
                         group_manifests=() if in_process else manifests,
-                        host_types=register_comfy_host_types,
                     )
                 )
             engine = composer.composition.make_engine(lambda _event: None)
