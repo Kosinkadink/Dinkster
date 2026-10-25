@@ -19,17 +19,13 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    TypeRegistry,
     initialize_inference_process,
-    register_asset_type,
-    resolver_from_env,
 )
 from dinkster_assets import MountDef, MountTable
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.hypernetwork import HypernetworkLoader
-from dinkster_values import register_core_types
 
-from dinkster.compose import PackSpec, ServingComposer, default_pack_spec
+from dinkster.compose import PackSpec, ServingComposer
 
 
 def _model() -> Any:
@@ -223,59 +219,33 @@ HYPERNETWORK_FIXTURES = (HypernetworkSource, HypernetworkInspect)
 
 
 @pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("verified", (False, True))
 def test_hypernetwork_both_ordinary_hosts_twice(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, verified: bool
 ) -> None:
-    asset = _asset(tmp_path)
+    asset = _asset(tmp_path, verified=verified)
     monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(tmp_path / "mounts.json"))
 
     async def scenario() -> None:
         root = Path(__file__).resolve().parents[1]
         native = root / "dinkster-pack.toml"
-        fixture = tmp_path / "hypernetwork-pack.toml"
-        fixture.write_text(
-            '[pack]\nname="hypernetwork-fixture"\npublisher="dinkster"\n'
-            'namespaces=["hypernetwork-fixture"]\n[pack.entry]\n'
-            'nodes="hypernetwork_fixture:HYPERNETWORK_FIXTURES"\n'
-            'types="hypernetwork_fixture:register_inference_types"\n',
-            encoding="ascii",
-        )
-        (tmp_path / "hypernetwork_fixture.py").write_text(
-            "from test_hypernetwork_torch import HYPERNETWORK_FIXTURES\n"
-            "from dinkster_nodes_comfy import register_inference_types\n",
-            encoding="ascii",
-        )
-        registry = TypeRegistry()
-        register_core_types(registry)
-        register_asset_type(registry, resolver_from_env())
+        fixture = root / "tests/fixtures/hypernetwork/dinkster-pack.toml"
         composer = ServingComposer(
-            registry=registry,
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
                 "DINKSTER_ACCELERATOR": "cpu",
                 "DINKSTER_MOUNTS_SNAPSHOT": str(tmp_path / "mounts.json"),
-                "PYTHONPATH": os.pathsep.join(
-                    (str(tmp_path), str(root / "tests"), str(root / "src"))
-                ),
+                "PYTHONPATH": os.pathsep.join((str(root / "tests"), str(root / "src"))),
             },
         )
         try:
-            generation = default_pack_spec("dinkster-nodes-generation")
-            manifests = (
-                Path(generation.manifest),
-                root.parent / "dinkster-native/dinkster-pack.toml",
-                native,
-                fixture,
-            )
+            manifests = (native, fixture)
             for manifest in manifests:
-                packs = generation.packs if manifest == Path(generation.manifest) else None
                 await composer.add_pack(
-                    PackSpec(manifest=manifest, packs=packs, in_process=True, trust_reserved=True)
+                    PackSpec(manifest=manifest, in_process=True)
                     if in_process
                     else PackSpec(
                         manifest=manifest,
-                        packs=packs,
-                        trust_reserved=True,
                         worker_group="hypernetwork-fixture",
                         group_manifests=manifests,
                     )
