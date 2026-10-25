@@ -81,10 +81,17 @@ def test_checkpoint_hooks_preserve_weights_prior_hooks_and_strength_changes(
     previous = hooks.HookGroup()
     prior = hooks.WeightHook(strength_model=-0.25, strength_clip=0.75)
     previous.add(prior)
+    explicit_owner = object()
+    old_keyframes = hooks.HookKeyframeGroup()
+    previous._dinkster_resident_refs = (explicit_owner, old_keyframes, explicit_owner)
+    previous._dinkster_hook_keyframe_refs = (old_keyframes,)
     result = CreateHookModelAsLora.execute(
         ckpt_name=ref, strength_model=-0.7, strength_clip=1.3, prev_hooks=previous
     )["HOOKS"]
     assert isinstance(result, hooks.HookGroup)
+    assert result._dinkster_resident_refs[0] is explicit_owner
+    assert len(result._dinkster_resident_refs) == 2
+    assert not any(owner is old_keyframes for owner in result._dinkster_resident_refs)
     assert len(previous.hooks) == 1 and previous.hooks[0] is prior
     assert len(result.hooks) == 2
     assert result.hooks[0] is not prior
@@ -181,7 +188,13 @@ def test_checkpoint_weights_share_residency_across_assets_nodes_and_strengths(
         expected = model_b.model.weight if index == 1 else model_a.model.weight
         torch.testing.assert_close(added.weights["weight"][1][0], expected, rtol=0, atol=0)
         assert added.weights_clip["weight"][1][0].data_ptr() == expected.data_ptr()
-        retained.append(result._dinkster_resident_refs[-1])
+        owners = [
+            owner
+            for owner in result._dinkster_resident_refs
+            if owner[0]["weight"].data_ptr() == expected.data_ptr()
+        ]
+        assert len(owners) == 1
+        retained.append(owners[0])
         previous = result
     assert retained[0] is retained[2] is retained[4]
     assert retained[1] is retained[3] and retained[0] is not retained[1]

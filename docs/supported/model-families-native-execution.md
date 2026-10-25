@@ -13,3 +13,7 @@ streams on the model's 17k+5 frame grid at 24 fps.
 Other model-family templates and execution paths are not currently supported.
 The retained native 3D operation nodes are listed under standalone generation;
 they do not imply support for a retired model-family runtime.
+
+SeedVR2 workflows include temporal latent chunking and Hann-window merging for
+sampling video in smaller overlapping chunks. These nodes preserve latent
+metadata while removing a stale noise mask after chunks are recombined.

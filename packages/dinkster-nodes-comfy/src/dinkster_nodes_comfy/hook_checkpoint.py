@@ -23,6 +23,8 @@ from dinkster_api.v1 import (
     initialize_inference_process,
 )
 
+from .hook_scheduling import retain_hook_weights
+
 
 def _schema(node_type: str, *, model_only: bool) -> NodeSchema:
     return NodeSchema(
@@ -129,11 +131,8 @@ class CreateHookModelAsLora(Node):
         )
         previous = hooks.HookGroup() if prev_hooks is None else prev_hooks
         result = previous.clone_and_combine(added)
-        result._dinkster_resident_refs = (
-            *getattr(previous, "_dinkster_resident_refs", ()),
-            weights,
-        )
-        return cls.outputs(HOOKS=result)
+        added._dinkster_resident_refs = (weights,)
+        return cls.outputs(HOOKS=retain_hook_weights(result, previous, added))
 
 
 class CreateHookModelAsLoraModelOnly(Node):

@@ -1940,6 +1940,53 @@ def test_asset_literals_use_host_and_worker_resolvers(
 
 
 @pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("verified", (False, True))
+def test_comfy_manifest_registers_bound_assets_with_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, verified: bool
+) -> None:
+    from dinkster_api.v1 import ASSET_TYPE
+    from dinkster_assets import (
+        LocalAssetRef,
+        MountDef,
+        MountTable,
+    )
+
+    root = tmp_path / "models"
+    root.mkdir()
+    payload = b"bound model bytes"
+    (root / "weights.bin").write_bytes(payload)
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot, index_root=tmp_path / "indexes")
+    table.add(MountDef(id="models", path=root), kind="model/checkpoint")
+    if verified:
+        table.scan("models")
+    ref = table.bind_name("weights.bin", "model/checkpoint")
+    assert isinstance(ref, AssetRef if verified else LocalAssetRef)
+    comfy = TESTS_DIR.parent / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+    env = {
+        **WORKER_ENV,
+        "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
+    }
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        composer = ServingComposer(registry=registry, worker_env=env)
+        try:
+            assert ASSET_TYPE not in registry
+            await composer.add_pack(PackSpec(comfy, in_process=in_process, env=env))
+            for _ in range(2):
+                bound = registry.wrap(ASSET_TYPE, ref.to_wire()).resolve()
+                restored = registry.spec(ASSET_TYPE).decode(registry.spec(ASSET_TYPE).encode(bound))
+                assert isinstance(restored, AssetRef if verified else LocalAssetRef)
+                assert restored.local_path().read_bytes() == payload
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("in_process", (True, False))
 def test_native_comfy_pack_registers_container_literals(in_process: bool) -> None:
     async def scenario() -> None:
         composer = ServingComposer(worker_env=WORKER_ENV)

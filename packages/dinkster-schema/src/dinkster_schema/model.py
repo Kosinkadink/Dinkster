@@ -32,6 +32,7 @@ from typing import Literal, cast
 # runtime type ids can never drift apart.
 from dinkster_values import (
     ASSET_TYPE,
+    COLOR_TYPE,
     COMPOSITOR_TYPE,
     CORE_BOOLEAN,
     CORE_COMBO,
@@ -1106,8 +1107,13 @@ def _validate_widget_binding(input_id: str, input_type: TypeExpr, widget: Widget
             )
     if isinstance(widget, StringWidget) and primitive_type != TypeExpr.concrete(CORE_STRING):
         raise ValueError(f"input {input_id}: string widget requires a concrete STRING input")
-    if isinstance(widget, ColorWidget) and input_type != TypeExpr.concrete(CORE_STRING):
-        raise ValueError(f"input {input_id}: color widget requires a concrete STRING input")
+    if isinstance(widget, ColorWidget) and input_type not in (
+        TypeExpr.concrete(CORE_STRING),
+        TypeExpr.concrete(COLOR_TYPE),
+    ):
+        raise ValueError(
+            f"input {input_id}: color widget requires a concrete STRING or COLOR input"
+        )
     if isinstance(widget, CurveWidget) and input_type != TypeExpr.concrete(CURVE_TYPE):
         raise ValueError(f"input {input_id}: curve widget requires a concrete {CURVE_TYPE} input")
     if isinstance(widget, CompositorWidget) and input_type != TypeExpr.concrete(COMPOSITOR_TYPE):

@@ -1,5 +1,13 @@
 ## ComfyUI compatibility
 
+- Native LTXVCropGuides removes appended guide frames and their conditioning
+  metadata while preserving the remaining video latent and noise mask.
+- Native SeedVR2 output post-processing aligns video frames, restores alpha
+  and applies LAB, wavelet or AdaIN color matching with bounded chunks.
+- Native ARVideoI2V encodes the first start-image frame into a cloned model's
+  autoregressive configuration and creates the requested empty video latent.
+- Native Sampler AR Video constructs the autoregressive video sampler with
+  the workflow's frame-block size under its exact core interface.
 - Native LTXV sampling patches cloned models and constructs shifted sigma
   schedules from latent token counts, with optional terminal stretching.
 - Four native audio latent constructors preserve Stable Audio, ACE-Step 1.0,
