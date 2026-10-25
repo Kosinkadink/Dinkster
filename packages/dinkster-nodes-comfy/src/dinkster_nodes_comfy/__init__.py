@@ -10,6 +10,7 @@ from dinkster_api.v1 import register_inference_types as _register_inference_type
 
 from .ace_text_conditioning import ACE_TEXT_CONDITIONING_NODES
 from .advanced_samplers import ADVANCED_SAMPLER_NODES
+from .ar_video import SamplerARVideo
 from .attention_guidance import ATTENTION_GUIDANCE_NODES
 from .attention_multiply import ATTENTION_MULTIPLY_NODES
 from .audio_combine import AUDIO_COMBINE_NODES
@@ -206,6 +207,7 @@ COMFY_NODES = (
     *SIGMA_SCHEDULER_NODES,
     *SAMPLER_FACTORY_NODES,
     *ADVANCED_SAMPLER_NODES,
+    SamplerARVideo,
 )
 
 

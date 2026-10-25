@@ -376,6 +376,7 @@ namespaces = [
     "SamplerLCMUpscale",
     "SamplerLCM",
     "SamplerEulerCFGpp",
+    "SamplerARVideo",
 ]
 
 [pack.sandbox]
