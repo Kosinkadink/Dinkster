@@ -1,0 +1,53 @@
+"""Torch-free MiniMax H3 AV latent schema and discovery."""
+
+import subprocess
+import sys
+
+from dinkster_api.v1 import (
+    CORE_INT,
+    LATENT_TYPE,
+    InputSpec,
+    NumberWidget,
+    OutputSpec,
+    TypeExpr,
+    schema_from_wire,
+    schema_to_wire,
+)
+from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.minimax_h3_latent import EmptyMiniMaxH3LatentAV
+from dinkster_workers import load_manifest
+
+
+def test_minimax_h3_empty_av_schema_and_cold_discovery() -> None:
+    schema = EmptyMiniMaxH3LatentAV.schema()
+    integer = TypeExpr.concrete(CORE_INT)
+    assert schema.node_type == "EmptyMiniMaxH3LatentAV"
+    assert schema.display_name == "Empty MiniMax H3 AV Latent"
+    assert schema.category == "model/latent/minimax"
+    assert schema.inputs[:2] == (
+        InputSpec("width", integer, default=1344, widget=NumberWidget(min=32, max=16384, step=32)),
+        InputSpec("height", integer, default=768, widget=NumberWidget(min=32, max=16384, step=32)),
+    )
+    assert schema.inputs[2].id == "length"
+    assert schema.inputs[2].default == 124
+    assert schema.inputs[2].widget == NumberWidget(min=5, max=3600, step=17)
+    assert schema.outputs == (OutputSpec("LATENT", TypeExpr.concrete(LATENT_TYPE)),)
+    assert schema_from_wire(schema_to_wire(schema)) == schema
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; "
+            "from dinkster_nodes_comfy.minimax_h3_latent import EmptyMiniMaxH3LatentAV; "
+            "EmptyMiniMaxH3LatentAV.schema(); "
+            "assert 'torch' not in sys.modules; assert 'dinkster_inference' not in sys.modules",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_minimax_h3_empty_av_complete_registry_matches_manifest() -> None:
+    manifest = load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml")
+    assert tuple(node.schema().node_type for node in COMFY_NODES) == manifest.namespaces

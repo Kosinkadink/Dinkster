@@ -24,6 +24,7 @@ from typing import cast
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from dinkster_api.v1 import mount_roots_for_kind
 from dinkster_assets import (
     AssetError,
     AssetScanProgress,
@@ -43,6 +44,7 @@ from dinkster_assets.model import AssetRef
 from dinkster_assets.resolution import MountMaterialization, ResolutionStore
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EventListener
+from dinkster_graph import Graph, GraphNode
 from dinkster_schema import (
     InputSpec,
     Node,
@@ -54,7 +56,8 @@ from dinkster_schema import (
 )
 from dinkster_server import create_app
 from dinkster_values import TypeRegistry, register_core_types
-from dinkster_workers import InProcessWorker
+from dinkster_workers import InProcessWorker, IsolatedWorker, load_manifest
+from dinkster_workers.host import load_pack
 
 from dinkster.mounts_api import MountService, add_mount_routes
 
@@ -679,6 +682,143 @@ def test_snapshot_resolver_tolerates_malformed_snapshot(tmp_path: Path) -> None:
     assert resolver.resolve(digest_bytes(b"whatever")) is None
     snapshot.write_text(json.dumps({"mounts": "nope"}), "utf-8")
     assert resolver.resolve(digest_bytes(b"whatever")) is None
+
+
+def test_mount_roots_are_kind_scoped_ranked_and_live(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshot = tmp_path / "snapshot.json"
+    env = {"DINKSTER_MOUNTS_SNAPSHOT": str(snapshot)}
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+    resolver = MountSnapshotResolver(snapshot)
+    assert resolver.roots_for_kind("model/embedding") == ()
+    assert mount_roots_for_kind("model/embedding", env=env) == ()
+    table = MountTable(snapshot)
+    roots = {name: tmp_path / name for name in ("b-tie", "a-tie", "z-first", "other")}
+    for name, priority, kind in (
+        ("b-tie", 3, "model/embedding"),
+        ("other", -20, "model/checkpoint"),
+        ("a-tie", 3, "model/embedding"),
+        ("z-first", -2, "model/embedding"),
+    ):
+        roots[name].mkdir()
+        table.add(MountDef(id=name, path=roots[name], priority=priority), kind=kind)
+        table.scan(name)
+    # Snapshot row order is not the authority: priority and id are.
+    body = json.loads(snapshot.read_text())
+    body["mounts"].reverse()
+    snapshot.write_text(json.dumps(body))
+    expected = (roots["z-first"], roots["a-tie"], roots["b-tie"])
+    captured = resolver.roots_for_kind("model/embedding")
+    assert captured == expected
+    assert mount_roots_for_kind("model/embedding") == expected
+    assert mount_roots_for_kind("model/checkpoint", env=env) == (roots["other"],)
+    assert mount_roots_for_kind("model/embedding/child", env=env) == ()
+    # Directory authority survives an unavailable file index.
+    for row in body["mounts"]:
+        Path(row["index"]).unlink()
+    assert MountSnapshotResolver(snapshot).roots_for_kind("model/embedding") == expected
+    table.remove("z-first")
+    assert captured == expected
+    assert resolver.roots_for_kind("model/embedding") == expected[1:]
+    assert mount_roots_for_kind("model/embedding", env=env) == expected[1:]
+    snapshot.unlink()
+    assert resolver.roots_for_kind("model/embedding") == ()
+    assert mount_roots_for_kind("model/embedding", env=env) == ()
+
+
+def test_mount_roots_do_not_infer_unconfigured_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("DINKSTER_MOUNTS_SNAPSHOT", raising=False)
+    monkeypatch.setenv("DINKSTER_ASSET_ROOT", str(tmp_path))
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path))
+    assert mount_roots_for_kind("model/embedding") == ()
+    assert mount_roots_for_kind("model/embedding", env={}) == ()
+    snapshot = tmp_path / "malformed.json"
+    resolver = MountSnapshotResolver(snapshot)
+    env = {"DINKSTER_MOUNTS_SNAPSHOT": str(snapshot)}
+    for text in ("{not json", "[]", '{"mounts": "nope"}', '{"mounts": [{}]}'):
+        snapshot.write_text(text)
+        assert resolver.roots_for_kind("model/embedding") == ()
+        assert mount_roots_for_kind("model/embedding", env=env) == ()
+    with pytest.raises(AssetError, match="not a valid asset kind"):
+        mount_roots_for_kind("embedding", env={})
+    with pytest.raises(AssetError, match="not a valid asset kind"):
+        resolver.roots_for_kind("model/*")
+
+
+@pytest.mark.parametrize("isolated", [False, True])
+def test_public_mount_roots_in_ordinary_hosts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated: bool
+) -> None:
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    manifest_path = pack / "dinkster-pack.toml"
+    manifest_path.write_text(
+        '[pack]\nname = "root-probe"\npublisher = "dinkster"\n'
+        'namespaces = ["rootprobe"]\n[pack.entry]\nnodes = "root_probe:NODES"\n'
+    )
+    (pack / "root_probe.py").write_text(
+        "import json\n"
+        "from dinkster_api.v1 import Node, NodeSchema, OutputSpec, TypeExpr, mount_roots_for_kind\n"
+        "class Probe(Node):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema(node_type='rootprobe.read', inputs=(), "
+        "outputs=(OutputSpec('roots', TypeExpr.concrete('STRING')),))\n"
+        "    @classmethod\n"
+        "    def execute(cls):\n"
+        "        roots = mount_roots_for_kind('model/embedding')\n"
+        "        return cls.outputs(roots=json.dumps([(str(root), "
+        "(root / 'sentinel.txt').read_text()) for root in roots]))\n"
+        "NODES = (Probe,)\n"
+    )
+    snapshot = tmp_path / "snapshot.json"
+    table = MountTable(snapshot)
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        worker: InProcessWorker | IsolatedWorker
+        if isolated:
+            worker = IsolatedWorker(
+                manifest_path, registry, extra_env={"DINKSTER_MOUNTS_SNAPSHOT": str(snapshot)}
+            )
+            await worker.start()
+        else:
+            worker, registry, _, _ = load_pack(
+                load_manifest(manifest_path), import_from_pack_root=True, registry=registry
+            )
+        try:
+            expected: list[list[str]] = []
+            for name, priority, kind, text in (
+                ("late", 4, "model/embedding", "late embedding"),
+                ("unrelated", -9, "model/checkpoint", "not an embedding"),
+                ("first", -1, "model/embedding", "preferred embedding"),
+            ):
+                seed(tmp_path / name, {"sentinel.txt": text.encode()})
+                table.add(MountDef(id=name, path=tmp_path / name, priority=priority), kind=kind)
+                table.scan(name)
+                if kind == "model/embedding":
+                    expected.insert(0, [str(tmp_path / name), text])
+                engine = Engine(
+                    schemas=dict(worker.schemas),
+                    registry=registry,
+                    worker=worker,
+                    cache=MemoryLRUCache(),
+                )
+                result = await engine.run(
+                    Graph(nodes={"read": GraphNode("rootprobe.read", {})}), ["read"]
+                )
+                actual = result.outputs["read"]["roots"].resolve()
+                assert isinstance(actual, str)
+                assert json.loads(actual) == expected
+        finally:
+            await worker.close()
+
+    asyncio.run(scenario())
 
 
 # --- the API surface ----------------------------------------------------------

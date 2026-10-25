@@ -24,6 +24,7 @@ from dinkster_api.v1 import (
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.ltx_video_conditioning import (
     LTXVConditioning,
+    LTXVCropGuides,
     LTXVImgToVideo,
     LTXVImgToVideoInplace,
 )
@@ -281,6 +282,187 @@ def test_ltx_video_conditioning_executes_twice_through_both_production_hosts(
             for _ in range(2):
                 result = await engine.run(graph, ["consumer"])
                 assert result.outputs["consumer"]["summary"].resolve() == "ltx-video-conditioning"
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("count", (0, 2, 5))
+@pytest.mark.parametrize("existing_mask", (False, True))
+def test_crop_guides_preserves_sources_and_clears_only_removed_guides(
+    count: int, existing_mask: bool
+) -> None:
+    samples = torch.arange(2 * 3 * 5 * 2 * 3, dtype=torch.float64).reshape(2, 3, 5, 2, 3)
+    mask = torch.linspace(0.1, 0.9, 2 * 5 * 2 * 3).reshape(2, 1, 5, 2, 3)
+    positive = [[torch.ones(1, 2, 3), {"keep": "positive"}]]
+    positive.append([torch.ones(1, 2, 3), {"keyframe_idxs": torch.zeros(1, 3, count * 6, 2)}])
+    negative = [[torch.zeros(1, 2, 3), {"keep": "negative", "keyframe_idxs": "untouched"}]]
+    latent = {"samples": samples, "discarded": True}
+    if existing_mask:
+        latent["noise_mask"] = mask
+    before, before_mask = samples.clone(), mask.clone()
+    result = LTXVCropGuides.execute(positive=positive, negative=negative, latent=latent)
+    output = result["latent"]
+    assert set(output) == {"samples", "noise_mask"}
+    remaining = 5 - count
+    torch.testing.assert_close(output["samples"], before[:, :, :remaining], rtol=0, atol=0)
+    expected_mask = before_mask if existing_mask else torch.ones(2, 1, 5, 1, 1)
+    torch.testing.assert_close(
+        output["noise_mask"], expected_mask[:, :, :remaining], rtol=0, atol=0
+    )
+    assert torch.equal(samples, before) and torch.equal(mask, before_mask)
+    assert "guide_attention_entries" not in positive[0][1]
+    assert negative[0][1]["keyframe_idxs"] == "untouched"
+    if count:
+        for name in ("positive", "negative"):
+            assert all(entry[1]["keyframe_idxs"] is None for entry in result[name])
+            assert all(entry[1]["guide_attention_entries"] is None for entry in result[name])
+        assert result["positive"][0][1]["keep"] == "positive"
+        assert result["negative"][0][1]["keep"] == "negative"
+    else:
+        assert result["positive"] is positive and result["negative"] is negative
+    output["samples"].zero_()
+    output["noise_mask"].zero_()
+    assert torch.equal(samples, before) and torch.equal(mask, before_mask)
+
+
+def test_crop_guides_uses_first_present_key_and_non_video_fallbacks() -> None:
+    samples = torch.arange(30.0).reshape(1, 3, 5, 2)
+    mask = torch.ones(1, 1, 5, 1)
+    indices = torch.tensor([0.0, 0.0, 8.0, 8.0]).reshape(1, 1, 4, 1)
+    positive = [
+        [torch.ones(1), {"keyframe_idxs": None}],
+        [torch.ones(1), {"keyframe_idxs": indices}],
+    ]
+    result = LTXVCropGuides.execute(
+        positive=positive, negative=[], latent={"samples": samples, "noise_mask": mask}
+    )
+    assert result["positive"] is positive
+    torch.testing.assert_close(result["latent"]["samples"], samples, rtol=0, atol=0)
+    for entries, remaining in (
+        (None, 3),
+        ([{"latent_shape": (1, 2, 3)}, {"latent_shape": (2, 1, 1)}], 2),
+    ):
+        positive = [[torch.ones(1), {"keyframe_idxs": indices, "guide_attention_entries": entries}]]
+        result = LTXVCropGuides.execute(
+            positive=positive, negative=[], latent={"samples": samples, "noise_mask": mask}
+        )
+        torch.testing.assert_close(
+            result["latent"]["samples"], samples[:, :, :remaining], rtol=0, atol=0
+        )
+
+
+class CropSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="ltx-crop-guides-fixture.source",
+            outputs=(
+                OutputSpec("positive", _CONDITIONING),
+                OutputSpec("negative", _CONDITIONING),
+                OutputSpec("latent", _LATENT),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        return cls.outputs(
+            positive=[
+                [torch.ones(1, 2, 3), {"keyframe_idxs": torch.zeros(1, 3, 12, 2), "keep": 7}]
+            ],
+            negative=[[torch.zeros(1, 2, 3), {"keep": 9}]],
+            latent={
+                "samples": torch.arange(2 * 3 * 5 * 2 * 3, dtype=torch.float64).reshape(
+                    2, 3, 5, 2, 3
+                )
+            },
+        )
+
+
+class CropConsumer(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="ltx-crop-guides-fixture.consumer",
+            inputs=(
+                InputSpec("positive", _CONDITIONING),
+                InputSpec("negative", _CONDITIONING),
+                InputSpec("latent", _LATENT),
+            ),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, positive: object, negative: object, latent: object) -> dict[str, object]:
+        value = materialize_latent(latent)
+        expected = torch.arange(2 * 3 * 5 * 2 * 3, dtype=torch.float64).reshape(2, 3, 5, 2, 3)[
+            :, :, :3
+        ]
+        torch.testing.assert_close(value["samples"], expected, rtol=0, atol=0)
+        torch.testing.assert_close(value["noise_mask"], torch.ones(2, 1, 3, 1, 1), rtol=0, atol=0)
+        assert positive[0][1] == {"keep": 7, "keyframe_idxs": None, "guide_attention_entries": None}
+        assert negative[0][1] == {"keep": 9, "keyframe_idxs": None, "guide_attention_entries": None}
+        return cls.outputs(summary="ltx-crop-guides")
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_crop_guides_ordinary_native_and_separate_fixture_twice(
+    tmp_path: Path, in_process: bool
+) -> None:
+    async def scenario() -> None:
+        package = Path(__file__).resolve().parents[1]
+        module = "ltx_crop_guides_fixture"
+        (tmp_path / f"{module}.py").write_text(
+            "from test_ltx_video_conditioning_torch import CropSource, CropConsumer\n"
+            "from dinkster_api.v1 import register_inference_types\n"
+            "NODES=(CropSource,CropConsumer)\n",
+            encoding="ascii",
+        )
+        fixture = tmp_path / "dinkster-pack.toml"
+        fixture.write_text(
+            '[pack]\nname="ltx-crop-guides-fixture"\npublisher="dinkster"\nnamespaces=["ltx-crop-guides-fixture"]\n'
+            f'[pack.entry]\nnodes="{module}:NODES"\ntypes="{module}:register_inference_types"\n',
+            encoding="ascii",
+        )
+        native = package / "dinkster-pack.toml"
+        composer = ServingComposer(
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "PYTHONPATH": os.pathsep.join(
+                    (str(tmp_path), str(Path(__file__).parent), str(package / "src"))
+                ),
+            }
+        )
+        try:
+            for manifest in (native, fixture):
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=manifest,
+                        in_process=in_process,
+                        worker_group=None if in_process else "ltx-crop-guides-fixture",
+                        group_manifests=() if in_process else (native, fixture),
+                    )
+                )
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("ltx-crop-guides-fixture.source", {}),
+                    "crop": GraphNode(
+                        "LTXVCropGuides",
+                        {name: Link("source", name) for name in ("positive", "negative", "latent")},
+                    ),
+                    "consumer": GraphNode(
+                        "ltx-crop-guides-fixture.consumer",
+                        {name: Link("crop", name) for name in ("positive", "negative", "latent")},
+                    ),
+                }
+            )
+            for _ in range(2):
+                result = await composer.composition.make_engine(lambda _event: None).run(
+                    graph, ["consumer"]
+                )
+                assert result.outputs["consumer"]["summary"].resolve() == "ltx-crop-guides"
         finally:
             await composer.close()
 

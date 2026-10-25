@@ -28,7 +28,11 @@ uv run --locked python -m pytest -q \
   tests/test_vision_capability_schemas.py \
   tests/test_manifest.py::test_extension_contract_fixture_uses_current_public_pack_surfaces \
   tests/test_manifest.py::test_pack_prefix_reservation_depends_on_publisher \
+  tests/test_audio_lazy.py::test_native_comfy_audio_registration_preserves_first_authority \
+  tests/test_audio_lazy.py::test_native_comfy_audio_registration_is_torch_free \
   tests/test_compose.py::test_compose_dev_pack_adds_scaffold_nodes \
+  tests/test_compose.py::test_exact_node_claims_compose_reload_execute_and_reject_second_owner \
+  tests/test_compose.py::test_asset_literals_use_host_and_worker_resolvers \
   tests/test_serve.py::test_serve_rejects_removed_dev_argument \
   tests/test_serve.py::test_serve_plain_dev_pack_is_announced \
   tests/test_compat_comfy.py::test_compat_worker_type_ownership_preserves_image_dependency

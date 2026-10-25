@@ -397,6 +397,52 @@ def asset_registry(resolver: AssetResolver | None = None) -> TypeRegistry:
     return registry
 
 
+@pytest.mark.parametrize("verified", (False, True))
+@pytest.mark.parametrize("preexisting", (False, True))
+def test_comfy_manifest_registers_bound_assets_without_replacing_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verified: bool, preexisting: bool
+) -> None:
+    from dinkster_workers import load_manifest
+    from dinkster_workers.manifest import resolve_entry
+
+    root = tmp_path / "models"
+    root.mkdir()
+    payload = b"comfy model asset"
+    (root / "weights.bin").write_bytes(payload)
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot, index_root=tmp_path / "indexes")
+    table.add(MountDef(id="models", path=root), kind="model/checkpoint")
+    if verified:
+        table.scan("models")
+    ref = table.bind_name("weights.bin", "model/checkpoint")
+    assert isinstance(ref, AssetRef if verified else LocalAssetRef)
+    registry = TypeRegistry()
+    register_core_types(registry)
+    if preexisting:
+        register_asset_type(registry, table)
+        original = registry.spec(ASSET_TYPE)
+        monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(tmp_path / "absent.json"))
+    else:
+        original = None
+        monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+    manifest = load_manifest(
+        Path(__file__).parents[1] / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+    )
+    assert manifest.types_entry is not None
+    register = resolve_entry(manifest.types_entry)
+    assert callable(register)
+    register(registry)
+    first = registry.spec(ASSET_TYPE)
+    register(registry)
+    assert registry.spec(ASSET_TYPE) is first
+    if original is not None:
+        assert first is original
+    rebound = registry.wrap(ASSET_TYPE, ref.to_wire()).resolve()
+    assert isinstance(rebound, AssetRef if verified else LocalAssetRef)
+    assert rebound.local_path() == root / "weights.bin"
+    assert rebound.read_bytes() == payload
+
+
 def test_wrap_literal_mapping_becomes_resolver_bound_ref(tmp_path: Path) -> None:
     root = make_models_dir(tmp_path)
     library = LocalAssetLibrary(root)

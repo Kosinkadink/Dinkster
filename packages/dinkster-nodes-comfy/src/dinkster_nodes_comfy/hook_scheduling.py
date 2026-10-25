@@ -42,6 +42,30 @@ def _hooks() -> Any:
     return importlib.import_module("dinkster_inference.hooks")
 
 
+def retain_hook_weights(result: Any, *sources: Any) -> Any:
+    if result is None or any(result is source for source in sources):
+        return result
+    retained: list[object] = []
+    for source in (result, *sources):
+        if source is None or not any(
+            hook == cloned
+            and all(
+                getattr(hook, field, None) is getattr(cloned, field, None)
+                for field in ("weights", "weights_clip")
+            )
+            for hook in source.hooks
+            for cloned in result.hooks
+        ):
+            continue
+        derived = getattr(source, "_dinkster_hook_keyframe_refs", ())
+        for owner in getattr(source, "_dinkster_resident_refs", ()):
+            # Only explicit owners survive cloning; normalization derives the new schedule.
+            if not any(owner is old for old in (*derived, *retained)):
+                retained.append(owner)
+    result._dinkster_resident_refs = tuple(retained)
+    return result
+
+
 def _keyframes(previous: Any | None) -> Any:
     hooks = _hooks()
     return hooks.HookKeyframeGroup() if previous is None else previous.clone()
@@ -104,7 +128,7 @@ class SetHookKeyframes(Node):
             return cls.outputs(HOOKS=hooks)
         result = hooks.clone()
         result.set_keyframes_on_hooks(hook_kf)
-        return cls.outputs(HOOKS=result)
+        return cls.outputs(HOOKS=retain_hook_weights(result, hooks))
 
 
 class CreateHookKeyframe(Node):
@@ -292,7 +316,9 @@ class CombineHooks2(Node):
     def execute(
         cls, *, hooks_A: Any | None = None, hooks_B: Any | None = None
     ) -> Mapping[str, object]:
-        return cls.outputs(HOOKS=_hooks().HookGroup.combine_all_hooks([hooks_A, hooks_B]))
+        candidates = [hooks_A, hooks_B]
+        result = _hooks().HookGroup.combine_all_hooks(candidates)
+        return cls.outputs(HOOKS=retain_hook_weights(result, *candidates))
 
 
 class CombineHooks4(Node):
@@ -303,7 +329,8 @@ class CombineHooks4(Node):
     @classmethod
     def execute(cls, **inputs: Any) -> Mapping[str, object]:
         candidates = [inputs.get(f"hooks_{letter}") for letter in "ABCD"]
-        return cls.outputs(HOOKS=_hooks().HookGroup.combine_all_hooks(candidates))
+        result = _hooks().HookGroup.combine_all_hooks(candidates)
+        return cls.outputs(HOOKS=retain_hook_weights(result, *candidates))
 
 
 class CombineHooks8(Node):
@@ -314,7 +341,8 @@ class CombineHooks8(Node):
     @classmethod
     def execute(cls, **inputs: Any) -> Mapping[str, object]:
         candidates = [inputs.get(f"hooks_{letter}") for letter in "ABCDEFGH"]
-        return cls.outputs(HOOKS=_hooks().HookGroup.combine_all_hooks(candidates))
+        result = _hooks().HookGroup.combine_all_hooks(candidates)
+        return cls.outputs(HOOKS=retain_hook_weights(result, *candidates))
 
 
 HOOK_SCHEDULING_NODES = (

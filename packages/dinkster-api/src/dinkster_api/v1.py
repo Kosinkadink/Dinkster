@@ -72,6 +72,7 @@ from dinkster_assets import (
     digest_bytes,
     digest_file,
     is_digest,
+    mount_roots_for_kind,
     register_asset_type,
     register_audio_value_type,
     register_save_target_type,
@@ -89,6 +90,7 @@ from dinkster_memory import (
     ReservationRequest,
     Shedder,
 )
+from dinkster_memory.resident import obtain_resident
 from dinkster_protocol import (
     EXTENSION_CAPABILITIES,
     EXTENSION_SCOPES,
@@ -442,6 +444,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "RunExecutionContext",
+    "obtain_resident",
     "Expansion",
     "ExpansionBuilder",
     "ExpansionNode",
@@ -762,6 +765,7 @@ __all__ = [
     "digest_bytes",
     "digest_file",
     "is_digest",
+    "mount_roots_for_kind",
     "register_asset_type",
     "register_save_target_type",
     "register_audio_value_type",
