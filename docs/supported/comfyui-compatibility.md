@@ -1,5 +1,7 @@
 ## ComfyUI compatibility
 
+- Native ARVideoI2V encodes the first start-image frame into a cloned model's
+  autoregressive configuration and creates the requested empty video latent.
 - Native Sampler AR Video constructs the autoregressive video sampler with
   the workflow's frame-block size under its exact core interface.
 - Native LTXV sampling patches cloned models and constructs shifted sigma
