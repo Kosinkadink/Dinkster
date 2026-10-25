@@ -190,6 +190,8 @@ namespaces = [
     "ConditioningZeroOut",
     "ConditioningSetTimestepRange",
     "ConditioningStableAudio",
+    "CreateHookModelAsLora",
+    "CreateHookModelAsLoraModelOnly",
     "ConditioningSetProperties",
     "ConditioningSetPropertiesAndCombine",
     "PairConditioningSetProperties",

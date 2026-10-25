@@ -44,4 +44,7 @@
   links. Releasing a referenced hook invalidates dependent conditioning and caches.
 - Nine native hook conditioning nodes set and combine single or paired prompt
   properties, default prompt records, hook timesteps, and CLIP hook schedules.
+- `CreateHookModelAsLora` and its model-only variant combine checkpoint weight
+  hooks with optional prior hooks, using the bound checkpoint file and authorized
+  embedding directories.
 - Other model-family conditioning surfaces are unsupported.
