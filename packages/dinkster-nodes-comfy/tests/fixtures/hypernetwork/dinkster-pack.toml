@@ -1,0 +1,8 @@
+[pack]
+name = "hypernetwork-fixture"
+publisher = "dinkster"
+namespaces = ["hypernetwork-fixture"]
+
+[pack.entry]
+nodes = "hypernetwork_fixture:HYPERNETWORK_FIXTURES"
+types = "hypernetwork_fixture:register_inference_types"
