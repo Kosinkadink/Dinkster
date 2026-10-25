@@ -292,6 +292,8 @@ namespaces = [
     "LTXVConditioning",
     "SeedVR2Preprocess",
     "SeedVR2Conditioning",
+    "SeedVR2TemporalChunk",
+    "SeedVR2TemporalMerge",
     "MiniMaxH3SigmaShift",
     "EmptyMiniMaxH3LatentAV",
     "SVD_img2vid_Conditioning",
