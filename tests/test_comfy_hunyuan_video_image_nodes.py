@@ -9,6 +9,7 @@ from dinkster_api.v1 import (
     CLIP_VISION_OUTPUT_TYPE,
     CONDITIONING_TYPE,
     CORE_COMBO,
+    CORE_FLOAT,
     CORE_INT,
     IMAGE_TYPE,
     LATENT_TYPE,
@@ -66,6 +67,25 @@ def test_hunyuan_video_image_schemas_match_the_public_contract() -> None:
             (None, None, None, 848, 480, 33, 1, None, None),
             (True, True, True, True, True, True, True, False, False),
         ),
+        (
+            "HunyuanVideo15SuperResolution",
+            (
+                ("positive", CONDITIONING_TYPE),
+                ("negative", CONDITIONING_TYPE),
+                ("vae", VAE_TYPE),
+                ("start_image", IMAGE_TYPE),
+                ("clip_vision_output", CLIP_VISION_OUTPUT_TYPE),
+                ("latent", LATENT_TYPE),
+                ("noise_augmentation", CORE_FLOAT),
+            ),
+            (
+                ("positive", CONDITIONING_TYPE),
+                ("negative", CONDITIONING_TYPE),
+                ("latent", LATENT_TYPE),
+            ),
+            (None, None, None, None, None, None, 0.70),
+            (True, True, False, False, False, True, True),
+        ),
     )
     for node, (node_type, inputs, outputs, defaults, required) in zip(
         HUNYUAN_VIDEO_IMAGE_NODES, expected, strict=True
@@ -80,11 +100,17 @@ def test_hunyuan_video_image_schemas_match_the_public_contract() -> None:
         assert tuple(item.default for item in schema.inputs) == defaults
         assert tuple(item.required for item in schema.inputs) == required
         assert schema_from_wire(schema_to_wire(schema)) == schema
-        for item, minimum, step in zip(
-            schema.inputs[3:7] if node_type == "HunyuanVideo15ImageToVideo" else schema.inputs[2:6],
-            (16, 16, 1, 1),
-            (16, 16, 4, None),
-            strict=True,
+        for item, minimum, step in (
+            zip(
+                schema.inputs[3:7]
+                if node_type == "HunyuanVideo15ImageToVideo"
+                else schema.inputs[2:6],
+                (16, 16, 1, 1),
+                (16, 16, 4, None),
+                strict=True,
+            )
+            if node_type != "HunyuanVideo15SuperResolution"
+            else ()
         ):
             assert isinstance(item.widget, NumberWidget)
             assert (item.widget.min, item.widget.max, item.widget.step) == (
@@ -107,7 +133,8 @@ def test_hunyuan_video_image_cold_discovery() -> None:
             "sys.modules['torch'] = None\n"
             "from dinkster_nodes_comfy import COMFY_NODES\n"
             "ids = {node.schema().node_type for node in COMFY_NODES}\n"
-            "assert {'HunyuanImageToVideo', 'HunyuanVideo15ImageToVideo'} <= ids\n",
+            "assert {'HunyuanImageToVideo', 'HunyuanVideo15ImageToVideo',\n"
+            "        'HunyuanVideo15SuperResolution'} <= ids\n",
         ],
         capture_output=True,
         text=True,
