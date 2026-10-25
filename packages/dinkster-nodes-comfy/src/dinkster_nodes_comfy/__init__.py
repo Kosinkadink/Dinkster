@@ -30,6 +30,7 @@ from .dataset_images import DATASET_IMAGE_NODES
 from .dataset_text import DATASET_TEXT_NODES
 from .device_routing import DEVICE_ROUTING_NODES
 from .freeu import FREEU_NODES
+from .gligen_conditioning import GLIGENTextBoxApply
 from .hook_conditioning import HOOK_CONDITIONING_NODES
 from .hook_scheduling import HOOK_SCHEDULING_NODES
 from .hunyuan_latent import HUNYUAN_LATENT_NODES
@@ -132,6 +133,7 @@ COMFY_NODES = (
     *MODEL_LATENT_NODES,
     *CLIP_NODES,
     *STYLE_MODEL_NODES,
+    GLIGENTextBoxApply,
     *CLIP_SDXL_NODES,
     *MODEL_TEXT_ENCODER_NODES,
     *VAE_NODES,
