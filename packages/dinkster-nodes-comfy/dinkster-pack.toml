@@ -91,6 +91,7 @@ namespaces = [
     "RescaleCFG",
     "ModelComputeDtype",
     "ModelAttentionBackend",
+    "HypernetworkLoader",
     "ModelPatchLoader",
     "MultiGPU_WorkUnits",
     "SelectModelDevice",

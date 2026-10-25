@@ -26,6 +26,8 @@ from dinkster_api.v1 import (
     materialize_image,
 )
 
+from .hook_scheduling import retain_hook_weights
+
 _CATEGORY = "advanced/hooks"
 _CONDITIONING = TypeExpr.concrete(CONDITIONING_TYPE)
 _CLIP = TypeExpr.concrete(CLIP_TYPE)
@@ -65,6 +67,16 @@ def _properties_inputs(*inputs: InputSpec) -> tuple[InputSpec, ...]:
     )
 
 
+def _retain_conditioning_weights(
+    results: list[list[Any]], originals: Sequence[Sequence[Any]], hooks: object | None
+) -> list[list[Any]]:
+    if hooks is not None:
+        for result, original in zip(results, originals, strict=True):
+            for (_, metadata), (_, previous) in zip(result, original, strict=True):
+                retain_hook_weights(metadata.get("hooks"), previous.get("hooks"), hooks)
+    return results
+
+
 def _properties(
     conds: Sequence[Sequence[Any]],
     strength: float,
@@ -73,7 +85,7 @@ def _properties(
     hooks: object | None,
     timesteps: tuple[float, float] | None,
 ) -> list[list[Any]]:
-    return _hooks().set_conds_props(
+    results = _hooks().set_conds_props(
         list(conds),
         strength,
         set_cond_area,
@@ -81,6 +93,7 @@ def _properties(
         hooks=hooks,
         timesteps_range=timesteps,
     )
+    return _retain_conditioning_weights(results, conds, hooks)
 
 
 class ConditioningSetProperties(Node):
@@ -135,16 +148,17 @@ class ConditioningSetPropertiesAndCombine(Node):
         hooks: object | None = None,
         timesteps: tuple[float, float] | None = None,
     ) -> Mapping[str, object]:
+        result = _hooks().set_conds_props_and_combine(
+            [cond],
+            [cond_NEW],
+            strength,
+            set_cond_area,
+            mask=None if mask is None else materialize_image(mask),
+            hooks=hooks,
+            timesteps_range=timesteps,
+        )
         return cls.outputs(
-            conditioning=_hooks().set_conds_props_and_combine(
-                [cond],
-                [cond_NEW],
-                strength,
-                set_cond_area,
-                mask=None if mask is None else materialize_image(mask),
-                hooks=hooks,
-                timesteps_range=timesteps,
-            )[0]
+            conditioning=_retain_conditioning_weights(result, [[*cond, *cond_NEW]], hooks)[0]
         )
 
 
@@ -209,7 +223,7 @@ class PairConditioningSetPropertiesAndCombine(Node):
         hooks: object | None = None,
         timesteps: tuple[float, float] | None = None,
     ) -> Mapping[str, object]:
-        positive, negative = _hooks().set_conds_props_and_combine(
+        results = _hooks().set_conds_props_and_combine(
             [positive, negative],
             [positive_NEW, negative_NEW],
             strength,
@@ -217,6 +231,9 @@ class PairConditioningSetPropertiesAndCombine(Node):
             mask=None if mask is None else materialize_image(mask),
             hooks=hooks,
             timesteps_range=timesteps,
+        )
+        positive, negative = _retain_conditioning_weights(
+            results, [[*positive, *positive_NEW], [*negative, *negative_NEW]], hooks
         )
         return cls.outputs(positive=positive, negative=negative)
 
@@ -244,10 +261,9 @@ class ConditioningSetDefaultCombine(Node):
         cond_DEFAULT: Sequence[Sequence[Any]],
         hooks: object | None = None,
     ) -> Mapping[str, object]:
+        result = _hooks().set_default_conds_and_combine([cond], [cond_DEFAULT], hooks=hooks)
         return cls.outputs(
-            conditioning=_hooks().set_default_conds_and_combine(
-                [cond], [cond_DEFAULT], hooks=hooks
-            )[0]
+            conditioning=_retain_conditioning_weights(result, [[*cond, *cond_DEFAULT]], hooks)[0]
         )
 
 
@@ -278,8 +294,11 @@ class PairConditioningSetDefaultCombine(Node):
         negative_DEFAULT: Sequence[Sequence[Any]],
         hooks: object | None = None,
     ) -> Mapping[str, object]:
-        positive, negative = _hooks().set_default_conds_and_combine(
+        results = _hooks().set_default_conds_and_combine(
             [positive, negative], [positive_DEFAULT, negative_DEFAULT], hooks=hooks
+        )
+        positive, negative = _retain_conditioning_weights(
+            results, [[*positive, *positive_DEFAULT], [*negative, *negative_DEFAULT]], hooks
         )
         return cls.outputs(positive=positive, negative=negative)
 
@@ -348,7 +367,7 @@ class SetClipHooks(Node):
         result = clip.clone(disable_dynamic=True)
         if apply_to_conds:
             result.apply_hooks_to_conds = hook_group
-        result.patcher.forced_hooks = hook_group.clone()
+        result.patcher.forced_hooks = retain_hook_weights(hook_group.clone(), hook_group)
         result.use_clip_schedule = schedule_clip
         if not result.use_clip_schedule:
             result.patcher.forced_hooks.set_keyframes_on_hooks(None)

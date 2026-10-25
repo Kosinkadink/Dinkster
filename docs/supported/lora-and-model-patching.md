@@ -12,6 +12,9 @@ resident values to the selected default, CPU, or portable `gpu:N` device where
 supported. Unavailable devices leave the value unchanged; VAE routing does not
 offer CPU.
 
+`HypernetworkLoader` loads a bound hypernetwork asset and applies its key/value
+networks to self- and cross-attention on a cloned model, with adjustable strength.
+
 `ScaleROPE` scales and shifts spatial and temporal rotary coordinates on a cloned
 model. `DifferentialDiffusion` applies timestep-dependent denoise masks, with
 optional blending strength, without changing the source model.
@@ -55,3 +58,7 @@ consumer while retaining their dtype and ordering.
 Resident CLIP values retain their conditioning and scheduled hook dependencies.
 Releasing a retained hook group or keyframe group invalidates dependent cached
 CLIP outputs without invalidating unrelated encoders.
+
+Hook scheduling, combinations, CLIP schedules, and conditioning preserve retained
+weight dependencies. Releasing those weights invalidates dependent outputs;
+replacing a schedule releases the output's dependency on the old keyframes.
