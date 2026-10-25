@@ -382,6 +382,8 @@ namespaces = [
     "SamplerARVideo",
     "ARVideoI2V",
     "SeedVR2PostProcessing",
+    "WanDancerPadKeyframes",
+    "WanDancerPadKeyframesList",
 ]
 
 [pack.sandbox]

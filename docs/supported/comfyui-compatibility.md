@@ -1,5 +1,7 @@
 ## ComfyUI compatibility
 
+- Native WanDancer keyframe padding places reference frames and masks into
+  video segments, with matching audio slices and scalar or list outputs.
 - Native ComfyUI AUDIO sockets retain the first registered audio authority
   and work across isolated pack processes without a companion media pack.
 - Native LTXVCropGuides removes appended guide frames and their conditioning
