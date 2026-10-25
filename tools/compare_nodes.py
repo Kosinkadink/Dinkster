@@ -3,6 +3,10 @@
 Derived from the node-interface comparison in comfy-vibe-station issue 504.
 Only exact class ids match. Aliases, labels and namespace rewrites never match
 an id or a value. The only additional input is an appended optional save mount.
+Source-marked file combos may use an ASSET socket and asset picker; ordinary
+combo types, options and defaults remain exact.
+V3 inputs follow the recorded declaration sequence, including optional inputs
+between required inputs. V1 inputs retain required-then-optional group order.
 Hidden inputs are outside the workflow contract on both sides. Output names
 count only when the reference declares RETURN_NAMES (or explicit V3 output
 labels); dumps must leave return_names null when names are synthesized.
@@ -27,14 +31,6 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-ENGINE_EXCLUSIONS = {
-    "ComfySwitchNode": "lazy inputs",
-    "StartLoop": "GraphBuilder expansion; loop semantics",
-    "EndLoop": "loop semantics",
-    "LoopIteration": "loop semantics",
-    "LoopProgress": "loop semantics",
-    "LoopResult": "loop semantics",
-}
 FORBIDDEN_PREFIXES = ("dinkster.", "comfy.")
 INPUT_ROLES = {"input", "inputFamily", "dynamicCombo", "dynamicSlot"}
 VALUE_OPTIONS = (
@@ -171,6 +167,8 @@ def _native_inputs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     entry["file_picker"] = True
                 if entry.get("options"):
                     entry.setdefault("default", entry["options"][0])
+            elif entry["type"] in ("ASSET", {"list": "ASSET"}) and widget.get("type") == "ASSET":
+                entry["file_picker"] = True
             if entry.get("multiselect") is False:
                 entry.pop("multiselect")
         elif role == "dynamicCombo":
@@ -228,6 +226,10 @@ def _differences(expected: Any, actual: Any, path: str) -> list[str]:
             if not file_input or expected.get("type") not in ("COMBO", {"list": "COMBO"}):
                 return [f"{path}: asset picker on a non-file input"]
             # Mount contents vary, but the widget still consumes the original file slot.
+            if actual.get("type") == "ASSET":
+                actual["type"] = "COMBO"
+            elif actual.get("type") == {"list": "ASSET"}:
+                actual["type"] = {"list": "COMBO"}
             expected.pop("options", None)
             expected.pop("default", None)
             actual.pop("default", None)
@@ -262,6 +264,22 @@ def compare(row: dict[str, Any], schema: dict[str, Any]) -> list[str]:
     if any(item.get("role") not in INPUT_ROLES | {"output"} for item in schema["interface"]):
         return ["native interface contains an unsupported role or a variable output family"]
     expected = _reference_inputs(row["input_types"], bool(row.get("input_is_list")))
+    if row.get("is_v3") or "v3_inputs" in row:
+        declarations = row.get("v3_inputs")
+        if not isinstance(declarations, list) or any(
+            not isinstance(item, dict) or not isinstance(item.get("id"), str)
+            for item in declarations
+        ):
+            return ["reference V3 input sequence unavailable or malformed"]
+        names = [item["id"] for item in declarations]
+        by_name = {item["name"]: item for item in expected}
+        if (
+            len(names) != len(set(names))
+            or len(names) != len(expected)
+            or set(names) != set(by_name)
+        ):
+            return ["reference V3 input sequence does not match public input groups"]
+        expected = [by_name[name] for name in names]
     actual = _native_inputs(schema.get("interface", []))
     differences = []
     save_node = row["class_name"].startswith("Save") and any(
@@ -269,9 +287,13 @@ def compare(row: dict[str, Any], schema: dict[str, Any]) -> list[str]:
     )
     if actual and actual[-1]["name"] == "mount" and save_node:
         mount = actual.pop()
+        if mount.get("multiline") is False:
+            mount.pop("multiline")
+        # The production serializer omits the configured-output None sentinel.
+        mount.setdefault("default", None)
         differences.extend(
             _differences(
-                {"name": "mount", "group": "optional", "type": "STRING", "default": "output"},
+                {"name": "mount", "group": "optional", "type": "STRING", "default": None},
                 mount,
                 "mount",
             )
@@ -334,10 +356,6 @@ def compare_registry(reference: dict[str, Any], registry: dict[str, Any]) -> dic
     served = registry["nodes"]
     results = []
     errors = []
-    if "engine_exclusions" in reference and reference["engine_exclusions"] != {
-        name: semantics.split("; ") for name, semantics in ENGINE_EXCLUSIONS.items()
-    }:
-        errors.append("measured engine exclusions differ from the settled exclusion list")
     ids = set(classes)
     for key, schema in served.items():
         if key != schema.get("nodeType"):
@@ -355,8 +373,6 @@ def compare_registry(reference: dict[str, Any], registry: dict[str, Any]) -> dic
         exclusion = ""
         if row.get("api_node") or str(row.get("file", "")).startswith("comfy_api_nodes/"):
             exclusion = "API node"
-        elif name in ENGINE_EXCLUSIONS:
-            exclusion = ENGINE_EXCLUSIONS[name]
         differences = []
         if exclusion:
             status = "excluded"
@@ -391,7 +407,7 @@ def compare_registry(reference: dict[str, Any], registry: dict[str, Any]) -> dic
     return {
         "reference_commit": reference.get("source_commit"),
         "counts": counts,
-        "engine_exclusions": ENGINE_EXCLUSIONS,
+        "engine_exclusions": {},
         "registry_errors": sorted(set(errors)),
         "rows": results,
         "passed": not errors and not counts.get("differs") and not counts.get("absent"),

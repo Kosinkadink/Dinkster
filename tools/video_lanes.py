@@ -19,7 +19,7 @@ from typing import Any, cast
 import av
 import numpy as np
 from aiohttp import web
-from dinkster_api.v1 import Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_api.v1 import VIDEO_TYPE, Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_assets import AssetRef, AssetVault, digest_bytes
 from dinkster_caches import BudgetedDiskCAS, MemoryLRUCache
 from dinkster_engine import Engine
@@ -27,7 +27,6 @@ from dinkster_graph import Graph, GraphNode, Link, graph_from_wire, graph_to_wir
 from dinkster_nodes_media_io import register_media_types
 from dinkster_protocol import Invocation
 from dinkster_values import (
-    VIDEO_TYPE,
     TypeRegistry,
     edit_video,
     encode_video,

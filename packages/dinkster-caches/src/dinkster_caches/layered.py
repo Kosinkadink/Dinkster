@@ -20,7 +20,7 @@ from itertools import pairwise
 from typing import cast
 from weakref import WeakValueDictionary
 
-from dinkster_protocol import CacheKey, CacheStore
+from dinkster_protocol import CachedResult, CacheKey, CacheStore
 from dinkster_values import MEBIBYTE, Value
 
 from .disk import DiskCacheStore
@@ -83,7 +83,7 @@ class LayeredCache:
         await disk.put(key, outputs)
         return True
 
-    async def get(self, key: CacheKey) -> Mapping[str, Value] | None:
+    async def get(self, key: CacheKey) -> CachedResult | None:
         generation = self._generation
         async with self._key_locks.setdefault(key, asyncio.Lock()):
             for index, layer in enumerate(self._layers):
@@ -113,6 +113,7 @@ class LayeredCache:
         return None
 
     async def put(self, key: CacheKey, outputs: Mapping[str, Value]) -> None:
+        entry = CachedResult(outputs)
         generation = self._generation
         async with self._key_locks.setdefault(key, asyncio.Lock()):
             if generation != self._generation:
@@ -121,7 +122,7 @@ class LayeredCache:
                 if generation != self._generation:
                     return
                 if layer not in self._spill_disks.values():
-                    await layer.put(key, outputs)
+                    await layer.put(key, entry)
 
     def drop_referencing(self, resource_id: str) -> int:
         self._generation += 1

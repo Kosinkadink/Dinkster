@@ -17,16 +17,17 @@ strings (its objects know their own devices).
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import cast
 
 from dinkster_values import (
     COST_META_KEY,
     RESOURCES_META_KEY,
     ListPayload,
+    TuplePayload,
     Value,
     ValueMeta,
-    list_children,
+    value_children,
 )
 
 
@@ -109,20 +110,22 @@ class DeviceMap:
 
         Only residency meta (lane binding) and cost meta (budget keys) are
         touched; identity - type, fingerprint, payload - is device-free by
-        design (hazard H4) and crosses untouched. Lists rewrite their
+        design (hazard H4) and crosses untouched. Containers rewrite their
         children recursively: identity is unchanged (fingerprints are
         device-free), only the child envelopes' device facts move.
         """
-        children = list_children(value)
+        children = value_children(value)
         if children is not None:
             mapped = tuple(self.value(child) for child in children)
             if all(m is c for m, c in zip(mapped, children, strict=True)):
                 return value
+            payload = value.payload
+            assert isinstance(payload, ListPayload | TuplePayload)
             return Value(
                 type_id=value.type_id,
                 fingerprint=value.fingerprint,
                 meta=value.meta,
-                payload=ListPayload(mapped),
+                payload=replace(payload, children=mapped),
             )
         entries = dict(value.meta.entries)
         changed = False

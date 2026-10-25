@@ -45,6 +45,12 @@ authoritative; type mismatches are advisory warnings except for the scoped
 `COMBO` boundary, which is hard so strings and combos require explicit
 converter nodes.
 
+Loop boundaries are paired innermost-first across the document. Validation
+rejects unmatched boundaries, ambiguous nesting, paths escaping a paired end,
+and an `accumulate` control driven from inside its loop. Diagnostics use
+`loop.unmatchedStart`, `loop.unmatchedEnd`, `loop.ambiguousNesting`,
+`loop.bodyEscape`, and `loop.accumulateFromBody`.
+
 ## Learn more
 
 See the package layout in DESIGN 3, DESIGN 3.1 for document elaboration, DESIGN

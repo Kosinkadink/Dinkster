@@ -14,11 +14,12 @@ belong below this layer; anything more is a layering regression.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Literal, Protocol, cast
 
-from dinkster_schema import NodeSchema
+from dinkster_schema import NodeSchema, RunExecutionContext
 from dinkster_values import Value
 
 from .attention import (
@@ -429,6 +430,8 @@ class Invocation:
     job_ref: str | None = None
     attempt_id: int = 1
     """Stable server-job identity used to fence resumable boundary work."""
+    run_control: RunExecutionContext | None = field(default=None, compare=False, repr=False)
+    """Host-local run binding. Worker connections relay calls, never this object."""
 
     def __post_init__(self) -> None:
         if self.job_ref is not None and (type(self.job_ref) is not str or not self.job_ref):
@@ -549,6 +552,37 @@ class InvocationResult:
     error: NodeError | None = None
     artifacts: tuple[SavedArtifact, ...] = ()
     artifact_candidates: tuple[SavedArtifactCandidate, ...] = ()
+    expansion: ExpandedReturn | None = None
+
+    def __post_init__(self) -> None:
+        if self.expansion is None:
+            return
+        if self.error is not None:
+            raise ValueError("an expansion cannot accompany an invocation error")
+        present = {
+            name: binding.value
+            for name, binding in self.expansion.bindings
+            if isinstance(binding, PresentOutput)
+        }
+        outputs = MappingProxyType(dict(self.outputs if self.outputs is not None else present))
+        if set(outputs) != set(present):
+            raise ValueError("expansion outputs must name exactly its present bindings")
+        # Output replacement (producer stamps, diagnostics, device mapping)
+        # must update the algebra too, without introducing a second value owner.
+        object.__setattr__(self, "outputs", outputs)
+        object.__setattr__(
+            self,
+            "expansion",
+            ExpandedReturn(
+                self.expansion.expansion,
+                tuple(
+                    (name, PresentOutput(outputs[name]))
+                    if isinstance(binding, PresentOutput)
+                    else (name, binding)
+                    for name, binding in self.expansion.bindings
+                ),
+            ),
+        )
 
 
 @dataclass(frozen=True)
@@ -607,6 +641,29 @@ class LazyStatusResult:
             )
 
 
+@dataclass(frozen=True)
+class AdmissionInvocation:
+    """Plain pre-execution inputs for an opted-in native admission hook."""
+
+    request_id: str
+    node_id: str
+    node_type: str
+    literal_inputs: Mapping[str, object]
+    linked_input_types: Mapping[str, str]
+    effective_schema: NodeSchema
+
+
+@dataclass(frozen=True)
+class AdmissionResult:
+    explanation: str | None = None
+
+
+class AdmissionWorker(Protocol):
+    async def validate_admission(
+        self, invocation: AdmissionInvocation, on_event: OnInvocationEvent | None = None
+    ) -> AdmissionResult: ...
+
+
 class Worker(Protocol):
     async def prepare(self, node_types: Sequence[str]) -> None: ...
 
@@ -632,25 +689,56 @@ class LazyStatusWorker(Protocol):
     ) -> LazyStatusResult: ...
 
 
+@dataclass(frozen=True, eq=False)
+class CachedResult(Mapping[str, Value]):
+    """One immutable cached invocation, including its replayable graph fragment.
+
+    Mapping operations enumerate present values only. Expansion bindings
+    share those envelopes, so retention, cost and invalidation see each
+    value once rather than treating the graph as a second payload owner.
+    """
+
+    outputs: Mapping[str, Value]
+    expansion: ExpandedReturn | None = None
+
+    def __post_init__(self) -> None:
+        expansion = self.expansion
+        if expansion is None and isinstance(self.outputs, CachedResult):
+            expansion = self.outputs.expansion
+        result = InvocationResult(self.outputs, expansion=expansion)
+        assert result.outputs is not None
+        object.__setattr__(self, "outputs", MappingProxyType(dict(result.outputs)))
+        object.__setattr__(self, "expansion", result.expansion)
+
+    def __getitem__(self, key: str) -> Value:
+        return self.outputs[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.outputs)
+
+    def __len__(self) -> int:
+        return len(self.outputs)
+
+
 class CacheStore(Protocol):
-    async def get(self, key: CacheKey) -> Mapping[str, Value] | None: ...
+    async def get(self, key: CacheKey) -> CachedResult | None: ...
 
     async def put(self, key: CacheKey, outputs: Mapping[str, Value]) -> None: ...
 
 
 from .result_algebra import (  # noqa: E402 - NodeError is the algebra's leaf error
-    RESULT_ALGEBRA_CAPABILITY,
     RESULT_ALGEBRA_MAX_COUNT,
     RESULT_ALGEBRA_MAX_DOCUMENT_BYTES,
     RESULT_ALGEBRA_MAX_LITERAL_DEPTH,
     RESULT_ALGEBRA_MAX_LITERAL_ITEMS,
     RESULT_ALGEBRA_MAX_NESTING,
-    RESULT_ALGEBRA_VERSION,
     BlockedOutput,
     CurrentNodeRef,
     CurrentOutputRef,
     DirectReturn,
     ExpandedReturn,
+    ExternalNodeRef,
+    ExternalOutputRef,
     InvocationFailure,
     InvocationOutcome,
     InvocationReturn,
@@ -662,7 +750,6 @@ from .result_algebra import (  # noqa: E402 - NodeError is the algebra's leaf er
     LocalOutputRef,
     PresentOutput,
     ReturnBatch,
-    negotiate_result_capabilities,
 )
 
 __all__ = [
@@ -742,6 +829,9 @@ __all__ = [
     "LazyStatusInvocation",
     "LazyStatusResult",
     "LazyStatusWorker",
+    "AdmissionInvocation",
+    "AdmissionResult",
+    "AdmissionWorker",
     "MediaSourceAuthority",
     "KeyedContribution",
     "NodeError",
@@ -758,18 +848,18 @@ __all__ = [
     "SingleJobMultiGpuExecution",
     "SingleJobMultiGpuMode",
     "Worker",
-    "RESULT_ALGEBRA_CAPABILITY",
     "RESULT_ALGEBRA_MAX_COUNT",
     "RESULT_ALGEBRA_MAX_DOCUMENT_BYTES",
     "RESULT_ALGEBRA_MAX_LITERAL_DEPTH",
     "RESULT_ALGEBRA_MAX_LITERAL_ITEMS",
     "RESULT_ALGEBRA_MAX_NESTING",
-    "RESULT_ALGEBRA_VERSION",
     "BlockedOutput",
     "CurrentOutputRef",
     "CurrentNodeRef",
     "DirectReturn",
     "ExpandedReturn",
+    "ExternalNodeRef",
+    "ExternalOutputRef",
     "InvocationFailure",
     "InvocationOutcome",
     "InvocationReturn",
@@ -781,7 +871,6 @@ __all__ = [
     "LocalOutputRef",
     "PresentOutput",
     "ReturnBatch",
-    "negotiate_result_capabilities",
     "canonical_compile_reply_bytes",
     "canonical_extension_snapshot",
     "extension_behavior_hash",

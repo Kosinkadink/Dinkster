@@ -360,11 +360,13 @@ def test_catalog_rejects_entry_schema_wire_mismatch() -> None:
         parse_entry(valid.node_type, nodes[valid.node_type], SCHEMA_WIRE_VERSION + 1)
 
 
-def test_dynamic_node_classes_keep_their_own_catalog_schema(tmp_path: Path) -> None:
+@pytest.mark.parametrize("input_values", [False, True])
+def test_dynamic_node_classes_keep_their_own_catalog_schema(
+    tmp_path: Path, input_values: bool
+) -> None:
     runtime = RemoteRuntime(config("", tmp_path / "unused"))
-    runtime.snapshot = parse_catalog(
-        catalog_payload(remote_schema("dinkster.remote.one"), remote_schema("dinkster.remote.two"))
-    )
+    one = replace(remote_schema("dinkster.remote.one"), input_values=input_values)
+    runtime.snapshot = parse_catalog(catalog_payload(one, remote_schema("dinkster.remote.two")))
 
     nodes = build_node_classes(runtime)
 
@@ -372,6 +374,46 @@ def test_dynamic_node_classes_keep_their_own_catalog_schema(tmp_path: Path) -> N
         "dinkster.remote.one",
         "dinkster.remote.two",
     ]
+    assert nodes[0].define_schema() == replace(one, input_values=False)
+    assert runtime.snapshot.schemas[0].schema == one
+
+
+def test_catalog_envelope_hook_runs_on_gateway_not_local_adapter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_caches import MemoryLRUCache
+    from dinkster_engine import Engine
+    from dinkster_schema import build_node_types, build_schemas
+    from dinkster_values import TypeRegistry, register_core_types
+    from dinkster_workers import InProcessWorker
+
+    async def scenario() -> None:
+        async with FakeGateway() as gateway:
+            schema = replace(remote_schema(), input_values=True)
+            gateway.replace_catalog(schema)
+            runtime = await asyncio.to_thread(
+                RemoteRuntime, config(gateway.base_url, tmp_path / "catalog.json")
+            )
+            nodes = build_node_classes(runtime)
+            registry = TypeRegistry()
+            register_core_types(registry)
+            monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "output-vault"))
+            runtime.register_types(registry)
+            engine = Engine(
+                schemas=build_schemas(nodes),
+                registry=registry,
+                worker=InProcessWorker(build_node_types(nodes), registry),
+                cache=MemoryLRUCache(),
+            )
+            graph = Graph({"remote": GraphNode(schema.node_type, {"prompt": "hello"})})
+            result = await engine.run(graph, ["remote"])
+            output = result.outputs["remote"]["image"].resolve()
+            assert isinstance(output, AssetRef)
+            assert output.read_bytes() == gateway.output_bytes
+            assert gateway.submissions[0]["inputs"] == {"prompt": "hello"}
+            assert gateway.submissions[0]["schemaSignature"] == schema_signature(schema)
+
+    asyncio.run(scenario())
 
 
 def test_catalog_cache_degrades_startup_and_epoch_reload_uses_etags(tmp_path: Path) -> None:

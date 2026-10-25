@@ -13,6 +13,24 @@ import pytest
 
 
 def test_comparison_cli(tmp_path: Path) -> None:
+    from dinkster_schema import InputSpec, NodeSchema, StringWidget, TypeExpr, schema_to_wire
+
+    wire = schema_to_wire(
+        NodeSchema(
+            node_type="SaveExample",
+            inputs=(
+                InputSpec(
+                    "mount",
+                    TypeExpr.concrete("STRING"),
+                    required=False,
+                    default=None,
+                    widget=StringWidget(multiline=False),
+                ),
+            ),
+        )
+    )
+    mount = json.loads(json.dumps(wire))["interface"][0]
+    assert "default" not in mount
     reference = {
         "nodes": [
             {
@@ -30,7 +48,7 @@ def test_comparison_cli(tmp_path: Path) -> None:
                 "return_types": ["IMAGE", "MASK"],
                 "return_names": ["image", "mask"],
             },
-            {"class_name": "ComfySwitchNode"},
+            {"class_name": "ApiExample", "api_node": True},
         ]
     }
     native = {
@@ -60,13 +78,7 @@ def test_comparison_cli(tmp_path: Path) -> None:
                     ],
                 },
             },
-            {
-                "role": "input",
-                "id": "mount",
-                "required": False,
-                "type": {"kind": "concrete", "types": ["STRING"]},
-                "default": "output",
-            },
+            mount,
             {"role": "output", "id": "image", "type": {"kind": "concrete", "types": ["IMAGE"]}},
             {"role": "output", "id": "mask", "type": {"kind": "concrete", "types": ["MASK"]}},
         ],
@@ -101,6 +113,17 @@ def test_comparison_cli(tmp_path: Path) -> None:
     assert code == 0
     assert summary["counts"] == {"identical": 1, "excluded": 1}
     assert [row["status"] for row in rows] == ["identical", "excluded"]
+
+    native["interface"][2]["default"] = None
+    assert run(native)[0] == 0
+    del native["interface"][0]["default"]
+    code, _, rows = run(native)
+    assert code == 1 and "inputs[0].default" in rows[0]["differences"]
+    native["interface"][0]["default"] = "Example"
+    native["interface"][0]["widget"] = {"type": "STRING", "multiline": False}
+    code, _, rows = run(native)
+    assert code == 1 and "inputs[0].multiline" in rows[0]["differences"]
+    del native["interface"][0]["widget"]
 
     native["interface"][1]["widget"]["options"].reverse()
     code, summary, rows = run(native)
@@ -137,7 +160,17 @@ def test_comparison_cli(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "field,value",
-    [("required", True), ("default", None), ("type", {"kind": "concrete", "types": ["INT"]})],
+    [
+        ("required", True),
+        ("default", "output"),
+        ("default", "another-grant"),
+        ("default", 0),
+        ("default", False),
+        ("type", {"kind": "concrete", "types": ["INT"]}),
+        ("widget", {"type": "STRING", "multiline": True}),
+        ("widget", {"type": "STRING", "multiline": 0}),
+        ("widget", {"type": "STRING", "min": 0}),
+    ],
 )
 def test_save_mount_is_not_an_arbitrary_extra_input(field: str, value: object) -> None:
     from tools.compare_nodes import compare_registry
@@ -146,7 +179,7 @@ def test_save_mount_is_not_an_arbitrary_extra_input(field: str, value: object) -
         "role": "input",
         "id": "mount",
         "required": False,
-        "default": "output",
+        "default": None,
         "type": {"kind": "concrete", "types": ["STRING"]},
     }
     mount[field] = value
@@ -181,7 +214,8 @@ def test_save_mount_is_not_an_arbitrary_extra_input(field: str, value: object) -
 
 
 @pytest.mark.parametrize("list_inputs", [False, True])
-def test_exact_ids_and_file_widget_exemption(list_inputs: bool) -> None:
+@pytest.mark.parametrize("native_type", ["COMBO", "ASSET"])
+def test_exact_ids_and_file_widget_exemption(list_inputs: bool, native_type: str) -> None:
     from tools.compare_nodes import compare_registry
 
     reference = {
@@ -204,7 +238,7 @@ def test_exact_ids_and_file_widget_exemption(list_inputs: bool) -> None:
                 "role": "input",
                 "id": "file",
                 "required": True,
-                "type": {"kind": "concrete", "types": ["COMBO"]},
+                "type": {"kind": "concrete", "types": [native_type]},
                 "widget": {"type": "ASSET"},
             },
             {
@@ -218,6 +252,54 @@ def test_exact_ids_and_file_widget_exemption(list_inputs: bool) -> None:
     summary = compare_registry(reference, registry)
     assert summary["passed"]
     assert summary["counts"] == {"identical": 1, "Dinkster-only": 1}
+
+    file_input = schema["interface"][0]
+    reference["nodes"][0]["file_inputs"] = []
+    assert not compare_registry(reference, registry)["passed"]
+    reference["nodes"][0]["file_inputs"] = ["file"]
+    if native_type == "ASSET":
+        from dinkster_schema import AssetWidget, InputSpec, NodeSchema, TypeExpr, schema_to_wire
+
+        wire = schema_to_wire(
+            NodeSchema(
+                node_type="LoadExample",
+                inputs=(
+                    InputSpec(
+                        "file",
+                        TypeExpr.concrete("ASSET"),
+                        widget=AssetWidget(kind="model/lora", accept=("application/octet-stream",)),
+                    ),
+                ),
+            )
+        )
+        interface = wire["interface"]
+        assert isinstance(interface, list)
+        file_input = interface[0]
+        assert isinstance(file_input, dict)
+        schema["interface"][0] = file_input
+        assert compare_registry(reference, registry)["passed"]
+        widget = file_input.pop("widget")
+        assert not compare_registry(reference, registry)["passed"]
+        file_input["widget"] = widget
+    file_input["id"] = "renamed"
+    assert not compare_registry(reference, registry)["passed"]
+    file_input["id"] = "file"
+    file_input["type"] = {"kind": "concrete", "types": ["STRING"]}
+    assert not compare_registry(reference, registry)["passed"]
+    file_input["type"] = {"kind": "concrete", "types": [native_type]}
+    file_input["required"] = False
+    assert not compare_registry(reference, registry)["passed"]
+    file_input["required"] = True
+    file_input["type"] = {"kind": "list", "element": file_input["type"]}
+    assert compare_registry(reference, registry)["passed"] is list_inputs
+    original_spec = reference["nodes"][0]["input_types"]["required"]["file"]
+    reference["nodes"][0]["input_types"]["required"]["file"] = [{"list": "COMBO"}]
+    assert compare_registry(reference, registry)["passed"]
+    reference["nodes"][0]["input_types"]["required"]["file"] = original_spec
+    file_input["type"] = {"kind": "concrete", "types": [native_type]}
+    file_input["default"] = "another-mount/file.safetensors"
+    assert compare_registry(reference, registry)["passed"]
+    file_input.pop("default")
 
     schema["interface"][1]["type"] = {
         "kind": "list",
@@ -256,6 +338,58 @@ def example_contract() -> tuple[dict, dict]:
             ],
         },
     )
+
+
+def test_v3_input_order_preserves_interleaved_optional_inputs() -> None:
+    from tools.compare_nodes import compare
+
+    reference = {
+        "class_name": "Example",
+        "is_v3": True,
+        "v3_inputs": [{"id": name} for name in ("first", "optional", "last")],
+        "input_types": {
+            "required": {"first": ["INT"], "last": ["FLOAT"]},
+            "optional": {"optional": ["STRING"]},
+        },
+    }
+    native = {
+        "nodeType": "Example",
+        "interface": [
+            {
+                "role": "input",
+                "id": name,
+                "required": required,
+                "type": {"kind": "concrete", "types": [kind]},
+            }
+            for name, required, kind in (
+                ("first", True, "INT"),
+                ("optional", False, "STRING"),
+                ("last", True, "FLOAT"),
+            )
+        ],
+    }
+    assert compare(reference, native) == []
+    native["interface"][1:] = reversed(native["interface"][1:])
+    assert compare(reference, native)
+    del reference["is_v3"]
+    del reference["v3_inputs"]
+    assert compare(reference, native) == []
+    native["interface"][0], native["interface"][1] = (
+        native["interface"][1],
+        native["interface"][0],
+    )
+    assert compare(reference, native)
+
+
+@pytest.mark.parametrize("order", [None, [], [{"id": "other"}], [{"id": "value"}] * 2])
+def test_v3_input_order_requires_exact_membership(
+    example_contract: tuple[dict, dict], order: list[dict] | None
+) -> None:
+    from tools.compare_nodes import compare
+
+    reference, native = example_contract
+    reference.update(is_v3=True, v3_inputs=order)
+    assert compare(reference, native)
 
 
 def test_hidden_inputs_do_not_hide_public_input_drift(example_contract: tuple[dict, dict]) -> None:
@@ -451,7 +585,10 @@ def test_list_flags_do_not_hide_element_type_or_unflagged_output_drift(
 
 
 @pytest.mark.parametrize("kind", ["autogrow", "group", "combo"])
-def test_nested_inputs_preserve_file_slots_and_detect_child_drift(kind: str) -> None:
+@pytest.mark.parametrize("native_type", ["COMBO", "ASSET"])
+def test_nested_inputs_preserve_file_slots_and_detect_child_drift(
+    kind: str, native_type: str
+) -> None:
     from tools.compare_nodes import compare_registry
 
     reference_children = {
@@ -465,7 +602,7 @@ def test_nested_inputs_preserve_file_slots_and_detect_child_drift(kind: str) -> 
             "role": "input",
             "id": "file",
             "required": True,
-            "type": {"kind": "concrete", "types": ["COMBO"]},
+            "type": {"kind": "concrete", "types": [native_type]},
             "widget": {"type": "ASSET"},
         },
         {
@@ -541,6 +678,10 @@ def test_nested_inputs_preserve_file_slots_and_detect_child_drift(kind: str) -> 
     registry = {"nodes": {"Example": {"nodeType": "Example", "interface": [native_input]}}}
     assert compare_registry(reference, registry)["passed"]
 
+    if kind != "autogrow":
+        native_children.reverse()
+        assert not compare_registry(reference, registry)["passed"]
+        native_children.reverse()
     native_children[-1]["default"] = 0.5
     result = compare_registry(reference, registry)
     assert not result["passed"]
@@ -577,46 +718,28 @@ def test_namespace_rejects_core_id_ownership_and_nested_type_prefixes() -> None:
     ]
 
 
-def test_cli_rejects_changed_engine_exclusion_semantics(tmp_path: Path) -> None:
-    exclusions = {
-        "ComfySwitchNode": ["lazy inputs"],
-        "StartLoop": ["GraphBuilder expansion", "loop semantics"],
-        "EndLoop": ["loop semantics"],
-        "LoopIteration": ["loop semantics"],
-        "LoopProgress": ["loop semantics"],
-        "LoopResult": ["loop semantics"],
-    }
+@pytest.mark.parametrize(
+    "name",
+    ["ComfySwitchNode", "StartLoop", "EndLoop", "LoopIteration", "LoopProgress", "LoopResult"],
+)
+def test_engine_nodes_are_compared_despite_historical_exclusion_metadata(name: str) -> None:
+    from tools.compare_nodes import compare_registry
+
     reference = {
-        "nodes": [{"class_name": "Example", "input_types": {}, "return_types": []}],
-        "engine_exclusions": exclusions,
+        "nodes": [{"class_name": name, "input_types": {}, "return_types": ["INT"]}],
+        "engine_exclusions": {name: ["loop semantics"]},
     }
-    source = tmp_path / "reference.json"
-    registry = tmp_path / "registry.json"
-    registry.write_text(
-        json.dumps({"nodes": {"Example": {"nodeType": "Example", "interface": []}}})
-    )
-    summary = tmp_path / "summary.json"
-
-    def run() -> subprocess.CompletedProcess[str]:
-        source.write_text(json.dumps(reference))
-        return subprocess.run(
-            [
-                sys.executable,
-                "tools/compare_nodes.py",
-                str(source),
-                str(registry),
-                str(tmp_path / "comparison.csv"),
-                str(summary),
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-
-    assert run().returncode == 0
-    for semantics in ([], ["loop semantics"], ["lazy inputs", "ExecutionBlocker"]):
-        exclusions["ComfySwitchNode"] = semantics
-        assert run().returncode == 1
-        assert json.loads(summary.read_text())["registry_errors"] == [
-            "measured engine exclusions differ from the settled exclusion list"
-        ]
+    schema = {
+        "nodeType": name,
+        "interface": [
+            {"role": "output", "id": "value", "type": {"kind": "concrete", "types": ["INT"]}}
+        ],
+    }
+    registry = {"nodes": {name: schema}}
+    assert compare_registry(reference, registry)["counts"] == {"identical": 1}
+    schema["interface"][0]["type"]["types"] = ["FLOAT"]
+    result = compare_registry(reference, registry)
+    assert not result["passed"]
+    assert result["counts"] == {"differs": 1}
+    assert result["engine_exclusions"] == {}
+    assert compare_registry(reference, {"nodes": {}})["counts"] == {"absent": 1}

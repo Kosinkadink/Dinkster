@@ -21,6 +21,22 @@ import dataclasses
 from enum import Enum, StrEnum
 
 import pytest
+from dinkster_api.v1 import (
+    AUDIO_TYPE,
+    BACKGROUND_REMOVAL_TYPE,
+    BOUNDING_BOX_TYPE,
+    CONTROL_NET_TYPE,
+    GLIGEN_TYPE,
+    LATENT_UPSCALE_MODEL_TYPE,
+    MESH_TYPE,
+    MODEL_PATCH_TYPE,
+    MOGE_GEOMETRY_TYPE,
+    MOGE_MODEL_TYPE,
+    SHAPE_SUBDIVIDES_TYPE,
+    VIDEO_EDIT_TYPE,
+    VIDEO_TYPE,
+    VOXEL_TYPE,
+)
 from dinkster_compat_comfy import CompatError, CompatTranslation, translate_v3_schema
 from dinkster_compat_comfy.translate_v3 import translate_v3_type
 from dinkster_schema import (
@@ -362,6 +378,59 @@ def test_wildcard_and_multitype_unions() -> None:
     assert translate_v3_type("INT,*", translation) == TypeExpr.wildcard()
     # COMBO and STRING keep distinct concrete members.
     assert translate_v3_type("COMBO,STRING", translation) == TypeExpr.union(CORE_COMBO, CORE_STRING)
+
+
+def test_v3_native_types_stay_bare_in_list_union_and_template_structures() -> None:
+    raw_types = (
+        "AUDIO",
+        "VIDEO",
+        "VIDEO_EDIT",
+        "MOGE_MODEL",
+        "MOGE_GEOMETRY",
+        "BACKGROUND_REMOVAL",
+        "VOXEL",
+        "MESH",
+        "SHAPE_SUBDIVIDES",
+        "BOUNDING_BOX",
+        "CONTROL_NET",
+        "GLIGEN",
+        "MODEL_PATCH",
+        "LATENT_UPSCALE_MODEL",
+    )
+    canonical_types = (
+        AUDIO_TYPE,
+        VIDEO_TYPE,
+        VIDEO_EDIT_TYPE,
+        MOGE_MODEL_TYPE,
+        MOGE_GEOMETRY_TYPE,
+        BACKGROUND_REMOVAL_TYPE,
+        VOXEL_TYPE,
+        MESH_TYPE,
+        SHAPE_SUBDIVIDES_TYPE,
+        BOUNDING_BOX_TYPE,
+        CONTROL_NET_TYPE,
+        GLIGEN_TYPE,
+        MODEL_PATCH_TYPE,
+        LATENT_UPSCALE_MODEL_TYPE,
+    )
+    translation = CompatTranslation()
+    assert translate_v3_type(",".join(raw_types), translation) == TypeExpr.union(*canonical_types)
+    assert translation.opaque_types == set(canonical_types)
+
+    template = FakeMatchTemplate("T", [FakeComfyType(raw_type) for raw_type in raw_types])
+    result = translate(
+        FakeSchema(
+            "NativeTypes",
+            inputs=[
+                FakeInput("values", "VIDEO"),
+                FakeInput("selected", "COMFY_MATCHTYPE_V3", template=template),
+            ],
+            is_input_list=True,
+        )
+    )
+    assert result.inputs[0].type == TypeExpr.list_of(TypeExpr.concrete(VIDEO_TYPE))
+    assert result.inputs[1].type == TypeExpr.list_of(TypeExpr.variable("T", canonical_types))
+    assert translation.opaque_types == set(canonical_types)
 
 
 def test_empty_io_type_refuses() -> None:

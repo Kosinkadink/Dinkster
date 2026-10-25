@@ -6,6 +6,8 @@ from dinkster_graph import (
     GraphCycleError,
     GraphNode,
     Link,
+    RegionNode,
+    RegionOutput,
     TypedLiteral,
     has_errors,
     plan,
@@ -399,3 +401,113 @@ def test_cycle_detected() -> None:
     assert any(d.code == "cycle" for d in validate(graph, SCHEMAS, ["x"]))
     with pytest.raises(GraphCycleError):
         plan(graph, ["x"])
+
+
+@pytest.mark.parametrize(
+    ("nodes", "targets", "expected"),
+    [
+        ({"end": GraphNode("EndLoop")}, ["end"], "loop.unmatchedEnd"),
+        ({"start": GraphNode("StartLoop")}, ["start"], "loop.unmatchedStart"),
+        (
+            {
+                "a": GraphNode("StartLoop"),
+                "b": GraphNode("StartLoop"),
+                "end": GraphNode("EndLoop", {"x": Link("a", "value"), "y": Link("b", "value")}),
+            },
+            ["end"],
+            "loop.ambiguousNesting",
+        ),
+        (
+            {
+                "start": GraphNode("StartLoop"),
+                "end": GraphNode("EndLoop", {"x": Link("start", "value")}),
+                "escape": GraphNode("relay", {"x": Link("start", "value")}),
+            },
+            ["end", "escape"],
+            "loop.bodyEscape",
+        ),
+        (
+            {
+                "start": GraphNode("StartLoop"),
+                "body": GraphNode("relay", {"x": Link("start", "value")}),
+                "end": GraphNode("EndLoop", {"accumulate": Link("body", "value")}),
+            },
+            ["end"],
+            "loop.accumulateFromBody",
+        ),
+    ],
+)
+@pytest.mark.parametrize("inside_region", [False, True])
+def test_loop_boundary_diagnostics_are_structural(nodes, targets, expected, inside_region) -> None:
+    schemas = {
+        kind: NodeSchema(
+            kind,
+            inputs=tuple(
+                InputSpec(name, TypeExpr.wildcard(), required=False)
+                for name in ("x", "y", "accumulate")
+            ),
+            outputs=(OutputSpec("value", TypeExpr.concrete("INT")),),
+        )
+        for kind in ("StartLoop", "EndLoop", "relay")
+    }
+    graph = Graph(nodes)
+    if inside_region:
+        graph = Graph(
+            {
+                "region": RegionNode(
+                    "fold",
+                    graph,
+                    ports={"item": TypeExpr.concrete("INT")},
+                    inputs={"item": [1]},
+                    element_ports=("item",),
+                    outputs={
+                        target: RegionOutput(Link(target, "value"), "last") for target in targets
+                    },
+                )
+            }
+        )
+        targets = ["region"]
+    diagnostics = validate(graph, schemas, targets)
+    assert [(item.code, item.severity) for item in diagnostics] == [(expected, "error")]
+    if inside_region:
+        assert diagnostics[0].node_id is not None
+        assert diagnostics[0].node_id.startswith("region/")
+
+
+def test_nested_loop_pairing_consumes_inner_ends_before_outer_ends() -> None:
+    from dinkster_graph.validate import LoopPair, validate_loops
+
+    graph = Graph(
+        {
+            "outer": GraphNode("StartLoop"),
+            "first": GraphNode("StartLoop", {"x": Link("outer", "value")}),
+            "first_end": GraphNode("EndLoop", {"x": Link("first", "value")}),
+            "second": GraphNode("StartLoop", {"x": Link("first_end", "value")}),
+            "second_end": GraphNode("EndLoop", {"x": Link("second", "value")}),
+            "outer_end": GraphNode("EndLoop", {"x": Link("second_end", "value")}),
+        }
+    )
+    pairs, diagnostics = validate_loops(graph, ["outer_end"])
+    assert diagnostics == []
+    assert pairs == {
+        "first": LoopPair("first_end", ()),
+        "second": LoopPair("second_end", ()),
+        "outer": LoopPair("outer_end", ("first", "first_end", "second", "second_end")),
+    }
+    rewritten = Graph(
+        {
+            **graph.nodes,
+            "outer_end": GraphNode("EndLoop"),
+            "first_end": GraphNode("EndLoop"),
+            "second_end": GraphNode("EndLoop"),
+            "new_start": GraphNode("StartLoop"),
+            "new_end": GraphNode("EndLoop", {"x": Link("new_start", "value")}),
+        }
+    )
+    new_pairs, diagnostics = validate_loops(rewritten, ["outer_end", "new_end"], pairs)
+    assert diagnostics == []
+    assert new_pairs == {"new_start": LoopPair("new_end", ())}
+    _, diagnostics = validate_loops(
+        Graph({**rewritten.nodes, "orphan": GraphNode("EndLoop")}), ["orphan"], pairs
+    )
+    assert [diag.code for diag in diagnostics] == ["loop.unmatchedEnd"]

@@ -10,6 +10,7 @@ import pytest
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, ExecutionError, GraphValidationError, Invocation
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral, snapshot_graph, validate
+from dinkster_protocol import CachedResult
 from dinkster_schema import (
     MAX_FAMILY_MEMBERS,
     DynamicComboOption,
@@ -920,8 +921,8 @@ class WrongShapeCache:
         self._wrong = wrong
         self.puts = 0
 
-    async def get(self, key: str) -> Mapping[str, Value] | None:
-        return self._wrong
+    async def get(self, key: str) -> CachedResult | None:
+        return CachedResult(self._wrong)
 
     async def put(self, key: str, outputs: Mapping[str, Value]) -> None:
         self.puts += 1

@@ -920,7 +920,7 @@ def test_compose_defaults_only(tmp_path: Path) -> None:
                 STANDARD_OWNER_PACKS | STANDARD_VISION_PACKS | {"dinkster-nodes-remote"}
             )
             assert set(composition.node_packs.values()) == STANDARD_OWNER_PACKS
-            assert len(FOUNDATION_NODES) == 52
+            assert len(FOUNDATION_NODES) == 54
             assert len(IMAGE_NODES) == 87
             assert len(MEDIA_IO_NODES) == 66
             assert {
@@ -1054,19 +1054,19 @@ def test_compose_serving_default_resolution_is_atomic(
     [
         (
             "dinkster-nodes-foundation",
-            "blake3:32cea75be3ac296391962b09cd6ff04f197a42e4002523c73e2bbf548f4aefe5",
+            "blake3:0bf806a210d79b1a1f2c74f6a135cdc92f5dad7cb8e7a50984cdc28644749caf",
         ),
         (
             "dinkster-nodes-media-io",
-            "blake3:a5fc9c2f4806f4ad77f3c86e60c0d32159adac1bfad07bcc7739f4addf2d7077",
+            "blake3:76b4f2ab36f964b80382d2ee61f7e4092956df21540b23fff4da1faa8b2975e7",
         ),
         (
             "dinkster-nodes-image",
-            "blake3:a180405873344dee9917988731061852d48f017894d709edc505c709c2159535",
+            "blake3:2939448809f359f767e8575ece6c5b466b990c6a30aaba84a4fd63acbde63191",
         ),
         (
             "dinkster-nodes-remote",
-            "blake3:f0ce94b80269b35e0532fd16d987c867102db1c3c721c44fe64458ab5c6dc48a",
+            "blake3:580eee23612ab4193cf4b636a9c7e87452f8d8ebacd16632b6aca2e68c052e39",
         ),
     ],
 )
@@ -1533,21 +1533,32 @@ def test_default_suite_package_matches_managed_lock() -> None:
     }
 
 
-def test_compose_dev_pack_adds_scaffold_nodes() -> None:
+def test_compose_dev_pack_adds_scaffold_nodes(tmp_path: Path) -> None:
     """The development manifest composes its complete node surface."""
     from dinkster_nodes_dev import PACK_NODES
 
     async def scenario() -> None:
-        composition = await compose_serving([PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)])
+        composition = await compose_serving([DEV_PACK_MANIFEST])
         try:
             expected = set(build_schemas(DEFAULT_NODES)) | set(build_schemas(PACK_NODES))
             assert set(composition.schemas) == expected
+            info = composition.packs["dinkster-nodes-dev"]
+            assert info.source == f"local:{DEV_PACK_MANIFEST.parent.resolve()}"
+            assert info.version == ""
+            assert info.artifact_digest == ""
             engine = composition.make_engine(lambda event: None)
             graph = Graph(nodes={"g": GraphNode("dev.image.gradient", {"width": 8, "height": 4})})
             result = await engine.run(graph, ["g"])
             assert "g" in result.outputs
         finally:
             await composition.close()
+
+        second = write_iso_manifest(tmp_path, name="other-dev", namespaces=("dev",))
+        with pytest.raises(
+            CompositionError,
+            match="'dev' claimed by 'other-dev' overlaps 'dev' claimed by 'dinkster-nodes-dev'",
+        ):
+            await compose_serving([DEV_PACK_MANIFEST, second], worker_env=WORKER_ENV)
 
     asyncio.run(scenario())
 

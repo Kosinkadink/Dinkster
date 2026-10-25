@@ -46,8 +46,11 @@ from dinkster_workers.manifest import (
 
 
 def test_extension_contract_fixture_uses_current_public_pack_surfaces() -> None:
+    from dinkster.extension_assets import resolve_frontend_modules
+
     manifest = load_manifest(Path("tests/fixtures/extension-contract-pack/dinkster-pack.toml"))
     _worker, _registry, nodes, arms = load_pack(manifest, import_from_pack_root=True)
+    modules = resolve_frontend_modules(manifest)
 
     assert manifest.contracts is not None
     assert manifest.contracts.inference is None
@@ -56,9 +59,7 @@ def test_extension_contract_fixture_uses_current_public_pack_surfaces() -> None:
     assert [event.name for event in manifest.extension.events] == [
         "fixture.extension-contract.executed"
     ]
-    assert [module.id for module in manifest.extension.frontend_modules] == [
-        "dinkster-extension-contract-fixture.frontend"
-    ]
+    assert [module.id for module in modules] == ["fixture.frontend"]
     assert {node.schema().node_type for node in nodes} == {
         "fixture.extension.contract",
         "fixture.extension.value",
@@ -93,16 +94,29 @@ def test_registration_requires_pack_prefix_for_non_dinkster_publishers(
     validate_registration_claims(load_manifest(path))
 
 
-@pytest.mark.parametrize("pack_name", ["dinkster", "std", "comfy", "dev", "std-extra"])
-def test_non_dinkster_publisher_cannot_own_reserved_pack_prefix(
-    tmp_path: Path, pack_name: str
+@pytest.mark.parametrize(
+    ("pack_name", "reserved"),
+    [
+        ("dinkster", True),
+        ("std", True),
+        ("comfy", True),
+        ("core", True),
+        ("dev", False),
+        ("std-extra", True),
+    ],
+)
+def test_pack_prefix_reservation_depends_on_publisher(
+    tmp_path: Path, pack_name: str, reserved: bool
 ) -> None:
     path = tmp_path / "dinkster-pack.toml"
     path.write_text(
         f'[pack]\nname = "{pack_name}"\npublisher = "someone"\n'
         '[pack.entry]\nnodes = "mypack:NODES"\n'
     )
-    with pytest.raises(ManifestError, match="only publisher 'dinkster'.*reserved"):
+    if reserved:
+        with pytest.raises(ManifestError, match="only publisher 'dinkster'.*reserved"):
+            validate_registration_claims(load_manifest(path))
+    else:
         validate_registration_claims(load_manifest(path))
     path.write_text(path.read_text().replace('"someone"', '"dinkster"'))
     validate_registration_claims(load_manifest(path))
