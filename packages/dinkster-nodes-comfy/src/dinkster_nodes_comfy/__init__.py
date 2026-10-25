@@ -15,9 +15,11 @@ from .audio_transform import AUDIO_TRANSFORM_NODES
 from .audio_vae import AUDIO_VAE_NODES
 from .cache import CACHE_NODES
 from .cfg_guidance import CFG_GUIDANCE_NODES
+from .cfg_guiders import CFG_GUIDER_NODES
 from .clip import CLIP_NODES
 from .clip_model_specific import MODEL_TEXT_ENCODER_NODES
 from .clip_sdxl import CLIP_SDXL_NODES
+from .compile import COMPILE_NODES
 from .compositing import COMPOSITING_NODES
 from .conditioning import CONDITIONING_NODES
 from .controlnet import CONTROLNET_NODES
@@ -41,6 +43,7 @@ from .latent_model_specific import MODEL_LATENT_NODES
 from .latent_operations import LATENT_OPERATION_NODES
 from .logic import LOGIC_NODES
 from .ltx_audio import LTX_AUDIO_NODES
+from .ltx_sampling import LTX_SAMPLING_NODES
 from .ltx_video_conditioning import LTX_VIDEO_CONDITIONING_NODES
 from .mask import MASK_NODES
 from .math import ComfyMathExpression
@@ -51,6 +54,7 @@ from .model_merging_specific import MODEL_SPECIFIC_MERGE_NODES
 from .model_specific_schedulers import MODEL_SPECIFIC_SCHEDULER_NODES
 from .morphology import MORPHOLOGY_NODES
 from .noise_guidance import NOISE_GUIDANCE_NODES
+from .perpneg import PERPNEG_NODES
 from .post_processing import POST_PROCESSING_NODES
 from .primitive import (
     PrimitiveBoolean,
@@ -62,6 +66,7 @@ from .primitive import (
 from .reference_conditioning import REFERENCE_CONDITIONING_NODES
 from .rope_and_mask import ROPE_AND_MASK_NODES
 from .sampler_factories import SAMPLER_FACTORY_NODES
+from .save_text import SaveText
 from .seedvr_preprocess import SeedVR2Preprocess
 from .sigma_operations import SIGMA_OPERATION_NODES
 from .sigma_schedulers import SIGMA_SCHEDULER_NODES
@@ -81,6 +86,7 @@ from .video_latent_ops import VIDEO_LATENT_OPERATION_NODES
 COMFY_NODES = (
     *TEXT_NODES,
     *DATASET_TEXT_NODES,
+    SaveText,
     *DATASET_COLLECTION_NODES,
     PrimitiveString,
     PrimitiveStringMultiline,
@@ -98,8 +104,11 @@ COMFY_NODES = (
     *MODEL_SPECIFIC_MERGE_NODES,
     *MODEL_ADVANCED_NODES,
     *DEVICE_ROUTING_NODES,
+    *COMPILE_NODES,
     *MODEL_SPECIFIC_SCHEDULER_NODES,
+    *CFG_GUIDER_NODES,
     *CFG_GUIDANCE_NODES,
+    *PERPNEG_NODES,
     *VIDEO_GUIDANCE_NODES,
     *FREEU_NODES,
     *SPATIAL_MODEL_PATCH_NODES,
@@ -150,6 +159,7 @@ COMFY_NODES = (
     *AUDIO_VAE_NODES,
     GetAudioLatentSize,
     *LTX_AUDIO_NODES,
+    *LTX_SAMPLING_NODES,
     *DATASET_IMAGE_NODES,
     *SIGMA_SCHEDULER_NODES,
     *SAMPLER_FACTORY_NODES,

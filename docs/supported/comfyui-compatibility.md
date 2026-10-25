@@ -1,5 +1,7 @@
 ## ComfyUI compatibility
 
+- Native LTXV sampling patches cloned models and constructs shifted sigma
+  schedules from latent token counts, with optional terminal stretching.
 - Four native audio latent constructors preserve Stable Audio, ACE-Step 1.0,
   ACE-Step 1.5 and YuE2 duration rounding, tensor layouts and audio metadata.
 - Native EmptyMochiLatentVideo creates video latents with the core interface.
@@ -8,6 +10,9 @@
 - Seven native dataset text nodes lowercase, uppercase, truncate, prefix,
   suffix, replace, and strip text under exact core IDs, retaining the fixed
   reference's one-element list payloads on scalar STRING outputs.
+- Save Text preserves its core text, filename prefix, and format inputs while
+  writing UTF-8 output through the configured mounted output target. Filename
+  variables use 1-by-1 dimensions and local time; unknown variables stay literal.
 - The native core pack exposes eleven latent creation, batch, transform, resize,
   blend, composite, crop, and noise-mask nodes under their exact ComfyUI IDs.
   IMAGE, MASK, and LATENT values cross ordinary pack boundaries without host type
