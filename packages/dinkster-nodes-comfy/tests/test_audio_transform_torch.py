@@ -141,37 +141,40 @@ def test_ordinary_manifest_executes_audio_transforms_twice(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
                 "DINKSTER_ACCELERATOR": "cpu",
-                "PYTHONPATH": os.pathsep.join((str(Path(__file__).parent), str(source_root))),
+                "PYTHONPATH": os.pathsep.join(
+                    (str(tmp_path), str(Path(__file__).parent), str(source_root))
+                ),
             }
         )
         try:
             manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
             (tmp_path / "audio_transform_fixture.py").write_text(
                 "from test_audio_transform_torch import AudioInspect, AudioSource\n"
-                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "from dinkster_nodes_media_io import register_media_types\n"
-                "NODES = (*COMFY_NODES, AudioSource, AudioInspect)\n"
+                "from dinkster_api.v1 import "
+                "AUDIO_TYPE, register_audio_value_type, resolver_from_env\n"
+                "NODES = (AudioSource, AudioInspect)\n"
                 "\ndef register_types(registry):\n"
-                "    register_inference_types(registry)\n"
-                "    register_media_types(registry)\n",
+                "    if AUDIO_TYPE not in registry:\n"
+                "        register_audio_value_type(registry, AUDIO_TYPE, resolver_from_env())\n",
                 encoding="ascii",
             )
             fixture = tmp_path / "dinkster-pack.toml"
             fixture.write_text(
-                manifest.read_text(encoding="ascii")
-                .replace("namespaces = [", 'namespaces = ["audio-transform-fixture",')
-                .replace("dinkster_nodes_comfy:COMFY_NODES", "audio_transform_fixture:NODES")
-                .replace(
-                    "dinkster_nodes_comfy:register_inference_types",
-                    "audio_transform_fixture:register_types",
-                ),
+                '[pack]\nname="audio-transform-fixture"\npublisher="dinkster"\n'
+                'namespaces=["audio-transform-fixture"]\n'
+                '[pack.entry]\nnodes="audio_transform_fixture:NODES"\n'
+                'types="audio_transform_fixture:register_types"\n',
                 encoding="ascii",
             )
-            media_manifest = manifest.parent.parent / "dinkster-nodes-media-io/dinkster-pack.toml"
-            await composer.add_pack(
-                PackSpec(manifest=media_manifest, in_process=in_process, trust_reserved=True)
-            )
-            await composer.add_pack(PackSpec(manifest=fixture, in_process=in_process))
+            for path in (manifest, fixture):
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=path,
+                        in_process=in_process,
+                        worker_group=None if in_process else "audio-transform-fixture",
+                        group_manifests=() if in_process else (manifest, fixture),
+                    )
+                )
             graph = Graph(
                 nodes={
                     "source": GraphNode("audio-transform-fixture.source"),
