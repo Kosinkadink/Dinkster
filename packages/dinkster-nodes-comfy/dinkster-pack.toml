@@ -250,6 +250,8 @@ namespaces = [
     "ImagePadForOutpaint",
     "GetImageSize",
     "GetLatentSize",
+    "ImageSDRToHDR",
+    "ImageColorSpace",
     "ImageBlend",
     "ImageBlur",
     "ImageQuantize",
