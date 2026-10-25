@@ -305,6 +305,7 @@ namespaces = [
     "LTXVAudioVAEEncode",
     "LTXVAudioVAEDecode",
     "LTXVEmptyLatentAudio",
+    "LTXVPreprocess",
     "ModelSamplingLTXV",
     "LTXVScheduler",
     "ResizeImagesByShorterEdge",
