@@ -12,6 +12,9 @@ resident values to the selected default, CPU, or portable `gpu:N` device where
 supported. Unavailable devices leave the value unchanged; VAE routing does not
 offer CPU.
 
+`HypernetworkLoader` loads a bound hypernetwork asset and applies its key/value
+networks to self- and cross-attention on a cloned model, with adjustable strength.
+
 `ScaleROPE` scales and shifts spatial and temporal rotary coordinates on a cloned
 model. `DifferentialDiffusion` applies timestep-dependent denoise masks, with
 optional blending strength, without changing the source model.
