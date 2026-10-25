@@ -1630,8 +1630,9 @@ def _validate_value_descriptor(
         raise BoundaryError("result algebra list child type does not match its envelope")
     _blob_index(wire.get("metaBlob"), blobs, used)
     element_type = parse_list_type_id(wire["typeId"])
+    positions = parse_tuple_type_id(wire["typeId"])
     if "elements" in wire:
-        if element_type is None or set(wire) != {
+        if (element_type is None and positions is None) or set(wire) != {
             "typeId",
             "fingerprint",
             "metaBlob",
@@ -1641,7 +1642,9 @@ def _validate_value_descriptor(
         elements = wire["elements"]
         if type(elements) is not list or len(elements) > RESULT_ALGEBRA_MAX_COUNT:
             raise BoundaryError("invalid list value descriptor elements")
-        for child in elements:
+        if positions is not None and len(elements) != len(positions):
+            raise BoundaryError("tuple value descriptor arity does not match its envelope")
+        for index, child in enumerate(elements):
             if type(child) is not dict:
                 raise BoundaryError("invalid list child value descriptor")
             _validate_value_descriptor(
@@ -1650,10 +1653,14 @@ def _validate_value_descriptor(
                 used,
                 budget=budget,
                 depth=depth + 1,
-                expected_type=element_type,
+                expected_type=positions[index] if positions is not None else element_type,
             )
         return
-    if element_type is not None or set(wire) != {"typeId", "fingerprint", "metaBlob", "payload"}:
+    if (
+        element_type is not None
+        or positions is not None
+        or set(wire) != {"typeId", "fingerprint", "metaBlob", "payload"}
+    ):
         raise BoundaryError("invalid value descriptor fields")
     payload = wire["payload"]
     if type(payload) is not dict or type(payload.get("transport")) is not str:
