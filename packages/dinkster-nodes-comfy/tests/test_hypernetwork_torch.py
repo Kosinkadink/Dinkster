@@ -21,7 +21,7 @@ from dinkster_api.v1 import (
     TypeExpr,
     initialize_inference_process,
 )
-from dinkster_assets import MountDef, MountTable
+from dinkster_assets import AssetVault, MountDef, MountTable, digest_file
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.hypernetwork import HypernetworkLoader
 
@@ -50,9 +50,24 @@ def _state() -> dict[Any, Any]:
     }
 
 
-def _asset(tmp_path: Path, *, verified: bool = False, state: dict[Any, Any] | None = None) -> Any:
+def _asset(
+    tmp_path: Path,
+    *,
+    verified: bool = False,
+    vault_backed: bool = False,
+    state: dict[Any, Any] | None = None,
+) -> Any:
     path = tmp_path / "network.pt"
     torch.save(_state() if state is None else state, path)
+    if vault_backed:
+        vault = AssetVault(tmp_path / "vault")
+        digest = digest_file(path)
+        with vault.writer(digest) as writer:
+            writer.write(path.read_bytes())
+            writer.commit()
+        asset = AssetRef(digest, path.name, path.stat().st_size, resolver=vault)
+        assert not asset.local_path().suffix
+        return asset
     table = MountTable(tmp_path / "mounts.json", index_root=tmp_path / "index")
     table.add(MountDef(id="hypernetworks", path=tmp_path), kind="model/hypernetwork")
     if verified:
@@ -91,6 +106,14 @@ def test_hypernetwork_bound_weight_loading(tmp_path: Path, verified: bool, stren
         model=source, hypernetwork_name=_asset(tmp_path, verified=verified), strength=strength
     )["MODEL"]
     _check(source, result, strength)
+
+
+def test_hypernetwork_vault_weight_loading(tmp_path: Path) -> None:
+    source = _model()
+    result = HypernetworkLoader.execute(
+        model=source, hypernetwork_name=_asset(tmp_path, vault_backed=True), strength=1.25
+    )["MODEL"]
+    _check(source, result, 1.25)
 
 
 def test_hypernetwork_unsupported_activation_and_unbound_filename(tmp_path: Path) -> None:

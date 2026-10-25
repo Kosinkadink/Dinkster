@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,18 @@ PIN = "1" * 40
 REQUIREMENT = (
     f"dinkster-inference @ git+https://github.com/Kosinkadink/dinkster-inference.git@{PIN}"
 )
+
+
+def test_pack_requirements_match_setup_script_pin() -> None:
+    root = Path(__file__).resolve().parents[1]
+    requirement, _ = pinned_requirement(root)
+    for relative in (
+        "packages/dinkster-native/dinkster-pack.toml",
+        "packages/dinkster-compat-comfy/dinkster-pack.toml",
+        "packages/dinkster-compat-comfy/dinkster-legacy-pack.toml",
+    ):
+        manifest = tomllib.loads(root.joinpath(relative).read_text())
+        assert manifest["pack"]["requires"] == [requirement]
 
 
 def _write_setup_scripts(root: Path, shell_pin: str, powershell_pin: str) -> None:

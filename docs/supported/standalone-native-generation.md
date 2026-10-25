@@ -8,6 +8,8 @@
   environment containing PyTorch and `dinkster_inference`. The graph
   uses native checkpoint, text-encode, empty-latent, sampler, decode, and
   image-save nodes.
+- Safetensors weights load from extensionless content-addressed vault paths
+  as well as named model mounts. Weight format does not depend on the asset name.
 - Pinned core ComfyUI schemas are advertised as import metadata, including
   KSampler and CLIPTextEncode. They are not additional executable node IDs.
   Unsupported or ambiguous imports refuse with node-specific diagnostics.
