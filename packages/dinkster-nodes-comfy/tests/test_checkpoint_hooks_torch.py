@@ -142,6 +142,54 @@ def test_checkpoint_hook_refreshes_embedding_authority_and_revalidates_file(
         CreateHookModelAsLoraModelOnly.execute(ckpt_name=ref, strength_model=0.8)
 
 
+def test_checkpoint_weights_share_residency_across_assets_nodes_and_strengths(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    initialize_inference_process()
+    from dinkster_inference import sd
+    from dinkster_memory.resident import default_pool
+
+    paths = (tmp_path / "first.bin", tmp_path / "second.bin", tmp_path / "same-first.bin")
+    paths[0].write_bytes(b"first checkpoint")
+    paths[1].write_bytes(b"second checkpoint")
+    paths[2].write_bytes(paths[0].read_bytes())
+    assets = [_asset(path, True) for path in paths]
+    monkeypatch.setattr(v1, "mount_roots_for_kind", lambda kind: (), raising=False)
+    model_a = _patcher([[2.0, -7.0], [11.0, 0.5]])
+    model_b = _patcher([[-13.0, 3.0, 8.0]])
+    calls: list[str] = []
+
+    def load(path: str, **options: Any) -> tuple[Any, Any, None, None]:
+        assert options == {"output_vae": True, "output_clip": True, "embedding_directory": []}
+        calls.append(path)
+        model = model_b if path == str(paths[1]) else model_a
+        return model, SimpleNamespace(patcher=model), None, None
+
+    monkeypatch.setattr(sd, "load_checkpoint_guess_config", load)
+    baseline = default_pool().footprint("ram")
+    retained = []
+    previous = None
+    for index, strength in ((0, -0.75), (1, 1.25), (2, 0.0), (1, -2.5), (0, 3.0)):
+        result = CreateHookModelAsLora.execute(
+            ckpt_name=assets[index],
+            strength_model=strength,
+            strength_clip=-strength,
+            prev_hooks=previous,
+        )["HOOKS"]
+        added = result.hooks[-1]
+        assert added.strength_model == strength and added.strength_clip == -strength
+        expected = model_b.model.weight if index == 1 else model_a.model.weight
+        torch.testing.assert_close(added.weights["weight"][1][0], expected, rtol=0, atol=0)
+        assert added.weights_clip["weight"][1][0].data_ptr() == expected.data_ptr()
+        retained.append(result._dinkster_resident_refs[-1])
+        previous = result
+    assert retained[0] is retained[2] is retained[4]
+    assert retained[1] is retained[3] and retained[0] is not retained[1]
+    assert calls == [str(paths[0]), str(paths[1])]
+    # Each pair aliases model/CLIP storage, so charge each retained storage once.
+    assert default_pool().footprint("ram") - baseline == 28
+
+
 def test_checkpoint_hook_rejects_unbound_filename() -> None:
     with pytest.raises(TypeError, match="AssetRef or LocalAssetRef"):
         CreateHookModelAsLoraModelOnly.execute(ckpt_name="unbound.ckpt", strength_model=1.0)

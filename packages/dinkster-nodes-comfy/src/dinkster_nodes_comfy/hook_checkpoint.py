@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import importlib
+import json
 from collections.abc import Mapping
-from functools import lru_cache
 from typing import Any
 
 from dinkster_api.v1 import (
@@ -52,12 +52,7 @@ def _schema(node_type: str, *, model_only: bool) -> NodeSchema:
     )
 
 
-@lru_cache(maxsize=1)
-def _weights(
-    identity: tuple[str, str], path: str, embedding_roots: tuple[str, ...]
-) -> tuple[Any, Any]:
-    # Strength changes reuse extracted weights, not a loaded checkpoint or resolver.
-    del identity
+def _weights(path: str, embedding_roots: tuple[str, ...]) -> tuple[Any, Any]:
     sd = importlib.import_module("dinkster_inference.sd")
     hooks = importlib.import_module("dinkster_inference.hooks")
     loaded = sd.load_checkpoint_guess_config(
@@ -70,6 +65,18 @@ def _weights(
         hooks.get_patch_weights_from_model(loaded[0]),
         hooks.get_patch_weights_from_model(loaded[1].patcher if loaded[1] else loaded[1]),
     )
+
+
+def _ram_bytes(weights: tuple[Any, Any]) -> int:
+    storages: dict[int, int] = {}
+    for tensors in weights:
+        if tensors is None:
+            continue
+        for tensor in tensors.values():
+            if tensor.device.type == "cpu":
+                storage = tensor.untyped_storage()
+                storages[storage.data_ptr()] = storage.nbytes()
+    return sum(storages.values())
 
 
 class CreateHookModelAsLora(Node):
@@ -99,7 +106,21 @@ class CreateHookModelAsLora(Node):
             if isinstance(ckpt_name, AssetRef)
             else ("local", ckpt_name.binding)
         )
-        weights_model, weights_clip = _weights(identity, path, embedding_roots)
+        key = json.dumps(
+            {
+                "purpose": "checkpoint-hook-weights",
+                "asset": identity,
+                "output_vae": True,
+                "output_clip": True,
+                "discard_model_sampling": True,
+                "embedding_roots": embedding_roots,
+            },
+            separators=(",", ":"),
+        )
+        weights = api.obtain_resident(
+            key, lambda: _weights(path, embedding_roots), ram_bytes=_ram_bytes
+        )
+        weights_model, weights_clip = weights
         added = hooks.create_hook_model_as_lora(
             weights_model=weights_model,
             weights_clip=weights_clip,
@@ -107,7 +128,12 @@ class CreateHookModelAsLora(Node):
             strength_clip=strength_clip,
         )
         previous = hooks.HookGroup() if prev_hooks is None else prev_hooks
-        return cls.outputs(HOOKS=previous.clone_and_combine(added))
+        result = previous.clone_and_combine(added)
+        result._dinkster_resident_refs = (
+            *getattr(previous, "_dinkster_resident_refs", ()),
+            weights,
+        )
+        return cls.outputs(HOOKS=result)
 
 
 class CreateHookModelAsLoraModelOnly(Node):
