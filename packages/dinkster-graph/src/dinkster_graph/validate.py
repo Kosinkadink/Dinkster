@@ -323,16 +323,20 @@ def _resolve_linked_output_types(
     ports: Mapping[str, TypeExpr],
     effective: Mapping[str, NodeSchema],
     regions: Mapping[str, _RegionData],
+    diagnostics: list[Diagnostic] | None = None,
     *,
     include_typed_literals: bool = False,
 ) -> dict[str, dict[str, TypeExpr]]:
     """Resolve generic node outputs from linked concrete input declarations."""
     resolved: dict[str, dict[str, TypeExpr]] = {}
+    invalid_outputs: dict[str, Diagnostic] = {}
 
     def contains_variable(expr: TypeExpr) -> bool:
         if expr.kind == "variable":
             return True
-        return expr.element is not None and contains_variable(expr.element)
+        return (expr.element is not None and contains_variable(expr.element)) or any(
+            contains_variable(position) for position in expr.elements
+        )
 
     def source_type(link: Link) -> TypeExpr | None:
         if link.node_id == PORTS_NODE_ID:
@@ -379,16 +383,25 @@ def _resolve_linked_output_types(
                 bindings = bind_type_variables(schema.inputs, input_types)
             except TypeSolveError:
                 continue
-            outputs = {
-                output.id: concrete
-                for output in schema.outputs
-                if (concrete := resolved_type_expr(output.type, bindings)) is not None
-            }
+            try:
+                outputs = {
+                    output.id: concrete
+                    for output in schema.outputs
+                    if (concrete := resolved_type_expr(output.type, bindings)) is not None
+                }
+            except TypeSolveError as exc:
+                invalid_outputs[node_id] = Diagnostic(
+                    "error", "output-type-invalid", str(exc), node_id
+                )
+                continue
+            invalid_outputs.pop(node_id, None)
             if outputs and resolved.get(node_id) != outputs:
                 resolved[node_id] = outputs
                 changed = True
         if not changed:
             break
+    if diagnostics is not None:
+        diagnostics.extend(invalid_outputs.values())
     return resolved
 
 
@@ -900,6 +913,11 @@ def validate(
 
 
 def _validate_level(level: _Level, diags: list[Diagnostic]) -> None:
+    output_diagnostics: list[Diagnostic] = []
+    _resolve_linked_output_types(
+        level.graph, level.ports or {}, level.effective, level.regions, output_diagnostics
+    )
+    diags.extend(_prefixed(diag, level.prefix) for diag in output_diagnostics)
     if PORTS_NODE_ID in level.graph.nodes:
         diags.append(
             Diagnostic(

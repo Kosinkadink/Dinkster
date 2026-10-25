@@ -7,10 +7,8 @@ invocation at the worker boundary (dinkster_schema.solve), so one MakeList
 serves every value type; variable-typed inputs are connection-fed (literals
 need a concrete-typed input to wrap with).
 
-Zip is deliberately NOT a node: without a tuple constructor there is no
-honest value for it to produce, and zip semantics already live where they
-belong - a region's zip binding over multiple element ports. CrossProduct
-produces two ALIGNED lists (same length, index-matched) for the same reason;
+Zip semantics live in a region's zip binding over multiple element ports.
+CrossProduct produces two aligned lists (same length, index-matched);
 feed them to a zip-binding region's element ports.
 """
 

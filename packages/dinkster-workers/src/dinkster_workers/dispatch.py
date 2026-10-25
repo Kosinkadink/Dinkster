@@ -45,9 +45,10 @@ from dinkster_values import (
     RESOURCE_OWNER_META_KEY,
     RESOURCE_PRODUCER_ARM_META_KEY,
     ListPayload,
+    TuplePayload,
     Value,
     ValueMeta,
-    list_children,
+    value_children,
     value_resource_provenance_refs,
 )
 
@@ -103,12 +104,12 @@ class ArmWorker:
 
 
 def _qualify_producer_arm(value: Value, owner: str, arm: str) -> Value:
-    children = list_children(value)
+    children = value_children(value)
     if children is not None:
         qualified = tuple(_qualify_producer_arm(child, owner, arm) for child in children)
         if qualified != children:
             payload = value.payload
-            assert isinstance(payload, ListPayload)
+            assert isinstance(payload, ListPayload | TuplePayload)
             value = replace(value, payload=replace(payload, children=qualified))
     if (
         isinstance(value.meta.get(RESOURCE_ID_META_KEY), str)

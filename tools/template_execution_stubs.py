@@ -279,6 +279,8 @@ def configure(reference: Path, templates: Sequence[Path]) -> None:
             "std.list.element",
             "std.list.length",
             "std.list.range",
+            "std.tuple.make",
+            "std.tuple.get",
             "std.math.add_ints",
             "dinkster.value.compare",
             "dinkster.value.select",
