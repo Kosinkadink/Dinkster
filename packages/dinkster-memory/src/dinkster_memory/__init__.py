@@ -27,7 +27,6 @@ from .release import (
     ReleaseCandidate,
 )
 from .reported import ReportedTelemetry
-from .resident import obtain_resident
 from .reservations import (
     GovernorReservationService,
     InvocationView,
@@ -35,6 +34,7 @@ from .reservations import (
     ReservationRequest,
     ReservationService,
 )
+from .resident import obtain_resident
 from .system import SystemMemorySnapshot, system_memory_snapshot
 from .tenants import (
     ModelTenantHandle,
