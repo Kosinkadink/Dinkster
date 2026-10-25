@@ -2,6 +2,8 @@
 
 - Native LTXVCropGuides removes appended guide frames and their conditioning
   metadata while preserving the remaining video latent and noise mask.
+- Native SeedVR2 output post-processing aligns video frames, restores alpha
+  and applies LAB, wavelet or AdaIN color matching with bounded chunks.
 - Native ARVideoI2V encodes the first start-image frame into a cloned model's
   autoregressive configuration and creates the requested empty video latent.
 - Native Sampler AR Video constructs the autoregressive video sampler with
