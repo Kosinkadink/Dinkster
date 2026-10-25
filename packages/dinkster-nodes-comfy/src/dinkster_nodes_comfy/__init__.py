@@ -37,6 +37,7 @@ from .image_core import IMAGE_CORE_NODES
 from .image_filters import IMAGE_FILTER_NODES
 from .image_transform import IMAGE_TRANSFORM_NODES
 from .inpaint import INPAINT_NODES
+from .kandinsky_video import Kandinsky5ImageToVideo
 from .latent import LATENT_NODES
 from .latent_advanced import LATENT_ADVANCED_NODES
 from .latent_model_specific import MODEL_LATENT_NODES
@@ -143,6 +144,7 @@ COMFY_NODES = (
     *HUNYUAN_LATENT_NODES,
     *HUNYUAN_TEXT_NODES,
     *HUNYUAN_VIDEO_IMAGE_NODES,
+    Kandinsky5ImageToVideo,
     *LTX_VIDEO_CONDITIONING_NODES,
     SeedVR2Preprocess,
     *VIDEO_CONDITIONING_NODES,
