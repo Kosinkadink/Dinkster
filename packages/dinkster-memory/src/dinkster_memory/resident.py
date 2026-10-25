@@ -573,14 +573,16 @@ class ResidentPool(ResidencyTable):
 
 
 _pool: ResidentPool | None = None
+_pool_lock = threading.Lock()
 
 
 def default_pool() -> ResidentPool:
     """The process-local generic pool for shared inference registration."""
     global _pool  # noqa: PLW0603 - process-local singleton
-    if _pool is None:
-        _pool = ResidentPool()
-    return _pool
+    with _pool_lock:
+        if _pool is None:
+            _pool = ResidentPool()
+        return _pool
 
 
 def obtain_resident[T](

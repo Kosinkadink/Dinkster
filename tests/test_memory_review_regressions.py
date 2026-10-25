@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier, BrokenBarrierError
 
+import dinkster_api.v1 as api
+import dinkster_memory.resident as resident
 import pytest
 from dinkster_memory import (
     ConsumerItem,
@@ -104,3 +108,34 @@ def test_keyed_resident_failed_load_is_retryable() -> None:
     assert pool.footprint("ram") == 0
     assert pool.obtain("checkpoint", lambda: b"weights", ram_bytes=len) == b"weights"
     assert pool.footprint("ram") == 7
+
+
+def test_public_keyed_residents_share_first_concurrent_load(monkeypatch: pytest.MonkeyPatch) -> None:
+    constructors = Barrier(2)
+
+    def slow_pool() -> ResidentPool:
+        try:
+            constructors.wait(timeout=1)
+        except BrokenBarrierError:
+            pass
+        return ResidentPool()
+
+    monkeypatch.setattr(resident, "_pool", None)
+    monkeypatch.setattr(resident, "ResidentPool", slow_pool)
+    callers = Barrier(2)
+    loads: list[str] = []
+
+    def obtain() -> bytearray:
+        callers.wait(timeout=5)
+
+        def load() -> bytearray:
+            loads.append("checkpoint")
+            return bytearray(b"weights")
+
+        return api.obtain_resident("checkpoint", load, ram_bytes=len)
+
+    with ThreadPoolExecutor(2) as threads:
+        first = threads.submit(obtain)
+        second = threads.submit(obtain)
+        assert first.result(timeout=5) is second.result(timeout=5)
+    assert loads == ["checkpoint"]
