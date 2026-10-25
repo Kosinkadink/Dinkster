@@ -172,6 +172,7 @@ namespaces = [
     "CLIPTextEncodeLumina2",
     "CLIPTextEncodeHiDream",
     "CLIPTextEncodeKandinsky5",
+    "Kandinsky5ImageToVideo",
     "CLIPTextEncodeControlnet",
     "T5TokenizerOptions",
     "VAEDecode",

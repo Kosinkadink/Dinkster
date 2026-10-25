@@ -56,6 +56,8 @@
   replace existing latent starts, and attach frame-rate metadata.
 - Native SeedVR2 preprocessing drops alpha, clamps image values, and pads video
   dimensions and frame counts for encoding.
+- Native Kandinsky 5 image-to-video conditioning encodes optional start images,
+  preserving clean start latents separately from empty sampler latents.
 - Native Hunyuan image latent construction and refiner conditioning retain the
   source latent metadata while preparing refiner noise latents.
 - Portable masks become Torch tensors at native tensor-consuming nodes, without
