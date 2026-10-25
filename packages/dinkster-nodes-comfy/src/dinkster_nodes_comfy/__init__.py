@@ -30,6 +30,7 @@ from .dataset_text import DATASET_TEXT_NODES
 from .device_routing import DEVICE_ROUTING_NODES
 from .freeu import FREEU_NODES
 from .hook_conditioning import HOOK_CONDITIONING_NODES
+from .hook_scheduling import HOOK_SCHEDULING_NODES
 from .hunyuan_latent import HUNYUAN_LATENT_NODES
 from .hunyuan_text import HUNYUAN_TEXT_NODES
 from .hunyuan_video_image import HUNYUAN_VIDEO_IMAGE_NODES
@@ -118,6 +119,7 @@ COMFY_NODES = (
     *ROPE_AND_MASK_NODES,
     *NOISE_GUIDANCE_NODES,
     *SPARSE_ATTENTION_NODES,
+    *HOOK_SCHEDULING_NODES,
     *SIGMA_OPERATION_NODES,
     *LATENT_NODES,
     *LATENT_ADVANCED_NODES,
