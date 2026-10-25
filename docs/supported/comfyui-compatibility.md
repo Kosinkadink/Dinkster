@@ -2,6 +2,8 @@
 
 - Native LTXV duration prediction uses caption connectors and the duration head,
   returning raw seconds and a frame count snapped to the causal VAE grid.
+- Native ComfyUI AUDIO sockets retain the first registered audio authority
+  and work across isolated pack processes without a companion media pack.
 - Native LTXVCropGuides removes appended guide frames and their conditioning
   metadata while preserving the remaining video latent and noise mask.
 - Native SeedVR2 output post-processing aligns video frames, restores alpha
