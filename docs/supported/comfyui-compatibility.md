@@ -26,6 +26,8 @@
   LATENT_OPERATION uses the same resident-value boundary as model hooks.
 - LATENT_UPSCALE_MODEL preserves resident identity, ownership, and cache lifetime
   across ordinary native pack hosts without loading Torch during registration.
+- Hunyuan Video 1.5 and LTXV latent upscale consumers preserve core resize,
+  normalization, dtype, device, and latent metadata behavior.
 - Nine native advanced latent nodes add, subtract, multiply, interpolate,
   concatenate, cut, split to batches, join batches, and set batch seed behavior.
 - Native CLIP text encoding preserves scheduled conditioning; layer selection
