@@ -49,6 +49,8 @@ from .elaborate import (
     ElaborationError,
     elaborate,
 )
+from .execution import RunExecutionContext
+from .expansion import Expansion, ExpansionBuilder, ExpansionNode, ExpansionOutput
 from .log import (
     LOG_LEVEL_ENV,
     LOG_OVERRIDES_ENV,
@@ -125,6 +127,7 @@ from .names import (
 )
 from .node import (
     ABSENT,
+    BLOCKED,
     AbsentOutput,
     Node,
     NodeOutputError,
@@ -177,7 +180,13 @@ from .wire import (
 )
 
 __all__ = [
+    "RunExecutionContext",
+    "Expansion",
+    "ExpansionBuilder",
+    "ExpansionNode",
+    "ExpansionOutput",
     "ABSENT",
+    "BLOCKED",
     "COMFY_ALIAS_FORMAT",
     "COMFY_GROUP_FORMAT",
     "COMFY_GROUP_MAX_EDGES",

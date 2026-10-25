@@ -1,6 +1,6 @@
 """First-class absence (DESIGN 3.15): typed no-value with provenance.
 
-The anti-ExecutionBlocker slice: deliberate absence from optional outputs,
+Deliberate absence from optional outputs, blockers on any output,
 per-input policies (skip/omit/accept/fail), engine-level skip cascades with
 root-cause provenance, cache replay, boundary crossing, and the maybe-absent
 document diagnostic.
@@ -10,15 +10,19 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from typing import Any
 
 import pytest
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, ExecutionError
 from dinkster_graph import Graph, GraphNode, Link, validate
+from dinkster_protocol import ExpandedReturn, LiteralInput, LocalExpansion, LocalNode, PresentOutput
 from dinkster_schema import (
     ABSENT,
+    BLOCKED,
     AbsentOutput,
     AbsentPolicy,
+    ExpansionBuilder,
     InputSpec,
     Node,
     NodeSchema,
@@ -300,6 +304,82 @@ def test_absent_on_non_optional_output_is_contract_error() -> None:
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("cache_enabled", [True, False])
+@pytest.mark.parametrize("message", ["selected branch has no value", ""])
+def test_blocked_required_output_reports_once_per_run(cache_enabled: bool, message: str) -> None:
+    class Block(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                node_type="test.block",
+                inputs=(),
+                outputs=(OutputSpec("value", TypeExpr.concrete("INT")),),
+            )
+
+        @classmethod
+        def execute(cls) -> Mapping[str, object]:
+            return cls.outputs(value=BLOCKED(message))
+
+    async def scenario() -> None:
+        nodes = (Block, AddOne)
+        registry = TypeRegistry()
+        register_core_types(registry)
+        events: list = []
+        engine = Engine(
+            schemas=build_schemas(nodes),
+            registry=registry,
+            worker=InProcessWorker(build_node_types(nodes), registry),
+            cache=MemoryLRUCache(),
+            on_event=events.append,
+        )
+        graph = Graph(
+            nodes={
+                "source": GraphNode("test.block", {}),
+                "other_source": GraphNode("test.block", {}),
+                "left": GraphNode("test.add_one", {"value": Link("source", "value")}),
+                "right": GraphNode("test.add_one", {"value": Link("source", "value")}),
+                "tail": GraphNode("test.add_one", {"value": Link("left", "out")}),
+                "other": GraphNode("test.add_one", {"value": Link("other_source", "value")}),
+                "live": GraphNode("test.add_one", {"value": 18}),
+            }
+        )
+        for attempt in range(2):
+            events.clear()
+            result = await engine.run(
+                graph, ["tail", "right", "other", "live"], cache_enabled=cache_enabled
+            )
+            assert set(result.skipped) == {"left", "right", "tail", "other"}
+            assert result.outputs["live"]["out"].resolve() == 19
+            for target in ("tail", "right", "other"):
+                value = result.outputs[target]["out"]
+                assert is_absent(value)
+                origin = "other_source/value" if target == "other" else "source/value"
+                assert value.meta.get(ABSENT_ORIGIN_META_KEY) == origin
+                assert value.meta.get(ABSENT_REASON_META_KEY) == message
+            notices = [event for event in events if event.kind == "node_blocked"]
+            assert len(notices) == (2 if message else 0)
+            if message:
+                assert {event.detail["origin"] for event in notices} == {
+                    "source/value",
+                    "other_source/value",
+                }
+                for notice in notices:
+                    assert notice.detail["message"] == message
+                    assert events.index(notice) < next(
+                        i
+                        for i, event in enumerate(events)
+                        if event.kind == "node_skipped" and event.node_id == notice.node_id
+                    )
+            skips = [event for event in events if event.kind == "node_skipped"]
+            assert {event.node_id for event in skips} == {"left", "right", "tail", "other"}
+            if attempt and cache_enabled:
+                assert set(result.cached) == {"source", "other_source", "live"}
+            elif not cache_enabled:
+                assert result.cached == ()
+
+    asyncio.run(scenario())
+
+
 # -- skip cascade -----------------------------------------------------------
 
 
@@ -547,3 +627,57 @@ def test_no_warning_for_default_skip_consumer() -> None:
     )
     diags = validate(graph, build_schemas(NODES), ["a"])
     assert "maybe-absent" not in {d.code for d in diags}
+
+
+@pytest.mark.parametrize("return_kind", ["mapping", "expansion", "wire"])
+def test_cached_forwarded_absence_preserves_source_provenance(return_kind: str) -> None:
+    absent = make_absent_value(origin="source/value", reason="missing source", stands_for="INT")
+
+    class Forward(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                "test.forward_absent",
+                outputs=(OutputSpec("value", TypeExpr.concrete("INT"), optional=True),),
+                may_expand_graph=return_kind != "mapping",
+            )
+
+        @classmethod
+        def execute(cls) -> Any:
+            if return_kind == "wire":
+                return ExpandedReturn(
+                    LocalExpansion(
+                        (
+                            LocalNode(
+                                "unused", "test.maybe_produce", (("produce", LiteralInput(False)),)
+                            ),
+                        )
+                    ),
+                    (("value", PresentOutput(absent)),),
+                )
+            if return_kind == "expansion":
+                builder = ExpansionBuilder()
+                builder.node("test.maybe_produce", "unused", produce=False)
+                return builder.finalize(value=absent)
+            return cls.outputs(value=absent)
+
+    registry = TypeRegistry()
+    register_core_types(registry)
+    nodes = [Forward, MaybeProduce]
+    engine = Engine(
+        schemas=build_schemas(nodes),
+        registry=registry,
+        worker=InProcessWorker(build_node_types(nodes), registry),
+        cache=MemoryLRUCache(),
+    )
+
+    async def scenario() -> None:
+        for node_id, cached in (("forward", False), ("forward", True), ("other_forward", True)):
+            result = await engine.run(Graph({node_id: GraphNode("test.forward_absent")}), [node_id])
+            output = result.outputs[node_id]["value"]
+            assert output.meta.get(ABSENT_ORIGIN_META_KEY) == "source/value"
+            assert output.meta.get(ABSENT_REASON_META_KEY) == "missing source"
+            assert output.fingerprint == absent.fingerprint
+            assert bool(result.cached) == cached
+
+    asyncio.run(scenario())

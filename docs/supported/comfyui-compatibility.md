@@ -22,6 +22,8 @@
 - Six native latent operation nodes blend, tonemap, sharpen, apply operations
   directly or within a denoising schedule interval, and replace video frames.
   LATENT_OPERATION uses the same resident-value boundary as model hooks.
+- LATENT_UPSCALE_MODEL preserves resident identity, ownership, and cache lifetime
+  across ordinary native pack hosts without loading Torch during registration.
 - Nine native advanced latent nodes add, subtract, multiply, interpolate,
   concatenate, cut, split to batches, join batches, and set batch seed behavior.
 - Native CLIP text encoding preserves scheduled conditioning; layer selection
@@ -30,6 +32,10 @@
   exact core interfaces, including CPU Fourier fallback.
 - Video Linear CFG Guidance and Video Triangle CFG Guidance clone model
   patchers and install their native frame-wise CFG callbacks under exact core IDs.
+- Native Context Windows nodes clone model patchers and configure manual, Wan,
+  and LTXV context-window sampling under exact core IDs.
+- MiniMax H3 sigma shifts clone model patchers, preserve noise scale, and set
+  independent video/audio flow shifts without modifying the source model.
 - Ten native conditioning nodes combine, blend, concatenate, multiply, mask,
   zero, and set area or timestep metadata under their exact ComfyUI interfaces.
 - Native hook conditioning preserves paired ordering, default records, mask and
@@ -47,6 +53,8 @@
   stitch, resize with padding, rotate, flip, and scale to a maximum dimension.
 - Native morphology applies erosion, dilation, opening, closing, gradients and
   top/bottom hats; RGB/YUV conversion splits and joins three image channels.
+- Native dataset nodes merge image batches into frame lists and bucket training
+  latents with their paired conditioning by resolution in first-seen order.
 - Eight native video latent nodes create Hunyuan Video, Hunyuan Video 1.5, LTXV,
   Cosmos, and autoregressive video samples, trim video frames, freeze LTXV video
   or audio samples, and normalize video latent starts under their exact ComfyUI IDs.
@@ -56,6 +64,10 @@
   replace existing latent starts, and attach frame-rate metadata.
 - Native SeedVR2 preprocessing drops alpha, clamps image values, and pads video
   dimensions and frame counts for encoding.
+- Native SeedVR2 conditioning builds positive and negative conditioning from a
+  16-channel VAE latent, preserving its tensor dtype and device.
+- Native Kandinsky 5 image-to-video conditioning encodes optional start images,
+  preserving clean start latents separately from empty sampler latents.
 - Native Hunyuan image latent construction and refiner conditioning retain the
   source latent metadata while preparing refiner noise latents.
 - Portable masks become Torch tensors at native tensor-consuming nodes, without

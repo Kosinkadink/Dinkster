@@ -30,6 +30,8 @@
   attaches image conditioning to both prompt streams, and returns a zero latent.
 - Native `ReferenceLatent` appends a guiding latent to conditioning while
   preserving existing references; an unconnected latent leaves conditioning unchanged.
+- Hunyuan 3D v2 uses single-view vision features or ordered front/left/back/right
+  positional features for positive conditioning and matching zero negative conditioning.
 - Native `ReferenceMultiLatent` encodes ordered reference images, appends them
   to positive and optional negative conditioning, and returns a matching empty latent.
 - `MiniMaxMusic3TextEncode` encodes captions and lyrics with duration, seed, and
@@ -47,4 +49,6 @@
 - `CreateHookModelAsLora` and its model-only variant combine checkpoint weight
   hooks with optional prior hooks, using the bound checkpoint file and authorized
   embedding directories.
+- `GLIGENTextBoxApply` appends pooled text embeddings and latent-space textbox
+  positions to conditioning, preserving prior boxes and other prompt metadata.
 - Other model-family conditioning surfaces are unsupported.

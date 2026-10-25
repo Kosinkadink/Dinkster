@@ -28,6 +28,9 @@ from dataclasses import dataclass, replace
 from typing import cast
 
 from dinkster_protocol import (
+    AdmissionInvocation,
+    AdmissionResult,
+    AdmissionWorker,
     Invocation,
     InvocationResult,
     LazyStatusInvocation,
@@ -42,9 +45,10 @@ from dinkster_values import (
     RESOURCE_OWNER_META_KEY,
     RESOURCE_PRODUCER_ARM_META_KEY,
     ListPayload,
+    TuplePayload,
     Value,
     ValueMeta,
-    list_children,
+    value_children,
     value_resource_provenance_refs,
 )
 
@@ -100,12 +104,12 @@ class ArmWorker:
 
 
 def _qualify_producer_arm(value: Value, owner: str, arm: str) -> Value:
-    children = list_children(value)
+    children = value_children(value)
     if children is not None:
         qualified = tuple(_qualify_producer_arm(child, owner, arm) for child in children)
         if qualified != children:
             payload = value.payload
-            assert isinstance(payload, ListPayload)
+            assert isinstance(payload, ListPayload | TuplePayload)
             value = replace(value, payload=replace(payload, children=qualified))
     if (
         isinstance(value.meta.get(RESOURCE_ID_META_KEY), str)
@@ -278,5 +282,17 @@ class DispatchWorker:
                 )
             )
         return await cast("LazyStatusWorker", worker).check_lazy_status(
+            invocation, on_event=on_event
+        )
+
+    async def validate_admission(
+        self, invocation: AdmissionInvocation, on_event: OnInvocationEvent | None = None
+    ) -> AdmissionResult:
+        worker = self._arms[self._owner_arm]
+        if not callable(getattr(worker, "validate_admission", None)):
+            return AdmissionResult(
+                "admission-protocol-skew: dispatch owner does not support admission validation"
+            )
+        return await cast("AdmissionWorker", worker).validate_admission(
             invocation, on_event=on_event
         )
