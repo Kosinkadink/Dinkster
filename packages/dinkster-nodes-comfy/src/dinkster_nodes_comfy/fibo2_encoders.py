@@ -86,9 +86,7 @@ class TextEncodeFibo2(Node):
                 InputSpec(
                     "height", _INT, default=0, widget=NumberWidget(min=0, max=16384, step=16)
                 ),
-                InputSpec(
-                    "batch_size", _INT, default=1, widget=NumberWidget(min=1, max=4096, step=1)
-                ),
+                InputSpec("batch_size", _INT, default=1, widget=NumberWidget(min=1, max=4096)),
             ),
             input_families=(
                 InputFamilySpec(
@@ -102,6 +100,16 @@ class TextEncodeFibo2(Node):
                 OutputSpec("positive", _CONDITIONING),
                 OutputSpec("negative", _CONDITIONING),
                 OutputSpec("latent", _LATENT),
+            ),
+            input_order=(
+                "clip",
+                "prompt",
+                "negative_prompt",
+                "vae",
+                "images",
+                "width",
+                "height",
+                "batch_size",
             ),
         )
 
