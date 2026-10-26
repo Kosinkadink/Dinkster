@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from dinkster_api.v1 import (
     CLIP_TYPE,
@@ -75,7 +75,7 @@ class TextEncodeMingImageEdit(Node):
             )
             if image is not None
         ]
-        conditioning = clip.encode_from_tokens_scheduled(
+        conditioning: Any = clip.encode_from_tokens_scheduled(
             clip.tokenize(prompt, images=[image[..., :3] for image in references])
         )
         if vae is None or not references:
@@ -93,7 +93,12 @@ class TextEncodeMingImageEdit(Node):
             for image in references
         ]
         return cls.outputs(
-            CONDITIONING=conditioning_set_values(
-                conditioning, {"reference_latents": latents}, append=True
-            )  # type: ignore[call-arg]
+            CONDITIONING=cast(
+                "Any",
+                conditioning_set_values(
+                    conditioning,
+                    {"reference_latents": latents},
+                    append=True,  # pyright: ignore[reportCallIssue]
+                ),
+            )
         )

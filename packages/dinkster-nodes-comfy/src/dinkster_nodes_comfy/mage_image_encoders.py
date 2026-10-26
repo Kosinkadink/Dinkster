@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from dinkster_api.v1 import (
     CLIP_TYPE,
@@ -141,14 +141,28 @@ class TextEncodeMageFlowEdit(Node):
                         samples = common_upscale(samples, width, height, "bicubic", "disabled")
                     reference_latents.append(vae.encode(samples.movedim(1, -1)[..., :3]))
 
-        positive = clip.encode_from_tokens_scheduled(clip.tokenize(prompt, images=images_vl))
-        negative = clip.encode_from_tokens_scheduled(
+        positive: Any = clip.encode_from_tokens_scheduled(clip.tokenize(prompt, images=images_vl))
+        negative: Any = clip.encode_from_tokens_scheduled(
             clip.tokenize(negative_prompt or " ", images=images_vl)
         )
         if reference_latents:
             values = {"reference_latents": reference_latents}
-            positive = conditioning_set_values(positive, values, append=True)  # type: ignore[call-arg]
-            negative = conditioning_set_values(negative, values, append=True)  # type: ignore[call-arg]
+            positive = cast(
+                "Any",
+                conditioning_set_values(
+                    positive,
+                    values,
+                    append=True,  # pyright: ignore[reportCallIssue]
+                ),
+            )
+            negative = cast(
+                "Any",
+                conditioning_set_values(
+                    negative,
+                    values,
+                    append=True,  # pyright: ignore[reportCallIssue]
+                ),
+            )
 
         torch = importlib.import_module("torch")
         return cls.outputs(
