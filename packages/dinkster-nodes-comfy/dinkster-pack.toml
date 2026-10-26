@@ -403,6 +403,8 @@ namespaces = [
     "WanDancerPadKeyframesList",
     "LTXVDurationPredictor",
     "MiniMaxH3AddGuide",
+    "ColorToRGBInt",
+    "ResolutionSelector",
 ]
 
 [pack.sandbox]
