@@ -294,6 +294,7 @@ _FIRST_PARTY_PACK_MODULES = MappingProxyType(
         "dinkster-nodes-image": "dinkster_nodes_image",
         "dinkster-nodes-remote": "dinkster_nodes_remote",
         "dinkster-nodes-generation": "dinkster_nodes_generation",
+        "dinkster-nodes-comfy": "dinkster_nodes_comfy",
         "dinkster-vision-birefnet": "dinkster_nodes_vision.birefnet",
         "dinkster-vision-depth-anything-v2": "dinkster_nodes_vision.depth_anything_v2",
         "dinkster-vision-depth-anything-v3": "dinkster_nodes_vision.depth_anything_v3",
