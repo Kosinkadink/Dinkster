@@ -43,6 +43,7 @@ def test_model_file_loaders_use_bound_asset_inputs_and_expected_outputs() -> Non
     )
     assert schemas["CheckpointLoader"].display_name == "Load Checkpoint With Config (DEPRECATED)"
     assert schemas["CheckpointLoader"].deprecation is not None
+    assert schemas["GLIGENLoader"].display_name == "Load GLIGEN Model"
     assert schemas["CheckpointLoader"].search_terms == ("load model", "model loader")
     assert schemas["CheckpointLoaderSimple"].description == (
         "Loads a diffusion model checkpoint, diffusion models are used to denoise latents."
