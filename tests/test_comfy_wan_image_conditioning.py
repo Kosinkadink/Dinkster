@@ -207,3 +207,58 @@ def test_track_schema_preserves_required_image_and_string_tracks() -> None:
     assert schema.inputs[8].advanced and schema.inputs[9].advanced
     assert [o.id for o in schema.outputs] == ["positive", "negative", "latent"]
     assert schema_from_wire(schema_to_wire(schema)) == schema
+
+
+def test_animation_schemas_preserve_interleaved_inputs_and_cache_options() -> None:
+    suffixes = {
+        "WanAnimateToVideo": [
+            "clip_vision_output",
+            "reference_image",
+            "face_video",
+            "pose_video",
+            "continue_motion_max_frames",
+            "background_video",
+            "character_mask",
+            "continue_motion",
+            "video_frame_offset",
+        ],
+        "WanAnimate2ToVideo": [
+            "reference_image",
+            "pose_video",
+            "clip_vision_output",
+            "positive_pose",
+            "clip_vision_output_pose",
+            "continue_motion",
+            "video_frame_offset",
+            "pose_strength",
+            "pose_start_percent",
+            "pose_end_percent",
+            "reference_image_strength",
+        ],
+    }
+    for name, suffix in suffixes.items():
+        schema = next(n.schema() for n in COMFY_NODES if n.schema().node_type == name)
+        assert [i.id for i in schema.inputs] == [
+            "positive",
+            "negative",
+            "vae",
+            "width",
+            "height",
+            "length",
+            "batch_size",
+            *suffix,
+        ]
+        assert schema.inputs[6].widget == NumberWidget(min=1, max=4096)
+        assert [o.id for o in schema.outputs] == [
+            "positive",
+            "negative",
+            "latent",
+            "trim_latent",
+            "trim_image",
+            "video_frame_offset",
+        ]
+        assert schema_from_wire(schema_to_wire(schema)) == schema
+    cache = next(n.schema() for n in COMFY_NODES if n.schema().node_type == "WanAnimate2Cache")
+    assert [i.id for i in cache.inputs] == ["model", "device", "dtype"]
+    assert [i.default for i in cache.inputs[1:]] == ["cpu", "default"]
+    assert schema_from_wire(schema_to_wire(cache)) == cache

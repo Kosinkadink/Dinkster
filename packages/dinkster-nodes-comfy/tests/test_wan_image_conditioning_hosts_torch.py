@@ -14,12 +14,14 @@ from dinkster_api.v1 import (
     CORE_STRING,
     IMAGE_TYPE,
     LATENT_TYPE,
+    MODEL_TYPE,
     VAE_TYPE,
     InputSpec,
     Node,
     NodeSchema,
     OutputSpec,
     TypeExpr,
+    initialize_inference_process,
     materialize_latent,
 )
 from dinkster_api.v1 import register_inference_types as register_inference_types
@@ -51,18 +53,23 @@ class Source(Node):
                     ("vae", VAE_TYPE),
                     ("start", IMAGE_TYPE),
                     ("end", IMAGE_TYPE),
+                    ("model", MODEL_TYPE),
                 )
             ),
         )
 
     @classmethod
     def execute(cls) -> dict[str, object]:
+        initialize_inference_process()
+        from dinkster_inference.model_patcher import CoreModelPatcher
+
         return cls.outputs(
             positive=[[torch.ones(1, 2, 3), {"label": "positive"}]],
             negative=[[torch.ones(1, 2, 3), {"label": "negative"}]],
             vae=VideoEncoder(),
             start=torch.full((1, 16, 32, 3), 0.25),
             end=torch.full((1, 16, 32, 3), 0.75),
+            model=CoreModelPatcher(torch.nn.Identity(), torch.device("cpu"), torch.device("cpu")),
         )
 
 
@@ -84,6 +91,9 @@ class Consumer(Node):
                     ("phantom_negative", CONDITIONING_TYPE),
                     ("scail", CONDITIONING_TYPE),
                     ("track", CONDITIONING_TYPE),
+                    ("animate", CONDITIONING_TYPE),
+                    ("animate2", CONDITIONING_TYPE),
+                    ("cached_model", MODEL_TYPE),
                     ("latent", LATENT_TYPE),
                 )
             ),
@@ -104,6 +114,9 @@ class Consumer(Node):
         phantom_negative: Any,
         scail: Any,
         track: Any,
+        animate: Any,
+        animate2: Any,
+        cached_model: Any,
         latent: Any,
     ) -> dict[str, object]:
         samples = materialize_latent(latent)["samples"]
@@ -186,6 +199,18 @@ class Consumer(Node):
         assert not track_mask[:, :, 0].count_nonzero()
         assert track_mask[0, 0, 1, 0, 0] < 0.01
         assert track_mask[0, 0, 1, 1, 3] > 0.99
+        for value in (animate, animate2):
+            metadata = value[0][1]
+            assert metadata["concat_latent_image"].shape == (1, 16, 4, 2, 4)
+            assert metadata["pose_video_latent"].shape == (1, 16, 3, 2, 4)
+            torch.testing.assert_close(
+                metadata["pose_video_latent"], torch.full((1, 16, 3, 2, 4), 0.25), rtol=0, atol=0
+            )
+        cache = cached_model.model_options["transformer_options"]["animate2_cache"]
+        assert cache.dtype == "int8" and cache.store_device == torch.device("cpu")
+        cache.slots.append({"pinned": []})
+        cached_model.cleanup()
+        assert not cache.slots
         return cls.outputs(summary="wan-image-first-last-inpaint")
 
 
@@ -314,6 +339,29 @@ def test_wan_image_conditioning_runs_twice_in_ordinary_hosts(
                             "topk": 1,
                         },
                     ),
+                    "animate": GraphNode(
+                        "WanAnimateToVideo",
+                        {
+                            **{k: v for k, v in inputs.items() if k != "start_image"},
+                            "reference_image": Link("source", "end"),
+                            "pose_video": Link("source", "start"),
+                            "video_frame_offset": 0,
+                            "continue_motion_max_frames": 5,
+                        },
+                    ),
+                    "animate2": GraphNode(
+                        "WanAnimate2ToVideo",
+                        {
+                            **{k: v for k, v in inputs.items() if k != "start_image"},
+                            "reference_image": Link("source", "end"),
+                            "pose_video": Link("source", "start"),
+                            "video_frame_offset": 0,
+                        },
+                    ),
+                    "cache": GraphNode(
+                        "WanAnimate2Cache",
+                        {"model": Link("source", "model"), "device": "cpu", "dtype": "int8"},
+                    ),
                     "consumer": GraphNode(
                         "wan-image-fixture.consumer",
                         {
@@ -327,6 +375,9 @@ def test_wan_image_conditioning_runs_twice_in_ordinary_hosts(
                             "phantom_negative": Link("phantom", "negative_img_text"),
                             "scail": Link("scail", "positive"),
                             "track": Link("track", "positive"),
+                            "animate": Link("animate", "positive"),
+                            "animate2": Link("animate2", "positive"),
+                            "cached_model": Link("cache", "MODEL"),
                             "latent": Link("first_last", "latent"),
                         },
                     ),

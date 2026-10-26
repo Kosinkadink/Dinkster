@@ -400,6 +400,9 @@ namespaces = [
     "Wan22ImageToVideoLatent",
     "WanSCAILToVideo",
     "WanTrackToVideo",
+    "WanAnimateToVideo",
+    "WanAnimate2ToVideo",
+    "WanAnimate2Cache",
 ]
 
 [pack.sandbox]
