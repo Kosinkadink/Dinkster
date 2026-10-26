@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import torch
+from dinkster_nodes_comfy.ming_image_encoders import TextEncodeMingImageEdit
 from dinkster_nodes_comfy.qwen_image_encoders import (
     QwenImage21Cache,
     TextEncodeQwenImage21,
@@ -23,6 +24,14 @@ class Clip:
 
     def encode_from_tokens_scheduled(self, tokens: dict[str, Any]) -> list[list[Any]]:
         return [[torch.ones((1, 2)), {"tokens": tokens}]]
+
+
+def test_ming_without_images_preserves_prompt_and_has_no_reference_metadata() -> None:
+    clip = Clip()
+    result = TextEncodeMingImageEdit.execute(clip=clip, prompt="describe", images={})
+    assert result["CONDITIONING"] == [
+        [torch.ones((1, 2)), {"tokens": {"text": "describe", "images": []}}]
+    ]
 
 
 def test_qwen_edit_encoders_preserve_no_image_token_contracts() -> None:
