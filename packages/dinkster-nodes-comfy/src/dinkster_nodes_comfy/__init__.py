@@ -115,6 +115,7 @@ from .video_conditioning import VIDEO_CONDITIONING_NODES
 from .video_guidance import VIDEO_GUIDANCE_NODES
 from .video_latent import VIDEO_LATENT_NODES
 from .video_latent_ops import VIDEO_LATENT_OPERATION_NODES
+from .wan22_latent import Wan22ImageToVideoLatent
 from .wandancer_keyframes import WANDANCER_KEYFRAME_NODES
 
 COMFY_NODES = (
@@ -227,6 +228,7 @@ COMFY_NODES = (
     *WANDANCER_KEYFRAME_NODES,
     LTXVDurationPredictor,
     MiniMaxH3AddGuide,
+    Wan22ImageToVideoLatent,
 )
 
 
