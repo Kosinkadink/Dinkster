@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -260,12 +261,13 @@ def test_lora_file_loaders_execute_twice_through_both_ordinary_hosts(
 
     async def scenario() -> None:
         package = Path(__file__).resolve().parents[1]
+        checkout = package.parents[1]
         native_manifest = package / "dinkster-pack.toml"
-        owner = Path(
-            "/home/kosin/comfy-vibe-station/lanes/comfy-nodes-511-images-continuation-1026/"
-            "model-loader-integration/Dinkster"
+        source_paths = (
+            checkout / "src",
+            *(sorted(checkout.glob("packages/*/src"))),
         )
-        owner_sources = tuple(sorted(owner.glob("packages/*/src")))
+        runtime_paths = tuple(Path(path) for path in sys.path if path and Path(path).is_dir())
         composer = ServingComposer(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
@@ -276,9 +278,8 @@ def test_lora_file_loaders_execute_twice_through_both_ordinary_hosts(
                         str(tmp_path),
                         str(Path(__file__).parent),
                         str(package / "src"),
-                        str(owner / "src"),
-                        *(str(source) for source in owner_sources),
-                        str(owner / ".venv/lib/python3.12/site-packages"),
+                        *(str(source) for source in source_paths),
+                        *(str(path) for path in runtime_paths),
                     )
                 ),
             }
