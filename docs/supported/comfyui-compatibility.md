@@ -65,6 +65,8 @@
   patchers and install their native frame-wise CFG callbacks under exact core IDs.
 - Native Context Windows nodes clone model patchers and configure manual, Wan,
   and LTXV context-window sampling under exact core IDs.
+- Video latent frame replacement preserves the core destination/source/index
+  input order, including the optional source input.
 - MiniMax H3 sigma shifts clone model patchers, preserve noise scale, and set
   independent video/audio flow shifts without modifying the source model.
 - MiniMax H3 image-to-video conditioning encodes optional first and last

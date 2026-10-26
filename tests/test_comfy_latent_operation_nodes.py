@@ -156,13 +156,14 @@ def test_latent_operation_interfaces_keep_exact_input_order_and_optional_groups(
         "LatentOperationBlend": ("reference", "strength"),
         "LatentOperationTonemapReinhard": ("multiplier",),
         "LatentOperationSharpen": ("sharpen_radius", "sigma", "alpha"),
-        "ReplaceVideoLatentFrames": ("destination", "index", "source"),
+        "ReplaceVideoLatentFrames": ("destination", "source", "index"),
     }
     assert {
         node.schema().node_type: tuple(port.id for port in node.schema().inputs)
         for node in LATENT_OPERATION_NODES
     } == expected
-    assert not ReplaceVideoLatentFrames.schema().inputs[-1].required
+    assert not ReplaceVideoLatentFrames.schema().inputs[1].required
+    assert ReplaceVideoLatentFrames.schema().inputs[2].required
     assert all(not port.required for port in LatentApplyOperationCFG.schema().inputs[-2:])
 
 

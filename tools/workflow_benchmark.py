@@ -6,7 +6,7 @@ or residency bootstrap. Example from the Dinkster checkout:
 
   python ../dinkster-evidence/scripts/benchmark_inference.py \
     --workflow tests/fixtures/lumina2-workflow-api.json \
-    --workflow-provenance export.json --artifacts artifacts.json \
+    --workflow-provenance export.json --native-jobs native-jobs.json --artifacts artifacts.json \
     --repo /work/Dinkster --server-python /work/Dinkster/.venv-gpu/bin/python \
     --reference-root /work/ComfyUI --reference-commit FULL_COMMIT \
     --seed-input 48:33.seed --seed 1064 --warm-runs 5 \
@@ -15,9 +15,10 @@ or residency bootstrap. Example from the Dinkster checkout:
 artifacts.json is a list of {path, category, name, sha256}; paths are absolute,
 category is a ComfyUI model-folder category (or input), and name is its relative
 workflow filename. export.json records template_commit, template_path,
-template_sha256, api_sha256 and exporter. No fixed model or reference revision
-is embedded here. --offline-check authenticates inputs and prepares commands
-without starting servers, querying GPUs or importing Torch.
+template_sha256, api_sha256 and exporter. Dinkster also requires native_jobs_sha256
+and --native-jobs containing one native frontend compiler export per seed.
+No fixed model or reference revision is embedded here. --offline-check authenticates
+inputs and prepares commands without starting servers, querying GPUs or importing Torch.
 
 The executor currently uses POSIX session containment. Hold normal host/GPU
 locks around physical runs; this tool neither grants nor steals a GPU claim.
@@ -61,6 +62,7 @@ from tools.workflow_benchmark_report import (
     dinkster_journal_completed,
     file_digest,
     json_digest,
+    native_job_request,
     seeded_workflow,
     summary,
     validate_workflow_files,
@@ -473,7 +475,11 @@ def run_jobs(
     for index, seed in enumerate(workload["seeds"]):
         sampler.check()
         graph = seeded_workflow(workload["graph"], workload["seed_inputs"], seed)
-        body = {"prompt": graph, "client_id": "workflow-benchmark"}
+        body = (
+            native_job_request(workload, index)
+            if args.system == "dinkster"
+            else {"prompt": graph, "client_id": "workflow-benchmark"}
+        )
         prefix = str(index)
         row: dict[str, Any] = {
             "seed": seed,
@@ -484,14 +490,11 @@ def run_jobs(
             "accepted_file": prefix + "-accepted.json",
             "history_file": prefix + "-history.json",
         }
+        if args.system == "dinkster":
+            row["native_request_sha256"] = json_digest(body)
         report["runs"].append(row)
         save(args.output / row["submitted_file"], body)
-        endpoint = "/prompt" if args.system == "comfyui" else "/api/compat/comfy/prompt"
-        if args.system == "dinkster":
-            save(
-                args.output / (prefix + "-translation.json"),
-                request(base, endpoint + "?dryRun=1", body),
-            )
+        endpoint = "/prompt" if args.system == "comfyui" else "/api/jobs"
         before = output_snapshot(args.output / "images")
         server.assert_listener(args.port)
         row["start_epoch_ns"] = time.time_ns()
@@ -665,6 +668,13 @@ def parse_arguments(system: str, argv: Sequence[str] | None = None) -> argparse.
         "output",
     ):
         parser.add_argument("--" + name, type=Path, required=True)
+    if system == "dinkster":
+        parser.add_argument(
+            "--native-jobs",
+            type=Path,
+            required=True,
+            help="per-seed native job requests exported by the frontend importer/compiler",
+        )
     parser.add_argument(
         "--reference-commit", required=True, help="exact full reference revision actually run"
     )
@@ -769,7 +779,14 @@ def main(system: str, argv: Sequence[str] | None = None) -> int:
             "seed_inputs": args.seed_input,
             "seeds": seeds,
         }
-        validate_workload(report["workload"])
+        if system == "dinkster":
+            native_bytes = args.native_jobs.read_bytes()
+            report["workload"]["native_jobs"] = json.loads(native_bytes)
+            report["workload"]["native_jobs_sha256"] = hashlib.sha256(native_bytes).hexdigest()
+            validate_workload(report["workload"])
+            (args.output / "native-jobs.json").write_bytes(native_bytes)
+        else:
+            validate_workload(report["workload"])
         report["artifacts"] = authenticate_artifacts(args.artifacts)
         command = server_command(args, report["artifacts"])
         report["command"] = command

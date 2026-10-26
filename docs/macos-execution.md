@@ -39,9 +39,10 @@ claim CUDA-only kernels, every model family, or arbitrary third-party packs.
 
 ## Workflow matrix
 
-All workflows enter through `POST /api/compat/comfy/prompt`, finish with a
-completed job, and produce a decoded RGB PNG. The reference receives the same
-ComfyUI API graph through `/prompt`. Generation uses seed 7, Euler, batch 1,
+In this historical measurement, workflows entered through the preserved
+compatibility prompt endpoint, finished with a completed job, and produced a
+decoded RGB PNG. The reference received the same ComfyUI API graph through
+`/prompt`. Generation used seed 7, Euler, batch 1,
 the positive prompt `a photograph of a red fox sitting in a green meadow,
 soft morning light`, and an empty negative prompt where CFG is used.
 

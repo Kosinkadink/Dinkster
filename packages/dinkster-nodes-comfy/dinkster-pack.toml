@@ -91,6 +91,7 @@ namespaces = [
     "RescaleCFG",
     "ModelComputeDtype",
     "ModelAttentionBackend",
+    "ChromaRadianceOptions",
     "SenseNovaSamplingOptions",
     "HypernetworkLoader",
     "ModelPatchLoader",
@@ -416,6 +417,8 @@ namespaces = [
     "WanDancerPadKeyframesList",
     "LTXVDurationPredictor",
     "MiniMaxH3AddGuide",
+    "ColorToRGBInt",
+    "ResolutionSelector",
 ]
 
 [pack.sandbox]
