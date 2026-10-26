@@ -2,6 +2,8 @@
 
 - Color strings, ordered color palettes, and optional resolution-preview
   metadata pass between node packs without rewriting their values.
+- Native `ColorToRGBInt` preserves RGB letter casing and separates optional alpha;
+  `ResolutionSelector` rounds aspect-ratio and megapixel dimensions to a chosen multiple.
 - Native `Canny` edge detection with low/high hysteresis thresholds and RGB output
 - Native Stable Cascade stage C/B latent creation, stage C VAE encoding,
   stage B prior conditioning, and super-resolution control inputs
