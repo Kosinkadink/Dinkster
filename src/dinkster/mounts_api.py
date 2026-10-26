@@ -1,6 +1,6 @@
 """Filesystem mounts API: the operator's directory-grant surface.
 
-Umbrella-owned wiring like compat_api and reload_api: the MountTable is
+Umbrella-owned wiring like reload_api: the MountTable is
 composed in dinkster-serve, dinkster-server stays mount-agnostic, and this
 module is the seam.
 
