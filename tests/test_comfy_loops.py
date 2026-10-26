@@ -3,6 +3,7 @@
 import asyncio
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
 import pytest
 from dinkster_caches import MemoryLRUCache
@@ -23,6 +24,7 @@ from dinkster_schema import (
     TypeExpr,
     build_node_types,
     build_schemas,
+    schema_to_wire,
 )
 from dinkster_values import TypeRegistry, ValueMeta, is_absent, list_children, register_core_types
 from dinkster_workers import GovernedWorker, InProcessWorker, IsolatedWorker
@@ -36,6 +38,35 @@ NODES = (
     MakeList,
     ListElement,
 )
+
+
+@pytest.mark.parametrize(
+    ("node_type", "expected"),
+    [
+        (
+            "EndLoop",
+            [("output_value", False), ("next_iteration_value", False), ("accumulate", True)],
+        ),
+        (
+            "LoopIteration",
+            [
+                ("iteration_index", True),
+                ("is_first", True),
+                ("is_last", True),
+                ("list_item", False),
+                ("current_iteration_value", False),
+                ("reuse_cache", True),
+            ],
+        ),
+    ],
+)
+def test_loop_wire_inputs_preserve_v3_declaration_order(
+    node_type: str, expected: list[tuple[str, bool]]
+) -> None:
+    schema = build_schemas(LOOP_NODES)[node_type]
+    interface = cast(list[dict[str, object]], schema_to_wire(schema)["interface"])
+    inputs = [(item["id"], item["required"]) for item in interface if item["role"] == "input"]
+    assert inputs == expected
 
 
 def make_engine() -> Engine:
