@@ -2993,7 +2993,7 @@ def test_degraded_default_ordering_composes_media_io_before_image(
         asyncio.run(composer.close())
 
 
-def test_degraded_default_ordering_retains_generation_pack(tmp_path: Path) -> None:
+def test_degraded_default_ordering_retains_native_core_pack(tmp_path: Path) -> None:
     from dinkster_workers import load_manifest
 
     import dinkster.serve as serve
@@ -3019,7 +3019,8 @@ def test_degraded_default_ordering_retains_generation_pack(tmp_path: Path) -> No
         asyncio.run(composer.close())
 
     names = [load_manifest(Path(spec.manifest)).name for spec in ordered]
-    assert "dinkster-nodes-generation" in names
+    assert "dinkster-nodes-comfy" in names
+    assert "dinkster-nodes-generation" not in names
 
 
 def test_serve_progressive_pack_announcement(tmp_path: Path) -> None:
@@ -3110,7 +3111,8 @@ def test_serve_progressive_pack_announcement(tmp_path: Path) -> None:
                 for index, name in enumerate(default_packs)
             }
             expected_packs["isopack"] = {"state": "announced", "epoch": final_epoch}
-            assert "dinkster.ksampler" in data["nodes"]
+            assert data["nodes"]["StringLength"]["pack"] == "dinkster-nodes-comfy"
+            assert "dinkster.ksampler" not in data["nodes"]
             assert report["packs"] == expected_packs
 
     pending_error: BaseException | None = None
