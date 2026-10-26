@@ -7,6 +7,7 @@ from pathlib import Path
 
 import torch
 from dinkster_nodes_comfy.image_file_tools import PreviewImage, SaveImage
+from PIL import Image
 
 
 def _mount(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
@@ -53,6 +54,25 @@ def test_save_image_writes_each_cpu_batch_item_and_preserves_source(
     assert chosen_result["images"] is chosen
     assert (alternate / "chosen_00001.png").is_file()
     assert torch.equal(images[0, 0, 0], torch.tensor([0.0, 0.5, 1.0]))
+
+
+def test_save_image_uses_comfyui_truncation_and_batch_number_prefix(
+    tmp_path: Path, monkeypatch
+) -> None:
+    default, _ = _mount(tmp_path, monkeypatch)
+    images = torch.tensor(
+        [
+            [[[0.0, 0.5, 1.0], [0.501, 0.999, 0.001]]],
+            [[[0.25, 0.75, 0.5], [0.1, 0.9, 0.4]]],
+        ],
+        dtype=torch.float32,
+    )
+
+    SaveImage.execute(images=images, filename_prefix="batch/item-%batch_num%")
+
+    with Image.open(default / "batch" / "item-0_00001.png") as saved:
+        assert list(saved.getdata()) == [(0, 127, 255), (127, 254, 0)]
+    assert (default / "batch" / "item-1_00001.png").is_file()
 
 
 def test_preview_image_preserves_cpu_source() -> None:

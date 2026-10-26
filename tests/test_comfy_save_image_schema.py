@@ -17,6 +17,8 @@ def test_save_image_preserves_fixed_inputs_and_appends_mount_widget() -> None:
     assert schema.inputs[1].required
     assert schema.inputs[1].default == "ComfyUI"
     assert schema.inputs[1].widget == StringWidget(multiline=False)
+    assert schema.inputs[0].doc == "The images to save."
+    assert schema.inputs[1].doc.startswith("The prefix for the file to save.")
     assert not schema.inputs[2].required
     assert schema.inputs[2].default is None
     assert schema.inputs[2].widget == MountWidget()
@@ -53,4 +55,5 @@ def test_preview_image_uses_the_public_image_preview_output() -> None:
         "show image",
         "view image",
         "display image",
+        "image viewer",
     )

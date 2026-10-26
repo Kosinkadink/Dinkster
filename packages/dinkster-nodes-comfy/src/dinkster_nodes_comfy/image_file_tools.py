@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import os
 from collections.abc import Mapping
 from typing import Any
@@ -43,12 +44,17 @@ class SaveImage(Node):
             category="image",
             description="Saves the input images to your ComfyUI output directory.",
             inputs=(
-                InputSpec("images", _IMAGE),
+                InputSpec("images", _IMAGE, doc="The images to save."),
                 InputSpec(
                     "filename_prefix",
                     _STRING,
                     default="ComfyUI",
                     widget=StringWidget(multiline=False),
+                    doc=(
+                        "The prefix for the file to save. This may include formatting information "
+                        "such as %date:yyyy-MM-dd% or %Empty Latent Image.width% to include values "
+                        "from nodes."
+                    ),
                 ),
                 InputSpec(
                     "mount",
@@ -80,16 +86,18 @@ class SaveImage(Node):
         if batch.ndim != 4 or batch.shape[0] < 1:
             raise ValueError("images must be a nonempty [B,H,W,C] batch")
         writer = _writer()
-        target = writer.output_target(
-            filename_prefix,
-            mount=mount,
-            image_width=int(batch.shape[2]),
-            image_height=int(batch.shape[1]),
-        )
+        torch = importlib.import_module("torch")
         for index in range(batch.shape[0]):
+            target = writer.output_target(
+                filename_prefix.replace("%batch_num%", str(index)),
+                mount=mount,
+                image_width=int(batch.shape[2]),
+                image_height=int(batch.shape[1]),
+            )
+            image = torch.floor(torch.clamp(batch[index : index + 1], 0, 1) * 255.0) / 255.0
             writer.save_bytes(
                 target,
-                render_image_png(batch[index : index + 1]),
+                render_image_png(image),
                 suffix=".png",
                 media_type="image/png",
             )
@@ -107,7 +115,14 @@ class PreviewImage(Node):
             inputs=(InputSpec("images", _IMAGE),),
             outputs=(OutputSpec("images", _IMAGE, preview=True),),
             output_node=True,
-            search_terms=("preview", "preview image", "show image", "view image", "display image"),
+            search_terms=(
+                "preview",
+                "preview image",
+                "show image",
+                "view image",
+                "display image",
+                "image viewer",
+            ),
         )
 
     @classmethod
