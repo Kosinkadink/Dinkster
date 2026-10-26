@@ -792,6 +792,8 @@ def _input_entry_to_wire(spec: InputSpec, wire_version: int) -> dict[str, object
         entry["adjacentTo"] = spec.adjacent_to
     if spec.force_input:
         entry["forceInput"] = True
+    if spec.socketless:
+        entry["socketless"] = True
     if spec.advanced:
         entry["advanced"] = True
     if spec.hidden:
@@ -1218,6 +1220,7 @@ def schema_signature(schema: NodeSchema) -> str:
         entry.pop("displayName", None)
         entry.pop("adjacentTo", None)
         entry.pop("forceInput", None)
+        entry.pop("socketless", None)
         entry.pop("advanced", None)
         entry.pop("hidden", None)
         entry.pop("preview", None)
@@ -1368,6 +1371,7 @@ def _input_entry_from_wire(entry: dict[str, Any], wire_version: int) -> InputSpe
         if "adjacentTo" not in entry
         else _expect_str(entry["adjacentTo"], "input.adjacentTo"),
         force_input=_expect_bool(entry.get("forceInput", False), "input.forceInput"),
+        socketless=_expect_bool(entry.get("socketless", False), "input.socketless"),
         advanced=_expect_bool(entry.get("advanced", False), "input.advanced"),
         hidden=_expect_bool(entry.get("hidden", False), "input.hidden"),
         lazy=_expect_bool(entry.get("lazy", False), "input.lazy"),
