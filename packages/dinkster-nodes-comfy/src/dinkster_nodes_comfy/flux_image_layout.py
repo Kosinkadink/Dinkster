@@ -38,6 +38,7 @@ _PREFERRED_KONTEXT_RESOLUTIONS = (
     (1104, 944),
     (1184, 880),
     (1248, 832),
+    (1328, 800),
     (1392, 752),
     (1456, 720),
     (1504, 688),
@@ -50,7 +51,6 @@ class FluxKontextImageScale(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="FluxKontextImageScale",
-            display_name="FluxKontextImageScale",
             category="model/conditioning/flux",
             description="This node resizes the image to one that is more optimal for flux kontext.",
             inputs=(InputSpec("image", _IMAGE),),

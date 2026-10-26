@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import os
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.flux_image_layout import Flux3LayoutPrompt, FluxKontextImageScale
+from PIL import Image
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -33,28 +35,44 @@ _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 _STRING = TypeExpr.concrete(CORE_STRING)
 
 
-def test_flux_image_layout_preserves_resolution_tiebreak_and_prompt_values(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    ("height", "width", "target_height", "target_width", "crop_left", "crop_right"),
+    ((11, 17, 832, 1248, 0, 17), (50, 83, 800, 1328, 0, 83), (8, 32, 672, 1568, 7, 25)),
+)
+def test_flux_image_scale_preserves_preferred_geometry_and_lanczos_pixels(
+    height: int, width: int, target_height: int, target_width: int, crop_left: int, crop_right: int
 ) -> None:
-    import dinkster_nodes_comfy.flux_image_layout as module
-
-    monkeypatch.setattr(module, "initialize_inference_process", lambda: None)
-    image = torch.arange(1 * 11 * 17 * 3, dtype=torch.float32).reshape(1, 11, 17, 3) / 511
+    image = torch.linspace(-0.2, 1.2, height * width * 3).reshape(1, height, width, 3)
     source = image.clone()
     scaled: Any = FluxKontextImageScale.execute(image=image.numpy())["IMAGE"]
     assert torch.equal(image, source)
-    assert scaled.shape == (1, 832, 1248, 3)
+    assert scaled.shape == (1, target_height, target_width, 3)
+    pixels = np.clip(255 * source[0, :, crop_left:crop_right].numpy(), 0, 255).astype(np.uint8)
+    expected = (
+        np.asarray(
+            Image.fromarray(pixels).resize((target_width, target_height), Image.Resampling.LANCZOS),
+            dtype=np.float32,
+        )
+        / 255
+    )
+    torch.testing.assert_close(scaled[0], torch.from_numpy(expected), rtol=0, atol=0)
+
+
+def test_flux_layout_preserves_order_quoting_and_original_prompt() -> None:
     prompt = "A cafe  \n"
     elements = [
         {"bbox": [1, 2, 3, 4], "desc": "sign", "type": "text", "text": "Cafe"},
         {"bbox": [5, 6, 7, 8], "desc": "table", "type": "image"},
     ]
+    original = copy.deepcopy(elements)
     result = Flux3LayoutPrompt.execute(prompt=prompt, element=elements)["prompt"]
     assert result == (
         'A cafe [{"id": "obj_1", "bbox": [1, 2, 3, 4], "desc": "sign \\"Cafe\\""}, '
         '{"id": "obj_2", "bbox": [5, 6, 7, 8], "desc": "table"}]'
     )
+    assert elements == original
     assert Flux3LayoutPrompt.execute(prompt=prompt, element={})["prompt"] == prompt
+    assert Flux3LayoutPrompt.execute(prompt=prompt, element=[])["prompt"] == prompt
 
 
 class FluxSource(Node):
@@ -100,54 +118,66 @@ def test_ordinary_manifest_executes_flux_image_layout_nodes(
         source_root = Path(__file__).resolve().parents[1] / "src"
         composer = ServingComposer(
             worker_env={
-                "PYTHONPATH": os.pathsep.join((str(Path(__file__).parent), str(source_root)))
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "PYTHONPATH": os.pathsep.join(
+                    (
+                        str(tmp_path),
+                        str(Path(__file__).parent),
+                        str(source_root),
+                        os.environ.get("PYTHONPATH", ""),
+                    )
+                ),
             }
         )
         try:
             manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
             (tmp_path / "flux_image_layout_fixture.py").write_text(
                 "from test_flux_image_layout_torch import FluxInspect, FluxSource\n"
-                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "NODES = (*COMFY_NODES, FluxSource, FluxInspect)\n",
+                "from dinkster_nodes_comfy import register_inference_types\n"
+                "NODES = (FluxSource, FluxInspect)\n",
                 encoding="ascii",
             )
             source_manifest = tmp_path / "dinkster-pack.toml"
             source_manifest.write_text(
-                manifest.read_text(encoding="ascii")
-                .replace("namespaces = [", 'namespaces = ["flux-image-layout-fixture",')
-                .replace("dinkster_nodes_comfy:COMFY_NODES", "flux_image_layout_fixture:NODES")
-                .replace(
-                    "dinkster_nodes_comfy:register_inference_types",
-                    "flux_image_layout_fixture:register_inference_types",
-                ),
+                '[pack]\nname = "flux-image-layout-fixture"\npublisher = "dinkster"\n'
+                'namespaces = ["flux-image-layout-fixture"]\n\n[pack.entry]\n'
+                'nodes = "flux_image_layout_fixture:NODES"\n'
+                'types = "flux_image_layout_fixture:register_inference_types"\n',
                 encoding="ascii",
             )
-            await composer.add_pack(PackSpec(manifest=source_manifest, in_process=in_process))
-            result = await composer.composition.make_engine(lambda _event: None).run(
-                Graph(
-                    nodes={
-                        "source": GraphNode("flux-image-layout-fixture.source"),
-                        "scale": GraphNode(
-                            "FluxKontextImageScale", {"image": Link("source", "image")}
-                        ),
-                        "layout": GraphNode(
-                            "Flux3LayoutPrompt",
-                            {
-                                "prompt": Link("source", "prompt"),
-                                "element": Link("source", "elements"),
-                            },
-                        ),
-                        "inspect": GraphNode(
-                            "flux-image-layout-fixture.inspect",
-                            {"image": Link("scale", "IMAGE"), "prompt": Link("layout", "prompt")},
-                        ),
-                    }
-                ),
-                ["inspect"],
+            for path in (manifest, source_manifest):
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=path,
+                        in_process=in_process,
+                        worker_group=None if in_process else "flux-image-layout-fixture",
+                        group_manifests=() if in_process else (manifest, source_manifest),
+                    )
+                )
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("flux-image-layout-fixture.source"),
+                    "scale": GraphNode("FluxKontextImageScale", {"image": Link("source", "image")}),
+                    "layout": GraphNode(
+                        "Flux3LayoutPrompt",
+                        {
+                            "prompt": Link("source", "prompt"),
+                            "element": Link("source", "elements"),
+                        },
+                    ),
+                    "inspect": GraphNode(
+                        "flux-image-layout-fixture.inspect",
+                        {"image": Link("scale", "IMAGE"), "prompt": Link("layout", "prompt")},
+                    ),
+                }
             )
-            output = result.outputs["inspect"]
-            assert output["height"].resolve() == 832.0
-            assert output["prompt"].resolve().endswith('"shop \\"Caf\u00e9\\""}]')
+            engine = composer.composition.make_engine(lambda _event: None)
+            for _ in range(2):
+                result = await engine.run(graph, ["inspect"])
+                output = result.outputs["inspect"]
+                assert output["height"].resolve() == 832.0
+                assert output["prompt"].resolve().endswith('"shop \\"Caf\u00e9\\""}]')
         finally:
             await composer.close()
 
