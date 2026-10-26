@@ -197,6 +197,7 @@ class ModelPatchLoader(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="ModelPatchLoader",
+            display_name="Load Model Patch",
             category="model/loaders",
             inputs=(InputSpec("name", _ASSET, widget=AssetWidget(kind="model/patch")),),
             outputs=(OutputSpec("MODEL_PATCH", _MODEL_PATCH),),
