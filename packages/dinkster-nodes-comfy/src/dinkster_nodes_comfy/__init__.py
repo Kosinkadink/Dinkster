@@ -19,6 +19,7 @@ from .attention_guidance import ATTENTION_GUIDANCE_NODES
 from .attention_multiply import ATTENTION_MULTIPLY_NODES
 from .audio_combine import AUDIO_COMBINE_NODES
 from .audio_effects import AUDIO_EFFECT_NODES
+from .audio_encoder import AUDIO_ENCODER_NODES
 from .audio_generators import AUDIO_GENERATOR_NODES
 from .audio_latent import AUDIO_LATENT_NODES, GetAudioLatentSize
 from .audio_music_conditioning import AUDIO_MUSIC_CONDITIONING_NODES
@@ -144,6 +145,7 @@ from .wan_uni3c import WanUni3CControlnetApply
 from .wandancer_keyframes import WANDANCER_KEYFRAME_NODES
 
 COMFY_NODES = (
+    *AUDIO_ENCODER_NODES,
     *TEXT_NODES,
     *DATASET_TEXT_NODES,
     SaveText,

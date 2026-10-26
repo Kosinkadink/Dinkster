@@ -2,6 +2,9 @@
 name = "dinkster-nodes-comfy"
 publisher = "dinkster"
 namespaces = [
+    "AudioEncoderLoader",
+    "AudioEncoderEncode",
+    "SheetSage2AudioToABC",
     "StringFormat",
     "StringConcatenate",
     "StringSubstring",

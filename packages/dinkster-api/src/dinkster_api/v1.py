@@ -203,6 +203,7 @@ from dinkster_schema import (
 from dinkster_values import (
     ARRAY_TYPE,
     AUDIO_ENCODER_OUTPUT_TYPE,
+    AUDIO_ENCODER_TYPE,
     AUDIO_TYPE,
     BACKGROUND_REMOVAL_TYPE,
     BOUNDING_BOX_TYPE,
@@ -593,6 +594,7 @@ __all__ = [
     "CORE_STRING",
     "ASSET_TYPE",
     "AUDIO_ENCODER_OUTPUT_TYPE",
+    "AUDIO_ENCODER_TYPE",
     "AUDIO_TYPE",
     "ARRAY_TYPE",
     "CLIP_TYPE",
