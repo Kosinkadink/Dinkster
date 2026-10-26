@@ -215,9 +215,9 @@ collision-safe `comfy-model-<category>-<index>` ids and semantic
 `model/...` metadata; their real host paths stay off the API surface.
 
 Without this option, the provider uses native implementations.
-`/api/compat/comfy/schemas` lists pinned source schemas as importable metadata,
-not executable IDs. Supported API prompts submitted to `/api/compat/comfy/prompt`
-are lowered to canonical `dinkster.*` nodes before planning. The single-job
+The executable catalog is served at `/api/nodes`; compiled native graphs
+are submitted through `/api/jobs`. ComfyUI workflows are imported by the
+frontend, not translated by a separate HTTP submission endpoint. The single-job
 multi-GPU options also work without a ComfyUI install. Legacy quarantine
 still requires this option.
 
