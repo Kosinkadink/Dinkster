@@ -58,6 +58,7 @@ from .image_color_conversion import IMAGE_COLOR_CONVERSION_NODES
 from .image_core import IMAGE_CORE_NODES
 from .image_dimensions import IMAGE_DIMENSION_NODES
 from .image_filters import IMAGE_FILTER_NODES
+from .image_tiles import ImageMergeTileList, SplitImageToTileList
 from .image_transform import IMAGE_TRANSFORM_NODES
 from .inpaint import INPAINT_NODES
 from .kandinsky_video import Kandinsky5ImageToVideo
@@ -78,6 +79,7 @@ from .ltx_video_conditioning import LTX_VIDEO_CONDITIONING_NODES
 from .ltx_video_preprocess import LTX_VIDEO_PREPROCESS_NODES
 from .marigold import MarigoldV2PostProcess
 from .mask import MASK_NODES
+from .mask_preview import MaskPreview
 from .math import ComfyMathExpression
 from .minimax_h3_latent import EmptyMiniMaxH3LatentAV, MiniMaxH3AddGuide, MiniMaxH3ImageToVideo
 from .minimax_h3_sampling import MiniMaxH3SigmaShift
@@ -119,7 +121,7 @@ from .stable_cascade import STABLE_CASCADE_NODES
 from .style_model import STYLE_MODEL_NODES
 from .switch import ComfySwitchNode
 from .text import TEXT_NODES
-from .utilities import ComfyNumberConvert, SeedNode
+from .utilities import ComfyNumberConvert, PreviewAny, SeedNode
 from .vae import VAE_NODES
 from .video_conditioning import VIDEO_CONDITIONING_NODES
 from .video_guidance import VIDEO_GUIDANCE_NODES
@@ -247,6 +249,10 @@ COMFY_NODES = (
     MiniMaxH3AddGuide,
     *DATASET_VIDEO_NODES,
     *LIST_UTILITY_NODES,
+    SplitImageToTileList,
+    ImageMergeTileList,
+    MaskPreview,
+    PreviewAny,
 )
 
 

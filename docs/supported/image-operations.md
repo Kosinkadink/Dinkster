@@ -8,6 +8,9 @@
   shuffle video lists or video-text pairs with seeded ordering.
 - Native list construction preserves member order and nested values;
   indexed selection supports positive and negative indices.
+- Native image tile lists split batches with overlap and merge tiles using
+  feathered weights; mask previews retain their mask output, and arbitrary
+  values can be inspected as text.
 - Native `Canny` edge detection with low/high hysteresis thresholds and RGB output
 - Native Stable Cascade stage C/B latent creation, stage C VAE encoding,
   stage B prior conditioning, and super-resolution control inputs

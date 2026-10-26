@@ -137,7 +137,8 @@ class ImageMergeTileList(Node):
                 math.pi
                 * torch.linspace(0, 1, tile_width, device=first_tile.device, dtype=first_tile.dtype)
             ).clamp(min=1e-5)
-            weight_mask = (vertical[:, None] * horizontal[None, :]).unsqueeze(0).unsqueeze(-1)
+            sine_mask = (vertical[:, None] * horizontal[None, :]).unsqueeze(0).unsqueeze(-1)
+            weight_mask = torch.lerp(torch.ones_like(sine_mask), sine_mask, 1.0)
         else:
             weight_mask = torch.ones(
                 (1, tile_height, tile_width, 1), device=first_tile.device, dtype=first_tile.dtype

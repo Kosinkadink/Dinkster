@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import pytest
 import torch
 from dinkster_nodes_comfy.image_tiles import ImageMergeTileList, SplitImageToTileList
 from dinkster_nodes_comfy.mask_preview import MaskPreview
+from dinkster_nodes_comfy.utilities import PreviewAny
 from dinkster_schema import use_reporter
 
 
@@ -38,3 +40,37 @@ def test_mask_preview_passes_through_mask_and_reports_png() -> None:
     assert result is mask
     assert reports[0][:2] == ("preview", {"mime": "image/png", "width": 2, "height": 2})
     assert reports[0][2] is not None and reports[0][2].startswith(b"\x89PNG\r\n\x1a\n")
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (None, "None"),
+        (False, "False"),
+        ("first\nsecond", "first\nsecond"),
+        ({"n": [2, 7]}, '{\n    "n": [\n        2,\n        7\n    ]\n}'),
+    ],
+)
+def test_preview_any_returns_and_reports_the_formatted_value(source: object, expected: str) -> None:
+    reports: list[dict[str, object]] = []
+    with use_reporter(lambda _name, data, _blob: reports.append(dict(data))):
+        assert PreviewAny.execute(source=source) == {"STRING": expected}
+    assert reports == [{"step": 1, "total": 1, "text": expected}]
+
+
+def test_preview_any_formats_tensor_edges_and_unserializable_objects() -> None:
+    tensor = torch.arange(50)
+    expected = "tensor([ 0,  1,  2,  3,  4,  5,  ..., 44, 45, 46, 47, 48, 49])"
+    torch.set_printoptions(threshold=20)
+    try:
+        assert PreviewAny.execute(source=tensor) == {"STRING": expected}
+    finally:
+        torch.set_printoptions(profile="default")
+
+    class BrokenString:
+        def __str__(self) -> str:
+            raise ValueError("cannot stringify")
+
+    assert PreviewAny.execute(source=BrokenString()) == {
+        "STRING": "source exists, but could not be serialized."
+    }

@@ -39,6 +39,7 @@ class MaskPreview(Node):
             inputs=(InputSpec("mask", _MASK),),
             outputs=(OutputSpec("mask", _MASK, preview=True),),
             emits_previews=True,
+            output_node=True,
         )
 
     @classmethod
