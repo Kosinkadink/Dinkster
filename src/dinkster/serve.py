@@ -140,7 +140,6 @@ from .comfy_compose import (
     comfy_compat_specs,
     comfy_model_roots,
 )
-from .compat_api import add_comfy_compat_routes
 from .compose import (
     CompositionError,
     PackDelta,
@@ -2091,9 +2090,6 @@ def main(argv: list[str] | None = None) -> None:
 
         if resolution_store is not None:
             app.on_cleanup.append(close_federated_assets)
-        # ComfyUI API prompt submissions translate at this edge; the server
-        # package itself stays comfy-free.
-        add_comfy_compat_routes(app)
         _add_collaboration_routes(
             app,
             Path(args.library_root) / "sessions.sqlite" if args.library_root else None,
