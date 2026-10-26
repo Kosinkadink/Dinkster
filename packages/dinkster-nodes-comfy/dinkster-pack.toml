@@ -226,6 +226,7 @@ namespaces = [
     "InstructPixToPixConditioning",
     "ReferenceLatent",
     "ReferenceMultiLatent",
+    "SD_4XUpscale_Conditioning",
     "Hunyuan3Dv2Conditioning",
     "Hunyuan3Dv2ConditioningMultiView",
     "VAEEncodeForInpaint",
