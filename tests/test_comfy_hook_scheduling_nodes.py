@@ -59,6 +59,8 @@ def test_hook_scheduling_nodes_publish_the_fixed_core_ids_and_sockets() -> None:
     assert interpolated.outputs[0].id == from_floats.outputs[0].id == "HOOK_KF"
     assert from_floats.inputs[0].type == TypeExpr.concrete(FLOATS_TYPE)
     assert from_floats.inputs[0].force_input
+    assert from_floats.inputs[0].default == -1
+    assert from_floats.inputs[0].widget == NumberWidget(min=-1, step=0.001)
     assert interpolated.inputs[5].widget == NumberWidget(min=2, max=100, step=1)
 
 
