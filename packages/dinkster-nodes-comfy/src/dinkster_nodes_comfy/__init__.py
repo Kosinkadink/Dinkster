@@ -36,6 +36,7 @@ from .conditioning import CONDITIONING_NODES
 from .context_windows import CONTEXT_WINDOW_NODES
 from .controlnet import CONTROLNET_NODES
 from .cosmos_conditioning import COSMOS_CONDITIONING_NODES
+from .custom_sampling import CUSTOM_SAMPLING_NODES
 from .dataset_collections import DATASET_COLLECTION_NODES
 from .dataset_groups import DATASET_GROUP_NODES
 from .dataset_images import DATASET_IMAGE_NODES
@@ -159,6 +160,7 @@ COMFY_NODES = (
     AnimaLLLiteApply,
     SUPIRApply,
     *STANDARD_SAMPLING_NODES,
+    *CUSTOM_SAMPLING_NODES,
     WanUni3CControlnetApply,
     *IMAGE_CONTROL_PATCH_NODES,
     *DEVICE_ROUTING_NODES,

@@ -98,6 +98,8 @@ namespaces = [
     "SUPIRApply",
     "KSampler",
     "KSamplerAdvanced",
+    "SamplerCustom",
+    "SamplerCustomAdvanced",
     "WanUni3CControlnetApply",
     "QwenImageDiffsynthControlnet",
     "ZImageFunControlnet",
