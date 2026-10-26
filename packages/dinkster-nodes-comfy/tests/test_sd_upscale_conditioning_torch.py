@@ -34,12 +34,7 @@ _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 _LATENT = TypeExpr.concrete(LATENT_TYPE)
 
 
-def test_sd_upscale_rounds_asymmetric_dimensions_and_preserves_conditioning_sources(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import dinkster_nodes_comfy.sd_upscale_conditioning as module
-
-    monkeypatch.setattr(module, "initialize_inference_process", lambda: None)
+def test_sd_upscale_rounds_asymmetric_dimensions_and_preserves_conditioning_sources() -> None:
     image = torch.arange(2 * 7 * 11 * 3, dtype=torch.float32).reshape(2, 7, 11, 3) / 511
     image_before = image.clone()
     positive = [[torch.tensor([[[1.0]]]), {"source": "positive"}]]
@@ -57,6 +52,22 @@ def test_sd_upscale_rounds_asymmetric_dimensions_and_preserves_conditioning_sour
     assert result["positive"][0][0] is positive[0][0]
     assert result["negative"][0][0] is negative[0][0]
     assert result["positive"][0][1]["concat_image"].shape == (2, 3, 2, 4)
+    expected_pixels = torch.tensor(
+        [
+            [
+                [
+                    [
+                        (batch * 231 + row * 33 + column * 3 + channel) / 511 * 2 - 1
+                        for column in (0.875, 3.625, 6.375, 9.125)
+                    ]
+                    for row in (1.75, 4.25)
+                ]
+                for channel in range(3)
+            ]
+            for batch in range(2)
+        ]
+    )
+    assert torch.allclose(result["positive"][0][1]["concat_image"], expected_pixels)
     assert result["positive"][0][1]["noise_augmentation"] == 0.125
     assert result["negative"][0][1]["concat_image"] is result["positive"][0][1]["concat_image"]
     latent: Any = result["latent"]
@@ -127,7 +138,9 @@ def test_ordinary_manifest_executes_sd_upscale_conditioning_with_decoded_values(
         source_root = Path(__file__).resolve().parents[1] / "src"
         composer = ServingComposer(
             worker_env={
-                "PYTHONPATH": os.pathsep.join((str(Path(__file__).parent), str(source_root)))
+                "PYTHONPATH": os.pathsep.join(
+                    (str(Path(__file__).parent), str(source_root), os.environ.get("PYTHONPATH", ""))
+                )
             }
         )
         try:
@@ -150,38 +163,38 @@ def test_ordinary_manifest_executes_sd_upscale_conditioning_with_decoded_values(
                 encoding="ascii",
             )
             await composer.add_pack(PackSpec(manifest=source_manifest, in_process=in_process))
-            result = await composer.composition.make_engine(lambda _event: None).run(
-                Graph(
-                    nodes={
-                        "source": GraphNode("sd-upscale-fixture.source"),
-                        "upscale": GraphNode(
-                            "SD_4XUpscale_Conditioning",
-                            {
-                                "images": Link("source", "images"),
-                                "positive": Link("source", "positive"),
-                                "negative": Link("source", "negative"),
-                                "scale_ratio": 1.5,
-                                "noise_augmentation": 0.25,
-                            },
-                        ),
-                        "inspect": GraphNode(
-                            "sd-upscale-fixture.inspect",
-                            {
-                                "image": Link("source", "images"),
-                                "positive": Link("upscale", "positive"),
-                                "negative": Link("upscale", "negative"),
-                                "latent": Link("upscale", "latent"),
-                            },
-                        ),
-                    }
-                ),
-                ["inspect"],
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("sd-upscale-fixture.source"),
+                    "upscale": GraphNode(
+                        "SD_4XUpscale_Conditioning",
+                        {
+                            "images": Link("source", "images"),
+                            "positive": Link("source", "positive"),
+                            "negative": Link("source", "negative"),
+                            "scale_ratio": 1.5,
+                            "noise_augmentation": 0.25,
+                        },
+                    ),
+                    "inspect": GraphNode(
+                        "sd-upscale-fixture.inspect",
+                        {
+                            "image": Link("source", "images"),
+                            "positive": Link("upscale", "positive"),
+                            "negative": Link("upscale", "negative"),
+                            "latent": Link("upscale", "latent"),
+                        },
+                    ),
+                }
             )
-            output = result.outputs["inspect"]
-            assert output["pixel"].resolve() == 0.0
-            assert output["height"].resolve() == 2.0
-            assert output["width"].resolve() == 4.0
-            assert output["latent_batch"].resolve() == 2.0
+            engine = composer.composition.make_engine(lambda _event: None)
+            for _ in range(2):
+                result = await engine.run(graph, ["inspect"])
+                output = result.outputs["inspect"]
+                assert output["pixel"].resolve() == 0.0
+                assert output["height"].resolve() == 2.0
+                assert output["width"].resolve() == 4.0
+                assert output["latent_batch"].resolve() == 2.0
         finally:
             await composer.close()
 
