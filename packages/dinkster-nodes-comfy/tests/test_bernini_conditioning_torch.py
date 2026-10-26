@@ -21,26 +21,15 @@ def test_bernini_encodes_ordered_context_and_preserves_sources(monkeypatch: Any)
     import dinkster_nodes_comfy.bernini_conditioning as module
 
     monkeypatch.setattr(module, "initialize_inference_process", lambda: None)
-    utils = type(
-        "Utils",
-        (),
-        {
-            "common_upscale": staticmethod(
-                lambda image, width, height, _method, _crop: torch.nn.functional.interpolate(
-                    image, size=(height, width), mode="bilinear", align_corners=False
-                )
-            )
-        },
-    )
+    management = type("Management", (), {"intermediate_device": staticmethod(lambda: "cpu")})
+    actual_import = module.importlib.import_module
     monkeypatch.setattr(
         module.importlib,
         "import_module",
-        lambda name: (
-            torch
-            if name == "torch"
-            else utils
-            if name == "dinkster_inference.utils"
-            else type("Management", (), {"intermediate_device": lambda: "cpu"})
+        lambda name, package=None: (
+            management
+            if name == "dinkster_inference.model_management"
+            else actual_import(name, package)
         ),
     )
     vae = ControlledVAE()
