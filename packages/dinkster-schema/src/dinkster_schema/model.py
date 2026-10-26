@@ -326,6 +326,8 @@ class TypeExpr:
             return None if inner is None else stream_type_id(inner)
         if self.kind == "list":
             assert self.element is not None
+            if self.element.kind == "wildcard":
+                return list_type_id("*")
             inner = self.element.runtime_type_id()
             return None if inner is None else list_type_id(inner)
         if self.kind == "asset":
