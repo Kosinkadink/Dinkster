@@ -43,6 +43,18 @@ def test_model_file_loaders_use_bound_asset_inputs_and_expected_outputs() -> Non
     )
     assert schemas["CheckpointLoader"].display_name == "Load Checkpoint With Config (DEPRECATED)"
     assert schemas["CheckpointLoader"].deprecation is not None
+    assert schemas["CheckpointLoader"].search_terms == ("load model", "model loader")
+    assert schemas["CheckpointLoaderSimple"].description == (
+        "Loads a diffusion model checkpoint, diffusion models are used to denoise latents."
+    )
+    assert schemas["CheckpointLoaderSimple"].search_terms == (
+        "load model",
+        "checkpoint",
+        "model loader",
+        "load checkpoint",
+        "ckpt",
+        "model",
+    )
     assert tuple(output.id for output in schemas["CheckpointLoaderSimple"].outputs) == (
         "MODEL",
         "CLIP",
@@ -62,6 +74,14 @@ def test_model_file_loaders_use_bound_asset_inputs_and_expected_outputs() -> Non
     )
     assert not schemas["CLIPLoader"].inputs[2].required
     assert not schemas["DualCLIPLoader"].inputs[3].required
+    assert schemas["CheckpointLoaderSimple"].inputs[0].doc == (
+        "The name of the checkpoint (model) to load."
+    )
+    assert tuple(output.doc for output in schemas["CheckpointLoaderSimple"].outputs) == (
+        "The model used for denoising latents.",
+        "The CLIP model used for encoding text prompts.",
+        "The VAE model used for encoding and decoding images to and from latent space.",
+    )
     for schema in schemas.values():
         for input in schema.inputs:
             if input.id.endswith("name"):
@@ -79,6 +99,8 @@ def test_model_file_loader_defaults_match_comfyui() -> None:
     assert schemas["CLIPLoader"].inputs[2].default == "default"
     assert schemas["DualCLIPLoader"].inputs[2].default == "sdxl"
     assert schemas["DualCLIPLoader"].inputs[3].default == "default"
+    assert schemas["CLIPLoader"].description == model_file_loaders._CLIP_DESCRIPTION
+    assert schemas["DualCLIPLoader"].description == model_file_loaders._DUAL_CLIP_DESCRIPTION
 
 
 def test_model_file_loader_schema_discovery_does_not_import_torch() -> None:

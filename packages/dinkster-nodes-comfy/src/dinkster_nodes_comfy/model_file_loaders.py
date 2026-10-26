@@ -88,12 +88,42 @@ _DUAL_CLIP_TYPES = (
     "newbie",
     "ace",
 )
+_CLIP_DESCRIPTION = (
+    "Recipes:\n"
+    "sd: clip-l\n"
+    "stable cascade: clip-g\n"
+    "sd3: t5 xxl / clip-g / clip-l\n"
+    "stable audio: t5 base\n"
+    "mochi: t5 xxl\n"
+    "cogvideox: t5 xxl (226-token padding)\n"
+    "cosmos: old t5 xxl\n"
+    "lumina2: gemma 2 2B\n"
+    "wan: umt5 xxl\n"
+    "hidream: llama-3.1 (Recommend) or t5\n"
+    "omnigen2: qwen vl 2.5 3B\n"
+    "joyimage: qwen3-vl 8B\n"
+    "lens: gpt-oss-20b\n"
+    "pixeldit: gemma 2 2B elm\n"
+    "minimax: MiniMax H3 Qwen3-VL or Music3 Qwen/RVQ\n"
+    "flux3: qwen3-vl 4B\n"
+    "fibo2: qwen3-vl 4B"
+)
+_DUAL_CLIP_DESCRIPTION = (
+    "Recipes:\n"
+    "sdxl: clip-l, clip-g\n"
+    "sd3: clip-l, clip-g / clip-l, t5 / clip-g, t5\n"
+    "flux: clip-l, t5\n"
+    "hidream: at least one of t5 or llama, recommended t5 and llama\n"
+    "hunyuan_image: qwen2.5vl 7b and byt5 small\n"
+    "newbie: gemma-3-4b-it, jina clip v2"
+)
 
 
-def _asset(name: str, kind: str) -> InputSpec:
+def _asset(name: str, kind: str, *, doc: str = "") -> InputSpec:
     return InputSpec(
         name,
         _ASSET,
+        doc=doc,
         widget=AssetWidget(kind=kind, accept=("application/octet-stream",)),
     )
 
@@ -139,11 +169,35 @@ class CheckpointLoaderSimple(Node):
             node_type="CheckpointLoaderSimple",
             display_name="Load Checkpoint",
             category="model/loaders",
-            inputs=(_asset("ckpt_name", "model/checkpoint"),),
+            description=(
+                "Loads a diffusion model checkpoint, diffusion models are used to denoise latents."
+            ),
+            search_terms=(
+                "load model",
+                "checkpoint",
+                "model loader",
+                "load checkpoint",
+                "ckpt",
+                "model",
+            ),
+            inputs=(
+                _asset(
+                    "ckpt_name",
+                    "model/checkpoint",
+                    doc="The name of the checkpoint (model) to load.",
+                ),
+            ),
             outputs=(
-                OutputSpec("MODEL", _MODEL),
-                OutputSpec("CLIP", _CLIP),
-                OutputSpec("VAE", _VAE),
+                OutputSpec("MODEL", _MODEL, doc="The model used for denoising latents."),
+                OutputSpec("CLIP", _CLIP, doc="The CLIP model used for encoding text prompts."),
+                OutputSpec(
+                    "VAE",
+                    _VAE,
+                    doc=(
+                        "The VAE model used for encoding and decoding images "
+                        "to and from latent space."
+                    ),
+                ),
             ),
         )
 
@@ -166,6 +220,7 @@ class CheckpointLoader(Node):
             display_name="Load Checkpoint With Config (DEPRECATED)",
             category="model/loaders",
             deprecation=Deprecation("Deprecated in ComfyUI."),
+            search_terms=("load model", "model loader"),
             inputs=(
                 _asset("config_name", "model/config"),
                 _asset("ckpt_name", "model/checkpoint"),
@@ -344,6 +399,7 @@ class CLIPLoader(Node):
             node_type="CLIPLoader",
             display_name="Load CLIP",
             category="model/loaders",
+            description=_CLIP_DESCRIPTION,
             inputs=(
                 _asset("clip_name", "model/text-encoder"),
                 _combo("type", _CLIP_TYPES, "stable_diffusion"),
@@ -382,6 +438,7 @@ class DualCLIPLoader(Node):
             node_type="DualCLIPLoader",
             display_name="Load CLIP (Dual)",
             category="model/loaders",
+            description=_DUAL_CLIP_DESCRIPTION,
             inputs=(
                 _asset("clip_name1", "model/text-encoder"),
                 _asset("clip_name2", "model/text-encoder"),
