@@ -9,6 +9,7 @@ from typing import Any
 
 import torch
 from dinkster_api.v1 import (
+    CORE_BOOLEAN,
     CORE_FLOAT,
     LATENT_TYPE,
     MODEL_TYPE,
@@ -173,14 +174,24 @@ class _Consumer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="noise-fixture.consumer",
-            inputs=(InputSpec("latent", TypeExpr.concrete(LATENT_TYPE)),),
+            inputs=(
+                InputSpec("latent", TypeExpr.concrete(LATENT_TYPE)),
+                InputSpec("random", TypeExpr.concrete(CORE_BOOLEAN)),
+            ),
             outputs=(OutputSpec("value", TypeExpr.concrete(CORE_FLOAT)),),
         )
 
     @classmethod
-    def execute(cls, *, latent: Any) -> Mapping[str, object]:
+    def execute(cls, *, latent: Any, random: bool) -> Mapping[str, object]:
         materialized = materialize_latent(latent)
         assert materialized["note"] == "preserved"
+        assert materialized["batch_index"] == [7, 3]
+        expected = (
+            [-1.9337596893310547, 3.747830867767334, 21.249208450317383, 6.172018051147461]
+            if random
+            else [4.0, -2.0, 8.0, 10.0]
+        )
+        assert materialized["samples"].flatten().tolist() == expected
         return cls.outputs(value=float(materialized["samples"].sum()))
 
 
@@ -237,7 +248,8 @@ def test_noise_nodes_cross_an_ordinary_complete_pack_twice_in_both_hosts(tmp_pat
                         },
                     ),
                     "consumer": GraphNode(
-                        "noise-fixture.consumer", {"latent": Link("add", "LATENT")}
+                        "noise-fixture.consumer",
+                        {"latent": Link("add", "LATENT"), "random": noise_node == "RandomNoise"},
                     ),
                 }
             )
