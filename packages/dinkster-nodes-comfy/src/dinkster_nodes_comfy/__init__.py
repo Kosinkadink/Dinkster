@@ -27,6 +27,7 @@ from .cfg_guidance import CFG_GUIDANCE_NODES
 from .cfg_guiders import CFG_GUIDER_NODES
 from .clip import CLIP_NODES
 from .clip_model_specific import MODEL_TEXT_ENCODER_NODES
+from .clip_sd3 import CLIPTextEncodeSD3
 from .clip_sdxl import CLIP_SDXL_NODES
 from .compile import COMPILE_NODES
 from .compositing import COMPOSITING_NODES
@@ -172,6 +173,7 @@ COMFY_NODES = (
     *STYLE_MODEL_NODES,
     GLIGENTextBoxApply,
     *CLIP_SDXL_NODES,
+    CLIPTextEncodeSD3,
     *MODEL_TEXT_ENCODER_NODES,
     *FLUX_CONDITIONING_NODES,
     *FLUX_IMAGE_LAYOUT_NODES,

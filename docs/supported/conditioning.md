@@ -10,6 +10,8 @@
   crop and target-size conditioning. Unequal token streams are padded with
   empty-prompt tokens. `CLIPTextEncodeSDXLRefiner` adds aesthetic-score and
   size conditioning. Both preserve scheduled CLIP outputs.
+- `CLIPTextEncodeSD3` preserves independent CLIP-L, CLIP-G, and T5XXL prompt
+  streams, including empty-stream selection and CLIP chunk alignment.
 - MiniMax H3 supports text-to-video conditioning through the pinned
   `dinkster_inference` runtime. First/last-frame, reference image, clip, and audio
   guide conditioning are unsupported.
