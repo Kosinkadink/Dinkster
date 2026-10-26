@@ -121,6 +121,8 @@ def test_variant_type_must_be_recursively_concrete() -> None:
         TypeExpr.wildcard(),
         TypeExpr(kind="union", types=("STRING", "FLOAT")),
         TypeExpr.list_of(TypeExpr.wildcard()),
+        TypeExpr.list_of(TypeExpr.list_of(TypeExpr.wildcard())),
+        TypeExpr.tuple_of(STRING, TypeExpr.list_of(TypeExpr.wildcard())),
     ):
         with pytest.raises(ValueError, match="recursively concrete"):
             SlotVariant(key="v", type=expr)

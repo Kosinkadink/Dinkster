@@ -1784,7 +1784,8 @@ class SlotVariant:
     def __post_init__(self) -> None:
         if not VARIANT_KEY_PATTERN.fullmatch(self.key):
             raise ValueError(f"slot variant key must match [A-Za-z0-9_-]+: {self.key!r}")
-        if self.type.runtime_type_id() is None:
+        type_id = self.type.runtime_type_id()
+        if type_id is None or "*" in type_id:
             raise ValueError(
                 f"slot variant '{self.key}': type must be recursively concrete "
                 "(a variant is a type choice; use several variants for several types)"

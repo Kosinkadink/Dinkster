@@ -79,6 +79,7 @@ from dinkster_schema import (
     elaborate,
     install_stream_capture,
     plan_asset_coercion,
+    resolved_type_expr,
     resolved_type_id,
     use_capture_budget,
     use_reporter,
@@ -1156,11 +1157,8 @@ class InProcessWorker:
                         meta=ValueMeta({**returned_value.meta.entries, "absent.forwarded": True}),
                     )
                     continue
-                if (
-                    returned_value.type_id != expected
-                    if expected is not None
-                    else not out.type.accepts_concrete(returned_value.type_id)
-                ):
+                resolved = resolved_type_expr(out.type, bindings or {}) or out.type
+                if not resolved.accepts_concrete(returned_value.type_id):
                     return contract_error(f"output '{out.id}' rejects {returned_value.type_id}")
                 outputs[out.id] = returned_value
                 continue
