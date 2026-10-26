@@ -10,13 +10,17 @@ from dinkster_api.v1 import (
     ASSET_TYPE,
     CLIP_TYPE,
     CLIP_VISION_TYPE,
+    CONTROL_NET_TYPE,
     CORE_COMBO,
+    GLIGEN_TYPE,
     MODEL_TYPE,
+    STYLE_MODEL_TYPE,
     VAE_TYPE,
     AssetRef,
     AssetWidget,
     ComboOption,
     ComboWidget,
+    Deprecation,
     InputSpec,
     LocalAssetRef,
     Node,
@@ -31,7 +35,10 @@ _ASSET = TypeExpr.concrete(ASSET_TYPE)
 _CLIP = TypeExpr.concrete(CLIP_TYPE)
 _CLIP_VISION = TypeExpr.concrete(CLIP_VISION_TYPE)
 _COMBO = TypeExpr.concrete(CORE_COMBO)
+_CONTROL_NET = TypeExpr.concrete(CONTROL_NET_TYPE)
+_GLIGEN = TypeExpr.concrete(GLIGEN_TYPE)
 _MODEL = TypeExpr.concrete(MODEL_TYPE)
+_STYLE_MODEL = TypeExpr.concrete(STYLE_MODEL_TYPE)
 _VAE = TypeExpr.concrete(VAE_TYPE)
 _CLIP_TYPES = (
     "stable_diffusion",
@@ -62,6 +69,10 @@ _CLIP_TYPES = (
     "joyimage",
     "mage",
     "minimax",
+    "yue2",
+    "flux3",
+    "moss_image",
+    "fibo2",
 )
 _DUAL_CLIP_TYPES = (
     "sdxl",
@@ -152,8 +163,9 @@ class CheckpointLoader(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="CheckpointLoader",
-            display_name="Load Checkpoint With Config",
+            display_name="Load Checkpoint With Config (DEPRECATED)",
             category="model/loaders",
+            deprecation=Deprecation("Deprecated in ComfyUI."),
             inputs=(
                 _asset("config_name", "model/config"),
                 _asset("ckpt_name", "model/checkpoint"),
@@ -235,6 +247,60 @@ class VAELoader(Node):
         return cls.outputs(VAE=vae)
 
 
+class ControlNetLoader(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="ControlNetLoader",
+            display_name="Load ControlNet Model",
+            category="model/loaders",
+            inputs=(_asset("control_net_name", "model/controlnet"),),
+            outputs=(OutputSpec("CONTROL_NET", _CONTROL_NET),),
+            search_terms=(
+                "controlnet",
+                "control net",
+                "cn",
+                "load controlnet",
+                "controlnet loader",
+            ),
+        )
+
+    @classmethod
+    def execute(cls, *, control_net_name: object) -> Mapping[str, object]:
+        path = _path(control_net_name, "control_net_name")
+        initialize_inference_process()
+        controlnet = importlib.import_module("dinkster_inference.controlnet").load_controlnet(path)
+        if controlnet is None:
+            raise RuntimeError(
+                "controlnet file is invalid and does not contain a valid controlnet model"
+            )
+        return cls.outputs(CONTROL_NET=controlnet)
+
+
+class DiffControlNetLoader(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="DiffControlNetLoader",
+            display_name="Load ControlNet Model (diff)",
+            category="model/loaders",
+            inputs=(
+                InputSpec("model", _MODEL),
+                _asset("control_net_name", "model/controlnet"),
+            ),
+            outputs=(OutputSpec("CONTROL_NET", _CONTROL_NET),),
+        )
+
+    @classmethod
+    def execute(cls, *, model: object, control_net_name: object) -> Mapping[str, object]:
+        path = _path(control_net_name, "control_net_name")
+        initialize_inference_process()
+        controlnet = importlib.import_module("dinkster_inference.controlnet").load_controlnet(
+            path, model
+        )
+        return cls.outputs(CONTROL_NET=controlnet)
+
+
 class UNETLoader(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -280,7 +346,14 @@ class CLIPLoader(Node):
             inputs=(
                 _asset("clip_name", "model/text-encoder"),
                 _combo("type", _CLIP_TYPES, "stable_diffusion"),
-                _combo("device", ("default", "cpu"), "default", advanced=True),
+                InputSpec(
+                    "device",
+                    _COMBO,
+                    required=False,
+                    default="default",
+                    advanced=True,
+                    widget=ComboWidget((ComboOption("default"), ComboOption("cpu"))),
+                ),
             ),
             outputs=(OutputSpec("CLIP", _CLIP),),
         )
@@ -312,7 +385,14 @@ class DualCLIPLoader(Node):
                 _asset("clip_name1", "model/text-encoder"),
                 _asset("clip_name2", "model/text-encoder"),
                 _combo("type", _DUAL_CLIP_TYPES, "sdxl"),
-                _combo("device", ("default", "cpu"), "default", advanced=True),
+                InputSpec(
+                    "device",
+                    _COMBO,
+                    required=False,
+                    default="default",
+                    advanced=True,
+                    widget=ComboWidget((ComboOption("default"), ComboOption("cpu"))),
+                ),
             ),
             outputs=(OutputSpec("CLIP", _CLIP),),
         )
@@ -356,13 +436,55 @@ class CLIPVisionLoader(Node):
         return cls.outputs(CLIP_VISION=clip_vision)
 
 
+class StyleModelLoader(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="StyleModelLoader",
+            display_name="Load Style Model",
+            category="model/loaders",
+            inputs=(_asset("style_model_name", "model/style"),),
+            outputs=(OutputSpec("STYLE_MODEL", _STYLE_MODEL),),
+        )
+
+    @classmethod
+    def execute(cls, *, style_model_name: object) -> Mapping[str, object]:
+        path = _path(style_model_name, "style_model_name")
+        initialize_inference_process()
+        style_model = importlib.import_module("dinkster_inference.sd").load_style_model(path)
+        return cls.outputs(STYLE_MODEL=style_model)
+
+
+class GLIGENLoader(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="GLIGENLoader",
+            display_name="Load GLIGEN",
+            category="model/loaders",
+            inputs=(_asset("gligen_name", "model/gligen"),),
+            outputs=(OutputSpec("GLIGEN", _GLIGEN),),
+        )
+
+    @classmethod
+    def execute(cls, *, gligen_name: object) -> Mapping[str, object]:
+        path = _path(gligen_name, "gligen_name")
+        initialize_inference_process()
+        gligen = importlib.import_module("dinkster_inference.sd").load_gligen(path)
+        return cls.outputs(GLIGEN=gligen)
+
+
 MODEL_FILE_LOADER_NODES = (
     CheckpointLoaderSimple,
     CheckpointLoader,
     unCLIPCheckpointLoader,
     VAELoader,
+    ControlNetLoader,
+    DiffControlNetLoader,
     UNETLoader,
     CLIPLoader,
     DualCLIPLoader,
     CLIPVisionLoader,
+    StyleModelLoader,
+    GLIGENLoader,
 )

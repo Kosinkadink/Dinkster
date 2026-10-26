@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from dinkster_api.v1 import ASSET_TYPE, AssetRef, AssetWidget, TypeExpr, digest_bytes
+from dinkster_api.v1 import ASSET_TYPE, AssetRef, AssetWidget, ComboWidget, TypeExpr, digest_bytes
 from dinkster_nodes_comfy import model_file_loaders
 from dinkster_nodes_comfy.model_file_loaders import MODEL_FILE_LOADER_NODES
 
@@ -32,11 +32,17 @@ def test_model_file_loaders_use_bound_asset_inputs_and_expected_outputs() -> Non
         "CheckpointLoader",
         "unCLIPCheckpointLoader",
         "VAELoader",
+        "ControlNetLoader",
+        "DiffControlNetLoader",
         "UNETLoader",
         "CLIPLoader",
         "DualCLIPLoader",
         "CLIPVisionLoader",
+        "StyleModelLoader",
+        "GLIGENLoader",
     )
+    assert schemas["CheckpointLoader"].display_name == "Load Checkpoint With Config (DEPRECATED)"
+    assert schemas["CheckpointLoader"].deprecation is not None
     assert tuple(output.id for output in schemas["CheckpointLoaderSimple"].outputs) == (
         "MODEL",
         "CLIP",
@@ -54,6 +60,8 @@ def test_model_file_loaders_use_bound_asset_inputs_and_expected_outputs() -> Non
         "type",
         "device",
     )
+    assert not schemas["CLIPLoader"].inputs[2].required
+    assert not schemas["DualCLIPLoader"].inputs[3].required
     for schema in schemas.values():
         for input in schema.inputs:
             if input.id.endswith("name"):
@@ -65,6 +73,9 @@ def test_model_file_loader_defaults_match_comfyui() -> None:
     schemas = {node.schema().node_type: node.schema() for node in MODEL_FILE_LOADER_NODES}
     assert schemas["UNETLoader"].inputs[1].default == "default"
     assert schemas["CLIPLoader"].inputs[1].default == "stable_diffusion"
+    clip_type_widget = schemas["CLIPLoader"].inputs[1].widget
+    assert isinstance(clip_type_widget, ComboWidget)
+    assert len(clip_type_widget.options) == 32
     assert schemas["CLIPLoader"].inputs[2].default == "default"
     assert schemas["DualCLIPLoader"].inputs[2].default == "sdxl"
     assert schemas["DualCLIPLoader"].inputs[3].default == "default"
@@ -79,7 +90,7 @@ def test_model_file_loader_schema_discovery_does_not_import_torch() -> None:
 import sys
 sys.modules['torch'] = None
 from dinkster_nodes_comfy.model_file_loaders import MODEL_FILE_LOADER_NODES
-assert len(MODEL_FILE_LOADER_NODES) == 8
+assert len(MODEL_FILE_LOADER_NODES) == 12
 assert sys.modules['torch'] is None
 """,
         ],
@@ -98,6 +109,7 @@ def test_model_file_loader_execution_adapts_bound_assets_to_pinned_loader_calls(
     asset = _asset(path)
     calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
     model, clip, vae, vision = object(), object(), object(), object()
+    controlnet, style_model, gligen = object(), object(), object()
     state_dict = {"weight": object()}
 
     class LoadedVAE:
@@ -121,6 +133,8 @@ def test_model_file_loader_execution_adapts_bound_assets_to_pinned_loader_calls(
         load_checkpoint_guess_config=record("checkpoint-guess", (model, clip, vae, vision)),
         load_diffusion_model=record("diffusion", model),
         load_clip=record("clip", clip),
+        load_style_model=record("style-model", style_model),
+        load_gligen=record("gligen", gligen),
     )
     modules = {
         "dinkster_inference.sd": sd,
@@ -128,6 +142,9 @@ def test_model_file_loader_execution_adapts_bound_assets_to_pinned_loader_calls(
             load_torch_file=record("torch-file", (state_dict, {"format": "test"}))
         ),
         "dinkster_inference.clip_vision": SimpleNamespace(load=record("vision", vision)),
+        "dinkster_inference.controlnet": SimpleNamespace(
+            load_controlnet=record("controlnet", controlnet)
+        ),
         "torch": SimpleNamespace(float8_e4m3fn="fp8-e4m3fn", float8_e5m2="fp8-e5m2"),
     }
     monkeypatch.setattr(model_file_loaders, "initialize_inference_process", lambda: None)
@@ -156,6 +173,12 @@ def test_model_file_loader_execution_adapts_bound_assets_to_pinned_loader_calls(
         "CLIP_VISION": vision,
     }
     assert model_file_loaders.VAELoader.execute(vae_name=asset)["VAE"].__class__ is LoadedVAE
+    assert model_file_loaders.ControlNetLoader.execute(control_net_name=asset) == {
+        "CONTROL_NET": controlnet
+    }
+    assert model_file_loaders.DiffControlNetLoader.execute(model=model, control_net_name=asset) == {
+        "CONTROL_NET": controlnet
+    }
     assert model_file_loaders.UNETLoader.execute(unet_name=asset, weight_dtype="fp8_e4m3fn") == {
         "MODEL": model
     }
@@ -166,6 +189,10 @@ def test_model_file_loader_execution_adapts_bound_assets_to_pinned_loader_calls(
         clip_name1=asset, clip_name2=asset, type="sdxl", device="default"
     ) == {"CLIP": clip}
     assert model_file_loaders.CLIPVisionLoader.execute(clip_name=asset) == {"CLIP_VISION": vision}
+    assert model_file_loaders.StyleModelLoader.execute(style_model_name=asset) == {
+        "STYLE_MODEL": style_model
+    }
+    assert model_file_loaders.GLIGENLoader.execute(gligen_name=asset) == {"GLIGEN": gligen}
 
     root = str(tmp_path)
     assert calls == [
@@ -192,6 +219,8 @@ def test_model_file_loader_execution_adapts_bound_assets_to_pinned_loader_calls(
         ("torch-file", (str(path),), {"safe_load": True, "return_metadata": True}),
         ("VAE", (), {"sd": state_dict, "metadata": {"format": "test"}}),
         ("validate", (), {}),
+        ("controlnet", (str(path),), {}),
+        ("controlnet", (str(path), model), {}),
         ("diffusion", (str(path),), {"model_options": {"dtype": "fp8-e4m3fn"}}),
         (
             "clip",
@@ -214,4 +243,6 @@ def test_model_file_loader_execution_adapts_bound_assets_to_pinned_loader_calls(
             },
         ),
         ("vision", (str(path),), {}),
+        ("style-model", (str(path),), {}),
+        ("gligen", (str(path),), {}),
     ]
