@@ -413,6 +413,8 @@ namespaces = [
     "LoadImageOutput",
     "LoadLatent",
     "SaveLatent",
+    "CLIPSave",
+    "VAESave",
 ]
 
 [pack.sandbox]

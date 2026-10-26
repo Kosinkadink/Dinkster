@@ -1,5 +1,7 @@
 ## ComfyUI compatibility
 
+- Native CLIP and VAE exports preserve tensor keys and dtypes in safetensors
+  on the selected output mount. CLIP weights split by encoder prefix.
 - Native latent files load verified safetensors, convert samples to float32,
   and apply legacy scaling only when the format marker is absent. Saving
   writes contiguous samples and the format marker to the selected output mount.
