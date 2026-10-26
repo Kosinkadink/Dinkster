@@ -25,6 +25,7 @@ from dinkster_api.v1 import (
     NodeSchema,
     NumberWidget,
     OutputSpec,
+    StringWidget,
     TypeExpr,
     initialize_inference_process,
 )
@@ -583,6 +584,7 @@ class BlockSparseAttention(Node):
                     _STRING,
                     default="",
                     advanced=True,
+                    widget=StringWidget(multiline=False),
                     doc="Transformer blocks that always run dense, e.g. '0, 1, 47-49'.",
                 ),
                 InputSpec(
@@ -653,6 +655,17 @@ class BlockSparseAttention(Node):
                         ),
                     ),
                 ),
+            ),
+            input_order=(
+                "model",
+                "selection",
+                "start_percent",
+                "end_percent",
+                "dense_blocks",
+                "min_tokens",
+                "extra_tokens",
+                "sink_conditioning",
+                "verbose",
             ),
             outputs=(OutputSpec("MODEL", _MODEL, display_name="model"),),
         )

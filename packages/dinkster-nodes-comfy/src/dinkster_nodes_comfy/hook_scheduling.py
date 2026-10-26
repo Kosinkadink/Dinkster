@@ -205,7 +205,9 @@ class CreateHookKeyframesInterpolated(Node):
                     default=1.0,
                     widget=NumberWidget(min=0.0, max=1.0, step=0.001),
                 ),
-                InputSpec("keyframes_count", _INT, default=5, widget=NumberWidget(min=2, max=100)),
+                InputSpec(
+                    "keyframes_count", _INT, default=5, widget=NumberWidget(min=2, max=100, step=1)
+                ),
                 InputSpec("print_keyframes", _BOOLEAN, default=False, advanced=True),
                 InputSpec("prev_hook_kf", _HOOK_KEYFRAMES, required=False),
             ),

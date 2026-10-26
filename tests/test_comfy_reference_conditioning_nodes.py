@@ -89,7 +89,7 @@ def test_reference_multi_latent_exposes_resize_and_optional_ordered_images() -> 
         ("empty_latent", TypeExpr.concrete(LATENT_TYPE)),
     ]
     combo = schema.combos[0]
-    assert combo.id == "resolution" and combo.default == "keep resolution"
+    assert combo.id == "resolution" and combo.default is None
     assert [option.key for option in combo.options] == ["keep resolution", "resize"]
     megapixels = combo.options[1].inputs[0]
     assert isinstance(megapixels, InputSpec)
