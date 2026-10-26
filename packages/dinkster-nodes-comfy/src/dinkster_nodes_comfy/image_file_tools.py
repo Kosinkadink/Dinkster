@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import importlib
-import io
 import os
+import tempfile
 from collections.abc import Mapping
 from typing import Any, Literal
 
@@ -15,7 +15,9 @@ from dinkster_api.v1 import (
     CORE_FLOAT,
     CORE_INT,
     CORE_STRING,
+    ENCODED_MEDIA_LIMIT_BYTES,
     IMAGE_TYPE,
+    IMAGE_WORKING_SET_LIMIT_BYTES,
     MASK_TYPE,
     AssetError,
     AssetRef,
@@ -45,6 +47,8 @@ _FLOAT = TypeExpr.concrete(CORE_FLOAT)
 _INT = TypeExpr.concrete(CORE_INT)
 _STRING = TypeExpr.concrete(CORE_STRING)
 _IMAGE_MEDIA_TYPES = ("image/png", "image/jpeg", "image/webp", "image/gif", "image/tiff")
+_MAX_IMAGE_DIMENSION = 16_384
+_MAX_IMAGE_FRAMES = 4096
 
 
 def _writer() -> AssetWriter:
@@ -54,7 +58,28 @@ def _writer() -> AssetWriter:
     return AssetWriter(MountSnapshotWriter(snapshot))
 
 
+def _check_dimensions(width: int, height: int) -> None:
+    if min(width, height) < 1 or max(width, height) > _MAX_IMAGE_DIMENSION:
+        raise ValueError(f"image dimensions must be between 1 and {_MAX_IMAGE_DIMENSION}")
+    if width * height * 16 > IMAGE_WORKING_SET_LIMIT_BYTES:
+        raise ValueError("decoded image exceeds the image working-set limit")
+
+
+def _image_batch(images: Any) -> Any:
+    batch = materialize_image(images)
+    if batch.ndim != 4 or batch.shape[0] < 1 or batch.shape[3] not in (1, 3, 4):
+        raise ValueError("images must be a nonempty [B,H,W,1|3|4] batch")
+    if batch.shape[0] > _MAX_IMAGE_FRAMES:
+        raise ValueError("image batch exceeds the frame limit")
+    _check_dimensions(int(batch.shape[2]), int(batch.shape[1]))
+    if batch.numel() * max(4, batch.element_size()) > IMAGE_WORKING_SET_LIMIT_BYTES:
+        raise ValueError("image batch exceeds the image working-set limit")
+    return batch
+
+
 def _load_image(asset: AssetRef) -> tuple[Any, Any]:
+    if asset.size > IMAGE_WORKING_SET_LIMIT_BYTES:
+        raise ValueError("image asset exceeds the input byte limit")
     image_module = importlib.import_module("PIL.Image")
     image_ops = importlib.import_module("PIL.ImageOps")
     image_sequence = importlib.import_module("PIL.ImageSequence")
@@ -62,18 +87,29 @@ def _load_image(asset: AssetRef) -> tuple[Any, Any]:
     torch = importlib.import_module("torch")
     images: list[Any] = []
     masks: list[Any] = []
+    decoded_bytes = 0
     with asset.open() as handle:
+        if os.fstat(handle.fileno()).st_size > IMAGE_WORKING_SET_LIMIT_BYTES:
+            raise ValueError("image asset exceeds the input byte limit")
         source = image_module.open(handle)
+        _check_dimensions(*source.size)
+        if getattr(source, "n_frames", 1) > _MAX_IMAGE_FRAMES:
+            raise ValueError("image asset exceeds the frame limit")
         width = height = None
         for frame in image_sequence.Iterator(source):
+            _check_dimensions(*frame.size)
             frame = image_ops.exif_transpose(frame)
-            rgb = frame.convert("RGB")
             if width is None:
-                width, height = rgb.size
-            if rgb.size != (width, height):
+                width, height = frame.size
+            if frame.size != (width, height):
                 continue
+            has_alpha = "A" in frame.getbands() or "transparency" in frame.info
+            decoded_bytes += width * height * 12 + (width * height if has_alpha else 64 * 64) * 4
+            if decoded_bytes > IMAGE_WORKING_SET_LIMIT_BYTES:
+                raise ValueError("decoded image batch exceeds the image working-set limit")
+            rgb = frame.convert("RGB")
             images.append(torch.from_numpy(numpy.asarray(rgb, dtype=numpy.float32) / 255.0))
-            if "A" in frame.getbands() or "transparency" in frame.info:
+            if has_alpha:
                 alpha = (
                     numpy.asarray(frame.convert("RGBA").getchannel("A"), dtype=numpy.float32)
                     / 255.0
@@ -104,28 +140,29 @@ def _save_animation(
 ) -> None:
     torch = importlib.import_module("torch")
     image_module = importlib.import_module("PIL.Image")
-    batch = materialize_image(images)
-    if batch.ndim != 4 or batch.shape[0] < 1:
-        raise ValueError("images must be a nonempty [B,H,W,C] batch")
+    batch = _image_batch(images)
     pixels = torch.floor(torch.clamp(batch, 0, 1) * 255).to(torch.uint8).cpu().numpy()
     frames = [image_module.fromarray(frame) for frame in pixels]
-    buffer = io.BytesIO()
     if format_name == "WEBP":
         options = {**options, "exif": frames[0].getexif()}
-    frames[0].save(buffer, format=format_name, save_all=True, append_images=frames[1:], **options)
     writer = _writer()
     suffix, media_type = (".webp", "image/webp") if format_name == "WEBP" else (".png", "image/png")
-    writer.save_bytes(
-        writer.output_target(
-            filename_prefix,
-            mount=mount,
-            image_width=int(batch.shape[2]),
-            image_height=int(batch.shape[1]),
-        ),
-        buffer.getvalue(),
-        suffix=suffix,
-        media_type=media_type,
-    )
+    with tempfile.TemporaryFile() as buffer:
+        frames[0].save(
+            buffer, format=format_name, save_all=True, append_images=frames[1:], **options
+        )
+        writer.save_stream(
+            writer.output_target(
+                filename_prefix,
+                mount=mount,
+                image_width=int(batch.shape[2]),
+                image_height=int(batch.shape[1]),
+            ),
+            buffer,
+            suffix=suffix,
+            media_type=media_type,
+            limit=ENCODED_MEDIA_LIMIT_BYTES,
+        )
 
 
 class SaveImage(Node):
@@ -174,9 +211,7 @@ class SaveImage(Node):
     def execute(
         cls, *, images: Any, filename_prefix: str = "ComfyUI", mount: str | None = None
     ) -> Mapping[str, object]:
-        batch = materialize_image(images)
-        if batch.ndim != 4 or batch.shape[0] < 1:
-            raise ValueError("images must be a nonempty [B,H,W,C] batch")
+        batch = _image_batch(images)
         writer = _writer()
         torch = importlib.import_module("torch")
         for index in range(batch.shape[0]):
@@ -187,9 +222,12 @@ class SaveImage(Node):
                 image_height=int(batch.shape[1]),
             )
             image = torch.floor(torch.clamp(batch[index : index + 1], 0, 1) * 255.0) / 255.0
+            encoded = render_image_png(image)
+            if len(encoded) > ENCODED_MEDIA_LIMIT_BYTES:
+                raise ValueError("encoded image exceeds the output byte limit")
             writer.save_bytes(
                 target,
-                render_image_png(image),
+                encoded,
                 suffix=".png",
                 media_type="image/png",
             )

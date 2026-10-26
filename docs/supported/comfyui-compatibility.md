@@ -9,6 +9,7 @@
   writes contiguous samples and the format marker to the selected output mount.
 - Native image file schemas expose bound assets and adjacent output mounts;
   PNG output truncates channel values and preview outputs retain source images.
+  File operations reject oversized image batches and encoded outputs.
 - Native LoRA hook loaders use bound model/lora assets, preserve prior hooks
   and apply separate model and CLIP strengths while retaining loaded weights.
 - Native WanDancer keyframe padding places reference frames and masks into
