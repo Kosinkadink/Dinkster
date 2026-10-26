@@ -40,6 +40,7 @@ from dinkster_values import (
     CORE_INT,
     CORE_STRING,
     CURVE_TYPE,
+    FLOATS_TYPE,
     SAVE_TARGET_TYPE,
     CustomWidgetDescriptor,
     asset_type_id,
@@ -733,10 +734,9 @@ _DECIMAL_WIRE_INT_MAX = 2**64 - 1
 class NumberWidget:
     """Presentation request for a numeric input's editor.
 
-    Only meaningful on ``INT``/``FLOAT`` inputs or their exact numeric union;
-    the union uses float presentation, so one widget kind covers both.
-    All constraints are UI vocabulary: the runtime value stays a plain
-    number and out-of-range stored values are the frontend's diagnostic to
+    Numeric sockets, their exact union, and forced-input ``FLOATS`` use
+    this presentation without changing their runtime value domains.
+    All constraints are UI vocabulary: out-of-range stored values are the frontend's diagnostic to
     surface, never a schema error. Absent min/max means unbounded. Integer
     constraints through signed 64-bit minimum and unsigned 64-bit maximum are
     lossless as canonical decimal strings outside the JSON-double-safe range.
@@ -744,7 +744,7 @@ class NumberWidget:
     ``display`` is an explicit editor presentation when present. Bounds and
     step are independent constraints: they never imply a slider or any other
     presentation. ``round`` is an independent finite positive rendering
-    precision, or literal False to disable rounding, available only on FLOAT;
+    precision, or literal False to disable rounding, using FLOAT semantics;
     it never implies display or changes bounds/step. ``control_after_generate``
     names the INITIAL mode of the seed-style control-after-generate selector; setting it asks the
     frontend to render that control. Absence of the descriptor means "no
@@ -753,9 +753,9 @@ class NumberWidget:
     (pinned with the frontend).
 
     Socket binding: this descriptor is only
-    legal on concrete ``INT``/``FLOAT`` inputs, their one-level lists, and
-    the scalar ``INT``/``FLOAT`` union. Constraints use the socket's domain
-    (FLOAT for the union) - an int socket with a
+    legal on concrete ``INT``/``FLOAT`` inputs, their one-level lists,
+    the scalar ``INT``/``FLOAT`` union, and forced concrete ``FLOATS``.
+    Constraints use the socket's domain (FLOAT for the union and FLOATS) - an int socket with a
     fractional min/max/step is malformed. Enforced by InputSpec, which is
     the first place the widget meets its socket type."""
 
@@ -1071,7 +1071,9 @@ Widget = WidgetDescriptor | WidgetRepresentations
 """A singular descriptor or a finite named set of descriptors."""
 
 
-def _validate_widget_binding(input_id: str, input_type: TypeExpr, widget: WidgetDescriptor) -> None:
+def _validate_widget_binding(
+    input_id: str, input_type: TypeExpr, widget: WidgetDescriptor, *, force_input: bool
+) -> None:
     """Bind one descriptor to the canonical socket/value domain."""
 
     primitive_type = (
@@ -1081,10 +1083,12 @@ def _validate_widget_binding(input_id: str, input_type: TypeExpr, widget: Widget
         socket = primitive_type.types[0] if primitive_type.kind == "concrete" else None
         if input_type.kind == "union" and set(input_type.types) == {CORE_INT, CORE_FLOAT}:
             socket = CORE_FLOAT
+        if force_input and input_type == TypeExpr.concrete(FLOATS_TYPE):
+            socket = CORE_FLOAT
         if socket not in (CORE_INT, CORE_FLOAT):
             raise ValueError(
                 f"input {input_id}: number widget requires a concrete "
-                f"INT or FLOAT input or their scalar union, got {input_type.kind} "
+                f"INT or FLOAT input, their scalar union, or forced FLOATS, got {input_type.kind} "
                 f"{socket or ''}".rstrip()
             )
         if socket == CORE_INT:
@@ -1264,9 +1268,11 @@ class InputSpec:
         # domain. The wrapper contributes no execution state of its own.
         if isinstance(self.widget, WidgetRepresentations):
             for representation in self.widget.representations:
-                _validate_widget_binding(self.id, self.type, representation.widget)
+                _validate_widget_binding(
+                    self.id, self.type, representation.widget, force_input=self.force_input
+                )
         elif self.widget is not None:
-            _validate_widget_binding(self.id, self.type, self.widget)
+            _validate_widget_binding(self.id, self.type, self.widget, force_input=self.force_input)
         default: object = self.default
         if (
             any(isinstance(widget, MultiComboWidget) for widget in descriptors)
