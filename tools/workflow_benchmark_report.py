@@ -15,6 +15,8 @@ import statistics
 from pathlib import Path
 from typing import Any
 
+from dinkster_graph import GraphNode, graph_from_wire
+
 from tools.workflow_benchmark_observer import validate_free_response, validate_window
 
 REPORT_KIND = "workflow_http"
@@ -144,6 +146,56 @@ def seeded_workflow(graph: dict[str, Any], bindings: list[str], seed: int) -> di
     return result
 
 
+def native_job_request(workload: dict[str, Any], index: int) -> dict[str, Any]:
+    """Authenticate a compiler export without converting or rewriting its graph."""
+    export = workload["native_jobs"]
+    seed = workload["seeds"][index]
+    source = seeded_workflow(workload["graph"], workload["seed_inputs"], seed)
+    if (
+        not isinstance(export, dict)
+        or export.get("api_sha256") != workload["api_sha256"]
+        or not _hex(export.get("frontend_commit"), 40)
+        or not isinstance(export.get("jobs"), list)
+        or len(export["jobs"]) != len(workload["seeds"])
+    ):
+        raise ValueError("native job export provenance or run count differs")
+    row = export["jobs"][index]
+    if (
+        not isinstance(row, dict)
+        or row.get("seed") != seed
+        or row.get("source_graph_sha256") != json_digest(source)
+    ):
+        raise ValueError("native job export source graph or seed differs")
+    body = row.get("request")
+    if not isinstance(body, dict) or set(body) - {
+        "clientId",
+        "jobId",
+        "graph",
+        "targets",
+        "sourceDocument",
+        "previews",
+        "placement",
+    }:
+        raise ValueError("native job export must contain an ordinary job request")
+    graph = graph_from_wire(body.get("graph"))
+    targets = body.get("targets")
+    if (
+        not isinstance(targets, list)
+        or not targets
+        or any(not isinstance(target, str) or target not in graph.nodes for target in targets)
+    ):
+        raise ValueError("native job export targets must name graph nodes")
+    for binding in workload["seed_inputs"]:
+        node_id, _, input_id = binding.rpartition(".")
+        node = graph.nodes.get(node_id)
+        value = node.inputs.get(input_id) if isinstance(node, GraphNode) else None
+        if type(value) is not int or value != seed:
+            raise ValueError(f"native job export literal seed differs: {binding}")
+    result = copy.deepcopy(body)
+    result.update(clientId="workflow-benchmark", jobId=f"run-{index}")
+    return result
+
+
 def summary(values: list[float]) -> dict[str, float]:
     ordered = sorted(values)
     if not ordered or any(not math.isfinite(value) or value <= 0 for value in ordered):
@@ -261,6 +313,14 @@ def validate_workload(workload: dict[str, Any]) -> None:
         or not provenance["exporter"]
     ):
         raise ValueError("workflow export provenance is incomplete")
+    if "native_jobs" in workload:
+        if (
+            not _hex(workload.get("native_jobs_sha256"), 64)
+            or provenance.get("native_jobs_sha256") != workload["native_jobs_sha256"]
+        ):
+            raise ValueError("native job export digest differs from provenance")
+        for index in range(len(seeds)):
+            native_job_request(workload, index)
 
 
 def validate_workflow_report(report: dict[str, Any]) -> tuple[str, ...]:
@@ -322,6 +382,12 @@ def validate_workflow_report(report: dict[str, Any]) -> tuple[str, ...]:
             expected = seeded_workflow(graph, bindings, seed)
             if row["seed"] != seed or row["submitted_sha256"] != json_digest(expected):
                 raise ValueError("submitted graph/seed differs from workload")
+            if "native_jobs" in workload and (
+                report.get("system") != "dinkster"
+                or row.get("native_request_sha256")
+                != json_digest(native_job_request(workload, index))
+            ):
+                raise ValueError("submitted native request differs from export")
             if row["phase"] != ("cold" if index == 0 else "warm"):
                 raise ValueError("run phase differs")
             if row["job_id"] in identities or not row["job_id"]:
@@ -555,9 +621,23 @@ def validate_workflow_files(report: dict[str, Any], directory: Path) -> tuple[st
 
     try:
         system = report["system"]
-        for row in report["runs"]:
+        workload = report["workload"]
+        if "native_jobs" in workload:
+            native_bytes = local("native-jobs.json").read_bytes()
+            if (
+                hashlib.sha256(native_bytes).hexdigest() != workload["native_jobs_sha256"]
+                or json.loads(native_bytes) != workload["native_jobs"]
+            ):
+                raise ValueError("retained native job export differs")
+        for index, row in enumerate(report["runs"]):
             body = json.loads(local(row["submitted_file"]).read_text())
-            if json_digest(body["prompt"]) != row["submitted_sha256"]:
+            if "native_jobs" in report["workload"]:
+                if (
+                    body != native_job_request(report["workload"], index)
+                    or json_digest(body) != row["native_request_sha256"]
+                ):
+                    raise ValueError("retained native request differs")
+            elif json_digest(body["prompt"]) != row["submitted_sha256"]:
                 raise ValueError("retained submitted graph differs")
             accepted = json.loads(local(row["accepted_file"]).read_text())
             if accepted["prompt_id" if system == "comfyui" else "jobRef"] != row["job_id"]:
@@ -630,13 +710,22 @@ def workflow_comparability_problems(
     for key in (
         "report_kind",
         "report_version",
-        "workload",
         "device",
         "machine",
         "poll_interval_seconds",
     ):
         if ours.get(key) != theirs.get(key):
             problems.append(f"{key} differs")
+    source_workloads = [
+        {
+            key: value
+            for key, value in report["workload"].items()
+            if key not in {"native_jobs", "native_jobs_sha256"}
+        }
+        for report in (ours, theirs)
+    ]
+    if source_workloads[0] != source_workloads[1]:
+        problems.append("workload differs")
     for name in ("harness", "dinkster", "comfyui"):
         if ours["sources"][name]["commit"] != theirs["sources"][name]["commit"]:
             problems.append(f"{name} comparison revision differs")
