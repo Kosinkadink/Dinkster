@@ -24,6 +24,7 @@ from dinkster_nodes_comfy.gligen_conditioning import GLIGENTextBoxApply
 def test_gligen_textbox_schema_preserves_ports_defaults_and_widgets() -> None:
     schema = GLIGENTextBoxApply.schema()
     assert schema.node_type == "GLIGENTextBoxApply"
+    assert schema.display_name == "Apply GLIGEN Text Box"
     assert schema.category == "model/conditioning/gligen"
     assert tuple(item.id for item in schema.inputs) == (
         "conditioning_to",

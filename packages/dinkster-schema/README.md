@@ -23,6 +23,12 @@ The package is not published separately yet and provides no console script.
 
 ## Use
 
+`MountWidget()` presents a scalar STRING input as a writable mount selection.
+Save nodes append an optional `mount` input with `adjacent_to="filename_prefix"`.
+The `adjacentTo` wire hint names a sibling input and changes presentation only:
+interface order, stored positional values and execution signatures stay unchanged.
+An omitted mount value lets the asset writer select the output mount.
+
 The public surface exports `NodeSchema`, `InputSpec`, `OutputSpec`, `TypeExpr`,
 `Node`, elaboration and type-solving helpers, schema wire functions, reporting,
 logging, naming rules, and declarative replacement models. A minimal node keeps
