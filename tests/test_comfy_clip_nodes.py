@@ -31,6 +31,12 @@ from dinkster_nodes_comfy.clip_model_specific import (
     CLIPTextEncodePixArtAlpha,
     T5TokenizerOptions,
 )
+from dinkster_nodes_comfy.flux_conditioning import (
+    CLIPTextEncodeFlux,
+    FluxDisableGuidance,
+    FluxGuidance,
+    FluxKontextMultiReferenceLatentMethod,
+)
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -121,9 +127,59 @@ class ModelTextEncoder:
         return {key: f"{key}:{text}" for key in ("l", "g", "t5xxl", "llama", "extra")}
 
     def encode_from_tokens_scheduled(
-        self, tokens: dict[str, str], add_dict: dict[str, int] | None = None
+        self, tokens: dict[str, str], add_dict: dict[str, Any] | None = None
     ) -> list[list[object]]:
         return [[tokens, {"start_percent": 0.25, **(add_dict or {})}]]
+
+
+def test_flux_prompt_streams_and_guidance_preserve_scheduled_metadata() -> None:
+    encoder = ModelTextEncoder()
+    result: Any = CLIPTextEncodeFlux.execute(
+        clip=encoder, clip_l="short\n{one|two}", t5xxl="different long prompt", guidance=7.25
+    )["CONDITIONING"]
+    expected_tokens = {
+        "l": "l:short\n{one|two}",
+        "g": "g:short\n{one|two}",
+        "t5xxl": "t5xxl:different long prompt",
+        "llama": "llama:short\n{one|two}",
+        "extra": "extra:short\n{one|two}",
+    }
+    assert result == [[expected_tokens, {"start_percent": 0.25, "guidance": 7.25}]]
+    result.append(["second embedding", {"end_percent": 0.9, "guidance": 13.0}])
+    changed: Any = FluxGuidance.execute(conditioning=result, guidance=0.0)["CONDITIONING"]
+    disabled: Any = FluxDisableGuidance.execute(conditioning=changed)["CONDITIONING"]
+    assert changed == [
+        [expected_tokens, {"start_percent": 0.25, "guidance": 0.0}],
+        ["second embedding", {"end_percent": 0.9, "guidance": 0.0}],
+    ]
+    assert disabled == [
+        [expected_tokens, {"start_percent": 0.25, "guidance": None}],
+        ["second embedding", {"end_percent": 0.9, "guidance": None}],
+    ]
+    assert result[0][1] == {"start_percent": 0.25, "guidance": 7.25}
+    assert result[1][1] == {"end_percent": 0.9, "guidance": 13.0}
+    assert changed[0][0] is result[0][0]
+
+
+@pytest.mark.parametrize(
+    ("method", "expected"),
+    (
+        ("offset", "offset"),
+        ("index", "index"),
+        ("uxo/uno", "uxo"),
+        ("uso/uno", "uxo"),
+        ("index_timestep_zero", "index_timestep_zero"),
+        ("index_timestep_zero_isolated", "index_timestep_zero_isolated"),
+        ("index_timestep_zero_text_start", "index_timestep_zero_text_start"),
+    ),
+)
+def test_flux_reference_method_preserves_source(method: str, expected: str) -> None:
+    source = [["embedding", {"guidance": 2.5, "reference_latents_method": "prior"}]]
+    result = FluxKontextMultiReferenceLatentMethod.execute(
+        conditioning=source, reference_latents_method=method
+    )["CONDITIONING"]
+    assert result == [["embedding", {"guidance": 2.5, "reference_latents_method": expected}]]
+    assert source == [["embedding", {"guidance": 2.5, "reference_latents_method": "prior"}]]
 
 
 def test_model_specific_prompts_and_resolution() -> None:

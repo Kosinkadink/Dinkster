@@ -448,24 +448,40 @@ def test_v3_schema_dump_preserves_only_declared_names(
     example_contract: tuple[dict, dict],
 ) -> None:
     from tools.compare_nodes import compare
-    from tools.dump_comfy_nodes import output_contract
+    from tools.dump_comfy_nodes import v3_contract
 
     reference, native = example_contract
     schema = SimpleNamespace(
         display_name="Model Attention Backend",
-        outputs=[SimpleNamespace(display_name=None), SimpleNamespace(display_name="second")],
+        category="model/patch/wan",
+        inputs=[SimpleNamespace(id="value")],
+        is_input_list=False,
+        is_output_node=False,
+        is_api_node=False,
+        outputs=[
+            SimpleNamespace(display_name=None, io_type="INT", is_output_list=False),
+            SimpleNamespace(display_name="second", io_type="FLOAT", is_output_list=False),
+        ],
     )
-    reference.update(output_contract(schema))
+    reference["category"] = "model/patch"
+    reference["return_types"] = ["WRONG"]
+    reference["output_is_list"] = [True]
+    reference.update(v3_contract(schema))
+    assert reference["category"] == "model/patch/wan"
+    native["category"] = "model/patch/wan"
     assert reference["display_name"] == "Model Attention Backend"
     native["displayName"] = "Model Attention Backend"
     assert reference["return_names"] == [None, "second"]
+    assert reference["v3_inputs"] == [{"id": "value"}]
+    assert reference["return_types"] == ["INT", "FLOAT"]
+    assert reference["output_is_list"] == [False, False]
     assert compare(reference, native) == []
     native["interface"][1]["id"] = "another_unnamed_output"
     assert compare(reference, native) == []
     native["interface"][2]["id"] = "renamed"
     assert any("outputs[1].name" in difference for difference in compare(reference, native))
     schema.display_name = None
-    assert "display_name" not in output_contract(schema)
+    assert "display_name" not in v3_contract(schema)
 
 
 @pytest.mark.parametrize("list_inputs", [False, True])
