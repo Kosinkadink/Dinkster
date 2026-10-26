@@ -49,7 +49,7 @@ class ChromaRadianceOptions(Node):
                     default=1.0,
                     advanced=True,
                     doc="First sigma that these options will be in effect.",
-                    widget=NumberWidget(min=0.0, max=1.0, step=0.01),
+                    widget=NumberWidget(min=0.0, max=1.0),
                 ),
                 InputSpec(
                     "end_sigma",
@@ -57,7 +57,7 @@ class ChromaRadianceOptions(Node):
                     default=0.0,
                     advanced=True,
                     doc="Last sigma that these options will be in effect.",
-                    widget=NumberWidget(min=0.0, max=1.0, step=0.01),
+                    widget=NumberWidget(min=0.0, max=1.0),
                 ),
                 InputSpec(
                     "nerf_tile_size",
@@ -69,7 +69,7 @@ class ChromaRadianceOptions(Node):
                         "default (32). "
                         "0 means use non-tiling mode (may require a lot of VRAM)."
                     ),
-                    widget=NumberWidget(min=-1, step=1),
+                    widget=NumberWidget(min=-1),
                 ),
                 InputSpec(
                     "force_sequential_txt_ids",
