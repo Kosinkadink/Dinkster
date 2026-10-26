@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import torch
+from dinkster_nodes_comfy.mage_image_encoders import TextEncodeMageFlowEdit
 from dinkster_nodes_comfy.ming_image_encoders import TextEncodeMingImageEdit
 from dinkster_nodes_comfy.qwen_image_encoders import (
     QwenImage21Cache,
@@ -32,6 +33,15 @@ def test_ming_without_images_preserves_prompt_and_has_no_reference_metadata() ->
     assert result["CONDITIONING"] == [
         [torch.ones((1, 2)), {"tokens": {"text": "describe", "images": []}}]
     ]
+
+
+def test_mage_without_images_uses_each_default_axis_and_null_negative_prompt() -> None:
+    clip = Clip()
+    result = TextEncodeMageFlowEdit.execute(
+        clip=clip, prompt="edit", negative_prompt="", width=0, height=512, batch_size=2
+    )
+    assert result["latent"]["samples"].shape == (2, 128, 32, 64)
+    assert clip.calls == [("edit", {"images": []}), (" ", {"images": []})]
 
 
 def test_qwen_edit_encoders_preserve_no_image_token_contracts() -> None:
