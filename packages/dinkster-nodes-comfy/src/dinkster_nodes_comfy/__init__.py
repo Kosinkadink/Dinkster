@@ -118,6 +118,7 @@ from .video_latent_ops import VIDEO_LATENT_OPERATION_NODES
 from .wan22_latent import Wan22ImageToVideoLatent
 from .wan_control_conditioning import WAN_CONTROL_CONDITIONING_NODES
 from .wan_image_conditioning import WanFirstLastFrameToVideo, WanFunInpaintToVideo, WanImageToVideo
+from .wan_scail_conditioning import WanSCAILToVideo
 from .wandancer_keyframes import WANDANCER_KEYFRAME_NODES
 
 COMFY_NODES = (
@@ -235,6 +236,7 @@ COMFY_NODES = (
     WanFunInpaintToVideo,
     *WAN_CONTROL_CONDITIONING_NODES,
     Wan22ImageToVideoLatent,
+    WanSCAILToVideo,
 )
 
 

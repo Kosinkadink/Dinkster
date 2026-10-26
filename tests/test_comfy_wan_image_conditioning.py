@@ -140,3 +140,46 @@ def test_wan_control_schemas_are_native_and_keep_declared_order() -> None:
         assert schema_from_wire(schema_to_wire(schema)) == schema
     manifest = load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml")
     assert tuple(n.schema().node_type for n in COMFY_NODES) == manifest.namespaces
+
+
+def test_scail_schema_preserves_interleaved_optional_inputs() -> None:
+    schema = next(n.schema() for n in COMFY_NODES if n.schema().node_type == "WanSCAILToVideo")
+    assert schema.category == "model/conditioning/wan/scail"
+    assert [i.id for i in schema.inputs] == [
+        "positive",
+        "negative",
+        "vae",
+        "width",
+        "height",
+        "length",
+        "batch_size",
+        "pose_video",
+        "pose_video_mask",
+        "replacement_mode",
+        "pose_strength",
+        "pose_start",
+        "pose_end",
+        "reference_image",
+        "reference_image_mask",
+        "clip_vision_output",
+        "video_frame_offset",
+        "previous_frame_count",
+        "previous_frames",
+    ]
+    assert [i.id for i in schema.inputs if not i.required] == [
+        "pose_video",
+        "pose_video_mask",
+        "replacement_mode",
+        "reference_image",
+        "reference_image_mask",
+        "clip_vision_output",
+        "previous_frames",
+    ]
+    assert [i.default for i in schema.inputs[3:7]] == [512, 896, 81, 1]
+    assert [o.id for o in schema.outputs] == [
+        "positive",
+        "negative",
+        "latent",
+        "video_frame_offset",
+    ]
+    assert schema_from_wire(schema_to_wire(schema)) == schema

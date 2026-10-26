@@ -82,6 +82,7 @@ class Consumer(Node):
                     ("vace", CONDITIONING_TYPE),
                     ("phantom", CONDITIONING_TYPE),
                     ("phantom_negative", CONDITIONING_TYPE),
+                    ("scail", CONDITIONING_TYPE),
                     ("latent", LATENT_TYPE),
                 )
             ),
@@ -100,6 +101,7 @@ class Consumer(Node):
         vace: Any,
         phantom: Any,
         phantom_negative: Any,
+        scail: Any,
         latent: Any,
     ) -> dict[str, object]:
         samples = materialize_latent(latent)["samples"]
@@ -159,6 +161,20 @@ class Consumer(Node):
         )
         assert not torch.equal(
             phantom[0][1]["time_dim_concat"], phantom_negative[0][1]["time_dim_concat"]
+        )
+        scail_metadata = scail[0][1]
+        assert scail_metadata["label"] == "positive" and scail_metadata["ref_mask_flag"]
+        torch.testing.assert_close(
+            scail_metadata["reference_latents"][0],
+            torch.full((1, 16, 1, 2, 4), 0.75),
+            rtol=0,
+            atol=0,
+        )
+        torch.testing.assert_close(
+            scail_metadata["pose_video_latent"],
+            torch.full((1, 16, 1, 1, 2), 0.5),
+            rtol=0,
+            atol=0,
         )
         return cls.outputs(summary="wan-image-first-last-inpaint")
 
@@ -266,6 +282,19 @@ def test_wan_image_conditioning_runs_twice_in_ordinary_hosts(
                             if k != "start_image"
                         },
                     ),
+                    "scail": GraphNode(
+                        "WanSCAILToVideo",
+                        {
+                            **{k: v for k, v in inputs.items() if k != "start_image"},
+                            "pose_strength": 2.0,
+                            "pose_start": 0.0,
+                            "pose_end": 1.0,
+                            "pose_video": Link("source", "start"),
+                            "reference_image": Link("source", "end"),
+                            "video_frame_offset": 0,
+                            "previous_frame_count": 5,
+                        },
+                    ),
                     "consumer": GraphNode(
                         "wan-image-fixture.consumer",
                         {
@@ -277,6 +306,7 @@ def test_wan_image_conditioning_runs_twice_in_ordinary_hosts(
                             "vace": Link("vace", "positive"),
                             "phantom": Link("phantom", "positive"),
                             "phantom_negative": Link("phantom", "negative_img_text"),
+                            "scail": Link("scail", "positive"),
                             "latent": Link("first_last", "latent"),
                         },
                     ),

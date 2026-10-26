@@ -89,6 +89,8 @@
 - Native Wan control conditioning builds Fun Control and Wan 2.2 control latents,
   VACE masked control streams and reference frames, and separate Phantom subject
   image/text guidance.
+- Native Wan SCAIL conditioning combines per-identity reference masks, timed pose
+  conditioning, and continuation frames with their latent noise masks.
 - Native LTXV preprocessing applies the model's optional per-frame H.264 image
   compression before encoding video starts.
 - Native LTXV image-to-video and frame-rate conditioning nodes encode image starts,
