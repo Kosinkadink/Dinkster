@@ -183,3 +183,27 @@ def test_scail_schema_preserves_interleaved_optional_inputs() -> None:
         "video_frame_offset",
     ]
     assert schema_from_wire(schema_to_wire(schema)) == schema
+
+
+def test_track_schema_preserves_required_image_and_string_tracks() -> None:
+    schema = next(n.schema() for n in COMFY_NODES if n.schema().node_type == "WanTrackToVideo")
+    assert schema.category == "model/conditioning/wan/move"
+    assert [i.id for i in schema.inputs] == [
+        "positive",
+        "negative",
+        "vae",
+        "tracks",
+        "width",
+        "height",
+        "length",
+        "batch_size",
+        "temperature",
+        "topk",
+        "start_image",
+        "clip_vision_output",
+    ]
+    assert [i.default for i in schema.inputs[3:10]] == ["[]", 832, 480, 81, 1, 220.0, 2]
+    assert [i.id for i in schema.inputs if not i.required] == ["clip_vision_output"]
+    assert schema.inputs[8].advanced and schema.inputs[9].advanced
+    assert [o.id for o in schema.outputs] == ["positive", "negative", "latent"]
+    assert schema_from_wire(schema_to_wire(schema)) == schema

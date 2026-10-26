@@ -83,6 +83,7 @@ class Consumer(Node):
                     ("phantom", CONDITIONING_TYPE),
                     ("phantom_negative", CONDITIONING_TYPE),
                     ("scail", CONDITIONING_TYPE),
+                    ("track", CONDITIONING_TYPE),
                     ("latent", LATENT_TYPE),
                 )
             ),
@@ -102,6 +103,7 @@ class Consumer(Node):
         phantom: Any,
         phantom_negative: Any,
         scail: Any,
+        track: Any,
         latent: Any,
     ) -> dict[str, object]:
         samples = materialize_latent(latent)["samples"]
@@ -176,6 +178,14 @@ class Consumer(Node):
             rtol=0,
             atol=0,
         )
+        track_metadata = track[0][1]
+        assert track_metadata["label"] == "positive"
+        assert track_metadata["concat_latent_image"].shape == (2, 16, 3, 2, 4)
+        track_mask = track_metadata["concat_mask"]
+        assert track_mask.shape == (2, 4, 3, 2, 4)
+        assert not track_mask[:, :, 0].count_nonzero()
+        assert track_mask[0, 0, 1, 0, 0] < 0.01
+        assert track_mask[0, 0, 1, 1, 3] > 0.99
         return cls.outputs(summary="wan-image-first-last-inpaint")
 
 
@@ -295,6 +305,15 @@ def test_wan_image_conditioning_runs_twice_in_ordinary_hosts(
                             "previous_frame_count": 5,
                         },
                     ),
+                    "track": GraphNode(
+                        "WanTrackToVideo",
+                        {
+                            **inputs,
+                            "tracks": str([[{"x": 0, "y": 0}] * 121]),
+                            "temperature": 1.0,
+                            "topk": 1,
+                        },
+                    ),
                     "consumer": GraphNode(
                         "wan-image-fixture.consumer",
                         {
@@ -307,6 +326,7 @@ def test_wan_image_conditioning_runs_twice_in_ordinary_hosts(
                             "phantom": Link("phantom", "positive"),
                             "phantom_negative": Link("phantom", "negative_img_text"),
                             "scail": Link("scail", "positive"),
+                            "track": Link("track", "positive"),
                             "latent": Link("first_last", "latent"),
                         },
                     ),

@@ -91,6 +91,8 @@
   image/text guidance.
 - Native Wan SCAIL conditioning combines per-identity reference masks, timed pose
   conditioning, and continuation frames with their latent noise masks.
+- Native Wan track conditioning applies JSON point trajectories to image-start
+  latents, preserving visible-point weights and per-batch image conditioning.
 - Native LTXV preprocessing applies the model's optional per-frame H.264 image
   compression before encoding video starts.
 - Native LTXV image-to-video and frame-rate conditioning nodes encode image starts,
