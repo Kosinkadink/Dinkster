@@ -46,6 +46,11 @@ def test_color_values_preserve_case_alpha_and_reference_rejection() -> None:
         "hex": "#01020f",
         "alpha": 1.0,
     }
+    assert ColorToRGBInt.execute(color="#12_345") == {
+        "rgb_int": 16777215,
+        "hex": "#12_345",
+        "alpha": 1.0,
+    }
     assert ColorToRGBInt.execute(color="#00000000")["alpha"] == 0.0
     for invalid in ("", "red", "#abc", "001122", "#12345g", "#1122334455"):
         with pytest.raises(ValueError, match="Color must be in format #RRGGBB or #RRGGBBAA"):

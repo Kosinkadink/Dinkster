@@ -65,7 +65,11 @@ class ColorToRGBInt(Node):
             raise ValueError(message) from None
         alpha = int(color[7:9], 16) / 255.0 if len(color) == 9 else 1.0
         color = color[:7]
-        red, green, blue = (int(color[index : index + 2], 16) for index in (1, 3, 5))
+        try:
+            red, green, blue = (int(color[index : index + 2], 16) for index in (1, 3, 5))
+        except ValueError:
+            # The reference color helper falls back to white after whole-string validation.
+            red, green, blue = 255, 255, 255
         return cls.outputs(rgb_int=red * 256 * 256 + green * 256 + blue, hex=color, alpha=alpha)
 
 
