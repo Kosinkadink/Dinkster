@@ -28,6 +28,7 @@ from .cfg_guiders import CFG_GUIDER_NODES
 from .chroma_options import ChromaRadianceOptions
 from .clip import CLIP_NODES
 from .clip_model_specific import MODEL_TEXT_ENCODER_NODES
+from .clip_sd3 import CLIPTextEncodeSD3
 from .clip_sdxl import CLIP_SDXL_NODES
 from .compile import COMPILE_NODES
 from .compositing import COMPOSITING_NODES
@@ -41,6 +42,7 @@ from .dataset_images import DATASET_IMAGE_NODES
 from .dataset_text import DATASET_TEXT_NODES
 from .device_routing import DEVICE_ROUTING_NODES
 from .flux_conditioning import FLUX_CONDITIONING_NODES
+from .flux_image_layout import FLUX_IMAGE_LAYOUT_NODES
 from .freeu import FREEU_NODES
 from .gligen_conditioning import GLIGENTextBoxApply
 from .hook_checkpoint import HOOK_CHECKPOINT_NODES
@@ -86,6 +88,7 @@ from .model_specific_schedulers import MODEL_SPECIFIC_SCHEDULER_NODES
 from .morphology import MORPHOLOGY_NODES
 from .noise_guidance import NOISE_GUIDANCE_NODES
 from .perpneg import PERPNEG_NODES
+from .pid_conditioning import PiDConditioning
 from .post_processing import POST_PROCESSING_NODES
 from .primitive import (
     PrimitiveBoolean,
@@ -104,6 +107,7 @@ from .seedvr_conditioning import SeedVR2Conditioning
 from .seedvr_postprocess import SeedVR2PostProcessing
 from .seedvr_preprocess import SeedVR2Preprocess
 from .seedvr_temporal import SEEDVR_TEMPORAL_NODES
+from .sensenova_options import SenseNovaSamplingOptions
 from .sigma_operations import SIGMA_OPERATION_NODES
 from .sigma_schedulers import SIGMA_SCHEDULER_NODES
 from .sparse_attention import SPARSE_ATTENTION_NODES
@@ -144,6 +148,7 @@ COMFY_NODES = (
     *MODEL_SPECIFIC_MERGE_NODES,
     *MODEL_ADVANCED_NODES,
     ChromaRadianceOptions,
+    SenseNovaSamplingOptions,
     HypernetworkLoader,
     *MODEL_PATCH_LOADER_NODES,
     *DEVICE_ROUTING_NODES,
@@ -170,10 +175,13 @@ COMFY_NODES = (
     *STYLE_MODEL_NODES,
     GLIGENTextBoxApply,
     *CLIP_SDXL_NODES,
+    CLIPTextEncodeSD3,
     *MODEL_TEXT_ENCODER_NODES,
     *FLUX_CONDITIONING_NODES,
+    *FLUX_IMAGE_LAYOUT_NODES,
     *VAE_NODES,
     *CONDITIONING_NODES,
+    PiDConditioning,
     *HOOK_CHECKPOINT_NODES,
     *CONTEXT_WINDOW_NODES,
     *HOOK_CONDITIONING_NODES,

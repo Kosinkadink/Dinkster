@@ -344,7 +344,15 @@ def _elaborate_dynamic_entries(
     for entry in entries:
         path = _join_path(parent, entry.id)
         if isinstance(entry, InputSpec):
-            inputs.append(replace(entry, id=path))
+            inputs.append(
+                replace(
+                    entry,
+                    id=path,
+                    adjacent_to=_join_path(parent, entry.adjacent_to)
+                    if entry.adjacent_to is not None
+                    else None,
+                )
+            )
         elif isinstance(entry, InputFamilySpec):
             family_inputs, family_active, family_consumed = _elaborate_family(
                 entry, path, stored_input_ids, choices
