@@ -84,6 +84,8 @@
 - Native Wan image and first/last-frame conditioning encodes image starts and
   ends, applies temporal masks and optional CLIP vision states, and supports
   reference padding and inpaint conditioning.
+- Native Wan 2.2 image-to-video latents encode image starts, mask encoded temporal
+  tokens, and normalize only the unfilled tokens before repeating image batches.
 - Native Wan control conditioning builds Fun Control and Wan 2.2 control latents,
   VACE masked control streams and reference frames, and separate Phantom subject
   image/text guidance.

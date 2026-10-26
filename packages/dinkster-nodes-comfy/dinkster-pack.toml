@@ -397,6 +397,7 @@ namespaces = [
     "Wan22FunControlToVideo",
     "WanVaceToVideo",
     "WanPhantomSubjectToVideo",
+    "Wan22ImageToVideoLatent",
 ]
 
 [pack.sandbox]
