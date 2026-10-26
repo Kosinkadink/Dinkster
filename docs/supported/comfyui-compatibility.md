@@ -8,6 +8,8 @@
   seeded batch noise, masks, denoise strength and advanced step boundaries.
 - Native Wan Uni3C applies render-video guidance with temporal padding, spatial
   alignment, scheduled residuals and shared conditional-batch computation.
+- Native LoRA hook loaders use bound model/lora assets, preserve prior hooks
+  and apply separate model and CLIP strengths while retaining loaded weights.
 - Native WanDancer keyframe padding places reference frames and masks into
   video segments, with matching audio slices and scalar or list outputs.
 - Native LTXV duration prediction uses caption connectors and the duration head,
