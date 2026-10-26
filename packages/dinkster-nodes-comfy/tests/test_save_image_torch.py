@@ -96,12 +96,33 @@ def test_image_loader_checks_input_size_and_cumulative_decoded_bytes(
     monkeypatch.setattr(image_file_tools, "IMAGE_WORKING_SET_LIMIT_BYTES", asset.size - 1)
     with pytest.raises(ValueError, match="input byte limit"):
         LoadImage.execute(image=asset)
-    # Each RGBA frame yields six RGB pixels and six float32 mask values: 96 bytes.
-    monkeypatch.setattr(image_file_tools, "IMAGE_WORKING_SET_LIMIT_BYTES", 192)
+    # Two 96-byte outputs, their stack copies and 384 bytes of per-frame scratch coexist.
+    monkeypatch.setattr(image_file_tools, "IMAGE_WORKING_SET_LIMIT_BYTES", 768)
     assert LoadImage.execute(image=asset)["IMAGE"].shape == (2, 2, 3, 3)
-    monkeypatch.setattr(image_file_tools, "IMAGE_WORKING_SET_LIMIT_BYTES", 191)
+    monkeypatch.setattr(image_file_tools, "IMAGE_WORKING_SET_LIMIT_BYTES", 767)
     with pytest.raises(ValueError, match="decoded image batch"):
         LoadImage.execute(image=asset)
+
+
+@pytest.mark.parametrize("node", (SaveImage, SaveAnimatedPNG, SaveAnimatedWEBP))
+def test_image_savers_budget_live_conversion_copies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, node
+) -> None:
+    default, _ = _mount(tmp_path, monkeypatch)
+    images = torch.linspace(0.1, 0.9, 48).reshape(2, 2, 3, 4)
+    options = (
+        {"fps": 7.0, "lossless": True, "quality": 85, "method": "default"}
+        if node is SaveAnimatedWEBP
+        else {}
+    )
+    # 192 source bytes plus float temporaries, byte frames and encoding scratch.
+    monkeypatch.setattr(image_file_tools, "IMAGE_WORKING_SET_LIMIT_BYTES", 1152)
+    node.execute(images=images, filename_prefix="at-limit", **options)
+    assert list(default.glob("at-limit_*"))
+    monkeypatch.setattr(image_file_tools, "IMAGE_WORKING_SET_LIMIT_BYTES", 1151)
+    with pytest.raises(ValueError, match="working-set limit"):
+        node.execute(images=images, filename_prefix="over-limit", **options)
+    assert not list(default.glob("over-limit*"))
 
 
 @pytest.mark.parametrize("node", (SaveImage, SaveAnimatedPNG, SaveAnimatedWEBP))

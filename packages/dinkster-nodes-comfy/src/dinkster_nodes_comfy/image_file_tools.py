@@ -61,7 +61,8 @@ def _writer() -> AssetWriter:
 def _check_dimensions(width: int, height: int) -> None:
     if min(width, height) < 1 or max(width, height) > _MAX_IMAGE_DIMENSION:
         raise ValueError(f"image dimensions must be between 1 and {_MAX_IMAGE_DIMENSION}")
-    if width * height * 16 > IMAGE_WORKING_SET_LIMIT_BYTES:
+    # Float RGB/mask lists and stack outputs coexist with Pillow and conversion scratch.
+    if width * height * 96 > IMAGE_WORKING_SET_LIMIT_BYTES:
         raise ValueError("decoded image exceeds the image working-set limit")
 
 
@@ -72,7 +73,9 @@ def _image_batch(images: Any) -> Any:
     if batch.shape[0] > _MAX_IMAGE_FRAMES:
         raise ValueError("image batch exceeds the frame limit")
     _check_dimensions(int(batch.shape[2]), int(batch.shape[1]))
-    if batch.numel() * max(4, batch.element_size()) > IMAGE_WORKING_SET_LIMIT_BYTES:
+    # Source, clamp/quantization tensors, byte frames and codec scratch can coexist.
+    peak_bytes = batch.numel() * (4 * max(4, batch.element_size()) + 8)
+    if peak_bytes > IMAGE_WORKING_SET_LIMIT_BYTES:
         raise ValueError("image batch exceeds the image working-set limit")
     return batch
 
@@ -98,15 +101,18 @@ def _load_image(asset: AssetRef) -> tuple[Any, Any]:
         width = height = None
         for frame in image_sequence.Iterator(source):
             _check_dimensions(*frame.size)
+            has_alpha = "A" in frame.getbands() or "transparency" in frame.info
+            frame_pixels = frame.width * frame.height
+            frame_bytes = frame_pixels * 12 + (frame_pixels if has_alpha else 64 * 64) * 4
+            peak_bytes = 2 * (decoded_bytes + frame_bytes) + frame_pixels * 64
+            if peak_bytes > IMAGE_WORKING_SET_LIMIT_BYTES:
+                raise ValueError("decoded image batch exceeds the image working-set limit")
             frame = image_ops.exif_transpose(frame)
             if width is None:
                 width, height = frame.size
             if frame.size != (width, height):
                 continue
-            has_alpha = "A" in frame.getbands() or "transparency" in frame.info
-            decoded_bytes += width * height * 12 + (width * height if has_alpha else 64 * 64) * 4
-            if decoded_bytes > IMAGE_WORKING_SET_LIMIT_BYTES:
-                raise ValueError("decoded image batch exceeds the image working-set limit")
+            decoded_bytes += frame_bytes
             rgb = frame.convert("RGB")
             images.append(torch.from_numpy(numpy.asarray(rgb, dtype=numpy.float32) / 255.0))
             if has_alpha:
