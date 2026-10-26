@@ -433,6 +433,8 @@ namespaces = [
     "WanAnimate2Cache",
     "ColorToRGBInt",
     "ResolutionSelector",
+    "ImageCropV2",
+    "PrimitiveBoundingBox",
 ]
 
 [pack.sandbox]
