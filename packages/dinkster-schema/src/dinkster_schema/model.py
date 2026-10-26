@@ -40,6 +40,7 @@ from dinkster_values import (
     CORE_INT,
     CORE_STRING,
     CURVE_TYPE,
+    FLOATS_TYPE,
     SAVE_TARGET_TYPE,
     CustomWidgetDescriptor,
     asset_type_id,
@@ -1064,7 +1065,9 @@ Widget = WidgetDescriptor | WidgetRepresentations
 """A singular descriptor or a finite named set of descriptors."""
 
 
-def _validate_widget_binding(input_id: str, input_type: TypeExpr, widget: WidgetDescriptor) -> None:
+def _validate_widget_binding(
+    input_id: str, input_type: TypeExpr, widget: WidgetDescriptor, *, force_input: bool
+) -> None:
     """Bind one descriptor to the canonical socket/value domain."""
 
     primitive_type = (
@@ -1074,10 +1077,12 @@ def _validate_widget_binding(input_id: str, input_type: TypeExpr, widget: Widget
         socket = primitive_type.types[0] if primitive_type.kind == "concrete" else None
         if input_type.kind == "union" and set(input_type.types) == {CORE_INT, CORE_FLOAT}:
             socket = CORE_FLOAT
+        if force_input and input_type == TypeExpr.concrete(FLOATS_TYPE):
+            socket = CORE_FLOAT
         if socket not in (CORE_INT, CORE_FLOAT):
             raise ValueError(
                 f"input {input_id}: number widget requires a concrete "
-                f"INT or FLOAT input or their scalar union, got {input_type.kind} "
+                f"INT or FLOAT input, their scalar union, or forced FLOATS, got {input_type.kind} "
                 f"{socket or ''}".rstrip()
             )
         if socket == CORE_INT:
@@ -1247,9 +1252,11 @@ class InputSpec:
         # domain. The wrapper contributes no execution state of its own.
         if isinstance(self.widget, WidgetRepresentations):
             for representation in self.widget.representations:
-                _validate_widget_binding(self.id, self.type, representation.widget)
+                _validate_widget_binding(
+                    self.id, self.type, representation.widget, force_input=self.force_input
+                )
         elif self.widget is not None:
-            _validate_widget_binding(self.id, self.type, self.widget)
+            _validate_widget_binding(self.id, self.type, self.widget, force_input=self.force_input)
         default: object = self.default
         if (
             any(isinstance(widget, MultiComboWidget) for widget in descriptors)
