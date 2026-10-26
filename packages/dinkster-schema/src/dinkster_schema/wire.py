@@ -40,6 +40,7 @@ from .model import (
     InputSpec,
     MirrorSpec,
     MirrorTolerance,
+    MountWidget,
     MultiComboWidget,
     NodeSchema,
     NumberWidget,
@@ -234,6 +235,8 @@ def _widget_descriptor_to_wire(
         return {"type": "CURVE"}
     if isinstance(widget, CompositorWidget):
         return {"type": "COMPOSITOR"}
+    if isinstance(widget, MountWidget):
+        return {"type": "MOUNT"}
     remaining = cast("object", widget)
     if isinstance(remaining, SaveTargetWidget):
         wire: dict[str, object] = {"type": "SAVE_TARGET"}
@@ -329,6 +332,9 @@ def _widget_descriptor_from_wire(
             kind=asset_kind,
             allow_upload=allow_upload,
         )
+    if kind == "MOUNT":
+        _reject_unknown_fields(widget_data, frozenset({"type"}), "MOUNT widget")
+        return MountWidget()
     if kind == "SAVE_TARGET":
         if strict:
             _reject_unknown_fields(widget_data, frozenset({"type", "suffix"}), "SAVE_TARGET widget")
@@ -782,6 +788,8 @@ def _input_entry_to_wire(spec: InputSpec, wire_version: int) -> dict[str, object
         entry["doc"] = spec.doc
     if spec.display_name:
         entry["displayName"] = spec.display_name
+    if spec.adjacent_to is not None:
+        entry["adjacentTo"] = spec.adjacent_to
     if spec.force_input:
         entry["forceInput"] = True
     if spec.advanced:
@@ -1208,6 +1216,7 @@ def schema_signature(schema: NodeSchema) -> str:
         if dynamic_identity is not None:
             entry["dynamicPrompts"] = dynamic_identity
         entry.pop("displayName", None)
+        entry.pop("adjacentTo", None)
         entry.pop("forceInput", None)
         entry.pop("advanced", None)
         entry.pop("hidden", None)
@@ -1355,6 +1364,9 @@ def _input_entry_from_wire(entry: dict[str, Any], wire_version: int) -> InputSpe
         else cast("AbsentPolicy", _expect_str(on_absent, "input.onAbsent")),
         widget=widget,
         display_name=_expect_str(entry.get("displayName", ""), "input.displayName"),
+        adjacent_to=None
+        if "adjacentTo" not in entry
+        else _expect_str(entry["adjacentTo"], "input.adjacentTo"),
         force_input=_expect_bool(entry.get("forceInput", False), "input.forceInput"),
         advanced=_expect_bool(entry.get("advanced", False), "input.advanced"),
         hidden=_expect_bool(entry.get("hidden", False), "input.hidden"),

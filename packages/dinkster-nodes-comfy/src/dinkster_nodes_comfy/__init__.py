@@ -40,6 +40,7 @@ from .dataset_groups import DATASET_GROUP_NODES
 from .dataset_images import DATASET_IMAGE_NODES
 from .dataset_text import DATASET_TEXT_NODES
 from .device_routing import DEVICE_ROUTING_NODES
+from .flux_conditioning import FLUX_CONDITIONING_NODES
 from .freeu import FREEU_NODES
 from .gligen_conditioning import GLIGENTextBoxApply
 from .hook_checkpoint import HOOK_CHECKPOINT_NODES
@@ -71,6 +72,7 @@ from .ltx_duration import LTXVDurationPredictor
 from .ltx_sampling import LTX_SAMPLING_NODES
 from .ltx_video_conditioning import LTX_VIDEO_CONDITIONING_NODES
 from .ltx_video_preprocess import LTX_VIDEO_PREPROCESS_NODES
+from .marigold import MarigoldV2PostProcess
 from .mask import MASK_NODES
 from .math import ComfyMathExpression
 from .minimax_h3_latent import EmptyMiniMaxH3LatentAV, MiniMaxH3AddGuide, MiniMaxH3ImageToVideo
@@ -84,6 +86,7 @@ from .model_specific_schedulers import MODEL_SPECIFIC_SCHEDULER_NODES
 from .morphology import MORPHOLOGY_NODES
 from .noise_guidance import NOISE_GUIDANCE_NODES
 from .perpneg import PERPNEG_NODES
+from .pid_conditioning import PiDConditioning
 from .post_processing import POST_PROCESSING_NODES
 from .primitive import (
     PrimitiveBoolean,
@@ -97,6 +100,7 @@ from .reference_conditioning import REFERENCE_CONDITIONING_NODES
 from .rope_and_mask import ROPE_AND_MASK_NODES
 from .sampler_factories import SAMPLER_FACTORY_NODES
 from .save_text import SaveText
+from .sd_upscale_conditioning import SD_UPSCALE_CONDITIONING_NODES
 from .seedvr_conditioning import SeedVR2Conditioning
 from .seedvr_postprocess import SeedVR2PostProcessing
 from .seedvr_preprocess import SeedVR2Preprocess
@@ -168,12 +172,15 @@ COMFY_NODES = (
     *CLIP_SDXL_NODES,
     CLIPTextEncodeSD3,
     *MODEL_TEXT_ENCODER_NODES,
+    *FLUX_CONDITIONING_NODES,
     *VAE_NODES,
     *CONDITIONING_NODES,
+    PiDConditioning,
     *HOOK_CHECKPOINT_NODES,
     *CONTEXT_WINDOW_NODES,
     *HOOK_CONDITIONING_NODES,
     *REFERENCE_CONDITIONING_NODES,
+    *SD_UPSCALE_CONDITIONING_NODES,
     *HUNYUAN3D_CONDITIONING_NODES,
     *INPAINT_NODES,
     *CONTROLNET_NODES,
@@ -182,6 +189,7 @@ COMFY_NODES = (
     *IMAGE_CORE_NODES,
     *IMAGE_DIMENSION_NODES,
     *IMAGE_COLOR_CONVERSION_NODES,
+    MarigoldV2PostProcess,
     *IMAGE_FILTER_NODES,
     *IMAGE_TRANSFORM_NODES,
     *MORPHOLOGY_NODES,

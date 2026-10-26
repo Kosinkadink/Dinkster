@@ -47,11 +47,19 @@ def engine_semantics(cls: type, source: str) -> list[str]:
     return sorted(semantics)
 
 
-def output_contract(schema: Any) -> dict[str, Any]:
-    """Project declared V3 names, not the V1 view's synthesized type labels."""
+def v3_contract(schema: Any) -> dict[str, Any]:
+    """Read finalized declarations instead of potentially inherited V1 caches."""
     return {
         **({"display_name": schema.display_name} if schema.display_name is not None else {}),
+        "is_v3": True,
+        "v3_inputs": [{"id": item.id} for item in schema.inputs],
+        "category": schema.category,
+        "input_is_list": schema.is_input_list,
+        "output_node": schema.is_output_node,
+        "api_node": schema.is_api_node,
+        "return_types": [item.io_type for item in schema.outputs],
         "return_names": [item.display_name for item in schema.outputs],
+        "output_is_list": [item.is_output_list for item in schema.outputs],
         "v3_outputs": [
             {"template": item.template.as_dict()} if hasattr(item, "template") else {}
             for item in schema.outputs
@@ -149,7 +157,7 @@ def main() -> None:
                 row[attribute.lower()] = getattr(cls, attribute, None)
             if hasattr(cls, "GET_SCHEMA"):
                 try:
-                    row.update(output_contract(cls.GET_SCHEMA()))
+                    row.update(v3_contract(cls.GET_SCHEMA()))
                 except Exception as exc:
                     row["v3_error"] = f"{type(exc).__name__}: {exc}"
             rows.append(row)
