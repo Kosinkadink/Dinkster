@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import importlib
+import io
 import os
 from collections.abc import Mapping
 from typing import Any, Literal
 
 from dinkster_api.v1 import (
     ASSET_TYPE,
+    CORE_BOOLEAN,
     CORE_COMBO,
+    CORE_FLOAT,
+    CORE_INT,
     CORE_STRING,
     IMAGE_TYPE,
     MASK_TYPE,
@@ -34,6 +38,9 @@ _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 _ASSET = TypeExpr.concrete(ASSET_TYPE)
 _MASK = TypeExpr.concrete(MASK_TYPE)
 _COMBO = TypeExpr.concrete(CORE_COMBO)
+_BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
+_FLOAT = TypeExpr.concrete(CORE_FLOAT)
+_INT = TypeExpr.concrete(CORE_INT)
 _STRING = TypeExpr.concrete(CORE_STRING)
 _IMAGE_MEDIA_TYPES = ("image/png", "image/jpeg", "image/webp", "image/gif", "image/tiff")
 
@@ -80,6 +87,32 @@ def _asset_input(category: Literal["input", "output"]) -> InputSpec:
         _ASSET,
         widget=AssetWidget(_IMAGE_MEDIA_TYPES, kind="media/image", allow_upload=True),
         source_filename=SourceFilenameSpec("media/image", category),
+    )
+
+
+def _save_animation(
+    images: Any,
+    filename_prefix: str,
+    mount: str | None,
+    format_name: str,
+    options: dict[str, object],
+) -> None:
+    torch = importlib.import_module("torch")
+    image_module = importlib.import_module("PIL.Image")
+    batch = materialize_image(images)
+    if batch.ndim != 4 or batch.shape[0] < 1:
+        raise ValueError("images must be a nonempty [B,H,W,C] batch")
+    pixels = torch.floor(torch.clamp(batch, 0, 1) * 255).to(torch.uint8).cpu().numpy()
+    frames = [image_module.fromarray(frame) for frame in pixels]
+    buffer = io.BytesIO()
+    frames[0].save(buffer, format=format_name, save_all=True, append_images=frames[1:], **options)
+    writer = _writer()
+    suffix, media_type = (".webp", "image/webp") if format_name == "WEBP" else (".png", "image/png")
+    writer.save_bytes(
+        writer.output_target(filename_prefix, mount=mount),
+        buffer.getvalue(),
+        suffix=suffix,
+        media_type=media_type,
     )
 
 
@@ -175,6 +208,110 @@ class PreviewImage(Node):
     @classmethod
     def execute(cls, *, images: Any) -> Mapping[str, object]:
         materialize_image(images)
+        return cls.outputs(images=images)
+
+
+class SaveAnimatedWEBP(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "SaveAnimatedWEBP",
+            category="image",
+            inputs=(
+                InputSpec("images", _IMAGE),
+                InputSpec("filename_prefix", _STRING, default="ComfyUI"),
+                InputSpec("fps", _FLOAT, default=6.0),
+                InputSpec("lossless", _BOOLEAN, default=True),
+                InputSpec("quality", _INT, default=80),
+                InputSpec(
+                    "method", _COMBO, widget=ComboWidget(options=("default", "fastest", "slowest"))
+                ),
+                InputSpec(
+                    "mount",
+                    _STRING,
+                    required=False,
+                    default=None,
+                    widget=MountWidget(),
+                    adjacent_to="filename_prefix",
+                ),
+            ),
+            outputs=(OutputSpec("images", _IMAGE),),
+            idempotent=False,
+            output_node=True,
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        images: Any,
+        filename_prefix: str,
+        fps: float,
+        lossless: bool,
+        quality: int,
+        method: str,
+        mount: str | None = None,
+    ) -> Mapping[str, object]:
+        methods = {"default": 4, "fastest": 0, "slowest": 6}
+        if method not in methods:
+            raise ValueError("unknown WebP compression method")
+        _save_animation(
+            images,
+            filename_prefix,
+            mount,
+            "WEBP",
+            {
+                "duration": int(1000 / fps),
+                "lossless": lossless,
+                "quality": quality,
+                "method": methods[method],
+            },
+        )
+        return cls.outputs(images=images)
+
+
+class SaveAnimatedPNG(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "SaveAnimatedPNG",
+            category="image",
+            inputs=(
+                InputSpec("images", _IMAGE),
+                InputSpec("filename_prefix", _STRING, default="ComfyUI"),
+                InputSpec("fps", _FLOAT, default=6.0),
+                InputSpec("compress_level", _INT, default=4, advanced=True),
+                InputSpec(
+                    "mount",
+                    _STRING,
+                    required=False,
+                    default=None,
+                    widget=MountWidget(),
+                    adjacent_to="filename_prefix",
+                ),
+            ),
+            outputs=(OutputSpec("images", _IMAGE),),
+            idempotent=False,
+            output_node=True,
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        images: Any,
+        filename_prefix: str = "ComfyUI",
+        fps: float = 6.0,
+        compress_level: int = 4,
+        mount: str | None = None,
+    ) -> Mapping[str, object]:
+        _save_animation(
+            images,
+            filename_prefix,
+            mount,
+            "PNG",
+            {"duration": int(1000 / fps), "compress_level": compress_level},
+        )
         return cls.outputs(images=images)
 
 
