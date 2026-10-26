@@ -1,6 +1,9 @@
 """CPU patch execution with actual inference patchers and small conditioning seams."""
 
+import asyncio
 import importlib
+import os
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -96,3 +99,101 @@ def test_anima_patch_executes_image_mask_attention_and_mlp_without_changing_sour
         inactive = {"sigmas": torch.tensor([sigma]), "model_patch_data": {}}
         post({"x": torch.zeros((1, 4, 1, 1, 2)), "transformer_options": inactive})
         assert inactive["model_patch_data"] == {}
+
+
+def test_anima_zero_strength_and_inpaint_mask_controls() -> None:
+    source = _patcher(_Base())
+    weights = _patcher(_Conditioning(4))
+    weights.model.inpaint_masked_input = True
+    image = torch.tensor([0.125, 0.5, 1.0]).expand(1, 8, 16, 3).clone()
+    mask = torch.ones((1, 8, 16))
+    for strength in (0.0, -2.0):
+        patched = AnimaLLLiteApply.execute(
+            model=source,
+            model_patch=weights,
+            image=image,
+            mask=mask,
+            strength=strength,
+            start_percent=0.2,
+            end_percent=0.7,
+        )["MODEL"]
+        patch = patched.model_options["transformer_options"]["patches"]["post_input"][0]
+        options = {"sigmas": torch.tensor([5.0]), "model_patch_data": {}}
+        patch({"x": torch.zeros((1, 4, 1, 1, 2)), "transformer_options": options})
+        if strength == 0:
+            assert options["model_patch_data"] == {}
+        else:
+            expected = torch.tensor([0.0, 0.0, 0.0, 1.0]).view(1, 4, 1, 1)
+            assert torch.equal(options["model_patch_data"][patch], expected.expand(1, 4, 8, 16))
+        assert torch.equal(image, torch.tensor([0.125, 0.5, 1.0]).expand(1, 8, 16, 3))
+        assert torch.equal(mask, torch.ones((1, 8, 16)))
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_anima_executes_production_pack_on_both_ordinary_hosts(in_process: bool) -> None:
+    from dinkster_graph import Graph, GraphNode, Link
+
+    from dinkster.compose import PackSpec, ServingComposer
+
+    async def scenario() -> None:
+        root = Path(__file__).resolve().parents[1]
+        manifests = (
+            root / "dinkster-pack.toml",
+            root / "tests/fixtures/anima_lllite/dinkster-pack.toml",
+        )
+        composer = ServingComposer(
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "PYTHONPATH": os.pathsep.join((str(root / "tests"), str(root / "src"))),
+            }
+        )
+        try:
+            for manifest in manifests:
+                pack = PackSpec(manifest=manifest, in_process=True)
+                if not in_process:
+                    pack = PackSpec(
+                        manifest=manifest,
+                        worker_group="anima-lllite-fixture",
+                        group_manifests=manifests,
+                    )
+                await composer.add_pack(pack)
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("anima-lllite-fixture.source", {}),
+                    "patch": GraphNode(
+                        "AnimaLLLiteApply",
+                        {
+                            "model": Link("source", "model"),
+                            "model_patch": Link("source", "patch"),
+                            "image": Link("source", "image"),
+                            "mask": Link("source", "mask"),
+                            "strength": -2.0,
+                            "start_percent": 0.2,
+                            "end_percent": 0.7,
+                        },
+                    ),
+                    "inspect": GraphNode(
+                        "anima-lllite-fixture.inspect",
+                        {
+                            "source": Link("source", "model"),
+                            "patched": Link("patch", "MODEL"),
+                            "weights": Link("source", "patch"),
+                            "image": Link("source", "image"),
+                            "mask": Link("source", "mask"),
+                        },
+                    ),
+                }
+            )
+            engine = composer.composition.make_engine(lambda _: None)
+            for attempt in range(2):
+                result = await engine.run(graph, ["inspect"])
+                assert (
+                    result.outputs["inspect"]["summary"].resolve()
+                    == "anima patch values and sources preserved"
+                )
+                assert set(result.cached) == (set(graph.nodes) if attempt else set())
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
