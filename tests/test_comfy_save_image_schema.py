@@ -1,0 +1,56 @@
+"""Schema contract for the native ComfyUI SaveImage node."""
+
+from typing import cast
+
+from dinkster_api.v1 import MountWidget, StringWidget
+from dinkster_nodes_comfy.image_file_tools import PreviewImage, SaveImage
+from dinkster_schema import schema_to_wire
+
+
+def test_save_image_preserves_fixed_inputs_and_appends_mount_widget() -> None:
+    schema = SaveImage.schema()
+
+    assert schema.node_type == "SaveImage"
+    assert schema.display_name == "Save Image"
+    assert schema.category == "image"
+    assert tuple(spec.id for spec in schema.inputs) == ("images", "filename_prefix", "mount")
+    assert schema.inputs[1].required
+    assert schema.inputs[1].default == "ComfyUI"
+    assert schema.inputs[1].widget == StringWidget(multiline=False)
+    assert not schema.inputs[2].required
+    assert schema.inputs[2].default is None
+    assert schema.inputs[2].widget == MountWidget()
+    assert schema.inputs[2].adjacent_to == "filename_prefix"
+    assert tuple(spec.id for spec in schema.outputs) == ("images",)
+    assert schema.output_node
+    assert not schema.idempotent
+    assert schema.search_terms == (
+        "save",
+        "save image",
+        "export image",
+        "output image",
+        "write image",
+        "download",
+    )
+
+    wire = schema_to_wire(schema)
+    interface = cast(list[dict[str, object]], wire["interface"])
+    mount = next(entry for entry in interface if entry["id"] == "mount")
+    assert mount["widget"] == {"type": "MOUNT"}
+    assert mount["adjacentTo"] == "filename_prefix"
+
+
+def test_preview_image_uses_the_public_image_preview_output() -> None:
+    schema = PreviewImage.schema()
+
+    assert tuple(spec.id for spec in schema.inputs) == ("images",)
+    assert tuple(spec.id for spec in schema.outputs) == ("images",)
+    assert schema.outputs[0].preview
+    assert schema.output_node
+    assert schema.search_terms == (
+        "preview",
+        "preview image",
+        "show image",
+        "view image",
+        "display image",
+    )
