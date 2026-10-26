@@ -91,6 +91,7 @@ namespaces = [
     "RescaleCFG",
     "ModelComputeDtype",
     "ModelAttentionBackend",
+    "ChromaRadianceOptions",
     "HypernetworkLoader",
     "ModelPatchLoader",
     "MultiGPU_WorkUnits",
