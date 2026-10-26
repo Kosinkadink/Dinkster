@@ -193,6 +193,8 @@ namespaces = [
     "CLIPTextEncodeKandinsky5",
     "CLIPTextEncodeControlnet",
     "T5TokenizerOptions",
+    "FluxKontextImageScale",
+    "Flux3LayoutPrompt",
     "VAEDecode",
     "VAEEncode",
     "VAEDecodeTiled",
