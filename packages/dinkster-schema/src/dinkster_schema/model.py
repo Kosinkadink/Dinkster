@@ -436,6 +436,11 @@ class AssetWidget:
 
 
 @dataclass(frozen=True)
+class MountWidget:
+    """Select one writable mount id for a scalar STRING input."""
+
+
+@dataclass(frozen=True)
 class SaveTargetWidget:
     """Presentation request for a save-destination picker: choose a
     readwrite mount and a relative prefix (subfolders + filename stem).
@@ -937,6 +942,7 @@ class CompositorWidget:
 WidgetDescriptor = (
     CustomWidgetDescriptor
     | AssetWidget
+    | MountWidget
     | SaveTargetWidget
     | ComboWidget
     | MultiComboWidget
@@ -996,6 +1002,7 @@ class WidgetRepresentation:
             (
                 CustomWidgetDescriptor,
                 AssetWidget,
+                MountWidget,
                 SaveTargetWidget,
                 ComboWidget,
                 MultiComboWidget,
@@ -1107,6 +1114,8 @@ def _validate_widget_binding(input_id: str, input_type: TypeExpr, widget: Widget
             )
     if isinstance(widget, StringWidget) and primitive_type != TypeExpr.concrete(CORE_STRING):
         raise ValueError(f"input {input_id}: string widget requires a concrete STRING input")
+    if isinstance(widget, MountWidget) and input_type != TypeExpr.concrete(CORE_STRING):
+        raise ValueError(f"input {input_id}: mount widget requires a concrete STRING input")
     if isinstance(widget, ColorWidget) and input_type not in (
         TypeExpr.concrete(CORE_STRING),
         TypeExpr.concrete(COLOR_TYPE),
@@ -1172,10 +1181,14 @@ class InputSpec:
     alpha_policy: Literal["preserve", "require", "create_if_missing", "drop"] = "preserve"
     mask_polarity: Literal["coverage", "transparency"] | None = None
     mask_semantic: Literal["alpha", "selection", "other"] | None = None
+    adjacent_to: str | None = None
     """Presentation-only label for this input; empty means "derive from the
     id", exactly as before the field existed. Like doc and widget it never
     joins schema signatures or execution identity (hazard H15: presentation
     is pixels, never identity).
+
+    ``adjacent_to`` places this control beside a sibling input without changing
+    interface order or execution identity.
 
     ``lazy`` marks an input whose linked producer is deferred until the node's
     worker-bound hook requests it. Unlike the nearby presentation fields, it
@@ -1199,6 +1212,10 @@ class InputSpec:
     None means "use the default for this input's required-ness"."""
 
     def __post_init__(self) -> None:
+        if self.adjacent_to is not None and (
+            not isinstance(cast("object", self.adjacent_to), str) or not self.adjacent_to
+        ):
+            raise ValueError(f"input {self.id}: adjacent_to must be a non-empty sibling input id")
         if type(self.hidden) is not bool:
             raise ValueError(f"input {self.id}: hidden must be a bool")
         if type(self.lazy) is not bool:
@@ -1679,6 +1696,10 @@ def _validate_dynamic_entries(entries: tuple[DynamicEntry, ...], owner: str) -> 
         raise ValueError(f"{owner}: duplicate dynamic entry ids")
     for entry in entries:
         _validate_structural_id(entry.id, f"{owner} entry id")
+        if isinstance(entry, InputSpec) and entry.adjacent_to is not None:
+            siblings = {item.id for item in entries if isinstance(item, InputSpec)}
+            if entry.adjacent_to == entry.id or entry.adjacent_to not in siblings:
+                raise ValueError(f"input {entry.id}: adjacent_to must name another sibling input")
 
 
 @dataclass(frozen=True)
@@ -2365,6 +2386,11 @@ class NodeSchema:
         output_ids = [spec.id for spec in self.outputs]
         if len(set(input_ids)) != len(input_ids):
             raise ValueError(f"{self.node_type}: duplicate input ids")
+        for spec in self.inputs:
+            if spec.adjacent_to is not None and (
+                spec.adjacent_to == spec.id or spec.adjacent_to not in input_ids
+            ):
+                raise ValueError(f"input {spec.id}: adjacent_to must name another sibling input")
         if len(set(output_ids)) != len(output_ids):
             raise ValueError(f"{self.node_type}: duplicate output ids")
         if not isinstance(cast("object", self.widget_groups), tuple):

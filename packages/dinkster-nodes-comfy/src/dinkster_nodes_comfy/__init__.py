@@ -72,6 +72,7 @@ from .ltx_duration import LTXVDurationPredictor
 from .ltx_sampling import LTX_SAMPLING_NODES
 from .ltx_video_conditioning import LTX_VIDEO_CONDITIONING_NODES
 from .ltx_video_preprocess import LTX_VIDEO_PREPROCESS_NODES
+from .marigold import MarigoldV2PostProcess
 from .mask import MASK_NODES
 from .math import ComfyMathExpression
 from .minimax_h3_latent import EmptyMiniMaxH3LatentAV, MiniMaxH3AddGuide, MiniMaxH3ImageToVideo
@@ -85,6 +86,7 @@ from .model_specific_schedulers import MODEL_SPECIFIC_SCHEDULER_NODES
 from .morphology import MORPHOLOGY_NODES
 from .noise_guidance import NOISE_GUIDANCE_NODES
 from .perpneg import PERPNEG_NODES
+from .pid_conditioning import PiDConditioning
 from .post_processing import POST_PROCESSING_NODES
 from .primitive import (
     PrimitiveBoolean,
@@ -103,6 +105,7 @@ from .seedvr_conditioning import SeedVR2Conditioning
 from .seedvr_postprocess import SeedVR2PostProcessing
 from .seedvr_preprocess import SeedVR2Preprocess
 from .seedvr_temporal import SEEDVR_TEMPORAL_NODES
+from .sensenova_options import SenseNovaSamplingOptions
 from .sigma_operations import SIGMA_OPERATION_NODES
 from .sigma_schedulers import SIGMA_SCHEDULER_NODES
 from .sparse_attention import SPARSE_ATTENTION_NODES
@@ -142,6 +145,7 @@ COMFY_NODES = (
     *MODEL_MERGE_NODES,
     *MODEL_SPECIFIC_MERGE_NODES,
     *MODEL_ADVANCED_NODES,
+    SenseNovaSamplingOptions,
     HypernetworkLoader,
     *MODEL_PATCH_LOADER_NODES,
     *DEVICE_ROUTING_NODES,
@@ -172,6 +176,7 @@ COMFY_NODES = (
     *FLUX_CONDITIONING_NODES,
     *VAE_NODES,
     *CONDITIONING_NODES,
+    PiDConditioning,
     *HOOK_CHECKPOINT_NODES,
     *HOOK_LORA_NODES,
     *CONTEXT_WINDOW_NODES,
@@ -186,6 +191,7 @@ COMFY_NODES = (
     *IMAGE_CORE_NODES,
     *IMAGE_DIMENSION_NODES,
     *IMAGE_COLOR_CONVERSION_NODES,
+    MarigoldV2PostProcess,
     *IMAGE_FILTER_NODES,
     *IMAGE_TRANSFORM_NODES,
     *MORPHOLOGY_NODES,

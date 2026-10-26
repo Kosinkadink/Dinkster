@@ -50,14 +50,12 @@ def _properties_inputs(*inputs: InputSpec) -> tuple[InputSpec, ...]:
         InputSpec(
             "strength",
             _FLOAT,
-            required=False,
             default=1.0,
             widget=NumberWidget(min=0.0, max=10.0, step=0.01),
         ),
         InputSpec(
             "set_cond_area",
             _COMBO,
-            required=False,
             default="default",
             widget=ComboWidget(("default", "mask bounds")),
         ),
@@ -343,8 +341,8 @@ class SetClipHooks(Node):
             category=f"{_CATEGORY}/clip",
             inputs=(
                 InputSpec("clip", _CLIP),
-                InputSpec("apply_to_conds", _BOOLEAN, required=False, default=True, advanced=True),
-                InputSpec("schedule_clip", _BOOLEAN, required=False, default=False, advanced=True),
+                InputSpec("apply_to_conds", _BOOLEAN, default=True, advanced=True),
+                InputSpec("schedule_clip", _BOOLEAN, default=False, advanced=True),
                 InputSpec("hooks", _HOOKS, required=False),
             ),
             outputs=(OutputSpec("clip", _CLIP),),
@@ -388,14 +386,12 @@ class ConditioningTimestepsRange(Node):
                 InputSpec(
                     "start_percent",
                     _FLOAT,
-                    required=False,
                     default=0.0,
                     widget=NumberWidget(min=0.0, max=1.0, step=0.001),
                 ),
                 InputSpec(
                     "end_percent",
                     _FLOAT,
-                    required=False,
                     default=1.0,
                     widget=NumberWidget(min=0.0, max=1.0, step=0.001),
                 ),

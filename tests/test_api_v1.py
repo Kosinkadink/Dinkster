@@ -103,6 +103,7 @@ GOLDEN_V1_SURFACE = (
     "InputFamilySpec",
     "InputSpec",
     "MappingSource",
+    "MountWidget",
     "MultiComboWidget",
     "Node",
     "NodeOutputError",
