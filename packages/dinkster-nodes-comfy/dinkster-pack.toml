@@ -413,6 +413,7 @@ namespaces = [
     "TextEncodeBooguEdit",
     "TextEncodeFibo2",
     "TextGenerateLTX2Prompt",
+    "TextEncodeZImageOmni",
 ]
 
 [pack.sandbox]

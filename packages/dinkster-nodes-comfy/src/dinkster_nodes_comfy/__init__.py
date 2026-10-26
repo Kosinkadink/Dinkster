@@ -135,6 +135,7 @@ from .video_guidance import VIDEO_GUIDANCE_NODES
 from .video_latent import VIDEO_LATENT_NODES
 from .video_latent_ops import VIDEO_LATENT_OPERATION_NODES
 from .wandancer_keyframes import WANDANCER_KEYFRAME_NODES
+from .zimage_encoders import TextEncodeZImageOmni
 
 COMFY_NODES = (
     *TEXT_NODES,
@@ -266,6 +267,7 @@ COMFY_NODES = (
     TextEncodeBooguEdit,
     TextEncodeFibo2,
     TextGenerateLTX2Prompt,
+    TextEncodeZImageOmni,
 )
 
 

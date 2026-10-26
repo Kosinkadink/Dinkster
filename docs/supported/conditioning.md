@@ -16,6 +16,8 @@
 - Qwen Image, Ming, MageFlow, JoyImage, Boogu and Fibo 2 image conditioning
   retain model-specific reference sizing, prompt templates and prior latent
   references. Qwen Image 2.1 also supports precomputed reference caches.
+- Z-Image Omni conditioning combines up to three vision/image references,
+  optional image resizing and VAE latents with its image prompt template.
 - `CLIPTextEncodeSDXL` encodes separate global and local prompts with size,
   crop and target-size conditioning. Unequal token streams are padded with
   empty-prompt tokens. `CLIPTextEncodeSDXLRefiner` adds aesthetic-score and
