@@ -1809,6 +1809,69 @@ def test_compose_rejects_namespace_collision(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
+def test_rootless_default_composes_only_native_core_ids(monkeypatch: pytest.MonkeyPatch) -> None:
+    from dinkster_nodes_comfy import COMFY_NODES
+
+    from dinkster.comfy_compose import comfy_compat_specs
+
+    monkeypatch.delenv("DINKSTER_EXECUTION_PYTHON", raising=False)
+
+    async def scenario() -> None:
+        composer = ServingComposer()
+        try:
+            for spec in comfy_compat_specs():
+                await composer.add_pack(spec)
+            assert set(composer.composition.schemas) == {
+                node.schema().node_type for node in COMFY_NODES
+            }
+            assert set(composer.composition.node_packs.values()) == {"dinkster-nodes-comfy"}
+            result = await composer.composition.make_engine(lambda _event: None).run(
+                Graph(nodes={"length": GraphNode("StringLength", {"string": "native core"})}),
+                ["length"],
+            )
+            assert result.outputs["length"]["length"].resolve() == 11
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("explicit", (False, True))
+def test_rootless_native_runtime_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, explicit: bool
+) -> None:
+    from dinkster_workers import SingleJobMultiGpuConfig
+
+    from dinkster.comfy_compose import comfy_compat_specs
+
+    monkeypatch.setenv("DINKSTER_EXECUTION_PYTHON", "/environment/python")
+    specs = comfy_compat_specs(
+        python="/explicit/python" if explicit else None,
+        asset_vault=tmp_path / "vault",
+        mounts_snapshot=tmp_path / "mounts.json",
+        aimdo="off",
+        memory_budgets={"vram:cuda:0": 123456, "ram": 654321},
+        reserve_vram=789,
+        single_job_multi_gpu=SingleJobMultiGpuConfig(cuda_indices=(0, 1), mode="guidance"),
+    )
+    assert len(specs) == 1
+    spec = specs[0]
+    assert load_manifest(spec.manifest).name == "dinkster-nodes-comfy"
+    assert spec.python == ("/explicit/python" if explicit else "/environment/python")
+    assert spec.env["DINKSTER_ASSET_VAULT"] == str(tmp_path / "vault")
+    assert spec.env["DINKSTER_MOUNTS_SNAPSHOT"] == str(tmp_path / "mounts.json")
+    assert str(TESTS_DIR.parent / "packages/dinkster-nodes-comfy/src") in spec.env[
+        "PYTHONPATH"
+    ].split(os.pathsep)
+    assert spec.vram_budgets == {"vram:cuda:0": 123456}
+    assert spec.reserve_vram == 789
+    assert spec.single_job_cuda_indices == (0, 1)
+    assert spec.single_job_mode == "guidance"
+    assert spec.runtime_settings
+    assert not spec.in_process
+    assert not spec.trust_reserved
+
+
 def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(tmp_path: Path) -> None:
     from dinkster_nodes_comfy import COMFY_NODES
 
