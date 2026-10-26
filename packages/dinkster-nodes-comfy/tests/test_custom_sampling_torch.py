@@ -50,6 +50,101 @@ class _Model:
         self.model = SimpleNamespace(process_latent_out=lambda tensor: tensor * 10)
 
 
+class _LatentFormat:
+    latent_channels = 1
+    latent_dimensions = 2
+    spacial_downscale_ratio = 8
+    temporal_downscale_ratio = 1
+
+    def fix_empty_latent(self, samples: torch.Tensor) -> torch.Tensor:
+        return samples
+
+
+class _ModelSampling:
+    sigma_max = 1.0
+
+    def noise_scaling(
+        self, sigma: torch.Tensor, noise: torch.Tensor, latent: torch.Tensor, _maximum: bool
+    ) -> torch.Tensor:
+        return latent + noise * sigma
+
+    def inverse_noise_scaling(self, _sigma: torch.Tensor, samples: torch.Tensor) -> torch.Tensor:
+        return samples
+
+
+class _RealModel(torch.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.weight = torch.nn.Parameter(torch.ones(()))
+        self.latent_format = _LatentFormat()
+        self.model_sampling = _ModelSampling()
+
+    def get_dtype(self) -> torch.dtype:
+        return torch.float32
+
+    def get_model_object(self, name: str) -> object:
+        return getattr(self, name)
+
+    def memory_required(self, *_args: object, **_kwargs: object) -> int:
+        return 0
+
+    def extra_conds(self, **_kwargs: object) -> dict[str, object]:
+        return {}
+
+    def scale_latent_inpaint(self, **values: torch.Tensor) -> torch.Tensor:
+        return values["latent_image"]
+
+    def process_latent_in(self, samples: torch.Tensor) -> torch.Tensor:
+        return samples
+
+    def process_latent_out(self, samples: torch.Tensor) -> torch.Tensor:
+        return samples * 3
+
+
+def test_sampler_custom_uses_actual_cpu_cfg_guider_and_sampler(monkeypatch: Any) -> None:
+    from dinkster_api.v1 import initialize_inference_process
+
+    initialize_inference_process()
+    from dinkster_inference import samplers
+    from dinkster_inference.model_patcher import ModelPatcher
+
+    patcher = ModelPatcher(_RealModel(), torch.device("cpu"), torch.device("cpu"))
+    expected = torch.tensor([[[[3.0, -7.0]]], [[[11.0, 5.0]]]])
+    original = samplers.calc_cond_batch
+    monkeypatch.setattr(
+        samplers,
+        "calc_cond_batch",
+        lambda _model, conditions, _samples, _sigma, _options: [
+            expected if condition is not None else torch.zeros_like(expected)
+            for condition in conditions
+        ],
+    )
+    try:
+        output = custom_sampling.SamplerCustom.execute(
+            model=patcher,
+            add_noise=False,
+            noise_seed=99,
+            cfg=1.0,
+            positive=[],
+            negative=[],
+            sampler=samplers.ksampler("euler"),
+            sigmas=torch.tensor([1.0, 0.0]),
+            latent_image={
+                "samples": torch.tensor([[[[2.0, -4.0]]], [[[8.0, 1.0]]]]),
+                "batch_index": [6, 2],
+                "noise_mask": torch.tensor([[[[1.0, 0.0]]]]),
+                "origin": "real-cpu",
+            },
+        )
+    finally:
+        monkeypatch.setattr(samplers, "calc_cond_batch", original)
+    assert output["output"]["batch_index"] == [6, 2]
+    assert output["output"]["origin"] == "real-cpu"
+    expected_masked = torch.tensor([[[[9.0, -12.0]]], [[[33.0, 3.0]]]])
+    torch.testing.assert_close(output["output"]["samples"], expected_masked)
+    torch.testing.assert_close(output["denoised_output"]["samples"], expected_masked)
+
+
 def test_sampler_custom_preserves_source_metadata_and_returns_callback_denoised_tensor(
     monkeypatch: Any,
 ) -> None:
