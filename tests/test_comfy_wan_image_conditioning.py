@@ -9,6 +9,7 @@ from dinkster_api.v1 import (
     CORE_INT,
     IMAGE_TYPE,
     LATENT_TYPE,
+    MASK_TYPE,
     VAE_TYPE,
     NumberWidget,
     TypeExpr,
@@ -92,3 +93,50 @@ def test_wan_image_schemas_and_cold_native_discovery() -> None:
         text=True,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_wan_control_schemas_are_native_and_keep_declared_order() -> None:
+    cases = {
+        "WanFunControlToVideo": (
+            "fun control",
+            ["clip_vision_output", "start_image", "control_video"],
+            ["positive", "negative", "latent"],
+        ),
+        "Wan22FunControlToVideo": (
+            "fun control",
+            ["ref_image", "control_video"],
+            ["positive", "negative", "latent"],
+        ),
+        "WanVaceToVideo": (
+            "vace",
+            ["strength", "control_video", "control_masks", "reference_image"],
+            ["positive", "negative", "latent", "trim_latent"],
+        ),
+        "WanPhantomSubjectToVideo": (
+            "phantom subject",
+            ["images"],
+            ["positive", "negative_text", "negative_img_text", "latent"],
+        ),
+    }
+    for name, (category, extra, outputs) in cases.items():
+        schema = next(n.schema() for n in COMFY_NODES if n.schema().node_type == name)
+        assert schema.category == f"model/conditioning/wan/{category}"
+        assert [i.id for i in schema.inputs] == [
+            "positive",
+            "negative",
+            "vae",
+            "width",
+            "height",
+            "length",
+            "batch_size",
+            *extra,
+        ]
+        assert [i.default for i in schema.inputs[3:7]] == [832, 480, 81, 1]
+        for input_ in schema.inputs[7:]:
+            assert input_.required == (input_.id == "strength")
+            if input_.id == "control_masks":
+                assert input_.type == TypeExpr.concrete(MASK_TYPE)
+        assert [o.id for o in schema.outputs] == outputs
+        assert schema_from_wire(schema_to_wire(schema)) == schema
+    manifest = load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml")
+    assert tuple(n.schema().node_type for n in COMFY_NODES) == manifest.namespaces

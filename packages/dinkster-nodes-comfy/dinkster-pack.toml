@@ -393,6 +393,10 @@ namespaces = [
     "WanImageToVideo",
     "WanFirstLastFrameToVideo",
     "WanFunInpaintToVideo",
+    "WanFunControlToVideo",
+    "Wan22FunControlToVideo",
+    "WanVaceToVideo",
+    "WanPhantomSubjectToVideo",
 ]
 
 [pack.sandbox]

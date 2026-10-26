@@ -77,6 +77,11 @@ class Consumer(Node):
                     ("image", CONDITIONING_TYPE),
                     ("first_last", CONDITIONING_TYPE),
                     ("inpaint", CONDITIONING_TYPE),
+                    ("control", CONDITIONING_TYPE),
+                    ("control22", CONDITIONING_TYPE),
+                    ("vace", CONDITIONING_TYPE),
+                    ("phantom", CONDITIONING_TYPE),
+                    ("phantom_negative", CONDITIONING_TYPE),
                     ("latent", LATENT_TYPE),
                 )
             ),
@@ -85,7 +90,17 @@ class Consumer(Node):
 
     @classmethod
     def execute(
-        cls, *, image: Any, first_last: Any, inpaint: Any, latent: Any
+        cls,
+        *,
+        image: Any,
+        first_last: Any,
+        inpaint: Any,
+        control: Any,
+        control22: Any,
+        vace: Any,
+        phantom: Any,
+        phantom_negative: Any,
+        latent: Any,
     ) -> dict[str, object]:
         samples = materialize_latent(latent)["samples"]
         assert samples.shape == (2, 16, 3, 2, 4) and not samples.count_nonzero()
@@ -113,6 +128,38 @@ class Consumer(Node):
             assert mask.shape == (1, 4, 3, 2, 4)
             assert not mask[:, :, 0].count_nonzero()
             assert mask[0, 2, 2, 0, 0] == 1 and mask[0, 3, 2, 0, 0] == 0
+        for value in (control, control22):
+            encoded = value[0][1]["concat_latent_image"]
+            assert encoded.shape == (2, 32, 3, 2, 4)
+            torch.testing.assert_close(
+                encoded[:, :16, :1], torch.full((2, 16, 1, 2, 4), 0.25), rtol=0, atol=0
+            )
+        torch.testing.assert_close(
+            control[0][1]["concat_latent_image"][:, 16:, :1],
+            torch.full((2, 16, 1, 2, 4), 0.75),
+            rtol=0,
+            atol=0,
+        )
+        torch.testing.assert_close(
+            control22[0][1]["reference_latents"][0],
+            torch.full((1, 16, 1, 2, 4), 0.75),
+            rtol=0,
+            atol=0,
+        )
+        vace_metadata = vace[0][1]
+        assert vace_metadata["vace_frames"][0].shape == (1, 32, 4, 2, 4)
+        assert vace_metadata["vace_mask"][0].shape == (1, 64, 4, 2, 4)
+        assert not vace_metadata["vace_mask"][0][:, :, :1].count_nonzero()
+        assert vace_metadata["vace_strength"] == [0.75]
+        torch.testing.assert_close(
+            phantom[0][1]["time_dim_concat"],
+            torch.full((1, 16, 1, 2, 4), 0.25),
+            rtol=0,
+            atol=0,
+        )
+        assert not torch.equal(
+            phantom[0][1]["time_dim_concat"], phantom_negative[0][1]["time_dim_concat"]
+        )
         return cls.outputs(summary="wan-image-first-last-inpaint")
 
 
@@ -178,12 +225,58 @@ def test_wan_image_conditioning_runs_twice_in_ordinary_hosts(
                     "inpaint": GraphNode(
                         "WanFunInpaintToVideo", {**inputs, "end_image": Link("source", "end")}
                     ),
+                    "control": GraphNode(
+                        "WanFunControlToVideo",
+                        {
+                            **inputs,
+                            "start_image": Link("source", "end"),
+                            "control_video": Link("source", "start"),
+                        },
+                    ),
+                    "control22": GraphNode(
+                        "Wan22FunControlToVideo",
+                        {
+                            k: v
+                            for k, v in {
+                                **inputs,
+                                "ref_image": Link("source", "end"),
+                                "control_video": Link("source", "start"),
+                            }.items()
+                            if k != "start_image"
+                        },
+                    ),
+                    "vace": GraphNode(
+                        "WanVaceToVideo",
+                        {
+                            k: v
+                            for k, v in {
+                                **inputs,
+                                "strength": 0.75,
+                                "reference_image": Link("source", "end"),
+                                "control_video": Link("source", "start"),
+                            }.items()
+                            if k != "start_image"
+                        },
+                    ),
+                    "phantom": GraphNode(
+                        "WanPhantomSubjectToVideo",
+                        {
+                            k: v
+                            for k, v in {**inputs, "images": Link("source", "start")}.items()
+                            if k != "start_image"
+                        },
+                    ),
                     "consumer": GraphNode(
                         "wan-image-fixture.consumer",
                         {
                             "image": Link("image", "positive"),
                             "first_last": Link("first_last", "positive"),
                             "inpaint": Link("inpaint", "positive"),
+                            "control": Link("control", "positive"),
+                            "control22": Link("control22", "positive"),
+                            "vace": Link("vace", "positive"),
+                            "phantom": Link("phantom", "positive"),
+                            "phantom_negative": Link("phantom", "negative_img_text"),
                             "latent": Link("first_last", "latent"),
                         },
                     ),
