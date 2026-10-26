@@ -229,7 +229,7 @@ class VAELoader(Node):
         initialize_inference_process()
         utils = importlib.import_module("dinkster_inference.utils")
         sd = importlib.import_module("dinkster_inference.sd")
-        state_dict, metadata = utils.load_torch_file(path, return_metadata=True)
+        state_dict, metadata = utils.load_torch_file(path, safe_load=True, return_metadata=True)
         vae = sd.VAE(sd=state_dict, metadata=metadata)
         vae.throw_exception_if_invalid()
         return cls.outputs(VAE=vae)
