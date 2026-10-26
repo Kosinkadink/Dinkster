@@ -2,8 +2,14 @@
 
 from typing import cast
 
-from dinkster_api.v1 import MountWidget
-from dinkster_nodes_comfy.image_file_tools import LoadImageOutput, PreviewImage, SaveImage
+from dinkster_api.v1 import ASSET_TYPE, MountWidget, TypeExpr
+from dinkster_nodes_comfy.image_file_tools import (
+    LoadImage,
+    LoadImageMask,
+    LoadImageOutput,
+    PreviewImage,
+    SaveImage,
+)
 from dinkster_schema import schema_to_wire
 
 
@@ -67,3 +73,10 @@ def test_load_image_output_preserves_fixed_description() -> None:
         "update the image list and automatically select the first image, allowing for easy "
         "iteration."
     )
+
+
+def test_image_file_inputs_use_the_bound_asset_contract() -> None:
+    for node in (LoadImage, LoadImageMask, LoadImageOutput):
+        image = node.schema().inputs[0]
+        assert image.type == TypeExpr.concrete(ASSET_TYPE)
+        assert image.source_filename is not None

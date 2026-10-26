@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from typing import Any, Literal
 
 from dinkster_api.v1 import (
+    ASSET_TYPE,
     CORE_COMBO,
     CORE_STRING,
     IMAGE_TYPE,
@@ -30,7 +31,7 @@ from dinkster_api.v1 import (
 )
 
 _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
-_IMAGE_ASSET = TypeExpr.asset_of(_IMAGE)
+_ASSET = TypeExpr.concrete(ASSET_TYPE)
 _MASK = TypeExpr.concrete(MASK_TYPE)
 _COMBO = TypeExpr.concrete(CORE_COMBO)
 _STRING = TypeExpr.concrete(CORE_STRING)
@@ -76,7 +77,7 @@ def _load_image(asset: AssetRef) -> tuple[Any, Any]:
 def _asset_input(category: Literal["input", "output"]) -> InputSpec:
     return InputSpec(
         "image",
-        _IMAGE_ASSET,
+        _ASSET,
         widget=AssetWidget(_IMAGE_MEDIA_TYPES, kind="media/image", allow_upload=True),
         source_filename=SourceFilenameSpec("media/image", category),
     )
