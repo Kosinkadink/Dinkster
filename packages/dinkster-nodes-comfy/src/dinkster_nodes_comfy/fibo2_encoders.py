@@ -49,7 +49,7 @@ def _has_images(tokens: Any) -> bool:
 
 
 def _trained_size(aspect_ratio: float) -> tuple[int, int]:
-    area = 1024 * 1024
+    area = 1_048_576
     sizes = [
         (width, height)
         for width in range(64, 2 * area // 64, 16)

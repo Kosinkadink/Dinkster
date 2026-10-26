@@ -99,7 +99,7 @@ class TextEncodeBooguEdit(Node):
                     ).movedim(1, -1)[..., :3]
                 )
                 if vae is not None:
-                    latent_scale = math.sqrt(1024 * 1024 / (width * height))
+                    latent_scale = math.sqrt(1_048_576 / (width * height))
                     latent_width = round(width * latent_scale / 16.0) * 16
                     latent_height = round(height * latent_scale / 16.0) * 16
                     latents.append(

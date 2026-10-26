@@ -95,7 +95,7 @@ class TextEncodeZImageOmni(Node):
                 if auto_resize_images:
                     initialize_inference_process()
                     samples = image.movedim(-1, 1)
-                    scale = math.sqrt(1024 * 1024 / (samples.shape[3] * samples.shape[2]))
+                    scale = math.sqrt(1_048_576 / (samples.shape[3] * samples.shape[2]))
                     width, height = (
                         round(samples.shape[3] * scale / 8) * 8,
                         round(samples.shape[2] * scale / 8) * 8,

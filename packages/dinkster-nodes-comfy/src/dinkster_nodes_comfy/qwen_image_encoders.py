@@ -94,7 +94,7 @@ class TextEncodeQwenImageEdit(Node):
         references: list[Any] = []
         if image is not None:
             pixels: Any = materialize_image(image)
-            width, height = _scale(pixels, 1024 * 1024)
+            width, height = _scale(pixels, 1_048_576)
             pixels = _upscale(pixels, width, height, "area")
             images = [pixels[..., :3]]
             if vae is not None:
@@ -150,7 +150,7 @@ class TextEncodeQwenImageEditPlus(Node):
             width, height = _scale(image, 384 * 384)
             vision.append(_upscale(image, width, height, "area"))
             if vae is not None:
-                width, height = _scale(image, 1024 * 1024, 8)
+                width, height = _scale(image, 1_048_576, 8)
                 references.append(vae.encode(_upscale(image, width, height, "area")[..., :3]))
             prefix += f"Picture {index}: <|vision_start|><|image_pad|><|vision_end|>"
         conditioning = clip.encode_from_tokens_scheduled(

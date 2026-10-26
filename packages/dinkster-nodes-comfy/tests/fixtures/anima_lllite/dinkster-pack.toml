@@ -1,0 +1,8 @@
+[pack]
+name = "anima-lllite-fixture"
+publisher = "dinkster"
+namespaces = ["anima-lllite-fixture"]
+
+[pack.entry]
+nodes = "anima_lllite_fixture:ANIMA_FIXTURE_NODES"
+types = "anima_lllite_fixture:register_inference_types"
