@@ -73,6 +73,7 @@ class CustomWidgetDescriptor:
             "COMBO",
             "COMPOSITOR",
             "CURVE",
+            "MOUNT",
             "MULTI_COMBO",
             "NUMBER",
             "REPRESENTATIONS",

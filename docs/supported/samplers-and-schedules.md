@@ -49,3 +49,6 @@ DPM++, LMS, adaptive DPM, ER-SDE, SA-Solver, and SEEDS-2 runtime samplers.
 LCM upscale, LCM noise controls, and Euler CFG++ sampler nodes run through the
 pinned native sampler runtime. Euler CFG++ supports regular and alternative
 ComfyUI callback behavior.
+
+SenseNova Sampling Options sets a cloned model's flow shift while preserving
+its configured noise scale.

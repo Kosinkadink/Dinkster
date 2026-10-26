@@ -35,6 +35,9 @@
 - Backend color widgets accept scalar COLOR or STRING sockets, retaining the
   declared type and stored color text. Palettes, lists, and unions are rejected.
   This does not claim frontend COLOR editor support.
+- Backend mount widgets present one scalar STRING mount id. Input adjacency
+  hints name a sibling input without changing interface order or execution
+  identity. This does not claim frontend rendering or native save-node support.
 - FLOAT number descriptors, including one-level FLOAT lists, accept `round: false`
   for explicit no-round presentation, or a positive finite numeric precision.
   Omission leaves precision unspecified; false is distinct from numeric zero.
