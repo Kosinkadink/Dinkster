@@ -25,6 +25,7 @@ from .audio_vae import AUDIO_VAE_NODES
 from .cache import CACHE_NODES
 from .cfg_guidance import CFG_GUIDANCE_NODES
 from .cfg_guiders import CFG_GUIDER_NODES
+from .chroma_options import ChromaRadianceOptions
 from .clip import CLIP_NODES
 from .clip_model_specific import MODEL_TEXT_ENCODER_NODES
 from .clip_sd3 import CLIPTextEncodeSD3
@@ -148,6 +149,7 @@ COMFY_NODES = (
     *MODEL_MERGE_NODES,
     *MODEL_SPECIFIC_MERGE_NODES,
     *MODEL_ADVANCED_NODES,
+    ChromaRadianceOptions,
     SenseNovaSamplingOptions,
     HypernetworkLoader,
     *MODEL_PATCH_LOADER_NODES,
