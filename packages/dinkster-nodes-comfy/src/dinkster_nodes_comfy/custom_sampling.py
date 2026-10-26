@@ -40,11 +40,21 @@ _SIGMAS = TypeExpr.concrete(SIGMAS_TYPE)
 _MAX_SEED = 0xFFFFFFFFFFFFFFFF
 
 
-def _runtime() -> tuple[Any, Any]:
+def _runtime() -> Any:
     initialize_inference_process()
-    return importlib.import_module("dinkster_inference.sample"), importlib.import_module(
-        "latent_preview"
-    )
+    return importlib.import_module("dinkster_inference.sample")
+
+
+def _conditioning(value: object) -> object:
+    payload = getattr(value, "_dinkster_resident_payload", None)
+    return getattr(payload, "conditioning", value)
+
+
+def _capture_x0(output: dict[str, object]) -> Any:
+    def callback(_step: int, x0: object, _samples: object, _total_steps: int) -> None:
+        output["x0"] = x0
+
+    return callback
 
 
 def _prepare_latent(
@@ -57,7 +67,7 @@ def _prepare_latent(
     samples = source.get("samples")
     if samples is None:
         raise ValueError("latent_image is missing samples")
-    sample, _ = _runtime()
+    sample = _runtime()
     samples = sample.fix_empty_latent_channels(
         model,
         samples,
@@ -79,6 +89,13 @@ def _outputs(
         return {"output": output, "denoised_output": output}
     denoised = dict(latent)
     x0 = cast(Any, x0_output["x0"])
+    if getattr(samples, "is_nested", False) and not getattr(x0, "is_nested", False):
+        nested_tensor = importlib.import_module("dinkster_inference.nested_tensor")
+        utils = importlib.import_module("dinkster_inference.utils")
+        nested_samples = cast(Any, samples)
+        x0 = nested_tensor.NestedTensor(
+            utils.unpack_latents(x0, [sample.shape for sample in nested_samples.unbind()])
+        )
     denoised["samples"] = model.model.process_latent_out(x0.cpu())
     return {"output": output, "denoised_output": denoised}
 
@@ -131,7 +148,7 @@ class SamplerCustom(Node):
         sigmas: Any,
         latent_image: object,
     ) -> Mapping[str, object]:
-        sample, preview = _runtime()
+        sample = _runtime()
         latent, samples, noise_mask = _prepare_latent(model, latent_image)
         noise = (
             sample.prepare_noise(samples, noise_seed, latent.get("batch_index"))
@@ -139,15 +156,15 @@ class SamplerCustom(Node):
             else sample.prepare_empty_noise(samples)
         )
         x0_output: dict[str, object] = {}
-        callback = preview.prepare_callback(model, sigmas.shape[-1] - 1, x0_output)
+        callback = _capture_x0(x0_output)
         sampled = sample.sample_custom(
             model,
             noise,
             cfg,
             sampler,
             sigmas,
-            positive,
-            negative,
+            _conditioning(positive),
+            _conditioning(negative),
             samples,
             noise_mask=noise_mask,
             callback=callback,
@@ -175,10 +192,10 @@ class SamplerCustomAdvanced(Node):
     def execute(
         cls, *, noise: Any, guider: Any, sampler: Any, sigmas: Any, latent_image: object
     ) -> Mapping[str, object]:
-        _, preview = _runtime()
+        initialize_inference_process()
         latent, samples, noise_mask = _prepare_latent(guider.model_patcher, latent_image)
         x0_output: dict[str, object] = {}
-        callback = preview.prepare_callback(guider.model_patcher, sigmas.shape[-1] - 1, x0_output)
+        callback = _capture_x0(x0_output)
         sampled = guider.sample(
             noise.generate_noise(latent),
             samples,
@@ -189,6 +206,8 @@ class SamplerCustomAdvanced(Node):
             disable_pbar=True,
             seed=noise.seed,
         )
+        management = importlib.import_module("dinkster_inference.model_management")
+        sampled = sampled.to(management.intermediate_device())
         return cls.outputs(**_outputs(guider.model_patcher, latent, sampled, x0_output))
 
 

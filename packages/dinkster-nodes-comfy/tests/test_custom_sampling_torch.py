@@ -40,19 +40,9 @@ class _Sample:
         del model, sampler, sigmas, positive, negative
         callback = kwargs["callback"]
         assert callable(callback)
-        callback({"denoised": samples - noise})
+        callback(0, samples - noise, samples, 2)
         assert cfg == 2.5 and kwargs["noise_mask"] is not None and kwargs["seed"] == 19
         return samples + noise
-
-
-class _Preview:
-    def prepare_callback(self, _model: object, steps: int, output: dict[str, object]) -> Any:
-        assert steps in (1, 2)
-
-        def callback(state: dict[str, torch.Tensor]) -> None:
-            output["x0"] = state["denoised"]
-
-        return callback
 
 
 class _Model:
@@ -64,7 +54,7 @@ def test_sampler_custom_preserves_source_metadata_and_returns_callback_denoised_
     monkeypatch: Any,
 ) -> None:
     sample = _Sample()
-    monkeypatch.setattr(custom_sampling, "_runtime", lambda: (sample, _Preview()))
+    monkeypatch.setattr(custom_sampling, "_runtime", lambda: sample)
     latent = {
         "samples": torch.tensor([[[[1.0, -4.0]]], [[[3.0, 8.0]]]]),
         "batch_index": [9, 2],
@@ -98,7 +88,7 @@ def test_sampler_custom_preserves_source_metadata_and_returns_callback_denoised_
 
 def test_advanced_sampler_uses_the_guider_and_preserves_batch_metadata(monkeypatch: Any) -> None:
     sample = _Sample()
-    monkeypatch.setattr(custom_sampling, "_runtime", lambda: (sample, _Preview()))
+    monkeypatch.setattr(custom_sampling, "_runtime", lambda: sample)
 
     class Noise:
         seed = 41
@@ -120,7 +110,7 @@ def test_advanced_sampler_uses_the_guider_and_preserves_batch_metadata(monkeypat
         ) -> torch.Tensor:
             del sampler, sigmas
             assert kwargs["denoise_mask"] is not None and kwargs["seed"] == 41
-            kwargs["callback"]({"denoised": samples - noise})
+            kwargs["callback"](0, samples - noise, samples, 1)
             return samples + noise * 2
 
     output = custom_sampling.SamplerCustomAdvanced.execute(
