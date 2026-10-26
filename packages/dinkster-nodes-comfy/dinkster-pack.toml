@@ -97,6 +97,7 @@ namespaces = [
     "SUPIRApply",
     "KSampler",
     "KSamplerAdvanced",
+    "WanUni3CControlnetApply",
     "MultiGPU_WorkUnits",
     "SelectModelDevice",
     "SelectCLIPDevice",

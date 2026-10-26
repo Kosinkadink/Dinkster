@@ -122,6 +122,7 @@ from .video_conditioning import VIDEO_CONDITIONING_NODES
 from .video_guidance import VIDEO_GUIDANCE_NODES
 from .video_latent import VIDEO_LATENT_NODES
 from .video_latent_ops import VIDEO_LATENT_OPERATION_NODES
+from .wan_uni3c import WanUni3CControlnetApply
 from .wandancer_keyframes import WANDANCER_KEYFRAME_NODES
 
 COMFY_NODES = (
@@ -151,6 +152,7 @@ COMFY_NODES = (
     AnimaLLLiteApply,
     SUPIRApply,
     *STANDARD_SAMPLING_NODES,
+    WanUni3CControlnetApply,
     *DEVICE_ROUTING_NODES,
     *COMPILE_NODES,
     *MODEL_SPECIFIC_SCHEDULER_NODES,

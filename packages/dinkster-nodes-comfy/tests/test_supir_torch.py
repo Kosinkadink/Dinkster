@@ -1,6 +1,9 @@
 """SUPIR patch math with real CPU patchers and small VAE/control seams."""
 
+import asyncio
 import importlib
+import os
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -139,3 +142,74 @@ def test_supir_disabled_restore_and_encode_failure_restore_vae_patcher() -> None
             restore_cfg_s_tmin=0.25,
         )
     assert vae.patcher is original_patcher and not original_patcher.patches
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_supir_executes_on_both_ordinary_hosts(in_process: bool) -> None:
+    from dinkster_graph import Graph, GraphNode, Link
+
+    from dinkster.compose import PackSpec, ServingComposer
+
+    async def scenario() -> None:
+        root = Path(__file__).resolve().parents[1]
+        manifests = (
+            root / "dinkster-pack.toml",
+            root / "tests/fixtures/supir/dinkster-pack.toml",
+        )
+        composer = ServingComposer(
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "PYTHONPATH": os.pathsep.join((str(root / "tests"), str(root / "src"))),
+            }
+        )
+        try:
+            for manifest in manifests:
+                pack = PackSpec(manifest=manifest, in_process=True)
+                if not in_process:
+                    pack = PackSpec(
+                        manifest=manifest,
+                        worker_group="supir-fixture",
+                        group_manifests=manifests,
+                    )
+                await composer.add_pack(pack)
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("supir-fixture.source", {}),
+                    "patch": GraphNode(
+                        "SUPIRApply",
+                        {
+                            "model": Link("source", "model"),
+                            "model_patch": Link("source", "weights"),
+                            "vae": Link("source", "vae"),
+                            "image": Link("source", "image"),
+                            "strength_start": 2.0,
+                            "strength_end": 0.5,
+                            "restore_cfg": 1.0,
+                            "restore_cfg_s_tmin": 0.25,
+                        },
+                    ),
+                    "inspect": GraphNode(
+                        "supir-fixture.inspect",
+                        {
+                            "source": Link("source", "model"),
+                            "patched": Link("patch", "MODEL"),
+                            "weights": Link("source", "weights"),
+                            "vae": Link("source", "vae"),
+                            "image": Link("source", "image"),
+                        },
+                    ),
+                }
+            )
+            engine = composer.composition.make_engine(lambda _: None)
+            for attempt in range(2):
+                result = await engine.run(graph, ["inspect"])
+                assert (
+                    result.outputs["inspect"]["summary"].resolve()
+                    == "SUPIR control and restoration tensors preserved"
+                )
+                assert set(result.cached) == (set(graph.nodes) if attempt else set())
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
