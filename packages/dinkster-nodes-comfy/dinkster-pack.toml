@@ -410,10 +410,14 @@ namespaces = [
     "CheckpointLoader",
     "unCLIPCheckpointLoader",
     "VAELoader",
+    "ControlNetLoader",
+    "DiffControlNetLoader",
     "UNETLoader",
     "CLIPLoader",
     "DualCLIPLoader",
     "CLIPVisionLoader",
+    "StyleModelLoader",
+    "GLIGENLoader",
 ]
 
 [pack.sandbox]
