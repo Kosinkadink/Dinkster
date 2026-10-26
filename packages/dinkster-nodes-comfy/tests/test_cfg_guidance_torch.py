@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import math
+import os
 from collections.abc import Mapping
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -20,13 +22,22 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.cfg_guidance import APG, TCFG, CFGNorm, CFGZeroStar, Mahiro, NAGuidance
+from dinkster_nodes_comfy.cfg_guidance import (
+    APG,
+    TCFG,
+    CFGNorm,
+    CFGZeroStar,
+    Mahiro,
+    NAGuidance,
+    RenormCFG,
+)
 
 from dinkster.compose import PackSpec, ServingComposer
 
 
 class Patcher:
     def __init__(self) -> None:
+        self.model = SimpleNamespace(diffusion_model=SimpleNamespace(in_channels=1))
         self.pre: Any = None
         self.post: Any = None
         self.attention: Any = None
@@ -147,7 +158,13 @@ def test_ordinary_manifest_links_cfg_guidance_producer_and_consumer_twice(
     tmp_path: Path, in_process: bool
 ) -> None:
     async def scenario() -> None:
-        composer = ServingComposer(worker_env={"PYTHONPATH": str(Path(__file__).parent)})
+        composer = ServingComposer(
+            worker_env={
+                "PYTHONPATH": os.pathsep.join(
+                    (str(Path(__file__).parent), os.environ.get("PYTHONPATH", ""))
+                )
+            }
+        )
         try:
             manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
             module = "cfg_guidance_fixture_" + str(in_process)
@@ -187,3 +204,32 @@ def test_ordinary_manifest_links_cfg_guidance_producer_and_consumer_twice(
             await composer.close()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("timestep", "renorm_cfg", "eps"),
+    [
+        (49.0, 0.0, (5.0, 6.0)),
+        (49.0, 0.5, (12.5 / math.sqrt(61), 15.0 / math.sqrt(61))),
+        (50.0, 0.5, (3.0, 4.0)),
+        (51.0, 0.5, (3.0, 4.0)),
+    ],
+)
+def test_renorm_limits_guided_channels_before_truncation_only(
+    timestep: float, renorm_cfg: float, eps: tuple[float, float]
+) -> None:
+    source = Patcher()
+    patched = RenormCFG.execute(model=source, cfg_trunc=50, renorm_cfg=renorm_cfg)["MODEL"]
+    value = patched.pre(
+        {
+            "cond_denoised": torch.tensor([3.0, 4.0, 7.0, -9.0]).reshape(1, 2, 1, 2),
+            "uncond_denoised": torch.tensor([1.0, 2.0, -5.0, 8.0]).reshape(1, 2, 1, 2),
+            "cond_scale": 2.0,
+            "timestep": torch.tensor([timestep]),
+            "input": torch.zeros((1, 2, 1, 2)),
+        }
+    )
+    torch.testing.assert_close(
+        value, -torch.tensor([*eps, 7.0, -9.0]).reshape(1, 2, 1, 2), rtol=1e-6, atol=0
+    )
+    assert patched is not source and source.pre is None

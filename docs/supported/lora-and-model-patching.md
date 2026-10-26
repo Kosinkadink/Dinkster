@@ -8,6 +8,8 @@ model patcher.
 
 `ChromaRadianceOptions` applies Chroma Radiance transformer options over an
 inclusive sigma range while optionally retaining an existing model wrapper.
+`FluxKVCache` reuses reference-image attention keys and values independently
+for each model block, including changes in prompt batch size.
 
 `MultiGPU_WorkUnits` creates reusable model deep clones for the visible devices.
 `SelectModelDevice`, `SelectCLIPDevice`, and `SelectVAEDevice` route their
