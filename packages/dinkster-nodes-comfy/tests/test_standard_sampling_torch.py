@@ -1,188 +1,181 @@
-"""CPU execution behavior for standard sampler wrappers."""
+"""CPU behavior for native standard sampler nodes."""
 
 from __future__ import annotations
 
-import importlib
-from types import SimpleNamespace
+from typing import Any
 
-import pytest
 import torch
-from dinkster_native.standard_sampling import StandardKSampler, StandardKSamplerAdvanced
+from dinkster_api.v1 import initialize_inference_process
+from dinkster_nodes_comfy.standard_sampling import KSampler, KSamplerAdvanced
 
 
-def _install_sampling_runtime(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
-    calls: list[dict[str, object]] = []
+class _LatentFormat:
+    latent_channels = 1
+    spacial_downscale_ratio = 8
+    temporal_downscale_ratio = 1
+    latent_dimensions = 2
 
-    def fix_empty_latent_channels(
-        model: object, latent: torch.Tensor, spatial: object, temporal: object
+    def fix_empty_latent(self, samples: torch.Tensor) -> torch.Tensor:
+        return samples
+
+
+class _SamplingSpace:
+    sigma_max = 1.0
+    sigma_min = 0.0
+
+    def timestep(self, sigma: float) -> float:
+        return sigma
+
+    def sigma(self, timestep: float) -> float:
+        return timestep
+
+    def noise_scaling(
+        self, sigma: torch.Tensor, noise: torch.Tensor, latent: torch.Tensor, _maximum: bool
     ) -> torch.Tensor:
-        assert model == "model"
-        assert spatial == 8
-        assert temporal == 4
-        return latent + 0.25
+        return latent + sigma.reshape((-1, 1, 1, 1)) * noise
 
-    def prepare_noise(latent: torch.Tensor, seed: int, batch_index: object) -> torch.Tensor:
-        assert batch_index == (2, 0)
-        generator = torch.Generator(device="cpu").manual_seed(seed)
-        return torch.randn(latent.shape, generator=generator, dtype=latent.dtype)
+    def inverse_noise_scaling(self, _sigma: torch.Tensor, samples: torch.Tensor) -> torch.Tensor:
+        return samples
 
-    def prepare_empty_noise(latent: torch.Tensor) -> torch.Tensor:
-        return torch.zeros_like(latent)
 
-    def sample(
-        model: object,
-        noise: torch.Tensor,
-        steps: int,
-        cfg: float,
-        sampler_name: str,
-        scheduler: str,
-        positive: object,
-        negative: object,
-        latent: torch.Tensor,
-        **kwargs: object,
+class _CurrentPatcher:
+    def prepare_state(self, *_args: object) -> None:
+        pass
+
+    def prepare_hook_patches_current_keyframe(self, *_args: object) -> None:
+        pass
+
+    def get_free_memory(self, *_args: object) -> float:
+        return 1e30
+
+    def apply_hooks(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+        return {}
+
+
+class _TinyModel(torch.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.current_patcher = _CurrentPatcher()
+        self.latent_format = _LatentFormat()
+        self.model_sampling = _SamplingSpace()
+        self.inputs: list[torch.Tensor] = []
+
+    def get_dtype(self) -> torch.dtype:
+        return torch.float32
+
+    def memory_required(self, *_args: object, **_kwargs: object) -> int:
+        return 0
+
+    def process_latent_in(self, samples: torch.Tensor) -> torch.Tensor:
+        return samples
+
+    def process_latent_out(self, samples: torch.Tensor) -> torch.Tensor:
+        return samples
+
+    def extra_conds(self, **_kwargs: object) -> dict[str, object]:
+        return {}
+
+    def extra_conds_shapes(self, **_kwargs: object) -> dict[str, tuple[int, ...]]:
+        return {}
+
+    def scale_latent_inpaint(
+        self, *, latent_image: torch.Tensor, **_kwargs: object
     ) -> torch.Tensor:
-        calls.append(
-            {
-                "model": model,
-                "noise": noise.clone(),
-                "steps": steps,
-                "cfg": cfg,
-                "sampler_name": sampler_name,
-                "scheduler": scheduler,
-                "positive": positive,
-                "negative": negative,
-                **kwargs,
-            }
-        )
-        return latent + noise * cfg + steps
+        return latent_image
 
-    modules = {
-        "dinkster_inference.sample": SimpleNamespace(
-            fix_empty_latent_channels=fix_empty_latent_channels,
-            prepare_noise=prepare_noise,
-            prepare_empty_noise=prepare_empty_noise,
-            sample=sample,
-        )
-    }
-    real_import = importlib.import_module
-    monkeypatch.setattr(
-        importlib,
-        "import_module",
-        lambda name: modules.get(name) or real_import(name),
-    )
-    return calls
+    def apply_model(
+        self, samples: torch.Tensor, _sigma: torch.Tensor, **_kwargs: object
+    ) -> torch.Tensor:
+        self.inputs.append(samples.clone())
+        return samples * 0.25
+
+
+def _model() -> tuple[Any, _TinyModel]:
+    initialize_inference_process()
+    from dinkster_inference.model_patcher import ModelPatcher
+
+    raw = _TinyModel()
+    return ModelPatcher(raw, torch.device("cpu"), torch.device("cpu")), raw
+
+
+def _conditioning() -> list[list[object]]:
+    return [[None, {}]]
 
 
 def _latent() -> dict[str, object]:
     return {
-        "samples": torch.tensor(
-            [[[[0.125, -1.5, 2.25], [3.5, -0.75, 0.625]]]], dtype=torch.float32
-        ),
+        "samples": torch.tensor([[[[0.25, -0.5, 1.0], [2.0, -3.0, 0.75]]]], dtype=torch.float32),
         "batch_index": (2, 0),
         "noise_mask": torch.tensor([[[[1.0, 0.0, 0.5], [0.25, 0.75, 1.0]]]]),
         "downscale_ratio_spacial": 8,
-        "downscale_ratio_temporal": 4,
-        "preserved": "source metadata",
+        "downscale_ratio_temporal": 1,
+        "preserved": "metadata",
     }
 
 
-def test_ksampler_uses_seeded_noise_and_preserves_source_metadata(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls = _install_sampling_runtime(monkeypatch)
+def _batch_noise(samples: torch.Tensor, seed: int) -> torch.Tensor:
+    generator = torch.Generator(device="cpu").manual_seed(seed)
+    draws = [torch.randn((1, *samples.shape[1:]), generator=generator) for _ in range(3)]
+    return torch.cat((draws[2], draws[0]))
+
+
+def test_ksampler_runs_pinned_cpu_engine_with_seed_batch_mask_and_source_preservation() -> None:
+    model, raw = _model()
     source = _latent()
     original = source["samples"].clone()
+    mask = source["noise_mask"]
 
-    result = StandardKSampler.execute(
-        model="model",
+    result = KSampler.execute(
+        model=model,
         seed=739,
-        steps=3,
-        cfg=1.25,
-        sampler_name="dinkster.euler",
-        scheduler="dinkster.normal",
-        positive="positive",
-        negative="negative",
+        steps=1,
+        cfg=1.0,
+        sampler_name="euler",
+        scheduler="normal",
+        positive=_conditioning(),
+        negative=_conditioning(),
         latent_image=source,
-        denoise=0.4,
-    )["latent"]
+        denoise=1.0,
+    )["LATENT"]
 
-    generator = torch.Generator(device="cpu").manual_seed(739)
-    expected_noise = torch.randn(original.shape, generator=generator)
-    expected = original + 0.25 + expected_noise * 1.25 + 3
+    expected_source = original.repeat(2, 1, 1, 1)
+    noise = _batch_noise(expected_source, 739)
+    expected_input = (expected_source + noise) * mask + expected_source * (1.0 - mask)
+    expected = expected_input * 0.25 * mask + expected_source * (1.0 - mask)
+    assert len(raw.inputs) == 1
+    torch.testing.assert_close(raw.inputs[0], expected_input)
     torch.testing.assert_close(result["samples"], expected)
     assert torch.equal(source["samples"], original)
-    assert result["preserved"] == "source metadata"
+    assert result["preserved"] == "metadata"
     assert "downscale_ratio_spacial" not in result
     assert "downscale_ratio_temporal" not in result
-    assert len(calls) == 1
-    call = calls[0]
-    assert call["model"] == "model"
-    torch.testing.assert_close(call["noise"], expected_noise)
-    assert call["steps"] == 3
-    assert call["cfg"] == 1.25
-    assert call["sampler_name"] == "euler"
-    assert call["scheduler"] == "normal"
-    assert call["positive"] == "positive"
-    assert call["negative"] == "negative"
-    assert call["denoise"] == 0.4
-    assert call["disable_noise"] is False
-    assert call["start_step"] is None
-    assert call["last_step"] is None
-    assert call["force_full_denoise"] is False
-    assert call["noise_mask"] is source["noise_mask"]
-    assert call["callback"] is None
-    assert call["disable_pbar"] is True
-    assert call["seed"] == 739
 
 
-def test_ksampler_advanced_disables_noise_and_forwards_step_endpoints(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls = _install_sampling_runtime(monkeypatch)
+def test_ksampler_advanced_uses_noise_and_step_boundaries() -> None:
+    model, raw = _model()
     source = _latent()
     original = source["samples"].clone()
 
-    result = StandardKSamplerAdvanced.execute(
-        model="model",
+    result = KSamplerAdvanced.execute(
+        model=model,
         add_noise="disable",
         noise_seed=918,
-        steps=5,
-        cfg=0.75,
-        sampler_name="dinkster.dpmpp_2m",
-        scheduler="dinkster.karras",
-        positive="positive",
-        negative="negative",
+        steps=2,
+        cfg=1.0,
+        sampler_name="euler",
+        scheduler="normal",
+        positive=_conditioning(),
+        negative=_conditioning(),
         latent_image=source,
         start_at_step=1,
-        end_at_step=4,
+        end_at_step=2,
         return_with_leftover_noise="enable",
-    )["latent"]
+    )["LATENT"]
 
-    torch.testing.assert_close(result["samples"], original + 0.25 + 5)
-    call = calls[0]
-    assert torch.equal(call["noise"], torch.zeros_like(original))
-    assert call["sampler_name"] == "dpmpp_2m"
-    assert call["scheduler"] == "karras"
-    assert call["denoise"] == 1.0
-    assert call["disable_noise"] is True
-    assert call["start_step"] == 1
-    assert call["last_step"] == 4
-    assert call["force_full_denoise"] is False
-    assert call["seed"] == 918
-
-    StandardKSamplerAdvanced.execute(
-        model="model",
-        add_noise="enable",
-        noise_seed=918,
-        steps=5,
-        cfg=0.75,
-        sampler_name="dinkster.dpmpp_2m",
-        scheduler="dinkster.karras",
-        positive="positive",
-        negative="negative",
-        latent_image=source,
-        start_at_step=1,
-        end_at_step=4,
-        return_with_leftover_noise="disable",
+    assert len(raw.inputs) == 1
+    torch.testing.assert_close(raw.inputs[0], original)
+    torch.testing.assert_close(
+        result["samples"],
+        original * 0.25 * source["noise_mask"] + original * (1.0 - source["noise_mask"]),
     )
-    assert calls[1]["force_full_denoise"] is True
+    assert torch.equal(source["samples"], original)
