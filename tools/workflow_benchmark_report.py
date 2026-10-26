@@ -724,6 +724,12 @@ def workflow_comparability_problems(
         }
         for report in (ours, theirs)
     ]
+    for workload in source_workloads:
+        workload["provenance"] = {
+            key: value
+            for key, value in workload["provenance"].items()
+            if key != "native_jobs_sha256"
+        }
     if source_workloads[0] != source_workloads[1]:
         problems.append("workload differs")
     for name in ("harness", "dinkster", "comfyui"):

@@ -80,3 +80,12 @@ separate source-graph and native-request hashes. File validation checks the expo
 bytes, requests, successful histories, journal, outputs and memory samples.
 Export provenance and seed validation do not establish numerical parity; only
 executed comparisons can do that.
+
+The MiniMax H3 comparison runner requires `--native-jobs-root DIR`, containing
+`dinkster-pre-generalization/ROW.json` and `dinkster-current/ROW.json` for each
+workflow row (for example `t2v--no-lora`). Capture each stack's native export
+separately for the prepared two-second, fixed-seed workflow, not the untouched
+five-second template. The runner binds each export's exact digest into a retained
+per-stack provenance file without changing the shared source provenance or graph.
+The same native export validation applies to both Dinkster stacks; the reference
+ComfyUI stack does not read these files.

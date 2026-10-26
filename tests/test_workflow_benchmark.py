@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from tools import minimax_h3_comparison, workflow_benchmark
 from tools.workflow_benchmark import dinkster_execution_receipt
 from tools.workflow_benchmark_report import (
     json_digest,
@@ -126,7 +127,13 @@ def test_native_job_metadata_does_not_change_source_workflow_comparison(
     theirs["system"] = "comfyui"
     del theirs["workload"]["native_jobs"]
     del theirs["workload"]["native_jobs_sha256"]
+    del theirs["workload"]["provenance"]["native_jobs_sha256"]
+    original = copy.deepcopy(ours)
     assert workflow_comparability_problems(ours, theirs) == ()
+    assert ours == original
+    theirs["workload"]["provenance"]["template_sha256"] = "d" * 64
+    assert workflow_comparability_problems(ours, theirs) == ("workload differs",)
+    theirs["workload"]["provenance"]["template_sha256"] = "c" * 64
     theirs["workload"]["seeds"] = [17, 19]
     assert workflow_comparability_problems(ours, theirs) == ("workload differs",)
 
@@ -216,3 +223,57 @@ def test_retained_native_job_requests_are_validated_on_every_run(
     assert validate_workflow_files(report, tmp_path) == (
         "invalid retained workflow evidence: retained native request differs",
     )
+
+
+@pytest.mark.parametrize("stack_id", tuple(minimax_h3_comparison.STACK_PINS))
+def test_minimax_comparison_supplies_stack_specific_native_exports(
+    stack_id: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workflow, provenance, seed_input = minimax_h3_comparison.prepare_workflow(
+        "t2v--no-lora", tmp_path / "input"
+    )
+    original_provenance = provenance.read_bytes()
+    stack = minimax_h3_comparison.Stack(
+        stack_id, *minimax_h3_comparison.STACK_PINS[stack_id], tmp_path, Path("python")
+    )
+    reference = minimax_h3_comparison.Stack(
+        "comfyui", *minimax_h3_comparison.STACK_PINS["comfyui"], tmp_path, Path("python")
+    )
+    native_root = tmp_path / "native"
+    native_export = native_root / stack_id / "t2v--no-lora.json"
+    if stack.system == "dinkster":
+        native_export.parent.mkdir(parents=True)
+        native_export.write_text(json.dumps({"stack": stack_id}))
+
+    def benchmark(system: str, arguments: list[str]) -> int:
+        args = workflow_benchmark.parse_arguments(system, arguments)
+        captured = json.loads(args.workflow_provenance.read_text())
+        if system == "dinkster":
+            assert args.native_jobs == native_export
+            assert captured == {
+                **json.loads(original_provenance),
+                "native_jobs_sha256": hashlib.sha256(native_export.read_bytes()).hexdigest(),
+            }
+        else:
+            assert not hasattr(args, "native_jobs")
+            assert args.workflow_provenance == provenance
+        minimax_h3_comparison.save(args.output / "report.json", {"all_ok": False})
+        return 1
+
+    monkeypatch.setattr(workflow_benchmark, "main", benchmark)
+    result = minimax_h3_comparison.run_stack(
+        stack,
+        "t2v--no-lora",
+        workflow,
+        provenance,
+        seed_input,
+        tmp_path / "artifacts.json",
+        tmp_path / stack_id,
+        reference,
+        "GPU-test",
+        18760,
+        native_root,
+    )
+    assert result["status"] == "failed"
+    assert result["benchmark_exit_code"] == 1
+    assert provenance.read_bytes() == original_provenance
