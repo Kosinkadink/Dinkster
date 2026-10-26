@@ -1,5 +1,8 @@
 ## ComfyUI compatibility
 
+- The native pack declares bound-file checkpoint, VAE, diffusion-model, text
+  encoder and vision-encoder loader schemas. Model construction uses the pinned
+  inference package; file inputs grant access only to the selected asset.
 - Native LoRA hook loaders use bound model/lora assets, preserve prior hooks
   and apply separate model and CLIP strengths while retaining loaded weights.
 - Native WanDancer keyframe padding places reference frames and masks into

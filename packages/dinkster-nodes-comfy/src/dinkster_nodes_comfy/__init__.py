@@ -83,6 +83,7 @@ from .minimax_h3_latent import EmptyMiniMaxH3LatentAV, MiniMaxH3AddGuide, MiniMa
 from .minimax_h3_sampling import MiniMaxH3SigmaShift
 from .mochi import EmptyMochiLatentVideo
 from .model_advanced import MODEL_ADVANCED_NODES
+from .model_file_loaders import MODEL_FILE_LOADER_NODES
 from .model_merging import MODEL_MERGE_NODES
 from .model_merging_specific import MODEL_SPECIFIC_MERGE_NODES
 from .model_patch_loader import MODEL_PATCH_LOADER_NODES
@@ -247,6 +248,7 @@ COMFY_NODES = (
     LTXVDurationPredictor,
     MiniMaxH3AddGuide,
     *COLOR_RESOLUTION_NODES,
+    *MODEL_FILE_LOADER_NODES,
 )
 
 

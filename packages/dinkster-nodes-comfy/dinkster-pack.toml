@@ -406,6 +406,14 @@ namespaces = [
     "MiniMaxH3AddGuide",
     "ColorToRGBInt",
     "ResolutionSelector",
+    "CheckpointLoaderSimple",
+    "CheckpointLoader",
+    "unCLIPCheckpointLoader",
+    "VAELoader",
+    "UNETLoader",
+    "CLIPLoader",
+    "DualCLIPLoader",
+    "CLIPVisionLoader",
 ]
 
 [pack.sandbox]
