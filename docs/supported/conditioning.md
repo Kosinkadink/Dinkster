@@ -55,4 +55,6 @@
   embedding directories.
 - `GLIGENTextBoxApply` appends pooled text embeddings and latent-space textbox
   positions to conditioning, preserving prior boxes and other prompt metadata.
+- `PiDConditioning` attaches Flux, SD3, SDXL, or Qwen Image latents and a
+  degradation sigma to conditioning for PiD decoding and upscaling.
 - Other model-family conditioning surfaces are unsupported.

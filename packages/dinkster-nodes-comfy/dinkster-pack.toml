@@ -213,6 +213,7 @@ namespaces = [
     "ConditioningZeroOut",
     "ConditioningSetTimestepRange",
     "ConditioningStableAudio",
+    "PiDConditioning",
     "CreateHookModelAsLora",
     "CreateHookModelAsLoraModelOnly",
     "ContextWindowsManual",
