@@ -35,6 +35,10 @@
 - Backend color widgets accept scalar COLOR or STRING sockets, retaining the
   declared type and stored color text. Palettes, lists, and unions are rejected.
   This does not claim frontend COLOR editor support.
+- Inputs can declare socketless presentation while retaining their type,
+  widget, default and interface order, including nested combos and families.
+  The flag defaults to false, conflicts with forced socket presentation, and
+  does not change execution signatures. Frontend pin rendering is not claimed.
 - Backend mount widgets present one scalar STRING mount id. Input adjacency
   hints name a sibling input without changing interface order or execution
   identity. This does not claim frontend rendering or native save-node support.

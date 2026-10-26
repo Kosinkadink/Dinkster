@@ -3,6 +3,7 @@
 from dinkster_api.v1 import (
     ASSET_TYPE,
     AUDIO_TYPE,
+    BOUNDING_BOX_TYPE,
     TypeRegistry,
     register_asset_type,
     register_audio_value_type,
@@ -23,6 +24,7 @@ from .audio_latent import AUDIO_LATENT_NODES, GetAudioLatentSize
 from .audio_music_conditioning import AUDIO_MUSIC_CONDITIONING_NODES
 from .audio_transform import AUDIO_TRANSFORM_NODES
 from .audio_vae import AUDIO_VAE_NODES
+from .bernini_conditioning import BERNINI_CONDITIONING_NODES
 from .boogu_encoders import TextEncodeBooguEdit
 from .cache import CACHE_NODES
 from .cfg_guidance import CFG_GUIDANCE_NODES
@@ -62,6 +64,7 @@ from .hypernetwork import HypernetworkLoader
 from .image_color_conversion import IMAGE_COLOR_CONVERSION_NODES
 from .image_control_patches import IMAGE_CONTROL_PATCH_NODES
 from .image_core import IMAGE_CORE_NODES
+from .image_crop import ImageCropV2, PrimitiveBoundingBox
 from .image_dimensions import IMAGE_DIMENSION_NODES
 from .image_filters import IMAGE_FILTER_NODES
 from .image_transform import IMAGE_TRANSFORM_NODES
@@ -146,6 +149,12 @@ from .video_conditioning import VIDEO_CONDITIONING_NODES
 from .video_guidance import VIDEO_GUIDANCE_NODES
 from .video_latent import VIDEO_LATENT_NODES
 from .video_latent_ops import VIDEO_LATENT_OPERATION_NODES
+from .wan22_latent import Wan22ImageToVideoLatent
+from .wan_animate import WAN_ANIMATE_NODES
+from .wan_control_conditioning import WAN_CONTROL_CONDITIONING_NODES
+from .wan_image_conditioning import WanFirstLastFrameToVideo, WanFunInpaintToVideo, WanImageToVideo
+from .wan_scail_conditioning import WanSCAILToVideo
+from .wan_track_conditioning import WanTrackToVideo
 from .wan_uni3c import WanUni3CControlnetApply
 from .wandancer_keyframes import WANDANCER_KEYFRAME_NODES
 from .zimage_encoders import TextEncodeZImageOmni
@@ -211,6 +220,7 @@ COMFY_NODES = (
     *MODEL_TEXT_ENCODER_NODES,
     *FLUX_CONDITIONING_NODES,
     *FLUX_IMAGE_LAYOUT_NODES,
+    *BERNINI_CONDITIONING_NODES,
     *VAE_NODES,
     *CONDITIONING_NODES,
     PiDConditioning,
@@ -276,6 +286,14 @@ COMFY_NODES = (
     *WANDANCER_KEYFRAME_NODES,
     LTXVDurationPredictor,
     MiniMaxH3AddGuide,
+    WanImageToVideo,
+    WanFirstLastFrameToVideo,
+    WanFunInpaintToVideo,
+    *WAN_CONTROL_CONDITIONING_NODES,
+    Wan22ImageToVideoLatent,
+    WanSCAILToVideo,
+    WanTrackToVideo,
+    *WAN_ANIMATE_NODES,
     *COLOR_RESOLUTION_NODES,
     BuildJsonPromptIdeogram,
     MOSSImageLayoutPrompt,
@@ -295,6 +313,8 @@ COMFY_NODES = (
     TextEncodeZImageOmni,
     PhotoMakerLoader,
     PhotoMakerEncode,
+    ImageCropV2,
+    PrimitiveBoundingBox,
 )
 
 
@@ -303,6 +323,8 @@ def register_inference_types(registry: TypeRegistry) -> None:
         register_asset_type(registry, resolver_from_env())
     if AUDIO_TYPE not in registry:
         register_audio_value_type(registry, AUDIO_TYPE, resolver_from_env())
+    if BOUNDING_BOX_TYPE not in registry:
+        registry.register(BOUNDING_BOX_TYPE)
     _register_inference_types(registry)
 
 

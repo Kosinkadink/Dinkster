@@ -22,6 +22,7 @@
   optional image resizing and VAE latents with its image prompt template.
 - PhotoMaker loads identity checkpoints from admitted assets and fuses identity
   features into the selected prompt token while retaining pooled conditioning.
+- Bernini conditioning encodes source video, reference video, and ordered reference images.
 - `CLIPTextEncodeSDXL` encodes separate global and local prompts with size,
   crop and target-size conditioning. Unequal token streams are padded with
   empty-prompt tokens. `CLIPTextEncodeSDXLRefiner` adds aesthetic-score and

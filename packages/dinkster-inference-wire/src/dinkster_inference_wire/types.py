@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dinkster_memory.resident import default_pool
 from dinkster_values import (
+    AUDIO_ENCODER_OUTPUT_TYPE,
     CLIP_TYPE,
     CLIP_VISION_OUTPUT_TYPE,
     CLIP_VISION_TYPE,
@@ -22,11 +23,14 @@ from dinkster_values import (
     NOISE_TYPE,
     PHOTOMAKER_TYPE,
     RESOLUTION_PREVIEW_TYPE,
+    SAM3_TRACK_DATA_TYPE,
     SAMPLER_TYPE,
     SIGMAS_TYPE,
     STYLE_MODEL_TYPE,
     TIMESTEPS_RANGE_TYPE,
+    TRACKS_TYPE,
     VAE_TYPE,
+    WAN_CAMERA_EMBEDDING_TYPE,
     TypeRegistry,
     TypeSpec,
     register_resident_type,
@@ -44,6 +48,7 @@ from .media_wire import (
     materialize_latent,
     register_media_types,
 )
+from .sam3_wire import register_sam3_track_type
 from .sampling_wire import register_sampling_type
 from .vision_wire import (
     clip_vision_output_fingerprint,
@@ -52,6 +57,7 @@ from .vision_wire import (
     materialize_clip_vision_output,
     validate_clip_vision_output,
 )
+from .wan_wire import register_wan_type
 
 MODEL_TYPE_ID = MODEL_TYPE
 CLIP_TYPE_ID = CLIP_TYPE
@@ -132,6 +138,15 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
             validate_encoded=validate_clip_vision_output,
         )
     registered.append(registry.spec(CLIP_VISION_OUTPUT_TYPE))
+    registered.append(
+        registry.spec(SAM3_TRACK_DATA_TYPE)
+        if SAM3_TRACK_DATA_TYPE in registry
+        else register_sam3_track_type(registry)
+    )
+    for type_id in (WAN_CAMERA_EMBEDDING_TYPE, TRACKS_TYPE, AUDIO_ENCODER_OUTPUT_TYPE):
+        registered.append(
+            registry.spec(type_id) if type_id in registry else register_wan_type(registry, type_id)
+        )
     registered.extend(register_media_types(registry))
     return tuple(registered)
 

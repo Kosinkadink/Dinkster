@@ -1186,6 +1186,7 @@ class InputSpec:
     mask_polarity: Literal["coverage", "transparency"] | None = None
     mask_semantic: Literal["alpha", "selection", "other"] | None = None
     adjacent_to: str | None = None
+    socketless: bool = False
     """Presentation-only label for this input; empty means "derive from the
     id", exactly as before the field existed. Like doc and widget it never
     joins schema signatures or execution identity (hazard H15: presentation
@@ -1193,6 +1194,9 @@ class InputSpec:
 
     ``adjacent_to`` places this control beside a sibling input without changing
     interface order or execution identity.
+
+    ``socketless`` omits this editor's incoming connection affordance without
+    changing its value domain, declaration order, or execution identity.
 
     ``lazy`` marks an input whose linked producer is deferred until the node's
     worker-bound hook requests it. Unlike the nearby presentation fields, it
@@ -1216,6 +1220,10 @@ class InputSpec:
     None means "use the default for this input's required-ness"."""
 
     def __post_init__(self) -> None:
+        if type(self.socketless) is not bool:
+            raise ValueError(f"input {self.id}: socketless must be a bool")
+        if self.socketless and self.force_input:
+            raise ValueError(f"input {self.id}: socketless conflicts with force_input")
         if self.adjacent_to is not None and (
             not isinstance(cast("object", self.adjacent_to), str) or not self.adjacent_to
         ):
