@@ -224,13 +224,13 @@ class ReplaceVideoLatentFrames(Node):
             category="model/latent/batch",
             inputs=(
                 InputSpec("destination", _LATENT),
+                InputSpec("source", _LATENT, required=False),
                 InputSpec(
                     "index",
                     TypeExpr.concrete(CORE_INT),
                     default=0,
                     widget=NumberWidget(min=-16384, max=16384, step=1),
                 ),
-                InputSpec("source", _LATENT, required=False),
             ),
             outputs=(OutputSpec("LATENT", _LATENT),),
         )
