@@ -729,10 +729,9 @@ _DECIMAL_WIRE_INT_MAX = 2**64 - 1
 class NumberWidget:
     """Presentation request for a numeric input's editor.
 
-    Only meaningful on ``INT``/``FLOAT`` inputs or their exact numeric union;
-    the union uses float presentation, so one widget kind covers both.
-    All constraints are UI vocabulary: the runtime value stays a plain
-    number and out-of-range stored values are the frontend's diagnostic to
+    Numeric sockets, their exact union, and forced-input ``FLOATS`` use
+    this presentation without changing their runtime value domains.
+    All constraints are UI vocabulary: out-of-range stored values are the frontend's diagnostic to
     surface, never a schema error. Absent min/max means unbounded. Integer
     constraints through signed 64-bit minimum and unsigned 64-bit maximum are
     lossless as canonical decimal strings outside the JSON-double-safe range.
@@ -740,7 +739,7 @@ class NumberWidget:
     ``display`` is an explicit editor presentation when present. Bounds and
     step are independent constraints: they never imply a slider or any other
     presentation. ``round`` is an independent finite positive rendering
-    precision, or literal False to disable rounding, available only on FLOAT;
+    precision, or literal False to disable rounding, using FLOAT semantics;
     it never implies display or changes bounds/step. ``control_after_generate``
     names the INITIAL mode of the seed-style control-after-generate selector; setting it asks the
     frontend to render that control. Absence of the descriptor means "no
@@ -749,9 +748,9 @@ class NumberWidget:
     (pinned with the frontend).
 
     Socket binding: this descriptor is only
-    legal on concrete ``INT``/``FLOAT`` inputs, their one-level lists, and
-    the scalar ``INT``/``FLOAT`` union. Constraints use the socket's domain
-    (FLOAT for the union) - an int socket with a
+    legal on concrete ``INT``/``FLOAT`` inputs, their one-level lists,
+    the scalar ``INT``/``FLOAT`` union, and forced concrete ``FLOATS``.
+    Constraints use the socket's domain (FLOAT for the union and FLOATS) - an int socket with a
     fractional min/max/step is malformed. Enforced by InputSpec, which is
     the first place the widget meets its socket type."""
 
