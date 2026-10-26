@@ -2,6 +2,8 @@
 
 - SD1.5 positive and negative text conditioning executes through the pinned
   `dinkster_inference` runtime.
+- Native Flux text conditioning keeps independent CLIP-L and T5 prompts,
+  guidance embedding overrides or disabling, and the selected multi-reference method.
 - `CLIPTextEncodeSDXL` encodes separate global and local prompts with size,
   crop and target-size conditioning. Unequal token streams are padded with
   empty-prompt tokens. `CLIPTextEncodeSDXLRefiner` adds aesthetic-score and
@@ -28,6 +30,8 @@
   conditioning, prior-control chaining, union type selection, and AliMama masked hints.
 - Native `InstructPixToPixConditioning` crops and encodes the input image,
   attaches image conditioning to both prompt streams, and returns a zero latent.
+- `SD_4XUpscale_Conditioning` resizes image conditioning for Stable Diffusion
+  upscaling and returns matching positive, negative, and zero latent outputs.
 - Native `ReferenceLatent` appends a guiding latent to conditioning while
   preserving existing references; an unconnected latent leaves conditioning unchanged.
 - Hunyuan 3D v2 uses single-view vision features or ordered front/left/back/right
