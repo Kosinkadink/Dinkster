@@ -12,6 +12,7 @@ from dinkster_api.v1 import register_inference_types as _register_inference_type
 
 from .ace_text_conditioning import ACE_TEXT_CONDITIONING_NODES
 from .advanced_samplers import ADVANCED_SAMPLER_NODES
+from .anima_lllite import AnimaLLLiteApply
 from .ar_video import ARVideoI2V, SamplerARVideo
 from .attention_guidance import ATTENTION_GUIDANCE_NODES
 from .attention_multiply import ATTENTION_MULTIPLY_NODES
@@ -37,6 +38,7 @@ from .conditioning import CONDITIONING_NODES
 from .context_windows import CONTEXT_WINDOW_NODES
 from .controlnet import CONTROLNET_NODES
 from .cosmos_conditioning import COSMOS_CONDITIONING_NODES
+from .custom_sampling import CUSTOM_SAMPLING_NODES
 from .dataset_collections import DATASET_COLLECTION_NODES
 from .dataset_groups import DATASET_GROUP_NODES
 from .dataset_images import DATASET_IMAGE_NODES
@@ -56,6 +58,7 @@ from .hunyuan_text import HUNYUAN_TEXT_NODES
 from .hunyuan_video_image import HUNYUAN_VIDEO_IMAGE_NODES
 from .hypernetwork import HypernetworkLoader
 from .image_color_conversion import IMAGE_COLOR_CONVERSION_NODES
+from .image_control_patches import IMAGE_CONTROL_PATCH_NODES
 from .image_core import IMAGE_CORE_NODES
 from .image_dimensions import IMAGE_DIMENSION_NODES
 from .image_filters import IMAGE_FILTER_NODES
@@ -88,6 +91,7 @@ from .model_merging_specific import MODEL_SPECIFIC_MERGE_NODES
 from .model_patch_loader import MODEL_PATCH_LOADER_NODES
 from .model_specific_schedulers import MODEL_SPECIFIC_SCHEDULER_NODES
 from .morphology import MORPHOLOGY_NODES
+from .noise import NOISE_NODES
 from .noise_guidance import NOISE_GUIDANCE_NODES
 from .perpneg import PERPNEG_NODES
 from .pid_conditioning import PiDConditioning
@@ -116,7 +120,9 @@ from .sparse_attention import SPARSE_ATTENTION_NODES
 from .spatial_model_patches import SPATIAL_MODEL_PATCH_NODES
 from .stable3d import STABLE3D_NODES
 from .stable_cascade import STABLE_CASCADE_NODES
+from .standard_sampling import STANDARD_SAMPLING_NODES
 from .style_model import STYLE_MODEL_NODES
+from .supir import SUPIRApply
 from .switch import ComfySwitchNode
 from .text import TEXT_NODES
 from .utilities import ComfyNumberConvert, SeedNode
@@ -125,6 +131,7 @@ from .video_conditioning import VIDEO_CONDITIONING_NODES
 from .video_guidance import VIDEO_GUIDANCE_NODES
 from .video_latent import VIDEO_LATENT_NODES
 from .video_latent_ops import VIDEO_LATENT_OPERATION_NODES
+from .wan_uni3c import WanUni3CControlnetApply
 from .wandancer_keyframes import WANDANCER_KEYFRAME_NODES
 
 COMFY_NODES = (
@@ -153,6 +160,12 @@ COMFY_NODES = (
     SenseNovaSamplingOptions,
     HypernetworkLoader,
     *MODEL_PATCH_LOADER_NODES,
+    AnimaLLLiteApply,
+    SUPIRApply,
+    *STANDARD_SAMPLING_NODES,
+    *CUSTOM_SAMPLING_NODES,
+    WanUni3CControlnetApply,
+    *IMAGE_CONTROL_PATCH_NODES,
     *DEVICE_ROUTING_NODES,
     *COMPILE_NODES,
     *MODEL_SPECIFIC_SCHEDULER_NODES,
@@ -164,6 +177,7 @@ COMFY_NODES = (
     *SPATIAL_MODEL_PATCH_NODES,
     *ROPE_AND_MASK_NODES,
     *NOISE_GUIDANCE_NODES,
+    *NOISE_NODES,
     *SPARSE_ATTENTION_NODES,
     *HOOK_SCHEDULING_NODES,
     *SIGMA_OPERATION_NODES,

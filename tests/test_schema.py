@@ -145,6 +145,46 @@ def test_widget_roundtrip(type_id: str, widget: object, expected: dict[str, obje
     )
 
 
+@pytest.mark.parametrize("representations", [False, True])
+def test_forced_floats_numeric_presentation_preserves_socket(representations: bool) -> None:
+    widget = NumberWidget(min=-1, step=0.001)
+    presentation = (
+        WidgetRepresentations(
+            (WidgetRepresentation("number", widget),), default="number", user_switchable=False
+        )
+        if representations
+        else widget
+    )
+    schema = NodeSchema(
+        "test.floats-presentation",
+        inputs=(
+            InputSpec(
+                "floats_strength",
+                TypeExpr.concrete("FLOATS"),
+                default=-1,
+                force_input=True,
+                widget=presentation,
+            ),
+        ),
+    )
+    wire = schema_to_wire(schema)
+    item = cast("list[dict[str, Any]]", wire["interface"])[0]
+    assert item["type"] == {"kind": "concrete", "types": ["FLOATS"]}
+    assert item["default"] == -1
+    assert item["forceInput"] is True
+    assert schema_from_wire(wire) == schema
+    assert schema.inputs[0].widget == presentation
+    assert widget.min == -1 and widget.step == 0.001
+    for wrong_type, forced in (
+        (TypeExpr.concrete("FLOATS"), False),
+        (TypeExpr.concrete("OPAQUE"), True),
+        (TypeExpr.list_of(TypeExpr.concrete("FLOATS")), True),
+        (TypeExpr.union("FLOATS", "FLOAT"), True),
+    ):
+        with pytest.raises(ValueError, match="number widget requires"):
+            InputSpec("value", wrong_type, force_input=forced, widget=presentation)
+
+
 def test_save_mount_adjacency_preserves_wire_order_and_execution_identity() -> None:
     from dinkster_api.v1 import MountWidget as PublicMountWidget
 

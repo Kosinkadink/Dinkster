@@ -23,8 +23,8 @@ from dinkster_api.v1 import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.sampler_factories import (
-    _SAMPLER_NAMES,
     SAMPLER_FACTORY_NODES,
+    SAMPLER_NAMES,
     KSamplerSelect,
     SamplerDPMAdaptative,
     SamplerDPMPP_2M_SDE,
@@ -80,7 +80,7 @@ def test_sampler_factories_construct_pinned_runtime_samplers_with_exact_options(
     initialize_inference_process()
     from dinkster_inference import samplers
 
-    assert tuple(samplers.SAMPLER_NAMES) == _SAMPLER_NAMES
+    assert tuple(samplers.SAMPLER_NAMES) == SAMPLER_NAMES
     cases = (
         (KSamplerSelect, {"sampler_name": "euler"}, "sample_euler", {}),
         (

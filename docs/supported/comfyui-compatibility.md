@@ -1,5 +1,15 @@
 ## ComfyUI compatibility
 
+- Native Anima LLLite applies image and optional mask guidance to cloned models
+  through scheduled input, self-attention, cross-attention and MLP patches.
+- Native SUPIR applies scheduled control strength and optional restoration
+  guidance, using checkpoint denoise-encoder weights when present.
+- Native KSampler and KSamplerAdvanced use the inference sampling engine with
+  seeded batch noise, masks, denoise strength and advanced step boundaries.
+- Native Wan Uni3C applies render-video guidance with temporal padding, spatial
+  alignment, scheduled residuals and shared conditional-batch computation.
+- Native Qwen DiffSynth and Z-Image Fun ControlNet apply scheduled image and
+  inpaint guidance; USO prepends projected vision features to text tokens.
 - Native LoRA hook loaders use bound model/lora assets, preserve prior hooks
   and apply separate model and CLIP strengths while retaining loaded weights.
 - Native WanDancer keyframe padding places reference frames and masks into
