@@ -3,7 +3,7 @@
 from typing import cast
 
 from dinkster_api.v1 import MountWidget
-from dinkster_nodes_comfy.image_file_tools import PreviewImage, SaveImage
+from dinkster_nodes_comfy.image_file_tools import LoadImageOutput, PreviewImage, SaveImage
 from dinkster_schema import schema_to_wire
 
 
@@ -58,4 +58,12 @@ def test_preview_image_uses_the_public_image_preview_output() -> None:
         "view image",
         "display image",
         "image viewer",
+    )
+
+
+def test_load_image_output_preserves_fixed_description() -> None:
+    assert LoadImageOutput.schema().description == (
+        "Load an image from the output folder. When the refresh button is clicked, the node will "
+        "update the image list and automatically select the first image, allowing for easy "
+        "iteration."
     )

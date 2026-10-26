@@ -241,9 +241,9 @@ class LoadImageOutput(LoadImage):
             display_name="Load Image (from Outputs)",
             category="image",
             description=(
-                "Load an image from the output folder. When the refresh button is clicked, "
-                "the node "
-                "updates the image list and selects the first image."
+                "Load an image from the output folder. When the refresh button is clicked, the "
+                "node will update the image list and automatically select the first image, "
+                "allowing for easy iteration."
             ),
             inputs=(_asset_input("output"),),
             outputs=(OutputSpec("IMAGE", _IMAGE), OutputSpec("MASK", _MASK)),
