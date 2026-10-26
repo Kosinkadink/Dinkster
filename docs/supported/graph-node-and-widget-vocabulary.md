@@ -46,6 +46,10 @@
   FLOAT, in either order, with FLOAT constraint and rounding semantics. Socket
   types and numeric defaults remain unchanged, including with named widget
   representations. This does not claim frontend numeric-union editor support.
+- Forced-input FLOATS sockets accept numeric presentation with FLOAT constraint
+  semantics, retaining their canonical socket type and default on the wire,
+  including named representations. This does not change runtime values or
+  provide frontend FLOATS editing.
 - Node schemas can declare presentation-only editor roles and JSON-safe custom
   widget descriptors. Clients use these declarations without matching node IDs;
   native video trim and crop declare their exact `VIDEO_EDIT` features.
