@@ -56,6 +56,8 @@ SCHEMA = NodeSchema(
 
 def test_schema_reexports_custom_widget_descriptor() -> None:
     assert CustomWidgetDescriptor is ValuesCustomWidgetDescriptor
+    with pytest.raises(ValueError, match="MOUNT.*reserved"):
+        CustomWidgetDescriptor("MOUNT")
 
 
 @pytest.mark.parametrize("input_values", [False, True])
