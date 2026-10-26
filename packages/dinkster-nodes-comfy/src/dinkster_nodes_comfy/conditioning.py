@@ -58,7 +58,7 @@ def _schema(node_type: str, display_name: str, inputs: tuple[InputSpec, ...]) ->
 
 
 def conditioning_set_values(
-    conditioning: Sequence[Sequence[Any]], values: Mapping[str, object], append: bool = False
+    conditioning: Sequence[Sequence[Any]], values: Mapping[str, object], *, append: bool = False
 ) -> list[list[Any]]:
     result: list[list[Any]] = []
     for entry in conditioning:
