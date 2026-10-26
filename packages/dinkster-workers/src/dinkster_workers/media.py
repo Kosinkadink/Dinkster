@@ -30,20 +30,26 @@ from dinkster_values.model import PyObjPayload
 
 def media_input_value(obj: object, type_id: str, original: Value) -> Value:
     """Describe invoked pixels without hashing decoded assets into cache identity."""
-    if parse_list_type_id(type_id) == "*" and type(obj) in (list, tuple):
+    element_type = parse_list_type_id(type_id)
+    if element_type is not None and type(obj) in (list, tuple):
         originals = list_children(original)
         if originals is not None:
             children = tuple(
-                media_input_value(item, child.type_id, child)
+                media_input_value(
+                    item, child.type_id if element_type == "*" else element_type, child
+                )
                 for item, child in zip(cast("Sequence[object]", obj), originals, strict=True)
             )
-            return replace(make_list_value("*", children), fingerprint=original.fingerprint)
+            if all(child is source for child, source in zip(children, originals, strict=True)):
+                return original
+            return replace(
+                make_list_value(element_type, children), fingerprint=original.fingerprint
+            )
     if runtime_type_atom(type_id) not in (
         IMAGE_TYPE,
         MASK_TYPE,
     ):
         return original
-    element_type = parse_list_type_id(type_id)
     if element_type is not None and isinstance(obj, (list, tuple)):
         children = tuple(
             media_input_value(item, element_type, original)
