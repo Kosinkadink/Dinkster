@@ -21,6 +21,7 @@ from dinkster_values import (
     MODEL_TYPE,
     NOISE_TYPE,
     RESOLUTION_PREVIEW_TYPE,
+    SAM3_TRACK_DATA_TYPE,
     SAMPLER_TYPE,
     SIGMAS_TYPE,
     STYLE_MODEL_TYPE,
@@ -43,6 +44,7 @@ from .media_wire import (
     materialize_latent,
     register_media_types,
 )
+from .sam3_wire import register_sam3_track_type
 from .sampling_wire import register_sampling_type
 from .vision_wire import (
     clip_vision_output_fingerprint,
@@ -130,6 +132,11 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
             validate_encoded=validate_clip_vision_output,
         )
     registered.append(registry.spec(CLIP_VISION_OUTPUT_TYPE))
+    registered.append(
+        registry.spec(SAM3_TRACK_DATA_TYPE)
+        if SAM3_TRACK_DATA_TYPE in registry
+        else register_sam3_track_type(registry)
+    )
     registered.extend(register_media_types(registry))
     return tuple(registered)
 

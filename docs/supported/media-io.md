@@ -1,5 +1,8 @@
 ## Media I/O
 
+- Portable SAM3 track values preserve packed uint8 masks, empty object axes or
+  absent masks, original dimensions, frame counts, optional scores, and structural
+  metadata across worker boundaries
 - Typed PNG, JPEG, and WebP image loading with EXIF orientation, ICC-to-sRGB
   conversion, alpha masks, bounded metadata inspection, and input- or
   output-category asset selection. Media outputs retain compact pixel or PCM
