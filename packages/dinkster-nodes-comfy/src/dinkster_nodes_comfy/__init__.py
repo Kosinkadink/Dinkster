@@ -41,6 +41,7 @@ from .dataset_images import DATASET_IMAGE_NODES
 from .dataset_text import DATASET_TEXT_NODES
 from .device_routing import DEVICE_ROUTING_NODES
 from .flux_conditioning import FLUX_CONDITIONING_NODES
+from .flux_image_layout import FLUX_IMAGE_LAYOUT_NODES
 from .freeu import FREEU_NODES
 from .gligen_conditioning import GLIGENTextBoxApply
 from .hook_checkpoint import HOOK_CHECKPOINT_NODES
@@ -176,6 +177,7 @@ COMFY_NODES = (
     CLIPTextEncodeSD3,
     *MODEL_TEXT_ENCODER_NODES,
     *FLUX_CONDITIONING_NODES,
+    *FLUX_IMAGE_LAYOUT_NODES,
     *VAE_NODES,
     *CONDITIONING_NODES,
     PiDConditioning,

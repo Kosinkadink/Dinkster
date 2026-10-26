@@ -2,6 +2,8 @@
 
 - SD1.5 positive and negative text conditioning executes through the pinned
   `dinkster_inference` runtime.
+- Flux Kontext image scaling selects its preferred resolution from the native
+  Flux resolution table. Flux 3 layout prompts append ordered bounding-box rows.
 - Native Flux text conditioning keeps independent CLIP-L and T5 prompts,
   guidance embedding overrides or disabling, and the selected multi-reference method.
 - `CLIPTextEncodeSDXL` encodes separate global and local prompts with size,

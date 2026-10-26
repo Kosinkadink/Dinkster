@@ -199,6 +199,8 @@ namespaces = [
     "FluxGuidance",
     "FluxDisableGuidance",
     "FluxKontextMultiReferenceLatentMethod",
+    "FluxKontextImageScale",
+    "Flux3LayoutPrompt",
     "VAEDecode",
     "VAEEncode",
     "VAEDecodeTiled",
