@@ -1,20 +1,62 @@
-"""CPU SaveImage output behavior."""
+"""CPU image file input and output behavior."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 import torch
+from dinkster_api.v1 import AssetRef
+from dinkster_assets import digest_file
 from dinkster_nodes_comfy.image_file_tools import (
+    LoadImage,
+    LoadImageMask,
     PreviewImage,
     SaveAnimatedPNG,
     SaveAnimatedWEBP,
     SaveImage,
 )
 from PIL import Image
+
+
+@pytest.mark.parametrize("format_name", ("PNG", "GIF"))
+def test_load_palette_image_preserves_transparency_mask(tmp_path: Path, format_name: str) -> None:
+    path = tmp_path / f"palette.{format_name.lower()}"
+    image = Image.fromarray(np.array([[0, 1, 2], [2, 0, 1]], dtype=np.uint8)).convert("P")
+    image.putpalette([11, 43, 97, 191, 7, 53, 29, 227, 83] + [0] * (256 * 3 - 9))
+    image.save(path, format=format_name, transparency=0)
+    asset = AssetRef(
+        digest_file(path),
+        path.name,
+        path.stat().st_size,
+        resolver=SimpleNamespace(resolve=lambda _digest: path),
+    )
+
+    result = LoadImage.execute(image=asset)
+    expected_mask = torch.tensor([[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]])
+    expected_image = (
+        torch.tensor(
+            [
+                [
+                    [[11, 43, 97], [191, 7, 53], [29, 227, 83]],
+                    [[29, 227, 83], [11, 43, 97], [191, 7, 53]],
+                ]
+            ],
+            dtype=torch.float32,
+        )
+        / 255.0
+    )
+    torch.testing.assert_close(result["IMAGE"], expected_image, rtol=0, atol=0)
+    torch.testing.assert_close(result["MASK"], expected_mask, rtol=0, atol=0)
+    torch.testing.assert_close(
+        LoadImageMask.execute(image=asset, channel="alpha")["MASK"],
+        expected_mask,
+        rtol=0,
+        atol=0,
+    )
 
 
 def _mount(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:

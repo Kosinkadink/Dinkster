@@ -73,8 +73,11 @@ def _load_image(asset: AssetRef) -> tuple[Any, Any]:
             if rgb.size != (width, height):
                 continue
             images.append(torch.from_numpy(numpy.asarray(rgb, dtype=numpy.float32) / 255.0))
-            if "A" in frame.getbands():
-                alpha = numpy.asarray(frame.getchannel("A"), dtype=numpy.float32) / 255.0
+            if "A" in frame.getbands() or "transparency" in frame.info:
+                alpha = (
+                    numpy.asarray(frame.convert("RGBA").getchannel("A"), dtype=numpy.float32)
+                    / 255.0
+                )
                 masks.append(1.0 - torch.from_numpy(alpha))
             else:
                 masks.append(torch.zeros((64, 64), dtype=torch.float32))
