@@ -518,7 +518,7 @@ class GLIGENLoader(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="GLIGENLoader",
-            display_name="Load GLIGEN",
+            display_name="Load GLIGEN Model",
             category="model/loaders",
             inputs=(_asset("gligen_name", "model/gligen"),),
             outputs=(OutputSpec("GLIGEN", _GLIGEN),),
