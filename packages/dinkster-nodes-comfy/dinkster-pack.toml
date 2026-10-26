@@ -187,6 +187,7 @@ namespaces = [
     "GLIGENTextBoxApply",
     "CLIPTextEncodeSDXLRefiner",
     "CLIPTextEncodeSDXL",
+    "CLIPTextEncodeSD3",
     "CLIPTextEncodePixArtAlpha",
     "CLIPTextEncodeLumina2",
     "CLIPTextEncodeHiDream",
