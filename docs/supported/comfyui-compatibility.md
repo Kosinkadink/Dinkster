@@ -8,6 +8,8 @@
   returning raw seconds and a frame count snapped to the causal VAE grid.
 - Native ComfyUI AUDIO sockets retain the first registered audio authority
   and work across isolated pack processes without a companion media pack.
+- Native LoadAudio decodes a bound audio or video asset with its source sample
+  rate and channel order. PreviewAudio exposes audio without an output file.
 - Native LTXVCropGuides removes appended guide frames and their conditioning
   metadata while preserving the remaining video latent and noise mask.
 - Native SeedVR2 output post-processing aligns video frames, restores alpha
