@@ -125,13 +125,22 @@ class _PackSampling:
         return latent + noise * scale
 
 
-class _PackModel:
-    def get_model_object(self, name: str) -> object:
-        return {
-            "model_sampling": _PackSampling(),
-            "process_latent_in": lambda value: value + 1,
-            "process_latent_out": lambda value: value * 2,
-        }[name]
+class _PackModule(torch.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.weight = torch.nn.Parameter(torch.ones(()))
+        self.model_sampling = _PackSampling()
+        self.process_latent_in = lambda value: value + 1
+        self.process_latent_out = lambda value: value * 2
+
+
+def _pack_model() -> Any:
+    from dinkster_api.v1 import initialize_inference_process
+
+    initialize_inference_process()
+    from dinkster_inference.model_patcher import ModelPatcher
+
+    return ModelPatcher(_PackModule(), torch.device("cpu"), torch.device("cpu"))
 
 
 class _Source(Node):
@@ -149,7 +158,7 @@ class _Source(Node):
     @classmethod
     def execute(cls) -> Mapping[str, object]:
         return cls.outputs(
-            model=_PackModel(),
+            model=_pack_model(),
             sigmas=torch.tensor([4.0, 1.0]),
             latent={
                 "samples": torch.tensor([[[[1.0, -2.0]]], [[[3.0, 4.0]]]]),
