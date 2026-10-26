@@ -418,6 +418,12 @@ namespaces = [
     "CLIPVisionLoader",
     "StyleModelLoader",
     "GLIGENLoader",
+    "LoraLoader",
+    "LoraLoaderModelOnly",
+    "LoadLoraModel",
+    "LoadLoraTextEncoder",
+    "LoraLoaderBypass",
+    "LoraLoaderBypassModelOnly",
 ]
 
 [pack.sandbox]

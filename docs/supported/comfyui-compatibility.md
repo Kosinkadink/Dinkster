@@ -4,6 +4,9 @@
   encoder, vision-encoder, ControlNet, style-model and GLIGEN loader schemas.
   Model construction uses the pinned inference package; file inputs grant
   access only to the selected asset.
+- Native LoRA file loaders apply model and text-encoder strengths separately,
+  retain weight metadata, and support ordered stacks and bypass application.
+  Disabled stack entries and zero strengths do not resolve their file inputs.
 - Native LoRA hook loaders use bound model/lora assets, preserve prior hooks
   and apply separate model and CLIP strengths while retaining loaded weights.
 - Native WanDancer keyframe padding places reference frames and masks into
