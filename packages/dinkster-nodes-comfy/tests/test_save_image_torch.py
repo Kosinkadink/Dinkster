@@ -2,15 +2,31 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 import torch
-from dinkster_api.v1 import AssetError, AssetRef
-from dinkster_assets import digest_file
+from dinkster_api.v1 import (
+    CORE_STRING,
+    IMAGE_TYPE,
+    MASK_TYPE,
+    AssetError,
+    AssetRef,
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+    materialize_image,
+)
+from dinkster_assets import MountDef, MountTable, digest_file
+from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy import image_file_tools
 from dinkster_nodes_comfy.image_file_tools import (
     LoadImage,
@@ -21,6 +37,8 @@ from dinkster_nodes_comfy.image_file_tools import (
     SaveImage,
 )
 from PIL import Image
+
+from dinkster.compose import PackSpec, ServingComposer
 
 
 @pytest.mark.parametrize("format_name", ("PNG", "GIF"))
@@ -267,3 +285,168 @@ def test_animated_savers_preserve_frame_order_alpha_timing_and_dimension_prefix(
                 assert saved.info["duration"] == 142
     assert not list(default.rglob(f"*.{format_name}"))
     torch.testing.assert_close(frames, original, rtol=0, atol=0)
+
+
+class _FileHostInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "image-file-fixture.inspect",
+            inputs=(
+                *(
+                    InputSpec(name, TypeExpr.concrete(IMAGE_TYPE))
+                    for name in ("loaded", "output_loaded", "saved", "preview", "png", "webp")
+                ),
+                InputSpec("mask", TypeExpr.concrete(MASK_TYPE)),
+            ),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, mask, **images):
+        expected = (
+            torch.tensor(
+                [
+                    [
+                        [[0, 51, 255], [102, 204, 51], [255, 0, 153]],
+                        [[204, 102, 0], [51, 255, 204], [153, 51, 102]],
+                    ]
+                ],
+                dtype=torch.float32,
+            )
+            / 255.0
+        )
+        for image in images.values():
+            torch.testing.assert_close(materialize_image(image), expected, rtol=0, atol=0)
+        torch.testing.assert_close(
+            materialize_image(mask), torch.zeros((1, 64, 64)), rtol=0, atol=0
+        )
+        return cls.outputs(summary="image files crossed the ordinary host")
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("verified", (False, True))
+def test_image_file_nodes_execute_twice_through_unchanged_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, verified: bool
+) -> None:
+    source_pixels = np.array(
+        [
+            [[0, 51, 255], [102, 204, 51], [255, 0, 153]],
+            [[204, 102, 0], [51, 255, 204], [153, 51, 102]],
+        ],
+        dtype=np.uint8,
+    )
+    input_dir, output_dir = tmp_path / "input", tmp_path / "output"
+    input_dir.mkdir()
+    output_dir.mkdir()
+    Image.fromarray(source_pixels).save(input_dir / "source.png")
+    Image.fromarray(source_pixels).save(output_dir / "seed.png")
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot, index_root=tmp_path / "index")
+    table.add(MountDef("input", input_dir), kind="media/image")
+    table.add(MountDef("output", output_dir, mode="readwrite"), kind="media/image")
+    table.select_output_mount("output")
+    if verified:
+        table.scan("input")
+        table.scan("output")
+    source = table.bind_name("source.png", "media/image")
+    output_source = table.bind_name("seed.png", "media/image")
+    if not verified:
+        table.scan("output")
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+
+    async def scenario() -> None:
+        package = Path(__file__).resolve().parents[1]
+        native_manifest = package / "dinkster-pack.toml"
+        module = f"image_file_host_fixture_{tmp_path.name.replace('-', '_')}"
+        (tmp_path / f"{module}.py").write_text(
+            "from test_save_image_torch import _FileHostInspect\n"
+            "from dinkster_nodes_comfy import register_inference_types\n"
+            "NODES = (_FileHostInspect,)\n",
+            encoding="ascii",
+        )
+        fixture_manifest = tmp_path / "dinkster-pack.toml"
+        fixture_manifest.write_text(
+            '[pack]\nname = "image-file-fixture"\npublisher = "dinkster"\n'
+            'namespaces = ["image-file-fixture"]\n[pack.entry]\n'
+            f'nodes = "{module}:NODES"\ntypes = "{module}:register_inference_types"\n',
+            encoding="ascii",
+        )
+        paths = (str(tmp_path), str(Path(__file__).parent), *(p for p in sys.path if p))
+        composer = ServingComposer(
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
+                "PYTHONPATH": os.pathsep.join(paths),
+            }
+        )
+        try:
+            manifests = (native_manifest, fixture_manifest)
+            for manifest in manifests:
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=manifest,
+                        in_process=in_process,
+                        worker_group=None if in_process else "image-file-fixture",
+                        group_manifests=() if in_process else manifests,
+                    )
+                )
+            nodes = {
+                "load": GraphNode("LoadImage", {"image": source.to_wire()}),
+                "load_output": GraphNode("LoadImageOutput", {"image": output_source.to_wire()}),
+                "mask": GraphNode("LoadImageMask", {"image": source.to_wire(), "channel": "alpha"}),
+                "save": GraphNode(
+                    "SaveImage", {"images": Link("load", "IMAGE"), "filename_prefix": "saved"}
+                ),
+                "preview": GraphNode("PreviewImage", {"images": Link("load", "IMAGE")}),
+                "png": GraphNode(
+                    "SaveAnimatedPNG",
+                    {
+                        "images": Link("load", "IMAGE"),
+                        "filename_prefix": "animated-png",
+                        "fps": 7.0,
+                        "compress_level": 3,
+                    },
+                ),
+                "webp": GraphNode(
+                    "SaveAnimatedWEBP",
+                    {
+                        "images": Link("load", "IMAGE"),
+                        "filename_prefix": "animated-webp",
+                        "fps": 7.0,
+                        "lossless": True,
+                        "quality": 93,
+                        "method": "slowest",
+                    },
+                ),
+            }
+            nodes["inspect"] = GraphNode(
+                "image-file-fixture.inspect",
+                {
+                    "loaded": Link("load", "IMAGE"),
+                    "output_loaded": Link("load_output", "IMAGE"),
+                    "mask": Link("mask", "MASK"),
+                    "saved": Link("save", "images"),
+                    "preview": Link("preview", "images"),
+                    "png": Link("png", "images"),
+                    "webp": Link("webp", "images"),
+                },
+            )
+            engine = composer.composition.make_engine(lambda _event: None)
+            for _ in range(2):
+                result = await engine.run(Graph(nodes=nodes), ["inspect"])
+                assert (
+                    result.outputs["inspect"]["summary"].resolve()
+                    == "image files crossed the ordinary host"
+                )
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+    for prefix, suffix in (("saved", "png"), ("animated-png", "png"), ("animated-webp", "webp")):
+        saved = sorted(output_dir.glob(f"{prefix}_*.{suffix}"))
+        assert len(saved) == 2
+        for path in saved:
+            with Image.open(path) as image:
+                np.testing.assert_array_equal(np.asarray(image.convert("RGB")), source_pixels)
