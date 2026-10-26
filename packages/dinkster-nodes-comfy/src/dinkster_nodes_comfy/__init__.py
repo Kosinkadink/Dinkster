@@ -71,6 +71,7 @@ from .ltx_duration import LTXVDurationPredictor
 from .ltx_sampling import LTX_SAMPLING_NODES
 from .ltx_video_conditioning import LTX_VIDEO_CONDITIONING_NODES
 from .ltx_video_preprocess import LTX_VIDEO_PREPROCESS_NODES
+from .marigold import MarigoldV2PostProcess
 from .mask import MASK_NODES
 from .math import ComfyMathExpression
 from .minimax_h3_latent import EmptyMiniMaxH3LatentAV, MiniMaxH3AddGuide, MiniMaxH3ImageToVideo
@@ -184,6 +185,7 @@ COMFY_NODES = (
     *IMAGE_CORE_NODES,
     *IMAGE_DIMENSION_NODES,
     *IMAGE_COLOR_CONVERSION_NODES,
+    MarigoldV2PostProcess,
     *IMAGE_FILTER_NODES,
     *IMAGE_TRANSFORM_NODES,
     *MORPHOLOGY_NODES,
