@@ -12,6 +12,8 @@
   replay), values, queue control, live WebSocket events, settings, memory
   governance, cache trim/export; asset library and history routes when a
   library root is configured, including classified bounded latent upload
+- The node catalog and native job submission use `/api/nodes` and `/api/jobs`.
+  There is no separate ComfyUI schema catalog or prompt submission endpoint.
 - Asset record catalogs upgrade automatically with versioned migrations.
   Matching unversioned catalogs retain scoped records, verified media grants,
   dependency manifests, and derivations; incompatible schemas are refused.

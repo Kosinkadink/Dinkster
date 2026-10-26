@@ -472,8 +472,15 @@ def run_stack(
     reference: Stack,
     gpu_uuid: str,
     port: int,
+    native_jobs_root: Path,
 ) -> dict[str, Any]:
     benchmark_root = root / "benchmark"
+    native_jobs = native_jobs_root / stack.id / f"{row}.json"
+    if stack.system == "dinkster":
+        native_provenance = json.loads(provenance.read_text())
+        native_provenance["native_jobs_sha256"] = file_digest(native_jobs)
+        provenance = root / "workflow.provenance.json"
+        save(provenance, native_provenance)
     arguments = [
         "--workflow",
         str(workflow),
@@ -504,6 +511,8 @@ def run_stack(
         "--output",
         str(benchmark_root),
     ]
+    if stack.system == "dinkster":
+        arguments.extend(("--native-jobs", str(native_jobs)))
     exit_code = workflow_benchmark.main(stack.system, arguments)
     report = json.loads((benchmark_root / "report.json").read_text())
     result: dict[str, Any] = {
@@ -592,6 +601,7 @@ def run(args: argparse.Namespace) -> int:
                     reference,
                     args.gpu_uuid,
                     port,
+                    args.native_jobs_root.absolute(),
                 )
             except Exception as error:
                 result = {
@@ -635,6 +645,12 @@ def run(args: argparse.Namespace) -> int:
 def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifacts", type=Path, required=True)
+    parser.add_argument(
+        "--native-jobs-root",
+        type=Path,
+        required=True,
+        help="frontend compiler exports at STACK_ID/WORKFLOW_ROW.json for both Dinkster stacks",
+    )
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--gpu-uuid", required=True)
     parser.add_argument("--comfyui-root", type=Path, required=True)

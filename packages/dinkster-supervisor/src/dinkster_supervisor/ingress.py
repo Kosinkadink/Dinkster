@@ -678,7 +678,6 @@ def create_ingress_app(
         "memory",
         "cache",
         "queue",
-        "compat/comfy/prompt",
     ):
         app.router.add_route("*", f"/api/{prefix}", _primary)
         app.router.add_route("*", f"/api/{prefix}/{{tail:.*}}", _primary)

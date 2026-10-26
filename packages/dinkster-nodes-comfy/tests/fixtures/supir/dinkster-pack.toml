@@ -1,0 +1,8 @@
+[pack]
+name = "supir-fixture"
+publisher = "dinkster"
+namespaces = ["supir-fixture"]
+
+[pack.entry]
+nodes = "supir_fixture:FIXTURE_NODES"
+types = "supir_fixture:register_inference_types"
