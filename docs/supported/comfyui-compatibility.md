@@ -1,5 +1,7 @@
 ## ComfyUI compatibility
 
+- Native Anima LLLite applies image and optional mask guidance to cloned models
+  through scheduled input, self-attention, cross-attention and MLP patches.
 - Native WanDancer keyframe padding places reference frames and masks into
   video segments, with matching audio slices and scalar or list outputs.
 - Native LTXV duration prediction uses caption connectors and the duration head,
