@@ -26,6 +26,7 @@ from dinkster_nodes_comfy.attention_guidance import (
     SelfAttentionGuidance,
     SkipLayerGuidanceDiT,
     SkipLayerGuidanceDiTSimple,
+    SkipLayerGuidanceSD3,
 )
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -211,6 +212,26 @@ def test_sag_stored_callback_handles_a_one_by_one_attention_grid(
         + (degraded - ((degraded + args["input"] - args["uncond_denoised"]) * 0.25 - 3.0)) * 0.6
     )
     torch.testing.assert_close(actual, expected)
+
+
+def test_sd3_skip_layer_guidance_preserves_window_and_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, _, samplers = _runtime()
+    monkeypatch.setattr(samplers, "calc_cond_batch", _controlled_calc)
+    source = Patcher()
+    value = _asymmetric((1, 1, 5, 8), -4.0)
+    patched = SkipLayerGuidanceSD3.execute(
+        model=source, layers="2, 7", scale=1.75, start_percent=0.2, end_percent=0.8
+    )["MODEL"]
+    for sigma in (2.0, 5.0, 8.0):
+        args = _post_args(value, sigma)
+        expected = value + (args["cond_denoised"] - (args["input"] * 0.5 + 4.0)) * 1.75
+        torch.testing.assert_close(patched.post[0](args), expected, rtol=0, atol=0)
+    for sigma in (1.9, 8.1):
+        assert patched.post[0](_post_args(value, sigma)) is value
+    assert patched is not source
+    assert source.post == []
 
 
 def test_skip_layer_callbacks_cover_windows_rescaling_and_missing_uncond(

@@ -32,6 +32,7 @@
   optional outputs, per-input absence policies, and skip propagation.
 - Native ControlNet application supports both legacy and scheduled positive/negative
   conditioning, prior-control chaining, union type selection, and AliMama masked hints.
+- `ControlNetApplySD3` accepts the VAE-required ControlNet workflow input layout.
 - Native `InstructPixToPixConditioning` crops and encodes the input image,
   attaches image conditioning to both prompt streams, and returns a zero latent.
 - `SD_4XUpscale_Conditioning` resizes image conditioning for Stable Diffusion

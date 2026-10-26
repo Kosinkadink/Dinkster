@@ -168,6 +168,53 @@ class ControlNetApplyAdvanced(Node):
         return cls.outputs(positive=outputs[0], negative=outputs[1])
 
 
+class ControlNetApplySD3(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="ControlNetApplySD3",
+            display_name="Apply Controlnet with VAE",
+            category=_CATEGORY,
+            inputs=(
+                InputSpec("positive", _CONDITIONING),
+                InputSpec("negative", _CONDITIONING),
+                InputSpec("control_net", _CONTROL_NET),
+                InputSpec("vae", _VAE),
+                InputSpec("image", _IMAGE),
+                _strength(),
+                *_range(),
+            ),
+            outputs=(
+                OutputSpec("positive", _CONDITIONING),
+                OutputSpec("negative", _CONDITIONING),
+            ),
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        positive: Sequence[Sequence[Any]],
+        negative: Sequence[Sequence[Any]],
+        control_net: Any,
+        image: object,
+        strength: float,
+        start_percent: float,
+        end_percent: float,
+        vae: Any = None,
+    ) -> Mapping[str, object]:
+        return ControlNetApplyAdvanced.execute(
+            positive=positive,
+            negative=negative,
+            control_net=control_net,
+            image=image,
+            strength=strength,
+            start_percent=start_percent,
+            end_percent=end_percent,
+            vae=vae,
+        )
+
+
 class SetUnionControlNetType(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -266,6 +313,7 @@ class ControlNetInpaintingAliMamaApply(Node):
 CONTROLNET_NODES = (
     ControlNetApply,
     ControlNetApplyAdvanced,
+    ControlNetApplySD3,
     SetUnionControlNetType,
     ControlNetInpaintingAliMamaApply,
 )

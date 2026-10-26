@@ -51,6 +51,8 @@ Self-Attention Guidance, Perturbed Attention Guidance, and both Skip Layer
 Guidance DiT nodes clone a model and install sampler or attention callbacks.
 They use the inference sampler's conditional-routing and model-patch mechanisms;
 they do not load or apply LoRA weights.
+`SkipLayerGuidanceSD3` applies the double-block skip-layer guidance controls used
+by SD3 workflows.
 
 ControlNet values use the native `CONTROL_NET` type and stay resident in their
 owning worker, with the same governed lifetime as other loaded models.

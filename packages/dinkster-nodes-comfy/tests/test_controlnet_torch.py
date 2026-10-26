@@ -27,6 +27,7 @@ from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.controlnet import (
     ControlNetApply,
     ControlNetApplyAdvanced,
+    ControlNetApplySD3,
     ControlNetInpaintingAliMamaApply,
     SetUnionControlNetType,
 )
@@ -73,7 +74,10 @@ class Control:
         self.extra_args[name] = value
 
 
-def test_legacy_copies_each_entry_while_advanced_reuses_prior_control_chains() -> None:
+@pytest.mark.parametrize("apply_node", (ControlNetApplyAdvanced, ControlNetApplySD3))
+def test_legacy_copies_each_entry_while_advanced_reuses_prior_control_chains(
+    apply_node: Any,
+) -> None:
     image = torch.arange(2 * 7 * 11 * 4, dtype=torch.float32).reshape(2, 7, 11, 4) / 1024
     before = image.clone()
     previous = Control()
@@ -84,7 +88,7 @@ def test_legacy_copies_each_entry_while_advanced_reuses_prior_control_chains() -
     ]
     negative = [[torch.tensor([-1.0]), {"control": previous}], [torch.tensor([-2.0]), {}]]
     vae = object()
-    advanced: Any = ControlNetApplyAdvanced.execute(
+    advanced: Any = apply_node.execute(
         positive=positive,
         negative=negative,
         control_net=source,
