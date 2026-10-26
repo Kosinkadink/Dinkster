@@ -33,6 +33,7 @@ from .audio_lazy import channel_layout as audio_channel_layout
 from .builtin_types import (
     ARRAY_TYPE,
     ASSET_TYPE,
+    AUDIO_ENCODER_OUTPUT_TYPE,
     AUDIO_TYPE,
     BACKGROUND_REMOVAL_TYPE,
     BOUNDING_BOX_TYPE,
@@ -89,12 +90,14 @@ from .builtin_types import (
     SPLAT_TYPE,
     STYLE_MODEL_TYPE,
     TIMESTEPS_RANGE_TYPE,
+    TRACKS_TYPE,
     VAE_TYPE,
     VECTOR_TYPE,
     VIDEO_DOCUMENT_TYPE,
     VIDEO_EDIT_TYPE,
     VIDEO_TYPE,
     VOXEL_TYPE,
+    WAN_CAMERA_EMBEDDING_TYPE,
 )
 from .curve import MAX_CURVE_POINTS, Curve, register_curve_type
 from .detection_codec import (
@@ -291,6 +294,7 @@ __all__ = [
     "AIMDO_VBAR_PAGE_BYTES",
     "ASSET_BASE_TYPE",
     "ASSET_TYPE",
+    "AUDIO_ENCODER_OUTPUT_TYPE",
     "AUDIO_TYPE",
     "BufferEncoding",
     "CLIP_TYPE",
@@ -417,6 +421,8 @@ __all__ = [
     "TIMELINE_ACTIVE_FRAME_LIMIT_BYTES",
     "TIMELINE_AUDIO_WINDOW_LIMIT_BYTES",
     "TIMESTEPS_RANGE_TYPE",
+    "TRACKS_TYPE",
+    "WAN_CAMERA_EMBEDDING_TYPE",
     "TRELLIS2_SPARSE_DECODE_ALIGNMENT_BYTES",
     "TRELLIS2_SPARSE_DECODE_FIXED_BYTES",
     "TypeSpec",

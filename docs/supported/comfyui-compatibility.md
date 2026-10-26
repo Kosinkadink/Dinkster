@@ -77,6 +77,8 @@
   zero, and set area or timestep metadata under their exact ComfyUI interfaces.
 - Native hook conditioning preserves paired ordering, default records, mask and
   timestep metadata, and CLIP hook clone scheduling under exact core interfaces.
+- Hook keyframes from floats preserve the forced FLOATS socket and its numeric
+  default, minimum, and step under the exact core interface.
 - Native VAE inpainting encoding and model conditioning preserve crop, mask,
   latent, and conditioning metadata behavior under exact ComfyUI interfaces.
 - Fifteen native mask and composite nodes convert, create, invert, crop, combine,
