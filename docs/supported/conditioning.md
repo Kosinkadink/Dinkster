@@ -11,6 +11,11 @@
   maps, scales their latent contribution and limits it to the selected sampling range.
 - Text generation supports image, video-frame and audio context, optional
   sampling controls and separate completed or truncated reasoning output.
+  LTX2 prompt enhancement uses the Gemma 3 or Gemma 4 text/image chat format,
+  with model-specific system prompts and original-prompt fallback.
+- Qwen Image, Ming, MageFlow, JoyImage, Boogu and Fibo 2 image conditioning
+  retain model-specific reference sizing, prompt templates and prior latent
+  references. Qwen Image 2.1 also supports precomputed reference caches.
 - `CLIPTextEncodeSDXL` encodes separate global and local prompts with size,
   crop and target-size conditioning. Unequal token streams are padded with
   empty-prompt tokens. `CLIPTextEncodeSDXLRefiner` adds aesthetic-score and
