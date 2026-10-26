@@ -244,6 +244,7 @@ class VAELoader(Node):
         state_dict, metadata = utils.load_torch_file(path, safe_load=True, return_metadata=True)
         vae = sd.VAE(sd=state_dict, metadata=metadata)
         vae.throw_exception_if_invalid()
+        vae.patcher.cached_patcher_init = (sd.load_vae_patcher, (path, metadata, None))
         return cls.outputs(VAE=vae)
 
 

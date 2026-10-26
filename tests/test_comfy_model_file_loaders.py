@@ -115,6 +115,7 @@ def test_model_file_loader_execution_adapts_bound_assets_to_pinned_loader_calls(
     class LoadedVAE:
         def __init__(self, **kwargs: object) -> None:
             calls.append(("VAE", (), kwargs))
+            self.patcher = SimpleNamespace()
 
         def throw_exception_if_invalid(self) -> None:
             calls.append(("validate", (), {}))
@@ -133,6 +134,7 @@ def test_model_file_loader_execution_adapts_bound_assets_to_pinned_loader_calls(
         load_checkpoint_guess_config=record("checkpoint-guess", (model, clip, vae, vision)),
         load_diffusion_model=record("diffusion", model),
         load_clip=record("clip", clip),
+        load_vae_patcher=object(),
         load_style_model=record("style-model", style_model),
         load_gligen=record("gligen", gligen),
     )
@@ -172,7 +174,12 @@ def test_model_file_loader_execution_adapts_bound_assets_to_pinned_loader_calls(
         "VAE": vae,
         "CLIP_VISION": vision,
     }
-    assert model_file_loaders.VAELoader.execute(vae_name=asset)["VAE"].__class__ is LoadedVAE
+    loaded_vae = model_file_loaders.VAELoader.execute(vae_name=asset)["VAE"]
+    assert isinstance(loaded_vae, LoadedVAE)
+    assert loaded_vae.patcher.cached_patcher_init == (
+        sd.load_vae_patcher,
+        (str(path), {"format": "test"}, None),
+    )
     assert model_file_loaders.ControlNetLoader.execute(control_net_name=asset) == {
         "CONTROL_NET": controlnet
     }
