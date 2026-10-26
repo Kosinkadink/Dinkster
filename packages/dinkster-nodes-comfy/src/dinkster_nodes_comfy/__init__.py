@@ -132,6 +132,12 @@ from .video_conditioning import VIDEO_CONDITIONING_NODES
 from .video_guidance import VIDEO_GUIDANCE_NODES
 from .video_latent import VIDEO_LATENT_NODES
 from .video_latent_ops import VIDEO_LATENT_OPERATION_NODES
+from .wan22_latent import Wan22ImageToVideoLatent
+from .wan_animate import WAN_ANIMATE_NODES
+from .wan_control_conditioning import WAN_CONTROL_CONDITIONING_NODES
+from .wan_image_conditioning import WanFirstLastFrameToVideo, WanFunInpaintToVideo, WanImageToVideo
+from .wan_scail_conditioning import WanSCAILToVideo
+from .wan_track_conditioning import WanTrackToVideo
 from .wan_uni3c import WanUni3CControlnetApply
 from .wandancer_keyframes import WANDANCER_KEYFRAME_NODES
 
@@ -262,6 +268,14 @@ COMFY_NODES = (
     *WANDANCER_KEYFRAME_NODES,
     LTXVDurationPredictor,
     MiniMaxH3AddGuide,
+    WanImageToVideo,
+    WanFirstLastFrameToVideo,
+    WanFunInpaintToVideo,
+    *WAN_CONTROL_CONDITIONING_NODES,
+    Wan22ImageToVideoLatent,
+    WanSCAILToVideo,
+    WanTrackToVideo,
+    *WAN_ANIMATE_NODES,
     *COLOR_RESOLUTION_NODES,
 )
 
