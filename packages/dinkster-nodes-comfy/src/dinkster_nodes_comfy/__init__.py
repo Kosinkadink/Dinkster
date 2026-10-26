@@ -56,6 +56,7 @@ from .image_dimensions import IMAGE_DIMENSION_NODES
 from .image_filters import IMAGE_FILTER_NODES
 from .image_transform import IMAGE_TRANSFORM_NODES
 from .inpaint import INPAINT_NODES
+from .json_prompt import BuildJsonPromptIdeogram
 from .kandinsky_video import Kandinsky5ImageToVideo
 from .latent import LATENT_NODES
 from .latent_advanced import LATENT_ADVANCED_NODES
@@ -83,6 +84,7 @@ from .model_merging_specific import MODEL_SPECIFIC_MERGE_NODES
 from .model_patch_loader import MODEL_PATCH_LOADER_NODES
 from .model_specific_schedulers import MODEL_SPECIFIC_SCHEDULER_NODES
 from .morphology import MORPHOLOGY_NODES
+from .moss_image import MOSSImageLayoutPrompt, TextEncodeMOSSImageEdit
 from .noise_guidance import NOISE_GUIDANCE_NODES
 from .perpneg import PERPNEG_NODES
 from .pid_conditioning import PiDConditioning
@@ -237,6 +239,9 @@ COMFY_NODES = (
     *WANDANCER_KEYFRAME_NODES,
     LTXVDurationPredictor,
     MiniMaxH3AddGuide,
+    BuildJsonPromptIdeogram,
+    MOSSImageLayoutPrompt,
+    TextEncodeMOSSImageEdit,
 )
 
 

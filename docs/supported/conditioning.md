@@ -4,6 +4,10 @@
   `dinkster_inference` runtime.
 - Native Flux text conditioning keeps independent CLIP-L and T5 prompts,
   guidance embedding overrides or disabling, and the selected multi-reference method.
+- Ideogram JSON prompts retain selected photographic or art style, palettes and
+  bounding-box elements. MOSS layout prompts place enclosing boxes in centered
+  pixel coordinates; MOSS edit conditioning preserves the selected reference
+  layout and optional vision-token prompts.
 - `CLIPTextEncodeSDXL` encodes separate global and local prompts with size,
   crop and target-size conditioning. Unequal token streams are padded with
   empty-prompt tokens. `CLIPTextEncodeSDXLRefiner` adds aesthetic-score and

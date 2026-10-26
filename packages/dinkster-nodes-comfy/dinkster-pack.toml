@@ -398,6 +398,9 @@ namespaces = [
     "WanDancerPadKeyframesList",
     "LTXVDurationPredictor",
     "MiniMaxH3AddGuide",
+    "BuildJsonPromptIdeogram",
+    "MOSSImageLayoutPrompt",
+    "TextEncodeMOSSImageEdit",
 ]
 
 [pack.sandbox]
