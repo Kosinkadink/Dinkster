@@ -389,4 +389,12 @@ class LoadImageOutput(LoadImage):
         )
 
 
-__all__ = ["LoadImage", "LoadImageMask", "LoadImageOutput", "PreviewImage", "SaveImage"]
+__all__ = [
+    "LoadImage",
+    "LoadImageMask",
+    "LoadImageOutput",
+    "PreviewImage",
+    "SaveAnimatedPNG",
+    "SaveAnimatedWEBP",
+    "SaveImage",
+]
