@@ -82,7 +82,13 @@ class ShuffleImageTextDataset(Node):
             search_terms=("shuffle", "randomize", "mix"),
             inputs=(
                 InputSpec("images", _IMAGES, doc="List of images to shuffle."),
-                InputSpec("texts", _STRINGS, doc="List of texts to shuffle.", force_input=True),
+                InputSpec(
+                    "texts",
+                    _STRINGS,
+                    doc="List of texts to shuffle.",
+                    force_input=True,
+                    widget=StringWidget(multiline=False),
+                ),
                 InputSpec(
                     "seed",
                     _INT,

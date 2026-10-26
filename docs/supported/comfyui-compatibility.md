@@ -1,5 +1,7 @@
 ## ComfyUI compatibility
 
+- Native LoRA hook loaders use bound model/lora assets, preserve prior hooks
+  and apply separate model and CLIP strengths while retaining loaded weights.
 - Native WanDancer keyframe padding places reference frames and masks into
   video segments, with matching audio slices and scalar or list outputs.
 - Native LTXV duration prediction uses caption connectors and the duration head,
@@ -53,6 +55,8 @@
   patchers and install their native frame-wise CFG callbacks under exact core IDs.
 - Native Context Windows nodes clone model patchers and configure manual, Wan,
   and LTXV context-window sampling under exact core IDs.
+- Video latent frame replacement preserves the core destination/source/index
+  input order, including the optional source input.
 - MiniMax H3 sigma shifts clone model patchers, preserve noise scale, and set
   independent video/audio flow shifts without modifying the source model.
 - MiniMax H3 image-to-video conditioning encodes optional first and last
