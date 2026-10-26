@@ -403,6 +403,12 @@ namespaces = [
     "WanDancerPadKeyframesList",
     "LTXVDurationPredictor",
     "MiniMaxH3AddGuide",
+    "VideoTemporalCrop",
+    "VideoRandomTemporalCrop",
+    "ShuffleVideoDataset",
+    "ShuffleVideoTextDataset",
+    "CreateList",
+    "GetItemFromList",
 ]
 
 [pack.sandbox]

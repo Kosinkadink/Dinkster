@@ -39,6 +39,7 @@ from .dataset_collections import DATASET_COLLECTION_NODES
 from .dataset_groups import DATASET_GROUP_NODES
 from .dataset_images import DATASET_IMAGE_NODES
 from .dataset_text import DATASET_TEXT_NODES
+from .dataset_video import DATASET_VIDEO_NODES
 from .device_routing import DEVICE_ROUTING_NODES
 from .flux_conditioning import FLUX_CONDITIONING_NODES
 from .flux_image_layout import FLUX_IMAGE_LAYOUT_NODES
@@ -66,6 +67,7 @@ from .latent_model_specific import MODEL_LATENT_NODES
 from .latent_operations import LATENT_OPERATION_NODES
 from .latent_upscale import LATENT_UPSCALE_NODES
 from .latent_upscale_loader import LATENT_UPSCALE_LOADER_NODES
+from .list_utilities import LIST_UTILITY_NODES
 from .logic import LOGIC_NODES
 from .loops import LOOP_NODES
 from .ltx_audio import LTX_AUDIO_NODES
@@ -243,6 +245,8 @@ COMFY_NODES = (
     *WANDANCER_KEYFRAME_NODES,
     LTXVDurationPredictor,
     MiniMaxH3AddGuide,
+    *DATASET_VIDEO_NODES,
+    *LIST_UTILITY_NODES,
 )
 
 
