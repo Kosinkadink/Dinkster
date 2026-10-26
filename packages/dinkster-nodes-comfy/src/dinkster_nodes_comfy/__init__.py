@@ -3,6 +3,7 @@
 from dinkster_api.v1 import (
     ASSET_TYPE,
     AUDIO_TYPE,
+    BOUNDING_BOX_TYPE,
     TypeRegistry,
     register_asset_type,
     register_audio_value_type,
@@ -51,6 +52,7 @@ from .hunyuan_video_image import HUNYUAN_VIDEO_IMAGE_NODES
 from .hypernetwork import HypernetworkLoader
 from .image_color_conversion import IMAGE_COLOR_CONVERSION_NODES
 from .image_core import IMAGE_CORE_NODES
+from .image_crop import ImageCropV2, PrimitiveBoundingBox
 from .image_dimensions import IMAGE_DIMENSION_NODES
 from .image_filters import IMAGE_FILTER_NODES
 from .image_transform import IMAGE_TRANSFORM_NODES
@@ -227,6 +229,8 @@ COMFY_NODES = (
     *WANDANCER_KEYFRAME_NODES,
     LTXVDurationPredictor,
     MiniMaxH3AddGuide,
+    ImageCropV2,
+    PrimitiveBoundingBox,
 )
 
 
@@ -235,6 +239,8 @@ def register_inference_types(registry: TypeRegistry) -> None:
         register_asset_type(registry, resolver_from_env())
     if AUDIO_TYPE not in registry:
         register_audio_value_type(registry, AUDIO_TYPE, resolver_from_env())
+    if BOUNDING_BOX_TYPE not in registry:
+        registry.register(BOUNDING_BOX_TYPE)
     _register_inference_types(registry)
 
 

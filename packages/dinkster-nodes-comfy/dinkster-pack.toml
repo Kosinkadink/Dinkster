@@ -390,6 +390,8 @@ namespaces = [
     "WanDancerPadKeyframesList",
     "LTXVDurationPredictor",
     "MiniMaxH3AddGuide",
+    "ImageCropV2",
+    "PrimitiveBoundingBox",
 ]
 
 [pack.sandbox]
