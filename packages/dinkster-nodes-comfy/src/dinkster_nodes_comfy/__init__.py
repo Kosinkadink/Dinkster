@@ -111,6 +111,7 @@ from .sparse_attention import SPARSE_ATTENTION_NODES
 from .spatial_model_patches import SPATIAL_MODEL_PATCH_NODES
 from .stable3d import STABLE3D_NODES
 from .stable_cascade import STABLE_CASCADE_NODES
+from .standard_sampling import STANDARD_SAMPLING_NODES
 from .style_model import STYLE_MODEL_NODES
 from .supir import SUPIRApply
 from .switch import ComfySwitchNode
@@ -149,6 +150,7 @@ COMFY_NODES = (
     *MODEL_PATCH_LOADER_NODES,
     AnimaLLLiteApply,
     SUPIRApply,
+    *STANDARD_SAMPLING_NODES,
     *DEVICE_ROUTING_NODES,
     *COMPILE_NODES,
     *MODEL_SPECIFIC_SCHEDULER_NODES,

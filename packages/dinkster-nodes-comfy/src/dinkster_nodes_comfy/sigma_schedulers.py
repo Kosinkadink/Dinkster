@@ -29,7 +29,7 @@ _INT = TypeExpr.concrete(CORE_INT)
 _MODEL = TypeExpr.concrete(MODEL_TYPE)
 _SIGMAS = TypeExpr.concrete(SIGMAS_TYPE)
 _CATEGORY = "model/sampling/schedulers"
-_SCHEDULERS = (
+SCHEDULER_NAMES = (
     "simple",
     "sgm_uniform",
     "karras",
@@ -81,7 +81,7 @@ class BasicScheduler(Node):
                 InputSpec(
                     "scheduler",
                     _COMBO,
-                    widget=ComboWidget(tuple(ComboOption(value) for value in _SCHEDULERS)),
+                    widget=ComboWidget(tuple(ComboOption(value) for value in SCHEDULER_NAMES)),
                 ),
                 _integer("steps", 20, 1, 10_000),
                 _float("denoise", 1.0, 0.0, 1.0, 0.01, advanced=False),

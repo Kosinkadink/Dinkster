@@ -95,6 +95,8 @@ namespaces = [
     "ModelPatchLoader",
     "AnimaLLLiteApply",
     "SUPIRApply",
+    "KSampler",
+    "KSamplerAdvanced",
     "MultiGPU_WorkUnits",
     "SelectModelDevice",
     "SelectCLIPDevice",

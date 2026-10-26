@@ -4,6 +4,8 @@
   through scheduled input, self-attention, cross-attention and MLP patches.
 - Native SUPIR applies scheduled control strength and optional restoration
   guidance, using checkpoint denoise-encoder weights when present.
+- Native KSampler and KSamplerAdvanced use the inference sampling engine with
+  seeded batch noise, masks, denoise strength and advanced step boundaries.
 - Native WanDancer keyframe padding places reference frames and masks into
   video segments, with matching audio slices and scalar or list outputs.
 - Native LTXV duration prediction uses caption connectors and the duration head,
