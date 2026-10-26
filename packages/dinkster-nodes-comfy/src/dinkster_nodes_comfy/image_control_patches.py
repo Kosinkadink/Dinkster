@@ -20,6 +20,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
+    initialize_inference_process,
     materialize_clip_vision_output,
     materialize_image,
 )
@@ -38,6 +39,7 @@ def _range() -> tuple[InputSpec, InputSpec]:
             "start_percent",
             _FLOAT,
             default=0.0,
+            required=False,
             advanced=True,
             widget=NumberWidget(min=0.0, max=1.0, step=0.001),
         ),
@@ -45,6 +47,7 @@ def _range() -> tuple[InputSpec, InputSpec]:
             "end_percent",
             _FLOAT,
             default=1.0,
+            required=False,
             advanced=True,
             widget=NumberWidget(min=0.0, max=1.0, step=0.001),
         ),
@@ -52,6 +55,7 @@ def _range() -> tuple[InputSpec, InputSpec]:
 
 
 def _modules() -> tuple[Any, Any, Any, Any, Any, Any, Any]:
+    initialize_inference_process()
     return (
         importlib.import_module("torch"),
         importlib.import_module("dinkster_inference.utils"),
@@ -574,13 +578,6 @@ class QwenImageDiffsynthControlnet(Node):
         inpaint_image = (
             None if inpaint_image is None else materialize_image(inpaint_image)[:, :, :, :3]
         )
-        if mask is not None:
-            mask_tensor = materialize_image(mask)
-            if mask_tensor.ndim == 3:
-                mask_tensor = mask_tensor.unsqueeze(1)
-            if mask_tensor.ndim == 4:
-                mask_tensor = mask_tensor.unsqueeze(2)
-            mask = 1.0 - mask_tensor
         sampling = model.get_model_object("model_sampling")
         sigma_range = (
             float(sampling.percent_to_sigma(start_percent)),
@@ -588,10 +585,19 @@ class QwenImageDiffsynthControlnet(Node):
         )
         patched = model.clone()
         if isinstance(model_patch.model, qwen.QwenImage21FunControl):
+            raw_mask = None if mask is None else materialize_image(mask)
             QwenImage21FunControlPatch(
-                model_patch, vae, image, strength, inpaint_image, mask, sigma_range
+                model_patch, vae, image, strength, inpaint_image, raw_mask, sigma_range
             ).register(patched)
-        elif isinstance(model_patch.model, z_image.ZImage_Control):
+            return cls.outputs(MODEL=patched)
+        if mask is not None:
+            mask_tensor = materialize_image(mask)
+            if mask_tensor.ndim == 3:
+                mask_tensor = mask_tensor.unsqueeze(1)
+            if mask_tensor.ndim == 4:
+                mask_tensor = mask_tensor.unsqueeze(2)
+            mask = 1.0 - mask_tensor
+        if isinstance(model_patch.model, z_image.ZImage_Control):
             patch = ZImageControlPatch(
                 model_patch, vae, image, strength, inpaint_image, mask, sigma_range
             )

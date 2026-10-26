@@ -121,6 +121,13 @@ class _QwenFunControl(torch.nn.Module):
         return stream + index + 1, torch.full_like(stream, index + 4.0)
 
 
+class _QwenLatentFormat:
+    latent_channels = 16
+
+    def process_in(self, latent: torch.Tensor) -> torch.Tensor:
+        return latent
+
+
 class _Projector(torch.nn.Module):
     def forward(self, features: torch.Tensor) -> torch.Tensor:
         return features.sum(dim=0)
@@ -314,9 +321,57 @@ def test_qwen_fun_control_replaces_blocks_restores_inactive_path_and_cleans_up(
     assert not fun.active
 
 
-def test_uso_reference_projects_stacked_features_and_preserves_source() -> None:
+def test_qwen_prepare_keeps_raw_mask_for_active_wrapper(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import dinkster_inference.latent_formats as latent_formats
+    import dinkster_inference.ldm.lumina.controlnet as z_runtime
+    import dinkster_inference.ldm.qwen_image21.model as qwen_runtime
+
+    monkeypatch.setattr(qwen_runtime, "QwenImage21FunControl", _QwenFunControl)
+    monkeypatch.setattr(z_runtime, "ZImage_Control", _ZImage)
+    monkeypatch.setattr(latent_formats, "QwenImage21", _QwenLatentFormat)
+    patched = ZImageFunControlnet.execute(
+        model=_patcher(_Host()),
+        model_patch=_patcher(_QwenFunControl()),
+        vae=_Vae(),
+        image=torch.tensor([[[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]]]),
+        inpaint_image=torch.tensor([[[[10.0, 20.0, 30.0], [40.0, 50.0, 60.0]]]]),
+        mask=torch.tensor([[[0.0, 1.0]]]),
+    )["MODEL"]
+    fun = patched.model_options["transformer_options"]["patches_replace"]["dit"][
+        (
+            "single_block",
+            0,
+        )
+    ].control_patch
+    result = fun.diffusion_model_wrapper(
+        lambda *_args: _args[5],
+        torch.zeros(1, 1, 1, 2),
+        None,
+        None,
+        None,
+        None,
+        {"sigmas": torch.tensor([9.5])},
+    )
+    assert fun.active and result["sigmas"].item() == 9.5
+    assert fun.control is not None
+    assert torch.equal(fun.control[0, :3, 0], torch.tensor([[1.0, 4.0], [2.0, 5.0], [3.0, 6.0]]))
+    assert torch.equal(fun.control[0, 16, 0], torch.tensor([1.0, 0.0]))
+    assert torch.equal(
+        fun.control[0, 17:20, 0], torch.tensor([[10.0, 0.5], [20.0, 0.5], [30.0, 0.5]])
+    )
+
+
+def test_uso_reference_initializes_runtime_and_preserves_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import dinkster_nodes_comfy.image_control_patches as image_controls
+
     source = _patcher(_Host())
     projector = _patcher(_Projector())
+    calls: list[None] = []
+    monkeypatch.setattr(image_controls, "initialize_inference_process", lambda: calls.append(None))
     vision = SimpleNamespace(
         all_hidden_states=torch.arange(1 * 21 * 2 * 3, dtype=torch.float32).reshape(1, 21, 2, 3),
         penultimate_hidden_states=torch.full((1, 2, 3), 99.0),
@@ -340,9 +395,14 @@ def test_uso_reference_projects_stacked_features_and_preserves_source() -> None:
     assert torch.equal(output["txt_ids"][:, 2:], ids)
     assert patch.models() == [projector]
     assert patch.to(torch.device("cpu")) is patch
+    assert calls
 
 
 def test_image_control_fixture_uses_native_public_model_type() -> None:
     schema = ImageControlModelSource.define_schema()
     assert schema.outputs[0].id == "MODEL"
     assert ImageControlModelSource.execute()["MODEL"].__class__.__name__ == "ModelPatcher"
+    for node in (QwenImageDiffsynthControlnet, ZImageFunControlnet):
+        inputs = {input.id: input for input in node.define_schema().inputs}
+        assert not inputs["start_percent"].required
+        assert not inputs["end_percent"].required
