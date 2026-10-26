@@ -2,12 +2,21 @@
 
 from typing import cast
 
-from dinkster_api.v1 import ASSET_TYPE, MountWidget, TypeExpr
+from dinkster_api.v1 import (
+    ASSET_TYPE,
+    ComboWidget,
+    MountWidget,
+    NumberWidget,
+    StringWidget,
+    TypeExpr,
+)
 from dinkster_nodes_comfy.image_file_tools import (
     LoadImage,
     LoadImageMask,
     LoadImageOutput,
     PreviewImage,
+    SaveAnimatedPNG,
+    SaveAnimatedWEBP,
     SaveImage,
 )
 from dinkster_schema import schema_to_wire
@@ -80,3 +89,37 @@ def test_image_file_inputs_use_the_bound_asset_contract() -> None:
         image = node.schema().inputs[0]
         assert image.type == TypeExpr.concrete(ASSET_TYPE)
         assert image.source_filename is not None
+
+
+def test_animated_savers_preserve_source_controls_and_append_mount() -> None:
+    for node, label, controls in (
+        (SaveAnimatedPNG, "Save Animated PNG", ("compress_level",)),
+        (SaveAnimatedWEBP, "Save Animated WEBP", ("lossless", "quality", "method")),
+    ):
+        schema = node.schema()
+        assert schema.display_name == label
+        assert tuple(item.id for item in schema.inputs) == (
+            "images",
+            "filename_prefix",
+            "fps",
+            *controls,
+            "mount",
+        )
+        fields = {item.id: item for item in schema.inputs}
+        assert fields["filename_prefix"].default == "ComfyUI"
+        assert fields["filename_prefix"].widget == StringWidget(multiline=False)
+        assert fields["fps"].default == 6.0
+        assert fields["fps"].widget == NumberWidget(min=0.01, max=1000.0, step=0.01)
+        assert fields["mount"].widget == MountWidget()
+        assert fields["mount"].adjacent_to == "filename_prefix"
+        assert not fields["mount"].required and fields["mount"].default is None
+        assert schema.output_node and not schema.idempotent
+        assert tuple(item.id for item in schema.outputs) == ("images",)
+        if node is SaveAnimatedPNG:
+            assert fields["compress_level"].default == 4 and fields["compress_level"].advanced
+            assert fields["compress_level"].widget == NumberWidget(min=0, max=9)
+        else:
+            assert fields["lossless"].default is True
+            assert fields["quality"].default == 80
+            assert fields["quality"].widget == NumberWidget(min=0, max=100)
+            assert fields["method"].widget == ComboWidget(options=("default", "fastest", "slowest"))

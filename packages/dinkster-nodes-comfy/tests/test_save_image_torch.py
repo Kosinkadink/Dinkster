@@ -5,8 +5,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import numpy as np
+import pytest
 import torch
-from dinkster_nodes_comfy.image_file_tools import PreviewImage, SaveImage
+from dinkster_nodes_comfy.image_file_tools import (
+    PreviewImage,
+    SaveAnimatedPNG,
+    SaveAnimatedWEBP,
+    SaveImage,
+)
 from PIL import Image
 
 
@@ -79,3 +86,54 @@ def test_preview_image_preserves_cpu_source() -> None:
     images = torch.zeros((1, 2, 3, 3), dtype=torch.float32)
 
     assert PreviewImage.execute(images=images)["images"] is images
+
+
+@pytest.mark.parametrize("format_name", ("png", "webp"))
+@pytest.mark.parametrize("count", (1, 2))
+def test_animated_savers_preserve_frame_order_alpha_timing_and_dimension_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, format_name: str, count: int
+) -> None:
+    default, alternate = _mount(tmp_path, monkeypatch)
+    frames = torch.tensor(
+        [
+            [[[0.5, 0.25, 0.75, 1.0], [1.25, -0.5, 0.1, 0.5], [0.9, 0.2, 0.4, 0.75]]],
+            [[[0.0, 1.0, 0.5, 0.25], [0.1, 0.3, 0.7, 1.0], [0.6, 0.8, 0.2, 0.5]]],
+        ],
+        dtype=torch.float32,
+    )[:count]
+    original = frames.clone()
+    options = (
+        {"compress_level": 3}
+        if format_name == "png"
+        else {"lossless": True, "quality": 93, "method": "slowest"}
+    )
+    node = SaveAnimatedPNG if format_name == "png" else SaveAnimatedWEBP
+    assert (
+        node.execute(
+            images=frames,
+            filename_prefix="animated/%width%x%height%",
+            fps=7.0,
+            mount="alternate",
+            **options,
+        )["images"]
+        is frames
+    )
+    expected = np.array(
+        [
+            [[[127, 63, 191, 255], [255, 0, 25, 127], [229, 51, 102, 191]]],
+            [[[0, 255, 127, 63], [25, 76, 178, 255], [153, 204, 51, 127]]],
+        ],
+        dtype=np.uint8,
+    )[:count]
+    with Image.open(alternate / f"animated/3x1_00001.{format_name}") as saved:
+        assert saved.n_frames == count
+        if format_name == "webp":
+            assert saved.info["exif"]
+            assert dict(saved.getexif()) == {}
+        for index in range(count):
+            saved.seek(index)
+            np.testing.assert_array_equal(np.asarray(saved.convert("RGBA")), expected[index])
+            if count > 1:
+                assert saved.info["duration"] == 142
+    assert not list(default.rglob(f"*.{format_name}"))
+    torch.testing.assert_close(frames, original, rtol=0, atol=0)

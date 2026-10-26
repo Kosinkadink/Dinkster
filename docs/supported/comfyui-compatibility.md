@@ -1,5 +1,7 @@
 ## ComfyUI compatibility
 
+- Native animated PNG and WebP outputs retain frame order, alpha, timing,
+  compression controls and source images while writing to the selected mount.
 - Native CLIP and VAE exports preserve tensor keys and dtypes in safetensors
   on the selected output mount. CLIP weights split by encoder prefix.
 - Native latent files load verified safetensors, convert samples to float32,

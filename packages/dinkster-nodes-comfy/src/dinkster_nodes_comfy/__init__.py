@@ -58,7 +58,15 @@ from .hypernetwork import HypernetworkLoader
 from .image_color_conversion import IMAGE_COLOR_CONVERSION_NODES
 from .image_core import IMAGE_CORE_NODES
 from .image_dimensions import IMAGE_DIMENSION_NODES
-from .image_file_tools import LoadImage, LoadImageMask, LoadImageOutput, PreviewImage, SaveImage
+from .image_file_tools import (
+    LoadImage,
+    LoadImageMask,
+    LoadImageOutput,
+    PreviewImage,
+    SaveAnimatedPNG,
+    SaveAnimatedWEBP,
+    SaveImage,
+)
 from .image_filters import IMAGE_FILTER_NODES
 from .image_transform import IMAGE_TRANSFORM_NODES
 from .inpaint import INPAINT_NODES
@@ -257,6 +265,8 @@ COMFY_NODES = (
     LoadImageOutput,
     *LATENT_FILE_NODES,
     *MODEL_FILE_SAVE_NODES,
+    SaveAnimatedWEBP,
+    SaveAnimatedPNG,
 )
 
 
