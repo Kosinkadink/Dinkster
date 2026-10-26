@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import os
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,7 @@ from dinkster_api.v1 import (
     CLIP_TYPE,
     CONDITIONING_TYPE,
     CORE_INT,
+    CORE_STRING,
     IMAGE_TYPE,
     PHOTOMAKER_TYPE,
     AssetRef,
@@ -25,8 +27,10 @@ from dinkster_api.v1 import (
 )
 from dinkster_assets import digest_file
 from dinkster_graph import Graph, GraphNode, Link
+from dinkster_inference_wire import register_inference_types
 from dinkster_nodes_comfy import photomaker
 from dinkster_nodes_comfy.photomaker import PhotoMakerEncode, PhotoMakerLoader
+from dinkster_values import RESOURCE_ID_META_KEY, TypeRegistry
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -168,6 +172,66 @@ def test_loader_safely_reads_admitted_checkpoint(
     )
 
 
+def test_identity_constructor_and_projection_order_use_pinned_vision_primitives(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    initialize_inference_process()
+    management = importlib.import_module("dinkster_inference.model_management")
+    clip_model = importlib.import_module("dinkster_inference.clip_model")
+    monkeypatch.setattr(management, "text_encoder_device", lambda: torch.device("cpu"))
+    monkeypatch.setattr(management, "text_encoder_offload_device", lambda: torch.device("meta"))
+    monkeypatch.setattr(management, "text_encoder_dtype", lambda device: torch.float32)
+    with torch.device("meta"):
+        model = photomaker._id_encoder()
+    assert isinstance(model, clip_model.CLIPVisionModelProjection)
+    assert model.load_device == torch.device("cpu")
+    state = model.state_dict()
+    assert state["visual_projection.weight"].shape == (768, 1024)
+    assert state["visual_projection_2.weight"].shape == (1280, 1024)
+    assert state["fuse_module.mlp1.fc1.weight"].shape == (2048, 4096)
+    assert state["fuse_module.mlp1.fc2.weight"].shape == (2048, 2048)
+    assert state["fuse_module.mlp2.layernorm.weight"].shape == (2048,)
+    assert state["fuse_module.layer_norm.weight"].shape == (2048,)
+    assert "vision_model.encoder.layers.23.self_attn.q_proj.weight" in state
+    assert all(parameter.device.type == "meta" for parameter in model.parameters())
+
+    class Vision(torch.nn.Module):
+        def forward(self, pixels: Any) -> Any:
+            assert pixels.shape == (2, 3, 4, 6)
+            return (None, None, pixels[:, 0, 0, 0, None].expand(2, 1024))
+
+    class Projection(torch.nn.Module):
+        def __init__(self, size: int, offset: float) -> None:
+            super().__init__()
+            self.size = size
+            self.offset = offset
+
+        def forward(self, features: Any) -> Any:
+            return features[:, : self.size] + self.offset
+
+    class Fusion(torch.nn.Module):
+        def forward(self, prompts: Any, ids: Any, mask: Any) -> Any:
+            assert ids.shape == (1, 2, 1, 2048)
+            torch.testing.assert_close(ids[0, 0, 0, :768], torch.full((768,), 3.0))
+            torch.testing.assert_close(ids[0, 1, 0, :768], torch.full((768,), 7.0))
+            torch.testing.assert_close(ids[0, 0, 0, 768:], torch.full((1280,), -1.0))
+            torch.testing.assert_close(ids[0, 1, 0, 768:], torch.full((1280,), 3.0))
+            assert mask.nonzero().tolist() == [[0, 2]]
+            return prompts
+
+    class SecondProjection(torch.nn.Module):
+        def forward(self, features: Any) -> Any:
+            return features[:, :1].expand(2, 1280) - 2.0
+
+    model.vision_model = Vision()
+    model.visual_projection = Projection(768, 2.0)
+    model.visual_projection_2 = SecondProjection()
+    model.fuse_module = Fusion()
+    pixels = torch.stack((torch.ones(3, 4, 6), torch.full((3, 4, 6), 5.0))).unsqueeze(0)
+    prompts = torch.arange(3 * 2048, dtype=torch.float32).reshape(1, 3, 2048)
+    assert model(pixels, prompts, torch.tensor([[False, False, True]])) is prompts
+
+
 class PhotoMakerSource(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -179,14 +243,19 @@ class PhotoMakerSource(Node):
                     ("model", PHOTOMAKER_TYPE),
                     ("clip", CLIP_TYPE),
                     ("image", IMAGE_TYPE),
+                    ("resource", CORE_STRING),
                 )
             ),
         )
 
     @classmethod
     def execute(cls) -> dict[str, object]:
+        model = IdentityModel()
+        registry = TypeRegistry()
+        register_inference_types(registry)
+        resource = registry.spec(PHOTOMAKER_TYPE).meta(model)[RESOURCE_ID_META_KEY]
         return cls.outputs(
-            model=IdentityModel(), clip=Clip(), image=torch.ones(1, 32, 48, 3) * 0.25
+            model=model, clip=Clip(), image=torch.ones(1, 32, 48, 3) * 0.25, resource=resource
         )
 
 
@@ -199,12 +268,18 @@ class PhotoMakerInspect(Node):
                 InputSpec("model", TypeExpr.concrete(PHOTOMAKER_TYPE)),
                 InputSpec("clip", TypeExpr.concrete(CLIP_TYPE)),
                 InputSpec("conditioning", TypeExpr.concrete(CONDITIONING_TYPE)),
+                InputSpec("resource", TypeExpr.concrete(CORE_STRING)),
             ),
             outputs=(OutputSpec("count", TypeExpr.concrete(CORE_INT)),),
         )
 
     @classmethod
-    def execute(cls, *, model: Any, clip: Any, conditioning: Any) -> dict[str, object]:
+    def execute(
+        cls, *, model: Any, clip: Any, conditioning: Any, resource: str
+    ) -> dict[str, object]:
+        registry = TypeRegistry()
+        register_inference_types(registry)
+        assert registry.spec(PHOTOMAKER_TYPE).meta(model)[RESOURCE_ID_META_KEY] == resource
         assert model.mask.nonzero().tolist() == [[0, 1]]
         assert model.pixels.shape == (1, 1, 3, 224, 224)
         expected = clip.cond.clone()
@@ -269,6 +344,7 @@ def test_photo_identity_crosses_ordinary_resident_hosts(tmp_path: Path, in_proce
                             "model": Link("source", "model"),
                             "clip": Link("source", "clip"),
                             "conditioning": Link("encode", "CONDITIONING"),
+                            "resource": Link("source", "resource"),
                         },
                     ),
                 }

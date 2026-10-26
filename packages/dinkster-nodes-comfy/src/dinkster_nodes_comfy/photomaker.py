@@ -156,10 +156,11 @@ class PhotoMakerLoader(Node):
     def execute(cls, *, photomaker_model_name: object) -> Mapping[str, object]:
         if not isinstance(photomaker_model_name, (AssetRef, LocalAssetRef)):
             raise TypeError("photomaker_model_name must be an AssetRef or LocalAssetRef")
+        path = photomaker_model_name.local_path()
         initialize_inference_process()
         model = _id_encoder()
         utils = importlib.import_module("dinkster_inference.utils")
-        data = utils.load_torch_file(str(photomaker_model_name.local_path()), safe_load=True)
+        data = utils.load_torch_file(str(path), safe_load=True)
         if "id_encoder" in data:
             data = data["id_encoder"]
         model.load_state_dict(data)
