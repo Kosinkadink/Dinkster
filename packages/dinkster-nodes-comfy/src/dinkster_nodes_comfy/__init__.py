@@ -27,6 +27,7 @@ from .cfg_guidance import CFG_GUIDANCE_NODES
 from .cfg_guiders import CFG_GUIDER_NODES
 from .clip import CLIP_NODES
 from .clip_model_specific import MODEL_TEXT_ENCODER_NODES
+from .clip_sd3 import CLIPTextEncodeSD3
 from .clip_sdxl import CLIP_SDXL_NODES
 from .color_resolution import COLOR_RESOLUTION_NODES
 from .compile import COMPILE_NODES
@@ -41,10 +42,12 @@ from .dataset_images import DATASET_IMAGE_NODES
 from .dataset_text import DATASET_TEXT_NODES
 from .device_routing import DEVICE_ROUTING_NODES
 from .flux_conditioning import FLUX_CONDITIONING_NODES
+from .flux_image_layout import FLUX_IMAGE_LAYOUT_NODES
 from .freeu import FREEU_NODES
 from .gligen_conditioning import GLIGENTextBoxApply
 from .hook_checkpoint import HOOK_CHECKPOINT_NODES
 from .hook_conditioning import HOOK_CONDITIONING_NODES
+from .hook_lora import HOOK_LORA_NODES
 from .hook_scheduling import HOOK_SCHEDULING_NODES
 from .hunyuan3d import HUNYUAN3D_CONDITIONING_NODES
 from .hunyuan_latent import HUNYUAN_LATENT_NODES
@@ -172,12 +175,15 @@ COMFY_NODES = (
     *STYLE_MODEL_NODES,
     GLIGENTextBoxApply,
     *CLIP_SDXL_NODES,
+    CLIPTextEncodeSD3,
     *MODEL_TEXT_ENCODER_NODES,
     *FLUX_CONDITIONING_NODES,
+    *FLUX_IMAGE_LAYOUT_NODES,
     *VAE_NODES,
     *CONDITIONING_NODES,
     PiDConditioning,
     *HOOK_CHECKPOINT_NODES,
+    *HOOK_LORA_NODES,
     *CONTEXT_WINDOW_NODES,
     *HOOK_CONDITIONING_NODES,
     *REFERENCE_CONDITIONING_NODES,
