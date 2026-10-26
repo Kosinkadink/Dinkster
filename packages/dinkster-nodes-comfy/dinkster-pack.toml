@@ -59,6 +59,7 @@ namespaces = [
     "EasyCache",
     "LazyCache",
     "FluxKVCache",
+    "HiDreamO1PatchSeamSmoothing",
     "ModelMergeSimple",
     "ModelMergeSubtract",
     "ModelMergeAdd",

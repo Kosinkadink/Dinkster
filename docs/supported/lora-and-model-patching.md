@@ -10,6 +10,9 @@ model patcher.
 inclusive sigma range while optionally retaining an existing model wrapper.
 `FluxKVCache` reuses reference-image attention keys and values independently
 for each model block, including changes in prompt batch size.
+`HiDreamO1PatchSeamSmoothing` blends shifted patch-grid predictions over a
+sampling window, with fixed or ramped pass counts and average, Hann-window,
+or median blending while preserving the image edges.
 
 `MultiGPU_WorkUnits` creates reusable model deep clones for the visible devices.
 `SelectModelDevice`, `SelectCLIPDevice`, and `SelectVAEDevice` route their
