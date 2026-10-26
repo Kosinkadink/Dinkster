@@ -83,6 +83,7 @@ from .model_specific_schedulers import MODEL_SPECIFIC_SCHEDULER_NODES
 from .morphology import MORPHOLOGY_NODES
 from .noise_guidance import NOISE_GUIDANCE_NODES
 from .perpneg import PERPNEG_NODES
+from .pid_conditioning import PiDConditioning
 from .post_processing import POST_PROCESSING_NODES
 from .primitive import (
     PrimitiveBoolean,
@@ -168,6 +169,7 @@ COMFY_NODES = (
     *MODEL_TEXT_ENCODER_NODES,
     *VAE_NODES,
     *CONDITIONING_NODES,
+    PiDConditioning,
     *HOOK_CHECKPOINT_NODES,
     *CONTEXT_WINDOW_NODES,
     *HOOK_CONDITIONING_NODES,
