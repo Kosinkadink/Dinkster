@@ -220,6 +220,8 @@ namespaces = [
     "PiDConditioning",
     "CreateHookModelAsLora",
     "CreateHookModelAsLoraModelOnly",
+    "CreateHookLora",
+    "CreateHookLoraModelOnly",
     "ContextWindowsManual",
     "WanContextWindowsManual",
     "LTXVContextWindows",
@@ -401,6 +403,8 @@ namespaces = [
     "WanDancerPadKeyframesList",
     "LTXVDurationPredictor",
     "MiniMaxH3AddGuide",
+    "ColorToRGBInt",
+    "ResolutionSelector",
     "ImageCropV2",
     "PrimitiveBoundingBox",
 ]
