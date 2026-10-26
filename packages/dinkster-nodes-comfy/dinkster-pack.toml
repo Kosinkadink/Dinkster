@@ -220,6 +220,8 @@ namespaces = [
     "PiDConditioning",
     "CreateHookModelAsLora",
     "CreateHookModelAsLoraModelOnly",
+    "CreateHookLora",
+    "CreateHookLoraModelOnly",
     "ContextWindowsManual",
     "WanContextWindowsManual",
     "LTXVContextWindows",
