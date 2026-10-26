@@ -93,6 +93,8 @@ namespaces = [
     "ModelAttentionBackend",
     "HypernetworkLoader",
     "ModelPatchLoader",
+    "AnimaLLLiteApply",
+    "SUPIRApply",
     "MultiGPU_WorkUnits",
     "SelectModelDevice",
     "SelectCLIPDevice",

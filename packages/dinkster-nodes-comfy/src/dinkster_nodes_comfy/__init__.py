@@ -12,6 +12,7 @@ from dinkster_api.v1 import register_inference_types as _register_inference_type
 
 from .ace_text_conditioning import ACE_TEXT_CONDITIONING_NODES
 from .advanced_samplers import ADVANCED_SAMPLER_NODES
+from .anima_lllite import AnimaLLLiteApply
 from .ar_video import ARVideoI2V, SamplerARVideo
 from .attention_guidance import ATTENTION_GUIDANCE_NODES
 from .attention_multiply import ATTENTION_MULTIPLY_NODES
@@ -111,6 +112,7 @@ from .spatial_model_patches import SPATIAL_MODEL_PATCH_NODES
 from .stable3d import STABLE3D_NODES
 from .stable_cascade import STABLE_CASCADE_NODES
 from .style_model import STYLE_MODEL_NODES
+from .supir import SUPIRApply
 from .switch import ComfySwitchNode
 from .text import TEXT_NODES
 from .utilities import ComfyNumberConvert, SeedNode
@@ -145,6 +147,8 @@ COMFY_NODES = (
     *MODEL_ADVANCED_NODES,
     HypernetworkLoader,
     *MODEL_PATCH_LOADER_NODES,
+    AnimaLLLiteApply,
+    SUPIRApply,
     *DEVICE_ROUTING_NODES,
     *COMPILE_NODES,
     *MODEL_SPECIFIC_SCHEDULER_NODES,
