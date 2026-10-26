@@ -390,6 +390,9 @@ namespaces = [
     "WanDancerPadKeyframesList",
     "LTXVDurationPredictor",
     "MiniMaxH3AddGuide",
+    "WanImageToVideo",
+    "WanFirstLastFrameToVideo",
+    "WanFunInpaintToVideo",
 ]
 
 [pack.sandbox]

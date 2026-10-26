@@ -81,6 +81,9 @@
 - Eight native video latent nodes create Hunyuan Video, Hunyuan Video 1.5, LTXV,
   Cosmos, and autoregressive video samples, trim video frames, freeze LTXV video
   or audio samples, and normalize video latent starts under their exact ComfyUI IDs.
+- Native Wan image and first/last-frame conditioning encodes image starts and
+  ends, applies temporal masks and optional CLIP vision states, and supports
+  reference padding and inpaint conditioning.
 - Native LTXV preprocessing applies the model's optional per-frame H.264 image
   compression before encoding video starts.
 - Native LTXV image-to-video and frame-rate conditioning nodes encode image starts,
