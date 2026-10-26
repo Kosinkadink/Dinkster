@@ -32,7 +32,7 @@ _LATENT = TypeExpr.concrete(LATENT_TYPE)
 _VAE = TypeExpr.concrete(VAE_TYPE)
 
 
-def _integer(name: str, default: int, minimum: int, maximum: int, step: int) -> InputSpec:
+def _integer(name: str, default: int, minimum: int, maximum: int, step: int | None) -> InputSpec:
     return InputSpec(
         name,
         _INT,
@@ -72,7 +72,7 @@ class BerniniConditioning(Node):
                 _integer("width", 832, 16, 8192, 16),
                 _integer("height", 480, 16, 8192, 16),
                 _integer("length", 81, 1, 8192, 4),
-                _integer("batch_size", 1, 1, 4096, 1),
+                _integer("batch_size", 1, 1, 4096, None),
                 InputSpec("source_video", _IMAGE, required=False),
                 InputSpec("reference_video", _IMAGE, required=False),
                 InputSpec(
@@ -86,7 +86,7 @@ class BerniniConditioning(Node):
             input_families=(
                 InputFamilySpec(
                     "reference_images",
-                    (InputSpec("reference_image", _IMAGE, required=False),),
+                    (InputSpec("reference_image", _IMAGE),),
                     min_members=0,
                     max_members=8,
                     required=False,
