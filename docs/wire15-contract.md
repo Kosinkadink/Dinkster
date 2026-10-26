@@ -155,8 +155,8 @@ over-broad decoder reading; both sides pin the structural-only scope.
 
 Upstream compat submission keys are CONSTRUCT-SCOPED: `parse_class_inputs`
 pushes every dynamic construct's id onto the prefix and `finalize_prefix`
-is a plain `".".join`. Pinned vectors (flat keys accepted by
-`/api/compat/comfy/prompt` and upstream `get_finalized_class_inputs`;
+is a plain `".".join`. Pinned vectors (flat keys from upstream
+`get_finalized_class_inputs`;
 nesting into execute()'s dicts is server-side):
 
 - Top-level family `images`, prefix `image`: members `images.image0`,
