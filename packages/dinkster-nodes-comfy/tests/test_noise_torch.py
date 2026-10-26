@@ -198,22 +198,7 @@ class _Consumer(Node):
 def test_noise_nodes_cross_an_ordinary_complete_pack_twice_in_both_hosts(tmp_path: Path) -> None:
     async def scenario(in_process: bool, noise_node: str) -> None:
         manifest = Path(__file__).parents[1] / "dinkster-pack.toml"
-        fixture_module = f"noise_fixture_{in_process}_{noise_node.lower()}"
-        (tmp_path / f"{fixture_module}.py").write_text(
-            "from test_noise_torch import _Consumer, _Source\n"
-            "from dinkster_api.v1 import register_inference_types\n"
-            "NODES = (_Source, _Consumer)\n",
-            encoding="ascii",
-        )
-        fixture_manifest = tmp_path / f"{fixture_module}.toml"
-        fixture_manifest.write_text(
-            '[pack]\nname = "noise-fixture"\npublisher = "dinkster"\n'
-            'namespaces = ["noise-fixture"]\n'
-            '[pack.contracts]\nhost = "dinkster-pack-host/1"\napi = "dinkster-api/v1"\n'
-            f'[pack.entry]\nnodes = "{fixture_module}:NODES"\n'
-            f'types = "{fixture_module}:register_inference_types"\n',
-            encoding="ascii",
-        )
+        fixture_manifest = Path(__file__).with_name("noise-fixture.toml")
         composer = ServingComposer(
             worker_env={
                 "PYTHONPATH": os.pathsep.join((str(Path(__file__).parent), *sys.path)),
