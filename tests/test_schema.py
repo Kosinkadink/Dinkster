@@ -185,6 +185,24 @@ def test_save_mount_adjacency_preserves_wire_order_and_execution_identity() -> N
         schema_from_wire(wire)
 
 
+def test_input_family_adjacency_is_scoped_to_its_siblings() -> None:
+    prefix = InputSpec("prefix", TypeExpr.concrete("STRING"))
+    mount = InputSpec("mount", TypeExpr.concrete("STRING"), adjacent_to="prefix")
+    family = InputFamilySpec("targets", (prefix, mount))
+    schema = NodeSchema("SaveExamples", input_families=(family,))
+    assert schema_from_wire(schema_to_wire(schema)) == schema
+    without_hint = NodeSchema(
+        "SaveExamples",
+        input_families=(
+            InputFamilySpec("targets", (prefix, dataclasses.replace(mount, adjacent_to=None))),
+        ),
+    )
+    assert schema_signature(schema) == schema_signature(without_hint)
+    for target in ("missing", "mount"):
+        with pytest.raises(ValueError, match="adjacent_to"):
+            InputFamilySpec("targets", (prefix, dataclasses.replace(mount, adjacent_to=target)))
+
+
 @pytest.mark.parametrize(
     "input_type",
     [TypeExpr.concrete("INT"), TypeExpr.list_of(TypeExpr.concrete("STRING")), TypeExpr.wildcard()],

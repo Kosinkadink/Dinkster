@@ -1187,6 +1187,9 @@ class InputSpec:
     joins schema signatures or execution identity (hazard H15: presentation
     is pixels, never identity).
 
+    ``adjacent_to`` places this control beside a sibling input without changing
+    interface order or execution identity.
+
     ``lazy`` marks an input whose linked producer is deferred until the node's
     worker-bound hook requests it. Unlike the nearby presentation fields, it
     changes scheduling and therefore joins schema signatures.
@@ -1693,6 +1696,10 @@ def _validate_dynamic_entries(entries: tuple[DynamicEntry, ...], owner: str) -> 
         raise ValueError(f"{owner}: duplicate dynamic entry ids")
     for entry in entries:
         _validate_structural_id(entry.id, f"{owner} entry id")
+        if isinstance(entry, InputSpec) and entry.adjacent_to is not None:
+            siblings = {item.id for item in entries if isinstance(item, InputSpec)}
+            if entry.adjacent_to == entry.id or entry.adjacent_to not in siblings:
+                raise ValueError(f"input {entry.id}: adjacent_to must name another sibling input")
 
 
 @dataclass(frozen=True)
