@@ -32,7 +32,7 @@ _SAMPLER = TypeExpr.concrete(SAMPLER_TYPE)
 _CATEGORY = "model/sampling/samplers"
 
 # This is the fixed ComfyUI SAMPLER_NAMES order at bc5f880dbdd43e426077f42ccec53bb577ffee9f.
-_SAMPLER_NAMES = (
+SAMPLER_NAMES = (
     "euler",
     "euler_cfg_pp",
     "euler_ancestral",
@@ -84,7 +84,7 @@ _SAMPLER_NAMES = (
 def _runtime_samplers() -> Any:
     initialize_inference_process()
     samplers = importlib.import_module("dinkster_inference.samplers")
-    if tuple(samplers.SAMPLER_NAMES) != _SAMPLER_NAMES:
+    if tuple(samplers.SAMPLER_NAMES) != SAMPLER_NAMES:
         raise RuntimeError(
             "pinned dinkster_inference sampler names differ from the native node schema"
         )
@@ -140,7 +140,7 @@ class KSamplerSelect(Node):
     def define_schema(cls) -> NodeSchema:
         return _schema(
             "KSamplerSelect",
-            (InputSpec("sampler_name", _COMBO, widget=ComboWidget(options=_SAMPLER_NAMES)),),
+            (InputSpec("sampler_name", _COMBO, widget=ComboWidget(options=SAMPLER_NAMES)),),
         )
 
     @classmethod

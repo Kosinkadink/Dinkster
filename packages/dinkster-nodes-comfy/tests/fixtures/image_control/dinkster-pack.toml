@@ -1,0 +1,8 @@
+[pack]
+name = "image-control-fixture"
+publisher = "dinkster"
+namespaces = ["image-control-fixture"]
+
+[pack.entry]
+nodes = "image_control_fixture:FIXTURE_NODES"
+types = "image_control_fixture:register_inference_types"
