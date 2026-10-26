@@ -16,6 +16,7 @@ from dinkster_api.v1 import (
     NodeSchema,
     NumberWidget,
     OutputSpec,
+    StringWidget,
     TypeExpr,
     edit_video,
     effective_video_facts,
@@ -25,13 +26,6 @@ _INT = TypeExpr.concrete(CORE_INT)
 _STRINGS = TypeExpr.list_of(TypeExpr.concrete(CORE_STRING))
 _VIDEO = TypeExpr.concrete(VIDEO_TYPE)
 _VIDEOS = TypeExpr.list_of(_VIDEO)
-_SEEDS = TypeExpr.list_of(_INT)
-
-
-def _seed(seed: list[int]) -> int:
-    if not seed:
-        raise ValueError("seed list must contain a value")
-    return seed[0]
 
 
 def _frame_facts(video: Mapping[str, object]) -> tuple[int, Fraction]:
@@ -156,8 +150,8 @@ class ShuffleVideoDataset(Node):
                 InputSpec("videos", _VIDEOS, doc="List of videos to shuffle."),
                 InputSpec(
                     "seed",
-                    _SEEDS,
-                    default=[0],
+                    _INT,
+                    default=0,
                     doc="Random seed.",
                     widget=NumberWidget(min=0, max=0xFFFFFFFFFFFFFFFF),
                 ),
@@ -166,9 +160,9 @@ class ShuffleVideoDataset(Node):
         )
 
     @classmethod
-    def execute(cls, *, videos: list[Any], seed: list[int]) -> Mapping[str, object]:
+    def execute(cls, *, videos: list[Any], seed: int) -> Mapping[str, object]:
         numpy = importlib.import_module("numpy")
-        indices = numpy.random.RandomState(_seed(seed) % (2**32 - 1)).permutation(len(videos))
+        indices = numpy.random.RandomState(seed % (2**32 - 1)).permutation(len(videos))
         return cls.outputs(videos=[videos[int(index)] for index in indices])
 
 
@@ -183,11 +177,16 @@ class ShuffleVideoTextDataset(Node):
             search_terms=("shuffle", "randomize", "mix"),
             inputs=(
                 InputSpec("videos", _VIDEOS, doc="List of videos to shuffle."),
-                InputSpec("texts", _STRINGS, doc="List of texts to shuffle."),
+                InputSpec(
+                    "texts",
+                    _STRINGS,
+                    doc="List of texts to shuffle.",
+                    widget=StringWidget(multiline=False),
+                ),
                 InputSpec(
                     "seed",
-                    _SEEDS,
-                    default=[0],
+                    _INT,
+                    default=0,
                     doc="Random seed.",
                     widget=NumberWidget(min=0, max=0xFFFFFFFFFFFFFFFF),
                 ),
@@ -199,11 +198,9 @@ class ShuffleVideoTextDataset(Node):
         )
 
     @classmethod
-    def execute(
-        cls, *, videos: list[Any], texts: list[str], seed: list[int]
-    ) -> Mapping[str, object]:
+    def execute(cls, *, videos: list[Any], texts: list[str], seed: int) -> Mapping[str, object]:
         numpy = importlib.import_module("numpy")
-        indices = numpy.random.RandomState(_seed(seed) % (2**32 - 1)).permutation(len(videos))
+        indices = numpy.random.RandomState(seed % (2**32 - 1)).permutation(len(videos))
         return cls.outputs(
             videos=[videos[int(index)] for index in indices],
             texts=[texts[int(index)] for index in indices],

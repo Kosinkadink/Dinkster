@@ -7,8 +7,10 @@ from fractions import Fraction
 from typing import Any, cast
 
 import numpy as np
+import pytest
 from dinkster_api.v1 import (
     VIDEO_TYPE,
+    StringWidget,
     TypeExpr,
     assemble_video,
     disassemble_video,
@@ -16,6 +18,7 @@ from dinkster_api.v1 import (
     save_video_stream,
     video_from_source,
 )
+from dinkster_assets.value import bind_video_value
 from dinkster_nodes_comfy.dataset_video import (
     DATASET_VIDEO_NODES,
     ShuffleVideoDataset,
@@ -25,15 +28,20 @@ from dinkster_nodes_comfy.dataset_video import (
 )
 
 
-def _source() -> tuple[bytes, dict[str, object]]:
+def _source(*, audio: bool = False) -> tuple[bytes, dict[str, object]]:
     frames = np.zeros((7, 16, 24, 3), dtype=np.float32)
     for index, value in enumerate((0.03, 0.17, 0.31, 0.46, 0.62, 0.78, 0.94)):
         frames[index, ..., 0] = value
         frames[index, ..., 1] = 1.0 - value
         frames[index, ..., 2] = value / 2
+    soundtrack = (
+        {"waveform": np.arange(11_200, dtype=np.int16)[None, None, :], "sample_rate": 8000}
+        if audio
+        else None
+    )
     encoded = io.BytesIO()
     save_video_stream(
-        assemble_video(frames, fps=Fraction(5, 1)),
+        assemble_video(frames, fps=Fraction(5, 1), audio=soundtrack),
         encoded,
         codec="ffv1",
         container="mkv",
@@ -46,8 +54,11 @@ def _values(video: object) -> list[float]:
     return [round(float(frame[0, 0, 0]) / 255, 2) for frame in cast(np.ndarray, images)]
 
 
-def test_temporal_crop_clamps_to_source_tail_without_decoding_at_execute_time() -> None:
-    source, video = _source()
+def test_temporal_crop_clamps_to_source_tail_without_decoding_at_execute_time(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DINKSTER_PACK_SCRATCH", str(tmp_path))
+    source, video = _source(audio=True)
     result = VideoTemporalCrop.execute(video=video, start_frame=5, length=99)["video"]
     assert result["source"] == source
     assert "components" not in result
@@ -63,7 +74,14 @@ def test_temporal_crop_clamps_to_source_tail_without_decoding_at_execute_time() 
         Fraction(5, 1),
         Fraction(2, 5),
     )
-    assert _values(result) == [0.78, 0.94]
+    bound = bind_video_value(result, for_audio_extraction=True)
+    assert _values(bound) == [0.78, 0.94]
+    decoded_audio = disassemble_video(bound)["audio"]
+    assert isinstance(decoded_audio, dict)
+    assert decoded_audio["sample_rate"] == 8000
+    np.testing.assert_array_equal(
+        decoded_audio["waveform"], np.arange(8000, 11200, dtype=np.float32)[None, None, :] / 32768
+    )
 
 
 def test_temporal_crop_clamps_an_out_of_range_start_to_the_final_frame() -> None:
@@ -95,9 +113,9 @@ def test_random_temporal_crop_matches_reference_seed_selection_and_stays_lazy() 
 def test_shuffle_video_nodes_preserve_reference_order_and_text_pairing() -> None:
     videos = [{"id": value} for value in ("one", "two", "three", "four")]
     expected = [int(index) for index in np.random.RandomState(3).permutation(len(videos))]
-    shuffled = ShuffleVideoDataset.execute(videos=videos, seed=[3])["videos"]
+    shuffled = ShuffleVideoDataset.execute(videos=videos, seed=3)["videos"]
     paired = ShuffleVideoTextDataset.execute(
-        videos=videos, texts=["one", "two", "three", "four"], seed=[3]
+        videos=videos, texts=["one", "two", "three", "four"], seed=3
     )
     assert shuffled == [videos[index] for index in expected]
     assert paired == {
@@ -139,4 +157,5 @@ def test_video_dataset_schemas_keep_video_and_list_contracts() -> None:
     assert ShuffleVideoDataset.schema().inputs[0].type == TypeExpr.list_of(
         TypeExpr.concrete(VIDEO_TYPE)
     )
-    assert ShuffleVideoDataset.schema().inputs[1].default == [0]
+    assert ShuffleVideoDataset.schema().inputs[1].default == 0
+    assert ShuffleVideoTextDataset.schema().inputs[1].widget == StringWidget(multiline=False)
