@@ -186,12 +186,15 @@ class _Consumer(Node):
         materialized = materialize_latent(latent)
         assert materialized["note"] == "preserved"
         assert materialized["batch_index"] == [7, 3]
-        expected = (
-            [-1.9337596893310547, 3.747830867767334, 21.249208450317383, 6.172018051147461]
-            if random
-            else [4.0, -2.0, 8.0, 10.0]
-        )
-        assert materialized["samples"].flatten().tolist() == expected
+        source = torch.tensor([[[[1.0, -2.0]]], [[[3.0, 4.0]]]])
+        if random:
+            generator = torch.Generator(device="cpu").manual_seed(42)
+            draws = [torch.randn((1, 1, 1, 2), generator=generator) for _ in range(8)]
+            noise = torch.cat((draws[7], draws[3]))
+            expected = 2 * (source + 1 + noise * 3)
+        else:
+            expected = 2 * (source + 1)
+        assert torch.equal(materialized["samples"], expected)
         return cls.outputs(value=float(materialized["samples"].sum()))
 
 
