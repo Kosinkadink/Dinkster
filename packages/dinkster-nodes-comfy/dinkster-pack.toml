@@ -215,6 +215,7 @@ namespaces = [
     "FluxKontextMultiReferenceLatentMethod",
     "FluxKontextImageScale",
     "Flux3LayoutPrompt",
+    "BerniniConditioning",
     "VAEDecode",
     "VAEEncode",
     "VAEDecodeTiled",

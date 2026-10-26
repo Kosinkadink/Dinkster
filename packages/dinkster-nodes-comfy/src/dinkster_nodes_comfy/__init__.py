@@ -23,6 +23,7 @@ from .audio_latent import AUDIO_LATENT_NODES, GetAudioLatentSize
 from .audio_music_conditioning import AUDIO_MUSIC_CONDITIONING_NODES
 from .audio_transform import AUDIO_TRANSFORM_NODES
 from .audio_vae import AUDIO_VAE_NODES
+from .bernini_conditioning import BERNINI_CONDITIONING_NODES
 from .cache import CACHE_NODES
 from .cfg_guidance import CFG_GUIDANCE_NODES
 from .cfg_guiders import CFG_GUIDER_NODES
@@ -201,6 +202,7 @@ COMFY_NODES = (
     *MODEL_TEXT_ENCODER_NODES,
     *FLUX_CONDITIONING_NODES,
     *FLUX_IMAGE_LAYOUT_NODES,
+    *BERNINI_CONDITIONING_NODES,
     *VAE_NODES,
     *CONDITIONING_NODES,
     PiDConditioning,
