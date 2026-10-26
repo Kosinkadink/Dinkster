@@ -2,7 +2,7 @@
 
 from typing import cast
 
-from dinkster_api.v1 import MountWidget, StringWidget
+from dinkster_api.v1 import MountWidget
 from dinkster_nodes_comfy.image_file_tools import PreviewImage, SaveImage
 from dinkster_schema import schema_to_wire
 
@@ -16,7 +16,7 @@ def test_save_image_preserves_fixed_inputs_and_appends_mount_widget() -> None:
     assert tuple(spec.id for spec in schema.inputs) == ("images", "filename_prefix", "mount")
     assert schema.inputs[1].required
     assert schema.inputs[1].default == "ComfyUI"
-    assert schema.inputs[1].widget == StringWidget(multiline=False)
+    assert schema.inputs[1].widget is None
     assert schema.inputs[0].doc == "The images to save."
     assert schema.inputs[1].doc.startswith("The prefix for the file to save.")
     assert not schema.inputs[2].required
@@ -37,6 +37,8 @@ def test_save_image_preserves_fixed_inputs_and_appends_mount_widget() -> None:
 
     wire = schema_to_wire(schema)
     interface = cast(list[dict[str, object]], wire["interface"])
+    filename_prefix = next(entry for entry in interface if entry["id"] == "filename_prefix")
+    assert "widget" not in filename_prefix
     mount = next(entry for entry in interface if entry["id"] == "mount")
     assert mount["widget"] == {"type": "MOUNT"}
     assert mount["adjacentTo"] == "filename_prefix"
