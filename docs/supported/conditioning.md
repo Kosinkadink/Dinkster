@@ -20,6 +20,8 @@
   references. Qwen Image 2.1 also supports precomputed reference caches.
 - Z-Image Omni conditioning combines up to three vision/image references,
   optional image resizing and VAE latents with its image prompt template.
+- PhotoMaker loads identity checkpoints from admitted assets and fuses identity
+  features into the selected prompt token while retaining pooled conditioning.
 - `CLIPTextEncodeSDXL` encodes separate global and local prompts with size,
   crop and target-size conditioning. Unequal token streams are padded with
   empty-prompt tokens. `CLIPTextEncodeSDXLRefiner` adds aesthetic-score and

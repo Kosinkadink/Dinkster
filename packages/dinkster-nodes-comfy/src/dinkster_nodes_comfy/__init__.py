@@ -101,6 +101,7 @@ from .moss_image import MOSSImageControl, MOSSImageLayoutPrompt, TextEncodeMOSSI
 from .noise import NOISE_NODES
 from .noise_guidance import NOISE_GUIDANCE_NODES
 from .perpneg import PERPNEG_NODES
+from .photomaker import PhotoMakerEncode, PhotoMakerLoader
 from .pid_conditioning import PiDConditioning
 from .post_processing import POST_PROCESSING_NODES
 from .primitive import (
@@ -292,6 +293,8 @@ COMFY_NODES = (
     TextEncodeFibo2,
     TextGenerateLTX2Prompt,
     TextEncodeZImageOmni,
+    PhotoMakerLoader,
+    PhotoMakerEncode,
 )
 
 

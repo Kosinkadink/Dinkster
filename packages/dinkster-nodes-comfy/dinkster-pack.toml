@@ -435,6 +435,8 @@ namespaces = [
     "TextEncodeFibo2",
     "TextGenerateLTX2Prompt",
     "TextEncodeZImageOmni",
+    "PhotoMakerLoader",
+    "PhotoMakerEncode",
 ]
 
 [pack.sandbox]
