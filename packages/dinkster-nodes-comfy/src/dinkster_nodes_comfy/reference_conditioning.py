@@ -169,7 +169,6 @@ class ReferenceMultiLatent(Node):
                             ),
                         ),
                     ),
-                    default="keep resolution",
                 ),
             ),
             input_families=(
