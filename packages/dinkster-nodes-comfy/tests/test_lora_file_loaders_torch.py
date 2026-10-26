@@ -1,8 +1,10 @@
-"""CPU coverage for real LoRA file-loader tensor application."""
+"""CPU coverage for real LoRA file-loader tensor application and host wiring."""
 
 from __future__ import annotations
 
+import asyncio
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -13,11 +15,20 @@ os.environ["DINKSTER_ACCELERATOR"] = "cpu"
 
 import torch
 from dinkster_api.v1 import (
+    CLIP_TYPE,
+    CORE_STRING,
+    MODEL_TYPE,
     AssetRef,
+    InputSpec,
     LocalAssetRef,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
     initialize_inference_process,
 )
 from dinkster_assets import MountDef, MountTable
+from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.lora_file_loaders import (
     LoadLoraModel,
     LoadLoraTextEncoder,
@@ -26,6 +37,8 @@ from dinkster_nodes_comfy.lora_file_loaders import (
     LoraLoaderBypassModelOnly,
     LoraLoaderModelOnly,
 )
+
+from dinkster.compose import PackSpec, ServingComposer
 
 
 class _RawModel(torch.nn.Module):
@@ -189,3 +202,164 @@ def test_real_safetensors_apply_through_all_lora_file_loaders(
         model=_model(), lora_name=asset, strength_model=-0.5
     )["MODEL"]
     assert set(bypass_model_only.injections) == {"bypass_lora"}
+
+
+class _HostSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="lora-file-loaders-fixture.source",
+            outputs=(
+                OutputSpec("model", TypeExpr.concrete(MODEL_TYPE)),
+                OutputSpec("clip", TypeExpr.concrete(CLIP_TYPE)),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        return cls.outputs(model=_model(), clip=_clip())
+
+
+class _HostInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="lora-file-loaders-fixture.inspect",
+            inputs=(
+                InputSpec("model", TypeExpr.concrete(MODEL_TYPE)),
+                InputSpec("clip", TypeExpr.concrete(CLIP_TYPE)),
+            ),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, model: Any, clip: Any) -> dict[str, object]:
+        assert [patch[0] for patch in model.patches["diffusion_model.linear.weight"]] == [
+            -0.5,
+            1.25,
+        ]
+        assert [patch[0] for patch in clip.patcher.patches["text_encoder.weight"]] == [-0.5, 1.25]
+        return cls.outputs(summary="ordered lora rows applied")
+
+
+_HOST_NODES = (_HostSource, _HostInspect)
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("verified", (False, True))
+def test_lora_file_loaders_execute_twice_through_both_ordinary_hosts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, verified: bool
+) -> None:
+    _asset(tmp_path, verified=verified)
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot, index_root=tmp_path / "index")
+    table.add(MountDef(id="loras", path=tmp_path), kind="model/lora")
+    if verified:
+        table.scan("loras")
+    asset = table.bind_name("tiny.safetensors", "model/lora")
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+
+    async def scenario() -> None:
+        package = Path(__file__).resolve().parents[1]
+        checkout = package.parents[1]
+        native_manifest = package / "dinkster-pack.toml"
+        source_paths = (
+            checkout / "src",
+            *(sorted(checkout.glob("packages/*/src"))),
+        )
+        runtime_paths = tuple(Path(path) for path in sys.path if path and Path(path).is_dir())
+        composer = ServingComposer(
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
+                "PYTHONPATH": os.pathsep.join(
+                    (
+                        str(tmp_path),
+                        str(Path(__file__).parent),
+                        str(package / "src"),
+                        *(str(source) for source in source_paths),
+                        *(str(path) for path in runtime_paths),
+                    )
+                ),
+            }
+        )
+        try:
+            module = f"lora_file_loaders_fixture_{tmp_path.name.replace('-', '_')}"
+            (tmp_path / f"{module}.py").write_text(
+                "from test_lora_file_loaders_torch import _HOST_NODES\n"
+                "from dinkster_nodes_comfy import register_inference_types\n"
+                "NODES = _HOST_NODES\n",
+                encoding="ascii",
+            )
+            fixture_manifest = tmp_path / "dinkster-pack.toml"
+            fixture_manifest.write_text(
+                '[pack]\nname = "lora-file-loaders-fixture"\npublisher = "dinkster"\n'
+                'namespaces = ["lora-file-loaders-fixture"]\n\n[pack.entry]\n'
+                f'nodes = "{module}:NODES"\n'
+                f'types = "{module}:register_inference_types"\n',
+                encoding="ascii",
+            )
+            manifests = (native_manifest, fixture_manifest)
+            for manifest in manifests:
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=manifest,
+                        in_process=in_process,
+                        worker_group=None if in_process else "lora-file-loaders-fixture",
+                        group_manifests=() if in_process else manifests,
+                    )
+                )
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("lora-file-loaders-fixture.source"),
+                    "model": GraphNode(
+                        "LoadLoraModel",
+                        {
+                            "model": Link("source", "model"),
+                            "loras.first.lora_name": asset.to_wire(),
+                            "loras.first.strength": -0.5,
+                            "loras.first.enabled": True,
+                            "loras.disabled.lora_name": asset.to_wire(),
+                            "loras.disabled.strength": 1.25,
+                            "loras.disabled.enabled": False,
+                            "loras.zero.lora_name": asset.to_wire(),
+                            "loras.zero.strength": 0.0,
+                            "loras.zero.enabled": True,
+                            "loras.last.lora_name": asset.to_wire(),
+                            "loras.last.strength": 1.25,
+                            "loras.last.enabled": True,
+                        },
+                    ),
+                    "clip": GraphNode(
+                        "LoadLoraTextEncoder",
+                        {
+                            "clip": Link("source", "clip"),
+                            "loras.first.lora_name": asset.to_wire(),
+                            "loras.first.strength": -0.5,
+                            "loras.first.enabled": True,
+                            "loras.disabled.lora_name": asset.to_wire(),
+                            "loras.disabled.strength": 1.25,
+                            "loras.disabled.enabled": False,
+                            "loras.zero.lora_name": asset.to_wire(),
+                            "loras.zero.strength": 0.0,
+                            "loras.zero.enabled": True,
+                            "loras.last.lora_name": asset.to_wire(),
+                            "loras.last.strength": 1.25,
+                            "loras.last.enabled": True,
+                        },
+                    ),
+                    "inspect": GraphNode(
+                        "lora-file-loaders-fixture.inspect",
+                        {"model": Link("model", "MODEL"), "clip": Link("clip", "CLIP")},
+                    ),
+                }
+            )
+            engine = composer.composition.make_engine(lambda _event: None)
+            for _ in range(2):
+                result = await engine.run(graph, ["inspect"])
+                assert result.outputs["inspect"]["summary"].resolve() == "ordered lora rows applied"
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
