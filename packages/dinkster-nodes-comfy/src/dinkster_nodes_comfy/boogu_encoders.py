@@ -55,10 +55,9 @@ class TextEncodeBooguEdit(Node):
             input_families=(
                 InputFamilySpec(
                     "images",
-                    (InputSpec("image", _IMAGE, required=False),),
+                    (InputSpec("image", _IMAGE),),
                     min_members=0,
-                    max_members=16,
-                    member_prefix="image_",
+                    member_names=tuple(f"image_{index}" for index in range(1, 17)),
                 ),
             ),
             outputs=(OutputSpec("positive", _CONDITIONING), OutputSpec("negative", _CONDITIONING)),

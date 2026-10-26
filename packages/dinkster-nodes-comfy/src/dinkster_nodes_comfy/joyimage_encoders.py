@@ -118,11 +118,9 @@ class TextEncodeJoyImageEdit(Node):
             input_families=(
                 InputFamilySpec(
                     "images",
-                    (InputSpec("image", _IMAGE, required=False),),
+                    (InputSpec("image", _IMAGE),),
                     min_members=0,
-                    max_members=6,
-                    required=False,
-                    member_prefix="image",
+                    member_names=tuple(f"image{index}" for index in range(1, 7)),
                 ),
             ),
             outputs=(OutputSpec("CONDITIONING", _CONDITIONING),),
