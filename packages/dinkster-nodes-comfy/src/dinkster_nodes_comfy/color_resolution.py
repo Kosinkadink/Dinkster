@@ -142,7 +142,7 @@ class ResolutionSelector(Node):
         cls, *, aspect_ratio: str, megapixels: float, multiple: int, preview: object = None
     ) -> Mapping[str, object]:
         width_ratio, height_ratio = _ASPECT_RATIOS[aspect_ratio]
-        scale = math.sqrt(megapixels * 1024 * 1024 / (width_ratio * height_ratio))
+        scale = math.sqrt(megapixels * 1024.0 * 1024.0 / (width_ratio * height_ratio))
         return cls.outputs(
             width=round(width_ratio * scale / multiple) * multiple,
             height=round(height_ratio * scale / multiple) * multiple,
