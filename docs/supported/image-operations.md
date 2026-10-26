@@ -2,6 +2,8 @@
 
 - Color strings, ordered color palettes, and optional resolution-preview
   metadata pass between node packs without rewriting their values.
+- Marigold V2 decoded predictions convert to per-image normalized depth,
+  unit surface normals, or sRGB albedo.
 - Native `Canny` edge detection with low/high hysteresis thresholds and RGB output
 - Native Stable Cascade stage C/B latent creation, stage C VAE encoding,
   stage B prior conditioning, and super-resolution control inputs

@@ -259,6 +259,7 @@ namespaces = [
     "GetLatentSize",
     "ImageSDRToHDR",
     "ImageColorSpace",
+    "MarigoldV2PostProcess",
     "ImageBlend",
     "ImageBlur",
     "ImageQuantize",
