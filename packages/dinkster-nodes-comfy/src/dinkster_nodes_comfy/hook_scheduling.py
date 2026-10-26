@@ -257,7 +257,13 @@ class CreateHookKeyframesFromFloats(Node):
             category=_CATEGORY,
             search_terms=("batch keyframes", "strength list to keyframes"),
             inputs=(
-                InputSpec("floats_strength", _FLOATS, default=-1, force_input=True),
+                InputSpec(
+                    "floats_strength",
+                    _FLOATS,
+                    default=-1,
+                    force_input=True,
+                    widget=NumberWidget(min=-1, step=0.001),
+                ),
                 InputSpec(
                     "start_percent",
                     _FLOAT,

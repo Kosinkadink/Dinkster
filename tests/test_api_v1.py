@@ -160,6 +160,7 @@ GOLDEN_V1_SURFACE = (
     "CORE_INT",
     "CORE_STRING",
     "ARRAY_TYPE",
+    "AUDIO_ENCODER_OUTPUT_TYPE",
     "AUDIO_TYPE",
     "BACKGROUND_REMOVAL_TYPE",
     "BOUNDING_BOX_TYPE",
@@ -176,6 +177,7 @@ GOLDEN_V1_SURFACE = (
     "DICT_TYPE",
     "FLOATS_TYPE",
     "GLIGEN_TYPE",
+    "PHOTOMAKER_TYPE",
     "GUIDER_TYPE",
     "HOOK_KEYFRAMES_TYPE",
     "HOOKS_TYPE",
@@ -199,12 +201,15 @@ GOLDEN_V1_SURFACE = (
     "RESOLUTION_PREVIEW_TYPE",
     "RESOURCE_HANDLE_TYPE",
     "SAMPLER_TYPE",
+    "SAM3_TRACK_DATA_TYPE",
     "SEGMENTATION_TYPE",
     "SHAPE_SUBDIVIDES_TYPE",
     "SIGMAS_TYPE",
     "SPLAT_TYPE",
     "STYLE_MODEL_TYPE",
     "TIMESTEPS_RANGE_TYPE",
+    "TRACKS_TYPE",
+    "WAN_CAMERA_EMBEDDING_TYPE",
     "VAE_TYPE",
     "VECTOR_TYPE",
     "VIDEO_DOCUMENT_TYPE",
@@ -498,27 +503,31 @@ assert "torch" not in sys.modules
 
 
 @pytest.mark.parametrize("native_first", (True, False))
-def test_gligen_registration_preserves_resident_identity_without_torch(native_first: bool) -> None:
+@pytest.mark.parametrize("type_name", ("GLIGEN", "PHOTOMAKER"))
+def test_model_registration_preserves_resident_identity_without_torch(
+    native_first: bool, type_name: str
+) -> None:
     script = f"""
 import sys
-from dinkster_api.v1 import GLIGEN_TYPE, TypeRegistry, register_inference_types
+from dinkster_api.v1 import {type_name}_TYPE, TypeRegistry, register_inference_types
 from dinkster_memory.resident import default_pool
 from dinkster_native.native import register_native_types
 from dinkster_values import RESOURCE_ID_META_KEY, ResidentLookupError
 
-assert GLIGEN_TYPE == "GLIGEN"
+model_type = {type_name}_TYPE
+assert model_type == {type_name!r}
 registry = TypeRegistry()
 registrations = (register_native_types, register_inference_types)
 if not {native_first!r}:
     registrations = registrations[::-1]
 registrations[0](registry)
-spec = registry.spec(GLIGEN_TYPE)
+spec = registry.spec(model_type)
 registrations[1](registry)
-assert registry.spec(GLIGEN_TYPE) is spec
+assert registry.spec(model_type) is spec
 register_inference_types(registry)
-assert registry.spec(GLIGEN_TYPE) is spec
+assert registry.spec(model_type) is spec
 assert default_pool() in registry.resident_tables
-assert "comfy.GLIGEN" not in registry
+assert "comfy.{type_name}" not in registry
 source = object()
 encoded = spec.encode(source)
 assert spec.decode(encoded) is source
@@ -530,7 +539,7 @@ try:
 except ResidentLookupError:
     pass
 else:
-    raise AssertionError("released GLIGEN remained resolvable")
+    raise AssertionError("released {type_name} remained resolvable")
 assert "torch" not in sys.modules
 """
     result = subprocess.run(
