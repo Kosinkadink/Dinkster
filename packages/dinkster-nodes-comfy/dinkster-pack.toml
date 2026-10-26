@@ -197,6 +197,7 @@ namespaces = [
     "FluxGuidance",
     "FluxDisableGuidance",
     "FluxKontextMultiReferenceLatentMethod",
+    "BerniniConditioning",
     "VAEDecode",
     "VAEEncode",
     "VAEDecodeTiled",

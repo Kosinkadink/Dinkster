@@ -4,6 +4,7 @@
   `dinkster_inference` runtime.
 - Native Flux text conditioning keeps independent CLIP-L and T5 prompts,
   guidance embedding overrides or disabling, and the selected multi-reference method.
+- Bernini conditioning encodes source video, reference video, and ordered reference images.
 - `CLIPTextEncodeSDXL` encodes separate global and local prompts with size,
   crop and target-size conditioning. Unequal token streams are padded with
   empty-prompt tokens. `CLIPTextEncodeSDXLRefiner` adds aesthetic-score and
