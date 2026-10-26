@@ -28,6 +28,7 @@ from .cfg_guidance import CFG_GUIDANCE_NODES
 from .cfg_guiders import CFG_GUIDER_NODES
 from .chroma_options import ChromaRadianceOptions
 from .clip import CLIP_NODES
+from .clip_loaders import QuadrupleCLIPLoader, TripleCLIPLoader
 from .clip_model_specific import MODEL_TEXT_ENCODER_NODES
 from .clip_sd3 import CLIPTextEncodeSD3
 from .clip_sdxl import CLIP_SDXL_NODES
@@ -155,6 +156,8 @@ COMFY_NODES = (
     *ATTENTION_GUIDANCE_NODES,
     *CACHE_NODES,
     HiDreamO1PatchSeamSmoothing,
+    TripleCLIPLoader,
+    QuadrupleCLIPLoader,
     *MODEL_MERGE_NODES,
     *MODEL_SPECIFIC_MERGE_NODES,
     *MODEL_ADVANCED_NODES,
