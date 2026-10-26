@@ -18,6 +18,7 @@ from dinkster_schema import (
     DynamicSlotSpec,
     InputFamilySpec,
     InputSpec,
+    MountWidget,
     MultiComboWidget,
     Node,
     NodeOutputError,
@@ -123,6 +124,7 @@ def test_current_schema_features_roundtrip() -> None:
         ),
         ("FLOAT", NumberWidget(round=False), {"type": "NUMBER", "round": False}),
         ("STRING", StringWidget(multiline=True), {"type": "STRING", "multiline": True}),
+        ("STRING", MountWidget(), {"type": "MOUNT"}),
         ("STRING", ColorWidget(), {"type": "COLOR"}),
         ("CURVE", CurveWidget(), {"type": "CURVE"}),
         ("COMPOSITOR", CompositorWidget(), {"type": "COMPOSITOR"}),
@@ -139,6 +141,57 @@ def test_widget_roundtrip(type_id: str, widget: object, expected: dict[str, obje
     assert schema_signature(schema) == schema_signature(
         dataclasses.replace(schema, inputs=(dataclasses.replace(schema.inputs[0], widget=None),))
     )
+
+
+def test_save_mount_adjacency_preserves_wire_order_and_execution_identity() -> None:
+    from dinkster_api.v1 import MountWidget as PublicMountWidget
+
+    assert PublicMountWidget is MountWidget
+    schema = NodeSchema(
+        "SaveExample",
+        inputs=(
+            InputSpec("filename_prefix", TypeExpr.concrete("STRING"), default="Example"),
+            InputSpec("quality", TypeExpr.concrete("INT"), default=90),
+            InputSpec(
+                "mount",
+                TypeExpr.concrete("STRING"),
+                required=False,
+                widget=MountWidget(),
+                adjacent_to="filename_prefix",
+            ),
+        ),
+    )
+    wire = schema_to_wire(schema)
+    entries = cast("list[dict[str, Any]]", wire["interface"])
+    assert [entry["id"] for entry in entries] == ["filename_prefix", "quality", "mount"]
+    assert "adjacentTo" not in entries[0]
+    assert entries[-1]["adjacentTo"] == "filename_prefix"
+    assert entries[-1]["widget"] == {"type": "MOUNT"}
+    assert entries[-1]["required"] is False
+    assert "default" not in entries[-1]
+    assert schema_from_wire(wire) == schema
+    without_hint = dataclasses.replace(
+        schema,
+        inputs=(*schema.inputs[:-1], dataclasses.replace(schema.inputs[-1], adjacent_to=None)),
+    )
+    assert schema_signature(schema) == schema_signature(without_hint)
+    for bad in (None, "", 7, "missing", "mount"):
+        entries[-1]["adjacentTo"] = bad
+        with pytest.raises(ValueError, match="adjacent"):
+            schema_from_wire(wire)
+    entries[-1]["adjacentTo"] = "filename_prefix"
+    entries[-1]["widget"] = {"type": "MOUNT", "path": "/tmp"}
+    with pytest.raises(ValueError, match="MOUNT"):
+        schema_from_wire(wire)
+
+
+@pytest.mark.parametrize(
+    "input_type",
+    [TypeExpr.concrete("INT"), TypeExpr.list_of(TypeExpr.concrete("STRING")), TypeExpr.wildcard()],
+)
+def test_mount_widget_requires_scalar_string(input_type: TypeExpr) -> None:
+    with pytest.raises(ValueError, match="mount widget requires a concrete STRING"):
+        InputSpec("mount", input_type, widget=MountWidget())
 
 
 @pytest.mark.parametrize("members", [("FLOAT", "INT"), ("INT", "FLOAT")])
