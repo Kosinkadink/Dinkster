@@ -144,6 +144,13 @@ def test_core_server_serves_real_catalog_without_optional_packages(tmp_path: Pat
                 for node_id, schema in nodes.items()
             )
             assert any(node_id.startswith("std.") for node_id in nodes)
+            for method, path in (
+                ("GET", "/api/compat/comfy/schemas"),
+                ("POST", "/api/compat/comfy/prompt"),
+                ("POST", "/api/compat/comfy/prompt?dryRun=1"),
+            ):
+                async with session.request(method, base + path) as response:
+                    assert response.status == 404, await response.text()
             graph = Graph(nodes={"sum": GraphNode("std.math.add_ints", {"a": 2, "b": 3})})
             async with session.post(
                 base + "/api/jobs",
@@ -1603,7 +1610,7 @@ def test_federated_asset_store_closes_when_app_construction_fails(
     if failure_site == "create-app":
         monkeypatch.setattr(serve, "create_app", fail_create_app)
     else:
-        monkeypatch.setattr(serve, "add_comfy_compat_routes", fail_create_app)
+        monkeypatch.setattr(serve, "_add_collaboration_routes", fail_create_app)
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     monkeypatch.setattr(
         sys,
@@ -2986,7 +2993,7 @@ def test_degraded_default_ordering_composes_media_io_before_image(
         asyncio.run(composer.close())
 
 
-def test_degraded_default_ordering_retains_generation_pack(tmp_path: Path) -> None:
+def test_degraded_default_ordering_retains_native_core_pack(tmp_path: Path) -> None:
     from dinkster_workers import load_manifest
 
     import dinkster.serve as serve
@@ -3012,7 +3019,8 @@ def test_degraded_default_ordering_retains_generation_pack(tmp_path: Path) -> No
         asyncio.run(composer.close())
 
     names = [load_manifest(Path(spec.manifest)).name for spec in ordered]
-    assert "dinkster-nodes-generation" in names
+    assert "dinkster-nodes-comfy" in names
+    assert "dinkster-nodes-generation" not in names
 
 
 def test_serve_progressive_pack_announcement(tmp_path: Path) -> None:
@@ -3103,7 +3111,8 @@ def test_serve_progressive_pack_announcement(tmp_path: Path) -> None:
                 for index, name in enumerate(default_packs)
             }
             expected_packs["isopack"] = {"state": "announced", "epoch": final_epoch}
-            assert "dinkster.ksampler" in data["nodes"]
+            assert data["nodes"]["StringLength"]["pack"] == "dinkster-nodes-comfy"
+            assert "dinkster.ksampler" not in data["nodes"]
             assert report["packs"] == expected_packs
 
     pending_error: BaseException | None = None

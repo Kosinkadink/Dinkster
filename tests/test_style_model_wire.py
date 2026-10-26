@@ -18,6 +18,8 @@ from dinkster_values.builtin_types import STYLE_MODEL_TYPE as builtin_type
 from dinkster_memory.resident import default_pool
 from dinkster_native.native import register_native_types
 from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.style_model import StyleModelApply
+assert StyleModelApply.schema().display_name == 'Apply Style Model'
 assert STYLE_MODEL_TYPE == values_type == builtin_type == 'STYLE_MODEL'
 registry = TypeRegistry()
 registrations = (register_native_types, register_inference_types)

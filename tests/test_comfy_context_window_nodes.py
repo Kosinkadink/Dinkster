@@ -63,6 +63,11 @@ def test_context_window_nodes_are_native_pack_schemas() -> None:
         assert schema.outputs[0].id == "MODEL"
         assert schema_from_wire(schema_to_wire(schema)) == schema
         assert node in COMFY_NODES
+    assert tuple(node.schema().category for node in CONTEXT_WINDOW_NODES) == (
+        "model/patch",
+        "model/patch/wan",
+        "model/patch/ltxv",
+    )
     assert CONTEXT_WINDOW_NODES[1].schema().inputs[1].widget == NumberWidget(
         min=1, max=16384, step=4
     )

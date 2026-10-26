@@ -35,6 +35,13 @@
 - Backend color widgets accept scalar COLOR or STRING sockets, retaining the
   declared type and stored color text. Palettes, lists, and unions are rejected.
   This does not claim frontend COLOR editor support.
+- Inputs can declare socketless presentation while retaining their type,
+  widget, default and interface order, including nested combos and families.
+  The flag defaults to false, conflicts with forced socket presentation, and
+  does not change execution signatures. Frontend pin rendering is not claimed.
+- Backend mount widgets present one scalar STRING mount id. Input adjacency
+  hints name a sibling input without changing interface order or execution
+  identity. This does not claim frontend rendering or native save-node support.
 - FLOAT number descriptors, including one-level FLOAT lists, accept `round: false`
   for explicit no-round presentation, or a positive finite numeric precision.
   Omission leaves precision unspecified; false is distinct from numeric zero.
@@ -43,6 +50,10 @@
   FLOAT, in either order, with FLOAT constraint and rounding semantics. Socket
   types and numeric defaults remain unchanged, including with named widget
   representations. This does not claim frontend numeric-union editor support.
+- Forced-input FLOATS sockets accept numeric presentation with FLOAT constraint
+  semantics, retaining their canonical socket type and default on the wire,
+  including named representations. This does not change runtime values or
+  provide frontend FLOATS editing.
 - Node schemas can declare presentation-only editor roles and JSON-safe custom
   widget descriptors. Clients use these declarations without matching node IDs;
   native video trim and crop declare their exact `VIDEO_EDIT` features.

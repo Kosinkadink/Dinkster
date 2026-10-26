@@ -18,6 +18,7 @@ from dinkster_schema import (
     DynamicSlotSpec,
     InputFamilySpec,
     InputSpec,
+    MountWidget,
     MultiComboWidget,
     Node,
     NodeOutputError,
@@ -55,6 +56,8 @@ SCHEMA = NodeSchema(
 
 def test_schema_reexports_custom_widget_descriptor() -> None:
     assert CustomWidgetDescriptor is ValuesCustomWidgetDescriptor
+    with pytest.raises(ValueError, match="MOUNT.*reserved"):
+        CustomWidgetDescriptor("MOUNT")
 
 
 @pytest.mark.parametrize("input_values", [False, True])
@@ -123,6 +126,7 @@ def test_current_schema_features_roundtrip() -> None:
         ),
         ("FLOAT", NumberWidget(round=False), {"type": "NUMBER", "round": False}),
         ("STRING", StringWidget(multiline=True), {"type": "STRING", "multiline": True}),
+        ("STRING", MountWidget(), {"type": "MOUNT"}),
         ("STRING", ColorWidget(), {"type": "COLOR"}),
         ("CURVE", CurveWidget(), {"type": "CURVE"}),
         ("COMPOSITOR", CompositorWidget(), {"type": "COMPOSITOR"}),
@@ -139,6 +143,178 @@ def test_widget_roundtrip(type_id: str, widget: object, expected: dict[str, obje
     assert schema_signature(schema) == schema_signature(
         dataclasses.replace(schema, inputs=(dataclasses.replace(schema.inputs[0], widget=None),))
     )
+
+
+@pytest.mark.parametrize("representations", [False, True])
+def test_forced_floats_numeric_presentation_preserves_socket(representations: bool) -> None:
+    widget = NumberWidget(min=-1, step=0.001)
+    presentation = (
+        WidgetRepresentations(
+            (WidgetRepresentation("number", widget),), default="number", user_switchable=False
+        )
+        if representations
+        else widget
+    )
+    schema = NodeSchema(
+        "test.floats-presentation",
+        inputs=(
+            InputSpec(
+                "floats_strength",
+                TypeExpr.concrete("FLOATS"),
+                default=-1,
+                force_input=True,
+                widget=presentation,
+            ),
+        ),
+    )
+    wire = schema_to_wire(schema)
+    item = cast("list[dict[str, Any]]", wire["interface"])[0]
+    assert item["type"] == {"kind": "concrete", "types": ["FLOATS"]}
+    assert item["default"] == -1
+    assert item["forceInput"] is True
+    assert schema_from_wire(wire) == schema
+    assert schema.inputs[0].widget == presentation
+    assert widget.min == -1 and widget.step == 0.001
+    for wrong_type, forced in (
+        (TypeExpr.concrete("FLOATS"), False),
+        (TypeExpr.concrete("OPAQUE"), True),
+        (TypeExpr.list_of(TypeExpr.concrete("FLOATS")), True),
+        (TypeExpr.union("FLOATS", "FLOAT"), True),
+    ):
+        with pytest.raises(ValueError, match="number widget requires"):
+            InputSpec("value", wrong_type, force_input=forced, widget=presentation)
+
+
+@pytest.mark.parametrize("scope", ["direct", "combo", "family"])
+def test_socketless_color_preserves_nested_literals_and_execution_identity(scope: str) -> None:
+    def declaration(socketless: bool) -> NodeSchema:
+        color = InputSpec(
+            "color",
+            TypeExpr.concrete("COLOR"),
+            default="#123456",
+            widget=ColorWidget(),
+            socketless=socketless,
+        )
+        if scope == "combo":
+            return NodeSchema(
+                "ColorExample",
+                combos=(
+                    DynamicComboSpec(
+                        "padding_style",
+                        (DynamicComboOption("color", (color,)),),
+                        default="color",
+                    ),
+                ),
+            )
+        if scope == "family":
+            return NodeSchema("ColorExample", input_families=(InputFamilySpec("colors", (color,)),))
+        return NodeSchema("ColorExample", inputs=(color,))
+
+    schema = declaration(True)
+    assert schema_from_wire(schema_to_wire(schema)) == schema
+    assert schema_signature(schema) == schema_signature(declaration(False))
+    stored = {"colors.first.color": "#abcdef"} if scope == "family" else {}
+    choices = {"padding_style": "color"} if scope == "combo" else None
+    effective = elaborate(schema, stored, slot_variants=choices)
+    color = next(spec for spec in effective.inputs if spec.widget == ColorWidget())
+    assert color.type == TypeExpr.concrete("COLOR")
+    assert color.default == "#123456"
+    assert color.socketless is True
+    wire = schema_to_wire(effective)
+    entries = cast("list[dict[str, Any]]", wire["interface"])
+    entry = next(item for item in entries if item["id"] == color.id)
+    assert entry["socketless"] is True
+    assert entry["widget"] == {"type": "COLOR"}
+    assert "forceInput" not in entry
+    assert schema_from_wire(wire) == effective
+
+
+def test_socketless_input_defaults_and_invalid_declarations() -> None:
+    color = InputSpec("color", TypeExpr.concrete("COLOR"), widget=ColorWidget())
+    wire = schema_to_wire(NodeSchema("ColorExample", inputs=(color,)))
+    entry = cast("list[dict[str, Any]]", wire["interface"])[0]
+    assert color.socketless is False
+    assert "socketless" not in entry
+    assert schema_from_wire(wire).inputs[0].socketless is False
+    for bad in (None, 0, 1, "true"):
+        with pytest.raises(ValueError, match="socketless"):
+            dataclasses.replace(color, socketless=bad)
+        entry["socketless"] = bad
+        with pytest.raises(ValueError, match="socketless"):
+            schema_from_wire(wire)
+    entry["socketless"] = True
+    entry["forceInput"] = True
+    with pytest.raises(ValueError, match="socketless.*force_input"):
+        schema_from_wire(wire)
+
+
+def test_save_mount_adjacency_preserves_wire_order_and_execution_identity() -> None:
+    from dinkster_api.v1 import MountWidget as PublicMountWidget
+
+    assert PublicMountWidget is MountWidget
+    schema = NodeSchema(
+        "SaveExample",
+        inputs=(
+            InputSpec("filename_prefix", TypeExpr.concrete("STRING"), default="Example"),
+            InputSpec("quality", TypeExpr.concrete("INT"), default=90),
+            InputSpec(
+                "mount",
+                TypeExpr.concrete("STRING"),
+                required=False,
+                widget=MountWidget(),
+                adjacent_to="filename_prefix",
+            ),
+        ),
+    )
+    wire = schema_to_wire(schema)
+    entries = cast("list[dict[str, Any]]", wire["interface"])
+    assert [entry["id"] for entry in entries] == ["filename_prefix", "quality", "mount"]
+    assert "adjacentTo" not in entries[0]
+    assert entries[-1]["adjacentTo"] == "filename_prefix"
+    assert entries[-1]["widget"] == {"type": "MOUNT"}
+    assert entries[-1]["required"] is False
+    assert "default" not in entries[-1]
+    assert schema_from_wire(wire) == schema
+    without_hint = dataclasses.replace(
+        schema,
+        inputs=(*schema.inputs[:-1], dataclasses.replace(schema.inputs[-1], adjacent_to=None)),
+    )
+    assert schema_signature(schema) == schema_signature(without_hint)
+    for bad in (None, "", 7, "missing", "mount"):
+        entries[-1]["adjacentTo"] = bad
+        with pytest.raises(ValueError, match="adjacent"):
+            schema_from_wire(wire)
+    entries[-1]["adjacentTo"] = "filename_prefix"
+    entries[-1]["widget"] = {"type": "MOUNT", "path": "/tmp"}
+    with pytest.raises(ValueError, match="MOUNT"):
+        schema_from_wire(wire)
+
+
+def test_input_family_adjacency_is_scoped_to_its_siblings() -> None:
+    prefix = InputSpec("prefix", TypeExpr.concrete("STRING"))
+    mount = InputSpec("mount", TypeExpr.concrete("STRING"), adjacent_to="prefix")
+    family = InputFamilySpec("targets", (prefix, mount))
+    schema = NodeSchema("SaveExamples", input_families=(family,))
+    assert schema_from_wire(schema_to_wire(schema)) == schema
+    without_hint = NodeSchema(
+        "SaveExamples",
+        input_families=(
+            InputFamilySpec("targets", (prefix, dataclasses.replace(mount, adjacent_to=None))),
+        ),
+    )
+    assert schema_signature(schema) == schema_signature(without_hint)
+    for target in ("missing", "mount"):
+        with pytest.raises(ValueError, match="adjacent_to"):
+            InputFamilySpec("targets", (prefix, dataclasses.replace(mount, adjacent_to=target)))
+
+
+@pytest.mark.parametrize(
+    "input_type",
+    [TypeExpr.concrete("INT"), TypeExpr.list_of(TypeExpr.concrete("STRING")), TypeExpr.wildcard()],
+)
+def test_mount_widget_requires_scalar_string(input_type: TypeExpr) -> None:
+    with pytest.raises(ValueError, match="mount widget requires a concrete STRING"):
+        InputSpec("mount", input_type, widget=MountWidget())
 
 
 @pytest.mark.parametrize("members", [("FLOAT", "INT"), ("INT", "FLOAT")])

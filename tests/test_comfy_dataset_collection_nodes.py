@@ -80,6 +80,10 @@ def test_dataset_collection_schemas_match_the_fixed_reference() -> None:
     seed = next(item for item in shuffle["interface"] if item["id"] == "seed")
     assert seed["default"] == 0
     assert seed["widget"] == {"type": "NUMBER", "min": 0, "max": str(0xFFFFFFFFFFFFFFFF)}
+    paired = cast(dict[str, Any], schema_to_wire(DATASET_COLLECTION_NODES[1].schema()))
+    texts = next(item for item in paired["interface"] if item["id"] == "texts")
+    assert texts["forceInput"] is True
+    assert texts["widget"] == {"type": "STRING", "multiline": False}
     grid = cast(dict[str, Any], schema_to_wire(DATASET_COLLECTION_NODES[3].schema()))
     assert next(item for item in grid["interface"] if item["id"] == "columns")["default"] == 4
     assert next(item for item in grid["interface"] if item["id"] == "cell_width")["default"] == 256

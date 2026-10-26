@@ -6,6 +6,9 @@ rescale classifier-free guidance; select compute dtype; and select a supported
 dense attention backend. They use the pinned `dinkster_inference` sampler and
 model patcher.
 
+`ChromaRadianceOptions` applies Chroma Radiance transformer options over an
+inclusive sigma range while optionally retaining an existing model wrapper.
+
 `MultiGPU_WorkUnits` creates reusable model deep clones for the visible devices.
 `SelectModelDevice`, `SelectCLIPDevice`, and `SelectVAEDevice` route their
 resident values to the selected default, CPU, or portable `gpu:N` device where

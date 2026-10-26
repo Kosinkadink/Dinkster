@@ -1,0 +1,8 @@
+[pack]
+name = "standard-sampling-fixture"
+publisher = "dinkster"
+namespaces = ["standard-sampling-fixture"]
+
+[pack.entry]
+nodes = "standard_sampling_fixture:FIXTURE_NODES"
+types = "standard_sampling_fixture:register_inference_types"
