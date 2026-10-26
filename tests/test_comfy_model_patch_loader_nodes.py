@@ -13,6 +13,7 @@ def test_model_patch_loader_schema_is_torch_free_and_uses_bound_name_asset() -> 
 
     schema = ModelPatchLoader.schema()
     assert "torch" not in sys.modules
+    assert schema.display_name == "Load Model Patch"
     assert schema.inputs[0].id == "name"
     assert schema.inputs[0].type == TypeExpr.concrete(ASSET_TYPE)
     assert schema.inputs[0].widget == AssetWidget(kind="model/patch")

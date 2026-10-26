@@ -28,6 +28,7 @@ class StyleModelApply(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="StyleModelApply",
+            display_name="Apply Style Model",
             category="model/conditioning",
             search_terms=("style transfer",),
             inputs=(

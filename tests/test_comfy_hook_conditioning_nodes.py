@@ -97,26 +97,37 @@ def test_hook_conditioning_schemas_are_torch_free_and_match_core_interfaces() ->
     properties = schemas["ConditioningSetProperties"]
     assert [(item.type, item.required, item.default) for item in properties.inputs] == [
         (conditioning, True, None),
-        (float_, False, 1.0),
-        (combo, False, "default"),
+        (float_, True, 1.0),
+        (combo, True, "default"),
         (mask, False, None),
         (hooks, False, None),
         (timesteps, False, None),
     ]
+    for name in (
+        "ConditioningSetProperties",
+        "ConditioningSetPropertiesAndCombine",
+        "PairConditioningSetProperties",
+        "PairConditioningSetPropertiesAndCombine",
+    ):
+        assert {item.id for item in schemas[name].inputs if not item.required} == {
+            "mask",
+            "hooks",
+            "timesteps",
+        }
     assert properties.inputs[1].widget == NumberWidget(min=0.0, max=10.0, step=0.01)
     assert properties.inputs[2].widget == ComboWidget(("default", "mask bounds"))
     clip = schemas["SetClipHooks"]
     assert [(item.type, item.required, item.default, item.advanced) for item in clip.inputs] == [
         (TypeExpr.concrete(CLIP_TYPE), True, None, False),
-        (boolean, False, True, True),
-        (boolean, False, False, True),
+        (boolean, True, True, True),
+        (boolean, True, False, True),
         (hooks, False, None, False),
     ]
     assert clip.occupies == ("gpu",)
     range_ = schemas["ConditioningTimestepsRange"]
     assert [(item.required, item.default, item.widget) for item in range_.inputs] == [
-        (False, 0.0, NumberWidget(min=0.0, max=1.0, step=0.001)),
-        (False, 1.0, NumberWidget(min=0.0, max=1.0, step=0.001)),
+        (True, 0.0, NumberWidget(min=0.0, max=1.0, step=0.001)),
+        (True, 1.0, NumberWidget(min=0.0, max=1.0, step=0.001)),
     ]
     assert "torch" not in sys.modules
 
