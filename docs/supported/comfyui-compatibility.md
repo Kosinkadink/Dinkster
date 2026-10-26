@@ -57,6 +57,8 @@
   independent video/audio flow shifts without modifying the source model.
 - MiniMax H3 image-to-video conditioning encodes optional first and last
   keyframes and scheduled text while creating paired zero audio/video latents.
+- MiniMax H3 guides anchor image clips and audio at positive or negative frame
+  indices, retaining existing keyframes and cropping audio to the remaining duration.
 - Ten native conditioning nodes combine, blend, concatenate, multiply, mask,
   zero, and set area or timestep metadata under their exact ComfyUI interfaces.
 - Native hook conditioning preserves paired ordering, default records, mask and
