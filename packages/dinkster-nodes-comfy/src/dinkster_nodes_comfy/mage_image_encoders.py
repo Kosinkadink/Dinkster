@@ -152,7 +152,7 @@ class TextEncodeMageFlowEdit(Node):
                 conditioning_set_values(
                     positive,
                     values,
-                    append=True,  # pyright: ignore[reportCallIssue]
+                    append=True,
                 ),
             )
             negative = cast(
@@ -160,7 +160,7 @@ class TextEncodeMageFlowEdit(Node):
                 conditioning_set_values(
                     negative,
                     values,
-                    append=True,  # pyright: ignore[reportCallIssue]
+                    append=True,
                 ),
             )
 

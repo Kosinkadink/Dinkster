@@ -144,7 +144,7 @@ class TextEncodeJoyImageEdit(Node):
                 conditioning_set_values(
                     conditioning,
                     {"reference_latents": [vae.encode(image) for image in resized]},
-                    append=True,  # pyright: ignore[reportCallIssue]
+                    append=True,
                 ),
             )
         return cls.outputs(CONDITIONING=conditioning)

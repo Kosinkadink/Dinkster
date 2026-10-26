@@ -120,7 +120,7 @@ class TextEncodeBooguEdit(Node):
                 conditioning_set_values(
                     positive,
                     values,
-                    append=True,  # pyright: ignore[reportCallIssue]
+                    append=True,
                 ),
             )
             negative = cast(
@@ -128,7 +128,7 @@ class TextEncodeBooguEdit(Node):
                 conditioning_set_values(
                     negative,
                     values,
-                    append=True,  # pyright: ignore[reportCallIssue]
+                    append=True,
                 ),
             )
         return cls.outputs(positive=positive, negative=negative)

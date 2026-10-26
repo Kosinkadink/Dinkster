@@ -66,7 +66,7 @@ def _append(conditioning: Any, references: list[Any]) -> Any:
     return conditioning_set_values(
         conditioning,
         {"reference_latents": references},
-        append=True,  # type: ignore[call-arg]
+        append=True,
     )
 
 

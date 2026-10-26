@@ -98,7 +98,7 @@ class TextEncodeMingImageEdit(Node):
                 conditioning_set_values(
                     conditioning,
                     {"reference_latents": latents},
-                    append=True,  # pyright: ignore[reportCallIssue]
+                    append=True,
                 ),
             )
         )
