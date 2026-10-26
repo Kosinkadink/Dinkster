@@ -14,6 +14,7 @@ from dinkster_api.v1 import (
     CLIP_TYPE,
     CONDITIONING_TYPE,
     CORE_COMBO,
+    CORE_FLOAT,
     CORE_INT,
     CORE_STRING,
     IMAGE_TYPE,
@@ -31,7 +32,7 @@ from dinkster_api.v1 import (
     materialize_image,
 )
 
-from .conditioning import conditioning_set_values
+from .conditioning import conditioning_set_values, conditioning_set_values_with_timestep_range
 
 _STRING = TypeExpr.concrete(CORE_STRING)
 _CONDITIONING = TypeExpr.concrete(CONDITIONING_TYPE)
@@ -112,6 +113,119 @@ class MOSSImageLayoutPrompt(Node):
             "bbox_format": "yxyx",
         }
         return cls.outputs(prompt=json.dumps(layout, ensure_ascii=False, separators=(",", ":")))
+
+
+class MOSSImageControl(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="MOSSImageControl",
+            display_name="MOSS-Image Color/Depth Control",
+            category="model/conditioning/moss_image",
+            description=(
+                "Adds the color region and depth maps for a MOSS-Image color/depth control "
+                "adapter loaded with a LoRA loader."
+            ),
+            inputs=(
+                InputSpec("positive", _CONDITIONING),
+                InputSpec("negative", _CONDITIONING),
+                InputSpec("vae", TypeExpr.concrete(VAE_TYPE)),
+                InputSpec(
+                    "color_map",
+                    TypeExpr.concrete(IMAGE_TYPE),
+                    required=False,
+                    doc=(
+                        "One flat color per region, at the output size. "
+                        "The colors are only region IDs."
+                    ),
+                ),
+                InputSpec(
+                    "depth_map",
+                    TypeExpr.concrete(IMAGE_TYPE),
+                    required=False,
+                    doc="Depth map at the output size, near is white.",
+                ),
+                InputSpec(
+                    "strength",
+                    TypeExpr.concrete(CORE_FLOAT),
+                    default=1.0,
+                    widget=NumberWidget(min=0.0, max=10.0, step=0.01),
+                    doc=(
+                        "Scales the maps' contribution to the image tokens. 0.0 is the same "
+                        "as no maps, 1.0 is the trained strength."
+                    ),
+                ),
+                InputSpec(
+                    "start_percent",
+                    TypeExpr.concrete(CORE_FLOAT),
+                    default=0.0,
+                    widget=NumberWidget(min=0.0, max=1.0, step=0.001),
+                    doc="Sampling percent at which the control starts.",
+                ),
+                InputSpec(
+                    "end_percent",
+                    TypeExpr.concrete(CORE_FLOAT),
+                    default=1.0,
+                    widget=NumberWidget(min=0.0, max=1.0, step=0.001),
+                    doc=(
+                        "Sampling percent at which the control ends. Ending early keeps the "
+                        "layout and depth while the rest of the steps loosen the shapes."
+                    ),
+                ),
+            ),
+            outputs=(
+                OutputSpec("positive", _CONDITIONING, display_name="positive"),
+                OutputSpec("negative", _CONDITIONING, display_name="negative"),
+            ),
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        positive: Any,
+        negative: Any,
+        vae: Any,
+        color_map: object = None,
+        depth_map: object = None,
+        strength: float = 1.0,
+        start_percent: float = 0.0,
+        end_percent: float = 1.0,
+    ) -> Mapping[str, object]:
+        latents = [
+            vae.encode(materialize_image(image)[..., :3]) if image is not None else None
+            for image in (color_map, depth_map)
+        ]
+        reference = next((latent for latent in latents if latent is not None), None)
+        if reference is None:
+            return cls.outputs(positive=positive, negative=negative)
+        initialize_inference_process()
+        torch = importlib.import_module("torch")
+        utils = importlib.import_module("dinkster_inference.utils")
+        batch = max(latent.shape[0] for latent in latents if latent is not None)
+        aligned = [
+            torch.zeros_like(reference)
+            if latent is None
+            else latent
+            if latent.shape[-2:] == reference.shape[-2:]
+            else utils.common_upscale(
+                latent, reference.shape[-1], reference.shape[-2], "bilinear", "center"
+            )
+            for latent in latents
+        ]
+        control = (
+            torch.cat([utils.resize_to_batch_size(latent, batch) for latent in aligned], dim=1)
+            * strength
+        )
+        values = {"concat_latent_image": control}
+        return cls.outputs(
+            positive=conditioning_set_values_with_timestep_range(
+                positive, values, start_percent, end_percent
+            ),
+            negative=conditioning_set_values_with_timestep_range(
+                negative, values, start_percent, end_percent
+            ),
+        )
 
 
 class TextEncodeMOSSImageEdit(Node):

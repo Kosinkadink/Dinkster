@@ -24,7 +24,11 @@ from dinkster_api.v1 import (
     materialize_image,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.moss_image import MOSSImageLayoutPrompt, TextEncodeMOSSImageEdit
+from dinkster_nodes_comfy.moss_image import (
+    MOSSImageControl,
+    MOSSImageLayoutPrompt,
+    TextEncodeMOSSImageEdit,
+)
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -132,6 +136,59 @@ def test_moss_edit_orders_references_and_selects_vision_and_latent_layout(
     assert torch.equal(small, torch.full_like(small, 2.0))
 
 
+class ControlVAE:
+    def encode(self, image: torch.Tensor) -> torch.Tensor:
+        assert image.shape[-1] == 3
+        return image.movedim(-1, 1)
+
+
+@pytest.mark.parametrize("missing", ("color", "depth", "neither"))
+def test_moss_control_aligns_maps_batches_and_splits_timestep_range(missing: str) -> None:
+    color = torch.full((1, 3, 5, 4), 2.0)
+    depth = torch.stack((torch.full((5, 3, 3), 3.0), torch.full((5, 3, 3), 7.0)))
+    positive = [[torch.tensor([11.0]), {"keep": "positive"}]]
+    negative = [
+        [torch.tensor([-7.0]), {"keep": "negative", "start_percent": 0.4, "end_percent": 0.9}]
+    ]
+    output = MOSSImageControl.execute(
+        positive=positive,
+        negative=negative,
+        vae=ControlVAE(),
+        color_map=None if missing == "color" else color.numpy(),
+        depth_map=None if missing == "depth" else depth.numpy(),
+        strength=1.5,
+        start_percent=0.25,
+        end_percent=0.6,
+    )
+    height, width = (5, 3) if missing == "color" else (3, 5)
+    batch = 1 if missing == "depth" else 2
+    for name, source, start in (("positive", positive, 0.25), ("negative", negative, 0.4)):
+        result = output[name]
+        active = next(entry for entry in result if "concat_latent_image" in entry[1])
+        assert active[0] is source[0][0]
+        assert active[1]["keep"] == name
+        assert active[1]["start_percent"] == start
+        assert active[1]["end_percent"] == 0.6
+        control = active[1]["concat_latent_image"]
+        assert control.shape == (batch, 6, height, width)
+        torch.testing.assert_close(
+            control[:, :3],
+            torch.full((batch, 3, height, width), 0.0 if missing == "color" else 3.0),
+        )
+        for index in range(batch):
+            torch.testing.assert_close(
+                control[index, 3:],
+                torch.full(
+                    (3, height, width), 0.0 if missing == "depth" else (4.5 if index == 0 else 10.5)
+                ),
+            )
+    assert positive[0][1] == {"keep": "positive"}
+    assert negative[0][1] == {"keep": "negative", "start_percent": 0.4, "end_percent": 0.9}
+    passthrough = MOSSImageControl.execute(positive=positive, negative=negative, vae=ControlVAE())
+    assert passthrough["positive"] is positive
+    assert passthrough["negative"] is negative
+
+
 class MossSource(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -142,6 +199,8 @@ class MossSource(Node):
                 for name, type_id in (
                     ("clip", CLIP_TYPE),
                     ("vae", VAE_TYPE),
+                    ("control_vae", VAE_TYPE),
+                    ("conditioning", CONDITIONING_TYPE),
                     ("image2", IMAGE_TYPE),
                     ("image10", IMAGE_TYPE),
                 )
@@ -153,6 +212,8 @@ class MossSource(Node):
         return cls.outputs(
             clip=Clip(),
             vae=VAE(),
+            control_vae=ControlVAE(),
+            conditioning=[[torch.tensor([11.0]), {"keep": 7}]],
             image2=torch.full((1, 3, 5, 4), 2.0).numpy(),
             image10=torch.full((1, 5, 3, 4), 10.0).numpy(),
         )
@@ -164,13 +225,24 @@ class MossInspect(Node):
         return NodeSchema(
             node_type="moss-fixture.inspect",
             inputs=tuple(
-                InputSpec(name, TypeExpr.concrete(CONDITIONING_TYPE)) for name in ("vision", "text")
+                InputSpec(name, TypeExpr.concrete(CONDITIONING_TYPE))
+                for name in ("vision", "text", "control_positive", "control_negative")
             ),
             outputs=(OutputSpec("count", TypeExpr.concrete(CORE_INT)),),
         )
 
     @classmethod
-    def execute(cls, *, vision: Any, text: Any) -> dict[str, object]:
+    def execute(
+        cls, *, vision: Any, text: Any, control_positive: Any, control_negative: Any
+    ) -> dict[str, object]:
+        for output in (control_positive, control_negative):
+            assert len(output) == 3
+            active = output[1][1]
+            assert active["start_percent"] == 0.25
+            assert active["end_percent"] == 0.6
+            control = materialize_image(active["concat_latent_image"])
+            torch.testing.assert_close(control[:, :3], torch.full((1, 3, 3, 5), 3.0))
+            torch.testing.assert_close(control[:, 3:], torch.full((1, 3, 3, 5), 15.0))
         for output, method in (
             (vision, "index_timestep_zero_isolated"),
             (text, "index_timestep_zero_text_start"),
@@ -243,11 +315,26 @@ def test_moss_edit_ordinary_manifest_hosts(tmp_path: Path, in_process: bool) -> 
                             ("text", "Moss-Image-Edit"),
                         )
                     },
+                    "control": GraphNode(
+                        "MOSSImageControl",
+                        inputs={
+                            "positive": Link("source", "conditioning"),
+                            "negative": Link("source", "conditioning"),
+                            "vae": Link("source", "control_vae"),
+                            "color_map": Link("source", "image2"),
+                            "depth_map": Link("source", "image10"),
+                            "strength": 1.5,
+                            "start_percent": 0.25,
+                            "end_percent": 0.6,
+                        },
+                    ),
                     "inspect": GraphNode(
                         "moss-fixture.inspect",
                         inputs={
                             "vision": Link("vision", "CONDITIONING"),
                             "text": Link("text", "CONDITIONING"),
+                            "control_positive": Link("control", "positive"),
+                            "control_negative": Link("control", "negative"),
                         },
                     ),
                 }

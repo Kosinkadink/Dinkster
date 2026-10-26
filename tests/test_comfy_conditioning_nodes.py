@@ -26,9 +26,63 @@ from dinkster_nodes_comfy.conditioning import (
     ConditioningSetTimestepRange,
     ConditioningStableAudio,
     ConditioningZeroOut,
+    conditioning_set_values,
+    conditioning_set_values_with_timestep_range,
 )
 
 from dinkster.compose import PackSpec, ServingComposer
+
+
+def test_conditioning_metadata_append_preserves_sources_and_default_overwrite() -> None:
+    text = object()
+    existing = [object()]
+    incoming = [object(), object()]
+    source = [[text, {"refs": existing, "unset": None, "count": 3, "keep": "unchanged"}]]
+    appended = conditioning_set_values(
+        source, {"refs": incoming, "unset": incoming, "count": 7}, append=True
+    )
+    assert appended[0][0] is text
+    assert appended[0][1] == {
+        "refs": existing + incoming,
+        "unset": incoming,
+        "count": 10,
+        "keep": "unchanged",
+    }
+    assert source[0][1]["refs"] is existing
+    assert len(existing) == 1
+    assert source[0][1]["unset"] is None
+    assert source[0][1]["count"] == 3
+    replaced = conditioning_set_values(source, {"refs": incoming})
+    assert replaced[0][1]["refs"] is incoming
+    assert conditioning_set_values([[text, {"refs": (1,)}]], {"refs": (2, 3)}, append=True)[0][1][
+        "refs"
+    ] == (1, 2, 3)
+
+
+def test_conditioning_timestep_values_intersect_and_preserve_outside_intervals() -> None:
+    text = object()
+    source = [[text, {"start_percent": 0.1, "end_percent": 0.9, "keep": "source"}]]
+    result = conditioning_set_values_with_timestep_range(source, {"control": "map"}, 0.25, 0.6)
+    assert all(entry[0] is text for entry in result)
+    assert [entry[1] for entry in result] == [
+        {"start_percent": 0.1, "end_percent": 0.25 - 1e-5, "keep": "source"},
+        {"start_percent": 0.25, "end_percent": 0.6, "keep": "source", "control": "map"},
+        {"start_percent": 0.6 + 1e-5, "end_percent": 0.9, "keep": "source"},
+    ]
+    assert source[0][1] == {"start_percent": 0.1, "end_percent": 0.9, "keep": "source"}
+    clipped = conditioning_set_values_with_timestep_range(source, {"control": "map"}, 0.0, 0.4)
+    assert clipped[0][1] == {
+        "start_percent": 0.1,
+        "end_percent": 0.4,
+        "keep": "source",
+        "control": "map",
+    }
+    for start, end in ((0.9, 1.0), (0.4, 0.4)):
+        assert (
+            conditioning_set_values_with_timestep_range(source, {"control": "map"}, start, end)[0]
+            is source[0]
+        )
+    assert conditioning_set_values_with_timestep_range(source, {}, 0.7, 0.2) is source
 
 
 class MaskTensor:

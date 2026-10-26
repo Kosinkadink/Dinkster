@@ -7,7 +7,8 @@
 - Ideogram JSON prompts retain selected photographic or art style, palettes and
   bounding-box elements. MOSS layout prompts place enclosing boxes in centered
   pixel coordinates; MOSS edit conditioning preserves the selected reference
-  layout and optional vision-token prompts.
+  layout and optional vision-token prompts. MOSS color/depth control aligns
+  maps, scales their latent contribution and limits it to the selected sampling range.
 - Text generation supports image, video-frame and audio context, optional
   sampling controls and separate completed or truncated reasoning output.
 - `CLIPTextEncodeSDXL` encodes separate global and local prompts with size,

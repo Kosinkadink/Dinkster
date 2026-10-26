@@ -402,6 +402,7 @@ namespaces = [
     "MOSSImageLayoutPrompt",
     "TextEncodeMOSSImageEdit",
     "TextGenerate",
+    "MOSSImageControl",
 ]
 
 [pack.sandbox]
