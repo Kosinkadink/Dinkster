@@ -45,11 +45,6 @@ def _runtime() -> Any:
     return importlib.import_module("dinkster_inference.sample")
 
 
-def _conditioning(value: object) -> object:
-    payload = getattr(value, "_dinkster_resident_payload", None)
-    return getattr(payload, "conditioning", value)
-
-
 def _capture_x0(output: dict[str, object]) -> Any:
     def callback(_step: int, x0: object, _samples: object, _total_steps: int) -> None:
         output["x0"] = x0
@@ -118,7 +113,10 @@ class SamplerCustom(Node):
                 InputSpec("model", _MODEL),
                 InputSpec("add_noise", _BOOLEAN, default=True, advanced=True),
                 InputSpec(
-                    "noise_seed", _INT, default=0, widget=NumberWidget(min=0, max=_MAX_SEED, step=1)
+                    "noise_seed",
+                    _INT,
+                    default=0,
+                    widget=NumberWidget(min=0, max=_MAX_SEED, control_after_generate="fixed"),
                 ),
                 InputSpec(
                     "cfg",
@@ -163,8 +161,8 @@ class SamplerCustom(Node):
             cfg,
             sampler,
             sigmas,
-            _conditioning(positive),
-            _conditioning(negative),
+            positive,
+            negative,
             samples,
             noise_mask=noise_mask,
             callback=callback,

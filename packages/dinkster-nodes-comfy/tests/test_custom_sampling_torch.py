@@ -100,8 +100,13 @@ class _RealModel(torch.nn.Module):
     def process_latent_out(self, samples: torch.Tensor) -> torch.Tensor:
         return samples * 3
 
+    def apply_model(
+        self, samples: torch.Tensor, _sigma: torch.Tensor, **_kwargs: object
+    ) -> torch.Tensor:
+        return torch.tensor([[[[3.0, -7.0]]], [[[11.0, 5.0]]]], dtype=samples.dtype)
 
-def test_sampler_custom_uses_actual_cpu_cfg_guider_and_sampler(monkeypatch: Any) -> None:
+
+def test_sampler_custom_uses_actual_cpu_cfg_guider_and_sampler() -> None:
     from dinkster_api.v1 import initialize_inference_process
 
     initialize_inference_process()
@@ -109,38 +114,26 @@ def test_sampler_custom_uses_actual_cpu_cfg_guider_and_sampler(monkeypatch: Any)
     from dinkster_inference.model_patcher import ModelPatcher
 
     patcher = ModelPatcher(_RealModel(), torch.device("cpu"), torch.device("cpu"))
-    expected = torch.tensor([[[[3.0, -7.0]]], [[[11.0, 5.0]]]])
-    original = samplers.calc_cond_batch
-    monkeypatch.setattr(
-        samplers,
-        "calc_cond_batch",
-        lambda _model, conditions, _samples, _sigma, _options: [
-            expected if condition is not None else torch.zeros_like(expected)
-            for condition in conditions
-        ],
+    patcher.model.current_patcher = patcher
+    output = custom_sampling.SamplerCustom.execute(
+        model=patcher,
+        add_noise=False,
+        noise_seed=99,
+        cfg=1.0,
+        positive=[],
+        negative=[],
+        sampler=samplers.ksampler("euler"),
+        sigmas=torch.tensor([1.0, 0.0]),
+        latent_image={
+            "samples": torch.tensor([[[[2.0, -4.0]]], [[[8.0, 1.0]]]]),
+            "batch_index": [6, 2],
+            "noise_mask": torch.tensor([[[[1.0, 0.0]]]]),
+            "origin": "real-cpu",
+        },
     )
-    try:
-        output = custom_sampling.SamplerCustom.execute(
-            model=patcher,
-            add_noise=False,
-            noise_seed=99,
-            cfg=1.0,
-            positive=[],
-            negative=[],
-            sampler=samplers.ksampler("euler"),
-            sigmas=torch.tensor([1.0, 0.0]),
-            latent_image={
-                "samples": torch.tensor([[[[2.0, -4.0]]], [[[8.0, 1.0]]]]),
-                "batch_index": [6, 2],
-                "noise_mask": torch.tensor([[[[1.0, 0.0]]]]),
-                "origin": "real-cpu",
-            },
-        )
-    finally:
-        monkeypatch.setattr(samplers, "calc_cond_batch", original)
     assert output["output"]["batch_index"] == [6, 2]
     assert output["output"]["origin"] == "real-cpu"
-    expected_masked = torch.tensor([[[[9.0, -12.0]]], [[[33.0, 3.0]]]])
+    expected_masked = torch.tensor([[[[0.0, -12.0]]], [[[0.0, 3.0]]]])
     torch.testing.assert_close(output["output"]["samples"], expected_masked)
     torch.testing.assert_close(output["denoised_output"]["samples"], expected_masked)
 

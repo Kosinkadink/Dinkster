@@ -1,0 +1,8 @@
+[pack]
+name = "custom-sampling-fixture"
+publisher = "dinkster"
+namespaces = ["custom-sampling-fixture"]
+
+[pack.entry]
+nodes = "custom_sampling_fixture:NODES"
+types = "dinkster_api.v1:register_inference_types"
