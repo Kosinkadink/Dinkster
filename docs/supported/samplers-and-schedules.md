@@ -43,6 +43,9 @@ worker without serializing callables or losing sampler options and seeds.
 Portable sampling selections remain supported. Runtime handles cannot be
 resolved in another worker or after their resident state is released.
 
+RandomNoise, DisableNoise, and AddNoise provide seeded noise, zero noise, and
+model-scaled noise while preserving latent metadata and the source samples.
+
 Native sampler factory nodes provide KSampler selection, Euler ancestral,
 DPM++, LMS, adaptive DPM, ER-SDE, SA-Solver, and SEEDS-2 runtime samplers.
 

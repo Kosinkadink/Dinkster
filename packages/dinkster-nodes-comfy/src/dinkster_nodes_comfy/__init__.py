@@ -88,6 +88,7 @@ from .model_merging_specific import MODEL_SPECIFIC_MERGE_NODES
 from .model_patch_loader import MODEL_PATCH_LOADER_NODES
 from .model_specific_schedulers import MODEL_SPECIFIC_SCHEDULER_NODES
 from .morphology import MORPHOLOGY_NODES
+from .noise import NOISE_NODES
 from .noise_guidance import NOISE_GUIDANCE_NODES
 from .perpneg import PERPNEG_NODES
 from .pid_conditioning import PiDConditioning
@@ -171,6 +172,7 @@ COMFY_NODES = (
     *SPATIAL_MODEL_PATCH_NODES,
     *ROPE_AND_MASK_NODES,
     *NOISE_GUIDANCE_NODES,
+    *NOISE_NODES,
     *SPARSE_ATTENTION_NODES,
     *HOOK_SCHEDULING_NODES,
     *SIGMA_OPERATION_NODES,
