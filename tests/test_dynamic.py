@@ -54,6 +54,48 @@ JOIN_SCHEMA = NodeSchema(
 # --- elaboration is pure, stable, and order-preserving ---
 
 
+@pytest.mark.parametrize("construct", ["family", "combo", "open-slot", "closed-slot"])
+def test_nested_adjacency_targets_the_materialized_sibling(construct: str) -> None:
+    prefix = InputSpec("prefix", STRING)
+    mount = InputSpec("mount", STRING, adjacent_to="prefix")
+    siblings = (prefix, mount)
+    if construct == "family":
+        schema = NodeSchema(
+            "SaveExamples",
+            inputs=(prefix,),
+            input_families=(InputFamilySpec("targets", siblings),),
+        )
+        effective = elaborate(schema, ["targets.second.mount", "targets.first.mount"])
+        expected = [
+            ("targets.second.mount", "targets.second.prefix"),
+            ("targets.first.mount", "targets.first.prefix"),
+        ]
+    else:
+        if construct == "combo":
+            schema = NodeSchema(
+                "SaveExamples",
+                inputs=(prefix,),
+                combos=(DynamicComboSpec("target", (DynamicComboOption("active", siblings),)),),
+            )
+        else:
+            slot = (
+                DynamicSlotSpec("target", inputs=siblings, slot_type=STRING)
+                if construct == "open-slot"
+                else DynamicSlotSpec("target", variants=(SlotVariant("active", STRING, siblings),))
+            )
+            schema = NodeSchema("SaveExamples", inputs=(prefix,), slots=(slot,))
+        effective = elaborate(
+            schema,
+            ["target"],
+            slot_variants={} if construct == "open-slot" else {"target": "active"},
+        )
+        expected = [("target.mount", "target.prefix")]
+    assert [
+        (spec.id, spec.adjacent_to) for spec in effective.inputs if spec.adjacent_to
+    ] == expected
+    assert schema_from_wire(schema_to_wire(effective)) == effective
+
+
 def test_elaboration_members_keep_stored_ids_in_document_order() -> None:
     effective = elaborate(JOIN_SCHEMA, ["pieces.b", "separator", "pieces.a"])
     member_ids = [s.id for s in effective.inputs if s.id != "separator"]

@@ -27,6 +27,7 @@ from .cfg_guidance import CFG_GUIDANCE_NODES
 from .cfg_guiders import CFG_GUIDER_NODES
 from .clip import CLIP_NODES
 from .clip_model_specific import MODEL_TEXT_ENCODER_NODES
+from .clip_sd3 import CLIPTextEncodeSD3
 from .clip_sdxl import CLIP_SDXL_NODES
 from .compile import COMPILE_NODES
 from .compositing import COMPOSITING_NODES
@@ -39,10 +40,13 @@ from .dataset_groups import DATASET_GROUP_NODES
 from .dataset_images import DATASET_IMAGE_NODES
 from .dataset_text import DATASET_TEXT_NODES
 from .device_routing import DEVICE_ROUTING_NODES
+from .flux_conditioning import FLUX_CONDITIONING_NODES
+from .flux_image_layout import FLUX_IMAGE_LAYOUT_NODES
 from .freeu import FREEU_NODES
 from .gligen_conditioning import GLIGENTextBoxApply
 from .hook_checkpoint import HOOK_CHECKPOINT_NODES
 from .hook_conditioning import HOOK_CONDITIONING_NODES
+from .hook_lora import HOOK_LORA_NODES
 from .hook_scheduling import HOOK_SCHEDULING_NODES
 from .hunyuan3d import HUNYUAN3D_CONDITIONING_NODES
 from .hunyuan_latent import HUNYUAN_LATENT_NODES
@@ -70,6 +74,7 @@ from .ltx_duration import LTXVDurationPredictor
 from .ltx_sampling import LTX_SAMPLING_NODES
 from .ltx_video_conditioning import LTX_VIDEO_CONDITIONING_NODES
 from .ltx_video_preprocess import LTX_VIDEO_PREPROCESS_NODES
+from .marigold import MarigoldV2PostProcess
 from .mask import MASK_NODES
 from .math import ComfyMathExpression
 from .minimax_h3_latent import EmptyMiniMaxH3LatentAV, MiniMaxH3AddGuide, MiniMaxH3ImageToVideo
@@ -83,6 +88,7 @@ from .model_specific_schedulers import MODEL_SPECIFIC_SCHEDULER_NODES
 from .morphology import MORPHOLOGY_NODES
 from .noise_guidance import NOISE_GUIDANCE_NODES
 from .perpneg import PERPNEG_NODES
+from .pid_conditioning import PiDConditioning
 from .post_processing import POST_PROCESSING_NODES
 from .primitive import (
     PrimitiveBoolean,
@@ -96,10 +102,12 @@ from .reference_conditioning import REFERENCE_CONDITIONING_NODES
 from .rope_and_mask import ROPE_AND_MASK_NODES
 from .sampler_factories import SAMPLER_FACTORY_NODES
 from .save_text import SaveText
+from .sd_upscale_conditioning import SD_UPSCALE_CONDITIONING_NODES
 from .seedvr_conditioning import SeedVR2Conditioning
 from .seedvr_postprocess import SeedVR2PostProcessing
 from .seedvr_preprocess import SeedVR2Preprocess
 from .seedvr_temporal import SEEDVR_TEMPORAL_NODES
+from .sensenova_options import SenseNovaSamplingOptions
 from .sigma_operations import SIGMA_OPERATION_NODES
 from .sigma_schedulers import SIGMA_SCHEDULER_NODES
 from .sparse_attention import SPARSE_ATTENTION_NODES
@@ -139,6 +147,7 @@ COMFY_NODES = (
     *MODEL_MERGE_NODES,
     *MODEL_SPECIFIC_MERGE_NODES,
     *MODEL_ADVANCED_NODES,
+    SenseNovaSamplingOptions,
     HypernetworkLoader,
     *MODEL_PATCH_LOADER_NODES,
     *DEVICE_ROUTING_NODES,
@@ -165,13 +174,19 @@ COMFY_NODES = (
     *STYLE_MODEL_NODES,
     GLIGENTextBoxApply,
     *CLIP_SDXL_NODES,
+    CLIPTextEncodeSD3,
     *MODEL_TEXT_ENCODER_NODES,
+    *FLUX_CONDITIONING_NODES,
+    *FLUX_IMAGE_LAYOUT_NODES,
     *VAE_NODES,
     *CONDITIONING_NODES,
+    PiDConditioning,
     *HOOK_CHECKPOINT_NODES,
+    *HOOK_LORA_NODES,
     *CONTEXT_WINDOW_NODES,
     *HOOK_CONDITIONING_NODES,
     *REFERENCE_CONDITIONING_NODES,
+    *SD_UPSCALE_CONDITIONING_NODES,
     *HUNYUAN3D_CONDITIONING_NODES,
     *INPAINT_NODES,
     *CONTROLNET_NODES,
@@ -180,6 +195,7 @@ COMFY_NODES = (
     *IMAGE_CORE_NODES,
     *IMAGE_DIMENSION_NODES,
     *IMAGE_COLOR_CONVERSION_NODES,
+    MarigoldV2PostProcess,
     *IMAGE_FILTER_NODES,
     *IMAGE_TRANSFORM_NODES,
     *MORPHOLOGY_NODES,
