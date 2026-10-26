@@ -215,6 +215,8 @@ namespaces = [
     "ConditioningStableAudio",
     "CreateHookModelAsLora",
     "CreateHookModelAsLoraModelOnly",
+    "CreateHookLora",
+    "CreateHookLoraModelOnly",
     "ContextWindowsManual",
     "WanContextWindowsManual",
     "LTXVContextWindows",

@@ -61,7 +61,7 @@ def _write_lora(path: Path) -> None:
     )
 
 
-def test_lora_hook_schemas_are_torch_free_and_unregistered() -> None:
+def test_lora_hook_schemas_are_torch_free_and_registered() -> None:
     root = Path(__file__).resolve().parents[3]
     subprocess.run(
         [
@@ -94,7 +94,7 @@ assert not any(name.startswith("dinkster_inference.") for name in sys.modules)
     )
     from dinkster_nodes_comfy import COMFY_NODES
 
-    assert not any(node in COMFY_NODES for node in HOOK_LORA_NODES)
+    assert all(node in COMFY_NODES for node in HOOK_LORA_NODES)
 
 
 @pytest.mark.parametrize("verified", [False, True])
@@ -208,10 +208,19 @@ class LoraHookInspect(Node):
             model_only.hooks[-1].strength_model,
             model_only.hooks[-1].strength_clip,
         ) == (0.8, 0.0)
+        assert (source.hooks[0].strength_model, source.hooks[0].strength_clip) == (-0.25, 0.75)
+        expected = {
+            "lora_unet.linear.lora_down.weight": torch.tensor([[2.0, -7.0]]),
+            "lora_unet.linear.lora_up.weight": torch.tensor([[11.0], [0.5]]),
+        }
+        for hook in (full.hooks[-1], model_only.hooks[-1]):
+            assert hook.weights.keys() == expected.keys()
+            for key, value in expected.items():
+                assert torch.equal(hook.weights[key], value)
         return cls.outputs(summary="lora weights and sources preserved")
 
 
-LORA_HOOK_FIXTURES = (*HOOK_LORA_NODES, LoraHookSource, LoraHookInspect)
+LORA_HOOK_FIXTURES = (LoraHookSource, LoraHookInspect)
 
 
 @pytest.mark.parametrize("in_process", (True, False))
@@ -233,6 +242,8 @@ def test_lora_hooks_execute_through_fixture_pack_on_both_hosts(
     async def scenario() -> None:
         root = Path(__file__).resolve().parents[1]
         manifest = root / "tests/fixtures/lora_hooks/dinkster-pack.toml"
+        native = root / "dinkster-pack.toml"
+        manifests = (native, manifest)
         composer = ServingComposer(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
@@ -242,14 +253,15 @@ def test_lora_hooks_execute_through_fixture_pack_on_both_hosts(
             }
         )
         try:
-            pack = PackSpec(manifest=manifest, in_process=True)
-            if not in_process:
-                pack = PackSpec(
-                    manifest=manifest,
-                    worker_group="lora-hooks-fixture",
-                    group_manifests=(manifest,),
-                )
-            await composer.add_pack(pack)
+            for entry in manifests:
+                pack = PackSpec(manifest=entry, in_process=True)
+                if not in_process:
+                    pack = PackSpec(
+                        manifest=entry,
+                        worker_group="lora-hooks-fixture",
+                        group_manifests=manifests,
+                    )
+                await composer.add_pack(pack)
             graph = Graph(
                 nodes={
                     "source": GraphNode("lora-hooks-fixture.source", {}),
