@@ -366,6 +366,7 @@ GOLDEN_V1_SURFACE = (
     "save_video_frames",
     "assemble_video",
     "disassemble_video",
+    "iter_video_pixels",
     "save_frame_records",
     "save_video_stream",
     "coerce_video",

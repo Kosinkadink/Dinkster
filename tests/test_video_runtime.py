@@ -8,7 +8,7 @@ import json
 import struct
 from fractions import Fraction
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, BinaryIO, cast
 
 import av
 import numpy as np
@@ -64,6 +64,62 @@ def _packets(data: bytes) -> list[bytes]:
     with av.open(io.BytesIO(data), mode="r") as source:
         packets = [bytes(p) for p in source.demux(video=0) if p.size]
     return packets
+
+
+@pytest.mark.parametrize("encoded", (False, True))
+def test_public_pixel_iterator_applies_edits_to_components_and_encoded_video(encoded: bool) -> None:
+    from dinkster_api.v1 import iter_video_pixels
+
+    pixels = np.arange(4 * 4 * 6 * 3, dtype=np.uint16).reshape(4, 4, 6, 3).astype(np.uint8)
+    video = assemble_video(pixels, fps=Fraction(5))
+    if encoded:
+        output = io.BytesIO()
+        save_video_stream(video, output, codec="ffv1", container="mkv")
+        video = video_from_source(output.getvalue())
+    video = edit_video(video, {"trim": {"start_time": Fraction(1, 5), "duration": Fraction(2, 5)}})
+    video = edit_video(video, {"crop": {"x": 2, "y": 2, "width": 4, "height": 2}})
+    frames = iter_video_pixels(video)
+    try:
+        actual = list(frames)
+    finally:
+        frames.close()
+    assert [time for time, _pixels in actual] == [Fraction(0), Fraction(1, 5)]
+    expected = pixels[1:3, 2:4, 2:6].astype(np.float32) / 255
+    for (_time, frame), wanted in zip(actual, expected, strict=True):
+        assert frame.dtype == np.float32
+        np.testing.assert_array_equal(frame, wanted)
+
+
+def test_public_pixel_iterator_early_close_releases_encoded_asset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_api.v1 import iter_video_pixels
+
+    data = _source()
+    vault = AssetVault(tmp_path)
+    digest = digest_bytes(data)
+    with vault.writer(digest) as writer:
+        writer.write(data)
+        writer.commit()
+    video = video_from_source(AssetRef(digest, "source.mp4", len(data), resolver=vault))
+    opened: list[BinaryIO] = []
+    original = AssetRef.open
+
+    def track_open(ref: AssetRef) -> BinaryIO:
+        handle = original(ref)
+        opened.append(handle)
+        return handle
+
+    monkeypatch.setattr(AssetRef, "open", track_open)
+    frames = iter_video_pixels(video)
+    try:
+        timestamp, pixels = next(frames)
+        assert timestamp == 0
+        assert pixels.shape == (32, 64, 3)
+        assert opened and any(not handle.closed for handle in opened)
+    finally:
+        frames.close()
+    assert all(handle.closed for handle in opened)
 
 
 def test_inline_v2_roundtrip_and_v1_migration() -> None:
