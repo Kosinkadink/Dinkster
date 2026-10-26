@@ -60,7 +60,8 @@
   optional audio, fps, duration, bit depth, and color space
 - VIDEO values retain an encoded source or deferred components, rational
   source probe facts, and ordered lazy trim, crop, scale, and restricted
-  identical-codec concat edits. Info and lazy edits do not decode frames.
+  identical-codec concat edits with up to 100 source segments across the
+  complete nested edit tree. Info and lazy edits do not decode frames.
   Encoded sources can be MP4, MKV, MOV, WebM, AVI, or GIF. Source-copy saves
   preserve original bytes; exact closed packet cuts use stream copy and
   other edits transcode frame-at-a-time. Alpha and source precision are

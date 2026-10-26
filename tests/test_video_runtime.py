@@ -77,6 +77,45 @@ def test_inline_v2_roundtrip_and_v1_migration() -> None:
     assert video_fingerprint(VIDEO_TYPE)(value) == video_fingerprint(VIDEO_TYPE)(decode_video(data))
 
 
+@pytest.mark.parametrize("count", [64, 65, 100])
+def test_concat_clip_budget_roundtrip_and_packet_copy(count: int) -> None:
+    data = _source()
+    clip = video_from_source(data)
+    nested = edit_video(clip, {"concat": [clip] * 31})
+    value = edit_video(clip, {"concat": [nested, *([clip] * (count - 33))]})
+    encoded = encode_video(value)
+    decoded = decode_video(encoded)
+    facts = cast(dict[str, object], video_meta(decoded)["effective"])
+    assert facts["duration"] == [count * 2, 1]
+    assert video_fingerprint(VIDEO_TYPE)(decoded) == video_fingerprint(VIDEO_TYPE)(value)
+    output = io.BytesIO()
+    save_video_stream(decoded, output)
+    assert _packets(output.getvalue()) == _packets(data) * count
+    assert clip["edits"] == []
+    assert clip["source"] is data
+
+
+def test_concat_decoder_rejects_aggregate_clip_overflow() -> None:
+    clip = video_from_source(_source())
+    value = edit_video(clip, {"concat": [clip] * 99})
+    with pytest.raises(ValueError, match="100 clips"):
+        edit_video(value, {"concat": [clip]})
+    encoded = encode_video(value)
+    magic = b"DINKSTER-VIDEO\x02"
+    start = len(magic) + 8
+    end = start + struct.unpack_from("<Q", encoded, len(magic))[0]
+    header = json.loads(encoded[start:end])
+    extra = json.loads(json.dumps(header["video"]["edits"][0]["concat"][-1]))
+    extra["source"]["chunk"] = len(header["chunks"])
+    header["video"]["edits"][0]["concat"].append(extra)
+    source = cast(bytes, clip["source"])
+    header["chunks"].append(len(source))
+    rewritten = json.dumps(header, separators=(",", ":")).encode()
+    forged = magic + struct.pack("<Q", len(rewritten)) + rewritten + encoded[end:] + source
+    with pytest.raises(ValueError, match="clip or nesting limit"):
+        decode_video(forged)
+
+
 def test_asset_codec_does_not_open_and_rebinds_at_destination(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

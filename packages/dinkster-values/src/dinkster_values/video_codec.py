@@ -28,7 +28,7 @@ from .limits import MEBIBYTE, VIDEO_AUDIO_COMPONENT_LIMIT_BYTES, VIDEO_VALUE_LIM
 from .model import stable_hash
 from .resources import COST_META_KEY
 from .storage import BFLOAT16_FIELD, array_storage_meta, storage_dtype
-from .video_edits import effective_video_facts, integer, mapping, seconds
+from .video_edits import VIDEO_CLIP_LIMIT, effective_video_facts, integer, mapping, seconds
 from .video_probe import VideoSource, color_space_label, open_video_source, probe_video
 
 VIDEO_CONTAINERS = frozenset({"mp4", "mkv", "mov", "webm", "avi", "gif"})
@@ -417,7 +417,7 @@ def _pack_video(
     edits = cast("list[object]", value["edits"])
     budget[0] += len(edits)
     budget[1] += 1
-    if depth > 16 or budget[0] > 256 or budget[1] > 64:
+    if depth > 16 or budget[0] > 256 or budget[1] > VIDEO_CLIP_LIMIT:
         raise ValueError("VIDEO edit tree exceeds its operation, clip, or nesting limit")
     wire: dict[str, object] = {"probe": value["probe"]}
     if "source" in value:
@@ -559,7 +559,7 @@ def _unpack_video(
     }:
         raise ValueError("invalid VIDEO header value fields")
     budget[1] += 1
-    if depth > 16 or budget[1] > 64:
+    if depth > 16 or budget[1] > VIDEO_CLIP_LIMIT:
         raise ValueError("VIDEO edit tree exceeds its clip or nesting limit")
     probe = dict(mapping(wire.get("probe"), "VIDEO probe"))
     for key in _RATIONAL_FIELDS:

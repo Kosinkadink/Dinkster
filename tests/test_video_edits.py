@@ -181,3 +181,18 @@ def test_ambiguous_unknown_and_recursive_edits_fail() -> None:
     cast("list[object]", clip["edits"]).append({"concat": [clip]})
     with pytest.raises(ValueError, match="nesting"):
         effective_video_facts(clip)
+
+
+@pytest.mark.parametrize("count", [64, 65, 100])
+def test_concat_clip_budget_counts_nested_source_segments(count: int) -> None:
+    nested = _clip({"concat": [_clip() for _ in range(31)]})
+    value = _clip({"concat": [nested, *[_clip() for _ in range(count - 33)]]})
+    facts = effective_video_facts(value)
+    assert facts["duration"] == count * 10
+    assert facts["frame_count"] == count * 240
+    overflow = _clip({"concat": [value]})
+    if count == 100:
+        with pytest.raises(ValueError, match="100 clips"):
+            effective_video_facts(overflow)
+    else:
+        assert effective_video_facts(overflow)["duration"] == (count + 1) * 10
