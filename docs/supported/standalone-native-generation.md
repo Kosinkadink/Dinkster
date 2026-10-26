@@ -12,6 +12,8 @@
   as well as named model mounts. Weight format does not depend on the asset name.
 - The native catalog does not advertise schema-only generation nodes or
   translated import aliases. Unsupported imports report missing node IDs.
+- Fleet ingress exposes native job submission, not compatibility prompt routes,
+  even when an engine member offers a legacy endpoint.
 - Same-host NVIDIA single-job execution supports guidance-lane splitting and
   explicit two- or four-rank H3 Ulysses sequence sharding. Automatic sequence
   selection remains two-rank.
