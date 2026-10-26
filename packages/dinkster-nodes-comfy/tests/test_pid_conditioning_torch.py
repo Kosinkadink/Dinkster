@@ -163,7 +163,12 @@ def test_pid_conditioning_executes_twice_through_both_production_hosts(
                 "CUDA_VISIBLE_DEVICES": "",
                 "DINKSTER_ACCELERATOR": "cpu",
                 "PYTHONPATH": os.pathsep.join(
-                    (str(tmp_path), str(Path(__file__).parent), str(source_root))
+                    (
+                        str(tmp_path),
+                        str(Path(__file__).parent),
+                        str(source_root),
+                        os.environ.get("PYTHONPATH", ""),
+                    )
                 ),
             }
         )
