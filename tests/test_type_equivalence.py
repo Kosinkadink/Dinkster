@@ -31,14 +31,9 @@ from dinkster_values import (
 )
 from dinkster_workers import BoundaryDiagnostic, IsolatedWorker, RoutingWorker
 
-from dinkster.comfy_compose import register_comfy_host_types
-
 TESTS_DIR = Path(__file__).parent
-COMPAT_IMAGE = "comfy.IMAGE"
-COMPAT_MASK = "comfy.MASK"
-NATIVE_IMAGE = "dinkster.image"
-NATIVE_MASK = "dinkster.mask"
-PROVIDER = "test.compat-wire@1"
+IMAGE = "IMAGE"
+MASK = "MASK"
 
 
 def _register_image_type(registry: TypeRegistry, type_id: str) -> None:
@@ -52,14 +47,11 @@ def _register_image_type(registry: TypeRegistry, type_id: str) -> None:
     )
 
 
-def _image_registry(*, with_equivalences: bool = True) -> TypeRegistry:
+def _image_registry() -> TypeRegistry:
     registry = TypeRegistry()
     register_core_types(registry)
-    for type_id in (COMPAT_IMAGE, COMPAT_MASK, NATIVE_IMAGE, NATIVE_MASK):
+    for type_id in (IMAGE, MASK):
         _register_image_type(registry, type_id)
-    if with_equivalences:
-        registry.register_type_equivalence(COMPAT_IMAGE, NATIVE_IMAGE, provider_id=PROVIDER)
-        registry.register_type_equivalence(COMPAT_MASK, NATIVE_MASK, provider_id=PROVIDER)
     return registry
 
 
@@ -95,15 +87,19 @@ def test_registry_type_equivalence_rejects_ambiguous_or_invalid_pairs() -> None:
         ("list<compat.value>", "native.value", "atom"),
     ):
         try:
-            registry.register_type_equivalence(left, right, provider_id=PROVIDER)
+            registry.register_type_equivalence(left, right, provider_id="test.compat-wire@1")
         except (KeyError, ValueError) as exc:
             assert message in str(exc)
         else:
             raise AssertionError("invalid type equivalence was accepted")
 
-    registry.register_type_equivalence("compat.value", "native.value", provider_id=PROVIDER)
+    registry.register_type_equivalence(
+        "compat.value", "native.value", provider_id="test.compat-wire@1"
+    )
     try:
-        registry.register_type_equivalence("compat.value", "other.value", provider_id=PROVIDER)
+        registry.register_type_equivalence(
+            "compat.value", "other.value", provider_id="test.compat-wire@1"
+        )
     except ValueError as exc:
         assert "already registered" in str(exc)
     else:
@@ -193,48 +189,61 @@ def test_restamped_encoded_buffer_keeps_shared_memory_alive() -> None:
 
 
 def test_type_equivalence_planning_preserves_exact_spelling_and_is_explicit() -> None:
-    registry = _image_registry()
-    native = TypeExpr.variable("T", allowed=(NATIVE_IMAGE, NATIVE_MASK))
-    assert plan_type_equivalence(COMPAT_IMAGE, native, registry) == NATIVE_IMAGE
-    assert plan_type_equivalence(NATIVE_IMAGE, native, registry) is None
-    assert (
-        plan_type_equivalence(
-            COMPAT_IMAGE,
-            TypeExpr.wildcard(),
-            registry,
-        )
-        is None
+    registry = TypeRegistry()
+    registry.register("compat.value")
+    registry.register("native.value")
+    registry.register_type_equivalence(
+        "compat.value", "native.value", provider_id="test.compat-wire@1"
     )
+    native = TypeExpr.concrete("native.value")
+    assert plan_type_equivalence("compat.value", native, registry) == "native.value"
+    assert plan_type_equivalence("native.value", native, registry) is None
 
-    without_pair = _image_registry(with_equivalences=False)
-    assert plan_type_equivalence(COMPAT_IMAGE, native, without_pair) is None
 
-
-def test_graph_validation_uses_registered_equivalence_for_links_and_literals() -> None:
-    source = NodeSchema(
-        "compat.source", outputs=(OutputSpec("image", TypeExpr.concrete(COMPAT_IMAGE)),)
+def test_graph_validation_uses_registered_generic_equivalence_for_links_and_literals() -> None:
+    registry = TypeRegistry()
+    registry.register("compat.value")
+    registry.register("native.value")
+    registry.register_type_equivalence(
+        "compat.value", "native.value", provider_id="test.compat-wire@1"
     )
+    source = NodeSchema("source", outputs=(OutputSpec("value", TypeExpr.concrete("compat.value")),))
+    sink = NodeSchema("sink", inputs=(InputSpec("value", TypeExpr.concrete("native.value")),))
+    schemas = {source.node_type: source, sink.node_type: sink}
+    linked = Graph(
+        {
+            "source": GraphNode("source", {}),
+            "sink": GraphNode("sink", {"value": Link("source", "value")}),
+        }
+    )
+    stamped = Graph({"sink": GraphNode("sink", {"value": TypedLiteral("compat.value", "value")})})
+    assert validate(linked, schemas, ["sink"], known_types=registry) == []
+    assert validate(stamped, schemas, ["sink"], known_types=registry) == []
+
+
+def test_graph_validation_uses_exact_image_and_mask_atoms() -> None:
+    source = NodeSchema("source", outputs=(OutputSpec("image", TypeExpr.concrete(IMAGE)),))
     sink = NodeSchema(
-        "native.sink",
+        "sink",
         inputs=(
             InputSpec(
                 "image",
-                TypeExpr.variable("input_type", allowed=(NATIVE_IMAGE, NATIVE_MASK)),
+                TypeExpr.variable("input_type", allowed=(IMAGE, MASK)),
             ),
         ),
     )
     schemas = {source.node_type: source, sink.node_type: sink}
     linked = Graph(
         nodes={
-            "source": GraphNode(source.node_type, {}),
-            "sink": GraphNode(sink.node_type, {"image": Link("source", "image")}),
+            "source": GraphNode("source", {}),
+            "sink": GraphNode("sink", {"image": Link("source", "image")}),
         }
     )
     stamped = Graph(
         nodes={
             "sink": GraphNode(
                 sink.node_type,
-                {"image": TypedLiteral(COMPAT_IMAGE, [[[[0.0, 0.0, 0.0]]]])},
+                {"image": TypedLiteral(IMAGE, [[[[0.0, 0.0, 0.0]]]])},
             )
         }
     )
@@ -242,33 +251,6 @@ def test_graph_validation_uses_registered_equivalence_for_links_and_literals() -
     registry = _image_registry()
     assert validate(linked, schemas, ["sink"], known_types=registry) == []
     assert validate(stamped, schemas, ["sink"], known_types=registry) == []
-
-    without_pair = _image_registry(with_equivalences=False)
-    assert [
-        diag.code for diag in validate(linked, schemas, ["sink"], known_types=without_pair)
-    ] == ["type-mismatch"]
-    assert [
-        diag.code for diag in validate(stamped, schemas, ["sink"], known_types=without_pair)
-    ] == ["type-mismatch"]
-
-
-def test_comfy_host_registration_activates_only_available_native_pairs() -> None:
-    compat_only = TypeRegistry()
-    register_core_types(compat_only)
-    register_comfy_host_types(compat_only)
-    assert compat_only.equivalent_type(COMPAT_IMAGE) is None
-    assert compat_only.equivalent_type(COMPAT_MASK) is None
-
-    registry = TypeRegistry()
-    register_core_types(registry)
-    _register_image_type(registry, NATIVE_IMAGE)
-    _register_image_type(registry, NATIVE_MASK)
-    register_comfy_host_types(registry)
-    register_comfy_host_types(registry)
-    assert registry.equivalent_type(COMPAT_IMAGE) == NATIVE_IMAGE
-    assert registry.equivalent_type(NATIVE_IMAGE) == COMPAT_IMAGE
-    assert registry.equivalent_type(COMPAT_MASK) == NATIVE_MASK
-    assert registry.equivalent_type(NATIVE_MASK) == COMPAT_MASK
 
 
 def _write_manifest(root: Path, *, compat: bool) -> Path:
@@ -278,7 +260,8 @@ def _write_manifest(root: Path, *, compat: bool) -> Path:
     module = "type_equivalence_compat_nodes" if compat else "type_equivalence_native_nodes"
     manifest = root / "dinkster-pack.toml"
     manifest.write_text(
-        f'[pack]\nname = "{pack}"\nnamespaces = ["{namespace}"]\n\n'
+        f'[pack]\nname = "{pack}"\npublisher = "dinkster"\n'
+        f'type-namespaces = []\nnamespaces = ["{namespace}"]\n\n'
         f'[pack.entry]\nnodes = "{module}:NODES"\n'
         f'types = "{module}:register_types"\n',
         encoding="utf-8",
@@ -286,15 +269,14 @@ def _write_manifest(root: Path, *, compat: bool) -> Path:
     return manifest
 
 
-def test_equivalent_image_and_mask_atoms_cross_isolated_workers_both_directions(
+def test_exact_image_and_mask_atoms_cross_isolated_workers(
     tmp_path: Path,
 ) -> None:
     async def scenario() -> None:
         registry = TypeRegistry()
         register_core_types(registry)
-        _register_image_type(registry, NATIVE_IMAGE)
-        _register_image_type(registry, NATIVE_MASK)
-        register_comfy_host_types(registry)
+        _register_image_type(registry, IMAGE)
+        _register_image_type(registry, MASK)
         compat_diagnostics: list[BoundaryDiagnostic] = []
         native_diagnostics: list[BoundaryDiagnostic] = []
         extra_env = {
@@ -320,8 +302,8 @@ def test_equivalent_image_and_mask_atoms_cross_isolated_workers_both_directions(
             resize_wire = json.dumps(
                 schema_to_wire(schemas["dinkster.image.resize"]), sort_keys=True
             )
-            assert COMPAT_IMAGE not in resize_wire
-            assert COMPAT_MASK not in resize_wire
+            assert '"IMAGE"' in resize_wire
+            assert '"MASK"' in resize_wire
             routes = {node_type: compat for node_type in compat.schemas}
             routes.update({node_type: native for node_type in native.schemas})
             engine = Engine(
@@ -393,8 +375,8 @@ def test_equivalent_image_and_mask_atoms_cross_isolated_workers_both_directions(
             assert validate(graph, schemas, targets, known_types=registry) == []
             result = await engine.run(graph, targets)
 
-            assert result.outputs["resize_image"]["image"].type_id == NATIVE_IMAGE
-            assert result.outputs["resize_mask"]["image"].type_id == NATIVE_MASK
+            assert result.outputs["resize_image"]["image"].type_id == IMAGE
+            assert result.outputs["resize_mask"]["image"].type_id == MASK
             assert result.outputs["native_image_sink"]["shape"].resolve() == "1x2x2x3"
             assert result.outputs["native_mask_sink"]["shape"].resolve() == "1x2x2"
             assert result.outputs["compat_image_sink"]["shape"].resolve() == "1x2x3x3"
@@ -403,17 +385,17 @@ def test_equivalent_image_and_mask_atoms_cross_isolated_workers_both_directions(
             native_by_node = {diagnostic.node_id: diagnostic for diagnostic in native_diagnostics}
             compat_by_node = {diagnostic.node_id: diagnostic for diagnostic in compat_diagnostics}
             for node_id, expected in (
-                ("resize_image", NATIVE_IMAGE),
-                ("resize_mask", NATIVE_MASK),
-                ("native_image_sink", NATIVE_IMAGE),
-                ("native_mask_sink", NATIVE_MASK),
+                ("resize_image", IMAGE),
+                ("resize_mask", MASK),
+                ("native_image_sink", IMAGE),
+                ("native_mask_sink", MASK),
             ):
                 edge = native_by_node[node_id].inputs[0]
                 assert edge.type_id == expected
                 assert edge.transport == "shm"
                 assert edge.reused is True
-            assert compat_by_node["compat_image_sink"].inputs[0].type_id == COMPAT_IMAGE
-            assert compat_by_node["compat_mask_sink"].inputs[0].type_id == COMPAT_MASK
+            assert compat_by_node["compat_image_sink"].inputs[0].type_id == IMAGE
+            assert compat_by_node["compat_mask_sink"].inputs[0].type_id == MASK
             assert compat_by_node["compat_image_sink"].inputs[0].transport == "shm"
             assert compat_by_node["compat_mask_sink"].inputs[0].transport == "shm"
             assert compat_by_node["compat_image_sink"].inputs[0].reused is True

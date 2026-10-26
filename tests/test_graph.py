@@ -6,6 +6,8 @@ from dinkster_graph import (
     GraphCycleError,
     GraphNode,
     Link,
+    RegionNode,
+    RegionOutput,
     TypedLiteral,
     has_errors,
     plan,
@@ -25,8 +27,8 @@ from scaffold_nodes import SCAFFOLD_NODES
 
 SCHEMAS = build_schemas(SCAFFOLD_NODES)
 
-STRING = TypeExpr.concrete("core.string")
-COMBO = TypeExpr.concrete("core.combo")
+STRING = TypeExpr.concrete("STRING")
+COMBO = TypeExpr.concrete("COMBO")
 
 
 @pytest.mark.parametrize(
@@ -92,7 +94,7 @@ class _AcceptsComboOrString(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.combo_union",
-            inputs=(InputSpec("value", TypeExpr.union("core.combo", "core.string")),),
+            inputs=(InputSpec("value", TypeExpr.union("COMBO", "STRING")),),
         )
 
 
@@ -274,7 +276,7 @@ def test_combo_literals_wildcards_unions_and_other_combos_are_legal() -> None:
         nodes={
             # A combo literal is an ordinary plain literal, never $typed.
             "a": GraphNode("test.combo_a", {"value": "a"}),
-            # Different choice lists do not refine core.combo identity.
+            # Different choice lists do not refine COMBO identity.
             "b": GraphNode("test.combo_b", {"value": Link("a", "value")}),
             "wild": GraphNode("test.combo_wildcard", {"value": Link("a", "value")}),
             "union_combo": GraphNode("test.combo_union", {"value": Link("a", "value")}),
@@ -298,19 +300,19 @@ def test_typed_literal_on_nonconcrete_input_is_valid() -> None:
     # variable input (and a list stamp on a list<T> input) - clean document.
     graph = Graph(
         nodes={
-            "m": GraphNode("dev.gallery.match", {"var_in": TypedLiteral("core.int", 7)}),
+            "m": GraphNode("dev.gallery.match", {"var_in": TypedLiteral("INT", 7)}),
             "l": GraphNode(
                 "std.list.length",
-                {"list": TypedLiteral("list<core.int>", [1, 2, 3])},
+                {"list": TypedLiteral("list<INT>", [1, 2, 3])},
             ),
         }
     )
-    diags = validate(graph, SCHEMAS, ["m", "l"], known_types={"core.int"})
+    diags = validate(graph, SCHEMAS, ["m", "l"], known_types={"INT"})
     assert diags == []
 
 
 def test_typed_literal_malformed_type_id_is_error() -> None:
-    for bad in ("", "list<>", "list<core.int", "core<int>", "list<list<>>"):
+    for bad in ("", "list<>", "list<INT", "core<int>", "list<list<>>"):
         graph = Graph(nodes={"m": GraphNode("dev.gallery.match", {"var_in": TypedLiteral(bad, 7)})})
         diags = validate(graph, SCHEMAS, ["m"])
         assert any(d.code == "typed-literal-malformed" for d in diags), bad
@@ -324,7 +326,7 @@ def test_typed_literal_unknown_type_needs_registry() -> None:
     assert validate(graph, SCHEMAS, ["m"]) == []
     # With one (the engine passes its registry), an unregistered atom is an
     # error - including the atom inside a list stamp.
-    diags = validate(graph, SCHEMAS, ["m"], known_types={"core.int"})
+    diags = validate(graph, SCHEMAS, ["m"], known_types={"INT"})
     assert any(d.code == "typed-literal-unknown-type" and d.severity == "error" for d in diags)
     listy = Graph(
         nodes={
@@ -334,15 +336,15 @@ def test_typed_literal_unknown_type_needs_registry() -> None:
             )
         }
     )
-    diags = validate(listy, SCHEMAS, ["m"], known_types={"core.int"})
+    diags = validate(listy, SCHEMAS, ["m"], known_types={"INT"})
     assert any(d.code == "typed-literal-unknown-type" for d in diags)
 
 
 def test_typed_literal_list_stamp_requires_list_value() -> None:
     graph = Graph(
-        nodes={"m": GraphNode("dev.gallery.match", {"var_in": TypedLiteral("list<core.int>", 7)})}
+        nodes={"m": GraphNode("dev.gallery.match", {"var_in": TypedLiteral("list<INT>", 7)})}
     )
-    diags = validate(graph, SCHEMAS, ["m"], known_types={"core.int"})
+    diags = validate(graph, SCHEMAS, ["m"], known_types={"INT"})
     assert any(d.code == "literal-shape" and d.severity == "error" for d in diags)
 
 
@@ -353,11 +355,11 @@ def test_typed_literal_on_concrete_input_is_redundant_warning() -> None:
         nodes={
             "g": GraphNode(
                 "dev.image.gradient",
-                {"width": TypedLiteral("core.int", 8), "height": 8},
+                {"width": TypedLiteral("INT", 8), "height": 8},
             )
         }
     )
-    diags = validate(graph, SCHEMAS, ["g"], known_types={"core.int"})
+    diags = validate(graph, SCHEMAS, ["g"], known_types={"INT"})
     warnings = [d for d in diags if d.code == "typed-literal-on-concrete"]
     assert warnings and all(d.severity == "warning" for d in warnings)
     assert not has_errors(diags)
@@ -370,23 +372,21 @@ def test_typed_literal_cardinality_is_structural() -> None:
         nodes={
             "s": GraphNode(
                 "dev.gallery.sockets",
-                {"union2": TypedLiteral("list<core.int>", [1])},
+                {"union2": TypedLiteral("list<INT>", [1])},
             ),
-            "l": GraphNode("std.list.length", {"list": TypedLiteral("core.int", 7)}),
+            "l": GraphNode("std.list.length", {"list": TypedLiteral("INT", 7)}),
         }
     )
-    codes = {d.code for d in validate(graph, SCHEMAS, ["s", "l"], known_types={"core.int"})}
+    codes = {d.code for d in validate(graph, SCHEMAS, ["s", "l"], known_types={"INT"})}
     assert "list-into-scalar" in codes
     assert "scalar-into-list" in codes
 
 
 def test_typed_literal_type_mismatch_is_warning() -> None:
-    # Advisory compat, exactly as for links: a core.int stamp into a union
+    # Advisory compat, exactly as for links: a INT stamp into a union
     # of image types warns but never errors.
-    graph = Graph(
-        nodes={"s": GraphNode("dev.gallery.sockets", {"union2": TypedLiteral("core.int", 7)})}
-    )
-    diags = validate(graph, SCHEMAS, ["s"], known_types={"core.int"})
+    graph = Graph(nodes={"s": GraphNode("dev.gallery.sockets", {"union2": TypedLiteral("INT", 7)})})
+    diags = validate(graph, SCHEMAS, ["s"], known_types={"INT"})
     mismatches = [d for d in diags if d.code == "type-mismatch"]
     assert mismatches and all(d.severity == "warning" for d in mismatches)
 
@@ -401,3 +401,113 @@ def test_cycle_detected() -> None:
     assert any(d.code == "cycle" for d in validate(graph, SCHEMAS, ["x"]))
     with pytest.raises(GraphCycleError):
         plan(graph, ["x"])
+
+
+@pytest.mark.parametrize(
+    ("nodes", "targets", "expected"),
+    [
+        ({"end": GraphNode("EndLoop")}, ["end"], "loop.unmatchedEnd"),
+        ({"start": GraphNode("StartLoop")}, ["start"], "loop.unmatchedStart"),
+        (
+            {
+                "a": GraphNode("StartLoop"),
+                "b": GraphNode("StartLoop"),
+                "end": GraphNode("EndLoop", {"x": Link("a", "value"), "y": Link("b", "value")}),
+            },
+            ["end"],
+            "loop.ambiguousNesting",
+        ),
+        (
+            {
+                "start": GraphNode("StartLoop"),
+                "end": GraphNode("EndLoop", {"x": Link("start", "value")}),
+                "escape": GraphNode("relay", {"x": Link("start", "value")}),
+            },
+            ["end", "escape"],
+            "loop.bodyEscape",
+        ),
+        (
+            {
+                "start": GraphNode("StartLoop"),
+                "body": GraphNode("relay", {"x": Link("start", "value")}),
+                "end": GraphNode("EndLoop", {"accumulate": Link("body", "value")}),
+            },
+            ["end"],
+            "loop.accumulateFromBody",
+        ),
+    ],
+)
+@pytest.mark.parametrize("inside_region", [False, True])
+def test_loop_boundary_diagnostics_are_structural(nodes, targets, expected, inside_region) -> None:
+    schemas = {
+        kind: NodeSchema(
+            kind,
+            inputs=tuple(
+                InputSpec(name, TypeExpr.wildcard(), required=False)
+                for name in ("x", "y", "accumulate")
+            ),
+            outputs=(OutputSpec("value", TypeExpr.concrete("INT")),),
+        )
+        for kind in ("StartLoop", "EndLoop", "relay")
+    }
+    graph = Graph(nodes)
+    if inside_region:
+        graph = Graph(
+            {
+                "region": RegionNode(
+                    "fold",
+                    graph,
+                    ports={"item": TypeExpr.concrete("INT")},
+                    inputs={"item": [1]},
+                    element_ports=("item",),
+                    outputs={
+                        target: RegionOutput(Link(target, "value"), "last") for target in targets
+                    },
+                )
+            }
+        )
+        targets = ["region"]
+    diagnostics = validate(graph, schemas, targets)
+    assert [(item.code, item.severity) for item in diagnostics] == [(expected, "error")]
+    if inside_region:
+        assert diagnostics[0].node_id is not None
+        assert diagnostics[0].node_id.startswith("region/")
+
+
+def test_nested_loop_pairing_consumes_inner_ends_before_outer_ends() -> None:
+    from dinkster_graph.validate import LoopPair, validate_loops
+
+    graph = Graph(
+        {
+            "outer": GraphNode("StartLoop"),
+            "first": GraphNode("StartLoop", {"x": Link("outer", "value")}),
+            "first_end": GraphNode("EndLoop", {"x": Link("first", "value")}),
+            "second": GraphNode("StartLoop", {"x": Link("first_end", "value")}),
+            "second_end": GraphNode("EndLoop", {"x": Link("second", "value")}),
+            "outer_end": GraphNode("EndLoop", {"x": Link("second_end", "value")}),
+        }
+    )
+    pairs, diagnostics = validate_loops(graph, ["outer_end"])
+    assert diagnostics == []
+    assert pairs == {
+        "first": LoopPair("first_end", ()),
+        "second": LoopPair("second_end", ()),
+        "outer": LoopPair("outer_end", ("first", "first_end", "second", "second_end")),
+    }
+    rewritten = Graph(
+        {
+            **graph.nodes,
+            "outer_end": GraphNode("EndLoop"),
+            "first_end": GraphNode("EndLoop"),
+            "second_end": GraphNode("EndLoop"),
+            "new_start": GraphNode("StartLoop"),
+            "new_end": GraphNode("EndLoop", {"x": Link("new_start", "value")}),
+        }
+    )
+    new_pairs, diagnostics = validate_loops(rewritten, ["outer_end", "new_end"], pairs)
+    assert diagnostics == []
+    assert new_pairs == {"new_start": LoopPair("new_end", ())}
+    _, diagnostics = validate_loops(
+        Graph({**rewritten.nodes, "orphan": GraphNode("EndLoop")}), ["orphan"], pairs
+    )
+    assert [diag.code for diag in diagnostics] == ["loop.unmatchedEnd"]

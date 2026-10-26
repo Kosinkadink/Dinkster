@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from collections.abc import Mapping
 from pathlib import Path
+from types import SimpleNamespace
 from typing import BinaryIO
 
 import pytest
@@ -18,9 +20,14 @@ from dinkster_assets import (
     AssetEntry,
     AssetError,
     AssetRef,
+    AssetResolver,
     ChainResolver,
     IndexedAssetResolver,
     LocalAssetLibrary,
+    LocalAssetRef,
+    MountDef,
+    MountSnapshotResolver,
+    MountTable,
     digest_bytes,
     digest_file,
     is_digest,
@@ -267,6 +274,46 @@ def test_library_custom_ignore_replaces_defaults(tmp_path: Path) -> None:
     assert library.catalog.get("models/loras/style.safetensors") is None
 
 
+@pytest.mark.parametrize(
+    "extension",
+    [".part", ".partial", ".CRDOWNLOAD", ".download", ".tmp", ".aria2", ".!qb", ".opdownload"],
+)
+def test_library_rejects_partial_downloads_even_with_custom_ignore(
+    tmp_path: Path, extension: str
+) -> None:
+    (tmp_path / f"model.safetensors{extension}").write_bytes(b"partial model")
+    (tmp_path / "finished.safetensors").write_bytes(b"finished model")
+    library = LocalAssetLibrary(tmp_path, ignore=())
+    assert library.scan() == 1
+    assert [entry.name for entry in library.entries()] == ["finished.safetensors"]
+
+
+@pytest.mark.parametrize("change", ["size", "mtime"])
+def test_library_defers_unstable_file_until_a_later_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    path = tmp_path / "downloading.safetensors"
+    path.write_bytes(b"initial")
+    stable = tmp_path / "stable.safetensors"
+    stable.write_bytes(b"stable")
+    first = path.stat()
+
+    def change_between_stats(_delay: float) -> None:
+        if change == "size":
+            path.write_bytes(b"longer download")
+            os.utime(path, ns=(first.st_atime_ns, first.st_mtime_ns))
+        else:
+            os.utime(path, ns=(first.st_atime_ns, first.st_mtime_ns + 1_000_000))
+
+    library = LocalAssetLibrary(tmp_path)
+    with monkeypatch.context() as patch:
+        patch.setattr("dinkster_assets.library.time.sleep", change_between_stats)
+        assert library.scan() == 1
+        assert [entry.name for entry in library.entries()] == ["stable.safetensors"]
+    assert library.scan() == 2
+    assert library.ref("models/downloading.safetensors").read_bytes() == path.read_bytes()
+
+
 def test_library_never_catalogs_its_own_index(tmp_path: Path) -> None:
     root = make_models_dir(tmp_path)
     # A non-dot index name inside the root would otherwise look like a file.
@@ -343,11 +390,57 @@ def test_library_index_writes_are_atomic_and_quiescent(tmp_path: Path) -> None:
 # --- value type: fingerprint is the digest; boundary carries no bytes --------
 
 
-def asset_registry(resolver: LocalAssetLibrary | None = None) -> TypeRegistry:
+def asset_registry(resolver: AssetResolver | None = None) -> TypeRegistry:
     registry = TypeRegistry()
     register_core_types(registry)
     register_asset_type(registry, resolver)
     return registry
+
+
+@pytest.mark.parametrize("verified", (False, True))
+@pytest.mark.parametrize("preexisting", (False, True))
+def test_comfy_manifest_registers_bound_assets_without_replacing_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verified: bool, preexisting: bool
+) -> None:
+    from dinkster_workers import load_manifest
+    from dinkster_workers.manifest import resolve_entry
+
+    root = tmp_path / "models"
+    root.mkdir()
+    payload = b"comfy model asset"
+    (root / "weights.bin").write_bytes(payload)
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot, index_root=tmp_path / "indexes")
+    table.add(MountDef(id="models", path=root), kind="model/checkpoint")
+    if verified:
+        table.scan("models")
+    ref = table.bind_name("weights.bin", "model/checkpoint")
+    assert isinstance(ref, AssetRef if verified else LocalAssetRef)
+    registry = TypeRegistry()
+    register_core_types(registry)
+    if preexisting:
+        register_asset_type(registry, table)
+        original = registry.spec(ASSET_TYPE)
+        monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(tmp_path / "absent.json"))
+    else:
+        original = None
+        monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+    manifest = load_manifest(
+        Path(__file__).parents[1] / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+    )
+    assert manifest.types_entry is not None
+    register = resolve_entry(manifest.types_entry)
+    assert callable(register)
+    register(registry)
+    first = registry.spec(ASSET_TYPE)
+    register(registry)
+    assert registry.spec(ASSET_TYPE) is first
+    if original is not None:
+        assert first is original
+    rebound = registry.wrap(ASSET_TYPE, ref.to_wire()).resolve()
+    assert isinstance(rebound, AssetRef if verified else LocalAssetRef)
+    assert rebound.local_path() == root / "weights.bin"
+    assert rebound.read_bytes() == payload
 
 
 def test_wrap_literal_mapping_becomes_resolver_bound_ref(tmp_path: Path) -> None:
@@ -393,6 +486,133 @@ def test_codec_crossing_carries_identity_not_bytes(tmp_path: Path) -> None:
     ref = crossed.resolve()
     assert isinstance(ref, AssetRef)
     assert ref.read_bytes() == b"lora bytes"
+
+
+def test_unverified_local_binding_crosses_worker_codec_and_reconciles_after_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "models"
+    root.mkdir()
+    data = b"not yet hashed model bytes"
+    (root / "weights.safetensors").write_bytes(data)
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot, index_root=tmp_path / "indexes")
+    table.add(MountDef(id="checkpoints", path=root), kind="model/checkpoint")
+
+    def forbid_hash(*args: object, **kwargs: object) -> None:
+        raise AssertionError("unverified name binding must not hash file content")
+
+    with monkeypatch.context() as patch:
+        patch.setattr("dinkster_assets.library.digest_file_with_record", forbid_hash)
+        patch.setattr("dinkster_assets.identity.digest_file", forbid_hash)
+        ref = table.bind_name("weights.safetensors", "model/checkpoint")
+        assert isinstance(ref, LocalAssetRef)
+        assert ref.read_bytes() == data
+        registry = asset_registry(table)
+        value = registry.wrap(ASSET_TYPE, ref)
+        assert value.meta.get("verification") == "unverified"
+        assert "digest" not in value.meta.entries
+        assert not is_digest(value.fingerprint)
+        assert "digest" not in ref.to_wire()
+        assert str(root) not in json.dumps(ref.to_wire())
+        worker_registry = asset_registry(MountSnapshotResolver(snapshot))
+        blobs: list[bytes] = []
+        wire, _ = ValueCodec(registry).encode(value, blobs, [])
+        crossed, _ = ValueCodec(worker_registry).decode(wire, blobs, [])
+        assert crossed.fingerprint == value.fingerprint
+        worker_ref = crossed.resolve()
+        assert isinstance(worker_ref, LocalAssetRef)
+        assert worker_ref.read_bytes() == data
+        foreign = LocalAssetRef.from_wire(ref.to_wire(), MountTable())
+        with pytest.raises(AssetError, match="unavailable"):
+            foreign.read_bytes()
+
+    assert table.scan("checkpoints") == 1
+    reconciled = registry.wrap(ASSET_TYPE, ref)
+    verified = reconciled.resolve()
+    assert isinstance(verified, AssetRef)
+    assert verified.digest == digest_bytes(data)
+    assert reconciled.fingerprint == verified.digest
+    assert reconciled.meta.get("digest") == verified.digest
+    assert isinstance(worker_registry.wrap(ASSET_TYPE, worker_ref).resolve(), AssetRef)
+
+
+@pytest.mark.parametrize("change", ["replace", "revoke", "regrant"])
+def test_unverified_local_binding_cannot_reuse_cache_after_change_or_revocation(
+    tmp_path: Path, change: str
+) -> None:
+    root = tmp_path / "models"
+    root.mkdir()
+    path = root / "weights.safetensors"
+    path.write_bytes(b"original model")
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot)
+    mount = MountDef(id="models", path=root)
+    table.add(mount, kind="model/checkpoint")
+    ref = table.bind_name(path.name, "model/checkpoint")
+    assert isinstance(ref, LocalAssetRef)
+    worker_ref = LocalAssetRef.from_wire(ref.to_wire(), MountSnapshotResolver(snapshot))
+    if change == "replace":
+        path.unlink()
+        path.write_bytes(b"different data")
+    else:
+        table.remove("models")
+        if change == "regrant":
+            table.add(mount, kind="model/checkpoint")
+    with pytest.raises(AssetError, match="unavailable"):
+        asset_registry(table).wrap(ASSET_TYPE, ref)
+    with pytest.raises(AssetError, match="unavailable"):
+        worker_ref.read_bytes()
+
+
+@pytest.mark.parametrize(
+    ("platform", "changed_field", "allowed"),
+    [
+        ("nt", "st_ctime_ns", True),
+        ("posix", "st_ctime_ns", False),
+        ("nt", "st_size", False),
+        ("nt", "st_mtime_ns", False),
+        ("nt", "st_dev", False),
+        ("nt", "st_ino", False),
+    ],
+)
+def test_local_binding_descriptor_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    changed_field: str,
+    allowed: bool,
+) -> None:
+    import dinkster_assets.model as model
+
+    path = tmp_path / "weights.safetensors"
+    path.write_bytes(b"unhashed model")
+    table = MountTable()
+    table.add(MountDef(id="models", path=tmp_path), kind="model/checkpoint")
+    ref = table.bind_name(path.name, "model/checkpoint")
+    assert isinstance(ref, LocalAssetRef)
+
+    def changed_stat(fd: int) -> SimpleNamespace:
+        actual = os.fstat(fd)
+        values = {
+            field: getattr(actual, field)
+            for field in (
+                "st_size",
+                "st_mtime_ns",
+                "st_ctime_ns",
+                "st_dev",
+                "st_ino",
+            )
+        }
+        values[changed_field] += 1
+        return SimpleNamespace(**values)
+
+    monkeypatch.setattr(model, "os", SimpleNamespace(name=platform, fstat=changed_stat))
+    if allowed:
+        assert ref.read_bytes() == b"unhashed model"
+    else:
+        with pytest.raises(AssetError, match="changed while opening"):
+            ref.read_bytes()
 
 
 def test_unresolvable_ref_still_flows_but_fails_to_materialize() -> None:

@@ -66,7 +66,7 @@ def test_in_process_full_release_rejects_malformed_consumer_result() -> None:
     asyncio.run(scenario())
 
 
-PINS = {"torch": "2.13.0", "dinkster-aimdo": "0.4.13"}
+PINS = {"torch": "2.13.0", "comfy-aimdo": "0.4.13"}
 
 
 def _lockfile() -> Lockfile:
@@ -88,7 +88,7 @@ def test_in_process_policy_sidecar_authority_and_group_contradiction(tmp_path: P
     sidecar = tmp_path / "1.hosting.json"
     sidecar.write_text(
         '{"format":"dinkster.hosting/1","inProcess":["alpha"],'
-        '"runtimePins":{"dinkster-aimdo":"0.4.13",'
+        '"runtimePins":{"comfy-aimdo":"0.4.13",'
         '"torch":"2.13.0"},"venvGroups":{}}\n'
     )
     recorded = _decode_hosting_record(sidecar)
@@ -127,7 +127,8 @@ def _manifest(directory: Path, *, extra: str = "") -> Path:
     directory.mkdir()
     path = directory / "dinkster-pack.toml"
     path.write_text(
-        '[pack]\nname = "isopack"\nnamespaces = ["iso"]\n'
+        '[pack]\nname = "isopack"\npublisher = "dinkster"\n'
+        'type-namespaces = ["iso"]\nnamespaces = ["iso"]\n'
         f"{extra}\n[pack.entry]\n"
         'nodes = "isopack_nodes:NODES"\ntypes = "isopack_nodes:register_types"\n'
     )
@@ -148,7 +149,7 @@ def _placement_manifest(directory: Path) -> Path:
     directory.mkdir()
     (directory / "h31_placement_nodes.py").write_text(
         "from dinkster_schema import InputSpec,Node,NodeSchema,OutputSpec,TypeExpr\n"
-        "STRING=TypeExpr.concrete('core.string')\n"
+        "STRING=TypeExpr.concrete('STRING')\n"
         "class Echo(Node):\n"
         "    @classmethod\n"
         "    def define_schema(cls):\n"
@@ -161,7 +162,8 @@ def _placement_manifest(directory: Path) -> Path:
     )
     manifest = directory / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname = "h31-placement"\nnamespaces = ["h31"]\n[pack.entry]\n'
+        '[pack]\nname = "h31-placement"\npublisher = "dinkster"\n'
+        'namespaces = ["h31"]\n[pack.entry]\n'
         'nodes = "h31_placement_nodes:NODES"\n'
     )
     return manifest
@@ -230,7 +232,8 @@ def test_in_process_placement_is_byte_identical_for_schema_provenance_and_invoca
             )
             second = second_root / "dinkster-pack.toml"
             second.write_text(
-                '[pack]\nname = "h31-second"\nnamespaces = ["h32"]\n'
+                '[pack]\nname = "h31-second"\npublisher = "dinkster"\n'
+                'namespaces = ["h32"]\n'
                 '[pack.entry]\nnodes = "h31_second_nodes:NODES"\n'
             )
             await composer.add_pack(PackSpec(second, in_process=True, runtime_pins=PINS))
@@ -250,7 +253,8 @@ def test_in_process_placement_is_byte_identical_for_schema_provenance_and_invoca
             )
             conflicting = conflicting_root / "dinkster-pack.toml"
             conflicting.write_text(
-                '[pack]\nname = "h31-conflicting"\nnamespaces = ["h33"]\n'
+                '[pack]\nname = "h31-conflicting"\npublisher = "dinkster"\n'
+                'namespaces = ["h33"]\n'
                 '[pack.entry]\nnodes = "h31_second_nodes:NODES"\n'
             )
             with pytest.raises(ManifestError, match="already loaded from outside the pack root"):
@@ -293,7 +297,7 @@ def test_in_process_installer_skips_venv_and_exact_pin_refusal_is_not_overridabl
         installer.apply(target, allow_doctor_findings=True)
     assert installer.current_number() is None
     assert provisioned == []
-    with pytest.raises(InstallError, match="requires exact torch and dinkster-aimdo"):
+    with pytest.raises(InstallError, match="requires exact torch and comfy-aimdo"):
         installer.apply(
             target,
             hosting_groups=(),
@@ -301,9 +305,9 @@ def test_in_process_installer_skips_venv_and_exact_pin_refusal_is_not_overridabl
             hosting_runtime_pins={},
         )
 
-    aimdo = _install_pack(tmp_path / "aimdo", "alpha", requires='"dinkster-aimdo==0.4.13"')
+    aimdo = _install_pack(tmp_path / "aimdo", "alpha", requires='"comfy-aimdo==0.4.13"')
     aimdo_target = Lockfile.of([lock_local_pack(aimdo, installer.artifacts_dir)[0]])
-    with pytest.raises(InstallError, match="must not declare a dinkster-aimdo dependency"):
+    with pytest.raises(InstallError, match="must not declare a comfy-aimdo dependency"):
         installer.apply(aimdo_target, allow_doctor_findings=True)
 
     probes = iter((PINS, {**PINS, "torch": "2.14.0"}))
@@ -454,7 +458,7 @@ def test_in_process_tenant_registers_on_invocation_unregisters_on_remove_and_ref
         "class TenantNode(Node):\n"
         "    @classmethod\n"
         "    def define_schema(cls):\n"
-        "        output=OutputSpec('device',TypeExpr.concrete('core.string'))\n"
+        "        output=OutputSpec('device',TypeExpr.concrete('STRING'))\n"
         "        return NodeSchema(node_type='tenant.load',outputs=(output,))\n"
         "    @classmethod\n"
         "    async def execute(cls):\n"
@@ -466,7 +470,8 @@ def test_in_process_tenant_registers_on_invocation_unregisters_on_remove_and_ref
     )
     manifest = tmp_path / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname = "tenantpack"\nnamespaces = ["tenant"]\n[pack.entry]\n'
+        '[pack]\nname = "tenantpack"\npublisher = "dinkster"\n'
+        'namespaces = ["tenant"]\n[pack.entry]\n'
         'nodes = "tenant_nodes:NODES"\nconsumers = "tenant_nodes:unused"\n'
     )
     monkeypatch.syspath_prepend(str(tmp_path))
@@ -497,7 +502,10 @@ def test_in_process_tenant_registers_on_invocation_unregisters_on_remove_and_ref
         workers = await composer.full_free("in-process-tenants")
         tenant_worker = next(worker for worker in workers if worker["worker"] == "tenantpack")
         assert tenant_worker["status"] == "complete"
-        assert tenant_worker["consumers"] == [{"consumer": "model-tenants", "status": "complete"}]
+        assert tenant_worker["consumers"] == [
+            {"consumer": "resident-values-0", "status": "complete"},
+            {"consumer": "model-tenants", "status": "complete"},
+        ]
         assert registry.live == {}
         await composer.remove_pack("tenantpack")
         assert registry.live == {}

@@ -42,7 +42,9 @@ omitted at every depth.
 ```toml
 [pack]
 name = "my-pack"                 # the pack id; also the attribution key
+publisher = "my-publisher"       # checkout publisher identity
 # namespaces = ["my-pack"]       # node-type claims; default: the pack name
+# type-namespaces = ["my-pack"]  # type id or namespace claims; default: the pack name
 requires = ["numpy>=1.26"]       # pip requirements; PIN them (doctor warns)
 
 [pack.sandbox]                   # requests only; the host grants authority
@@ -425,8 +427,9 @@ node type you announce must sit under a claim at a `.` boundary
 (`my-pack` covers `my-pack.shout`, never `my-pack-extra.shout`). Claims
 are just that - claims: the local host refuses overlapping claims between
 installed packs, and the public registry (not your manifest) is the
-authority for who owns a namespace. `std`, `comfy`, `core`, and `dinkster`
-are reserved roots; don't claim them or names nesting under them.
+authority for who owns a namespace. `std`, `comfy`, `core`, `dev`, and
+`dinkster` are reserved roots; only publisher `dinkster` may claim them or
+names nesting under them, including when the pack name uses that root.
 
 `[pack.presentation]` is pixels only: it never joins schema signatures,
 cache identity, or documents, and malformed fields warn-and-drop (a bad
@@ -646,11 +649,11 @@ class Shout(Node):
             display_name="Shout",
             category="text",
             inputs=(
-                InputSpec("text", TypeExpr.concrete("core.string")),
-                InputSpec("times", TypeExpr.concrete("core.int"),
+                InputSpec("text", TypeExpr.concrete("STRING")),
+                InputSpec("times", TypeExpr.concrete("INT"),
                           required=False, default=1),
             ),
-            outputs=(OutputSpec("shouted", TypeExpr.concrete("core.string")),),
+            outputs=(OutputSpec("shouted", TypeExpr.concrete("STRING")),),
         )
 
     @classmethod
@@ -672,12 +675,12 @@ Facts that matter:
 - **execute() may be sync or async.** Declare plain named parameters
   matching your input ids; the shim only ever calls you with
   schema-declared inputs.
-- **Type expressions**: `TypeExpr.concrete("core.int")`,
-  `TypeExpr.union("core.int", "core.float")`, `TypeExpr.wildcard()`,
+- **Type expressions**: `TypeExpr.concrete("INT")`,
+  `TypeExpr.union("INT", "FLOAT")`, `TypeExpr.wildcard()`,
   `TypeExpr.variable("T", allowed=(...))` (same variable id unifies across
   ports), and `TypeExpr.list_of(element)` for typed lists, nestable
-  (`list<list<core.int>>`). Core atoms: `core.int`, `core.float`,
-  `core.bool`, `core.string` (constants `CORE_INT` etc. are exported).
+  (`list<list<INT>>`). Core atoms: `INT`, `FLOAT`,
+  `core.bool`, `STRING` (constants `CORE_INT` etc. are exported).
 - **Caching is automatic and on by default.** Results are keyed by schema
   signature + input fingerprints, never by node id or process (hazard H4).
   A side-effecting node opts out with `NodeSchema(idempotent=False)` - it
@@ -723,6 +726,47 @@ from signatures:
 ## Value types and codecs
 
 Register pack-owned types in `register_types(registry)`:
+
+Declare the type ids or namespaces you own in `[pack] type-namespaces`.
+The default is your pack name. Claims are exclusive: registering a type
+must fall under your claim, but referencing another pack's type in a schema
+does not claim or register that type. Only publisher `dinkster` may claim
+bare type or node ids and reserved namespaces. The standard selection lock
+chooses default installations, not which publishers are official. Every
+other publisher uses each pack's own pack-name prefix, for example
+`my-pack.SEGS`, not `SEGS` or `IMAGE`.
+
+For packs loaded from a repository checkout, the host trusts the manifest's
+`publisher` field. An omitted publisher grants no first-party privileges.
+Registry-installed packs must instead use the registry's authenticated
+publisher record, carried into local registration by the installer. That
+installer authority is not implemented by the checkout manifest contract;
+do not treat a downloaded manifest's self-declared publisher as authenticated.
+
+A shared type has one definition and one owner. Request promotion of a
+widely shared concept to a bare built-in with an official codec in
+`dinkster-values`. For a niche concept, one pack owns the prefixed type and
+other packs declare that pack in their manifest `dependencies` and reference
+its type in their schemas. A small shared types pack can own the definition
+when neither consuming pack should own it. Ownership restricts registration,
+not reference: any pack may reference a registered type.
+
+Built-in identities are reserved to the foundation pack by the shared type
+module. An official codec provider implements that identity without taking
+ownership; removing the provider does not retract the built-in identity.
+
+Import built-in type constants from `dinkster_values.builtin_types` (or the
+public `dinkster_api.v1` exports) rather than spelling socket ids in schemas,
+validators, codecs or generators. Dinkster-specific built-ins use bare
+uppercase names, for example `ASSET`, `CURVE` and `VIDEO_DOCUMENT`. Node ids,
+widget tags and external ComfyUI protocol labels keep their own identities.
+`core.absent` remains an internal execution envelope, not a socket type.
+
+Do not use aliases or structural equivalence to share a type between packs.
+The id selects the codec, cache fingerprint, literal coercion, and renditions;
+there cannot be competing implementations for one shared concept. Use an
+ordinary converter node between genuinely different types. Existing ComfyUI
+compatibility bridges are not a pack-sharing mechanism.
 
 ```python
 from dinkster_api.v1 import TypeRegistry
@@ -966,9 +1010,11 @@ equivalents: MatchType templates become type variables, Autogrow inputs
 become input families, `is_api_node` becomes `io_bound`,
 `is_deprecated`/`is_dev_only` become deprecation metadata and hidden
 search visibility, and per-socket tooltips become doc strings. Opaque
-`comfy.*` types the schemas reference are registered in a generated
-`register_types` (doctor warns until you declare codecs - that warning
-is honest, not noise).
+types are registered by the generated `register_types` only when their ids
+are prefixed by the generated pack's name. Shared types retain their ids
+and must come from built-ins or an owning pack dependency. Doctor reports
+unresolved shared types and missing codecs for owned types as warnings
+until the port declares those dependencies and codecs.
 
 What you do NOT get is behavior: every generated `execute()` raises
 `NotImplementedError` with a `TODO(port)` marker and carries the source

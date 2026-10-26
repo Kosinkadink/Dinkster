@@ -56,7 +56,13 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal, TypeVar, cast
 
-from dinkster_assets import DeclaredAsset, PackAssetCatalog
+from dinkster_assets import (
+    ASSET_TYPE,
+    DeclaredAsset,
+    PackAssetCatalog,
+    register_asset_type,
+    resolver_from_env,
+)
 from dinkster_caches import (
     DEFAULT_DISK_CACHE_BYTES,
     DiskCacheStore,
@@ -87,6 +93,7 @@ from dinkster_memory import (
     TenantRegistration,
     use_model_tenant_registry,
 )
+from dinkster_memory.resident import ResidentPool
 from dinkster_native.memory import plan_reservations
 from dinkster_native.pool import default_pool
 from dinkster_protocol import (
@@ -155,6 +162,7 @@ from dinkster_schema import (
     NodeSchema,
     build_node_types,
     build_schemas,
+    canonical_claim,
     canonical_name,
     claim_covers,
     claims_conflict,
@@ -207,6 +215,7 @@ from dinkster_workers import (
     HeadroomMirror,
     InProcessWorker,
     IsolatedWorker,
+    ManifestError,
     PackManifest,
     ReleaseGuard,
     RemoteWorker,
@@ -230,6 +239,7 @@ from dinkster_workers.catalog import (
     worker_declarations_match_catalog,
 )
 from dinkster_workers.host import load_pack as load_host_pack
+from dinkster_workers.manifest import validate_registration_claims
 from dinkster_workers.session import WorkerDied
 
 from .extension_assets import read_module, resolve_frontend_modules
@@ -416,6 +426,10 @@ class _ReplicaWorkerPool:
     @property
     def renditions(self) -> object:
         return getattr(self._first, "renditions", ())
+
+    @property
+    def registered_types(self) -> tuple[str, ...]:
+        return tuple(getattr(self._first, "registered_types", ()))
 
     async def resolve_rendition(
         self,
@@ -1091,7 +1105,7 @@ class PackSpec:
     Other schema-only types still require a provider for a complete generation.
     """
     runtime_pins: Mapping[str, str] = field(default_factory=dict)
-    """Exact torch/dinkster-aimdo baseline recorded by the install generation."""
+    """Exact torch/comfy-aimdo baseline recorded by the install generation."""
     asset_vault_write: bool = False
     """Allow this trusted isolated pack to ingest verified assets into the host vault."""
     replica_cuda_indices: tuple[int, ...] = ()
@@ -1124,7 +1138,7 @@ class PackSpec:
             raise ValueError("replica and single-job CUDA indices are mutually exclusive")
         if self.in_process and self.asset_vault_write:
             raise ValueError("an in-process PackSpec cannot request asset vault write access")
-        if self.single_job_mode not in ("auto", "guidance", "sequence", "window"):
+        if self.single_job_mode not in ("auto", "guidance", "sequence"):
             raise ValueError("PackSpec single_job_mode is invalid")
         budgets: dict[str, int] = {}
         for residency, nbytes in self.vram_budgets.items():
@@ -1323,7 +1337,7 @@ def _installed_pack_spec(
                 f"default suite locks {pack_id} artifact {locked.artifact_digest}, "
                 f"but installed artifact is {digest}"
             )
-        if tuple(canonical_name(claim) for claim in manifest_record.namespaces) != locked.claims:
+        if tuple(canonical_claim(claim) for claim in manifest_record.namespaces) != locked.claims:
             raise CompositionError(
                 f"default suite locks {pack_id} claims {locked.claims!r}, "
                 f"but its manifest claims {manifest_record.namespaces!r}"
@@ -1535,9 +1549,10 @@ class Composition:
                 ),
             )
         pins = self._resource_pins
-        pool = default_pool()
-        pool.register_invalidator(cache.drop_referencing)
-        pool.register_pins(pins)
+        for pool in (default_pool(), *self._registry.resident_tables):
+            if isinstance(pool, ResidentPool):
+                pool.register_invalidator(cache.drop_referencing)
+                pool.register_pins(pins)
         self._engine_caches.add(cache)
         return Engine(
             schemas=self.schemas,
@@ -2414,7 +2429,7 @@ class ServingComposer:
         self._tenant_registry = tenant_registry
         self._torch_capable = torch_capable or _probe_torch_capability
         self._runtime_versions = runtime_versions or (
-            lambda: {name: importlib.metadata.version(name) for name in ("torch", "dinkster-aimdo")}
+            lambda: {name: importlib.metadata.version(name) for name in ("torch", "comfy-aimdo")}
         )
         self._sandbox_policy = sandbox_policy
         self._sandbox_gpu_grants = frozenset(canonical_name(name) for name in sandbox_gpu_grants)
@@ -2449,7 +2464,7 @@ class ServingComposer:
             self._diagnostic_listener = fan_out
         self._worker_env = dict(worker_env or {})
         # The asset base URL composed remote workers offer their daemons
-        # as a staging source (pull-over-HTTP; peer_asset_sources URL
+        # as a staging source (pull-over-HTTP asset endpoint URL
         # shape), plus the bearer credential for it when this engine
         # serves with auth. Engine-global: one advertised surface, every
         # remote hears the same address.
@@ -3035,6 +3050,13 @@ class ServingComposer:
     def _resolve_contract_inputs(
         self, entries: Mapping[str, PackContractInput]
     ) -> tuple[tuple[str, ...], CompositionGeneration]:
+        type_claims = self._base_registry.copy()
+        for manifest, _spec in entries.values():
+            try:
+                validate_registration_claims(manifest)
+                type_claims.claim_types(manifest.name, manifest.type_namespaces)
+            except (ManifestError, ValueError) as exc:
+                raise CompositionError(str(exc)) from exc
         _composition_generation(entries, {}, "development")
         order, receipts = _resolve_pack_contracts(entries)
         return order, _composition_generation(entries, receipts, self._composition_mode)
@@ -3630,6 +3652,7 @@ class ServingComposer:
                 inputs,
                 {arm.name: arm.default_cache_tag for arm in arms},
                 attention_routes,
+                self._producer_targets(self._topology if topology is None else topology, arms),
             )
         target = selected.target if selected is not None else first_arm.name
         if provider_target is not None:
@@ -4070,6 +4093,17 @@ class ServingComposer:
                 **({"error": pool_result.error} if pool_result.error is not None else {}),
             }
         )
+        for index, table in enumerate(self.composition._registry.resident_tables):
+            if not isinstance(table, ResidentPool) or table is default_pool():
+                continue
+            outcome = await table.full_release()
+            local_consumers.append(
+                {
+                    "consumer": f"resident-values-{index}",
+                    "status": outcome.status,
+                    **({"error": outcome.error} if outcome.error is not None else {}),
+                }
+            )
         results: list[dict[str, object]] = [
             {
                 "worker": "local",
@@ -4827,6 +4861,21 @@ class ServingComposer:
             {node_type: tuple(arms) for node_type, arms in arms_by_type.items()}
         )
 
+    @staticmethod
+    def _producer_targets(topology: Topology, arms: Sequence[ArmRecord]) -> dict[str, str]:
+        targets = {arm.name: arm.name for arm in arms}
+        for producers in topology.values():
+            for producer in producers:
+                if producer.name in targets or producer.name != producer.default_arm:
+                    continue
+                for arm in arms:
+                    # Default bodies in separate packs can share resident objects,
+                    # but alternate implementations still require exact affinity.
+                    if arm.name == arm.default_arm and arm.domain is producer.domain:
+                        targets[producer.name] = arm.name
+                        break
+        return targets
+
     def _dispatch_routes(self, topology: Topology, node_types: Sequence[str]) -> dict[str, Worker]:
         routes: dict[str, Worker] = {}
         for node_type in node_types:
@@ -4841,6 +4890,7 @@ class ServingComposer:
                 resolve_owner=lambda token, snapshot=topology: self._resolve_owner(snapshot, token),
                 arm_domains={arm.name: arm.domain for arm in arms},
                 default_arms={arm.name: arm.default_arm for arm in arms},
+                producer_targets=self._producer_targets(topology, arms),
             )
         return routes
 
@@ -4993,7 +5043,7 @@ class ServingComposer:
                 )
             if needs_residency and not spec.runtime_pins:
                 raise CompositionError(
-                    f"in-process pack {manifest.name!r} has no exact torch/dinkster-aimdo "
+                    f"in-process pack {manifest.name!r} has no exact torch/comfy-aimdo "
                     "generation baseline"
                 )
             if spec.runtime_pins:
@@ -5002,9 +5052,9 @@ class ServingComposer:
                         f"in-process pack {manifest.name!r} requires a torch-capable "
                         "serve environment"
                     )
-                if set(spec.runtime_pins) != {"torch", "dinkster-aimdo"}:
+                if set(spec.runtime_pins) != {"torch", "comfy-aimdo"}:
                     raise CompositionError(
-                        f"in-process pack {manifest.name!r} has no exact torch/dinkster-aimdo "
+                        f"in-process pack {manifest.name!r} has no exact torch/comfy-aimdo "
                         "generation baseline"
                     )
                 try:
@@ -5190,6 +5240,7 @@ class ServingComposer:
             self._validate_body_arms(manifest, worker)
             self._validate_schema_only(manifest, worker)
             self._validate_executes(manifest, worker)
+            self._register_worker_types(staged_registry, manifest, worker)
             delta_schemas: dict[str, NodeSchema] = {}
             delta_node_packs: dict[str, str] = {}
             for node_type, schema in worker.schemas.items():
@@ -6425,9 +6476,12 @@ class ServingComposer:
             staged_records = dict(self._records)
             del staged_records[name]
             staged_records[manifest.name] = new_record
+            staged_registry = composition._registry.copy()
+            staged_registry.remove_pack_types(name)
             snapshot: ExtensionSnapshot | None = None
             topology: Topology | None = None
             try:
+                self._register_worker_types(staged_registry, manifest, worker)
                 topology = self._build_topology(staged_records)
                 (
                     snapshot,
@@ -6440,6 +6494,11 @@ class ServingComposer:
                 derived_choices = self._validated_derived_choices(
                     sampler_registry, scheduler_registry, staged_records, topology
                 )
+                staged_registry.remove_relayed_renditions(name)
+                if not spec.in_process:
+                    self._register_worker_renditions(staged_registry, manifest.name, worker)
+                if spec.host_types is not None:
+                    spec.host_types(staged_registry)
             except BaseException:
                 if snapshot is not None and topology is not None:
                     await self._rollback_unpublished_generation(snapshot, topology)
@@ -6448,10 +6507,6 @@ class ServingComposer:
                 raise
             old_derived_choices = self._current_derived_choices()
             old_choice_owners = dict(self._choice_owners)
-            staged_registry = composition._registry.copy()
-            staged_registry.remove_relayed_renditions(name)
-            if not spec.in_process:
-                self._register_worker_renditions(staged_registry, manifest.name, worker)
             removed_routes = tuple(
                 node_type
                 for node_type in dict.fromkeys((*old_types, *record.executes, *manifest.executes))
@@ -6872,7 +6927,10 @@ class ServingComposer:
                 tuple(node_type for node_type in route_candidates if topology.get(node_type)),
             )
             staged_registry = self.composition._registry.copy()
+            for pack in specs:
+                staged_registry.remove_pack_types(pack)
             for pack, member_spec in specs.items():
+                self._register_worker_types(staged_registry, manifest_by_name[pack], members[pack])
                 staged_registry.remove_relayed_renditions(pack)
                 self._register_worker_renditions(staged_registry, pack, members[pack])
                 if member_spec.host_types is not None:
@@ -7046,6 +7104,7 @@ class ServingComposer:
             old_derived_choices = self._current_derived_choices()
             old_choice_owners = dict(self._choice_owners)
             staged_registry = composition._registry.copy()
+            staged_registry.remove_pack_types(name)
             staged_registry.remove_relayed_renditions(name)
             route_candidates = tuple(dict.fromkeys((*old_types, *record.executes)))
             removed_routes = tuple(
@@ -7509,6 +7568,27 @@ class ServingComposer:
                 if arms is not None
                 else ("native",)
             )
+
+    @staticmethod
+    def _register_worker_types(registry: TypeRegistry, manifest: PackManifest, worker: Any) -> None:
+        type_ids = tuple(getattr(worker, "registered_types", ()))
+        if manifest.publisher != "dinkster" and any(
+            not claim_covers(manifest.name, tid) for tid in type_ids
+        ):
+            raise CompositionError(
+                f"{manifest.name}: registered types must use the pack-name prefix"
+            )
+        try:
+            registry.declare_types(
+                manifest.name,
+                manifest.type_namespaces,
+                type_ids,
+                allow_bare=manifest.publisher == "dinkster",
+            )
+        except ValueError as exc:
+            raise CompositionError(str(exc)) from exc
+        if ASSET_TYPE in type_ids and ASSET_TYPE not in registry:
+            register_asset_type(registry, resolver_from_env())
 
     @staticmethod
     def _register_worker_renditions(registry: TypeRegistry, owner: str, worker: Any) -> None:

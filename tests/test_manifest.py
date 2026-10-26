@@ -22,6 +22,7 @@ from dinkster_schema import (
     comfy_alias_registry_to_wire,
     comfy_group_registry_to_wire,
 )
+from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import (
     PACK_AUTHOR_API_CONTRACT,
     PACK_HOST_CONTRACT,
@@ -31,20 +32,25 @@ from dinkster_workers import (
     VisionProvider,
     load_manifest,
 )
+from dinkster_workers.doctor import prepare_catalog
 from dinkster_workers.host import load_pack
 from dinkster_workers.manifest import (
     COMFY_ALIASES_MAX_BYTES,
     COMFY_ALIASES_MAX_ITEMS,
     generation_provider_to_wire,
     generation_providers_from_wire,
+    validate_registration_claims,
     vision_provider_to_wire,
     vision_providers_from_wire,
 )
 
 
 def test_extension_contract_fixture_uses_current_public_pack_surfaces() -> None:
+    from dinkster.extension_assets import resolve_frontend_modules
+
     manifest = load_manifest(Path("tests/fixtures/extension-contract-pack/dinkster-pack.toml"))
     _worker, _registry, nodes, arms = load_pack(manifest, import_from_pack_root=True)
+    modules = resolve_frontend_modules(manifest)
 
     assert manifest.contracts is not None
     assert manifest.contracts.inference is None
@@ -53,9 +59,7 @@ def test_extension_contract_fixture_uses_current_public_pack_surfaces() -> None:
     assert [event.name for event in manifest.extension.events] == [
         "fixture.extension-contract.executed"
     ]
-    assert [module.id for module in manifest.extension.frontend_modules] == [
-        "dinkster-extension-contract-fixture.frontend"
-    ]
+    assert [module.id for module in modules] == ["fixture.frontend"]
     assert {node.schema().node_type for node in nodes} == {
         "fixture.extension.contract",
         "fixture.extension.value",
@@ -69,6 +73,171 @@ def write_manifest(path: Path, handler: object = None) -> Path:
         '[pack]\nname = "test"\n[pack.entry]\nnodes = "test_pack:NODES"\n' + handler_line
     )
     return path
+
+
+@pytest.mark.parametrize("field", ["namespaces", "type-namespaces"])
+def test_registration_requires_pack_prefix_for_non_dinkster_publishers(
+    tmp_path: Path, field: str
+) -> None:
+    path = tmp_path / "dinkster-pack.toml"
+    path.write_text(
+        '[pack]\nname = "mypack"\npublisher = "someone"\n'
+        f'{field} = ["foreign"]\n[pack.entry]\nnodes = "mypack:NODES"\n'
+    )
+    with pytest.raises(ManifestError, match="must be prefixed by pack name"):
+        validate_registration_claims(load_manifest(path))
+    path.write_text(path.read_text().replace('"foreign"', '"mypack.types"'))
+    validate_registration_claims(load_manifest(path))
+    path.write_text(
+        path.read_text().replace('"someone"', '"dinkster"').replace('"mypack.types"', '"foreign"')
+    )
+    validate_registration_claims(load_manifest(path))
+
+
+@pytest.mark.parametrize(
+    ("pack_name", "reserved"),
+    [
+        ("dinkster", True),
+        ("std", True),
+        ("comfy", True),
+        ("core", True),
+        ("dev", False),
+        ("std-extra", True),
+    ],
+)
+def test_pack_prefix_reservation_depends_on_publisher(
+    tmp_path: Path, pack_name: str, reserved: bool
+) -> None:
+    path = tmp_path / "dinkster-pack.toml"
+    path.write_text(
+        f'[pack]\nname = "{pack_name}"\npublisher = "someone"\n'
+        '[pack.entry]\nnodes = "mypack:NODES"\n'
+    )
+    if reserved:
+        with pytest.raises(ManifestError, match="only publisher 'dinkster'.*reserved"):
+            validate_registration_claims(load_manifest(path))
+    else:
+        validate_registration_claims(load_manifest(path))
+    path.write_text(path.read_text().replace('"someone"', '"dinkster"'))
+    validate_registration_claims(load_manifest(path))
+
+
+def test_manifest_type_claims_accept_exact_ids_and_reject_overlaps(tmp_path: Path) -> None:
+    path = tmp_path / "dinkster-pack.toml"
+    path.write_text(
+        '[pack]\nname = "mypack"\ntype-namespaces = ["mypack.Thing", "mypack.Other"]\n'
+        '[pack.entry]\nnodes = "mypack:NODES"\n'
+    )
+    manifest = load_manifest(path)
+    assert manifest.type_namespaces == ("mypack.Thing", "mypack.Other")
+    assert manifest.publisher == ""
+    validate_registration_claims(manifest)
+    path.write_text(
+        path.read_text()
+        .replace('"mypack.Thing"', '"mypack.thing"')
+        .replace('"mypack.Other"', '"mypack.thing-child"')
+    )
+    with pytest.raises(ManifestError, match="overlapping claims"):
+        load_manifest(path)
+
+
+@pytest.mark.parametrize("with_codec", [False, True])
+def test_pack_registration_refuses_duplicate_type_owner(tmp_path: Path, with_codec: bool) -> None:
+    registry = TypeRegistry()
+    register_core_types(registry)
+    for name in ("first-owner", "second-owner"):
+        root = tmp_path / name
+        root.mkdir()
+        module = name.replace("-", "_") + f"_{int(with_codec)}"
+        (root / f"{module}.py").write_text(
+            'NODES = []\ndef register_types(registry):\n    registry.register("SHARED")\n'
+        )
+        path = root / "dinkster-pack.toml"
+        path.write_text(
+            f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
+            'type-namespaces = ["SHARED"]\n[pack.entry]\n'
+            f'nodes = "{module}:NODES"\n'
+            + (f'types = "{module}:register_types"\n' if with_codec else "")
+        )
+        if name == "first-owner":
+            load_pack(load_manifest(path), registry=registry, import_from_pack_root=True)
+            assert registry.owner_of("SHARED") == "first-owner"
+        else:
+            with pytest.raises(ValueError, match="overlaps"):
+                load_pack(load_manifest(path), registry=registry, import_from_pack_root=True)
+    assert registry.owner_of("SHARED") == "first-owner"
+
+
+def test_pack_registration_rejects_bare_claim_before_importing_entries(tmp_path: Path) -> None:
+    path = tmp_path / "dinkster-pack.toml"
+    path.write_text(
+        '[pack]\nname = "mypack"\npublisher = "someone"\ntype-namespaces = ["THING"]\n'
+        '[pack.entry]\nnodes = "missing_module:NODES"\n'
+    )
+    with pytest.raises(ManifestError, match="only publisher 'dinkster'"):
+        load_pack(load_manifest(path))
+
+
+def test_pack_registration_rejects_bare_node_under_a_prefixed_claim(tmp_path: Path) -> None:
+    (tmp_path / "bare_node_pack.py").write_text(
+        "from dinkster_api.v1 import Node, NodeSchema\n"
+        "class BareNode(Node):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema(node_type='bare_node')\n"
+        "NODES = [BareNode]\n"
+    )
+    path = tmp_path / "dinkster-pack.toml"
+    path.write_text(
+        '[pack]\nname = "mypack"\npublisher = "someone"\n'
+        '[pack.entry]\nnodes = "bare_node_pack:NODES"\n'
+    )
+    with pytest.raises(ManifestError, match="node.*bare_node.*pack-name prefix"):
+        load_pack(load_manifest(path), import_from_pack_root=True)
+    assert not prepare_catalog(path).ok
+
+
+def test_manifest_keeps_exact_node_claims_and_rejects_overlapping_namespace(tmp_path: Path) -> None:
+    path = tmp_path / "dinkster-pack.toml"
+    claims = ["Epsilon Scaling", "Video Slice", "TextEncodeAceStepAudio1.5"]
+    path.write_text(
+        f'[pack]\nname = "test"\nnamespaces = {json.dumps(claims)}\n'
+        '[pack.entry]\nnodes = "test_pack:NODES"\n'
+    )
+    assert load_manifest(path).namespaces == tuple(claims)
+    path.write_text(path.read_text().replace(json.dumps(claims), '["img", "Img.Blur"]'))
+    with pytest.raises(ManifestError, match="overlap"):
+        load_manifest(path)
+
+
+@pytest.mark.parametrize("field", ["nodes", "searchTerms"])
+def test_locale_metadata_preserves_exact_node_and_port_ids(tmp_path: Path, field: str) -> None:
+    path = tmp_path / "dinkster-pack.toml"
+    path.write_text(
+        '[pack]\nname = "test"\nnamespaces = ["Epsilon Scaling"]\n'
+        '[pack.entry]\nnodes = "test_pack:NODES"\n'
+    )
+    locales = tmp_path / "locales"
+    locales.mkdir()
+    catalog = locales / "en.json"
+    record = {
+        "displayName": "Scale epsilon",
+        "inputs": {"blocks.0.": {"displayName": "First block"}},
+        "outputs": {"STRING": {"displayName": "Text"}, "*": {"doc": "Any value"}},
+        "combos": {"Model Choice": {"fast": "Fast"}},
+    }
+    payload = {field: {"Epsilon Scaling": record if field == "nodes" else ["epsilon"]}}
+    data = json.dumps(payload).encode()
+    catalog.write_bytes(data)
+    manifest = load_manifest(path)
+    assert manifest.locale_catalog_problems == ()
+    assert len(manifest.locale_catalogs) == 1
+    assert manifest.locale_catalogs[0].node_references == ("Epsilon Scaling",)
+    assert manifest.locale_catalogs[0].data == data
+    catalog.write_text(json.dumps({field: {"Epsilon scaling": payload[field]["Epsilon Scaling"]}}))
+    unowned = load_manifest(path)
+    assert unowned.locale_catalogs == ()
+    assert any("not owned" in problem for problem in unowned.locale_catalog_problems)
 
 
 def write_alias_registry(path: Path, *, carrier: str = "test.native") -> None:
@@ -108,8 +277,6 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
 
     fork_backed = (
         "dinkster.load_checkpoint",
-        "dinkster.load_model_patch",
-        "dinkster.apply_minimax_h3_fun_controlnet",
         "dinkster.load_diffusion_model",
         "dinkster.clip_text_encode",
         "dinkster.empty_latent_image",
@@ -123,7 +290,7 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
         "dinkster.separate_av_latent",
         "dinkster.vae_decode_audio",
     )
-    default_native = ("comfy.BlockSparseAttention", *fork_backed)
+    default_native = fork_backed
     mesh = (
         "dinkster.image_crop_to_mask",
         "dinkster.preview_mask",
@@ -151,33 +318,13 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
     )
 
     legacy = load_manifest(Path("packages/dinkster-compat-comfy/dinkster-legacy-pack.toml"))
-    legacy_extra = {
-        "dinkster.load_model_patch",
-        "dinkster.apply_minimax_h3_fun_controlnet",
-        "dinkster.temporal_window_plan",
-        "dinkster.spatial_tile_plan",
-        "dinkster.explicit_window_plan",
-        "dinkster.res4lyf_rk_beta_sampler",
-    }
-    legacy_native = set(fork_backed) | legacy_extra
+    legacy_native = set(fork_backed)
     assert set(legacy.executes) == legacy_native | set(mesh)
     assert set(dict(legacy.arms)["native"]) == legacy_native
     assert legacy.arm_nodes_entry == "dinkster_compat_comfy.legacy_entry:ARM_NODES"
 
     native = load_manifest(Path("packages/dinkster-native/dinkster-pack.toml"))
-    retained = set((*default_native, *mesh))
-    native_sampling = {
-        "dinkster.temporal_window_plan",
-        "dinkster.spatial_tile_plan",
-        "dinkster.explicit_window_plan",
-        "dinkster.res4lyf_rk_beta_sampler",
-    }
-    native_model_patches = {
-        "comfy.BlockSparseAttention",
-        "dinkster.load_model_patch",
-        "dinkster.apply_minimax_h3_fun_controlnet",
-    }
-    native_nodes = retained | native_sampling | native_model_patches
+    native_nodes = set((*default_native, *mesh))
     assert native.namespaces == ("comfy", "dinkster")
     assert set(native.executes) == native_nodes
     assert set(dict(native.arms)["native"]) == native_nodes
@@ -185,7 +332,14 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
 
     generation = load_manifest(Path("packages/dinkster-nodes-generation/dinkster-pack.toml"))
     assert generation.namespaces == ("comfy", "dinkster")
-    assert "comfy.BlockSparseAttention" in generation.schema_only
+    assert "comfy.BlockSparseAttention" not in generation.schema_only
+    _worker, _registry, nodes, _arms = load_pack(generation, import_from_pack_root=True)
+    assert {
+        "comfy.BlockSparseAttention",
+        "dinkster.context_windows_manual",
+        "dinkster.wan_context_windows_manual",
+        "dinkster.ltxv_context_windows",
+    }.isdisjoint(node.schema().node_type for node in nodes)
 
 
 def test_manifest_loads_strict_adjacent_comfy_alias_registry_without_importing_code(

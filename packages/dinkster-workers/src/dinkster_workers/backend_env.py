@@ -787,7 +787,7 @@ _BENCHMARK_EAGER_ONLY_FAMILIES = frozenset(
 BENCHMARK_ACCELERATORS = ("rocm", "xpu", "cuda")
 
 #: Offload mechanisms a Dinkster benchmark process can run under
-#: (the DINKSTER_AIMDO_ARM assembly modes).
+#: (the COMFY_AIMDO_ARM assembly modes).
 BENCHMARK_RESIDENCY_MECHANISMS = ("off", "auto", "on")
 
 #: VRAM regimes a mechanism-comparison cell runs in: the device as-is,

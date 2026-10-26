@@ -375,10 +375,14 @@ def attribute_moved_wire(
     moved: Mapping[str, tuple[int, float]],
     blobs: Sequence[bytes] = (),
 ) -> None:
-    """attribute_moved for an already-encoded result frame: fold moved
-    bytes into its ``outputStats`` wire entries in place."""
+    """Fold moved bytes into an encoded result's per-value stats in place."""
     outputs = header.get("outputs")
     stats = header.get("outputStats")
+    algebra = header.get("resultAlgebra")
+    if isinstance(algebra, Mapping):
+        algebra = cast("Mapping[str, Any]", algebra)
+        outputs = {str(index): wire for index, wire in enumerate(algebra["values"])}
+        stats = {str(index): stat for index, stat in enumerate(algebra["valueStats"])}
     if not isinstance(outputs, Mapping) or not isinstance(stats, Mapping):
         return
     remaining = dict(moved)

@@ -1012,6 +1012,61 @@ def test_multi_gpu_sandbox_lanes_share_pack_scratch(
     ),
 )
 class TestLiveJail:
+    def test_public_embedding_roots_remain_read_only_and_scoped(self, tmp_path: Path) -> None:
+        from dinkster_assets import MountDef, MountTable
+
+        state = tmp_path / "state"
+        state.mkdir()
+        snapshot = state / "snapshot.json"
+        embedding = tmp_path / "embedding"
+        embedding.mkdir()
+        (embedding / "sentinel.txt").write_text("embedding bytes")
+        hidden = tmp_path / "hidden"
+        hidden.mkdir()
+        (hidden / "secret.txt").write_text("not granted")
+        table = MountTable(snapshot)
+        table.add(MountDef(id="embedding", path=embedding), kind="model/embedding")
+        table.scan("embedding")
+        table.add(MountDef(id="hidden", path=hidden), kind="model/checkpoint")
+        table.scan("hidden")
+        observed = tmp_path / "endpoint" / "roots.json"
+        script = f"""
+import json
+from pathlib import Path
+from dinkster_api.v1 import mount_roots_for_kind
+roots = mount_roots_for_kind('model/embedding')
+assert roots == (Path({str(embedding)!r}),)
+assert (roots[0] / 'sentinel.txt').read_text() == 'embedding bytes'
+try:
+    (roots[0] / 'forbidden.txt').write_text('no')
+except OSError:
+    pass
+else:
+    raise AssertionError('embedding grant became writable')
+assert not Path({str(hidden / "secret.txt")!r}).exists()
+Path({str(observed)!r}).write_text(json.dumps([str(root) for root in roots]))
+"""
+
+        async def scenario() -> None:
+            launcher = BubblewrapLauncher(
+                SandboxPolicy(ro_binds=(str(REPO_ROOT), str(state), str(embedding)))
+            )
+            spec = make_spec(
+                tmp_path,
+                command=(sys.executable, "-c", script),
+                env={"DINKSTER_MOUNTS_SNAPSHOT": str(snapshot)},
+            )
+            process = await launcher.launch(spec)
+            try:
+                assert await asyncio.wait_for(process.wait(), timeout=15) == 0
+                assert json.loads(observed.read_text()) == [str(embedding)]
+            finally:
+                if process.returncode is None:
+                    process.terminate()
+                    await process.wait()
+
+        asyncio.run(scenario())
+
     def test_secret_reaches_child_without_appearing_in_process_arguments(
         self, tmp_path: Path
     ) -> None:
@@ -1266,7 +1321,8 @@ Path({str(observed)!r}).write_text("proxied", encoding="utf-8")
         pack = tmp_path / "probe-pack"
         pack.mkdir()
         (pack / "dinkster-pack.toml").write_text(
-            '[pack]\nname = "sandbox-probe"\nnamespaces = ["sandboxprobe"]\n'
+            '[pack]\nname = "sandbox-probe"\npublisher = "dinkster"\n'
+            'namespaces = ["sandboxprobe"]\n'
             "[pack.sandbox]\nwritable-mounts = true\n"
             '[pack.entry]\nnodes = "probe_nodes:NODES"\n',
             encoding="utf-8",

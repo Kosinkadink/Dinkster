@@ -11,11 +11,13 @@ from typing import Literal, TypeAlias, cast
 
 from dinkster_values import (
     CONDITIONING_HEADER_LIMIT_BYTES,
+    CONDITIONING_TYPE,
     ResidencyTable,
     ResidentCodec,
     ResidentLookupError,
     TypeRegistry,
     TypeSpec,
+    resident_owners,
     stable_hash,
 )
 
@@ -37,8 +39,9 @@ from .conditioning import (
     TokenSegmentDescriptor,
     canonical_conditioning_set,
 )
+from .hook_values import normalize_hook_owners
 
-CONDITIONING_TYPE_ID = "dinkster.conditioning"
+CONDITIONING_TYPE_ID = CONDITIONING_TYPE
 CONDITIONING_CARRIER_FORMAT = "dinkster-conditioning-carrier-v1"
 RESIDENT_CONDITIONING_FORMAT = "dinkster-resident-conditioning-v1"
 
@@ -253,6 +256,48 @@ class ConditioningCarrier:
         return tuple(owners)
 
 
+def _conditioning_hooks(payload: object) -> tuple[object, ...]:
+    if type(payload) is not list:
+        return ()
+    hooks: list[object] = []
+    for entry in cast("list[object]", payload):
+        if not isinstance(entry, (list, tuple)):
+            continue
+        pair = cast("Sequence[object]", entry)
+        if len(pair) != 2:
+            continue
+        metadata = pair[1]
+        if isinstance(metadata, Mapping):
+            hook = cast("Mapping[str, object]", metadata).get("hooks")
+            if hook is not None:
+                normalize_hook_owners(hook)
+                for owner in (hook, *resident_owners(hook)):
+                    if not any(owner is existing for existing in hooks):
+                        hooks.append(owner)
+    return tuple(hooks)
+
+
+def _conditioning_gligens(payload: object) -> tuple[object, ...]:
+    if type(payload) is not list:
+        return ()
+    models: list[object] = []
+    for entry in cast("list[object]", payload):
+        if not isinstance(entry, (list, tuple)):
+            continue
+        pair = cast("Sequence[object]", entry)
+        if len(pair) != 2 or not isinstance(pair[1], Mapping):
+            continue
+        gligen_value = cast("Mapping[str, object]", pair[1]).get("gligen")
+        gligen = cast("tuple[object, ...]", gligen_value)
+        if type(gligen_value) is not tuple or len(gligen) < 2:
+            continue
+        model = gligen[1]
+        for owner in (model, *resident_owners(model)):
+            if not any(owner is existing for existing in models):
+                models.append(owner)
+    return tuple(models)
+
+
 @dataclass(frozen=True, slots=True)
 class ResidentConditioningCarrier:
     """Typed conditioning whose opaque payload remains in its worker process."""
@@ -280,10 +325,16 @@ class ResidentConditioningCarrier:
         refs = getattr(self.payload, "_dinkster_resident_refs", ())
         if not isinstance(refs, tuple):
             raise TypeError("resident conditioning payload references must be a tuple")
-        return cast("tuple[object, ...]", refs)
+        return (
+            *cast("tuple[object, ...]", refs),
+            *_conditioning_hooks(self.payload),
+            *_conditioning_gligens(self.payload),
+        )
 
     @property
-    def _dinkster_resident_fingerprint(self) -> str:
+    def _dinkster_resident_fingerprint(self) -> str | None:
+        if type(self.payload) is list:
+            return None
         fingerprint = getattr(self.payload, "_dinkster_resident_fingerprint", None)
         if not isinstance(fingerprint, str) or not fingerprint:
             raise TypeError("resident conditioning payload requires a stable fingerprint")
@@ -989,6 +1040,13 @@ def register_conditioning_type(
     resident_codec = ResidentCodec(resident_table, resident_meta)
 
     def coerce(obj: object) -> object:
+        if type(obj) is list:
+            payload = cast("list[object]", obj)
+            return (
+                ResidentConditioningCarrier(payload)
+                if _conditioning_hooks(payload) or _conditioning_gligens(payload)
+                else payload
+            )
         if (
             not isinstance(obj, ConditioningCarrier)
             and type(obj) is not ResidentConditioningCarrier
@@ -999,7 +1057,16 @@ def register_conditioning_type(
         return obj
 
     def fingerprint(obj: object) -> str:
+        if type(obj) is list:
+            return resident_codec.fingerprint(cast(object, obj))
         if type(obj) is ResidentConditioningCarrier:
+            if type(obj.payload) is list:
+                return stable_hash(
+                    [
+                        resident_codec.fingerprint(owner).encode("utf-8")
+                        for owner in resident_owners(obj)
+                    ]
+                )
             return resident_codec.fingerprint(obj)
         carrier = cast("ConditioningCarrier", obj)
         if carrier.has_resident_payloads:
@@ -1010,6 +1077,8 @@ def register_conditioning_type(
         return stable_hash([encoded])
 
     def encode(obj: object) -> bytes:
+        if type(obj) is list:
+            return _RESIDENT_MAGIC + resident_codec.encode(cast(object, obj))
         if type(obj) is ResidentConditioningCarrier:
             return _RESIDENT_MAGIC + resident_codec.encode(obj)
         carrier = cast("ConditioningCarrier", obj)
@@ -1022,7 +1091,7 @@ def register_conditioning_type(
     def decode(data: bytes) -> object:
         if data.startswith(_RESIDENT_MAGIC):
             value = resident_codec.decode(data[len(_RESIDENT_MAGIC) :])
-            if type(value) not in (ConditioningCarrier, ResidentConditioningCarrier):
+            if type(value) not in (ConditioningCarrier, ResidentConditioningCarrier, list):
                 raise ConditioningWireError("invalid-resident-carrier")
             return value
         return decode_conditioning_carrier(data)
@@ -1039,6 +1108,11 @@ def register_conditioning_type(
         decode_conditioning_carrier(data, metadata)
 
     def metadata(obj: object) -> Mapping[str, object]:
+        if type(obj) is list:
+            return {
+                **resident_codec.metadata(cast(object, obj)),
+                "format": RESIDENT_CONDITIONING_FORMAT,
+            }
         if type(obj) is ResidentConditioningCarrier or (
             type(obj) is ConditioningCarrier and obj.has_resident_payloads
         ):
@@ -1054,7 +1128,7 @@ def register_conditioning_type(
             return getattr(payload, "_dinkster_input_value", payload)
         return obj
 
-    return registry.register(
+    spec = registry.register(
         CONDITIONING_TYPE_ID,
         encode=encode,
         decode=decode,
@@ -1064,3 +1138,6 @@ def register_conditioning_type(
         input_convert=input_convert,
         validate_encoded=validate_encoded,
     )
+    if resident_table is not None:
+        registry.register_resident_table(resident_table)
+    return spec

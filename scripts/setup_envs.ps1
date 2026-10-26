@@ -83,8 +83,8 @@ $GpuEditablePackages = @(
     "packages/dinkster-nodes-generation",
     "packages/dinkster-compat-comfy"
 )
-$KitchenCpuWheel = "dinkster-kitchen@https://files.pythonhosted.org/packages/2e/20/84e29ca1dedcd51eb5edd297d3c2f6c665cf2e30bb9237892f0f8d108d0d/dinkster_kitchen-0.2.35.post1-py3-none-any.whl#sha256=31458547cdcf9ff26974a4955cf79e83ebdf50077666720d3bb3255786c5fc4f"
-$DinksterInferenceRequirement = "dinkster-inference @ git+https://github.com/Kosinkadink/dinkster-inference.git@5b80190fd4591861d5cd7a27a1bac2ef12ab6cff"
+$KitchenCpuWheel = "comfy-kitchen@https://files.pythonhosted.org/packages/9c/2e/1c6c621a1cd2ba89ae12fe99e095faa50986c0e6485461170732adfcfa6d/comfy_kitchen-0.2.40-py3-none-any.whl#sha256=e5834f2ce993c8d5ea8c01650157c639742b5a28ecb0d95253777f31b5248099"
+$DinksterInferenceRequirement = "dinkster-inference @ git+https://github.com/Kosinkadink/dinkster-inference.git@df0ec36bf1b3350004c7c785d9a9fc866ad9f630"
 $PreviousProject = [Environment]::GetEnvironmentVariable("UV_PROJECT", "Process")
 $PreviousProjectEnvironment = [Environment]::GetEnvironmentVariable(
     "UV_PROJECT_ENVIRONMENT", "Process"
@@ -122,13 +122,13 @@ try {
     )
     $CpuDependencies = @(
         "pytest", "packaging", "numpy>=1.26", "scipy>=1.11",
-        "simpleeval==1.0.3", "onnxruntime==1.29.0",
+        "simpleeval==1.0.8", "onnxruntime==1.29.0",
         "opencv-python-headless==5.0.0.93", "pillow==12.0.0",
         "safetensors==0.8.0", "sentencepiece==0.2.1", "tokenizers==0.23.1",
         "transformers==5.16.1",
         $KitchenCpuWheel,
         $DinksterInferenceRequirement,
-        "dinkster-aimdo==0.5.5.post2"
+        "comfy-aimdo==0.6.0"
     ) + (Get-EditableArguments $CpuEditablePackages)
     Invoke-Native "uv" (@("pip", "install", "--python", $TorchPython) + $CpuDependencies)
     if ($InstallAcceptance) {
@@ -139,7 +139,7 @@ try {
     }
     Invoke-Native $TorchPython @(
         "-c",
-        "from importlib.metadata import version; import torch; assert torch.__version__ == '2.13.0+cpu'; assert version('torchvision') == '0.28.0+cpu'; assert version('dinkster-kitchen') == '0.2.35.post1'; assert version('dinkster-aimdo') == '0.5.5.post2'"
+        "from importlib.metadata import version; import torch; assert torch.__version__ == '2.13.0+cpu'; assert version('torchvision') == '0.28.0+cpu'; assert version('comfy-kitchen') == '0.2.40'; assert version('comfy-aimdo') == '0.6.0'"
     )
 
     $PythonInclude = (& $TorchPython -c "import sysconfig; print(sysconfig.get_paths()['include'])")
@@ -173,7 +173,7 @@ try {
         $GpuDependencies = @(
             "pytest", "numpy", "scipy", "torchsde", "tqdm", "pillow", "packaging",
             "safetensors==0.8.0", "sentencepiece==0.2.1", "tokenizers==0.23.1",
-            "dinkster-kitchen==0.2.35.post1", "dinkster-aimdo==0.5.5.post2",
+            "comfy-kitchen==0.2.40", "comfy-aimdo==0.6.0",
             $DinksterInferenceRequirement,
             "triton-windows==3.7.1.post27"
         ) + (Get-EditableArguments $GpuEditablePackages)

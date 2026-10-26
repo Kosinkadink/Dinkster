@@ -19,6 +19,9 @@ behavior, then keep the file for provenance.
 
 | Issue | Area | Status |
 | --- | --- | --- |
+| [rebatch-latent-mask-resize-discarded.md](rebatch-latent-mask-resize-discarded.md) | LatentRebatch noise mask size | reproduced at bc5f880d; native preserves reference behavior |
+| [dataset-text-output-wrapping.md](dataset-text-output-wrapping.md) | Dataset text output types | reproduced at bc5f880d; native preserves reference behavior |
+| [grow-mask-bfloat16-numpy.md](grow-mask-bfloat16-numpy.md) | GrowMask NumPy conversion | reproduced at bc5f880d; native preserves reference behavior |
 | [sd15-post-vae-residency-drift.md](sd15-post-vae-residency-drift.md) | comfy/model_management.py + comfy/model_patcher.py | verified at b5cc8830; Dinkster normalizes residency before sampling |
 | [t5-positive-end-layer-index.md](t5-positive-end-layer-index.md) | comfy/sd1_clip.py + comfy/text_encoders/t5.py | verified in pinned source; Dinkster rejects the invalid index |
 | [load-image-small-animated-gif.md](load-image-small-animated-gif.md) | LoadImage / video alignment filter | found locally; native Pillow loading succeeds |
@@ -46,8 +49,9 @@ behavior, then keep the file for provenance.
 | [flux2-tekken-tokenizer.md](flux2-tekken-tokenizer.md) | comfy/text_encoders/flux.py | found 2026-08; crash fixed upstream (bbb4b04c); Dinkster self-contained |
 | [cosmos-predict2-retains-forward-activations.md](cosmos-predict2-retains-forward-activations.md) | comfy/ldm/cosmos/predict2.py | found 2026-08 (Dinkster #841); benchmark shim releases through ComfyUI free path |
 | [renorm-cfg-batch-tensor-bool-crash.md](renorm-cfg-batch-tensor-bool-crash.md) | comfy_extras/nodes_lumina2.py | found 2026-08-27; Dinkster mirrors batch-1 contract |
-| [temporal-score-rescaling-batch-tensor-bool-crash.md](temporal-score-rescaling-batch-tensor-bool-crash.md) | comfy_extras/nodes_eps.py | found 2026-08-27; Dinkster immune (scalar sigma contract) |
+| [temporal-score-rescaling-batch-tensor-bool-crash.md](temporal-score-rescaling-batch-tensor-bool-crash.md) | comfy_extras/nodes_eps.py | native per-sample correction; zero-sigma samples unchanged |
 | [flux-normal-collapsed-brownian-interval.md](flux-normal-collapsed-brownian-interval.md) | comfy/k_diffusion/sampling.py + torchsde | executed reference failure on a narrow positive sigma interval |
 | [video-matroska-frame-count.md](video-matroska-frame-count.md) | comfy_api/latest/_input_impl/video_types.py | found at 15eb748b3ec5; Dinkster uses marked container estimates |
 | [ace15-generation-maximum-uses-minimum.md](ace15-generation-maximum-uses-minimum.md) | comfy/text_encoders/ace15.py | verified at 25dfc16f; Dinkster preserves the composer behavior |
+| [sag-single-token-attention-grid.md](sag-single-token-attention-grid.md) | comfy_extras/nodes_sag.py | found at bc5f880d; Dinkster uses a 1x1 grid |
 | [minimax-h3-i2v-dark-tail.md](minimax-h3-i2v-dark-tail.md) | MiniMax H3 official I2V template | found at current master b5cc8830; cause unresolved |

@@ -74,7 +74,7 @@ def write_choice_manifest(
     directory.mkdir(parents=True, exist_ok=True)
     claims = "namespaces = [" + ", ".join(f'"{c}"' for c in namespaces) + "]\n"
     body = (
-        f'[pack]\nname = "{name}"\n{claims}\n[pack.entry]\n'
+        f'[pack]\nname = "{name}"\npublisher = "dinkster"\n{claims}\n[pack.entry]\n'
         f'nodes = "{nodes}"\n'
         'types = "choicepack_nodes:register_types"\n'
     )
@@ -1210,7 +1210,7 @@ def test_server_publication_revalidates_remote_authority_and_choice_bounds() -> 
             inputs=(
                 InputSpec(
                     "choice",
-                    TypeExpr.concrete("core.combo"),
+                    TypeExpr.concrete("COMBO"),
                     widget=ComboWidget(remote_route="/api/choices/cp.remote"),
                 ),
             ),
@@ -1246,7 +1246,7 @@ def test_replacement_retains_only_same_owner_remote_choice_authority() -> None:
         inputs=(
             InputSpec(
                 "choice",
-                TypeExpr.concrete("core.combo"),
+                TypeExpr.concrete("COMBO"),
                 widget=ComboWidget(remote_route="/api/choices/cp.remote"),
             ),
         ),

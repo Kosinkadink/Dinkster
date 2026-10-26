@@ -10,6 +10,7 @@ from dinkster_api.v1 import (
     CORE_INT,
     CORE_STRING,
     DETECTION_TYPE,
+    IMAGE_TYPE,
     REGION_TYPE,
     ComboOption,
     ComboWidget,
@@ -37,7 +38,6 @@ from dinkster_api.v1 import (
     region_meta,
 )
 
-IMAGE_TYPE = "dinkster.image"
 IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 DETECTIONS = TypeExpr.list_of(TypeExpr.concrete(DETECTION_TYPE))
 COMBO = TypeExpr.concrete(CORE_COMBO)

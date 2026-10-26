@@ -18,7 +18,7 @@
 #
 # On macOS (Darwin) the torch env installs the native arm64 PyPI wheels
 # instead: torch's mac build ships MPS support in the one default wheel,
-# and dinkster-kitchen's mac-compatible distribution is its pure-Python
+# and comfy-kitchen's mac-compatible distribution is its pure-Python
 # PyPI wheel (eager/triton backends - the CPU flavor this env wants).
 
 set -euo pipefail
@@ -36,7 +36,7 @@ else
     echo "==> dinkster-evidence not found - skipping optional dinkster-acceptance"
 fi
 
-dinkster_inference_requirement="dinkster-inference @ git+https://github.com/Kosinkadink/dinkster-inference.git@5b80190fd4591861d5cd7a27a1bac2ef12ab6cff"
+dinkster_inference_requirement="dinkster-inference @ git+https://github.com/Kosinkadink/dinkster-inference.git@df0ec36bf1b3350004c7c785d9a9fc866ad9f630"
 
 FORCE=0
 for arg in "$@"; do
@@ -79,7 +79,7 @@ fi
 # the benchmark scripts in dinkster-evidence importable, so torch-dependent
 # benchmark-harness tests can run in this venv.
 uv pip install --python .venv-torch/bin/python pytest packaging "numpy>=1.26" "scipy>=1.11" \
-    "simpleeval==1.0.3" \
+    "simpleeval==1.0.8" \
     "onnxruntime==1.29.0" "opencv-python-headless==5.0.0.93" "pillow==12.0.0" \
     "safetensors==0.8.0" "sentencepiece==0.2.1" "tokenizers==0.23.1" \
     "transformers==5.16.1" "$dinkster_inference_requirement" \
@@ -106,12 +106,12 @@ fi
 
 # The direct PyPI URL forces the device-agnostic wheel in the CPU environment;
 # the platform wheels contain accelerator-specific native extensions.
-kitchen_cpu_wheel="dinkster-kitchen@https://files.pythonhosted.org/packages/2e/20/84e29ca1dedcd51eb5edd297d3c2f6c665cf2e30bb9237892f0f8d108d0d/dinkster_kitchen-0.2.35.post1-py3-none-any.whl#sha256=31458547cdcf9ff26974a4955cf79e83ebdf50077666720d3bb3255786c5fc4f"
+kitchen_cpu_wheel="comfy-kitchen@https://files.pythonhosted.org/packages/9c/2e/1c6c621a1cd2ba89ae12fe99e095faa50986c0e6485461170732adfcfa6d/comfy_kitchen-0.2.40-py3-none-any.whl#sha256=e5834f2ce993c8d5ea8c01650157c639742b5a28ecb0d95253777f31b5248099"
 uv pip install --python .venv-torch/bin/python "$kitchen_cpu_wheel"
 if [ "$os" != "Darwin" ]; then
-    uv pip install --python .venv-torch/bin/python "dinkster-aimdo==0.5.5.post2"
+    uv pip install --python .venv-torch/bin/python "comfy-aimdo==0.6.0"
 fi
-.venv-torch/bin/python -c "from importlib.metadata import version; assert version('dinkster-kitchen') == '0.2.35.post1'"
+.venv-torch/bin/python -c "from importlib.metadata import version; assert version('comfy-kitchen') == '0.2.40'"
 
 # ------------------------------------------------ shared Python headers
 # Torch inductor CPU and CUDA compilation both include Python.h. The CPU and
@@ -177,7 +177,7 @@ if [ "${CUDA_VISIBLE_DEVICES-unset}" != "" ] && [ "${CUDA_VISIBLE_DEVICES-unset}
     uv pip install --python .venv-gpu/bin/python \
         pytest numpy scipy torchsde tqdm pillow packaging \
         "safetensors==0.8.0" "sentencepiece==0.2.1" "tokenizers==0.23.1" \
-        dinkster-kitchen==0.2.35.post1 dinkster-aimdo==0.5.5.post2 \
+        comfy-kitchen==0.2.40 comfy-aimdo==0.6.0 \
         "$dinkster_inference_requirement" \
         -e packages/dinkster-api \
         -e packages/dinkster-schema \

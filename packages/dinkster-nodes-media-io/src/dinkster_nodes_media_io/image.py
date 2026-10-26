@@ -14,12 +14,15 @@ from typing import Any, BinaryIO, cast
 
 import numpy as np
 from dinkster_api.v1 import (
+    CORE_BOOLEAN,
     CORE_COMBO,
     CORE_FLOAT,
     CORE_INT,
     CORE_STRING,
     ENCODED_MEDIA_LIMIT_BYTES,
+    IMAGE_TYPE,
     IMAGE_WORKING_SET_LIMIT_BYTES,
+    MASK_TYPE,
     MEBIBYTE,
     SAVE_TARGET_TYPE,
     AssetError,
@@ -51,9 +54,6 @@ from dinkster_api.v1 import (
 )
 
 from .image_metadata import metadata_document, parse_image_metadata_json, png_metadata
-
-IMAGE_TYPE = "dinkster.image"
-MASK_TYPE = "dinkster.mask"
 
 IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 MASK = TypeExpr.concrete(MASK_TYPE)
@@ -852,7 +852,7 @@ class SaveImage(Node):
                     widget=NumberWidget(min=0, max=9, step=1),
                 ),
                 InputSpec(
-                    "lossless", TypeExpr.concrete("core.boolean"), required=False, default=True
+                    "lossless", TypeExpr.concrete(CORE_BOOLEAN), required=False, default=True
                 ),
                 InputSpec(
                     "metadata_json",
@@ -1053,7 +1053,7 @@ class SaveAnimatedImage(Node):
                     widget=NumberWidget(min=0, max=65535, step=1),
                 ),
                 InputSpec(
-                    "lossless", TypeExpr.concrete("core.boolean"), required=False, default=True
+                    "lossless", TypeExpr.concrete(CORE_BOOLEAN), required=False, default=True
                 ),
                 InputSpec(
                     "quality",

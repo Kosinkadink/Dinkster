@@ -12,9 +12,24 @@ from dinkster_assets import (
     resolver_from_env,
 )
 from dinkster_inference_wire import register_inference_types
-from dinkster_inference_wire.sampling_wire import register_sampling_type
+from dinkster_inference_wire.hook_values import normalize_clip_hook_owners
 from dinkster_schema import Node
-from dinkster_values import TypeRegistry, register_curve_type, register_model3d_type
+from dinkster_values import (
+    AUDIO_TYPE,
+    CLIP_TYPE,
+    IMAGE_TYPE,
+    INFERENCE_LATENT_OPERATION_TYPE,
+    LATENT_TYPE,
+    MASK_TYPE,
+    MODEL3D_TYPE,
+    MODEL_PATCH_TYPE,
+    MODEL_TYPE,
+    VAE_TYPE,
+    VIDEO_TYPE,
+    TypeRegistry,
+    register_curve_type,
+    register_model3d_type,
+)
 
 from .audio import register_audio_type
 from .devices import comfy_resident_meta
@@ -22,7 +37,6 @@ from .fork_nodes import FORK_NODES
 from .image import (
     register_image_asset_providers,
     register_image_type,
-    register_image_type_equivalences,
 )
 from .latent import register_latent_type
 from .nodes_model3d import (
@@ -76,7 +90,6 @@ FOUNDATION_CLAIMED_V1_NAMES: tuple[str, ...] = (
     "PrimitiveBoolean",
     "CreateList",
     "ComfyMathExpression",
-    "ComfySwitchNode",
 )
 MEDIA_IO_CLAIMED_V1_NAMES: tuple[str, ...] = (
     "LoadImage",
@@ -108,6 +121,7 @@ def _register_resident(registry: TypeRegistry, type_id: str) -> None:
             type_id,
             table=default_pool(),
             meta=comfy_resident_meta,
+            coerce=normalize_clip_hook_owners if type_id == CLIP_TYPE else None,
         )
 
 
@@ -119,33 +133,28 @@ def register_native_types(registry: TypeRegistry) -> None:
         register_save_target_type(registry)
 
     for type_id in (
-        "dinkster.model",
-        "dinkster.clip",
-        "dinkster.vae",
-        "comfy.MODEL_PATCH",
+        MODEL_TYPE,
+        CLIP_TYPE,
+        VAE_TYPE,
+        MODEL_PATCH_TYPE,
+        INFERENCE_LATENT_OPERATION_TYPE,
     ):
         _register_resident(registry, type_id)
 
-    if "dinkster.latent" not in registry:
-        register_latent_type(registry, "dinkster.latent")
-
-    for type_id in ("dinkster.sampler", "dinkster.sigmas", "dinkster.noise"):
-        register_sampling_type(registry, type_id)
-    if "dinkster.window-plan" not in registry:
-        registry.register("dinkster.window-plan")
+    if LATENT_TYPE not in registry:
+        register_latent_type(registry, LATENT_TYPE)
 
     register_inference_types(registry)
     register_curve_type(registry)
-    register_model3d_type(registry, "dinkster.model3d")
+    register_model3d_type(registry, MODEL3D_TYPE)
 
-    for type_id in ("dinkster.image", "dinkster.mask"):
+    for type_id in (IMAGE_TYPE, MASK_TYPE):
         if type_id not in registry:
             register_image_type(registry, type_id)
-    register_image_type_equivalences(registry)
-    if registry.asset_decoder_for("dinkster.image") is None:
-        register_image_asset_providers(registry, "dinkster.image")
+    if registry.asset_decoder_for(IMAGE_TYPE) is None:
+        register_image_asset_providers(registry, IMAGE_TYPE)
 
-    if "comfy.AUDIO" not in registry:
-        register_audio_type(registry, "comfy.AUDIO")
-    if "dinkster.video" not in registry:
-        register_video_type(registry, "dinkster.video")
+    if AUDIO_TYPE not in registry:
+        register_audio_type(registry, AUDIO_TYPE)
+    if VIDEO_TYPE not in registry:
+        register_video_type(registry, VIDEO_TYPE)

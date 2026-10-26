@@ -12,9 +12,21 @@
   replay), values, queue control, live WebSocket events, settings, memory
   governance, cache trim/export; asset library and history routes when a
   library root is configured, including classified bounded latent upload
+- Asset record catalogs upgrade automatically with versioned migrations.
+  Matching unversioned catalogs retain scoped records, verified media grants,
+  dependency manifests, and derivations; incompatible schemas are refused.
 - Filesystem mount scans report file, byte, and elapsed progress; publish
   indexed assets before the scan finishes; reuse unchanged-file indexes; and
   keep per-mount indexes under the configured library root
+- Scans exclude partial downloads and files changing between observations.
+  Missing and replaced asset identities survive rescans and restart without
+  being offered as live content; restored content recovers its digest.
+- Native job submissions accept bare filenames in model asset inputs before
+  mount hashing. Bindings remain explicitly unverified and omit content
+  hashes until a scan verifies the same file revision. Missing names return
+  `409 assets-missing`; submission does not hash or download model bytes.
+  Native and translated model loaders accept these local bindings; translated
+  loaders retain category-root confinement and reject shadowed file names.
 - Inbound authentication with operator-managed static Bearer credentials,
   identity-service Ed25519 JWTs verified against cached JWKS, or both with
   static credentials tried first
@@ -25,27 +37,17 @@
   freshness
 - Declarative resolver-index subscriptions from local JSON files or HTTPS
   URLs, with ETag revalidation, regional mirror priority, digest-verified
-  acquisition leads, isolated source removal, exact-basename suggestions, and
-  explicit per-subscription P2P trust and license-authority controls
+  acquisition leads, isolated source removal, and exact-basename suggestions
 - Official provider subscription bootstrap from explicit URL and stable-ID
-  configuration, with identity verification and preserved trust/unsubscribe
+  configuration, with identity verification and preserved unsubscribe
   choices; no built-in provider endpoint or identity
 - Workflow templates are disabled by default: `features.templates.enabled`
   defaults to false, and the catalog, template body and thumbnail routes
   return 404. Guide Markdown and node documentation remain available through
   their separate documentation routes; template-opening actions are hidden.
-- P2P is disabled by default and requires the optional `p2p` extra plus
-  explicit `features.p2p.enabled` opt-in at startup. Disabled installations
-  have no P2P controller, API or LAN mapping routes, or mDNS advertisement.
-  The retained optional implementation uses one shared sidecar session for canonical
-  BitTorrent v2 descriptors, with six-hour trust expiry, license metadata,
-  safe-format verification, durable rate and seeding budgets, metered
-  network closure, and immediate resolver-omission revocation. Global resolver
-  transport uses trackerless DHT under `lan-and-internet` scope; LAN
-  and HTTP fallback remain available when global transport closes.
-- Bounded P2P sidecar status diagnostics for native peer failures, listener
-  bindings, discovery errors, and upload-counter comparison; no packet capture
-  or persistent diagnostic logging
+- Asset acquisition checks the local vault and mounted files before packaged
+  assets and HTTP sources. Remote bytes verify against the requested digest
+  before publication, and job acquisition requires explicit consent.
 - Durable job queue when history is configured: accepted jobs are recorded
   before acknowledgment, and jobs lost to a server crash or restart appear
   in history as "interrupted" (distinguishing never-started from
@@ -56,6 +58,22 @@
   execution that recomputes every node without restarting the server or
   releasing loaded model consumers; partial execution (execute up/between/from
   via target outputs), binary WebSocket preview frames
+- Nodes may return `BLOCKED(message)` on any output. Default-policy consumers
+  skip without failing the run; a nonempty absence reason produces one
+  `node_blocked` event per origin per run, including cache replay. Silent
+  blockers skip without a notice. Explicit accept, omit and fail input
+  policies retain their normal behavior.
+- Opted-in native nodes can reject literal inputs and declared linked types
+  before producers execute. Admission validation crosses isolated and remote
+  worker boundaries and follows routing and unpinned placement policies.
+- Runtime expansion preserves child dynamic choices and ordered output
+  membership across local, isolated and remote workers and cache replay.
+  Expansions may request child reruns without cache hits or coalescing;
+  nested expansions inherit that policy unless they explicitly request reuse
+  or rerun. The policy survives persistent cache replay.
+- Native loop list selection and result collection preserve child value
+  metadata, including resource ownership and producer execution arms.
+  Pure list construction and element selection retain cross-run cache reuse.
 - Memory governance: budgets, headroom, reservations with renewal,
   governed shedding, admission waiting, and item details with Aimdo model-weight
   page residency when the active Aimdo build exposes it

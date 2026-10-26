@@ -4,9 +4,9 @@ The ONE resolution of the exceptional hard type boundary and of "does this
 runtime value fit that input, and how?" Graph validation, the engine, and
 workers consume this policy so diagnostics and execution cannot drift.
 
-Most Dinkster type compatibility remains deliberately advisory. ``core.combo``
+Most Dinkster type compatibility remains deliberately advisory. ``COMBO``
 is the scoped exception: once ordinary TypeExpr acceptance and a valid asset
-coercion are exhausted, an incompatible runtime type involving core.combo
+coercion are exhausted, an incompatible runtime type involving COMBO
 (including inside list/asset shapes) is a hard admission error. Wildcards
 and explicit unions containing the arriving type accept normally before
 this predicate is consulted.
@@ -41,7 +41,7 @@ from dinkster_values import (
     list_type_id,
     parse_asset_type_id,
     parse_list_type_id,
-    runtime_type_atom,
+    runtime_type_atoms,
 )
 
 from .model import TypeExpr
@@ -62,20 +62,24 @@ def _expr_mentions_combo(expr: TypeExpr) -> bool:
     if expr.kind in ("list", "asset", "stream"):
         assert expr.element is not None
         return _expr_mentions_combo(expr.element)
+    if expr.kind == "tuple":
+        return any(_expr_mentions_combo(position) for position in expr.elements)
     return False
 
 
 def combo_type_mismatch_is_error(source_type_id: str, expected: TypeExpr) -> bool:
     """Whether an incompatible source/destination pair crosses the hard
-    core.combo boundary.
+    COMBO boundary.
 
     Callers first honor ``expected.accepts_concrete(source_type_id)`` and
     ``plan_asset_coercion``. This function only classifies a mismatch after
-    those normal acceptance paths fail. Peeling the runtime atom makes the
-    exception apply recursively to list<core.combo>, asset<core.combo>, and
-    stream<core.combo>.
+    those normal acceptance paths fail. Inspecting every runtime atom makes
+    the exception apply recursively through lists, assets, streams, and
+    tuple positions.
     """
-    return runtime_type_atom(source_type_id) == CORE_COMBO or _expr_mentions_combo(expected)
+    return CORE_COMBO in (runtime_type_atoms(source_type_id) or ()) or _expr_mentions_combo(
+        expected
+    )
 
 
 @runtime_checkable

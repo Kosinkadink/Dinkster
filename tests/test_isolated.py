@@ -20,12 +20,13 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 from dinkster_caches import MemoryLRUCache
-from dinkster_engine import Engine, EngineEvent, ExecutionError
+from dinkster_engine import Engine, EngineEvent, ExecutionError, GraphValidationError
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_memory import DEFAULT_INFERENCE_RESERVE_BYTES, InvocationView, MemoryGovernor
 from dinkster_nodes_dev import PACK_NODES
 from dinkster_protocol import (
     WORKGROUP_CAPABILITY,
+    AdmissionInvocation,
     AttentionCapabilityEvidence,
     AttentionPolicyConfig,
     AttentionRouteToken,
@@ -147,7 +148,8 @@ def write_iso_manifest(
 ) -> Path:
     manifest = tmp_path / "dinkster-pack.toml"
     manifest.write_text(
-        f'[pack]\nname = "{name}"\n\n[pack.entry]\n'
+        f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
+        'type-namespaces = ["iso"]\n\n[pack.entry]\n'
         f'nodes = "{module_name}:NODES"\ntypes = "{module_name}:register_types"\n'
     )
     return manifest
@@ -291,7 +293,8 @@ def test_isolated_worker_uses_interpreter_entry_for_split_package(tmp_path: Path
     (pack_root / "isopack_nodes" / "__init__.py").write_text("\n")
     manifest = pack_root / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname = "isopack"\n\n[pack.entry]\n'
+        '[pack]\nname = "isopack"\npublisher = "dinkster"\n'
+        'type-namespaces = ["iso"]\n\n[pack.entry]\n'
         'nodes = "isopack_nodes.entries:NODES"\n'
         'types = "isopack_nodes.entries:register_types"\n'
     )
@@ -721,7 +724,7 @@ def test_aimdo_bootstrap_unavailable_warns_and_continues(
     monkeypatch.delitem(sys.modules, "torch", raising=False)
 
     def unavailable(name: str) -> object:
-        assert name == "dinkster_aimdo.control"
+        assert name == "comfy_aimdo.control"
         raise ImportError(name)
 
     monkeypatch.setattr(importlib, "import_module", unavailable)
@@ -816,7 +819,7 @@ def test_aimdo_bootstrap_old_aimdo_degrades_headroomless_and_disarms(
     assert calls == [{"simple_vram_headroom": 128 * 1024**2}, {}]
     assert "NOT applied" in caplog.text
     assert "older than 0.4.10" in caplog.text
-    assert "upgrade dinkster-aimdo" in caplog.text
+    assert "upgrade comfy-aimdo" in caplog.text
     assert "completed successfully with simple_vram_headroom" not in caplog.text
     assert host_module._aimdo_bootstrap_headroom_base is None
 
@@ -862,40 +865,30 @@ def test_aimdo_headroom_handler_replaces_base_and_converges_in_either_order(
     monkeypatch.setattr(host_module, "_accelerator_headroom_base", 100)
     monkeypatch.setattr(host_module, "_aimdo_bootstrap_headroom_base", 100)
     monkeypatch.setattr(host_module, "_aimdo_headroom_extra_bytes", 0)
-    monkeypatch.delenv("DINKSTER_AIMDO_HEADROOM_TARGET", raising=False)
+    monkeypatch.delenv("COMFY_AIMDO_HEADROOM_TARGET", raising=False)
 
     # An old parent frame keeps the current base.
     host_module._handle_aimdo_headroom(40)
-    assert os.environ["DINKSTER_AIMDO_HEADROOM_TARGET"] == str(
-        DEFAULT_INFERENCE_RESERVE_BYTES + 140
-    )
+    assert os.environ["COMFY_AIMDO_HEADROOM_TARGET"] == str(DEFAULT_INFERENCE_RESERVE_BYTES + 140)
     assert host_module._aimdo_bootstrap_headroom_base == DEFAULT_INFERENCE_RESERVE_BYTES + 100
 
     # Base then extras and extras then base converge on the same target.
     host_module._handle_aimdo_headroom(40, 200)
     host_module._handle_aimdo_headroom(60)
-    assert os.environ["DINKSTER_AIMDO_HEADROOM_TARGET"] == str(
-        DEFAULT_INFERENCE_RESERVE_BYTES + 260
-    )
+    assert os.environ["COMFY_AIMDO_HEADROOM_TARGET"] == str(DEFAULT_INFERENCE_RESERVE_BYTES + 260)
     host_module._handle_aimdo_headroom(40)
     host_module._handle_aimdo_headroom(60, 200)
-    assert os.environ["DINKSTER_AIMDO_HEADROOM_TARGET"] == str(
-        DEFAULT_INFERENCE_RESERVE_BYTES + 260
-    )
+    assert os.environ["COMFY_AIMDO_HEADROOM_TARGET"] == str(DEFAULT_INFERENCE_RESERVE_BYTES + 260)
     assert host_module._accelerator_headroom_base == 200
     assert host_module._aimdo_bootstrap_headroom_base == DEFAULT_INFERENCE_RESERVE_BYTES + 200
     assert host_module._aimdo_headroom_extra_bytes == 60
 
     host_module._handle_aimdo_headroom(0)
-    assert os.environ["DINKSTER_AIMDO_HEADROOM_TARGET"] == str(
-        DEFAULT_INFERENCE_RESERVE_BYTES + 200
-    )
+    assert os.environ["COMFY_AIMDO_HEADROOM_TARGET"] == str(DEFAULT_INFERENCE_RESERVE_BYTES + 200)
 
     monkeypatch.setattr(host_module, "_aimdo_bootstrap_headroom_base", None)
     host_module._handle_aimdo_headroom(50, 300)
-    assert os.environ["DINKSTER_AIMDO_HEADROOM_TARGET"] == str(
-        DEFAULT_INFERENCE_RESERVE_BYTES + 200
-    )
+    assert os.environ["COMFY_AIMDO_HEADROOM_TARGET"] == str(DEFAULT_INFERENCE_RESERVE_BYTES + 200)
 
 
 @pytest.mark.parametrize("base", [True, -1, "100", None])
@@ -1351,7 +1344,7 @@ def test_host_main_sets_aimdo_arm_only_from_argv(
         del endpoint, manifest_path, shm_threshold, use_shm
         seen.append(
             (
-                os.environ.get("DINKSTER_AIMDO_ARM"),
+                os.environ.get("COMFY_AIMDO_ARM"),
                 os.environ.get("DINKSTER_ACCELERATOR_BUDGETS"),
                 os.environ.get("DINKSTER_ACCELERATOR_HEADROOM_BYTES"),
             )
@@ -1370,7 +1363,7 @@ def test_host_main_sets_aimdo_arm_only_from_argv(
     ]
     if mode is not None:
         argv.extend(("--aimdo-arm", mode))
-    monkeypatch.setenv("DINKSTER_AIMDO_ARM", "on")
+    monkeypatch.setenv("COMFY_AIMDO_ARM", "on")
     monkeypatch.setenv("DINKSTER_ACCELERATOR_BUDGETS", "0=1")
     monkeypatch.setenv("DINKSTER_ACCELERATOR_HEADROOM_BYTES", "1")
     monkeypatch.setattr(host_module, "configure_logging_from_env", lambda _env: None)
@@ -1500,7 +1493,7 @@ def test_host_main_publishes_only_validated_headroom_argv(
         del endpoint, manifest_path, shm_threshold, use_shm
         seen.append(
             (
-                os.environ.get("DINKSTER_AIMDO_ARM"),
+                os.environ.get("COMFY_AIMDO_ARM"),
                 os.environ.get("DINKSTER_ACCELERATOR_BUDGETS"),
                 os.environ.get("DINKSTER_ACCELERATOR_HEADROOM_BYTES"),
             )
@@ -1557,7 +1550,7 @@ def test_host_main_publishes_classic_policy_argv(
         del endpoint, manifest_path, shm_threshold, use_shm
         seen.append(
             (
-                os.environ.get("DINKSTER_AIMDO_ARM"),
+                os.environ.get("COMFY_AIMDO_ARM"),
                 os.environ.get("DINKSTER_ACCELERATOR_BUDGETS"),
                 os.environ.get("DINKSTER_ACCELERATOR_HEADROOM_BYTES"),
             )
@@ -1819,6 +1812,54 @@ def test_worker_converter_delegates_retryable_classification_to_compat(
     assert status == "error"
     assert reason is not None and "future-infrastructure-failure" in reason
     assert len(classified) == 1 and isinstance(classified[0], Refusal)
+
+
+@pytest.mark.parametrize("finish", ["close", "cancel", "malformed", "missing"])
+def test_admission_session_pending_request_terminates(
+    finish: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def scenario() -> None:
+        session = negotiated_session()
+        sent = asyncio.Event()
+
+        async def send(header: dict[str, object], blobs: list[bytes]) -> None:
+            del blobs
+            if header["type"] == "validateAdmission":
+                sent.set()
+                if finish in ("malformed", "missing"):
+                    session._admission_pending[str(header["requestId"])].set_result(  # noqa: SLF001
+                        ({"explanation": 42} if finish == "malformed" else {}, [])
+                    )
+
+        monkeypatch.setattr(session, "send", send)
+        request = asyncio.create_task(
+            session.validate_admission(
+                AdmissionInvocation(
+                    request_id="admit",
+                    node_id="n",
+                    node_type="test.admission",
+                    literal_inputs={"value": 7.0},
+                    linked_input_types={},
+                    effective_schema=NodeSchema(
+                        node_type="test.admission", admission_validation=True
+                    ),
+                )
+            )
+        )
+        await sent.wait()
+        if finish == "cancel":
+            request.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(request, 1)
+        else:
+            if finish == "close":
+                await session.close()
+            result = await asyncio.wait_for(request, 1)
+            assert result.explanation is not None
+            assert ("not running" if finish == "close" else "malformed") in result.explanation
+        await session.close()
+
+    asyncio.run(scenario())
 
 
 def test_conversion_pending_rpc_fails_with_worker_died_on_session_close(
@@ -2130,7 +2171,8 @@ def test_group_isolated_close_is_idempotent(tmp_path: Path) -> None:
             directory.mkdir()
             manifest = directory / "dinkster-pack.toml"
             manifest.write_text(
-                f'[pack]\nname = "{name}"\nnamespaces = ["iso"]\n\n'
+                f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
+                'type-namespaces = ["iso"]\nnamespaces = ["iso"]\n\n'
                 '[pack.entry]\nnodes = "isopack_nodes:NODES"\n'
                 'types = "isopack_nodes:register_types"\n',
                 encoding="utf-8",
@@ -2212,7 +2254,7 @@ def test_shm_transport_for_large_payloads_and_cleanup() -> None:
             # they must cross via shared memory, not inline bytes.
             assert stats_inputs["image"].transport == "shm"
             blend_inputs = {c.edge_id: c for c in by_node["dev.image.blend"].inputs}
-            # ratio is a small core.float: inline either way.
+            # ratio is a small FLOAT: inline either way.
             assert blend_inputs["ratio"].transport == "inline"
         finally:
             await worker.close()
@@ -2280,6 +2322,52 @@ def test_node_error_carries_message_and_worker_survives(tmp_path: Path) -> None:
             ok = Graph(nodes={"s": GraphNode("iso.sleepy", {"value": "hi", "seconds": 0.0})})
             result = await engine.run(ok, ["s"])
             assert result.outputs["s"]["value"].resolve() == "hi"
+        finally:
+            await worker.close()
+
+    asyncio.run(scenario())
+
+
+def test_isolated_admission_rejects_before_execution_and_recovers() -> None:
+    async def scenario() -> None:
+        registry = core_registry()
+        worker = IsolatedWorker(DEV_MANIFEST, registry)
+        await worker.start()
+        try:
+            engine = Engine(
+                schemas=dict(worker.schemas),
+                registry=registry,
+                worker=worker,
+                cache=MemoryLRUCache(),
+            )
+            for value in (5, "not a float"):
+                with pytest.raises(GraphValidationError, match="value must be a float literal"):
+                    await asyncio.wait_for(
+                        engine.run(
+                            Graph(
+                                {"check": GraphNode("dev.execution.admission", {"value": value})}
+                            ),
+                            ["check"],
+                        ),
+                        timeout=5,
+                    )
+            with pytest.raises(GraphValidationError, match="value must be linked from FLOAT"):
+                await engine.run(
+                    Graph(
+                        {
+                            "producer": GraphNode("dev.execution.fail"),
+                            "check": GraphNode(
+                                "dev.execution.admission", {"value": Link("producer", "value")}
+                            ),
+                        }
+                    ),
+                    ["check"],
+                )
+            result = await engine.run(
+                Graph({"check": GraphNode("dev.execution.admission", {"value": 7.5})}),
+                ["check"],
+            )
+            assert result.outputs["check"]["value"].resolve() == 7.5
         finally:
             await worker.close()
 
@@ -2365,7 +2453,7 @@ def test_isolated_lazy_hook_protocol_and_attribution(tmp_path: Path) -> None:
                     request_id=request_id,
                     node_id="lazy",
                     node_type="iso.lazy_probe",
-                    available_inputs={"mode": registry.wrap("core.string", mode)},
+                    available_inputs={"mode": registry.wrap("STRING", mode)},
                     connected_undemanded_inputs=("value",),
                     effective_schema=schema,
                 )
@@ -2720,8 +2808,11 @@ def test_manifest_namespaces(tmp_path: Path) -> None:
         load_manifest(manifest("namespaces = []\n"))
     with pytest.raises(ManifestError, match="list of strings"):
         load_manifest(manifest("namespaces = [3]\n"))
+    assert load_manifest(manifest('namespaces = ["Img"]\n')).namespaces == ("Img",)
+    uppercase_pack = manifest('namespaces = ["Img"]\n')
+    uppercase_pack.write_text(uppercase_pack.read_text().replace('name = "p"', 'name = "P"'))
     with pytest.raises(ManifestError, match="lowercase"):
-        load_manifest(manifest('namespaces = ["Img"]\n'))
+        load_manifest(uppercase_pack)
     # Separator equivalence: img_x and img.x are the SAME claim.
     with pytest.raises(ManifestError, match="same claim"):
         load_manifest(manifest('namespaces = ["img_x", "img.x"]\n'))
@@ -3637,7 +3728,7 @@ def test_load_pack_validates_comfy_alias_carrier_ownership_and_references(
                 ComfyAliasSourceSchema(
                     NodeSchema(
                         source.node_type,
-                        inputs=(InputSpec("value", TypeExpr.concrete("core.string")),),
+                        inputs=(InputSpec("value", TypeExpr.concrete("STRING")),),
                     ),
                     SCHEMA_WIRE_VERSION,
                 ),

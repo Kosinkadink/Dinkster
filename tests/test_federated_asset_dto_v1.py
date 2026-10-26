@@ -92,14 +92,10 @@ def round_trip(decoder: object, encoder: object, wire: dict[str, object]) -> Non
 def test_federated_asset_dto_v1_minimal_requests_and_defaults_round_trip() -> None:
     catalog = dto.decode_catalog_request({"contractVersion": 1})
     candidates = dto.decode_candidates_request({"contractVersion": 1, "context": context_wire()})
-    resolve = dto.decode_resolve_request(
-        {"contractVersion": 1, "mode": "existing", "context": context_wire()}
-    )
 
     assert catalog.limit == candidates.limit == 50
     assert dto.encode_catalog_request(catalog) == {"contractVersion": 1, "limit": 50}
     assert dto.encode_candidates_request(candidates)["limit"] == 50
-    assert "limit" not in dto.encode_resolve_request(resolve)
 
 
 def test_federated_asset_dto_v1_all_optional_request_fields_round_trip() -> None:
@@ -119,7 +115,7 @@ def test_federated_asset_dto_v1_all_optional_request_fields_round_trip() -> None
             "schema": {
                 "nodeType": "dinkster.load",
                 "inputId": "model",
-                "typeId": "dinkster.asset",
+                "typeId": "ASSET",
             },
             "accept": ["application/safetensors", "model/*"],
         },
@@ -144,28 +140,8 @@ def test_federated_asset_dto_v1_all_optional_request_fields_round_trip() -> None
         "cursor": "opaque cursor",
         "limit": 1,
     }
-    resolve = {
-        "contractVersion": 1,
-        "mode": "acquire-managed",
-        "scope": "workspace-a",
-        "context": context_wire(),
-        "expected": {"digest": DIGEST_A},
-        "hints": {},
-        "selection": selection,
-        "consents": {
-            "license": ["license-a", "license-a"],
-            "cost": [],
-            "policyOverride": ["policy-a"],
-        },
-        "document": {
-            "digest": "opaque-document-token-not-a-content-digest",
-            "occurrences": [{"pointer": "/nodes/0/inputs/model", "current": asset_ref_wire()}],
-        },
-    }
-
     round_trip(dto.decode_catalog_request, dto.encode_catalog_request, catalog)
     round_trip(dto.decode_candidates_request, dto.encode_candidates_request, candidates)
-    round_trip(dto.decode_resolve_request, dto.encode_resolve_request, resolve)
 
 
 @pytest.mark.parametrize(
@@ -344,95 +320,6 @@ def test_federated_asset_dto_v1_expected_selection_and_selected_states() -> None
         dto.decode_candidates_response(ambiguous)
 
 
-def test_federated_asset_dto_v1_document_token_pointer_and_repair_invariants() -> None:
-    resolve = {
-        "contractVersion": 1,
-        "mode": "existing",
-        "context": context_wire(),
-        "document": {
-            "digest": "opaque-token",
-            "occurrences": [{"pointer": "/nodes/0/~0key/~1value", "current": asset_ref_wire()}],
-        },
-    }
-    assert dto.decode_resolve_request(resolve).document is not None
-
-    invalid_pointer = json.loads(json.dumps(resolve))
-    invalid_pointer["document"]["occurrences"][0]["pointer"] = "/bad/~2"  # type: ignore[index]
-    with pytest.raises(dto.FederatedAssetCodecError, match="RFC 6901"):
-        dto.decode_resolve_request(invalid_pointer)
-
-    control_token = json.loads(json.dumps(resolve))
-    control_token["document"]["digest"] = "bad\n"  # type: ignore[index]
-    with pytest.raises(dto.FederatedAssetCodecError, match="control"):
-        dto.decode_resolve_request(control_token)
-
-    repair = {
-        "type": "asset-ref-repair",
-        "version": 1,
-        "atomic": True,
-        "documentDigest": "opaque-token",
-        "preconditions": [
-            {"pointer": "/nodes/0", "equals": asset_ref_wire()},
-            {"pointer": "/nodes/1", "equals": asset_ref_wire()},
-        ],
-        "replacements": [
-            {"pointer": "/nodes/0", "value": asset_ref_wire(DIGEST_B)},
-            {"pointer": "/nodes/1", "value": asset_ref_wire(DIGEST_B)},
-        ],
-    }
-    assert dto.encode_repair(dto.decode_repair(repair)) == repair
-
-    for mutate in ("empty", "mismatch", "duplicate", "overlap"):
-        bad = json.loads(json.dumps(repair))
-        if mutate == "empty":
-            bad["preconditions"] = []
-            bad["replacements"] = []
-        elif mutate == "mismatch":
-            bad["replacements"][1]["pointer"] = "/nodes/2"
-        elif mutate == "duplicate":
-            bad["preconditions"][1]["pointer"] = "/nodes/0"
-        else:
-            bad["preconditions"][1]["pointer"] = "/nodes/0/input"
-            bad["replacements"][1]["pointer"] = "/nodes/0/input"
-        with pytest.raises(dto.FederatedAssetCodecError):
-            dto.decode_repair(bad)
-
-    duplicate_both = json.loads(json.dumps(repair))
-    duplicate_both["preconditions"][1]["pointer"] = "/nodes/0"
-    duplicate_both["replacements"][1]["pointer"] = "/nodes/0"
-    with pytest.raises(dto.FederatedAssetCodecError, match="must be unique"):
-        dto.decode_repair(duplicate_both)
-
-
-def test_federated_asset_dto_v1_resolve_success_digest_and_repair_match() -> None:
-    wire = {
-        "contractVersion": 1,
-        "status": "resolved-existing",
-        "selected": asset_ref_wire(),
-        "selectedCandidate": selected_wire(),
-    }
-    assert dto.encode_resolve_response(dto.decode_resolve_response(wire)) == wire
-
-    bad = dict(wire)
-    bad["selectedCandidate"] = selected_wire(DIGEST_B)
-    with pytest.raises(dto.FederatedAssetCodecError, match="must equal"):
-        dto.decode_resolve_response(bad)
-
-    repair = {
-        "type": "asset-ref-repair",
-        "version": 1,
-        "atomic": True,
-        "documentDigest": "opaque-token",
-        "preconditions": [{"pointer": "/model", "equals": asset_ref_wire()}],
-        "replacements": [{"pointer": "/model", "value": asset_ref_wire(DIGEST_B)}],
-    }
-    with_distinct_repair = {**wire, "repair": repair}
-    assert (
-        dto.encode_resolve_response(dto.decode_resolve_response(with_distinct_repair))
-        == with_distinct_repair
-    )
-
-
 ERROR_CASES = [
     (400, {"code": "invalid-request", "reason": "bad", "field": "limit"}),
     (400, {"code": "cursor-invalid", "reason": "expired"}),
@@ -590,25 +477,6 @@ def test_federated_asset_dto_v1_response_pages_refuse_more_than_100_items() -> N
 
 def test_federated_asset_dto_v1_constructor_collections_reject_arbitrary_iterables() -> None:
     candidate = dto.decode_candidate(candidate_wire())
-    document = dto.decode_resolve_request(
-        {
-            "contractVersion": 1,
-            "mode": "existing",
-            "context": context_wire(),
-            "document": {"digest": "token", "occurrences": []},
-        }
-    ).document
-    assert document is not None
-    repair = dto.decode_repair(
-        {
-            "type": "asset-ref-repair",
-            "version": 1,
-            "atomic": True,
-            "documentDigest": "token",
-            "preconditions": [{"pointer": "/model", "equals": asset_ref_wire()}],
-            "replacements": [{"pointer": "/model", "value": asset_ref_wire(DIGEST_B)}],
-        }
-    )
     error = dto.ErrorV1(
         "selection-required",
         reason="digestless",
@@ -617,11 +485,8 @@ def test_federated_asset_dto_v1_constructor_collections_reject_arbitrary_iterabl
     )
     constructors = (
         ("candidate.providerSources", lambda value: replace(candidate, provider_sources=value)),
-        ("document.occurrences", lambda value: replace(document, occurrences=value)),
         ("items", lambda value: dto.CatalogResponseV1(value)),
         ("items", lambda value: dto.CandidatesResponseV1("missing", value)),
-        ("repair.preconditions", lambda value: replace(repair, preconditions=value)),
-        ("repair.replacements", lambda value: replace(repair, replacements=value)),
         ("error.candidates", lambda value: replace(error, candidates=value)),
     )
     for expected_field, constructor in constructors:

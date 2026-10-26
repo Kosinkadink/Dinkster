@@ -21,3 +21,9 @@ uv sync --all-packages
 
 Untranslated legacy nodes require a ComfyUI installation selected with
 `--comfy-root`. The torch-free host process never imports the execution runtime.
+
+The core compatibility manifest declares the translated opaque type leaves it
+owns. The shared `comfy.LAYERS` and `comfy.COMPOSITOR` codecs belong to its image
+pack dependency, including when installed inside the compatibility worker.
+New translated opaque types require an explicit manifest claim; the adapter
+does not claim the entire `comfy` type namespace.

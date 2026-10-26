@@ -49,6 +49,8 @@ from typing import Any, cast
 from dinkster_assets import DeclaredAsset, RemoteSource
 from dinkster_memory import MemoryGovernor, ReportedTelemetry, ReservationService
 from dinkster_protocol import (
+    AdmissionInvocation,
+    AdmissionResult,
     CompatGateDiagnostic,
     Invocation,
     InvocationResult,
@@ -124,8 +126,8 @@ class RemoteWorker:
         self._name = name
         self._connect_timeout = connect_timeout
         self._tls_ca_file = tls_ca_file
-        # This engine's advertised asset base URL (peer_asset_sources
-        # convention: bytes at <endpoint>/assets/<digest>) and its bearer
+        # This engine's advertised asset base URL (bytes at
+        # <endpoint>/assets/<digest>) and its bearer
         # credential, offered to the daemon as a staging source. The
         # credential rides ONLY requests to this endpoint - declared
         # provenance URLs never see it.
@@ -820,6 +822,12 @@ class RemoteWorker:
                     if not isinstance(reference, Mapping):
                         raise TransportError("asset reference must be a metadata mapping")
                     reference = cast("Mapping[str, object]", reference)
+                    if reference.get("verification") == "unverified":
+                        raise TransportError(
+                            f"remote worker '{self._name}': node {invocation.node_id!r} "
+                            f"({invocation.node_type}) has an unverified local-only asset "
+                            "binding - run on the granting host or wait for background hashing"
+                        )
                     digest = reference.get("digest")
                     if not isinstance(digest, str) or not digest:
                         raise TransportError(
@@ -891,6 +899,13 @@ class RemoteWorker:
         on_event: OnInvocationEvent | None = None,
     ) -> LazyStatusResult:
         return await self._session.check_lazy_status(invocation, on_event=on_event)
+
+    async def validate_admission(
+        self,
+        invocation: AdmissionInvocation,
+        on_event: OnInvocationEvent | None = None,
+    ) -> AdmissionResult:
+        return await self._session.validate_admission(invocation, on_event=on_event)
 
     async def close(self) -> None:
         """Disconnect. The service keeps running and keeps its pack state;

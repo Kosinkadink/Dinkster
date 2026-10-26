@@ -49,6 +49,8 @@ from .elaborate import (
     ElaborationError,
     elaborate,
 )
+from .execution import RunExecutionContext
+from .expansion import Expansion, ExpansionBuilder, ExpansionNode, ExpansionOutput
 from .log import (
     LOG_LEVEL_ENV,
     LOG_OVERRIDES_ENV,
@@ -83,6 +85,7 @@ from .model import (
     InputSpec,
     MirrorSpec,
     MirrorTolerance,
+    MountWidget,
     MultiComboWidget,
     NodeSchema,
     NumberWidget,
@@ -115,14 +118,17 @@ from .model import (
 from .names import (
     NAME_MAX,
     RESERVED_NAMESPACES,
+    canonical_claim,
     canonical_name,
     claim_covers,
     claims_conflict,
     reserved_root,
+    validate_claim,
     validate_name,
 )
 from .node import (
     ABSENT,
+    BLOCKED,
     AbsentOutput,
     Node,
     NodeOutputError,
@@ -175,7 +181,13 @@ from .wire import (
 )
 
 __all__ = [
+    "RunExecutionContext",
+    "Expansion",
+    "ExpansionBuilder",
+    "ExpansionNode",
+    "ExpansionOutput",
     "ABSENT",
+    "BLOCKED",
     "COMFY_ALIAS_FORMAT",
     "COMFY_GROUP_FORMAT",
     "COMFY_GROUP_MAX_EDGES",
@@ -236,6 +248,7 @@ __all__ = [
     "InputSpec",
     "MirrorSpec",
     "MirrorTolerance",
+    "MountWidget",
     "MultiComboWidget",
     "MappingSource",
     "Node",
@@ -291,6 +304,7 @@ __all__ = [
     "comfy_group_registry_from_wire",
     "comfy_group_registry_problems",
     "comfy_group_registry_to_wire",
+    "canonical_claim",
     "canonical_name",
     "claim_covers",
     "claims_conflict",
@@ -320,6 +334,7 @@ __all__ = [
     "type_expr_to_wire",
     "use_capture_budget",
     "use_reporter",
+    "validate_claim",
     "validate_name",
     "validate_remote_choice_authority",
     "validate_replacement_references",

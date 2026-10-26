@@ -12,11 +12,11 @@ finite, and duplicate-key-free; limits are 4096 items, 16 composition levels,
 
 Clips select `sources[clip.metadata.dinkster.source]`. A binding is either:
 
-- `{type: "comfy.VIDEO", video: <reference-only VIDEO v2 packed record>}`,
+- `{type: "VIDEO", video: <reference-only VIDEO v2 packed record>}`,
   produced by `dinkster_values.video_document.video_reference(video)`. It retains
   the entire ordered base edit plan, not just the encoded asset. Inline
   sources and deferred component payloads must be published before binding.
-- `{type: "comfy.VIDEO" | "dinkster.image" | "comfy.AUDIO" | "dinkster.layers",
+- `{type: "VIDEO" | "dinkster.image" | "AUDIO" | "dinkster.layers",
   asset: <declared asset wire>}`. Assets contain a canonical blake3 digest,
   size, and optional name/mediaType/virtualPath, never host paths.
 - A `dinkster.layers` binding may also contain `resources: [<asset wire>, ...]`.
@@ -55,7 +55,7 @@ updates the selected trim fields, preserving unrelated widget fields.
 
 Node IDs are `dinkster.video_document.<command>`. No HTTP timeline endpoint is
 implied. Every mutation takes `document: dinkster.video_document` and
-`params: core.string` containing JSON, and returns `document` of the same type.
+`params: STRING` containing JSON, and returns `document` of the same type.
 Indices are zero-based OTIO child indices, including gaps/transitions, not
 indices of clips with those items filtered out. `track` defaults to 0 and
 `clip` defaults to 0; track selection addresses top-level tracks.
@@ -65,7 +65,7 @@ indices of clips with those items filtered out. `track` defaults to 0 and
 | `make` | Optional `params` (`{}` default): width, height, rate, name, clips. Returns document. |
 | `add_track` | kind (`Video` default), name, blend (`normal`), opacity (1). |
 | `add_clip` | track, item (complete OTIO Clip/Gap), optional insertion index. |
-| `bind_source` | source (binding ID), reference; optional track/clip also assigns that ID to a clip. Optional typed `video: comfy.VIDEO` port replaces reference and carries base edits. |
+| `bind_source` | source (binding ID), reference; optional track/clip also assigns that ID to a clip. Optional typed `video: VIDEO` port replaces reference and carries base edits. |
 | `set_effect` | track, clip, index (append default), effect `{node_type, parameters}`, or remove:true. |
 | `transition` | track, clip (outgoing clip), in_offset/out_offset in seconds (0.5 each). Inserts an SMPTE_Dissolve between adjacent clips. |
 | `retime` | track, clip, scalar; replaces LinearTimeWarp/FreezeFrame without changing declared item duration. |
@@ -75,9 +75,9 @@ indices of clips with those items filtered out. `track` defaults to 0 and
 | `trim` | track, clip, start_time/duration/strict_duration; leaves gaps to preserve surrounding timeline positions. Alternatively video_edit plus sibling strict_duration sets the raw VIDEO_EDIT selection. |
 | `ripple` | track, clip, start_time/duration/strict_duration; closes removed time. |
 | `roll` | track, clip, delta seconds; moves an adjacent cut without changing total duration. |
-| `render` | document -> video: comfy.VIDEO. Lazy, no encoding. |
-| `import_otio` | otio: core.string -> document. No source resolution. |
-| `export_otio` | document -> otio: core.string. |
+| `render` | document -> video: VIDEO. Lazy, no encoding. |
+| `import_otio` | otio: STRING -> document. No source resolution. |
+| `export_otio` | document -> otio: STRING. |
 
 Effects remain ordered in `clip.metadata.dinkster.effects`. A parameter may be
 `{type: "dinkster.curve", value: {points: [{position, value}], interpolation}}`.

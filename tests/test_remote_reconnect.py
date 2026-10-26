@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
 from typing import Any
@@ -19,9 +19,11 @@ import pytest
 from aiohttp import ClientResponse
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_caches import BudgetedDiskCAS
+from dinkster_engine.control import EngineRunContext
 from dinkster_graph import Graph, GraphNode, Link, graph_to_wire
 from dinkster_server import STATE_KEY, create_app
 from dinkster_workers import TransportError
+from dinkster_workers.run_control import dispatch_run_control
 from dinkster_workers.session import WorkerDied
 from test_isolated import write_iso_manifest
 from test_remote import start_service, stop_service
@@ -57,7 +59,8 @@ def write_variant_manifest(root: Path, dropped: str) -> Path:
     )
     manifest = root / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname = "isopack"\n\n[pack.entry]\n'
+        '[pack]\nname = "isopack"\npublisher = "dinkster"\n'
+        'type-namespaces = ["iso"]\n\n[pack.entry]\n'
         'nodes = "isopack_nodes_variant:NODES"\ntypes = "isopack_nodes_variant:register_types"\n'
     )
     return manifest
@@ -191,6 +194,104 @@ def test_inflight_invocation_resumes_after_same_daemon_network_cut(tmp_path: Pat
             result = await asyncio.wait_for(run, 10.0)
             assert result.outputs["slow"]["value"].resolve() == "survived"
         finally:
+            await composer.close()
+            await stop_service(proc)
+
+    asyncio.run(scenario())
+
+
+def test_run_control_wait_and_reply_survive_same_daemon_reconnect(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    async def scenario() -> None:
+        manifest = tmp_path / "dinkster-pack.toml"
+        manifest.write_text(
+            '[pack]\nname = "control"\nnamespaces = ["control"]\n'
+            '[pack.entry]\nnodes = "test_run_control_boundary:PACK_NODES"\n'
+            'reservations = "test_run_control_boundary:reserve"\n',
+            encoding="ascii",
+        )
+        proc, host, port = await start_service(
+            manifest,
+            tmp_path,
+            pythonpath=(Path(__file__).parent,),
+        )
+        composer = ServingComposer()
+        entered = asyncio.Event()
+        publisher_entered = asyncio.Event()
+        release_publisher = asyncio.Event()
+        operations: list[str] = []
+        import dinkster_workers.session as session_module
+
+        await_run_value = EngineRunContext.await_run_value
+
+        async def observe_await(context: EngineRunContext, node_id: str) -> Mapping[str, Any]:
+            entered.set()
+            return await await_run_value(context, node_id)
+
+        async def pause_publisher_dispatch(*args: Any, **kwargs: Any) -> None:
+            header = args[2]
+            operation = header["operation"]
+            assert type(operation) is str
+            operations.append(operation)
+            if operation == "publishRunValue":
+                publisher_entered.set()
+                await release_publisher.wait()
+            await dispatch_run_control(*args, **kwargs)
+
+        monkeypatch.setattr(EngineRunContext, "await_run_value", observe_await)
+        monkeypatch.setattr(session_module, "dispatch_run_control", pause_publisher_dispatch)
+        try:
+            spec = remote_spec(host, port, tmp_path, name="control")
+            await composer.add_remote(spec)
+            engine = composer.composition.make_engine(lambda event: None)
+            run = asyncio.create_task(
+                engine.run(
+                    Graph(
+                        {
+                            "waiter": GraphNode("control.wait"),
+                            "publisher": GraphNode("control.publish", {"value": 23}),
+                        }
+                    ),
+                    ["waiter", "publisher"],
+                    run_id="control-reconnect",
+                )
+            )
+            await asyncio.wait_for(entered.wait(), 10)
+            await asyncio.wait_for(publisher_entered.wait(), 10)
+            session = composer._remotes["control"].worker._session
+            assert session._writer is not None
+            session._writer.transport.abort()
+            await wait_for_connected(composer, "control", False)
+            outcome = await composer.reattach_remote(spec)
+            assert outcome.same_instance is True
+            send = session.send
+            reply_lost = asyncio.Event()
+
+            async def lose_first_control_reply(
+                header: dict[str, object],
+                blobs: Sequence[bytes],
+                segments: Sequence[SharedMemory] = (),
+            ) -> None:
+                if header.get("type") == "runControlResult" and not reply_lost.is_set():
+                    assert session._writer is not None
+                    session._writer.transport.abort()
+                    reply_lost.set()
+                    raise WorkerDied()
+                await send(header, blobs, segments)
+
+            session.send = lose_first_control_reply  # type: ignore[method-assign]
+            release_publisher.set()
+            await asyncio.wait_for(reply_lost.wait(), 10)
+            await wait_for_connected(composer, "control", False)
+            outcome = await composer.reattach_remote(spec)
+            assert outcome.same_instance is True
+            result = await asyncio.wait_for(run, 10)
+            assert result.outputs["waiter"]["value"].resolve() == 23
+            assert operations.count("awaitRunValue") == 1
+            assert operations.count("publishRunValue") == 3
+        finally:
+            release_publisher.set()
             await composer.close()
             await stop_service(proc)
 

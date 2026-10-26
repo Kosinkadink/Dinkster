@@ -12,9 +12,7 @@ import threading
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import ExitStack, asynccontextmanager, contextmanager, suppress
-from dataclasses import replace
 from pathlib import Path
-from typing import cast
 from unittest.mock import patch
 from urllib.parse import quote
 
@@ -22,17 +20,14 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import (
-    P2P_REMOTE_GRANT_MAX_SECONDS,
     RESOLVER_INDEX_MAX_BYTES,
     RESOLVER_INDEX_MAX_ENTRIES,
     RESOLVER_INDEX_MAX_URLS,
     RESOLVER_REVALIDATE_SECONDS,
     RESOLVER_SUBSCRIPTIONS_MAX_BYTES,
-    AssetError,
     AssetNeed,
     AssetVault,
     LibraryStore,
-    P2PGrantReconciler,
     ProvenanceRecord,
     ProvenanceStore,
     ResolverIndexError,
@@ -40,14 +35,12 @@ from dinkster_assets import (
     ResolverSubscriptionError,
     ResolverSubscriptionStore,
     acquire_need,
-    derive_p2p_descriptor,
     digest_bytes,
     parse_resolver_index,
     resolver_index_from_wire,
 )
 from dinkster_assets import resolver_subscription as resolver_transport
-from dinkster_assets.p2p_global import ProviderArtifactP2PV1
-from dinkster_server import ServerLibrary, create_app
+from dinkster_server import RuntimeSettings, ServerLibrary, create_app
 from test_server import SCHEMAS, make_engine
 
 from dinkster.guess_api import add_guess_routes
@@ -59,6 +52,35 @@ OTHER_BYTES = b"updated resolver-index model bytes" * 32
 OTHER_DIGEST = digest_bytes(OTHER_BYTES)
 
 
+def resolver_settings() -> RuntimeSettings:
+    return RuntimeSettings(
+        {
+            "memory-budgets": {},
+            "memory-headroom": 256 * 1024**2,
+            "aimdo-policy": "auto",
+            "dtype-policy": {"diffusion": "auto", "textEncoder": "auto", "vae": "auto"},
+            "fp8-matmul": False,
+            "worker-comfy-args": (),
+            "jobs": {"maxRunningJobs": 1},
+            "logging": {"level": "info", "overrides": {}},
+        },
+        {
+            category: "default"
+            for category in (
+                "memory-budgets",
+                "memory-headroom",
+                "aimdo-policy",
+                "dtype-policy",
+                "fp8-matmul",
+                "worker-comfy-args",
+                "jobs",
+                "logging",
+            )
+        },
+        features={"resolver": {"enabled": True}},
+    )
+
+
 def resolver_entry(
     *,
     digest: str = MODEL_DIGEST,
@@ -67,13 +89,14 @@ def resolver_entry(
     regions: dict[str, list[str]] | None = None,
     components: list[dict[str, object]] | None = None,
     kind: str = "model/diffusion",
+    size: int | None = None,
 ) -> dict[str, object]:
     entry: dict[str, object] = {
         "digest": digest,
         "name": name,
         "urls": urls or ["https://models.example/default.safetensors"],
         "kind": kind,
-        "size": len(MODEL_BYTES),
+        "size": len(MODEL_BYTES) if size is None else size,
         "license": "apache-2.0",
         "notes": "verified community mirror",
         "regions": regions or {"cn": ["https://cn.example/model.safetensors"]},
@@ -126,151 +149,12 @@ def test_parse_resolver_index_round_trip_and_region_priority(
     assert parse_resolver_index(json.dumps(index.to_wire())) == index
 
 
-@pytest.mark.parametrize(
-    "malformed",
-    (
-        None,
-        {},
-        {
-            "protocol": "bittorrent-v2",
-            "infoHash": "0" * 64,
-            "fileRoot": "0" * 64,
-            "pieceLength": 8 * 1024 * 1024,
-        },
-        {
-            "protocol": "bittorrent-v2",
-            "infoHash": "0" * 64,
-            "fileRoot": "0" * 64,
-            "pieceLength": 8 * 1024 * 1024,
-            "future": True,
-        },
-    ),
-)
-def test_malformed_entry_p2p_preserves_the_http_entry(
-    malformed: object,
-) -> None:
-    entry = resolver_entry()
-    entry["p2p"] = malformed
-
-    parsed = parse_resolver_index(json.dumps(resolver_document(entry)))
-
-    assert parsed.entries[0].p2p is None
-    assert parsed.entries[0].digest == MODEL_DIGEST
-    assert parsed.entries[0].urls == ("https://models.example/default.safetensors",)
-
-    entry["urls"] = []
-    with pytest.raises(ResolverIndexError, match="non-empty list"):
-        resolver_index_from_wire(resolver_document(entry))
-
-
 @pytest.mark.parametrize("gated", [None, 0, 1, "true", [], {}])
 def test_resolver_gated_metadata_requires_boolean(gated: object) -> None:
     entry = resolver_entry()
     entry["gated"] = gated
     with pytest.raises(ResolverIndexError, match="gated must be a boolean"):
         resolver_index_from_wire(resolver_document(entry))
-
-
-def test_p2p_only_entries_require_canonical_descriptor_size_and_bounded_https_urls(
-    tmp_path: Path,
-) -> None:
-    model = tmp_path / "model.safetensors"
-    model.write_bytes(MODEL_BYTES)
-    derived = derive_p2p_descriptor(model)
-    entry = resolver_entry()
-    entry.update(urls=[], regions={}, p2p=derived.descriptor.to_wire())
-    parsed = resolver_index_from_wire(resolver_document(entry))
-    assert parsed.entries[0].urls == ()
-    assert parsed.entries[0].gated is False
-    assert parsed.entries[0].p2p == derived.descriptor
-    assert resolver_index_from_wire(parsed.to_wire()) == parsed
-
-    for size in (-1, 0, derived.size + 1):
-        with pytest.raises(ResolverIndexError, match="non-empty list"):
-            resolver_index_from_wire(resolver_document({**entry, "size": size}))
-    missing_size = dict(entry)
-    del missing_size["size"]
-    with pytest.raises(ResolverIndexError, match="non-empty list"):
-        resolver_index_from_wire(resolver_document(missing_size))
-    for urls in (
-        [f"https://models.example/{i}" for i in range(RESOLVER_INDEX_MAX_URLS + 1)],
-        ["http://models.example/model"],
-        ["https://user:password@models.example/model"],
-    ):
-        with pytest.raises(ResolverIndexError):
-            resolver_index_from_wire(resolver_document({**entry, "urls": urls}))
-
-
-@pytest.mark.parametrize("license_name", [None, "", "unknown", "All rights reserved"])
-@pytest.mark.parametrize(
-    "urls", [[], ["https://models.example/model"], ["https://models.example/?key=x"]]
-)
-def test_trusted_gated_metadata_round_trip_and_grants_require_only_verified_bytes(
-    tmp_path: Path, license_name: str | None, urls: list[str]
-) -> None:
-    now = [100.0]
-    model = tmp_path / "model.safetensors"
-    model.write_bytes(MODEL_BYTES)
-    derived = derive_p2p_descriptor(model)
-    entry = resolver_entry()
-    entry.update(urls=urls, regions={}, p2p=derived.descriptor.to_wire(), gated=True)
-    if license_name is None:
-        del entry["license"]
-    else:
-        entry["license"] = license_name
-    source = tmp_path / "resolver.json"
-    document = resolver_document(entry)
-    write_document(source, document)
-    state = tmp_path / "subscriptions.json"
-    provenance_path = tmp_path / "provenance.json"
-    store = ResolverSubscriptionStore(state, ProvenanceStore(provenance_path), clock=lambda: now[0])
-    subscription = store.subscribe(str(source))
-    assert not subscription.trusted_for_p2p
-    assert not subscription.license_authoritative
-    assert store.public_swarm_declarations() == ()
-    store.set_p2p_trust(subscription.id, trusted_for_p2p=False, license_authoritative=True)
-    assert store.public_swarm_declarations() == ()
-    store.set_p2p_trust(subscription.id, trusted_for_p2p=True, license_authoritative=False)
-    store = ResolverSubscriptionStore(state, ProvenanceStore(provenance_path), clock=lambda: now[0])
-    persisted = store.subscriptions()[0]
-    assert persisted.license_authoritative is False
-    parsed_entry = persisted.index.entries[0]
-    assert parsed_entry.license == (license_name or "")
-    assert parsed_entry.gated is True
-    assert resolver_index_from_wire(persisted.index.to_wire()) == persisted.index
-    declarations = store.public_swarm_declarations()
-    assert len(declarations) == 1
-    assert declarations[0].license == (license_name or "")
-    reconciler = P2PGrantReconciler(clock=lambda: now[0])
-    assert (
-        reconciler.reconcile(declarations, (), lambda _: None, enabled=True).snapshot.seed_grants
-        == ()
-    )
-    verified = reconciler.reconcile(declarations, (), lambda _: model, enabled=True).snapshot
-    assert len(verified.public_grants) == len(verified.seed_grants) == 1
-    model.write_bytes(bytes(len(MODEL_BYTES)))
-    mutated = reconciler.reconcile(declarations, (), lambda _: model, enabled=True).snapshot
-    assert mutated.public_grants == verified.public_grants
-    assert mutated.seed_grants == ()
-
-    now[0] = 101.0
-    source.write_text('{"dinksterResolver":1,"entries":[', "utf-8")
-    store.refresh(subscription.id)
-    assert store.subscriptions()[0].error
-    assert store.subscriptions()[0].refreshed_at == 100.0
-    assert store.public_swarm_declarations() == declarations
-    now[0] = 100.0 + P2P_REMOTE_GRANT_MAX_SECONDS
-    assert store.public_swarm_declarations() == ()
-    now[0] += 1
-    write_document(source, document)
-    store.refresh(subscription.id)
-    assert store.public_swarm_declarations()
-    now[0] += 1
-    document["entries"] = []
-    write_document(source, document)
-    store.refresh(subscription.id)
-    assert store.public_swarm_declarations() == ()
-    assert store.subscriptions()[0].p2p_tombstones == ((derived.asset_digest, now[0]),)
 
 
 def test_parse_resolver_index_uses_shared_component_manifest() -> None:
@@ -520,344 +404,24 @@ def test_local_subscriptions_replace_remove_and_reload(tmp_path: Path) -> None:
     assert reloaded_provenance.sources(MODEL_DIGEST) == provenance.sources(MODEL_DIGEST)
 
 
-def test_resolver_p2p_trust_defaults_false_persists_and_builds_trackerless_snapshot(
-    tmp_path: Path,
-) -> None:
-    model = tmp_path / "model.safetensors"
-    model.write_bytes(MODEL_BYTES)
-    descriptor = derive_p2p_descriptor(model)
-    entry = resolver_entry(
-        digest=descriptor.asset_digest,
-        urls=[
-            "https://models.example/signed?token=credential",
-            "https://models.example/model.safetensors",
-        ],
-    )
-    entry["size"] = descriptor.size
-    entry["p2p"] = descriptor.descriptor.to_wire()
-    source = tmp_path / "resolver.json"
-    document = resolver_document(entry)
-    document["p2pTrackers"] = ["https://tracker.example/announce"]
-    write_document(source, document)
+def test_persisted_unused_optional_field_keeps_http_entries_and_suggestions(tmp_path: Path) -> None:
+    source = tmp_path / "index.json"
     state = tmp_path / "subscriptions.json"
-    provenance_path = tmp_path / "provenance.json"
-    store = ResolverSubscriptionStore(
-        state,
-        ProvenanceStore(provenance_path),
-        clock=lambda: 100.0,
-    )
+    provenance = ProvenanceStore(tmp_path / "provenance.json")
+    write_document(source, resolver_document())
+    ResolverSubscriptionStore(state, provenance).subscribe(str(source))
 
-    subscription = store.subscribe(str(source))
-    assert subscription.trusted_for_p2p is False
-    assert subscription.license_authoritative is False
-    assert store.provider_p2p_snapshots() == ()
-    assert store.public_swarm_declarations() == ()
+    persisted = json.loads(state.read_text("utf-8"))
+    subscriptions = persisted["subscriptions"]
+    assert isinstance(subscriptions, list) and isinstance(subscriptions[0], dict)
+    subscriptions[0]["retiredOptionalField"] = {"unused": True}
+    state.write_text(json.dumps(persisted), "utf-8")
 
-    store.set_p2p_trust(
-        subscription.id,
-        trusted_for_p2p=True,
-        license_authoritative=False,
-    )
-    assert len(store.provider_p2p_snapshots()) == 1
-    original_declarations = store.public_swarm_declarations()
-    store.set_p2p_trust(
-        subscription.id,
-        trusted_for_p2p=True,
-        license_authoritative=True,
-    )
-    assert store.public_swarm_declarations() == original_declarations
-
-    snapshots = store.provider_p2p_snapshots()
-    assert store.provider_p2p_snapshots() is snapshots
-    (snapshot,) = snapshots
-    assert snapshot.provider_id == "community-models"
-    assert snapshot.source_revision.startswith("2026-09-01T00:00:00Z|sha256:")
-    assert snapshot.refreshed_at == 100.0
-    assert snapshot.p2p_trackers == ()
-    assert [artifact.digest for artifact in snapshot.artifacts] == [descriptor.asset_digest]
-    assert snapshot.artifacts[0].format_safe is True
-    assert [location.url for location in snapshot.artifacts[0].locations] == [
-        "https://models.example/model.safetensors"
+    reloaded = ResolverSubscriptionStore(state, provenance)
+    assert provenance.sources(MODEL_DIGEST)
+    assert [suggestion.digest for suggestion in reloaded.suggest("example.safetensors")] == [
+        MODEL_DIGEST
     ]
-    assert len(snapshot.p2p_artifacts[0].grant_id) == 64
-    assert snapshot.p2p_artifacts[0].expires_at == 100.0 + P2P_REMOTE_GRANT_MAX_SECONDS
-    declarations = store.public_swarm_declarations()
-    assert store.public_swarm_declarations() is declarations
-    (declaration,) = declarations
-    assert declaration.source_type == "official-provider"
-    assert declaration.digest == descriptor.asset_digest
-
-    reloaded = ResolverSubscriptionStore(state, ProvenanceStore(provenance_path))
-    persisted = reloaded.subscriptions()[0]
-    assert persisted.trusted_for_p2p is True
-    assert persisted.license_authoritative is True
-    assert len(reloaded.provider_p2p_snapshots()) == 1
-
-    legacy = json.loads(state.read_text("utf-8"))
-    legacy_subscription = legacy["subscriptions"][0]
-    legacy_subscription.pop("trustedForP2P")
-    legacy_subscription.pop("licenseAuthoritative")
-    legacy_subscription.pop("p2pTombstones")
-    state.write_text(json.dumps(legacy), "utf-8")
-    migrated = ResolverSubscriptionStore(state, ProvenanceStore(tmp_path / "legacy.json"))
-    assert migrated.subscriptions()[0].trusted_for_p2p is False
-    assert migrated.subscriptions()[0].license_authoritative is False
-    assert migrated.provider_p2p_snapshots() == ()
-
-
-def test_resolver_provider_snapshot_rejects_ineligible_entries_without_name_special_cases(
-    tmp_path: Path,
-) -> None:
-    entries: list[dict[str, object]] = []
-    expected_digests: set[str] = set()
-    for position, (name, license_name, valid_p2p) in enumerate(
-        (
-            ("safe.safetensors", "Apache-2.0", True),
-            ("unsafe.ckpt", "Apache-2.0", True),
-            ("unknown.gguf", "private-custom-license", True),
-            ("missing.safetensors", "MIT", False),
-        )
-    ):
-        model = tmp_path / f"model-{position}"
-        model.write_bytes(MODEL_BYTES + bytes([position]))
-        derived = derive_p2p_descriptor(model)
-        entry = resolver_entry(
-            digest=derived.asset_digest,
-            name=name,
-            urls=[f"https://models.example/{position}"],
-        )
-        entry["size"] = derived.size
-        entry["license"] = license_name
-        if valid_p2p:
-            entry["p2p"] = derived.descriptor.to_wire()
-        if position in {0, 2}:
-            expected_digests.add(derived.asset_digest)
-        entries.append(entry)
-    document = resolver_document(*entries)
-    document["name"] = "official-private-provider"
-    source = tmp_path / "resolver.json"
-    write_document(source, document)
-    store = ResolverSubscriptionStore(
-        tmp_path / "subscriptions.json",
-        ProvenanceStore(tmp_path / "provenance.json"),
-        clock=lambda: 100.0,
-    )
-    subscription = store.subscribe(str(source))
-
-    assert store.provider_p2p_snapshots() == ()
-    store.set_p2p_trust(
-        subscription.id,
-        trusted_for_p2p=True,
-        license_authoritative=True,
-    )
-    (snapshot,) = store.provider_p2p_snapshots()
-    assert snapshot.provider_id == "official-private-provider"
-    assert snapshot.p2p_trackers == ()
-    assert len(snapshot.artifacts) == 3
-    assert len(snapshot.p2p_artifacts) == 3
-    assert {
-        declaration.digest for declaration in store.public_swarm_declarations()
-    } == expected_digests
-
-
-@pytest.fixture
-def p2p_resolver_entry(tmp_path: Path) -> dict[str, object]:
-    model = tmp_path / "model.safetensors"
-    model.write_bytes(MODEL_BYTES)
-    derived = derive_p2p_descriptor(model)
-    return {**resolver_entry(), "p2p": derived.descriptor.to_wire()}
-
-
-@pytest.mark.parametrize(
-    "license_text",
-    ["", " ", " custom license ", *["x" * n for n in (256, 300, 512, 513, 4096)]],
-    ids=["empty", "space", "custom-padded", "256", "300", "512", "513", "4096"],
-)
-def test_license_metadata_survives_trust_refresh_reload_and_grants(
-    tmp_path: Path, p2p_resolver_entry: dict[str, object], license_text: str
-) -> None:
-    source = tmp_path / "resolver.json"
-    state = tmp_path / "subscriptions.json"
-    provenance = ProvenanceStore(tmp_path / "provenance.json")
-    now = [100.0]
-    entry = {**p2p_resolver_entry, "license": license_text}
-    write_document(source, resolver_document(entry))
-    store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
-    subscription = store.subscribe(str(source))
-    store.set_p2p_trust(subscription.id, trusted_for_p2p=True, license_authoritative=False)
-
-    def assert_metadata(current: ResolverSubscriptionStore, expected: str) -> None:
-        (snapshot,) = current.provider_p2p_snapshots()
-        (artifact,) = snapshot.artifacts
-        assert artifact.license == expected
-        assert (
-            ProviderArtifactP2PV1.from_wire(
-                {
-                    "sourceId": artifact.source_id,
-                    "digest": artifact.digest,
-                    "sizeBytes": artifact.size_bytes,
-                    "p2p": artifact.descriptor.to_wire(),
-                    "license": expected,
-                    "formatSafe": artifact.format_safe,
-                    "locations": [location.to_wire() for location in artifact.locations],
-                }
-            )
-            == artifact
-        )
-        (declaration,) = current.public_swarm_declarations()
-        assert declaration.license == expected
-        grants = (
-            P2PGrantReconciler(clock=lambda: now[0])
-            .reconcile((declaration,), (), lambda _: tmp_path / "model.safetensors", enabled=True)
-            .snapshot
-        )
-        assert len(grants.public_grants) == len(grants.seed_grants) == 1
-        assert grants.public_grants[0].license == expected
-        assert grants.seed_grants[0].to_wire()["license"] == expected
-
-    assert_metadata(store, license_text)
-    assert_metadata(
-        ResolverSubscriptionStore(state, provenance, clock=lambda: now[0]), license_text
-    )
-    # Exercise accepted metadata introduced by a trusted refresh, not just trust.
-    entry["license"] = "other metadata"
-    write_document(source, resolver_document(entry))
-    now[0] += 1
-    store.refresh()
-    entry["license"] = license_text
-    write_document(source, resolver_document(entry))
-    now[0] += 1
-    store.refresh()
-    assert_metadata(store, license_text)
-    assert_metadata(
-        ResolverSubscriptionStore(state, provenance, clock=lambda: now[0]), license_text
-    )
-
-
-@pytest.mark.parametrize(
-    "invalid",
-    ["x" * 4097, "control\n", "control\t", "control\x7f", None, 1],
-    ids=["4097", "newline", "tab", "delete", "null", "number"],
-)
-def test_license_metadata_rejects_the_same_invalid_values_at_each_boundary(
-    tmp_path: Path, p2p_resolver_entry: dict[str, object], invalid: object
-) -> None:
-    source = tmp_path / "resolver.json"
-    state = tmp_path / "subscriptions.json"
-    provenance = ProvenanceStore(tmp_path / "provenance.json")
-    write_document(source, resolver_document(p2p_resolver_entry))
-    store = ResolverSubscriptionStore(state, provenance, clock=lambda: 100.0)
-    subscription = store.subscribe(str(source))
-    store.set_p2p_trust(subscription.id, trusted_for_p2p=True, license_authoritative=False)
-    before = store.subscriptions()
-    snapshots = store.provider_p2p_snapshots()
-    (declaration,) = store.public_swarm_declarations()
-    bad_document = resolver_document({**p2p_resolver_entry, "license": invalid})
-    with pytest.raises(ResolverIndexError):
-        resolver_index_from_wire(bad_document)
-    with pytest.raises(AssetError):
-        replace(snapshots[0].artifacts[0], license=cast(str, invalid))
-    with pytest.raises(AssetError):
-        replace(declaration, license=cast(str, invalid))
-    write_document(source, bad_document)
-    (failed,) = store.refresh()
-    assert failed["error"]
-    assert store.subscriptions()[0].index == before[0].index
-    assert store.subscriptions()[0].refreshed_at == before[0].refreshed_at
-    assert store.provider_p2p_snapshots() == snapshots
-    assert ResolverSubscriptionStore(state, provenance).provider_p2p_snapshots() == snapshots
-
-
-@pytest.mark.parametrize("operation", ["trust", "refresh"])
-@pytest.mark.parametrize("failure", ["cache", "write"])
-def test_p2p_cache_and_saved_authority_rollback_together(
-    tmp_path: Path, p2p_resolver_entry: dict[str, object], operation: str, failure: str
-) -> None:
-    source = tmp_path / "resolver.json"
-    state = tmp_path / "subscriptions.json"
-    provenance = ProvenanceStore(tmp_path / "provenance.json")
-    now = [100.0]
-    write_document(source, resolver_document(p2p_resolver_entry))
-    store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
-    subscription = store.subscribe(str(source))
-    if operation == "refresh":
-        store.set_p2p_trust(subscription.id, trusted_for_p2p=True, license_authoritative=False)
-        write_document(source, resolver_document({**p2p_resolver_entry, "license": "new"}))
-    before = store.subscriptions()
-    saved = state.read_bytes()
-    snapshots = store.provider_p2p_snapshots()
-    declarations = store.public_swarm_declarations()
-    records = provenance.records()
-    now[0] += 1
-    error = AssetError("derived cache rejected") if failure == "cache" else OSError("write failed")
-    original_write = Path.write_bytes
-
-    def write(path: Path, data: bytes) -> int:
-        if path.name.startswith(state.name + ".tmp-"):
-            raise error
-        return original_write(path, data)
-
-    fault = (
-        patch("dinkster_assets.resolver_subscription.provider_declarations", side_effect=error)
-        if failure == "cache"
-        else patch.object(Path, "write_bytes", write)
-    )
-    with fault:
-        with pytest.raises(type(error), match=str(error)):
-            if operation == "trust":
-                store.set_p2p_trust(
-                    subscription.id, trusted_for_p2p=True, license_authoritative=False
-                )
-            else:
-                store.refresh()
-        assert store.provider_p2p_snapshots() is snapshots
-        assert store.public_swarm_declarations() is declarations
-    assert store.subscriptions() == before
-    assert state.read_bytes() == saved
-    assert provenance.records() == records
-    reloaded = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
-    assert reloaded.subscriptions() == before
-    assert reloaded.provider_p2p_snapshots() == snapshots
-    assert reloaded.public_swarm_declarations() == declarations
-
-
-def test_complete_resolver_refresh_records_p2p_omission_as_a_tombstone(tmp_path: Path) -> None:
-    now = [100.0]
-    model = tmp_path / "model.safetensors"
-    model.write_bytes(MODEL_BYTES)
-    derived = derive_p2p_descriptor(model)
-    entry = resolver_entry(digest=derived.asset_digest)
-    entry["size"] = derived.size
-    entry["p2p"] = derived.descriptor.to_wire()
-    source = tmp_path / "resolver.json"
-    write_document(source, resolver_document(entry))
-    state = tmp_path / "subscriptions.json"
-    store = ResolverSubscriptionStore(
-        state,
-        ProvenanceStore(tmp_path / "provenance.json"),
-        clock=lambda: now[0],
-    )
-    subscription = store.subscribe(str(source))
-    store.set_p2p_trust(
-        subscription.id,
-        trusted_for_p2p=True,
-        license_authoritative=True,
-    )
-    assert store.public_swarm_declarations()
-
-    now[0] = 101.0
-    entry.pop("p2p")
-    write_document(source, resolver_document(entry))
-    store.refresh(subscription.id)
-
-    (snapshot,) = store.provider_p2p_snapshots()
-    assert snapshot.artifacts == snapshot.p2p_artifacts == ()
-    assert [(row.digest, row.observed_at) for row in snapshot.tombstones] == [
-        (derived.asset_digest, 101.0)
-    ]
-    assert store.public_swarm_declarations() == ()
-    reloaded = ResolverSubscriptionStore(state, ProvenanceStore(tmp_path / "reload.json"))
-    assert reloaded.provider_p2p_snapshots()[0].tombstones == snapshot.tombstones
 
 
 def test_subscription_state_rejects_ambiguous_nonfinite_and_oversized_json(
@@ -947,252 +511,6 @@ def test_multi_source_refresh_reads_concurrently(tmp_path: Path) -> None:
         refreshed = store.refresh()
 
     assert len(refreshed) == 4
-
-
-def test_refresh_io_does_not_block_resolver_reads(
-    tmp_path: Path, p2p_resolver_entry: dict[str, object]
-) -> None:
-    source = tmp_path / "index.json"
-    write_document(source, resolver_document(p2p_resolver_entry))
-    provenance = ProvenanceStore(tmp_path / "provenance.json")
-    store = ResolverSubscriptionStore(tmp_path / "subscriptions.json", provenance)
-    subscription = store.subscribe(str(source))
-    subscription = store.set_p2p_trust(
-        subscription.id, trusted_for_p2p=True, license_authoritative=False
-    )
-    started = threading.Event()
-    release = threading.Event()
-    refresh_errors: list[BaseException] = []
-    read_errors: list[BaseException] = []
-    read_finished = threading.Event()
-    read_local = resolver_transport._read_local
-
-    def blocked_read(path: str) -> bytes:
-        started.set()
-        assert release.wait(3.0)
-        return read_local(path)
-
-    def refresh() -> None:
-        try:
-            store.refresh(subscription.id)
-        except BaseException as exc:  # noqa: BLE001 - thread failures are asserted below
-            refresh_errors.append(exc)
-
-    def read_store() -> None:
-        try:
-            assert store.subscriptions() == (subscription,)
-            assert store.public_sources(MODEL_DIGEST)
-            assert store.provider_p2p_snapshots()
-            assert store.public_swarm_declarations()
-            assert store.suggest("example.safetensors")
-        except BaseException as exc:  # noqa: BLE001 - thread failures are asserted below
-            read_errors.append(exc)
-        finally:
-            read_finished.set()
-
-    with patch.object(resolver_transport, "_read_local", side_effect=blocked_read):
-        refresher = threading.Thread(target=refresh, daemon=True)
-        refresher.start()
-        assert started.wait(1.0)
-        reader = threading.Thread(target=read_store, daemon=True)
-        reader.start()
-        try:
-            assert read_finished.wait(0.5)
-        finally:
-            release.set()
-            refresher.join(2.0)
-            reader.join(2.0)
-    assert not refresher.is_alive()
-    assert not reader.is_alive()
-    assert refresh_errors == []
-    assert read_errors == []
-
-
-@pytest.mark.parametrize("failure", ["apply", "save"])
-def test_refresh_failure_restores_every_observable(
-    tmp_path: Path, p2p_resolver_entry: dict[str, object], failure: str
-) -> None:
-    first_path = tmp_path / "first.json"
-    second_path = tmp_path / "second.json"
-    write_document(first_path, resolver_document(p2p_resolver_entry))
-    write_document(
-        second_path,
-        resolver_document(
-            resolver_entry(
-                digest=OTHER_DIGEST,
-                name="other.safetensors",
-                urls=["https://models.example/other"],
-            )
-        ),
-    )
-    state = tmp_path / "subscriptions.json"
-    provenance_path = tmp_path / "provenance.json"
-    provenance = ProvenanceStore(provenance_path)
-    store = ResolverSubscriptionStore(state, provenance, clock=lambda: 100.0)
-    first = store.subscribe(str(first_path))
-    store.subscribe(str(second_path))
-    store.set_p2p_trust(first.id, trusted_for_p2p=True, license_authoritative=False)
-    before = store.subscriptions()
-    saved = state.read_bytes()
-    provenance_saved = provenance_path.read_bytes()
-    records = provenance.records()
-    snapshots = store.provider_p2p_snapshots()
-    declarations = store.public_swarm_declarations()
-    old_suggestions = store.suggest("example.safetensors")
-    write_document(
-        first_path,
-        resolver_document({**p2p_resolver_entry, "name": "updated-first.safetensors"}),
-    )
-    write_document(
-        second_path,
-        resolver_document(
-            resolver_entry(
-                digest=OTHER_DIGEST,
-                name="updated-second.safetensors",
-                urls=["https://models.example/updated-second"],
-            )
-        ),
-    )
-    apply = store._apply
-    save = store._save
-    apply_calls = 0
-
-    def fail_during_apply(subscription: ResolverSubscription) -> None:
-        nonlocal apply_calls
-        apply_calls += 1
-        apply(subscription)
-        if apply_calls == 2:
-            raise OSError("injected apply failure")
-
-    def fail_after_save() -> None:
-        save()
-        raise OSError("injected save failure")
-
-    fault = (
-        patch.object(store, "_apply", side_effect=fail_during_apply)
-        if failure == "apply"
-        else patch.object(store, "_save", side_effect=fail_after_save)
-    )
-    with fault, pytest.raises(OSError, match=f"injected {failure} failure"):
-        store.refresh()
-
-    current = store.subscriptions()
-    assert current == before
-    assert all(after is old for after, old in zip(current, before, strict=True))
-    assert state.read_bytes() == saved
-    assert provenance_path.read_bytes() == provenance_saved
-    assert provenance.records() == records
-    assert store.suggest("example.safetensors") == old_suggestions
-    assert store.suggest("updated-first.safetensors") == ()
-    assert store.suggest("updated-second.safetensors") == ()
-    assert store.provider_p2p_snapshots() is snapshots
-    assert store.public_swarm_declarations() is declarations
-
-
-def test_refresh_does_not_overwrite_concurrent_subscription_mutation(tmp_path: Path) -> None:
-    source = tmp_path / "index.json"
-    state = tmp_path / "subscriptions.json"
-    write_document(source, resolver_document(resolver_entry()))
-    store = ResolverSubscriptionStore(state, ProvenanceStore(tmp_path / "provenance.json"))
-    subscription = store.subscribe(str(source))
-    write_document(source, resolver_document(resolver_entry(name="updated.safetensors")))
-    started = threading.Event()
-    release = threading.Event()
-    refresh_errors: list[BaseException] = []
-    read_local = resolver_transport._read_local
-
-    def blocked_read(path: str) -> bytes:
-        started.set()
-        assert release.wait(3.0)
-        return read_local(path)
-
-    def refresh() -> None:
-        try:
-            store.refresh(subscription.id)
-        except BaseException as exc:  # noqa: BLE001 - thread failures are asserted below
-            refresh_errors.append(exc)
-
-    with patch.object(resolver_transport, "_read_local", side_effect=blocked_read):
-        refresher = threading.Thread(target=refresh, daemon=True)
-        refresher.start()
-        assert started.wait(1.0)
-        mutated = store.set_p2p_trust(
-            subscription.id,
-            trusted_for_p2p=True,
-            license_authoritative=False,
-        )
-        release.set()
-        refresher.join(2.0)
-
-    assert not refresher.is_alive()
-    assert len(refresh_errors) == 1
-    assert isinstance(refresh_errors[0], ResolverSubscriptionError)
-    assert "changed during refresh" in str(refresh_errors[0])
-    assert store.subscriptions() == (mutated,)
-    assert store.subscriptions()[0].index == subscription.index
-    assert store.suggest("updated.safetensors") == ()
-    assert ResolverSubscriptionStore(
-        state, ProvenanceStore(tmp_path / "reloaded-provenance.json")
-    ).subscriptions() == (mutated,)
-
-
-def test_refresh_rejects_concurrent_mutation_restored_to_equal_values(tmp_path: Path) -> None:
-    source = tmp_path / "index.json"
-    state = tmp_path / "subscriptions.json"
-    write_document(source, resolver_document(resolver_entry()))
-    provenance = ProvenanceStore(tmp_path / "provenance.json")
-    store = ResolverSubscriptionStore(state, provenance)
-    subscription = store.subscribe(str(source))
-    saved = state.read_bytes()
-    records = provenance.records()
-    write_document(source, resolver_document(resolver_entry(name="stale-refresh.safetensors")))
-    started = threading.Event()
-    release = threading.Event()
-    refresh_errors: list[BaseException] = []
-    read_local = resolver_transport._read_local
-
-    def blocked_read(path: str) -> bytes:
-        started.set()
-        assert release.wait(3.0)
-        return read_local(path)
-
-    def refresh() -> None:
-        try:
-            store.refresh(subscription.id)
-        except BaseException as exc:  # noqa: BLE001 - thread failures are asserted below
-            refresh_errors.append(exc)
-
-    with patch.object(resolver_transport, "_read_local", side_effect=blocked_read):
-        refresher = threading.Thread(target=refresh, daemon=True)
-        refresher.start()
-        assert started.wait(1.0)
-        store.set_p2p_trust(
-            subscription.id,
-            trusted_for_p2p=True,
-            license_authoritative=False,
-        )
-        restored = store.set_p2p_trust(
-            subscription.id,
-            trusted_for_p2p=False,
-            license_authoritative=False,
-        )
-        assert restored == subscription
-        assert restored is not subscription
-        release.set()
-        refresher.join(2.0)
-
-    assert not refresher.is_alive()
-    assert len(refresh_errors) == 1
-    assert isinstance(refresh_errors[0], ResolverSubscriptionError)
-    assert "changed during refresh" in str(refresh_errors[0])
-    assert store.subscriptions() == (restored,)
-    assert store.subscriptions()[0] is restored
-    assert state.read_bytes() == saved
-    assert provenance.records() == records
-    assert store.suggest("stale-refresh.safetensors") == ()
-    assert ResolverSubscriptionStore(
-        state, ProvenanceStore(tmp_path / "reloaded-provenance.json")
-    ).subscriptions() == (restored,)
 
 
 def test_unsubscribe_rolls_back_when_subscription_persistence_fails(tmp_path: Path) -> None:
@@ -1450,145 +768,6 @@ async def resolver_http_server(
         await server.close()
 
 
-@pytest.mark.parametrize("terminal_null", [False, True])
-def test_official_bootstrap_complete_snapshot_identity_and_tombstones(
-    tmp_path: Path, p2p_resolver_entry: dict[str, object], terminal_null: bool
-) -> None:
-    async def scenario() -> None:
-        state = tmp_path / "subscriptions.json"
-        provenance = ProvenanceStore(tmp_path / "provenance.json")
-        now = [100.0]
-        mode = "initial"
-        calls: list[str | None] = []
-        store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
-
-        async def index(request: web.Request) -> web.Response:
-            assert not any(
-                name in request.headers
-                for name in ("Authorization", "Cookie", "Proxy-Authorization")
-            )
-            assert "If-None-Match" not in request.headers
-            cursor = request.query.get("cursor")
-            calls.append(cursor)
-            document = resolver_document()
-            document["entries"] = [p2p_resolver_entry] if mode == "initial" and cursor else []
-            if not cursor:
-                document["nextCursor"] = "last"
-            elif terminal_null:
-                document["nextCursor"] = None
-            if mode == "wrong-identity":
-                document["name"] = "other-provider"
-            if mode == "initial":
-                assert not state.exists()
-            return web.json_response(document, headers={"ETag": '"page"', "Set-Cookie": "x=y"})
-
-        async with resolver_http_server(index) as url:
-            subscription = await asyncio.to_thread(
-                store.bootstrap_official, url, "community-models"
-            )
-            assert subscription is not None
-            assert subscription.trusted_for_p2p and subscription.license_authoritative
-            assert subscription.complete_snapshot and subscription.etag == ""
-            assert calls == [None, "last"]
-            (snapshot,) = store.provider_p2p_snapshots()
-            assert snapshot.provider_id == "community-models"
-            assert len(snapshot.artifacts) == len(store.public_swarm_declarations()) == 1
-            assert provenance.sources(MODEL_DIGEST)
-            saved = state.read_bytes()
-            store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
-            assert (
-                await asyncio.to_thread(store.bootstrap_official, url, "community-models")
-                == subscription
-            )
-            assert calls == [None, "last"]
-            assert state.read_bytes() == saved
-
-            mode = "wrong-identity"
-            now[0] += RESOLVER_REVALIDATE_SECONDS
-            (failed,) = await asyncio.to_thread(store.refresh)
-            assert "identity" in str(failed["error"])
-            retained = store.subscriptions()[0]
-            assert retained.refreshed_at == subscription.refreshed_at
-            assert retained.index == subscription.index and not retained.p2p_tombstones
-            assert store.provider_p2p_snapshots() == (snapshot,)
-            assert provenance.sources(MODEL_DIGEST)
-
-            mode = "empty"
-            now[0] += RESOLVER_REVALIDATE_SECONDS
-            await asyncio.to_thread(store.refresh)
-            assert store.subscriptions()[0].p2p_tombstones == ((MODEL_DIGEST, now[0]),)
-            assert not provenance.sources(MODEL_DIGEST)
-            store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
-            assert not store.provider_p2p_snapshots()[0].artifacts
-
-            corrupt = json.loads(state.read_bytes())
-            corrupt["officialBootstrap"]["providerId"] = "other-provider"
-            write_document(state, corrupt)
-            with pytest.raises(ResolverSubscriptionError, match="identity"):
-                ResolverSubscriptionStore(state, provenance)
-
-    asyncio.run(scenario())
-
-
-@pytest.mark.parametrize("preexisting", [False, True])
-@pytest.mark.parametrize(
-    "trusted,authoritative", [(False, False), (False, True), (True, False), (True, True)]
-)
-def test_official_bootstrap_preserves_trust_unsubscribe_and_configuration(
-    tmp_path: Path, preexisting: bool, trusted: bool, authoritative: bool
-) -> None:
-    async def scenario() -> None:
-        calls = 0
-
-        async def index(_: web.Request) -> web.Response:
-            nonlocal calls
-            calls += 1
-            return web.json_response(resolver_document())
-
-        state = tmp_path / "subscriptions.json"
-        provenance = ProvenanceStore(tmp_path / "provenance.json")
-        store = ResolverSubscriptionStore(state, provenance)
-        async with resolver_http_server(index) as url:
-            if preexisting:
-                subscription = await asyncio.to_thread(store.subscribe, url)
-                assert not subscription.trusted_for_p2p and not subscription.license_authoritative
-            else:
-                subscription = await asyncio.to_thread(
-                    store.bootstrap_official, url, "community-models"
-                )
-                assert subscription is not None
-            chosen = store.set_p2p_trust(
-                subscription.id, trusted_for_p2p=trusted, license_authoritative=authoritative
-            )
-            assert (
-                await asyncio.to_thread(store.bootstrap_official, url, "community-models") == chosen
-            )
-            saved = state.read_bytes()
-            store = ResolverSubscriptionStore(state, provenance)
-            assert (
-                await asyncio.to_thread(store.bootstrap_official, url, "community-models") == chosen
-            )
-            assert state.read_bytes() == saved
-            for source, provider_id in (
-                (url + "?different=1", "community-models"),
-                (url, "different"),
-            ):
-                with pytest.raises(ResolverSubscriptionError, match="configuration differs"):
-                    await asyncio.to_thread(store.bootstrap_official, source, provider_id)
-                assert state.read_bytes() == saved
-            store.unsubscribe(subscription.id)
-            saved = state.read_bytes()
-            store = ResolverSubscriptionStore(state, provenance)
-            assert (
-                await asyncio.to_thread(store.bootstrap_official, url, "community-models") is None
-            )
-            assert not store.subscriptions() and not store.provider_p2p_snapshots()
-            assert state.read_bytes() == saved
-            assert calls == 1
-
-    asyncio.run(scenario())
-
-
 @pytest.mark.parametrize(
     "source,provider_id",
     [
@@ -1613,314 +792,6 @@ def test_official_bootstrap_requires_valid_explicit_configuration(
         with pytest.raises(ResolverSubscriptionError):
             store.bootstrap_official(source, provider_id)
     assert not state.exists() and not store.subscriptions()
-
-
-@pytest.mark.parametrize("failure", ["identity", "metadata", "json", "partial", "save", "cache"])
-def test_official_bootstrap_failure_is_atomic_and_retryable(
-    tmp_path: Path, p2p_resolver_entry: dict[str, object], failure: str
-) -> None:
-    async def scenario() -> None:
-        failing = True
-
-        async def index(request: web.Request) -> web.Response:
-            document = resolver_document(p2p_resolver_entry)
-            if failing:
-                if failure == "identity":
-                    document["name"] = "wrong"
-                elif failure == "metadata":
-                    document.pop("updated")
-                elif failure == "json":
-                    return web.Response(text="{")
-                elif failure == "partial":
-                    if request.query.get("cursor"):
-                        return web.Response(status=500)
-                    document["nextCursor"] = "next"
-            return web.json_response(document)
-
-        state = tmp_path / "subscriptions.json"
-        provenance = ProvenanceStore(tmp_path / "provenance.json")
-        store = ResolverSubscriptionStore(state, provenance)
-        async with resolver_http_server(index) as url:
-            with ExitStack() as stack:
-                if failure == "save":
-                    stack.enter_context(
-                        patch(
-                            "dinkster_assets.resolver_subscription.os.replace",
-                            side_effect=OSError("disk full"),
-                        )
-                    )
-                elif failure == "cache":
-                    stack.enter_context(
-                        patch.object(
-                            store,
-                            "_build_p2p_cache",
-                            side_effect=ResolverSubscriptionError("cache failure"),
-                        )
-                    )
-                with pytest.raises((ResolverIndexError, ResolverSubscriptionError, OSError)):
-                    await asyncio.to_thread(store.bootstrap_official, url, "community-models")
-            assert not state.exists() and not store.subscriptions()
-            assert not store.provider_p2p_snapshots() and not provenance.sources(MODEL_DIGEST)
-            failing = False
-            subscription = await asyncio.to_thread(
-                store.bootstrap_official, url, "community-models"
-            )
-            assert subscription is not None
-            assert subscription.trusted_for_p2p and subscription.license_authoritative
-            assert len(store.provider_p2p_snapshots()) == 1
-            assert ResolverSubscriptionStore(state, provenance).subscriptions() == (subscription,)
-
-    asyncio.run(scenario())
-
-
-@pytest.mark.parametrize("terminal_null", [False, True])
-def test_cursor_refresh_refetches_all_pages_despite_unchanged_first_page_etag(
-    tmp_path: Path,
-    terminal_null: bool,
-) -> None:
-    async def scenario() -> None:
-        now = [100.0]
-        entries: list[dict[str, object]] = []
-        for name, content in (("one", MODEL_BYTES), ("two", OTHER_BYTES), ("gone", b"gone")):
-            model = tmp_path / name
-            model.write_bytes(content)
-            derived = derive_p2p_descriptor(model)
-            entries.append(
-                {
-                    **resolver_entry(digest=digest_bytes(content)),
-                    "size": derived.size,
-                    "p2p": derived.descriptor.to_wire(),
-                    "gated": True,
-                }
-            )
-        mode = "initial"
-        requests: list[tuple[str, str | None]] = []
-        saved = b""
-        cursor = "opaque+/=&?%# cursor"
-        query = "limit=1&search=a%2fb+z&tag=a&tag=b&blank=&flag"
-        state_path = tmp_path / "subscriptions.json"
-        provenance = ProvenanceStore(tmp_path / "provenance.json")
-        store = ResolverSubscriptionStore(state_path, provenance, clock=lambda: now[0])
-
-        async def index(request: web.Request) -> web.Response:
-            assert "Authorization" not in request.headers
-            assert "Cookie" not in request.headers
-            assert "Proxy-Authorization" not in request.headers
-            assert request.headers["User-Agent"] == "dinkster-resolver-index"
-            requests.append((request.raw_path, request.headers.get("If-None-Match")))
-            if mode == "not-modified" or request.headers.get("If-None-Match") == '"first"':
-                assert "cursor" not in request.query
-                return web.Response(status=304, headers={"ETag": '"first"'})
-            if "cursor" in request.query:
-                assert request.query["cursor"] == cursor
-                assert request.headers.get("If-None-Match") is None
-                if mode == "initial":
-                    assert not state_path.exists()
-                    page_entries = entries[1:]
-                else:
-                    assert state_path.read_bytes() == saved
-                    assert provenance.sources(str(entries[2]["digest"]))
-                    page_entries = entries[1:2]
-                terminal = {**resolver_document(*page_entries), "providerProtocol": 1}
-                if terminal_null:
-                    terminal["nextCursor"] = None
-                return web.json_response(
-                    terminal,
-                    headers={"ETag": '"last"'},
-                )
-            return web.json_response(
-                {
-                    **resolver_document(entries[0]),
-                    "providerProtocol": 1,
-                    "nextCursor": cursor,
-                },
-                headers={"ETag": '"first"', "Set-Cookie": "session=do-not-forward"},
-            )
-
-        async with resolver_http_server(index) as url:
-            subscription = await asyncio.to_thread(
-                store.subscribe, url + "?" + query + "&cursor=stale&%63ursor=also-stale"
-            )
-            assert len(subscription.index.entries) == 3
-            assert subscription.etag == ""
-            assert not subscription.trusted_for_p2p
-            assert store.provider_p2p_snapshots() == ()
-            store.set_p2p_trust(subscription.id, trusted_for_p2p=True, license_authoritative=False)
-            before = store.provider_p2p_snapshots()[0]
-            saved = state_path.read_bytes()
-            mode = "remove"
-            now[0] += RESOLVER_REVALIDATE_SECONDS
-            (refreshed,) = await asyncio.to_thread(store.refresh)
-            assert refreshed["error"] == ""
-            after = store.provider_p2p_snapshots()[0]
-            assert after.source_revision != before.source_revision
-            assert after.refreshed_at == now[0]
-            assert [row.digest for row in after.artifacts] == sorted(
-                str(row["digest"]) for row in entries[:2]
-            )
-            assert [(row.digest, row.observed_at) for row in after.tombstones] == [
-                (entries[2]["digest"], now[0])
-            ]
-            assert not provenance.sources(str(entries[2]["digest"]))
-            assert "nextCursor" not in state_path.read_text()
-            reloaded = ResolverSubscriptionStore(state_path, provenance, clock=lambda: now[0])
-            assert reloaded.subscriptions()[0].etag == ""
-            assert reloaded.provider_p2p_snapshots() == store.provider_p2p_snapshots()
-            mode = "not-modified"
-            now[0] += RESOLVER_REVALIDATE_SECONDS
-            (failed,) = await asyncio.to_thread(reloaded.refresh)
-            assert "not-modified" in str(failed["error"])
-            assert reloaded.provider_p2p_snapshots()[0] == after
-            first_path = "/dinkster/v1/export/resolver?" + query
-            second_path = first_path + "&cursor=" + quote(cursor, safe="")
-            assert requests == [
-                (first_path, None),
-                (second_path, None),
-                (first_path, None),
-                (second_path, None),
-                (first_path, None),
-            ]
-
-    asyncio.run(scenario())
-
-
-@pytest.mark.parametrize(
-    ("failure", "message"),
-    [
-        ("206", "HTTP 206"),
-        ("400", "HTTP 400"),
-        ("500", "HTTP 500"),
-        ("304", "not-modified"),
-        ("json", "invalid resolver index JSON"),
-        ("truncated", "body is incomplete"),
-        ("duplicate", "duplicates digest"),
-        ("cycle", "cursor cycle"),
-        ("name", "metadata changed"),
-        ("updated", "metadata changed"),
-        ("description", "metadata changed"),
-        ("homepage", "metadata changed"),
-        ("providerProtocol", "metadata changed"),
-        ("entries", "at most 1 entries"),
-        ("pages", "exceeds 1 pages"),
-        ("bytes", "bytes"),
-        ("chunked-bytes", "bytes"),
-    ],
-)
-def test_failed_cursor_refresh_retains_authority_timestamp_and_tombstones(
-    tmp_path: Path, failure: str, message: str
-) -> None:
-    async def scenario() -> None:
-        model = tmp_path / "model"
-        model.write_bytes(MODEL_BYTES)
-        derived = derive_p2p_descriptor(model)
-        entry = {**resolver_entry(), "p2p": derived.descriptor.to_wire()}
-        other_model = tmp_path / "other"
-        other_model.write_bytes(OTHER_BYTES)
-        other_derived = derive_p2p_descriptor(other_model)
-        removed = {
-            **resolver_entry(digest=OTHER_DIGEST),
-            "size": other_derived.size,
-            "p2p": other_derived.descriptor.to_wire(),
-        }
-        now = [100.0]
-        mode = "initial"
-        first = {**resolver_document(resolver_entry(digest=OTHER_DIGEST)), "nextCursor": "next"}
-        first["providerProtocol"] = 1
-        second = {**resolver_document(entry), "providerProtocol": 1}
-        state_path = tmp_path / "subscriptions.json"
-        provenance = ProvenanceStore(tmp_path / "provenance.json")
-        store = ResolverSubscriptionStore(state_path, provenance, clock=lambda: now[0])
-
-        async def index(request: web.Request) -> web.StreamResponse:
-            assert "Authorization" not in request.headers
-            assert "Cookie" not in request.headers
-            if mode == "initial":
-                return web.json_response(
-                    resolver_document(entry, removed), headers={"ETag": '"old"'}
-                )
-            if mode == "remove":
-                return web.json_response(resolver_document(entry), headers={"ETag": '"old"'})
-            if "cursor" not in request.query:
-                assert request.headers.get("If-None-Match") == '"old"'
-                return web.json_response(first, headers={"ETag": '"candidate"'})
-            assert request.headers.get("If-None-Match") is None
-            if failure in {"400", "500", "304"}:
-                return web.Response(status=int(failure), text="cursor-invalid")
-            if failure == "206":
-                return web.json_response(second, status=206)
-            if failure == "json":
-                return web.Response(text="{bad")
-            if failure == "truncated":
-                body = json.dumps(second).encode()
-                response = web.StreamResponse(headers={"Content-Length": str(len(body) + 1)})
-                response.force_close()
-                await response.prepare(request)
-                await response.write(body)
-                await response.write_eof()
-                return response
-            if failure == "duplicate":
-                return web.json_response({**second, "entries": first["entries"]})
-            if failure == "cycle":
-                return web.json_response({**second, "nextCursor": "next"})
-            if failure in {"name", "updated", "description", "homepage", "providerProtocol"}:
-                changed = dict(second)
-                if failure == "providerProtocol":
-                    del changed[failure]
-                elif failure == "updated":
-                    changed[failure] = "2026-09-02T00:00:00Z"
-                elif failure == "homepage":
-                    changed[failure] = "https://different.example"
-                else:
-                    changed[failure] = "different"
-                return web.json_response(changed)
-            if failure == "chunked-bytes":
-                response = web.StreamResponse()
-                response.enable_chunked_encoding()
-                await response.prepare(request)
-                await response.write(json.dumps(second).encode())
-                await response.write_eof()
-                return response
-            return web.json_response(second)
-
-        async with resolver_http_server(index) as url:
-            subscription = await asyncio.to_thread(store.subscribe, url + "?limit=1")
-            store.set_p2p_trust(subscription.id, trusted_for_p2p=True, license_authoritative=False)
-            mode = "remove"
-            now[0] += RESOLVER_REVALIDATE_SECONDS
-            await asyncio.to_thread(store.refresh)
-            prior = store.subscriptions()[0]
-            snapshots = store.provider_p2p_snapshots()
-            assert prior.p2p_tombstones == ((OTHER_DIGEST, now[0]),)
-            mode = "fail"
-            now[0] += RESOLVER_REVALIDATE_SECONDS
-            limits: dict[str, int] = {}
-            if failure == "entries":
-                limits["RESOLVER_INDEX_MAX_ENTRIES"] = 1
-            elif failure == "pages":
-                limits["RESOLVER_FETCH_MAX_PAGES"] = 1
-            elif failure in {"bytes", "chunked-bytes"}:
-                limits["RESOLVER_INDEX_MAX_BYTES"] = len(json.dumps(first).encode()) + 10
-            with ExitStack() as stack:
-                for name, value in limits.items():
-                    stack.enter_context(
-                        patch("dinkster_assets.resolver_subscription." + name, value)
-                    )
-                (failed,) = await asyncio.to_thread(store.refresh)
-            assert message in str(failed["error"])
-            retained = store.subscriptions()[0]
-            assert retained.checked_at == now[0]
-            assert retained.refreshed_at == prior.refreshed_at
-            assert retained.index == prior.index
-            assert retained.etag == prior.etag
-            assert retained.p2p_tombstones == prior.p2p_tombstones
-            assert store.provider_p2p_snapshots() == snapshots
-            assert provenance.sources(MODEL_DIGEST)
-            assert not provenance.sources(OTHER_DIGEST)
-            reloaded = ResolverSubscriptionStore(state_path, provenance, clock=lambda: now[0])
-            assert reloaded.subscriptions() == store.subscriptions()
-            assert reloaded.provider_p2p_snapshots() == snapshots
-
-    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("cursor", ["", 1, False, [], {}, "x" * 2049, "\ud800"])
@@ -2235,76 +1106,6 @@ def test_fetch_capacity_is_held_until_timed_out_dns_workers_exit() -> None:
             )
 
 
-@pytest.mark.parametrize("late_response", ["new-snapshot", "not-modified"])
-def test_refresh_deadline_releases_store_lock_and_late_results_cannot_renew_authority(
-    tmp_path: Path, p2p_resolver_entry: dict[str, object], late_response: str
-) -> None:
-    now = [100.0]
-    state = tmp_path / "subscriptions.json"
-    provenance = ProvenanceStore(tmp_path / "provenance.json")
-    store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0], fetch_timeout=0.1)
-    initial = json.dumps(resolver_document(p2p_resolver_entry)).encode()
-    with patch.object(resolver_transport, "_fetch_page", return_value=(initial, "old")):
-        for source in ("https://first.example/index", "https://second.example/index"):
-            subscription = store.subscribe(source)
-            store.set_p2p_trust(subscription.id, trusted_for_p2p=True, license_authoritative=False)
-    prior = store.subscriptions()
-    snapshots = store.provider_p2p_snapshots()
-    now[0] += RESOLVER_REVALIDATE_SECONDS
-    release = threading.Event()
-    workers: list[threading.Thread] = []
-
-    def blocked(*_args: object, **_kwargs: object) -> tuple[bytes | None, str]:
-        workers.append(threading.current_thread())
-        assert release.wait(3.0)
-        return (
-            None
-            if late_response == "not-modified"
-            else json.dumps(resolver_document(resolver_entry(digest=OTHER_DIGEST))).encode(),
-            "late",
-        )
-
-    with patch.object(resolver_transport, "_fetch_page", side_effect=blocked):
-        try:
-            started = time.monotonic()
-            failed = store.refresh()
-            assert time.monotonic() - started < 0.75
-            assert len(failed) == 2 and all(row["error"] for row in failed)
-            assert len(workers) == 2 and all(worker.is_alive() for worker in workers)
-            # A different thread must read the store while both transports remain blocked.
-            read_finished = threading.Event()
-
-            def read_store() -> None:
-                store.subscriptions()
-                read_finished.set()
-
-            reader = threading.Thread(target=read_store, daemon=True)
-            reader.start()
-            assert read_finished.wait(0.5)
-            reader.join(0.5)
-            retained = store.subscriptions()
-            saved = state.read_bytes()
-        finally:
-            release.set()
-            for worker in workers:
-                worker.join(2.0)
-                assert not worker.is_alive()
-    assert store.subscriptions() == retained
-    assert state.read_bytes() == saved
-    for old, current in zip(prior, retained, strict=True):
-        assert current.refreshed_at == old.refreshed_at
-        assert current.index == old.index
-        assert current.etag == old.etag
-        assert current.p2p_tombstones == old.p2p_tombstones
-    assert store.provider_p2p_snapshots() == snapshots
-    assert store.public_swarm_declarations() == ()
-    assert not provenance.sources(OTHER_DIGEST)
-    reloaded = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
-    assert reloaded.subscriptions() == retained
-    assert reloaded.provider_p2p_snapshots() == snapshots
-    assert reloaded.public_swarm_declarations() == ()
-
-
 @pytest.mark.parametrize("timeout", [0.0, -1.0, float("inf"), float("nan")])
 def test_resolver_timeout_must_be_finite_and_positive(tmp_path: Path, timeout: float) -> None:
     with pytest.raises(ValueError, match="finite and positive"):
@@ -2313,100 +1114,6 @@ def test_resolver_timeout_must_be_finite_and_positive(tmp_path: Path, timeout: f
             ProvenanceStore(tmp_path / "provenance.json"),
             fetch_timeout=timeout,
         )
-
-
-@pytest.mark.parametrize("trusted", [False, True])
-def test_legacy_resolver_cache_requires_complete_unconditional_refresh(
-    tmp_path: Path, trusted: bool
-) -> None:
-    async def scenario() -> None:
-        model = tmp_path / "model"
-        model.write_bytes(MODEL_BYTES)
-        derived = derive_p2p_descriptor(model)
-        entry = {**resolver_entry(), "p2p": derived.descriptor.to_wire()}
-        mode = "initial"
-        state = tmp_path / "subscriptions.json"
-        now = [100.0]
-
-        async def index(request: web.Request) -> web.Response:
-            if mode == "revalidate":
-                assert request.headers.get("If-None-Match") == '"whole"'
-                return web.Response(status=304)
-            assert "If-None-Match" not in request.headers
-            if mode == "complete-single":
-                return web.json_response(
-                    resolver_document(entry, resolver_entry(digest=OTHER_DIGEST)),
-                    headers={"ETag": '"whole"'},
-                )
-            if mode == "legacy-304":
-                return web.Response(status=304)
-            if mode == "initial":
-                return web.json_response(resolver_document(entry), headers={"ETag": '"first"'})
-            if "cursor" not in request.query:
-                return web.json_response(
-                    {**resolver_document(entry), "nextCursor": "next"},
-                    headers={"ETag": '"first"'},
-                )
-            assert json.loads(state.read_text())["subscriptions"][0]["completeSnapshot"] is False
-            if mode == "failed-page":
-                return web.Response(status=400)
-            return web.json_response(resolver_document(resolver_entry(digest=OTHER_DIGEST)))
-
-        async with resolver_http_server(index) as url:
-            provenance = ProvenanceStore(tmp_path / "provenance.json")
-            store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
-            subscription = await asyncio.to_thread(store.subscribe, url)
-            store.set_p2p_trust(
-                subscription.id, trusted_for_p2p=trusted, license_authoritative=True
-            )
-            legacy = json.loads(state.read_text())
-            del legacy["subscriptions"][0]["completeSnapshot"]
-            state.write_text(json.dumps(legacy))
-            store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
-            prior = store.subscriptions()[0]
-            assert not prior.complete_snapshot
-            assert prior.trusted_for_p2p is trusted
-            assert prior.license_authoritative
-            assert store.provider_p2p_snapshots() == ()
-            assert store.public_swarm_declarations() == ()
-            assert provenance.sources(MODEL_DIGEST)
-            assert store.public_sources(MODEL_DIGEST)
-            for failure_mode in ("legacy-304", "failed-page"):
-                mode = failure_mode
-                now[0] += RESOLVER_REVALIDATE_SECONDS
-                (failed,) = await asyncio.to_thread(store.refresh)
-                assert failed["error"]
-                retained = store.subscriptions()[0]
-                assert retained.checked_at == now[0]
-                assert retained.refreshed_at == prior.refreshed_at
-                assert retained.index == prior.index
-                assert not retained.complete_snapshot
-                assert store.provider_p2p_snapshots() == ()
-                store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
-                assert store.subscriptions()[0] == retained
-            mode = "complete"
-            now[0] += RESOLVER_REVALIDATE_SECONDS
-            (refreshed,) = await asyncio.to_thread(store.refresh)
-            assert not refreshed["error"]
-            assert len(store.subscriptions()[0].index.entries) == 2
-            assert store.subscriptions()[0].complete_snapshot
-            assert store.subscriptions()[0].etag == ""
-            assert store.subscriptions()[0].trusted_for_p2p is trusted
-            store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
-            assert bool(store.provider_p2p_snapshots()) is trusted
-            assert bool(store.public_swarm_declarations()) is trusted
-            mode = "complete-single"
-            now[0] += RESOLVER_REVALIDATE_SECONDS
-            (refreshed,) = await asyncio.to_thread(store.refresh)
-            assert not refreshed["error"]
-            assert store.subscriptions()[0].etag == '"whole"'
-            mode = "revalidate"
-            now[0] += RESOLVER_REVALIDATE_SECONDS
-            (revalidated,) = await asyncio.to_thread(store.refresh)
-            assert not revalidated["error"]
-            assert store.subscriptions()[0].refreshed_at == now[0]
-
-    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("marker", [None, 0, 1, "true", [], {}])
@@ -2452,36 +1159,6 @@ def test_local_partial_resolver_cannot_replace_or_reload_complete_authority(tmp_
     state.write_text(json.dumps(persisted))
     with pytest.raises(ResolverIndexError, match="partial resolver index"):
         ResolverSubscriptionStore(state, provenance)
-
-
-def test_legacy_local_cache_keeps_http_entries_but_requires_refresh_for_p2p(tmp_path: Path) -> None:
-    model = tmp_path / "model"
-    model.write_bytes(MODEL_BYTES)
-    derived = derive_p2p_descriptor(model)
-    entry = {**resolver_entry(), "p2p": derived.descriptor.to_wire()}
-    source = tmp_path / "index.json"
-    state = tmp_path / "subscriptions.json"
-    provenance = ProvenanceStore(tmp_path / "provenance.json")
-    write_document(source, resolver_document(entry))
-    store = ResolverSubscriptionStore(state, provenance)
-    subscription = store.subscribe(str(source))
-    store.set_p2p_trust(subscription.id, trusted_for_p2p=True, license_authoritative=False)
-    persisted = json.loads(state.read_text())
-    del persisted["subscriptions"][0]["completeSnapshot"]
-    state.write_text(json.dumps(persisted))
-    store = ResolverSubscriptionStore(state, provenance)
-    assert store.provider_p2p_snapshots() == ()
-    assert provenance.sources(MODEL_DIGEST)
-    write_document(source, {**resolver_document(entry), "nextCursor": "next"})
-    (failed,) = store.refresh()
-    assert failed["error"]
-    assert not store.subscriptions()[0].complete_snapshot
-    assert store.provider_p2p_snapshots() == ()
-    write_document(source, resolver_document(entry))
-    (refreshed,) = store.refresh()
-    assert not refreshed["error"]
-    assert store.subscriptions()[0].complete_snapshot
-    assert store.provider_p2p_snapshots()
 
 
 class _BytesResponse:
@@ -2613,7 +1290,7 @@ def test_resolver_management_and_filename_guess_api(tmp_path: Path) -> None:
     )
 
     async def scenario() -> None:
-        app = create_app(make_engine, SCHEMAS, library=library)
+        app = create_app(make_engine, SCHEMAS, library=library, settings=resolver_settings())
         add_resolver_index_routes(app, store)
         add_guess_routes(app)
         client = TestClient(TestServer(app))
@@ -2683,7 +1360,7 @@ def test_resolver_api_refreshes_local_subscriptions_on_startup(tmp_path: Path) -
     )
 
     async def scenario() -> None:
-        app = create_app(make_engine, SCHEMAS)
+        app = create_app(make_engine, SCHEMAS, settings=resolver_settings())
         add_resolver_index_routes(app, store)
         client = TestClient(TestServer(app))
         await client.start_server()
@@ -2695,89 +1372,6 @@ def test_resolver_api_refreshes_local_subscriptions_on_startup(tmp_path: Path) -
             assert (await response.json())["subscriptions"][0]["entryCount"] == 1
         finally:
             await client.close()
-
-    asyncio.run(scenario())
-
-
-@pytest.mark.parametrize(
-    "mode",
-    [
-        "valid",
-        "encoded-url",
-        "url-encoding",
-        "unicode-metadata",
-        "metadata-encoding",
-        "absent",
-        "identity",
-        "json",
-        "save",
-    ],
-)
-def test_resolver_api_official_bootstrap_with_fixture_provider(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture, mode: str
-) -> None:
-    async def scenario() -> None:
-        async def index(_: web.Request) -> web.Response:
-            if mode == "json":
-                return web.Response(text="{")
-            document = resolver_document()
-            if mode == "metadata-encoding":
-                document["description"] = "bad\ud800"
-            elif mode == "unicode-metadata":
-                document["description"] = "r\u00e9solver"
-            return web.json_response(document)
-
-        state = tmp_path / "subscriptions.json"
-        store = ResolverSubscriptionStore(state, ProvenanceStore(tmp_path / "provenance.json"))
-        async with resolver_http_server(index) as url:
-            app = create_app(make_engine, SCHEMAS)
-            source = None if mode == "absent" else url
-            if mode == "url-encoding":
-                source = url + "?label=r\u00e9solver"
-            elif mode == "encoded-url":
-                source = url + "?label=r%C3%A9solver"
-            add_resolver_index_routes(
-                app,
-                store,
-                official_url=source,
-                official_provider_id="wrong" if mode == "identity" else "community-models",
-            )
-            client = TestClient(TestServer(app))
-            try:
-                with ExitStack() as stack:
-                    if mode == "save":
-                        stack.enter_context(
-                            patch.object(store, "_save", side_effect=OSError("disk full"))
-                        )
-                    elif mode == "url-encoding":
-                        stack.enter_context(
-                            patch(
-                                "socket.socket.connect",
-                                side_effect=AssertionError(
-                                    "invalid configuration must not connect"
-                                ),
-                            )
-                        )
-                    await client.start_server()
-                response = await client.get("/api/assets/resolver-indexes")
-                assert response.status == 200
-                subscriptions = (await response.json())["subscriptions"]
-                if mode in {"valid", "encoded-url", "unicode-metadata"}:
-                    (subscription,) = subscriptions
-                    assert subscription["trustedForP2P"] and subscription["licenseAuthoritative"]
-                    response = await client.patch(
-                        f"/api/assets/resolver-indexes/{subscription['id']}",
-                        json={"trustedForP2P": False, "licenseAuthoritative": False},
-                    )
-                    assert response.status == 403
-                    assert "official resolver bootstrap refused" not in caplog.text
-                else:
-                    assert not subscriptions and not state.exists()
-                    assert "official resolver bootstrap refused" in caplog.text
-                    if mode == "url-encoding":
-                        assert "percent-encode" in caplog.text
-            finally:
-                await client.close()
 
     asyncio.run(scenario())
 
@@ -2827,7 +1421,7 @@ def test_resolver_api_startup_refresh_persistence_failure_is_nonfatal(
     )
 
     async def scenario() -> None:
-        app = create_app(make_engine, SCHEMAS)
+        app = create_app(make_engine, SCHEMAS, settings=resolver_settings())
         add_resolver_index_routes(app, store)
         client = TestClient(TestServer(app))
         await client.start_server()
@@ -2849,7 +1443,7 @@ def test_resolver_management_api_validates_requests(tmp_path: Path) -> None:
     )
 
     async def scenario() -> None:
-        app = create_app(make_engine, SCHEMAS)
+        app = create_app(make_engine, SCHEMAS, settings=resolver_settings())
         add_resolver_index_routes(app, store)
         client = TestClient(TestServer(app))
         await client.start_server()
@@ -2870,34 +1464,761 @@ def test_resolver_management_api_validates_requests(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
-def test_resolver_p2p_trust_api_requires_the_p2p_settings_permission(tmp_path: Path) -> None:
+def test_refresh_io_does_not_block_resolver_reads(tmp_path: Path) -> None:
     source = tmp_path / "index.json"
-    write_document(source, resolver_document(resolver_entry()))
+    write_document(source, resolver_document())
+    store = ResolverSubscriptionStore(
+        tmp_path / "subscriptions.json", ProvenanceStore(tmp_path / "provenance.json")
+    )
+    subscription = store.subscribe(str(source))
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    read_local = resolver_transport._read_local
 
-    async def scenario(*, p2p_granted: bool) -> tuple[int, dict[str, object]]:
-        store = ResolverSubscriptionStore(
-            tmp_path / f"subscriptions-{p2p_granted}.json",
-            ProvenanceStore(tmp_path / f"provenance-{p2p_granted}.json"),
+    def blocked_read(path: str) -> bytes:
+        started.set()
+        assert release.wait(3.0)
+        return read_local(path)
+
+    with patch.object(resolver_transport, "_read_local", side_effect=blocked_read):
+        refresher = threading.Thread(target=lambda: store.refresh(subscription.id), daemon=True)
+        refresher.start()
+        assert started.wait(1.0)
+        reader = threading.Thread(
+            target=lambda: (
+                store.subscriptions(),
+                store.suggest("example.safetensors"),
+                finished.set(),
+            ),
+            daemon=True,
         )
-        subscription = store.subscribe(str(source))
-        app = create_app(make_engine, SCHEMAS)
-        add_resolver_index_routes(app, store, p2p_granted=p2p_granted)
-        client = TestClient(TestServer(app))
-        await client.start_server()
+        reader.start()
         try:
-            response = await client.patch(
-                f"/api/assets/resolver-indexes/{subscription.id}",
-                json={"trustedForP2P": True, "licenseAuthoritative": True},
-            )
-            return response.status, cast("dict[str, object]", await response.json())
+            assert finished.wait(0.5)
         finally:
-            await client.close()
+            release.set()
+            refresher.join(2.0)
+            reader.join(2.0)
+    assert not refresher.is_alive() and not reader.is_alive()
 
-    denied_status, denied = asyncio.run(scenario(p2p_granted=False))
-    assert denied_status == 403
-    assert "disabled" in cast("str", denied["error"])
 
-    allowed_status, allowed = asyncio.run(scenario(p2p_granted=True))
-    assert allowed_status == 200
-    assert allowed["trustedForP2P"] is True
-    assert allowed["licenseAuthoritative"] is True
+@pytest.mark.parametrize("failure", ["apply", "save"])
+def test_refresh_failure_restores_every_observable(tmp_path: Path, failure: str) -> None:
+    first_path = tmp_path / "first.json"
+    second_path = tmp_path / "second.json"
+    write_document(first_path, resolver_document())
+    write_document(second_path, resolver_document(resolver_entry(digest=OTHER_DIGEST)))
+    state = tmp_path / "subscriptions.json"
+    provenance_path = tmp_path / "provenance.json"
+    provenance = ProvenanceStore(provenance_path)
+    store = ResolverSubscriptionStore(state, provenance, clock=lambda: 100.0)
+    store.subscribe(str(first_path))
+    store.subscribe(str(second_path))
+    before = store.subscriptions()
+    saved = state.read_bytes()
+    provenance_saved = provenance_path.read_bytes()
+    records = provenance.records()
+    suggestions = store.suggest("example.safetensors")
+    write_document(first_path, resolver_document(resolver_entry(name="updated-first.safetensors")))
+    write_document(
+        second_path,
+        resolver_document(resolver_entry(digest=OTHER_DIGEST, name="updated-second.safetensors")),
+    )
+    apply, save = store._apply, store._save
+    calls = 0
+
+    def fail_during_apply(subscription: ResolverSubscription) -> None:
+        nonlocal calls
+        calls += 1
+        apply(subscription)
+        if calls == 2:
+            raise OSError("injected apply failure")
+
+    def fail_after_save() -> None:
+        save()
+        raise OSError("injected save failure")
+
+    fault = (
+        patch.object(store, "_apply", side_effect=fail_during_apply)
+        if failure == "apply"
+        else patch.object(store, "_save", side_effect=fail_after_save)
+    )
+    with fault, pytest.raises(OSError, match=f"injected {failure} failure"):
+        store.refresh()
+    current = store.subscriptions()
+    assert current == before
+    assert all(after is old for after, old in zip(current, before, strict=True))
+    assert state.read_bytes() == saved
+    assert provenance_path.read_bytes() == provenance_saved
+    assert provenance.records() == records
+    assert store.suggest("example.safetensors") == suggestions
+    assert store.suggest("updated-first.safetensors") == ()
+    assert store.suggest("updated-second.safetensors") == ()
+
+
+def test_refresh_does_not_overwrite_concurrent_subscription_mutation(tmp_path: Path) -> None:
+    source = tmp_path / "index.json"
+    write_document(source, resolver_document())
+    store = ResolverSubscriptionStore(
+        tmp_path / "subscriptions.json", ProvenanceStore(tmp_path / "provenance.json")
+    )
+    subscription = store.subscribe(str(source))
+    write_document(source, resolver_document(resolver_entry(name="updated.safetensors")))
+    started, release = threading.Event(), threading.Event()
+    errors: list[BaseException] = []
+    read_local = resolver_transport._read_local
+
+    def blocked_read(path: str) -> bytes:
+        started.set()
+        assert release.wait(3.0)
+        return read_local(path)
+
+    def refresh() -> None:
+        try:
+            store.refresh(subscription.id)
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    with patch.object(resolver_transport, "_read_local", side_effect=blocked_read):
+        refresher = threading.Thread(target=refresh, daemon=True)
+        refresher.start()
+        assert started.wait(1.0)
+        assert store.unsubscribe(subscription.id)
+        release.set()
+        refresher.join(2.0)
+    assert isinstance(errors[0], ResolverSubscriptionError)
+    assert "changed during refresh" in str(errors[0])
+    mutated = store.subscribe(str(source))
+    assert store.subscriptions() == (mutated,)
+
+
+def test_official_bootstrap_identity_configuration_and_unsubscribe(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        state = tmp_path / "subscriptions.json"
+        store = ResolverSubscriptionStore(state, ProvenanceStore(tmp_path / "provenance.json"))
+
+        async def index(_: web.Request) -> web.Response:
+            return web.json_response(resolver_document(), headers={"ETag": '"one"'})
+
+        async with resolver_http_server(index) as url:
+            subscription = await asyncio.to_thread(
+                store.bootstrap_official, url, "community-models"
+            )
+            assert subscription is not None and subscription.complete_snapshot
+            saved = state.read_bytes()
+            assert (
+                await asyncio.to_thread(store.bootstrap_official, url, "community-models")
+                == subscription
+            )
+            assert state.read_bytes() == saved
+            with pytest.raises(ResolverSubscriptionError, match="configuration differs"):
+                await asyncio.to_thread(
+                    store.bootstrap_official, url + "?different=1", "community-models"
+                )
+            assert store.unsubscribe(subscription.id)
+            reloaded = ResolverSubscriptionStore(state, ProvenanceStore(tmp_path / "reloaded.json"))
+            assert (
+                await asyncio.to_thread(reloaded.bootstrap_official, url, "community-models")
+                is None
+            )
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("failure", ["identity", "json", "partial", "save"])
+def test_official_bootstrap_failure_is_atomic_and_retryable(tmp_path: Path, failure: str) -> None:
+    async def scenario() -> None:
+        failing = True
+
+        async def index(request: web.Request) -> web.Response:
+            if failing and failure == "json":
+                return web.Response(text="{")
+            document = resolver_document()
+            if failing and failure == "identity":
+                document["name"] = "wrong"
+            if failing and failure == "partial" and "cursor" not in request.query:
+                document["nextCursor"] = "next"
+            elif failing and failure == "partial":
+                return web.Response(status=500)
+            return web.json_response(document)
+
+        state = tmp_path / "subscriptions.json"
+        store = ResolverSubscriptionStore(state, ProvenanceStore(tmp_path / "provenance.json"))
+        async with resolver_http_server(index) as url:
+            with ExitStack() as stack:
+                if failure == "save":
+                    stack.enter_context(
+                        patch.object(store, "_save", side_effect=OSError("disk full"))
+                    )
+                with pytest.raises((ResolverIndexError, ResolverSubscriptionError, OSError)):
+                    await asyncio.to_thread(store.bootstrap_official, url, "community-models")
+            assert not state.exists() and not store.subscriptions()
+            failing = False
+            assert (
+                await asyncio.to_thread(store.bootstrap_official, url, "community-models")
+                is not None
+            )
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("terminal_null", [False, True])
+def test_cursor_refresh_refetches_all_pages_despite_unchanged_first_page_etag(
+    tmp_path: Path, terminal_null: bool
+) -> None:
+    async def scenario() -> None:
+        now = [100.0]
+        entries = [
+            {**resolver_entry(digest=digest_bytes(content), size=len(content)), "gated": True}
+            for content in (MODEL_BYTES, OTHER_BYTES, b"gone")
+        ]
+        mode = "initial"
+        requests: list[tuple[str, str | None]] = []
+        saved = b""
+        cursor = "opaque+/=&?%# cursor"
+        query = "limit=1&search=a%2fb+z&tag=a&tag=b&blank=&flag"
+        state = tmp_path / "subscriptions.json"
+        provenance = ProvenanceStore(tmp_path / "provenance.json")
+        store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
+
+        async def index(request: web.Request) -> web.Response:
+            assert "Authorization" not in request.headers
+            assert "Cookie" not in request.headers
+            assert "Proxy-Authorization" not in request.headers
+            assert request.headers["User-Agent"] == "dinkster-resolver-index"
+            requests.append((request.raw_path, request.headers.get("If-None-Match")))
+            if mode == "not-modified" or request.headers.get("If-None-Match") == '"first"':
+                assert "cursor" not in request.query
+                return web.Response(status=304, headers={"ETag": '"first"'})
+            if "cursor" in request.query:
+                assert request.query["cursor"] == cursor
+                assert request.headers.get("If-None-Match") is None
+                if mode == "initial":
+                    assert not state.exists()
+                    page_entries = entries[1:]
+                else:
+                    assert state.read_bytes() == saved
+                    assert provenance.sources(str(entries[2]["digest"]))
+                    page_entries = entries[1:2]
+                terminal = {**resolver_document(*page_entries), "providerProtocol": 1}
+                if terminal_null:
+                    terminal["nextCursor"] = None
+                return web.json_response(terminal, headers={"ETag": '"last"'})
+            return web.json_response(
+                {
+                    **resolver_document(entries[0]),
+                    "providerProtocol": 1,
+                    "nextCursor": cursor,
+                },
+                headers={"ETag": '"first"', "Set-Cookie": "session=do-not-forward"},
+            )
+
+        async with resolver_http_server(index) as url:
+            subscription = await asyncio.to_thread(
+                store.subscribe, url + "?" + query + "&cursor=stale&%63ursor=also-stale"
+            )
+            assert len(subscription.index.entries) == 3
+            assert subscription.etag == ""
+            saved = state.read_bytes()
+            mode = "remove"
+            now[0] += RESOLVER_REVALIDATE_SECONDS
+            (refreshed,) = await asyncio.to_thread(store.refresh)
+            assert refreshed["error"] == ""
+            after = store.subscriptions()[0]
+            assert after.refreshed_at == now[0]
+            assert [row.digest for row in after.index.entries] == [
+                str(row["digest"]) for row in entries[:2]
+            ]
+            assert not provenance.sources(str(entries[2]["digest"]))
+            assert "nextCursor" not in state.read_text()
+            reloaded = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
+            assert reloaded.subscriptions()[0].etag == ""
+            assert reloaded.subscriptions()[0] == after
+            mode = "not-modified"
+            now[0] += RESOLVER_REVALIDATE_SECONDS
+            (failed,) = await asyncio.to_thread(reloaded.refresh)
+            assert "not-modified" in str(failed["error"])
+            assert reloaded.subscriptions()[0].index == after.index
+            assert reloaded.subscriptions()[0].refreshed_at == after.refreshed_at
+            first_path = "/dinkster/v1/export/resolver?" + query
+            second_path = first_path + "&cursor=" + quote(cursor, safe="")
+            assert requests == [
+                (first_path, None),
+                (second_path, None),
+                (first_path, None),
+                (second_path, None),
+                (first_path, None),
+            ]
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("failure", "message"),
+    [
+        ("206", "HTTP 206"),
+        ("400", "HTTP 400"),
+        ("500", "HTTP 500"),
+        ("304", "not-modified"),
+        ("json", "invalid resolver index JSON"),
+        ("truncated", "body is incomplete"),
+        ("duplicate", "duplicates digest"),
+        ("cycle", "cursor cycle"),
+        ("name", "metadata changed"),
+        ("updated", "metadata changed"),
+        ("description", "metadata changed"),
+        ("homepage", "metadata changed"),
+        ("providerProtocol", "metadata changed"),
+        ("entries", "at most 1 entries"),
+        ("pages", "exceeds 1 pages"),
+        ("bytes", "bytes"),
+        ("chunked-bytes", "bytes"),
+    ],
+)
+def test_failed_cursor_refresh_retains_http_state(
+    tmp_path: Path, failure: str, message: str
+) -> None:
+    async def scenario() -> None:
+        entry = resolver_entry()
+        removed = resolver_entry(digest=OTHER_DIGEST, size=len(OTHER_BYTES))
+        now = [100.0]
+        mode = "initial"
+        first = {**resolver_document(resolver_entry(digest=OTHER_DIGEST)), "nextCursor": "next"}
+        first["providerProtocol"] = 1
+        second = {**resolver_document(entry), "providerProtocol": 1}
+        state_path = tmp_path / "subscriptions.json"
+        provenance = ProvenanceStore(tmp_path / "provenance.json")
+        store = ResolverSubscriptionStore(state_path, provenance, clock=lambda: now[0])
+
+        async def index(request: web.Request) -> web.StreamResponse:
+            assert "Authorization" not in request.headers
+            assert "Cookie" not in request.headers
+            if mode == "initial":
+                return web.json_response(
+                    resolver_document(entry, removed), headers={"ETag": '"old"'}
+                )
+            if mode == "remove":
+                return web.json_response(resolver_document(entry), headers={"ETag": '"old"'})
+            if "cursor" not in request.query:
+                assert request.headers.get("If-None-Match") == '"old"'
+                return web.json_response(first, headers={"ETag": '"candidate"'})
+            assert request.headers.get("If-None-Match") is None
+            if failure in {"400", "500", "304"}:
+                return web.Response(status=int(failure), text="cursor-invalid")
+            if failure == "206":
+                return web.json_response(second, status=206)
+            if failure == "json":
+                return web.Response(text="{bad")
+            if failure == "truncated":
+                body = json.dumps(second).encode()
+                response = web.StreamResponse(headers={"Content-Length": str(len(body) + 1)})
+                response.force_close()
+                await response.prepare(request)
+                await response.write(body)
+                await response.write_eof()
+                return response
+            if failure == "duplicate":
+                return web.json_response({**second, "entries": first["entries"]})
+            if failure == "cycle":
+                return web.json_response({**second, "nextCursor": "next"})
+            if failure in {"name", "updated", "description", "homepage", "providerProtocol"}:
+                changed = dict(second)
+                if failure == "providerProtocol":
+                    del changed[failure]
+                elif failure == "updated":
+                    changed[failure] = "2026-09-02T00:00:00Z"
+                elif failure == "homepage":
+                    changed[failure] = "https://different.example"
+                else:
+                    changed[failure] = "different"
+                return web.json_response(changed)
+            if failure == "chunked-bytes":
+                response = web.StreamResponse()
+                response.enable_chunked_encoding()
+                await response.prepare(request)
+                await response.write(json.dumps(second).encode())
+                await response.write_eof()
+                return response
+            return web.json_response(second)
+
+        async with resolver_http_server(index) as url:
+            await asyncio.to_thread(store.subscribe, url + "?limit=1")
+            mode = "remove"
+            now[0] += RESOLVER_REVALIDATE_SECONDS
+            await asyncio.to_thread(store.refresh)
+            prior = store.subscriptions()[0]
+            assert prior.index.entries == (
+                parse_resolver_index(json.dumps(resolver_document(entry))).entries[0],
+            )
+            mode = "fail"
+            now[0] += RESOLVER_REVALIDATE_SECONDS
+            limits: dict[str, int] = {}
+            if failure == "entries":
+                limits["RESOLVER_INDEX_MAX_ENTRIES"] = 1
+            elif failure == "pages":
+                limits["RESOLVER_FETCH_MAX_PAGES"] = 1
+            elif failure in {"bytes", "chunked-bytes"}:
+                limits["RESOLVER_INDEX_MAX_BYTES"] = len(json.dumps(first).encode()) + 10
+            with ExitStack() as stack:
+                for name, value in limits.items():
+                    stack.enter_context(
+                        patch("dinkster_assets.resolver_subscription." + name, value)
+                    )
+                (failed,) = await asyncio.to_thread(store.refresh)
+            assert message in str(failed["error"])
+            retained = store.subscriptions()[0]
+            assert retained.checked_at == now[0]
+            assert retained.refreshed_at == prior.refreshed_at
+            assert retained.index == prior.index
+            assert retained.etag == prior.etag
+            assert provenance.sources(MODEL_DIGEST)
+            assert not provenance.sources(OTHER_DIGEST)
+            reloaded = ResolverSubscriptionStore(state_path, provenance, clock=lambda: now[0])
+            assert reloaded.subscriptions() == store.subscriptions()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("late_response", ["new-snapshot", "not-modified"])
+def test_refresh_deadline_releases_store_lock_and_rejects_late_results(
+    tmp_path: Path, late_response: str
+) -> None:
+    now = [100.0]
+    state = tmp_path / "subscriptions.json"
+    provenance = ProvenanceStore(tmp_path / "provenance.json")
+    store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0], fetch_timeout=0.1)
+    initial = json.dumps(resolver_document()).encode()
+    with patch.object(resolver_transport, "_fetch_page", return_value=(initial, "old")):
+        for source in ("https://first.example/index", "https://second.example/index"):
+            store.subscribe(source)
+    prior = store.subscriptions()
+    now[0] += RESOLVER_REVALIDATE_SECONDS
+    release = threading.Event()
+    workers: list[threading.Thread] = []
+
+    def blocked(*_args: object, **_kwargs: object) -> tuple[bytes | None, str]:
+        workers.append(threading.current_thread())
+        assert release.wait(3.0)
+        return (
+            None
+            if late_response == "not-modified"
+            else json.dumps(resolver_document(resolver_entry(digest=OTHER_DIGEST))).encode(),
+            "late",
+        )
+
+    with patch.object(resolver_transport, "_fetch_page", side_effect=blocked):
+        try:
+            started = time.monotonic()
+            failed = store.refresh()
+            assert time.monotonic() - started < 0.75
+            assert len(failed) == 2 and all(row["error"] for row in failed)
+            assert len(workers) == 2 and all(worker.is_alive() for worker in workers)
+            read_finished = threading.Event()
+
+            def read_store() -> None:
+                store.subscriptions()
+                read_finished.set()
+
+            reader = threading.Thread(target=read_store, daemon=True)
+            reader.start()
+            assert read_finished.wait(0.5)
+            reader.join(0.5)
+            retained = store.subscriptions()
+            saved = state.read_bytes()
+        finally:
+            release.set()
+            for worker in workers:
+                worker.join(2.0)
+                assert not worker.is_alive()
+    assert store.subscriptions() == retained
+    assert state.read_bytes() == saved
+    for old, current in zip(prior, retained, strict=True):
+        assert current.refreshed_at == old.refreshed_at
+        assert current.index == old.index
+        assert current.etag == old.etag
+    assert not provenance.sources(OTHER_DIGEST)
+    reloaded = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
+    assert reloaded.subscriptions() == retained
+
+
+def test_legacy_resolver_cache_requires_complete_unconditional_refresh(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        entry = resolver_entry()
+        mode = "initial"
+        state = tmp_path / "subscriptions.json"
+        now = [100.0]
+
+        async def index(request: web.Request) -> web.Response:
+            if mode == "revalidate":
+                assert request.headers.get("If-None-Match") == '"whole"'
+                return web.Response(status=304)
+            assert "If-None-Match" not in request.headers
+            if mode == "complete-single":
+                return web.json_response(
+                    resolver_document(entry, resolver_entry(digest=OTHER_DIGEST)),
+                    headers={"ETag": '"whole"'},
+                )
+            if mode == "legacy-304":
+                return web.Response(status=304)
+            if mode == "initial":
+                return web.json_response(resolver_document(entry), headers={"ETag": '"first"'})
+            if "cursor" not in request.query:
+                return web.json_response(
+                    {**resolver_document(entry), "nextCursor": "next"},
+                    headers={"ETag": '"first"'},
+                )
+            assert json.loads(state.read_text())["subscriptions"][0]["completeSnapshot"] is False
+            if mode == "failed-page":
+                return web.Response(status=400)
+            return web.json_response(resolver_document(resolver_entry(digest=OTHER_DIGEST)))
+
+        async with resolver_http_server(index) as url:
+            provenance = ProvenanceStore(tmp_path / "provenance.json")
+            store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
+            await asyncio.to_thread(store.subscribe, url)
+            legacy = json.loads(state.read_text())
+            del legacy["subscriptions"][0]["completeSnapshot"]
+            state.write_text(json.dumps(legacy))
+            store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
+            prior = store.subscriptions()[0]
+            assert not prior.complete_snapshot
+            assert provenance.sources(MODEL_DIGEST)
+            assert store.public_sources(MODEL_DIGEST)
+            for failure_mode in ("legacy-304", "failed-page"):
+                mode = failure_mode
+                now[0] += RESOLVER_REVALIDATE_SECONDS
+                (failed,) = await asyncio.to_thread(store.refresh)
+                assert failed["error"]
+                retained = store.subscriptions()[0]
+                assert retained.checked_at == now[0]
+                assert retained.refreshed_at == prior.refreshed_at
+                assert retained.index == prior.index
+                assert not retained.complete_snapshot
+                store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
+                assert store.subscriptions()[0] == retained
+            mode = "complete"
+            now[0] += RESOLVER_REVALIDATE_SECONDS
+            (refreshed,) = await asyncio.to_thread(store.refresh)
+            assert not refreshed["error"]
+            assert len(store.subscriptions()[0].index.entries) == 2
+            assert store.subscriptions()[0].complete_snapshot
+            assert store.subscriptions()[0].etag == ""
+            store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
+            mode = "complete-single"
+            now[0] += RESOLVER_REVALIDATE_SECONDS
+            (refreshed,) = await asyncio.to_thread(store.refresh)
+            assert not refreshed["error"]
+            assert store.subscriptions()[0].etag == '"whole"'
+            mode = "revalidate"
+            now[0] += RESOLVER_REVALIDATE_SECONDS
+            (revalidated,) = await asyncio.to_thread(store.refresh)
+            assert not revalidated["error"]
+            assert store.subscriptions()[0].refreshed_at == now[0]
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "valid",
+        "encoded-url",
+        "url-encoding",
+        "unicode-metadata",
+        "metadata-encoding",
+        "absent",
+        "identity",
+        "json",
+        "save",
+    ],
+)
+def test_resolver_api_official_bootstrap_with_fixture_provider(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, mode: str
+) -> None:
+    async def scenario() -> None:
+        async def index(_: web.Request) -> web.Response:
+            if mode == "json":
+                return web.Response(text="{")
+            document = resolver_document()
+            if mode == "metadata-encoding":
+                document["description"] = "bad\ud800"
+            elif mode == "unicode-metadata":
+                document["description"] = "r\u00e9solver"
+            return web.json_response(document)
+
+        state = tmp_path / "subscriptions.json"
+        store = ResolverSubscriptionStore(state, ProvenanceStore(tmp_path / "provenance.json"))
+        async with resolver_http_server(index) as url:
+            app = create_app(make_engine, SCHEMAS, settings=resolver_settings())
+            source = None if mode == "absent" else url
+            if mode == "url-encoding":
+                source = url + "?label=r\u00e9solver"
+            elif mode == "encoded-url":
+                source = url + "?label=r%C3%A9solver"
+            add_resolver_index_routes(
+                app,
+                store,
+                official_url=source,
+                official_provider_id="wrong" if mode == "identity" else "community-models",
+            )
+            client = TestClient(TestServer(app))
+            try:
+                with ExitStack() as stack:
+                    if mode == "save":
+                        stack.enter_context(
+                            patch.object(store, "_save", side_effect=OSError("disk full"))
+                        )
+                    elif mode == "url-encoding":
+                        stack.enter_context(
+                            patch(
+                                "socket.socket.connect",
+                                side_effect=AssertionError(
+                                    "invalid configuration must not connect"
+                                ),
+                            )
+                        )
+                    await client.start_server()
+                response = await client.get("/api/assets/resolver-indexes")
+                assert response.status == 200
+                subscriptions = (await response.json())["subscriptions"]
+                if mode in {"valid", "encoded-url", "unicode-metadata"}:
+                    (subscription,) = subscriptions
+                    assert subscription["entryCount"] == 1
+                    assert "official resolver bootstrap refused" not in caplog.text
+                else:
+                    assert not subscriptions and not state.exists()
+                    assert "official resolver bootstrap refused" in caplog.text
+                    if mode == "url-encoding":
+                        assert "percent-encode" in caplog.text
+            finally:
+                await client.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("terminal_null", [False, True])
+def test_official_bootstrap_complete_snapshot_identity(tmp_path: Path, terminal_null: bool) -> None:
+    async def scenario() -> None:
+        state = tmp_path / "subscriptions.json"
+        provenance = ProvenanceStore(tmp_path / "provenance.json")
+        now = [100.0]
+        mode = "initial"
+        calls: list[str | None] = []
+        store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
+
+        async def index(request: web.Request) -> web.Response:
+            assert not any(
+                name in request.headers
+                for name in ("Authorization", "Cookie", "Proxy-Authorization")
+            )
+            assert "If-None-Match" not in request.headers
+            cursor = request.query.get("cursor")
+            calls.append(cursor)
+            document = resolver_document()
+            document["entries"] = [resolver_entry()] if mode == "initial" and cursor else []
+            if not cursor:
+                document["nextCursor"] = "last"
+            elif terminal_null:
+                document["nextCursor"] = None
+            if mode == "wrong-identity":
+                document["name"] = "other-provider"
+            if mode == "initial":
+                assert not state.exists()
+            return web.json_response(document, headers={"ETag": '"page"', "Set-Cookie": "x=y"})
+
+        async with resolver_http_server(index) as url:
+            subscription = await asyncio.to_thread(
+                store.bootstrap_official, url, "community-models"
+            )
+            assert subscription is not None
+            assert subscription.complete_snapshot and subscription.etag == ""
+            assert calls == [None, "last"]
+            assert provenance.sources(MODEL_DIGEST)
+            saved = state.read_bytes()
+            store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
+            assert (
+                await asyncio.to_thread(store.bootstrap_official, url, "community-models")
+                == subscription
+            )
+            assert calls == [None, "last"]
+            assert state.read_bytes() == saved
+
+            mode = "wrong-identity"
+            now[0] += RESOLVER_REVALIDATE_SECONDS
+            (failed,) = await asyncio.to_thread(store.refresh)
+            assert "identity" in str(failed["error"])
+            retained = store.subscriptions()[0]
+            assert retained.refreshed_at == subscription.refreshed_at
+            assert retained.index == subscription.index
+            assert provenance.sources(MODEL_DIGEST)
+
+            mode = "empty"
+            now[0] += RESOLVER_REVALIDATE_SECONDS
+            await asyncio.to_thread(store.refresh)
+            assert not provenance.sources(MODEL_DIGEST)
+            store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
+            assert not store.subscriptions()[0].index.entries
+
+            corrupt = json.loads(state.read_bytes())
+            corrupt["officialBootstrap"]["providerId"] = "other-provider"
+            write_document(state, corrupt)
+            with pytest.raises(ResolverSubscriptionError, match="identity"):
+                ResolverSubscriptionStore(state, provenance)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "license_text",
+    ["", " ", " custom license ", *["x" * n for n in (256, 300, 512, 513, 4096)]],
+    ids=["empty", "space", "custom-padded", "256", "300", "512", "513", "4096"],
+)
+def test_license_metadata_survives_refresh_and_reload(tmp_path: Path, license_text: str) -> None:
+    source = tmp_path / "resolver.json"
+    state = tmp_path / "subscriptions.json"
+    provenance = ProvenanceStore(tmp_path / "provenance.json")
+    now = [100.0]
+    entry = {**resolver_entry(), "license": license_text, "gated": True}
+    write_document(source, resolver_document(entry))
+    store = ResolverSubscriptionStore(state, provenance, clock=lambda: now[0])
+    subscription = store.subscribe(str(source))
+    assert subscription.index.entries[0].license == license_text
+    assert subscription.index.entries[0].gated
+    assert ResolverSubscriptionStore(state, provenance).subscriptions() == (subscription,)
+    for value in ("other metadata", license_text):
+        entry["license"] = value
+        write_document(source, resolver_document(entry))
+        now[0] += 1
+        store.refresh()
+        current = store.subscriptions()[0]
+        assert current.index.entries[0].license == value
+        assert current.index.entries[0].gated
+        assert ResolverSubscriptionStore(state, provenance).subscriptions() == (current,)
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    ["x" * 4097, "control\n", "control\t", "control\x7f", None, 1],
+    ids=["4097", "newline", "tab", "delete", "null", "number"],
+)
+def test_license_metadata_rejects_invalid_values_during_parse_and_refresh(
+    tmp_path: Path, invalid: object
+) -> None:
+    source = tmp_path / "resolver.json"
+    state = tmp_path / "subscriptions.json"
+    provenance = ProvenanceStore(tmp_path / "provenance.json")
+    write_document(source, resolver_document())
+    store = ResolverSubscriptionStore(state, provenance, clock=lambda: 100.0)
+    store.subscribe(str(source))
+    before = store.subscriptions()
+    bad_document = resolver_document({**resolver_entry(), "license": invalid})
+    with pytest.raises(ResolverIndexError):
+        resolver_index_from_wire(bad_document)
+    write_document(source, bad_document)
+    (failed,) = store.refresh()
+    assert failed["error"]
+    retained = store.subscriptions()[0]
+    assert retained.index == before[0].index
+    assert retained.refreshed_at == before[0].refreshed_at
+    assert ResolverSubscriptionStore(state, provenance).subscriptions() == (retained,)

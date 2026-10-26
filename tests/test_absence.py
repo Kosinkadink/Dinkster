@@ -1,6 +1,6 @@
 """First-class absence (DESIGN 3.15): typed no-value with provenance.
 
-The anti-ExecutionBlocker slice: deliberate absence from optional outputs,
+Deliberate absence from optional outputs, blockers on any output,
 per-input policies (skip/omit/accept/fail), engine-level skip cascades with
 root-cause provenance, cache replay, boundary crossing, and the maybe-absent
 document diagnostic.
@@ -10,15 +10,19 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from typing import Any
 
 import pytest
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, ExecutionError
 from dinkster_graph import Graph, GraphNode, Link, validate
+from dinkster_protocol import ExpandedReturn, LiteralInput, LocalExpansion, LocalNode, PresentOutput
 from dinkster_schema import (
     ABSENT,
+    BLOCKED,
     AbsentOutput,
     AbsentPolicy,
+    ExpansionBuilder,
     InputSpec,
     Node,
     NodeSchema,
@@ -47,15 +51,15 @@ from dinkster_workers.boundary import ValueCodec
 
 def test_omit_policy_requires_optional_input() -> None:
     with pytest.raises(ValueError, match="omit"):
-        InputSpec("x", TypeExpr.concrete("core.int"), required=True, on_absent="omit")
+        InputSpec("x", TypeExpr.concrete("INT"), required=True, on_absent="omit")
 
 
 def test_absent_policy_defaults() -> None:
-    required = InputSpec("a", TypeExpr.concrete("core.int"))
-    optional = InputSpec("b", TypeExpr.concrete("core.int"), required=False)
+    required = InputSpec("a", TypeExpr.concrete("INT"))
+    optional = InputSpec("b", TypeExpr.concrete("INT"), required=False)
     assert required.absent_policy() == "skip"
     assert optional.absent_policy() == "omit"
-    declared = InputSpec("c", TypeExpr.concrete("core.int"), on_absent="accept")
+    declared = InputSpec("c", TypeExpr.concrete("INT"), on_absent="accept")
     assert declared.absent_policy() == "accept"
 
 
@@ -63,12 +67,12 @@ def test_schema_wire_roundtrip_with_absence_fields() -> None:
     schema = NodeSchema(
         node_type="test.maybe",
         inputs=(
-            InputSpec("strict", TypeExpr.concrete("core.int"), on_absent="fail"),
-            InputSpec("loose", TypeExpr.concrete("core.int"), on_absent="accept"),
+            InputSpec("strict", TypeExpr.concrete("INT"), on_absent="fail"),
+            InputSpec("loose", TypeExpr.concrete("INT"), on_absent="accept"),
         ),
         outputs=(
-            OutputSpec("value", TypeExpr.concrete("core.int"), optional=True),
-            OutputSpec("always", TypeExpr.concrete("core.int")),
+            OutputSpec("value", TypeExpr.concrete("INT"), optional=True),
+            OutputSpec("always", TypeExpr.concrete("INT")),
         ),
     )
     assert schema_from_wire(schema_to_wire(schema)) == schema
@@ -87,16 +91,16 @@ def test_schema_wire_roundtrip_with_absence_fields() -> None:
 
 
 def test_absent_value_is_interrogable_and_deterministic() -> None:
-    value = make_absent_value(origin="n1/vae", reason="no VAE", stands_for="core.int")
+    value = make_absent_value(origin="n1/vae", reason="no VAE", stands_for="INT")
     assert is_absent(value)
     assert value.type_id == CORE_ABSENT
     assert value.meta.get(ABSENT_ORIGIN_META_KEY) == "n1/vae"
     assert value.meta.get(ABSENT_REASON_META_KEY) == "no VAE"
-    assert value.meta.get(ABSENT_STANDS_FOR_META_KEY) == "core.int"
+    assert value.meta.get(ABSENT_STANDS_FOR_META_KEY) == "INT"
     assert value.resolve() is None
-    same = make_absent_value(origin="n1/vae", reason="no VAE", stands_for="core.int")
+    same = make_absent_value(origin="n1/vae", reason="no VAE", stands_for="INT")
     assert same.fingerprint == value.fingerprint
-    other = make_absent_value(origin="n2/vae", reason="no VAE", stands_for="core.int")
+    other = make_absent_value(origin="n2/vae", reason="no VAE", stands_for="INT")
     assert other.fingerprint != value.fingerprint
 
 
@@ -105,7 +109,7 @@ def test_absent_crosses_the_boundary() -> None:
     register_core_types(registry)
     sender = ValueCodec(registry, use_shm=False, accept_shm=False)
     receiver = ValueCodec(registry, use_shm=False, accept_shm=False)
-    value = make_absent_value(origin="n1/out", reason="nothing", stands_for="core.int")
+    value = make_absent_value(origin="n1/out", reason="nothing", stands_for="INT")
     blobs: list[bytes] = []
     wire, _ = sender.encode(value, blobs, [])
     decoded, _ = receiver.decode(wire, blobs, [])
@@ -125,8 +129,8 @@ class MaybeProduce(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.maybe_produce",
-            inputs=(InputSpec("produce", TypeExpr.concrete("core.boolean")),),
-            outputs=(OutputSpec("value", TypeExpr.concrete("core.int"), optional=True),),
+            inputs=(InputSpec("produce", TypeExpr.concrete("BOOLEAN")),),
+            outputs=(OutputSpec("value", TypeExpr.concrete("INT"), optional=True),),
         )
 
     @classmethod
@@ -144,7 +148,7 @@ class IllegalAbsent(Node):
         return NodeSchema(
             node_type="test.illegal_absent",
             inputs=(),
-            outputs=(OutputSpec("value", TypeExpr.concrete("core.int")),),
+            outputs=(OutputSpec("value", TypeExpr.concrete("INT")),),
         )
 
     @classmethod
@@ -161,8 +165,8 @@ class AddOne(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.add_one",
-            inputs=(InputSpec("value", TypeExpr.concrete("core.int")),),
-            outputs=(OutputSpec("out", TypeExpr.concrete("core.int")),),
+            inputs=(InputSpec("value", TypeExpr.concrete("INT")),),
+            outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
         )
 
     @classmethod
@@ -179,10 +183,10 @@ class Coalesce(Node):
         return NodeSchema(
             node_type="test.coalesce",
             inputs=(
-                InputSpec("value", TypeExpr.concrete("core.int"), on_absent="accept"),
-                InputSpec("fallback", TypeExpr.concrete("core.int")),
+                InputSpec("value", TypeExpr.concrete("INT"), on_absent="accept"),
+                InputSpec("fallback", TypeExpr.concrete("INT")),
             ),
-            outputs=(OutputSpec("out", TypeExpr.concrete("core.int")),),
+            outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
         )
 
     @classmethod
@@ -198,10 +202,10 @@ class WithOptional(Node):
         return NodeSchema(
             node_type="test.with_optional",
             inputs=(
-                InputSpec("base", TypeExpr.concrete("core.int")),
-                InputSpec("extra", TypeExpr.concrete("core.int"), required=False),
+                InputSpec("base", TypeExpr.concrete("INT")),
+                InputSpec("extra", TypeExpr.concrete("INT"), required=False),
             ),
-            outputs=(OutputSpec("out", TypeExpr.concrete("core.int")),),
+            outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
         )
 
     @classmethod
@@ -217,10 +221,10 @@ class WithDefault(Node):
         return NodeSchema(
             node_type="test.with_default",
             inputs=(
-                InputSpec("base", TypeExpr.concrete("core.int")),
-                InputSpec("extra", TypeExpr.concrete("core.int"), required=False, default=100),
+                InputSpec("base", TypeExpr.concrete("INT")),
+                InputSpec("extra", TypeExpr.concrete("INT"), required=False, default=100),
             ),
-            outputs=(OutputSpec("out", TypeExpr.concrete("core.int")),),
+            outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
         )
 
     @classmethod
@@ -235,8 +239,8 @@ class Strict(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.strict",
-            inputs=(InputSpec("value", TypeExpr.concrete("core.int"), on_absent="fail"),),
-            outputs=(OutputSpec("out", TypeExpr.concrete("core.int")),),
+            inputs=(InputSpec("value", TypeExpr.concrete("INT"), on_absent="fail"),),
+            outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
         )
 
     @classmethod
@@ -279,7 +283,7 @@ def test_optional_output_carries_provenance_and_caches() -> None:
         assert is_absent(value)
         assert value.meta.get(ABSENT_ORIGIN_META_KEY) == "m/value"
         assert value.meta.get(ABSENT_REASON_META_KEY) == "nothing to produce"
-        assert value.meta.get(ABSENT_STANDS_FOR_META_KEY) == "core.int"
+        assert value.meta.get(ABSENT_STANDS_FOR_META_KEY) == "INT"
 
         # Deliberate absence is an ordinary cached value.
         again = await engine.run(graph, ["m"])
@@ -296,6 +300,82 @@ def test_absent_on_non_optional_output_is_contract_error() -> None:
         graph = Graph(nodes={"i": GraphNode("test.illegal_absent", {})})
         with pytest.raises(ExecutionError, match="not.*declared optional"):
             await engine.run(graph, ["i"])
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("cache_enabled", [True, False])
+@pytest.mark.parametrize("message", ["selected branch has no value", ""])
+def test_blocked_required_output_reports_once_per_run(cache_enabled: bool, message: str) -> None:
+    class Block(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                node_type="test.block",
+                inputs=(),
+                outputs=(OutputSpec("value", TypeExpr.concrete("INT")),),
+            )
+
+        @classmethod
+        def execute(cls) -> Mapping[str, object]:
+            return cls.outputs(value=BLOCKED(message))
+
+    async def scenario() -> None:
+        nodes = (Block, AddOne)
+        registry = TypeRegistry()
+        register_core_types(registry)
+        events: list = []
+        engine = Engine(
+            schemas=build_schemas(nodes),
+            registry=registry,
+            worker=InProcessWorker(build_node_types(nodes), registry),
+            cache=MemoryLRUCache(),
+            on_event=events.append,
+        )
+        graph = Graph(
+            nodes={
+                "source": GraphNode("test.block", {}),
+                "other_source": GraphNode("test.block", {}),
+                "left": GraphNode("test.add_one", {"value": Link("source", "value")}),
+                "right": GraphNode("test.add_one", {"value": Link("source", "value")}),
+                "tail": GraphNode("test.add_one", {"value": Link("left", "out")}),
+                "other": GraphNode("test.add_one", {"value": Link("other_source", "value")}),
+                "live": GraphNode("test.add_one", {"value": 18}),
+            }
+        )
+        for attempt in range(2):
+            events.clear()
+            result = await engine.run(
+                graph, ["tail", "right", "other", "live"], cache_enabled=cache_enabled
+            )
+            assert set(result.skipped) == {"left", "right", "tail", "other"}
+            assert result.outputs["live"]["out"].resolve() == 19
+            for target in ("tail", "right", "other"):
+                value = result.outputs[target]["out"]
+                assert is_absent(value)
+                origin = "other_source/value" if target == "other" else "source/value"
+                assert value.meta.get(ABSENT_ORIGIN_META_KEY) == origin
+                assert value.meta.get(ABSENT_REASON_META_KEY) == message
+            notices = [event for event in events if event.kind == "node_blocked"]
+            assert len(notices) == (2 if message else 0)
+            if message:
+                assert {event.detail["origin"] for event in notices} == {
+                    "source/value",
+                    "other_source/value",
+                }
+                for notice in notices:
+                    assert notice.detail["message"] == message
+                    assert events.index(notice) < next(
+                        i
+                        for i, event in enumerate(events)
+                        if event.kind == "node_skipped" and event.node_id == notice.node_id
+                    )
+            skips = [event for event in events if event.kind == "node_skipped"]
+            assert {event.node_id for event in skips} == {"left", "right", "tail", "other"}
+            if attempt and cache_enabled:
+                assert set(result.cached) == {"source", "other_source", "live"}
+            elif not cache_enabled:
+                assert result.cached == ()
 
     asyncio.run(scenario())
 
@@ -407,13 +487,13 @@ def test_demanded_lazy_absence_uses_existing_policies_and_producer_cache() -> No
                     inputs=(
                         InputSpec(
                             "value",
-                            TypeExpr.concrete("core.int"),
+                            TypeExpr.concrete("INT"),
                             required=policy != "omit",
                             on_absent=policy,
                             lazy=True,
                         ),
                     ),
-                    outputs=(OutputSpec("out", TypeExpr.concrete("core.int")),),
+                    outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
                 )
 
             @classmethod
@@ -547,3 +627,57 @@ def test_no_warning_for_default_skip_consumer() -> None:
     )
     diags = validate(graph, build_schemas(NODES), ["a"])
     assert "maybe-absent" not in {d.code for d in diags}
+
+
+@pytest.mark.parametrize("return_kind", ["mapping", "expansion", "wire"])
+def test_cached_forwarded_absence_preserves_source_provenance(return_kind: str) -> None:
+    absent = make_absent_value(origin="source/value", reason="missing source", stands_for="INT")
+
+    class Forward(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                "test.forward_absent",
+                outputs=(OutputSpec("value", TypeExpr.concrete("INT"), optional=True),),
+                may_expand_graph=return_kind != "mapping",
+            )
+
+        @classmethod
+        def execute(cls) -> Any:
+            if return_kind == "wire":
+                return ExpandedReturn(
+                    LocalExpansion(
+                        (
+                            LocalNode(
+                                "unused", "test.maybe_produce", (("produce", LiteralInput(False)),)
+                            ),
+                        )
+                    ),
+                    (("value", PresentOutput(absent)),),
+                )
+            if return_kind == "expansion":
+                builder = ExpansionBuilder()
+                builder.node("test.maybe_produce", "unused", produce=False)
+                return builder.finalize(value=absent)
+            return cls.outputs(value=absent)
+
+    registry = TypeRegistry()
+    register_core_types(registry)
+    nodes = [Forward, MaybeProduce]
+    engine = Engine(
+        schemas=build_schemas(nodes),
+        registry=registry,
+        worker=InProcessWorker(build_node_types(nodes), registry),
+        cache=MemoryLRUCache(),
+    )
+
+    async def scenario() -> None:
+        for node_id, cached in (("forward", False), ("forward", True), ("other_forward", True)):
+            result = await engine.run(Graph({node_id: GraphNode("test.forward_absent")}), [node_id])
+            output = result.outputs[node_id]["value"]
+            assert output.meta.get(ABSENT_ORIGIN_META_KEY) == "source/value"
+            assert output.meta.get(ABSENT_REASON_META_KEY) == "missing source"
+            assert output.fingerprint == absent.fingerprint
+            assert bool(result.cached) == cached
+
+    asyncio.run(scenario())

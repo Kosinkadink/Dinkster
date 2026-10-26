@@ -50,8 +50,8 @@ class ExtensionContractValue(Node):
             node_type="fixture.extension.value",
             display_name="Extension Contract Value",
             inputs=(
-                InputSpec("width", TypeExpr.concrete("core.int"), default=13),
-                InputSpec("height", TypeExpr.concrete("core.int"), default=7),
+                InputSpec("width", TypeExpr.concrete("INT"), default=13),
+                InputSpec("height", TypeExpr.concrete("INT"), default=7),
             ),
             outputs=(OutputSpec("sample", TypeExpr.concrete(VALUE_TYPE)),),
         )
@@ -74,7 +74,7 @@ class ExtensionContractProof(Node):
             node_type="fixture.extension.contract",
             display_name="Extension Contract Proof",
             inputs=(InputSpec("sample", TypeExpr.concrete(VALUE_TYPE)),),
-            outputs=(OutputSpec("mean", TypeExpr.concrete("core.float")),),
+            outputs=(OutputSpec("mean", TypeExpr.concrete("FLOAT")),),
             idempotent=False,
         )
 

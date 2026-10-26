@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 from dinkster_caches import MemoryLRUCache
-from dinkster_engine import Engine, ExecutionError
+from dinkster_engine import Engine, ExecutionError, GraphValidationError
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_memory import MemoryGovernor
 from dinkster_protocol import (
@@ -121,6 +121,36 @@ def make_engine(registry: TypeRegistry, worker: RemoteWorker) -> Engine:
         worker=worker,
         cache=MemoryLRUCache(),
     )
+
+
+def test_remote_admission_rejects_and_same_connection_accepts(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        proc, host, port = await start_service(DEV_MANIFEST, tmp_path)
+        try:
+            registry = core_registry()
+            worker = remote_worker(host, port, registry)
+            await worker.start()
+            try:
+                engine = make_engine(registry, worker)
+                with pytest.raises(GraphValidationError, match="value must be a float literal"):
+                    await asyncio.wait_for(
+                        engine.run(
+                            Graph({"check": GraphNode("dev.execution.admission", {"value": 9})}),
+                            ["check"],
+                        ),
+                        timeout=5,
+                    )
+                result = await engine.run(
+                    Graph({"check": GraphNode("dev.execution.admission", {"value": 9.25})}),
+                    ["check"],
+                )
+                assert result.outputs["check"]["value"].resolve() == 9.25
+            finally:
+                await worker.close()
+        finally:
+            await stop_service(proc)
+
+    asyncio.run(scenario())
 
 
 def big_image_graph() -> Graph:
@@ -481,7 +511,8 @@ def test_daemon_waits_for_detached_sync_invocation_before_handover(tmp_path: Pat
     async def scenario() -> None:
         manifest = tmp_path / "dinkster-pack.toml"
         manifest.write_text(
-            '[pack]\nname = "memorypack"\n\n[pack.entry]\n'
+            '[pack]\nname = "memorypack"\npublisher = "dinkster"\n'
+            'type-namespaces = ["mem"]\n\n[pack.entry]\n'
             'nodes = "memorypack_nodes:NODES"\ntypes = "memorypack_nodes:register_types"\n'
             'consumers = "memorypack_nodes:memory_consumers"\n'
         )
@@ -591,7 +622,8 @@ def test_service_death_fails_pending_invocations(tmp_path: Path) -> None:
     async def scenario() -> None:
         manifest = tmp_path / "dinkster-pack.toml"
         manifest.write_text(
-            '[pack]\nname = "isopack"\n\n[pack.entry]\n'
+            '[pack]\nname = "isopack"\npublisher = "dinkster"\n'
+            'type-namespaces = ["iso"]\n\n[pack.entry]\n'
             'nodes = "isopack_nodes:NODES"\ntypes = "isopack_nodes:register_types"\n'
         )
         proc, host, port = await start_service(manifest, tmp_path)
@@ -629,7 +661,8 @@ def test_remote_relay_qualifies_devices_and_collapses_on_death(
     async def scenario() -> None:
         manifest = tmp_path / "dinkster-pack.toml"
         manifest.write_text(
-            '[pack]\nname = "memorypack"\n\n[pack.entry]\n'
+            '[pack]\nname = "memorypack"\npublisher = "dinkster"\n'
+            'type-namespaces = ["mem"]\n\n[pack.entry]\n'
             'nodes = "memorypack_nodes:NODES"\ntypes = "memorypack_nodes:register_types"\n'
             'consumers = "memorypack_nodes:memory_consumers"\n'
         )
@@ -691,7 +724,7 @@ def test_remote_never_accepts_shm_descriptors() -> None:
     register_core_types(registry)
     codec = ValueCodec(registry, use_shm=False, accept_shm=False)
     wire = {
-        "typeId": "core.string",
+        "typeId": "STRING",
         "fingerprint": "f",
         "metaBlob": 0,
         "payload": {"transport": "shm", "segment": "dinksterdeadbeef", "size": 4},

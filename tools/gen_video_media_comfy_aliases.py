@@ -13,7 +13,7 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
-from dinkster_api.v1 import ComboWidget, InputSpec, TypeExpr
+from dinkster_api.v1 import CORE_COMBO, CORE_FLOAT, CORE_STRING, ComboWidget, InputSpec, TypeExpr
 from dinkster_compat_comfy import CompatTranslation, translate_v3_schema
 from dinkster_schema import (
     MappingSource as M,
@@ -92,18 +92,16 @@ def _save_source_schema(schema: NodeSchema) -> NodeSchema:
             *schema.inputs,
             InputSpec(
                 "encoding",
-                TypeExpr.concrete("core.combo"),
+                TypeExpr.concrete(CORE_COMBO),
                 required=False,
                 force_input=True,
                 widget=ComboWidget(options=encoding_options),
             ),
             InputSpec(
-                "encoding.crf", TypeExpr.concrete("core.float"), required=False, force_input=True
+                "encoding.crf", TypeExpr.concrete(CORE_FLOAT), required=False, force_input=True
             ),
-            InputSpec("crf", TypeExpr.concrete("core.float"), required=False, force_input=True),
-            InputSpec(
-                "metadata", TypeExpr.concrete("core.string"), required=False, force_input=True
-            ),
+            InputSpec("crf", TypeExpr.concrete(CORE_FLOAT), required=False, force_input=True),
+            InputSpec("metadata", TypeExpr.concrete(CORE_STRING), required=False, force_input=True),
         ),
     )
 

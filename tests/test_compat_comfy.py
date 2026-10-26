@@ -12,10 +12,28 @@ import sys
 from collections.abc import Mapping
 from decimal import Decimal
 from fractions import Fraction
+from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
 import pytest
+from dinkster_api.v1 import (
+    AUDIO_TYPE,
+    BACKGROUND_REMOVAL_TYPE,
+    BOUNDING_BOX_TYPE,
+    CONTROL_NET_TYPE,
+    GLIGEN_TYPE,
+    LATENT_UPSCALE_MODEL_TYPE,
+    MESH_TYPE,
+    MODEL_PATCH_TYPE,
+    MOGE_GEOMETRY_TYPE,
+    MOGE_MODEL_TYPE,
+    SHAPE_SUBDIVIDES_TYPE,
+    STYLE_MODEL_TYPE,
+    VIDEO_EDIT_TYPE,
+    VIDEO_TYPE,
+    VOXEL_TYPE,
+)
 from dinkster_caches import MemoryLRUCache
 from dinkster_compat_comfy import (
     NATIVE_NODES,
@@ -251,7 +269,7 @@ def test_sampler_custom_advanced_accepts_declared_multi_stream_latent(
     result = cast("Mapping[str, object]", node.execute(latent_image=latent))
     registry = TypeRegistry()
     translation.register_types(registry)
-    latent_spec = registry.spec("comfy.LATENT")
+    latent_spec = registry.spec("LATENT")
     assert latent_spec.validate_encoded is not None
     for output_id in ("output", "denoised_output"):
         output = cast("Mapping[str, MultiStreamLatent[object]]", result[output_id])["samples"]
@@ -303,6 +321,84 @@ def test_translate_type_rules() -> None:
     assert translate_type("*")[0].kind == "wildcard"
     expr, opaque_types = translate_type("MODEL")
     assert expr.types == ("comfy.MODEL",) and opaque_types == ("comfy.MODEL",)
+
+
+@pytest.mark.parametrize(
+    ("raw_type", "canonical_type"),
+    [
+        ("AUDIO", AUDIO_TYPE),
+        ("VIDEO", VIDEO_TYPE),
+        ("VIDEO_EDIT", VIDEO_EDIT_TYPE),
+        ("MOGE_MODEL", MOGE_MODEL_TYPE),
+        ("MOGE_GEOMETRY", MOGE_GEOMETRY_TYPE),
+        ("BACKGROUND_REMOVAL", BACKGROUND_REMOVAL_TYPE),
+        ("VOXEL", VOXEL_TYPE),
+        ("MESH", MESH_TYPE),
+        ("SHAPE_SUBDIVIDES", SHAPE_SUBDIVIDES_TYPE),
+        ("BOUNDING_BOX", BOUNDING_BOX_TYPE),
+        ("CONTROL_NET", CONTROL_NET_TYPE),
+        ("GLIGEN", GLIGEN_TYPE),
+        ("MODEL_PATCH", MODEL_PATCH_TYPE),
+        ("LATENT_UPSCALE_MODEL", LATENT_UPSCALE_MODEL_TYPE),
+        ("STYLE_MODEL", STYLE_MODEL_TYPE),
+    ],
+)
+def test_translate_type_keeps_native_media_and_model_labels_bare(
+    raw_type: str, canonical_type: str
+) -> None:
+    assert translate_type(raw_type) == (TypeExpr.concrete(canonical_type), (canonical_type,))
+
+
+@pytest.mark.parametrize("raw_type", ["AUDIO_RECORD", "AUDIO_ENCODER"])
+def test_translate_type_keeps_unmigrated_audio_labels_prefixed(raw_type: str) -> None:
+    expected = f"comfy.{raw_type}"
+    assert translate_type(raw_type) == (TypeExpr.concrete(expected), (expected,))
+
+
+def test_compat_worker_type_ownership_preserves_image_dependency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_compat_comfy.schema_snapshot import core_schema_snapshot
+    from dinkster_workers import host, load_manifest
+
+    root = Path(__file__).parents[1] / "packages"
+    manifest = load_manifest(root / "dinkster-compat-comfy/dinkster-pack.toml")
+    assert "comfy.CONTROL_NET" not in manifest.type_namespaces
+    assert "comfy.GLIGEN" not in manifest.type_namespaces
+    translation = CompatTranslation()
+    translation.opaque_types.update(core_schema_snapshot()["opaqueTypes"])
+    manifest = dataclasses.replace(
+        manifest,
+        nodes_entry="fixture:nodes",
+        types_entry="fixture:types",
+        choices_entry=None,
+        consumers_entry=None,
+        arms=(),
+        arm_nodes_entry=None,
+    )
+    entries = {"fixture:nodes": [], "fixture:types": translation.register_types}
+    monkeypatch.setattr(host, "resolve_entry", entries.__getitem__)
+    worker, registry, _, _ = host.load_pack(manifest)
+    assert "comfy.AUDIO_ENCODER" in registry
+    assert registry.owner_of("comfy.AUDIO_ENCODER") == manifest.name
+    assert registry.owner_of("comfy.LAYERS") == "dinkster-nodes-image"
+    assert registry.owner_of("comfy.COMPOSITOR") == "dinkster-nodes-image"
+
+    published = TypeRegistry()
+    register_core_types(published)
+    image = load_manifest(root / "dinkster-nodes-image/dinkster-pack.toml")
+    published.claim_types(image.name, image.type_namespaces)
+    published.declare_types(
+        manifest.name, manifest.type_namespaces, worker.registered_types, allow_bare=True
+    )
+    assert published.owner_of("comfy.AUDIO_ENCODER") == manifest.name
+    assert published.owner_of("comfy.LAYERS") == image.name
+    assert published.owner_of("comfy.COMPOSITOR") == image.name
+    assert published.owner_of(CONTROL_NET_TYPE) == "dinkster-nodes-foundation"
+    assert published.owner_of(GLIGEN_TYPE) == "dinkster-nodes-foundation"
+    with registry.registering_pack(manifest.name, manifest.type_namespaces, allow_bare=True):
+        with pytest.raises(ValueError, match="outside its declared type claims"):
+            registry.register("comfy.UNDECLARED")
 
 
 def test_translate_type_comma_unions() -> None:
@@ -375,11 +471,11 @@ def test_blend_schema_translation() -> None:
     assert schema.category == "comfy/image/blend"
     by_id = {spec.id: spec for spec in schema.inputs}
     assert set(by_id) == {"image_a", "image_b", "factor", "mode", "label"}
-    assert by_id["image_a"].required and by_id["image_a"].type.types == ("comfy.IMAGE",)
+    assert by_id["image_a"].required and by_id["image_a"].type.types == ("IMAGE",)
     assert by_id["factor"].default == 0.5 and not by_id["factor"].required
     assert by_id["mode"].default == "normal"  # combo defaults to first choice
     # The choice list survives as a static dropdown (wire v9 COMBO) on the
-    # concrete core.combo socket; its vocabulary remains presentation only.
+    # concrete COMBO socket; its vocabulary remains presentation only.
     widget = by_id["mode"].widget
     assert isinstance(widget, ComboWidget)
     assert widget.options == ("normal", "multiply", "screen")
@@ -388,7 +484,7 @@ def test_blend_schema_translation() -> None:
     assert by_id["label"].default == "" and not by_id["label"].required
     assert [out.id for out in schema.outputs] == ["image"]
     assert schema.idempotent
-    assert translation.opaque_types == {"comfy.IMAGE"}
+    assert translation.opaque_types == {"IMAGE"}
 
 
 def test_v3_remote_options_untrusted_route_is_whole_node_classified_skip() -> None:
@@ -557,7 +653,7 @@ def test_v1_widget_v19_declarations_are_preserved_without_inference() -> None:
     assert by_id["choice"].widget == ComboWidget(
         options=("a", "b"), control_after_generate="randomize"
     )
-    assert by_id["color"].type == TypeExpr.concrete("core.string")
+    assert by_id["color"].type == TypeExpr.concrete("STRING")
     assert by_id["color"].widget == ColorWidget()
     assert by_id["opaque"].type == TypeExpr.concrete("comfy.COLORS")
     assert "comfy.COLOR" not in translation.opaque_types
@@ -639,6 +735,87 @@ def test_v1_widget_v19_declarations_are_preserved_without_inference() -> None:
     assert unknown.inputs[0].widget is None
     assert unknown.inputs[1].widget == StringWidget(multiline=False, dynamic_prompts=False)
     assert unknown.inputs[2].widget == ComboWidget(options=("a", "b"))
+
+
+@pytest.mark.parametrize(
+    "node_name,input_name,config,expected",
+    [
+        (
+            "EmptyAudio",
+            "duration",
+            {"default": 60.0, "min": 0.0, "max": 0xFFFFFFFFFFFFFFFF, "step": 0.01},
+            {"type": "NUMBER", "min": 0.0, "max": 1.8446744073709552e19, "step": 0.01},
+        ),
+        (
+            "TrimAudioDuration",
+            "start_index",
+            {"default": 0.0, "min": -0xFFFFFFFFFFFFFFFF, "max": 0xFFFFFFFFFFFFFFFF},
+            {"type": "NUMBER", "min": -1.8446744073709552e19, "max": 1.8446744073709552e19},
+        ),
+    ],
+)
+def test_audio_float_bounds_remain_json_numbers(
+    node_name: str, input_name: str, config: dict[str, object], expected: dict[str, object]
+) -> None:
+    class AudioNode:
+        RETURN_TYPES = ()
+        FUNCTION = "execute"
+
+        @classmethod
+        def INPUT_TYPES(cls):
+            return {"required": {input_name: ("FLOAT", config)}}
+
+        def execute(self, **kwargs):
+            return ()
+
+    schema = translate_node(node_name, AudioNode, CompatTranslation()).schema()
+    wire = schema_to_wire(schema)
+    interface = cast("list[dict[str, Any]]", wire["interface"])
+    assert interface[0]["widget"] == expected
+    assert all(
+        type(value) in (int, float)
+        for key, value in interface[0]["widget"].items()
+        if key != "type"
+    )
+    assert schema_from_wire(wire) == schema
+
+
+@pytest.mark.parametrize("socket", ["FLOAT", "INT"])
+@pytest.mark.parametrize(
+    "precision", [False, True, 0, 0.0, -1, float("nan"), float("inf"), None, 0.01]
+)
+def test_translated_round_preserves_only_float_no_round_or_positive_precision(
+    socket: str, precision: object
+) -> None:
+    class AngleNode:
+        RETURN_TYPES = ()
+        FUNCTION = "execute"
+
+        @classmethod
+        def INPUT_TYPES(cls):
+            return {
+                "required": {
+                    "angle": (
+                        socket,
+                        {"round": precision, "min": False, "max": True, "step": False},
+                    )
+                }
+            }
+
+        def execute(self, **kwargs):
+            return ()
+
+    schema = translate_node("AngleNode", AngleNode, CompatTranslation()).schema()
+    wire = schema_to_wire(schema)
+    entry = cast("list[dict[str, Any]]", wire["interface"])[0]
+    if socket == "FLOAT" and (precision is False or precision == 0.01):
+        assert entry["widget"] == {"type": "NUMBER", "round": precision}
+        assert type(entry["widget"]["round"]) is type(precision)
+        restored = schema_from_wire(wire)
+        assert isinstance(restored.inputs[0].widget, NumberWidget)
+        assert type(restored.inputs[0].widget.round) is type(precision)
+    else:
+        assert "widget" not in entry
 
 
 def test_ksampler_advanced_filters_unusable_numeric_metadata() -> None:
@@ -851,7 +1028,7 @@ def test_numeric_combo_wire_keys_restore_original_choice_types(listed: bool, v3:
     assert result == {"combo": ["10", "2.5"] if listed else "10"}
     registry = TypeRegistry()
     register_core_types(registry)
-    output_type = "list<core.combo>" if listed else CORE_COMBO
+    output_type = "list<COMBO>" if listed else CORE_COMBO
     assert registry.wrap(output_type, result["combo"]).resolve() == result["combo"]
 
 
@@ -959,7 +1136,7 @@ def test_v1_multicombo_translates_exact_list_contract_and_refuses_lookalikes() -
 
 def test_boolean_combo_translates_to_labeled_toggle() -> None:
     """A two-option combo that is a disguised boolean (enable/disable and
-    kin, either order, any case) becomes an honest core.boolean wearing
+    kin, either order, any case) becomes an honest BOOLEAN wearing
     the original strings as toggle labels; execute() maps the boolean
     back onto the v1 vocabulary, and a legacy prompt still sending the
     string passes through verbatim. v1 BOOLEAN inputs keep their
@@ -1884,7 +2061,7 @@ def test_translated_image_and_mask_share_the_image_array_codec() -> None:
     registry = TypeRegistry()
     register_core_types(registry)
     translation.register_types(registry)
-    for type_id in ("comfy.IMAGE", "comfy.MASK"):
+    for type_id in ("IMAGE", "MASK"):
         assert registry.spec(type_id).prepare_buffer_encoding is prepare_image_array_encoding
 
 
@@ -2010,7 +2187,7 @@ def test_output_is_list_values_flow_as_native_lists() -> None:
         parts = result.outputs["d"]["doubled"]
         assert parts.resolve() == [0, 2, 4]
         # The envelope carries the canonical runtime list type id.
-        assert parts.type_id == "list<core.int>"
+        assert parts.type_id == "list<INT>"
 
     asyncio.run(scenario())
 
@@ -3688,7 +3865,7 @@ def test_v3_matchtype_autogrow_lists_share_output_variable_and_execute() -> None
         )
         result = await engine.run(graph, ["list"])
         value = result.outputs["list"]["list"]
-        assert value.type_id == "list<core.int>"
+        assert value.type_id == "list<INT>"
         assert value.resolve() == [0, 1, 0, 1, 2]
 
     asyncio.run(scenario())

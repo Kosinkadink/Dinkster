@@ -300,7 +300,7 @@ def test_good_pack_loads_and_reports_skips(tmp_path: Path) -> None:
     }
     adder = schemas["comfy.good_pack.Adder"]
     assert adder.display_name == "Add Two Ints"
-    # The list-batch node loads with an honest list<core.int> socket.
+    # The list-batch node loads with an honest list<INT> socket.
     batcher = schemas["comfy.good_pack.Batcher"]
     assert batcher.inputs[0].type == TypeExpr.list_of(TypeExpr.concrete(CORE_INT))
 

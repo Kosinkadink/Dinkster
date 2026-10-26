@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dinkster_api.v1 import (
     CORE_COMBO,
     CORE_INT,
+    IMAGE_TYPE,
     ComboOption,
     ComboWidget,
     InputSpec,
@@ -24,7 +25,6 @@ from dinkster_api.v1 import (
     prepare_image_array_encoding,
 )
 
-IMAGE_TYPE = "dinkster.image"
 IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 INT = TypeExpr.concrete(CORE_INT)
 COMBO = TypeExpr.concrete(CORE_COMBO)

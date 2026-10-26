@@ -23,8 +23,8 @@ from dinkster_schema import (
 )
 from dinkster_values import CustomWidgetDescriptor, JsonValue
 
-STRING = TypeExpr.concrete("core.string")
-INT = TypeExpr.concrete("core.int")
+STRING = TypeExpr.concrete("STRING")
+INT = TypeExpr.concrete("INT")
 
 
 def test_custom_widget_descriptor_roundtrips_verbatim() -> None:
@@ -119,8 +119,8 @@ def test_composed_roundtrip(schema: NodeSchema, storage: bool, descriptors: bool
 
 
 def test_legacy_signatures_are_byte_identical(schema: NodeSchema) -> None:
-    assert schema_signature(schema) == "349e6ce01c9e04426862b23b2340eefe332e0568"
-    assert schema_signature(MathExpressions.schema()) == "55222fbee1e9fad73ac5d3ae62cf62e95db3059b"
+    assert schema_signature(schema) == "ac61e209d6037807b8a049bfa08c17b4572f0c79"
+    assert schema_signature(MathExpressions.schema()) == "c96778236596417a0754e682785f4bf584debd97"
     explicit_default = replace(schema, inputs=(replace(schema.inputs[0], accepts_storage=False),))
     assert schema_signature(explicit_default) == schema_signature(schema)
     assert schema_signature(
@@ -180,18 +180,18 @@ def test_media_policies_compose_with_storage_and_descriptors(schema: NodeSchema)
             schema.inputs[0],
             InputSpec(
                 "image",
-                TypeExpr.concrete("comfy.IMAGE"),
+                TypeExpr.concrete("IMAGE"),
                 accepts_storage=True,
                 alpha_policy="require",
             ),
         ),
-        outputs=(OutputSpec("image", TypeExpr.concrete("comfy.IMAGE"), alpha_policy="drop"),),
+        outputs=(OutputSpec("image", TypeExpr.concrete("IMAGE"), alpha_policy="drop"),),
         output_descriptors=OutputDescriptorsSpec(
             "entries",
             (
                 OutputSpec(
                     "mask",
-                    TypeExpr.concrete("comfy.MASK"),
+                    TypeExpr.concrete("MASK"),
                     mask_polarity="transparency",
                     mask_semantic="alpha",
                 ),

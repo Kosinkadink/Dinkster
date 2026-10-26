@@ -1,13 +1,13 @@
 """Structural validation and type diagnostics.
 
 Shared principle with Dinkster-Frontend: a graph is rejected only on structural
-grounds and the scoped core.combo boundary; other type mismatches are
+grounds and the scoped COMBO boundary; other type mismatches are
 advisory warnings.
 """
 
 from __future__ import annotations
 
-from collections.abc import Container, Mapping, Sequence
+from collections.abc import Container, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Literal
 
@@ -28,6 +28,7 @@ from dinkster_schema import (
     plan_type_equivalence,
     resolved_type_expr,
 )
+from dinkster_values import ASSET_TYPE, CORE_BOOLEAN
 
 from .model import (
     NODE_ID_FORBIDDEN_CHARS,
@@ -40,7 +41,7 @@ from .model import (
     RegionNode,
     TypedLiteral,
 )
-from .plan import find_cycle
+from .plan import find_cycle, output_node_targets
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,135 @@ class Diagnostic:
     """The consumer-side input (or region port) the diagnostic anchors to,
     when it anchors to one - so frontends map diagnostics onto per-port
     affordances structurally instead of parsing messages."""
+
+
+@dataclass(frozen=True)
+class LoopPair:
+    end_id: str
+    body: tuple[str, ...]
+
+
+def validate_loops(
+    graph: Graph,
+    targets: Sequence[str],
+    paired: Mapping[str, LoopPair] | None = None,
+) -> tuple[dict[str, LoopPair], list[Diagnostic]]:
+    """Pair boundaries not already admitted in this executing graph scope.
+
+    Admitted pairs keep their original body after a control node drops the
+    end's body-linked inputs. Newly added boundaries still validate normally.
+    """
+    known = paired or {}
+    starts = {
+        key
+        for key, node in graph.nodes.items()
+        if isinstance(node, GraphNode) and node.node_type == "StartLoop" and key not in known
+    }
+    known_ends = {pair.end_id for pair in known.values()}
+    ends = {
+        key
+        for key, node in graph.nodes.items()
+        if isinstance(node, GraphNode) and node.node_type == "EndLoop" and key not in known_ends
+    }
+    if not starts and not ends:
+        return {}, []
+    parents = {
+        key: {
+            value.node_id
+            for value in node.inputs.values()
+            if isinstance(value, Link) and value.node_id in graph.nodes
+        }
+        for key, node in graph.nodes.items()
+    }
+    children: dict[str, set[str]] = {key: set() for key in graph.nodes}
+    for key, dependencies in parents.items():
+        for dependency in dependencies:
+            children[dependency].add(key)
+
+    def walk(
+        seeds: Iterable[str],
+        edges: Mapping[str, set[str]],
+        stops: Container[str] = (),
+        *,
+        boundaries: bool = False,
+    ) -> set[str]:
+        pending = list(seeds)
+        visited: set[str] = set()
+        reached: set[str] = set()
+        while pending:
+            key = pending.pop()
+            if key in visited:
+                continue
+            visited.add(key)
+            if key in stops:
+                reached.add(key)
+            else:
+                pending.extend(edges.get(key, ()))
+        return reached if boundaries else visited
+
+    terminal = {key for key in targets if key in children and not children[key]}
+    start_edges = {key: walk(children[key], children, starts, boundaries=True) for key in starts}
+    descendants = {key: walk(start_edges[key], start_edges) for key in starts}
+    end_edges = {key: walk(parents[key], parents, ends, boundaries=True) for key in ends}
+    available = set(starts)
+    remaining = set(ends)
+    matched: dict[str, str] = {}
+
+    def error(
+        code: str, message: str, node_id: str
+    ) -> tuple[dict[str, LoopPair], list[Diagnostic]]:
+        return {}, [Diagnostic("error", f"loop.{code}", message, node_id)]
+
+    while remaining:
+        leaves = sorted(key for key in remaining if not (end_edges[key] & remaining))
+        if not leaves:
+            # Ordinary cycle validation reports the path; there is no pairing in a cycle.
+            return {}, []
+        end = leaves[0]
+        candidates = walk(parents[end], parents, available, boundaries=True)
+        if not candidates:
+            return error("unmatchedEnd", f"End Loop {end} has no available Start Loop", end)
+        closest = {
+            candidate
+            for candidate in candidates
+            if all(other == candidate or candidate in descendants[other] for other in candidates)
+        }
+        if len(closest) != 1:
+            return error(
+                "ambiguousNesting",
+                f"End Loop {end} can close unrelated Start Loops: {', '.join(sorted(candidates))}",
+                end,
+            )
+        start = closest.pop()
+        available.remove(start)
+        remaining.remove(end)
+        escapes = walk(children[start], children, remaining | terminal | {end}, boundaries=True)
+        escapes.discard(end)
+        if escapes:
+            return error(
+                "bodyEscape",
+                f"Start Loop {start} reaches {', '.join(sorted(escapes))} without End Loop {end}",
+                start,
+            )
+        matched[start] = end
+    if available:
+        return error(
+            "unmatchedStart",
+            f"Start Loops without End Loops: {', '.join(sorted(available))}",
+            min(available),
+        )
+    result: dict[str, LoopPair] = {}
+    for start, end in matched.items():
+        body = walk(children[start], children, {end}) - {end}
+        accumulate = graph.nodes[end].inputs.get("accumulate")
+        if isinstance(accumulate, Link) and accumulate.node_id in body | {start}:
+            return error(
+                "accumulateFromBody",
+                f"End Loop {end} accumulate depends on loop body node {accumulate.node_id}",
+                end,
+            )
+        result[start] = LoopPair(end, tuple(sorted(body)))
+    return result, []
 
 
 def elaborate_graph(
@@ -193,14 +323,20 @@ def _resolve_linked_output_types(
     ports: Mapping[str, TypeExpr],
     effective: Mapping[str, NodeSchema],
     regions: Mapping[str, _RegionData],
+    diagnostics: list[Diagnostic] | None = None,
+    *,
+    include_typed_literals: bool = False,
 ) -> dict[str, dict[str, TypeExpr]]:
     """Resolve generic node outputs from linked concrete input declarations."""
     resolved: dict[str, dict[str, TypeExpr]] = {}
+    invalid_outputs: dict[str, Diagnostic] = {}
 
     def contains_variable(expr: TypeExpr) -> bool:
         if expr.kind == "variable":
             return True
-        return expr.element is not None and contains_variable(expr.element)
+        return (expr.element is not None and contains_variable(expr.element)) or any(
+            contains_variable(position) for position in expr.elements
+        )
 
     def source_type(link: Link) -> TypeExpr | None:
         if link.node_id == PORTS_NODE_ID:
@@ -229,6 +365,9 @@ def _resolve_linked_output_types(
                 input_spec = schema.input(input_id)
                 if input_spec is None or not contains_variable(input_spec.type):
                     continue
+                if include_typed_literals and isinstance(value, TypedLiteral):
+                    input_types[input_id] = value.type_id
+                    continue
                 if not isinstance(value, Link):
                     all_generic_inputs_resolved = False
                     break
@@ -244,17 +383,46 @@ def _resolve_linked_output_types(
                 bindings = bind_type_variables(schema.inputs, input_types)
             except TypeSolveError:
                 continue
-            outputs = {
-                output.id: concrete
-                for output in schema.outputs
-                if (concrete := resolved_type_expr(output.type, bindings)) is not None
-            }
+            try:
+                outputs = {
+                    output.id: concrete
+                    for output in schema.outputs
+                    if (concrete := resolved_type_expr(output.type, bindings)) is not None
+                }
+            except TypeSolveError as exc:
+                invalid_outputs[node_id] = Diagnostic(
+                    "error", "output-type-invalid", str(exc), node_id
+                )
+                continue
+            invalid_outputs.pop(node_id, None)
             if outputs and resolved.get(node_id) != outputs:
                 resolved[node_id] = outputs
                 changed = True
         if not changed:
             break
+    if diagnostics is not None:
+        diagnostics.extend(invalid_outputs.values())
     return resolved
+
+
+def graph_output_types(
+    graph: Graph, schemas: Mapping[str, NodeSchema]
+) -> dict[str, dict[str, TypeExpr]]:
+    """Resolve output declarations, including linked template bindings."""
+    effective, regions, _ = _interface_pass(graph, schemas, "", include_elab=False)
+    resolved = _resolve_linked_output_types(
+        graph, {}, effective, regions, include_typed_literals=True
+    )
+    return {
+        node_id: {
+            output.id: resolved.get(node_id, {}).get(output.id, output.type)
+            for output in schema.outputs
+        }
+        for node_id, schema in effective.items()
+    } | {
+        node_id: {name: expr for name, expr in data.interface.items() if expr is not None}
+        for node_id, data in regions.items()
+    }
 
 
 def region_interface(
@@ -457,7 +625,7 @@ def _check_input_value(
                     )
                 )
             return
-        # Type check: most mismatches stay advisory. core.combo is the one
+        # Type check: most mismatches stay advisory. COMBO is the one
         # hard type boundary; coercible asset sources returned above, so
         # reaching here means no accepted/coercible path exists.
         if out_runtime is not None and not expected.accepts_concrete(out_runtime):
@@ -673,7 +841,7 @@ def _check_typed_literal(
             )
         return
     # Type check, exactly as for links (skipped when the stamp is already an
-    # error-level unknown). Most mismatches warn; core.combo is hard.
+    # error-level unknown). Most mismatches warn; COMBO is hard.
     if known and not expected.accepts_concrete(typed.type_id):
         diags.append(
             Diagnostic(
@@ -694,6 +862,8 @@ def validate(
     targets: Sequence[str],
     effective: Mapping[str, NodeSchema] | None = None,
     known_types: Container[str] | None = None,
+    ports: Mapping[str, TypeExpr] | None = None,
+    loop_pairs: Mapping[str, LoopPair] | None = None,
 ) -> list[Diagnostic]:
     """Structural validation over the elaborated document.
 
@@ -711,6 +881,8 @@ def validate(
 
     Region bodies validate recursively; their diagnostics carry hierarchical
     node ids (``region/bodyNode``, nested as ``outer/inner/node``).
+    ``ports`` supplies the enclosing region interface when validating a
+    runtime-expanded body independently of its containing document.
     """
     top_effective, regions, diags = _interface_pass(
         graph, schemas, "", include_elab=effective is None
@@ -729,15 +901,23 @@ def validate(
         schemas,
         top_effective,
         regions,
-        ports=None,
+        ports=ports,
         prefix="",
         known_types=known_types,
     )
     _validate_level(level, diags)
+    if not any(diag.code == "cycle" for diag in diags):
+        _, loop_diags = validate_loops(graph, targets, loop_pairs)
+        diags.extend(loop_diags)
     return diags
 
 
 def _validate_level(level: _Level, diags: list[Diagnostic]) -> None:
+    output_diagnostics: list[Diagnostic] = []
+    _resolve_linked_output_types(
+        level.graph, level.ports or {}, level.effective, level.regions, output_diagnostics
+    )
+    diags.extend(_prefixed(diag, level.prefix) for diag in output_diagnostics)
     if PORTS_NODE_ID in level.graph.nodes:
         diags.append(
             Diagnostic(
@@ -891,7 +1071,7 @@ def _validate_region(
     if region.max_iterations is not None and region.max_iterations < 1:
         shape_error("max_iterations must be >= 1")
 
-    if not region.outputs:
+    if not region.outputs and not output_node_targets(region.body, level.schemas):
         shape_error("region declares no outputs, so nothing in it can execute")
     state_output_keys = {out_id for out_id, out in region.outputs.items() if out.mode == "state"}
     for port in region.state_ports:
@@ -1016,8 +1196,8 @@ def _validate_region(
         else:
             cont_type = _body_output_type(region, data, region.continue_source)
             cont_runtime = None if cont_type is None else cont_type.runtime_type_id()
-            if cont_runtime is not None and cont_runtime != "core.boolean":
-                expected_boolean = TypeExpr.concrete("core.boolean")
+            if cont_runtime is not None and cont_runtime != CORE_BOOLEAN:
+                expected_boolean = TypeExpr.concrete(CORE_BOOLEAN)
                 diags.append(
                     Diagnostic(
                         (
@@ -1026,7 +1206,7 @@ def _validate_region(
                             else "warning"
                         ),
                         "type-mismatch",
-                        f"continue source produces {cont_runtime}, expected core.boolean",
+                        f"continue source produces {cont_runtime}, expected BOOLEAN",
                         where,
                     )
                 )
@@ -1055,6 +1235,18 @@ def _validate_region(
         known_types=level.known_types,
     )
     _validate_level(body_level, diags)
+    if not find_cycle(region.body):
+        targets = [output.source.node_id for output in region.outputs.values()]
+        targets.extend(output_node_targets(region.body, level.schemas))
+        if region.continue_source is not None:
+            targets.append(region.continue_source.node_id)
+        _, loop_diags = validate_loops(region.body, targets)
+        diags.extend(
+            replace(diag, node_id=body_level.prefix + diag.node_id)
+            if diag.node_id is not None
+            else diag
+            for diag in loop_diags
+        )
 
 
 def _validate_graph_node(
@@ -1156,7 +1348,7 @@ def _validate_graph_node(
                     )
                 )
                 and spec.type.kind == "concrete"
-                and spec.type != TypeExpr.concrete("dinkster.asset")
+                and spec.type != TypeExpr.concrete(ASSET_TYPE)
             ),
         )
 

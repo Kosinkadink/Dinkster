@@ -11,9 +11,9 @@ A literal may carry an explicit runtime type id via the reserved
 widget-tap lowering case, where a value is inlined into a
 wildcard/union/variable input the engine could not otherwise wrap)::
 
-    {"$typed": {"type": "core.int", "value": 7}}
+    {"$typed": {"type": "INT", "value": 7}}
 
-A core.int literal outside the JSON-double-safe range uses the reserved
+A INT literal outside the JSON-double-safe range uses the reserved
 ``$int`` marker so JavaScript clients can submit it without rounding::
 
     {"$int": "18446744073709551615"}

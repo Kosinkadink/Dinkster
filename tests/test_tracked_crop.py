@@ -12,6 +12,7 @@ import dinkster_nodes_image.support as image_support
 import numpy as np
 import pytest
 from dinkster_api.v1 import (
+    VIDEO_TYPE,
     Detection,
     Region,
     assemble_video,
@@ -349,14 +350,14 @@ def test_untagged_encoded_video_is_rejected_without_inventing_color_metadata() -
     assert video["probe"] == original_probe
 
 
-@pytest.mark.parametrize("type_id", ["dinkster.image", "comfy.VIDEO"])
+@pytest.mark.parametrize("type_id", ["IMAGE", VIDEO_TYPE])
 def test_registered_schemas_bind_media_output_types_through_graph_execution(type_id: str) -> None:
     registered = {node.schema().node_type: node.schema() for node in IMAGE_NODES}
     crop_schema = registered["dinkster.image.tracked_crop"]
     uncrop_schema = registered["dinkster.image.tracked_uncrop"]
     expected_media = crop_schema.inputs[0].type
     assert expected_media.kind == "variable"
-    assert expected_media.types == ("dinkster.image", "comfy.VIDEO")
+    assert expected_media.types == ("IMAGE", VIDEO_TYPE)
     assert crop_schema.outputs[0].type == expected_media
     assert uncrop_schema.inputs[0].type.kind == "variable"
     assert uncrop_schema.outputs[0].type == uncrop_schema.inputs[0].type
@@ -377,7 +378,7 @@ def test_registered_schemas_bind_media_output_types_through_graph_execution(type
             cache=MemoryLRUCache(),
         )
         frames = np.ones((2, 6, 8, 3), dtype=np.float32)
-        media = Link("assemble", "video") if type_id == "comfy.VIDEO" else Link("generate", "image")
+        media = Link("assemble", "video") if type_id == VIDEO_TYPE else Link("generate", "image")
         masks = np.ones((2, 6, 8), dtype=np.float32)
         graph = Graph(
             {
@@ -398,7 +399,7 @@ def test_registered_schemas_bind_media_output_types_through_graph_execution(type
                     "dinkster.image.tracked_crop",
                     {
                         "media": media,
-                        "source.masks": TypedLiteral("dinkster.mask", masks.tolist()),
+                        "source.masks": TypedLiteral("MASK", masks.tolist()),
                     },
                     slot_variants={"source": "masks"},
                 ),
@@ -418,7 +419,7 @@ def test_registered_schemas_bind_media_output_types_through_graph_execution(type
             output = execution.outputs[node]["media"]
             assert output.type_id == type_id
             result = output.resolve()
-            pixels = _video_frames(result) if type_id == "comfy.VIDEO" else result
+            pixels = _video_frames(result) if type_id == VIDEO_TYPE else result
             np.testing.assert_array_equal(pixels, frames)
 
     asyncio.run(scenario())

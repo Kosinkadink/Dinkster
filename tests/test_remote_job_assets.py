@@ -16,7 +16,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from dinkster_assets import AssetVault, register_asset_type
+from assetpack_nodes import ReadAssetInput
+from dinkster_api.v1 import AUDIO_TYPE
+from dinkster_assets import AssetVault, MountDef, MountTable, register_asset_type
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, ExecutionError
 from dinkster_graph import Graph, GraphNode
@@ -40,7 +42,7 @@ def write_assetpack_manifest(tmp_path: Path) -> Path:
     manifest = tmp_path / "dinkster-pack.toml"
     manifest.write_text(
         "[pack]\n"
-        'name = "assetpack"\n'
+        'name = "assetpack"\npublisher = "dinkster"\n'
         'namespaces = ["apack"]\n'
         "[pack.entry]\n"
         'nodes = "assetpack_nodes:NODES"\n'
@@ -174,7 +176,7 @@ def test_held_job_asset_short_circuits_without_transfer(
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("media_type", [None, "comfy.AUDIO", "dinkster.layers", "custom.media"])
+@pytest.mark.parametrize("media_type", [None, AUDIO_TYPE, "dinkster.layers", "custom.media"])
 def test_assets_query_once_deduplicated(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, media_type: str | None
 ) -> None:
@@ -266,6 +268,34 @@ def test_missing_endpoint_refuses_at_dispatch(tmp_path: Path) -> None:
                 await worker.close()
         finally:
             await stop_service(proc)
+
+    asyncio.run(scenario())
+
+
+def test_unverified_local_asset_refuses_remote_dispatch(tmp_path: Path) -> None:
+    path = tmp_path / "unhashed.bin"
+    path.write_bytes(MODEL_BYTES)
+    mounts = MountTable()
+    mounts.add(MountDef(id="models", path=tmp_path), kind="model/checkpoint")
+    reference = mounts.bind_name(path.name, "model/checkpoint")
+    assert reference is not None
+    registry = TypeRegistry()
+    register_core_types(registry)
+    register_asset_type(registry, mounts)
+    invocation = Invocation(
+        invocation_id="local-only",
+        node_id="r",
+        node_type="apack.read",
+        inputs={"data": registry.wrap("ASSET", reference)},
+        effective_schema=ReadAssetInput.define_schema(),
+    )
+
+    async def scenario() -> None:
+        worker = job_worker("127.0.0.1", 1, None)
+        result = await worker.invoke(invocation)
+        assert result.error is not None
+        assert "unverified local-only asset" in result.error.message
+        assert "granting host" in result.error.message
 
     asyncio.run(scenario())
 

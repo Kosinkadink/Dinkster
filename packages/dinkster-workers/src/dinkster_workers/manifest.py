@@ -83,12 +83,15 @@ from dinkster_protocol.pack_surfaces import PACK_SETTINGS_SCHEMA_MAX_BYTES, pack
 from dinkster_schema import (
     ComfyAliasRegistry,
     ComfyGroupRegistry,
+    canonical_claim,
     canonical_name,
     claim_covers,
     claims_conflict,
     comfy_alias_registry_from_wire,
     comfy_group_registry_from_wire,
     core_logger,
+    reserved_root,
+    validate_claim,
     validate_name,
 )
 from dinkster_values import MEBIBYTE
@@ -825,8 +828,8 @@ def _catalog_node_port_map(value: object, where: str) -> str | None:
     if not isinstance(value, dict):
         return f"{where} must be an object"
     for port_id, raw in cast("dict[str, object]", value).items():
-        if validate_name(port_id) is not None:
-            return f"{where} keys must be valid port ids"
+        if not port_id:
+            return f"{where} keys must be non-empty port ids"
         if not isinstance(raw, dict):
             return f"{where}.{port_id} must be an object"
         record = cast("dict[str, object]", raw)
@@ -845,8 +848,8 @@ def _catalog_combo_map(value: object, where: str) -> str | None:
     if not isinstance(value, dict):
         return f"{where} must be an object"
     for input_id, raw in cast("dict[str, object]", value).items():
-        if validate_name(input_id) is not None:
-            return f"{where} keys must be valid input ids"
+        if not input_id:
+            return f"{where} keys must be non-empty input ids"
         if not isinstance(raw, dict) or not raw:
             return f"{where}.{input_id} must be a non-empty object"
         for option, text in cast("dict[str, object]", raw).items():
@@ -875,8 +878,8 @@ def _validate_locale_catalog(
     if not isinstance(nodes, dict):
         return None, f"{path} nodes must be an object"
     for node_type, raw in cast("dict[str, object]", nodes).items():
-        if validate_name(node_type) is not None:
-            return None, f"{path} nodes keys must be valid node types"
+        if not node_type:
+            return None, f"{path} nodes keys must be non-empty node types"
         if not any(claim_covers(claim, node_type) for claim in namespaces):
             return None, f"{path} node {node_type!r} is not owned by this pack"
         if not isinstance(raw, dict) or not raw:
@@ -943,8 +946,8 @@ def _validate_locale_catalog(
     if not isinstance(search_terms, dict):
         return None, f"{path} searchTerms must be an object"
     for node_type, raw in cast("dict[str, object]", search_terms).items():
-        if validate_name(node_type) is not None:
-            return None, f"{path} searchTerms keys must be valid node types"
+        if not node_type:
+            return None, f"{path} searchTerms keys must be non-empty node types"
         if not any(claim_covers(claim, node_type) for claim in namespaces):
             return None, f"{path} searchTerms node {node_type!r} is not owned by this pack"
         if not isinstance(raw, list) or not raw:
@@ -2122,6 +2125,10 @@ class PackManifest:
     """Explicit host/API/inference contracts. None marks a legacy manifest."""
     dependencies: tuple[PackDependency, ...] = ()
     """Pack ordering dependencies, sorted by canonical pack id."""
+    publisher: str = ""
+    """Checkout publisher identity; installed publisher authority comes from the registry."""
+    type_namespaces: tuple[str, ...] = ()
+    """Exclusive type ids or namespaces declared in [pack] type-namespaces."""
     requirements: PackRequirements = PackRequirements()
     """Versioned capabilities this pack consumes."""
     sandbox: PackSandboxNeeds = PackSandboxNeeds()
@@ -2738,6 +2745,9 @@ def load_manifest(path: Path | str) -> PackManifest:
         raise ManifestError(f"{manifest_path}: [pack] name {name!r} {name_problem}")
 
     namespaces = _parse_namespaces(pack.get("namespaces"), name, manifest_path)
+    publisher = pack.get("publisher", "")
+    if not isinstance(publisher, str) or (publisher and validate_name(publisher) is not None):
+        raise ManifestError(f"{manifest_path}: [pack] publisher must be a valid publisher id")
 
     entry = pack.get("entry")
     if not isinstance(entry, dict):
@@ -2878,6 +2888,8 @@ def load_manifest(path: Path | str) -> PackManifest:
         path=manifest_path,
         contracts=_parse_contracts(pack.get("contracts"), manifest_path),
         dependencies=_parse_pack_dependencies(pack.get("dependencies"), manifest_path),
+        publisher=publisher,
+        type_namespaces=_parse_type_namespaces(pack.get("type-namespaces"), name, manifest_path),
         requirements=_parse_requirements(pack.get("requirements"), manifest_path),
         sandbox=_parse_sandbox(pack.get("sandbox"), manifest_path),
         sandbox_declared="sandbox" in pack,
@@ -3007,7 +3019,7 @@ def _parse_namespaces(raw: object, pack_name: str, manifest_path: Path) -> tuple
         )
     claims = cast("list[str]", raw)
     for claim in claims:
-        problem = validate_name(claim)
+        problem = validate_claim(claim)
         if problem is not None:
             raise ManifestError(f"{manifest_path}: [pack] namespaces entry {claim!r} {problem}")
     for index, claim in enumerate(claims):
@@ -3015,13 +3027,53 @@ def _parse_namespaces(raw: object, pack_name: str, manifest_path: Path) -> tuple
             if claims_conflict(earlier, claim):
                 detail = (
                     "are the same claim (separators '-', '_' and '.' are one equivalence class)"
-                    if canonical_name(earlier) == canonical_name(claim)
+                    if canonical_claim(earlier) == canonical_claim(claim)
                     else "overlap (one nests inside the other); keep only the broader claim"
                 )
                 raise ManifestError(
                     f"{manifest_path}: [pack] namespaces entries {earlier!r} and {claim!r} {detail}"
                 )
     return tuple(claims)
+
+
+def validate_registration_claims(manifest: PackManifest) -> None:
+    """Enforce publisher-qualified ownership before any pack entry runs."""
+    if manifest.publisher == "dinkster":
+        return
+    for field, claims in (
+        ("namespaces", manifest.namespaces),
+        ("type-namespaces", manifest.type_namespaces),
+    ):
+        for claim in claims:
+            if reserved_root(claim) is not None:
+                raise ManifestError(
+                    f"{manifest.path}: {field} claim {claim!r} is reserved; "
+                    "only publisher 'dinkster' may claim reserved namespaces"
+                )
+            if claim != manifest.name and not claim_covers(manifest.name, claim):
+                raise ManifestError(
+                    f"{manifest.path}: {field} claim {claim!r} must be prefixed by "
+                    f"pack name {manifest.name!r}; only publisher 'dinkster' may claim bare ids"
+                )
+
+
+def _parse_type_namespaces(raw: object, pack_name: str, manifest_path: Path) -> tuple[str, ...]:
+    if raw is None:
+        return (pack_name,)
+    if not isinstance(raw, list) or any(
+        not isinstance(item, str)
+        or not item
+        or not re.fullmatch(r"[A-Za-z][A-Za-z0-9]*(?:[-_.][A-Za-z0-9]+)*", item)
+        for item in cast("list[object]", raw)
+    ):
+        raise ManifestError(
+            f"{manifest_path}: [pack] type-namespaces must be a list of type claims"
+        )
+    claims = tuple(cast("list[str]", raw))
+    for index, claim in enumerate(claims):
+        if any(claims_conflict(earlier, claim) for earlier in claims[:index]):
+            raise ManifestError(f"{manifest_path}: [pack] type-namespaces has overlapping claims")
+    return claims
 
 
 def _parse_executes(raw: object, manifest_path: Path) -> tuple[str, ...]:

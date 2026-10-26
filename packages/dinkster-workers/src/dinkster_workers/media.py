@@ -9,6 +9,8 @@ from typing import Any, cast
 
 from dinkster_schema import NodeSchema, OutputSpec
 from dinkster_values import (
+    IMAGE_TYPE,
+    MASK_TYPE,
     Value,
     ValueMeta,
     annotate_image,
@@ -28,10 +30,8 @@ from dinkster_values.model import PyObjPayload
 def media_input_value(obj: object, type_id: str, original: Value) -> Value:
     """Describe invoked pixels without hashing decoded assets into cache identity."""
     if runtime_type_atom(type_id) not in (
-        "comfy.IMAGE",
-        "dinkster.image",
-        "comfy.MASK",
-        "dinkster.mask",
+        IMAGE_TYPE,
+        MASK_TYPE,
     ):
         return original
     element_type = parse_list_type_id(type_id)
@@ -43,9 +43,9 @@ def media_input_value(obj: object, type_id: str, original: Value) -> Value:
         return replace(make_list_value(element_type, children), fingerprint=original.fingerprint)
     if not hasattr(obj, "shape"):
         return original
-    if type_id in ("comfy.IMAGE", "dinkster.image"):
+    if type_id == IMAGE_TYPE:
         metadata = image_array_meta(obj)
-    elif type_id in ("comfy.MASK", "dinkster.mask"):
+    elif type_id == MASK_TYPE:
         metadata = mask_array_meta(obj)
     else:
         return original
@@ -57,7 +57,7 @@ def coercion_drops_alpha(value: Value, result: object) -> bool:
     sources = [
         child
         for child in iter_value_tree(value)
-        if parse_asset_type_id(child.type_id) in ("comfy.IMAGE", "dinkster.image")
+        if parse_asset_type_id(child.type_id) == IMAGE_TYPE
     ]
     if not sources:
         return False
@@ -86,7 +86,7 @@ def apply_alpha_policy(obj: object, type_id: str, policy: str) -> object:
         return [
             apply_alpha_policy(item, element_type, policy) for item in cast("Sequence[object]", obj)
         ]
-    if type_id not in {"comfy.IMAGE", "dinkster.image"} or policy not in (
+    if type_id != IMAGE_TYPE or policy not in (
         "require",
         "create_if_missing",
     ):
@@ -123,8 +123,8 @@ def prepare_media_output(
             for item in cast("Sequence[object]", obj)
         ]
     result = apply_alpha_policy(obj, type_id, spec.alpha_policy)
-    is_image = type_id in {"comfy.IMAGE", "dinkster.image"}
-    is_mask = type_id in {"comfy.MASK", "dinkster.mask"}
+    is_image = type_id == IMAGE_TYPE
+    is_mask = type_id == MASK_TYPE
     if (not is_image and not is_mask) or not hasattr(result, "shape"):
         return result
     explicit = hasattr(result, "_dinkster_media")
@@ -135,7 +135,7 @@ def prepare_media_output(
         if root is None or input_spec.alpha_policy == "drop":
             continue
         for value in iter_value_tree(root):
-            if is_image and value.type_id in {"comfy.IMAGE", "dinkster.image"}:
+            if is_image and value.type_id == IMAGE_TYPE:
                 channels = value.meta.get("channels")
                 alpha = (
                     cast("Mapping[str, object]", channels).get("alpha")
@@ -143,7 +143,7 @@ def prepare_media_output(
                     else None
                 )
                 sources.append({"color": value.meta.get("color"), "alpha": alpha})
-            elif is_mask and value.type_id in {"comfy.MASK", "dinkster.mask"}:
+            elif is_mask and value.type_id == MASK_TYPE:
                 sources.append(
                     {
                         "polarity": value.meta.get("polarity", "coverage"),

@@ -250,7 +250,7 @@ def test_curve_codec_is_canonical_and_bounded() -> None:
     assert spec.decode(b'{"points":[{"position":0,"value":1}]}') == Curve(((0, 1),))
     assert spec.meta is not None
     assert spec.meta(curve) == {"pointCount": 2, "start": 0.0, "end": 2.5}
-    with pytest.raises(ValueError, match="invalid dinkster.curve payload"):
+    with pytest.raises(ValueError, match="invalid CURVE payload"):
         spec.decode(b"not json")
     with pytest.raises(ValueError, match="strictly increasing"):
         spec.decode(b'{"points":[{"position":1,"value":0},{"position":1,"value":2}]}')
@@ -398,7 +398,7 @@ def test_conversion_curve_schemas_are_consolidated() -> None:
     for node_type in expected:
         assert schemas[node_type].aliases == ()
     convert = schemas["dinkster.value.convert"]
-    assert convert.inputs[0].type.types == ("core.int", "core.float", "core.string", "core.boolean")
+    assert convert.inputs[0].type.types == ("INT", "FLOAT", "STRING", "BOOLEAN")
     assert {output.id for output in convert.outputs if output.optional} == {
         "int",
         "float",

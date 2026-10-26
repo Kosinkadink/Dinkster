@@ -9,6 +9,13 @@ from typing import Any, cast
 
 import numpy as np
 from dinkster_api.v1 import (
+    BOUNDING_BOX_TYPE,
+    COMFY_ARRAY_TYPE,
+    COMPOSITOR_TYPE,
+    CORE_STRING,
+    DETECTION_TYPE,
+    LAYERS_TYPE,
+    REGION_TYPE,
     CompositorWidget,
     InputSpec,
     Node,
@@ -35,8 +42,8 @@ from .layer_document import migrate_layers
 from .support import combo_input, image_array, mask_array
 from .types import Detection, Region
 
-LAYERS = TypeExpr.concrete("dinkster.layers")
-COMPOSITOR = TypeExpr.concrete("dinkster.compositor")
+LAYERS = TypeExpr.concrete(LAYERS_TYPE)
+COMPOSITOR = TypeExpr.concrete(COMPOSITOR_TYPE)
 
 
 class AddLayer(Node):
@@ -59,7 +66,7 @@ class AddLayer(Node):
                 ),
                 InputSpec(
                     "name",
-                    TypeExpr.concrete("core.string"),
+                    TypeExpr.concrete(CORE_STRING),
                     required=False,
                     default="Layer",
                     widget=StringWidget(),
@@ -151,7 +158,7 @@ class LayersFromBoundingBoxes(Node):
                 InputSpec("image", IMAGE),
                 InputSpec(
                     "bounding_boxes",
-                    TypeExpr.list_of(TypeExpr.union("dinkster.region", "dinkster.detection")),
+                    TypeExpr.list_of(TypeExpr.union(REGION_TYPE, DETECTION_TYPE)),
                     required=False,
                     default=None,
                 ),
@@ -167,7 +174,7 @@ class LayersFromBoundingBoxes(Node):
                 InputSpec("canvas_height", INT, required=False, default=0),
                 InputSpec(
                     "bboxes",
-                    TypeExpr.union("core.string", "comfy.BOUNDING_BOX", "comfy.ARRAY"),
+                    TypeExpr.union(CORE_STRING, BOUNDING_BOX_TYPE, COMFY_ARRAY_TYPE),
                     required=False,
                     default=None,
                 ),

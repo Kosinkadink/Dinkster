@@ -21,6 +21,7 @@ import sys
 from collections.abc import Mapping
 
 import dinkster_api.v1 as api
+import pytest
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EngineEvent
 from dinkster_graph import Graph, GraphNode, Link
@@ -29,6 +30,15 @@ from dinkster_values import register_core_types
 from dinkster_workers import InProcessWorker
 
 GOLDEN_V1_SURFACE = (
+    "obtain_resident",
+    "LatentStream",
+    "MultiStreamLatent",
+    "initialize_inference_process",
+    "materialize_audio",
+    "materialize_clip_vision_output",
+    "materialize_image",
+    "materialize_latent",
+    "register_inference_types",
     "FrontendContribution",
     "FrontendModule",
     "JsonField",
@@ -66,8 +76,13 @@ GOLDEN_V1_SURFACE = (
     "SourceFilenameSpec",
     # -- node authoring (dinkster-schema)
     "ABSENT",
+    "BLOCKED",
     "AbsentOutput",
     "AbsentPolicy",
+    "Expansion",
+    "ExpansionBuilder",
+    "ExpansionNode",
+    "ExpansionOutput",
     "BooleanWidget",
     "ColorWidget",
     "CompositorWidget",
@@ -88,6 +103,7 @@ GOLDEN_V1_SURFACE = (
     "InputFamilySpec",
     "InputSpec",
     "MappingSource",
+    "MountWidget",
     "MultiComboWidget",
     "Node",
     "NodeOutputError",
@@ -109,6 +125,7 @@ GOLDEN_V1_SURFACE = (
     "ReplacementNode",
     "ReplacementPredicate",
     "ReplacementRule",
+    "RunExecutionContext",
     "SearchVisibility",
     "SelectorSpec",
     "SlotValue",
@@ -142,6 +159,58 @@ GOLDEN_V1_SURFACE = (
     "CORE_FLOAT",
     "CORE_INT",
     "CORE_STRING",
+    "ARRAY_TYPE",
+    "AUDIO_TYPE",
+    "BACKGROUND_REMOVAL_TYPE",
+    "BOUNDING_BOX_TYPE",
+    "CLIP_TYPE",
+    "CLIP_VISION_OUTPUT_TYPE",
+    "CLIP_VISION_TYPE",
+    "COLORS_TYPE",
+    "COLOR_TYPE",
+    "COMFY_ARRAY_TYPE",
+    "COMPOSITOR_TYPE",
+    "CONDITIONING_TYPE",
+    "CONTEXT_WINDOWS_TYPE",
+    "CONTROL_NET_TYPE",
+    "DICT_TYPE",
+    "FLOATS_TYPE",
+    "GLIGEN_TYPE",
+    "GUIDER_TYPE",
+    "HOOK_KEYFRAMES_TYPE",
+    "HOOKS_TYPE",
+    "IMAGE_TYPE",
+    "IMPACT_BASIC_PIPE_TYPE",
+    "INFERENCE_LATENT_OPERATION_TYPE",
+    "INPAINT_CONDITIONING_TYPE",
+    "LATENT_OPERATION_TYPE",
+    "LATENT_TYPE",
+    "LATENT_UPSCALE_MODEL_TYPE",
+    "LAYERS_TYPE",
+    "MASK_TYPE",
+    "MESH_TYPE",
+    "MODEL3D_TYPE",
+    "MODEL_PATCH_TYPE",
+    "MODEL_TYPE",
+    "MOGE_GEOMETRY_TYPE",
+    "MOGE_MODEL_TYPE",
+    "NOISE_TYPE",
+    "POSE_TYPE",
+    "RESOLUTION_PREVIEW_TYPE",
+    "RESOURCE_HANDLE_TYPE",
+    "SAMPLER_TYPE",
+    "SEGMENTATION_TYPE",
+    "SHAPE_SUBDIVIDES_TYPE",
+    "SIGMAS_TYPE",
+    "SPLAT_TYPE",
+    "STYLE_MODEL_TYPE",
+    "TIMESTEPS_RANGE_TYPE",
+    "VAE_TYPE",
+    "VECTOR_TYPE",
+    "VIDEO_DOCUMENT_TYPE",
+    "VIDEO_EDIT_TYPE",
+    "VIDEO_TYPE",
+    "VOXEL_TYPE",
     "COST_META_KEY",
     "CURVE_TYPE",
     "ENCODED_MEDIA_LIMIT_BYTES",
@@ -174,6 +243,8 @@ GOLDEN_V1_SURFACE = (
     "audio_input",
     "byte_storage_meta",
     "coerce_audio",
+    "list_children",
+    "Value",
     "effective_audio_facts",
     "decode_audio",
     "encode_audio",
@@ -215,7 +286,7 @@ GOLDEN_V1_SURFACE = (
     "region_meta",
     # -- model3d codec (dinkster-values.model3d_codec): raw GLB bytes across
     # boundaries, the original container as the browser rendition, and the
-    # asset<dinkster.model3d> file decode provider.
+    # asset<MODEL3D> file decode provider.
     "MODEL3D_FILE_DECODER_ID",
     "decode_model3d",
     "decode_model3d_file",
@@ -228,7 +299,7 @@ GOLDEN_V1_SURFACE = (
     "validate_model3d_encoded",
     # -- gaussian splat codec (dinkster-values.splat_codec): framed tensor
     # buffers across boundaries, PLY interchange renditions, and the
-    # asset<dinkster.splat> file decode provider.
+    # asset<SPLAT> file decode provider.
     "SPLAT_FILE_DECODER_ID",
     "SPLAT_PLY_MIME",
     "decode_splat",
@@ -241,7 +312,7 @@ GOLDEN_V1_SURFACE = (
     "validate_splat_encoded",
     # -- video codec (dinkster-values.video_codec): encoded container bytes
     # across boundaries and the original container as the browser
-    # rendition. Added so packs can register and operate on comfy.VIDEO
+    # rendition. Added so packs can register and operate on VIDEO
     # values the same way the compat surface does.
     "decode_video",
     "encode_video",
@@ -270,10 +341,12 @@ GOLDEN_V1_SURFACE = (
     "AssetVault",
     "FolderListing",
     "IndexedAssetResolver",
+    "LocalAssetRef",
     "declared_asset",
     "digest_bytes",
     "digest_file",
     "is_digest",
+    "mount_roots_for_kind",
     "register_asset_type",
     "resolver_from_env",
     # -- mounted saves (dinkster-assets + current dinkster-schema widgets)
@@ -346,6 +419,119 @@ loaded = {
     if name.split(".")[0] in {"dinkster_inference_wire", "torch"}
 }
 assert not loaded, sorted(loaded)
+from dinkster_api.v1 import initialize_inference_process, materialize_audio
+assert callable(initialize_inference_process)
+assert callable(materialize_audio)
+assert not any(name.split('.')[0] in {'torch', 'dinkster_inference'} for name in sys.modules)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_public_multi_stream_latents_are_cold_structural_identities() -> None:
+    script = """
+import importlib.abc
+import sys
+
+class BlockRuntime(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split('.')[0] in {'torch', 'dinkster_inference'}:
+            raise AssertionError(f'runtime imported: {fullname}')
+
+sys.meta_path.insert(0, BlockRuntime())
+import dinkster_api.v1 as api
+assert {'LatentStream', 'MultiStreamLatent'} <= set(dir(api))
+from dinkster_api.v1 import LatentStream, MultiStreamLatent
+from dinkster_inference_wire.latents import LatentStream as InternalStream
+from dinkster_inference_wire.latents import MultiStreamLatent as InternalMulti
+assert LatentStream is InternalStream
+assert MultiStreamLatent is InternalMulti
+audio, video = object(), object()
+value = MultiStreamLatent((LatentStream('audio', audio), LatentStream('video', video)))
+assert value.roles == ('audio', 'video')
+assert value.by_role('audio') is audio
+assert value.streams[-1].payload is video
+reversed_streams = MultiStreamLatent.from_pairs((('video', video), ('audio', audio)))
+assert reversed_streams.roles == ('video', 'audio')
+assert not any(name.split('.')[0] in {'torch', 'dinkster_inference'} for name in sys.modules)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_controlnet_registration_preserves_resident_identity_without_torch() -> None:
+    script = """
+import sys
+from dinkster_api.v1 import CONTROL_NET_TYPE, TypeRegistry, register_inference_types
+from dinkster_memory.resident import default_pool
+from dinkster_values import RESOURCE_ID_META_KEY, ResidentLookupError
+
+assert CONTROL_NET_TYPE == "CONTROL_NET"
+registry = TypeRegistry()
+register_inference_types(registry)
+spec = registry.spec(CONTROL_NET_TYPE)
+register_inference_types(registry)
+assert registry.spec(CONTROL_NET_TYPE) is spec
+assert "comfy.CONTROL_NET" not in registry
+source = object()
+encoded = spec.encode(source)
+assert spec.decode(encoded) is source
+assert spec.fingerprint(source) == spec.fingerprint(spec.decode(encoded))
+assert spec.meta(source)[RESOURCE_ID_META_KEY].startswith("resident:")
+assert default_pool().release_resident(source)
+try:
+    spec.decode(encoded)
+except ResidentLookupError:
+    pass
+else:
+    raise AssertionError("released ControlNet remained resolvable")
+assert "torch" not in sys.modules
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("native_first", (True, False))
+def test_gligen_registration_preserves_resident_identity_without_torch(native_first: bool) -> None:
+    script = f"""
+import sys
+from dinkster_api.v1 import GLIGEN_TYPE, TypeRegistry, register_inference_types
+from dinkster_memory.resident import default_pool
+from dinkster_native.native import register_native_types
+from dinkster_values import RESOURCE_ID_META_KEY, ResidentLookupError
+
+assert GLIGEN_TYPE == "GLIGEN"
+registry = TypeRegistry()
+registrations = (register_native_types, register_inference_types)
+if not {native_first!r}:
+    registrations = registrations[::-1]
+registrations[0](registry)
+spec = registry.spec(GLIGEN_TYPE)
+registrations[1](registry)
+assert registry.spec(GLIGEN_TYPE) is spec
+register_inference_types(registry)
+assert registry.spec(GLIGEN_TYPE) is spec
+assert default_pool() in registry.resident_tables
+assert "comfy.GLIGEN" not in registry
+source = object()
+encoded = spec.encode(source)
+assert spec.decode(encoded) is source
+assert spec.fingerprint(source) == spec.fingerprint(spec.decode(encoded))
+assert spec.meta(source)[RESOURCE_ID_META_KEY].startswith("resident:")
+assert default_pool().release_resident(source)
+try:
+    spec.decode(encoded)
+except ResidentLookupError:
+    pass
+else:
+    raise AssertionError("released GLIGEN remained resolvable")
+assert "torch" not in sys.modules
 """
     result = subprocess.run(
         [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
@@ -358,6 +544,7 @@ def test_golden_surface_is_exact() -> None:
     update this list deliberately; removals/renames are forbidden within v1
     (they mean a v2 module, not an edit)."""
     assert sorted(api.__all__) == sorted(GOLDEN_V1_SURFACE)
+    assert len(set(api.__all__)) == len(api.__all__)
     assert len(set(GOLDEN_V1_SURFACE)) == len(GOLDEN_V1_SURFACE)
     for name in GOLDEN_V1_SURFACE:
         assert hasattr(api, name), f"exported name missing on module: {name}"
@@ -366,6 +553,9 @@ def test_golden_surface_is_exact() -> None:
 def test_reexports_are_the_internal_objects() -> None:
     """Zero wrappers: the door hands out the internal objects themselves."""
     import dinkster_assets
+    import dinkster_inference_wire.latents as latent_values
+    import dinkster_inference_wire.process as inference_process
+    import dinkster_inference_wire.types as inference_types
     import dinkster_memory
     import dinkster_protocol
     import dinkster_schema
@@ -373,6 +563,9 @@ def test_reexports_are_the_internal_objects() -> None:
     import dinkster_video
 
     sources = (
+        latent_values,
+        inference_process,
+        inference_types,
         dinkster_schema,
         dinkster_values,
         dinkster_protocol,
@@ -384,7 +577,9 @@ def test_reexports_are_the_internal_objects() -> None:
         exported = getattr(api, name)
         owners = [m for m in sources if name in m.__all__]
         assert owners, f"{name} is not exported by any internal package"
-        expected_owners = 2 if name == "CustomWidgetDescriptor" else 1
+        expected_owners = (
+            2 if name in {"CustomWidgetDescriptor", "ASSET_TYPE", "SAVE_TARGET_TYPE"} else 1
+        )
         assert len(owners) == expected_owners, f"{name} exported by unexpected internal packages"
         assert all(getattr(owner, name) is exported for owner in owners), (
             f"{name} is a wrapper/copy"

@@ -23,6 +23,12 @@ The package is not published separately yet and provides no console script.
 
 ## Use
 
+`MountWidget()` presents a scalar STRING input as a writable mount selection.
+Save nodes append an optional `mount` input with `adjacent_to="filename_prefix"`.
+The `adjacentTo` wire hint names a sibling input and changes presentation only:
+interface order, stored positional values and execution signatures stay unchanged.
+An omitted mount value lets the asset writer select the output mount.
+
 The public surface exports `NodeSchema`, `InputSpec`, `OutputSpec`, `TypeExpr`,
 `Node`, elaboration and type-solving helpers, schema wire functions, reporting,
 logging, naming rules, and declarative replacement models. A minimal node keeps
@@ -35,7 +41,7 @@ from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 class Double(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        integer = TypeExpr.concrete("core.int")
+        integer = TypeExpr.concrete("INT")
         return NodeSchema(
             node_type="example.double",
             inputs=(InputSpec("value", integer),),
@@ -51,10 +57,28 @@ class Double(Node):
 static output IDs at the return site. Execution still receives and returns
 plain Python values; workers own envelope and transport details.
 
+## Positional tuple declarations
+
+`TypeExpr.tuple_of(...)` describes a fixed ordered sequence of independently
+typed positions. A tuple has scalar cardinality, including when a position
+contains a list. Its canonical type stamp is `tuple<IMAGE,INT>` for an image
+followed by an integer.
+
+An input family with `independent_types=True` gives each member its own type
+variables. `TypeExpr.tuple_from_family("items")` on an output projects that
+family's effective member types in document order. Ordinary families retain
+shared variables and therefore homogeneous list binding.
+
+`TypeExpr.tuple_element("value", "index")` projects an output from a named
+tuple input and a document-stored integer selector. Elaboration uses a missing
+selector's integer default; a non-integer stored selector is rejected. Type
+solving rejects non-tuple sources and out-of-range positions and supports
+negative indices. Schema elaboration and solving never inspect runtime payloads.
+
 ## Stored output descriptors
 
 `NodeSchema.output_descriptors` and its `OutputDescriptorsSpec`
-names a required top-level `core.string` input containing JSON:
+names a required top-level `STRING` input containing JSON:
 
 ```json
 {"entries":[{"id":"answer","name":"Answer","type":"integer","value":42}]}
@@ -117,8 +141,8 @@ strict and reject unknown or noncanonical fields.
 
 An `OutputSpec` may declare `known_value=OutputKnownValue(input="value")` when
 the output is exactly one of the node's top-level inputs. The input and output
-must share one concrete `core.int`, `core.float`, `core.string`, or
-`core.boolean` type. Clients can present the resolved value downstream before
+must share one concrete `INT`, `FLOAT`, `STRING`, or
+`BOOLEAN` type. Clients can present the resolved value downstream before
 execution without treating it as an estimate or cached result. If the input is
 connected, its upstream execution provenance remains authoritative.
 

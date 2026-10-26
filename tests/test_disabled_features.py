@@ -1,61 +1,86 @@
-"""Disabled feature boundaries remain closed even with the P2P extra installed."""
+"""Only shipped entry points and explicitly enabled template routes exist."""
 
 from __future__ import annotations
 
 import asyncio
-import shutil
-import subprocess
-import sys
+from importlib.metadata import distribution
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
+from dinkster_assets import ProvenanceStore, ResolverSubscriptionStore
 from dinkster_server import create_app
-from dinkster_server.settings import normalize_features
+from dinkster_server.settings import RuntimeSettings, normalize_features
 from test_server import SCHEMAS, make_engine
 
-from dinkster.p2p_plugin import disabled_main, load_p2p_plugin
+from dinkster.resolver_api import RESOLVER_INDEXES_KEY, add_resolver_index_routes
 
 
-def test_disabled_plugin_never_imports_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
-    def reject_import(name: str) -> None:
-        raise AssertionError(f"unexpected optional import: {name}")
+def _settings(*, resolver_enabled: bool) -> RuntimeSettings:
+    return RuntimeSettings(
+        {
+            "memory-budgets": {},
+            "memory-headroom": 256 * 1024**2,
+            "aimdo-policy": "auto",
+            "dtype-policy": {"diffusion": "auto", "textEncoder": "auto", "vae": "auto"},
+            "fp8-matmul": False,
+            "worker-comfy-args": (),
+            "jobs": {"maxRunningJobs": 1},
+            "logging": {"level": "info", "overrides": {}},
+        },
+        {
+            "memory-budgets": "default",
+            "memory-headroom": "default",
+            "aimdo-policy": "default",
+            "dtype-policy": "default",
+            "fp8-matmul": "default",
+            "worker-comfy-args": "default",
+            "jobs": "default",
+            "logging": "default",
+        },
+        features={"resolver": {"enabled": resolver_enabled}},
+    )
 
-    monkeypatch.setattr("dinkster.p2p_plugin.importlib.import_module", reject_import)
-    assert load_p2p_plugin() is None
-    assert load_p2p_plugin(enabled=False) is None
-    with pytest.raises(SystemExit, match="P2P is disabled"):
-        disabled_main()
 
-
-def test_server_import_and_disabled_routes_without_optional_imports() -> None:
-    code = """
-import sys
-class RejectP2P:
-    def find_spec(self, fullname, path=None, target=None):
-        if fullname in {'libtorrent', 'dinkster_p2p'} or fullname.startswith('dinkster_p2p.'):
-            raise AssertionError('disabled server imported P2P')
-sys.meta_path.insert(0, RejectP2P())
-from dinkster_assets.p2p_settings import default_p2p_settings, normalize_p2p_settings
-settings = default_p2p_settings()
-assert normalize_p2p_settings(settings) == settings
-import dinkster.serve
-from dinkster.p2p_plugin import load_p2p_plugin
-assert load_p2p_plugin() is None
-"""
-    subprocess.run([sys.executable, "-c", code], check=True)
-
+def test_server_exposes_only_supported_features_and_keeps_templates_disabled() -> None:
     async def scenario() -> None:
         app = create_app(make_engine, SCHEMAS)
-        assert not any("p2p" in str(route.resource) for route in app.router.routes())
+        namespaces: set[str] = set()
+        for route in app.router.routes():
+            resource = route.resource
+            assert resource is not None
+            namespaces.add("/".join(resource.canonical.split("/")[:3]))
+        assert namespaces == {
+            "/api/auth",
+            "/api/choices",
+            "/api/composition",
+            "/api/diagnostics",
+            "/api/docs",
+            "/api/events",
+            "/api/extension-assets",
+            "/api/extensions",
+            "/api/health",
+            "/api/jobs",
+            "/api/nodes",
+            "/api/packs",
+            "/api/principals",
+            "/api/queue",
+            "/api/settings",
+            "/api/values",
+            "/api/workers",
+            "/cache/trim",
+            "/memory/free",
+            "/memory/reserve",
+            "/memory/reset-peak",
+            "/memory/shed",
+            "/memory/status",
+            "/packs/{pack_id}",
+        }
         client = TestClient(TestServer(app))
         await client.start_server()
         try:
             for path in (
-                "/api/p2p/status",
-                "/api/p2p/transfers/anything",
-                "/dinkster-p2p/v1/mappings/anything",
-                "/dinkster-p2p/v2/mappings/anything",
                 "/api/templates",
                 "/api/packs/foundation/templates/loop",
                 "/api/packs/foundation/templates/loop/thumbnail",
@@ -63,26 +88,89 @@ assert load_p2p_plugin() is None
                 assert (await client.get(path)).status == 404, path
             payload = await (await client.get("/api/settings")).json()
             assert payload["features"] == {
-                "p2p": {"enabled": False},
+                "resolver": {"enabled": False},
                 "templates": {"enabled": False},
             }
+            assert payload["categories"]["available"] == [
+                "memory-budgets",
+                "memory-headroom",
+                "aimdo-policy",
+                "dtype-policy",
+                "fp8-matmul",
+                "worker-comfy-args",
+                "jobs",
+                "logging",
+            ]
         finally:
             await client.close()
 
     asyncio.run(scenario())
 
 
-def test_cli_entry_points_do_not_import_optional_runtime() -> None:
-    for entry in ("dinkster-seed", "dinkster-p2p-diagnostics"):
-        command = shutil.which(entry, path=str(Path(sys.executable).parent))
-        assert command is not None
-        result = subprocess.run([command], capture_output=True, text=True, check=False)
-        assert result.returncode != 0
-        assert result.stderr.strip() == "P2P is disabled"
+@pytest.mark.parametrize("resolver_enabled", [False, True])
+def test_resolver_index_routes_require_explicit_opt_in(
+    tmp_path: Path, resolver_enabled: bool
+) -> None:
+    async def scenario() -> None:
+        store = ResolverSubscriptionStore(
+            tmp_path / "resolver-indexes.json",
+            ProvenanceStore(tmp_path / "provenance.json"),
+        )
+        app = create_app(
+            make_engine, SCHEMAS, settings=_settings(resolver_enabled=resolver_enabled)
+        )
+        add_resolver_index_routes(app, store)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            response = await client.get("/api/assets/resolver-indexes")
+            assert response.status == (200 if resolver_enabled else 404)
+            assert (RESOLVER_INDEXES_KEY in app) is resolver_enabled
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_disabled_resolver_routes_do_not_bootstrap_or_refresh(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        store = ResolverSubscriptionStore(
+            tmp_path / "resolver-indexes.json",
+            ProvenanceStore(tmp_path / "provenance.json"),
+        )
+        app = create_app(make_engine, SCHEMAS, settings=_settings(resolver_enabled=False))
+        with (
+            patch.object(store, "bootstrap_official") as bootstrap,
+            patch.object(store, "refresh") as refresh,
+        ):
+            add_resolver_index_routes(app, store)
+            client = TestClient(TestServer(app))
+            await client.start_server()
+            try:
+                assert (await client.get("/api/assets/resolver-indexes")).status == 404
+                bootstrap.assert_not_called()
+                refresh.assert_not_called()
+            finally:
+                await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_installed_entry_points_match_the_shipped_commands() -> None:
+    assert {
+        entry.name
+        for entry in distribution("dinkster").entry_points
+        if entry.group == "console_scripts"
+    } == {"dinkster", "dinkster-serve", "dinkster-pack", "dinkster-isolated", "dinkster-port"}
 
 
 def test_feature_flags_require_boolean_opt_in() -> None:
-    assert normalize_features({}) == {"p2p": {"enabled": False}, "templates": {"enabled": False}}
+    assert normalize_features({}) == {
+        "resolver": {"enabled": False},
+        "templates": {"enabled": False},
+    }
     assert normalize_features({"templates": {"enabled": True}})["templates"]["enabled"]
-    with pytest.raises(ValueError, match="boolean"):
-        normalize_features({"p2p": {"enabled": "false"}})
+    assert normalize_features({"resolver": {"enabled": True}})["resolver"]["enabled"]
+    for feature in ("resolver", "templates"):
+        with pytest.raises(ValueError, match="boolean"):
+            normalize_features({feature: {"enabled": "false"}})

@@ -8,6 +8,7 @@ from collections.abc import Iterator, Mapping
 from fractions import Fraction
 from typing import Any, cast
 
+from .builtin_types import AUDIO_TYPE, IMAGE_TYPE, LAYERS_TYPE, VIDEO_DOCUMENT_TYPE, VIDEO_TYPE
 from .limits import MEBIBYTE
 from .model import stable_hash
 from .video_codec import asset_reference
@@ -15,11 +16,11 @@ from .video_codec import source_video as source_video
 from .video_codec import video_reference as video_reference
 from .video_edits import effective_video_facts, integer, mapping, seconds, trim_window
 
-DOCUMENT_TYPE = "dinkster.video_document"
+DOCUMENT_TYPE = VIDEO_DOCUMENT_TYPE
 DOCUMENT_LIMIT = MEBIBYTE
 MAX_ITEMS = 4096
 MAX_DEPTH = 16
-MEDIA_TYPES = frozenset({"comfy.VIDEO", "dinkster.image", "comfy.AUDIO", "dinkster.layers"})
+MEDIA_TYPES = frozenset({VIDEO_TYPE, IMAGE_TYPE, AUDIO_TYPE, LAYERS_TYPE})
 
 
 class TimelineError(ValueError):
@@ -223,11 +224,11 @@ def document(value: object) -> dict[str, Any]:
         raise TimelineError("document_limit", "sources", "at most 256 declared sources")
     for key, source in sources.items():
         ref = mapping(source, key)
-        if ref.get("type") == "comfy.VIDEO" and set(ref) == {"type", "video"}:
+        if ref.get("type") == VIDEO_TYPE and set(ref) == {"type", "video"}:
             source_video(ref)
         elif set(ref) == {"type", "asset"} and ref["type"] in MEDIA_TYPES:
             asset_reference(ref["asset"])
-        elif set(ref) == {"type", "asset", "resources"} and ref["type"] == "dinkster.layers":
+        elif set(ref) == {"type", "asset", "resources"} and ref["type"] == LAYERS_TYPE:
             asset_reference(ref["asset"])
             if not isinstance(ref["resources"], list):
                 raise TimelineError("invalid_source", key, "resources must be declared assets")

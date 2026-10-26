@@ -6,6 +6,8 @@ requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.10",
     "blake3>=0.4",
+    "comfy-aimdo==0.6.0",
+    "comfy-kitchen==0.2.40",
     "dinkster-api",
     "dinkster-schema",
     "dinkster-values",
@@ -44,11 +46,8 @@ dinkster-serve = "dinkster.serve:main"
 dinkster-pack = "dinkster.manager:main"
 dinkster-isolated = "dinkster.isolated_demo:main"
 dinkster-port = "dinkster.port:main"
-dinkster-p2p-diagnostics = "dinkster.p2p_plugin:disabled_main"
-dinkster-seed = "dinkster.p2p_plugin:disabled_main"
 
 [project.optional-dependencies]
-p2p = ["dinkster-p2p", "libtorrent==2.1.1"]
 default = [
     "dinkster-supervisor",
     "dinkster-collab",
@@ -89,7 +88,6 @@ dinkster-workers = { workspace = true }
 dinkster-caches = { workspace = true }
 dinkster-assets = { workspace = true }
 dinkster-image-document = { workspace = true }
-dinkster-p2p = { git = "https://github.com/Kosinkadink/dinkster-p2p.git", rev = "771e6cd180463998cdf21a3b6e5cf5cb821e7394" }
 dinkster-memory = { workspace = true }
 dinkster-native = { workspace = true }
 dinkster-compat-comfy = { workspace = true }
@@ -142,6 +140,7 @@ extraPaths = ["src", "../.dinkster-evidence-source", ".evidence-source"]
 # Torch execution modules are checked in their isolated worker environment.
 exclude = [
     "packages/dinkster-native/src/dinkster_native/model3d",
+    "packages/dinkster-nodes-comfy/tests",
     "packages/dinkster-nodes-vision",
 ]
 # The packages are the load-bearing code: strict there. Tests and the demo

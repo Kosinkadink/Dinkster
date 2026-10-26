@@ -51,9 +51,14 @@ from dinkster_assets import (
 from dinkster_assets.audio import register_audio_value_type
 from dinkster_server import PackInfo
 from dinkster_values import (
+    AUDIO_TYPE,
     IMAGE_BATCH_MERGER_ID,
     IMAGE_FILE_DECODER_ID,
+    IMAGE_TYPE,
+    LATENT_TYPE,
+    MASK_TYPE,
     PNG_CONTAINER_VERSION,
+    VIDEO_TYPE,
     TypeRegistry,
     decode_image_array,
     decode_image_file,
@@ -86,10 +91,8 @@ from .compose import CompositionError, PackSpec, cuda_vram_budgets, default_pack
 from .packs import blueprint_assets, pack_info_from_presentation, template_assets
 
 __all__ = [
-    "COMFY_AUDIO_TYPE",
     "COMFY_IMAGE_TYPE",
     "COMFY_MASK_TYPE",
-    "COMFY_VIDEO_TYPE",
     "ComfyModelRoot",
     "comfy_compat_specs",
     "comfy_model_roots",
@@ -104,25 +107,13 @@ COMFY_PACK_ID = "comfy"
 _CORE_START_TIMEOUT = 180.0  # first torch + ComfyUI import is slow
 _LEGACY_START_TIMEOUT = 300.0  # torch + ComfyUI + every legacy pack
 
-COMFY_IMAGE_TYPE = "comfy.IMAGE"
-"""The host-side spelling of the compat workers' image type. Kept as a
-literal because this module must not import dinkster_compat_comfy; it must
-match comfy_type_id("IMAGE") over there (translate.py's COMFY_TYPE_PREFIX
-plus image.py's IMAGE_V1_NAME)."""
+COMFY_IMAGE_TYPE = IMAGE_TYPE
+"""The exact host and worker image value type."""
 
-COMFY_MASK_TYPE = "comfy.MASK"
-"""MASK shares the image-array byte contract with IMAGE (``[H, W]`` /
-``[B, H, W]`` layouts), so ``comfy.MASK`` and ``dinkster.mask`` are one
-value type; only the PNG renderer differs (render_mask_png)."""
+COMFY_MASK_TYPE = MASK_TYPE
+"""The exact mask value type sharing IMAGE's byte contract."""
 
-COMFY_AUDIO_TYPE = "comfy.AUDIO"
-COMFY_VIDEO_TYPE = "comfy.VIDEO"
-COMFY_LATENT_TYPE = "comfy.LATENT"
-_IMAGE_TYPE_EQUIVALENCE_PROVIDER = "dinkster.image-array-type-equivalence@1"
-_COMFY_TYPE_EQUIVALENCES = (
-    (COMFY_IMAGE_TYPE, "dinkster.image"),
-    (COMFY_MASK_TYPE, "dinkster.mask"),
-)
+COMFY_LATENT_TYPE = LATENT_TYPE
 
 
 class ComfyModelRoot(NamedTuple):
@@ -179,8 +170,8 @@ def register_comfy_host_types(registry: TypeRegistry) -> None:
             render=render_image_png,
             version=PNG_CONTAINER_VERSION,
         )
-        # Typed assets (joint contract 2026-07-26): asset<comfy.IMAGE> decodes
-        # and list<asset<comfy.IMAGE>> merges. Host and workers use the same
+        # Typed assets (joint contract 2026-07-26): asset<IMAGE> decodes
+        # and list<asset<IMAGE>> merges. Host and workers use the same
         # provider identities even though their runtime forms differ.
         registry.register_asset_decoder(
             COMFY_IMAGE_TYPE,
@@ -211,10 +202,10 @@ def register_comfy_host_types(registry: TypeRegistry) -> None:
             render=render_mask_png,
             version=PNG_CONTAINER_VERSION,
         )
-    if COMFY_AUDIO_TYPE not in registry:
-        register_audio_value_type(registry, COMFY_AUDIO_TYPE, resolver_from_env())
-    if COMFY_VIDEO_TYPE not in registry:
-        register_video_value_type(registry, COMFY_VIDEO_TYPE, resolver_from_env())
+    if AUDIO_TYPE not in registry:
+        register_audio_value_type(registry, AUDIO_TYPE, resolver_from_env())
+    if VIDEO_TYPE not in registry:
+        register_video_value_type(registry, VIDEO_TYPE, resolver_from_env())
     if COMFY_LATENT_TYPE not in registry:
         registry.register(
             COMFY_LATENT_TYPE,
@@ -223,13 +214,6 @@ def register_comfy_host_types(registry: TypeRegistry) -> None:
             fingerprint=latent_fingerprint(COMFY_LATENT_TYPE),
             validate_encoded=validate_latent_encoded,
         )
-    for compat_type, native_type in _COMFY_TYPE_EQUIVALENCES:
-        if compat_type in registry and native_type in registry:
-            registry.register_type_equivalence(
-                compat_type,
-                native_type,
-                provider_id=_IMAGE_TYPE_EQUIVALENCE_PROVIDER,
-            )
 
 
 # Declared host data, not synthesis: one shared badge marks every unported

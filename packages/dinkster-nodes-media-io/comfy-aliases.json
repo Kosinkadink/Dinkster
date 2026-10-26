@@ -16,7 +16,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "required": true,
@@ -42,7 +42,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -66,7 +66,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -84,7 +84,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.int"
+              "INT"
             ]
           },
           "required": false,
@@ -103,7 +103,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.int"
+              "INT"
             ]
           },
           "required": false,
@@ -122,7 +122,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -146,7 +146,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           },
           "required": true
@@ -157,7 +157,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -173,7 +173,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -201,7 +201,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           },
           "required": true
@@ -212,7 +212,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -228,7 +228,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.combo"
+              "COMBO"
             ]
           },
           "required": false,
@@ -248,7 +248,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -276,7 +276,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           },
           "required": true
@@ -287,7 +287,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -303,7 +303,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.combo"
+              "COMBO"
             ]
           },
           "required": false,
@@ -325,7 +325,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -353,7 +353,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           },
           "required": true
@@ -364,7 +364,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -400,7 +400,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -424,7 +424,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           },
           "required": true
@@ -435,7 +435,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -452,7 +452,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -470,7 +470,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -494,7 +494,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           },
           "required": true
@@ -505,7 +505,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         },
@@ -515,7 +515,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -539,7 +539,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           },
           "required": true
@@ -550,7 +550,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           },
           "required": true
@@ -561,7 +561,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -585,7 +585,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           },
           "required": true
@@ -596,7 +596,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           },
           "required": true
@@ -607,7 +607,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.combo"
+              "COMBO"
             ]
           },
           "required": false,
@@ -627,7 +627,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -651,7 +651,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           },
           "required": true
@@ -662,7 +662,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           },
           "required": true
@@ -673,7 +673,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.combo"
+              "COMBO"
             ]
           },
           "required": false,
@@ -695,7 +695,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -719,7 +719,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           },
           "required": true
@@ -730,7 +730,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.int"
+              "INT"
             ]
           },
           "required": false,
@@ -748,7 +748,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -772,7 +772,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           },
           "required": true
@@ -783,7 +783,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -802,7 +802,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.int"
+              "INT"
             ]
           },
           "required": false,
@@ -820,7 +820,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -839,7 +839,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.int"
+              "INT"
             ]
           },
           "required": false,
@@ -857,7 +857,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -876,7 +876,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -895,7 +895,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.int"
+              "INT"
             ]
           },
           "required": false,
@@ -913,7 +913,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -937,7 +937,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": true,
@@ -953,7 +953,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -969,7 +969,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.combo"
+              "COMBO"
             ]
           },
           "required": false,
@@ -990,7 +990,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           }
         }
@@ -1026,7 +1026,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.int"
+              "INT"
             ]
           },
           "required": false,
@@ -1044,7 +1044,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.int"
+              "INT"
             ]
           },
           "required": false,
@@ -1062,7 +1062,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.boolean"
+              "BOOLEAN"
             ]
           },
           "required": false,
@@ -1098,7 +1098,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "required": true,
@@ -1157,7 +1157,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "required": true,
@@ -1182,7 +1182,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.combo"
+              "COMBO"
             ]
           },
           "required": false,
@@ -1227,7 +1227,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "required": true,
@@ -1298,7 +1298,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -1383,7 +1383,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -1399,7 +1399,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -1417,7 +1417,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.int"
+              "INT"
             ]
           },
           "required": false,
@@ -1471,7 +1471,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -1487,7 +1487,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -1505,7 +1505,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.boolean"
+              "BOOLEAN"
             ]
           },
           "required": false,
@@ -1517,7 +1517,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.int"
+              "INT"
             ]
           },
           "required": false,
@@ -1534,7 +1534,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.combo"
+              "COMBO"
             ]
           },
           "required": false,
@@ -1579,7 +1579,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.model3d"
+              "MODEL3D"
             ]
           },
           "required": true
@@ -1590,7 +1590,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -1606,7 +1606,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.int"
+              "INT"
             ]
           },
           "required": false,
@@ -1623,7 +1623,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.int"
+              "INT"
             ]
           },
           "required": false,
@@ -1640,7 +1640,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.model3d"
+              "MODEL3D"
             ]
           }
         }
@@ -1664,7 +1664,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.model3d"
+              "MODEL3D"
             ]
           },
           "required": true
@@ -1675,7 +1675,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -1691,7 +1691,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -1707,7 +1707,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.int"
+              "INT"
             ]
           },
           "required": false,
@@ -1724,7 +1724,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.int"
+              "INT"
             ]
           },
           "required": false,
@@ -1741,7 +1741,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.model3d"
+              "MODEL3D"
             ]
           }
         }
@@ -1765,7 +1765,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -1777,7 +1777,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -1793,7 +1793,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -1811,7 +1811,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         },
@@ -1821,7 +1821,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           }
         }
@@ -1845,7 +1845,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.combo"
+              "COMBO"
             ]
           },
           "required": true
@@ -1856,7 +1856,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -1874,7 +1874,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -1892,7 +1892,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         },
@@ -1902,7 +1902,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           }
         }
@@ -1926,7 +1926,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           },
           "required": true
@@ -1937,7 +1937,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -1949,7 +1949,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -1961,7 +1961,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -1985,7 +1985,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           },
           "required": true,
@@ -1997,7 +1997,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -2014,7 +2014,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.combo"
+              "COMBO"
             ]
           },
           "required": false,
@@ -2034,7 +2034,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.combo"
+              "COMBO"
             ]
           },
           "required": false,
@@ -2056,7 +2056,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         }
@@ -2093,7 +2093,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -2111,7 +2111,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           },
           "required": false,
@@ -2123,7 +2123,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.combo"
+              "COMBO"
             ]
           },
           "required": false,
@@ -2144,7 +2144,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.combo"
+              "COMBO"
             ]
           },
           "required": false,
@@ -2165,7 +2165,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VIDEO"
+              "VIDEO"
             ]
           }
         }
@@ -2189,7 +2189,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VIDEO"
+              "VIDEO"
             ]
           },
           "required": true,
@@ -2211,7 +2211,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.AUDIO"
+              "AUDIO"
             ]
           }
         },
@@ -2221,7 +2221,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           }
         },
@@ -2231,7 +2231,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.combo"
+              "COMBO"
             ]
           }
         },
@@ -2241,7 +2241,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.combo"
+              "COMBO"
             ]
           }
         }
@@ -2265,7 +2265,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "dinkster.asset"
+              "ASSET"
             ]
           },
           "required": true,
@@ -2289,7 +2289,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VIDEO"
+              "VIDEO"
             ]
           }
         }
@@ -2313,7 +2313,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VIDEO"
+              "VIDEO"
             ]
           },
           "required": true,
@@ -2325,7 +2325,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -2342,7 +2342,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.combo"
+              "COMBO"
             ]
           },
           "required": false,
@@ -2361,7 +2361,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -2373,7 +2373,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -2385,7 +2385,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -2426,7 +2426,7 @@
                                   "type": {
                                     "kind": "concrete",
                                     "types": [
-                                      "core.float"
+                                      "FLOAT"
                                     ]
                                   },
                                   "required": false,
@@ -2468,7 +2468,7 @@
                                   "type": {
                                     "kind": "concrete",
                                     "types": [
-                                      "core.float"
+                                      "FLOAT"
                                     ]
                                   },
                                   "required": false,
@@ -2527,7 +2527,7 @@
                                   "type": {
                                     "kind": "concrete",
                                     "types": [
-                                      "core.float"
+                                      "FLOAT"
                                     ]
                                   },
                                   "required": false,
@@ -2569,7 +2569,7 @@
                                   "type": {
                                     "kind": "concrete",
                                     "types": [
-                                      "core.float"
+                                      "FLOAT"
                                     ]
                                   },
                                   "required": false,
@@ -2628,7 +2628,7 @@
                                   "type": {
                                     "kind": "concrete",
                                     "types": [
-                                      "core.float"
+                                      "FLOAT"
                                     ]
                                   },
                                   "required": false,
@@ -2670,7 +2670,7 @@
                                   "type": {
                                     "kind": "concrete",
                                     "types": [
-                                      "core.float"
+                                      "FLOAT"
                                     ]
                                   },
                                   "required": false,
@@ -2729,7 +2729,7 @@
                                   "type": {
                                     "kind": "concrete",
                                     "types": [
-                                      "core.float"
+                                      "FLOAT"
                                     ]
                                   },
                                   "required": false,
@@ -2789,7 +2789,7 @@
                           "type": {
                             "kind": "concrete",
                             "types": [
-                              "core.float"
+                              "FLOAT"
                             ]
                           },
                           "required": false,
@@ -2831,7 +2831,7 @@
                           "type": {
                             "kind": "concrete",
                             "types": [
-                              "core.float"
+                              "FLOAT"
                             ]
                           },
                           "required": false,
@@ -2863,7 +2863,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VIDEO"
+              "VIDEO"
             ]
           },
           "doc": "The input video, unchanged."
@@ -2901,7 +2901,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.string"
+              "STRING"
             ]
           },
           "required": false,
@@ -2917,7 +2917,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.combo"
+              "COMBO"
             ]
           },
           "required": false,
@@ -2936,7 +2936,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -2954,7 +2954,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -2998,7 +2998,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VIDEO"
+              "VIDEO"
             ]
           },
           "required": true
@@ -3009,7 +3009,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -3028,7 +3028,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.float"
+              "FLOAT"
             ]
           },
           "required": false,
@@ -3046,7 +3046,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.boolean"
+              "BOOLEAN"
             ]
           },
           "required": false,
@@ -3059,7 +3059,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VIDEO"
+              "VIDEO"
             ]
           }
         }
@@ -3083,7 +3083,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VIDEO"
+              "VIDEO"
             ]
           },
           "required": true
@@ -3094,7 +3094,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VIDEO_EDIT"
+              "VIDEO_EDIT"
             ]
           },
           "required": false,
@@ -3114,7 +3114,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VIDEO"
+              "VIDEO"
             ]
           }
         }
@@ -3139,7 +3139,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VIDEO"
+              "VIDEO"
             ]
           },
           "required": true
@@ -3150,7 +3150,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VIDEO_EDIT"
+              "VIDEO_EDIT"
             ]
           },
           "required": false,
@@ -3168,7 +3168,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "core.boolean"
+              "BOOLEAN"
             ]
           },
           "required": false,
@@ -3182,7 +3182,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "comfy.VIDEO"
+              "VIDEO"
             ]
           }
         }

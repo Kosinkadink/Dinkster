@@ -43,12 +43,14 @@ ALLOWED: dict[str, set[str]] = {
     # owned by dinkster_values (type ids are registry namespace) and schema's
     # TypeExpr must use the same one (DESIGN 3.13).
     "dinkster_schema": {"dinkster_values"},
-    "dinkster_graph": {"dinkster_schema"},
-    # Native inference contracts contain protocols and frozen data only.
-    # dinkster_schema supplies the closed name grammar for registry ids;
-    # The conditioning carrier uses the bottom-layer dinkster_values package.
-    # Nothing else (and never torch) belongs here.
-    "dinkster_inference_wire": {"dinkster_schema", "dinkster_protocol", "dinkster_values"},
+    "dinkster_graph": {"dinkster_schema", "dinkster_values"},
+    # Shared inference codecs use the Torch-free governed resident pool.
+    "dinkster_inference_wire": {
+        "dinkster_schema",
+        "dinkster_protocol",
+        "dinkster_values",
+        "dinkster_memory",
+    },
     # The execution boundary itself (hazard H3): Worker/CacheStore protocols
     # plus the frozen data they exchange. A leaf on purpose - both the engine
     # (consumer) and workers/caches (implementations) depend on it, so a
@@ -107,9 +109,6 @@ ALLOWED: dict[str, set[str]] = {
     # Shared materialization consumes portable values, never packs or the scheduler.
     "dinkster_video": {"dinkster_values", "dinkster_image_document"},
     "dinkster_image_document": {"dinkster_assets", "dinkster_values"},
-    # The host-managed libtorrent sidecar consumes strict asset descriptors
-    # and the established private process boundary without importing the server.
-    "dinkster_p2p": {"dinkster_assets", "dinkster_workers"},
     # Packs may declare reservation policy (dinkster_memory's planner contracts)
     # but never touch the engine: planners observe InvocationView, not
     # Invocation. dinkster_graph is allowed for the Comfy API prompt adapter:
@@ -150,6 +149,7 @@ ALLOWED: dict[str, set[str]] = {
     # The install suite contains metadata only; component packs author
     # through the door exclusively and never import one another.
     "dinkster_nodes_std": set(),
+    "dinkster_nodes_comfy": {"dinkster_api"},
     "dinkster_nodes_foundation": {"dinkster_api"},
     "dinkster_nodes_media_io": {"dinkster_api", "dinkster_image_document"},
     "dinkster_nodes_image": {"dinkster_api", "dinkster_image_document"},
@@ -196,15 +196,9 @@ ALLOWED: dict[str, set[str]] = {
     },
 }
 
-EXTERNAL_PACKAGES = frozenset({"dinkster_p2p"})
-OPTIONAL_CORE_PACKAGES = frozenset({"dinkster_collab", "dinkster_p2p", "dinkster_supervisor"})
-OPTIONAL_PLUGIN_MODULES = frozenset(
-    {
-        REPO_ROOT / "src/dinkster/lan_p2p.py",
-        REPO_ROOT / "src/dinkster/p2p_api.py",
-        REPO_ROOT / "src/dinkster/seed.py",
-    }
-)
+EXTERNAL_PACKAGES: frozenset[str] = frozenset()
+OPTIONAL_CORE_PACKAGES = frozenset({"dinkster_collab", "dinkster_supervisor"})
+OPTIONAL_PLUGIN_MODULES: frozenset[Path] = frozenset()
 
 
 def dinkster_imports(path: Path) -> set[str]:
@@ -359,12 +353,10 @@ def test_umbrella_optional_packages_are_locked() -> None:
         ],
         "collab": ["dinkster-collab"],
         "supervisor": ["dinkster-supervisor"],
-        "p2p": ["dinkster-p2p", "libtorrent==2.1.1"],
     }
     assert {"dinkster-collab", "dinkster-supervisor"} <= {
         dependency for dependency in root_project["dependencies"]
     }
-    assert "dinkster-p2p" not in root_project["dependencies"]
     assert all(not dependency.startswith("gguf") for dependency in root_project["dependencies"])
     assert all(
         not dependency.startswith("gguf") for dependency in inference_project["dependencies"]
@@ -383,7 +375,6 @@ def test_umbrella_optional_packages_are_locked() -> None:
         ],
         "collab": [{"name": "dinkster-collab"}],
         "supervisor": [{"name": "dinkster-supervisor"}],
-        "p2p": [{"name": "dinkster-p2p"}, {"name": "libtorrent"}],
     }
     assert "gguf" not in {dependency["name"] for dependency in inference_locked["dependencies"]}
     assert "optional-dependencies" not in inference_locked
@@ -408,7 +399,7 @@ def test_windows_ci_installs_published_engine_dependencies_without_torch() -> No
     assert (
         "uv pip install --python $python --no-deps --index-url https://pypi.org/simple" in command
     )
-    assert '"dinkster-kitchen==0.2.35.post1"' in command
-    assert '"dinkster-aimdo==0.5.5.post2"' in command
-    assert "find_spec('dinkster_kitchen') is not None" in command
-    assert "find_spec('dinkster_aimdo') is not None" in command
+    assert '"comfy-kitchen==0.2.40"' in command
+    assert '"comfy-aimdo==0.6.0"' in command
+    assert "find_spec('comfy_kitchen') is not None" in command
+    assert "find_spec('comfy_aimdo') is not None" in command

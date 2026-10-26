@@ -58,11 +58,11 @@ _LINE_WIDTH = 100
 _CHOICE_PREVIEW = 8
 
 _SCALAR_ANNOTATIONS = {
-    "core.int": "int",
-    "core.float": "float",
-    "core.string": "str",
-    "core.combo": "str",
-    "core.boolean": "bool",
+    "INT": "int",
+    "FLOAT": "float",
+    "STRING": "str",
+    "COMBO": "str",
+    "BOOLEAN": "bool",
 }
 
 
@@ -391,7 +391,7 @@ def _choices_comment(node: dict[str, Any], input_id: str, indent: str) -> list[s
     if len(values) > _CHOICE_PREVIEW:
         preview += f", ... (+{len(values) - _CHOICE_PREVIEW} more)"
     return _comment_lines(
-        f"source combo choices for {input_id!r} (core.combo identity with "
+        f"source combo choices for {input_id!r} (COMBO identity with "
         f"UI-only vocabulary - consider a closed enum or an asset input): {preview}",
         indent,
     )
@@ -677,11 +677,13 @@ def _emit_module(
                 "",
                 "    TODO(port): declare encode/decode codecs so values cross process",
                 "    boundaries and caches without the fallback codec (dinkster doctor",
-                "    warns until then) - or drop entries owned by a pack you depend",
-                '    on and let that pack register them."""',
+                "    warns until then). Types outside this pack's namespace must",
+                '    come from built-ins or an owning pack dependency."""',
             ]
         )
-        register_lines.extend(f"    registry.register({t!r})" for t in opaque_types)
+        register_lines.extend(
+            f"    registry.register({t!r})" for t in opaque_types if t.startswith(pack_name + ".")
+        )
     else:
         register_lines.append('    """The translated schemas need no pack-owned value types."""')
     blocks.append("\n".join(register_lines))
@@ -781,12 +783,18 @@ def _emit_readme(
     )
     if opaque_types:
         lines.append(
-            "- [ ] Declare codecs in `register_types()` for: "
-            + ", ".join(f"`{t}`" for t in opaque_types)
+            "- [ ] Resolve value type ownership for: " + ", ".join(f"`{t}`" for t in opaque_types)
+        )
+        lines.extend(
+            [
+                "      Use built-ins or depend on the pack that owns a shared type.",
+                "      Register codecs only for types prefixed by this pack's name;",
+                "      do not alias another pack's type or register a second owner.",
+            ]
         )
     lines.extend(
         [
-            "- [ ] Review generated combo/boolean widgets; core.combo keeps",
+            "- [ ] Review generated combo/boolean widgets; COMBO keeps",
             "      choice vocabulary as UI affordance, so promote to closed",
             "      enums or asset inputs where choices are actual identity.",
             "- [ ] Revisit `idempotent=False` nodes - OUTPUT_NODE/IS_CHANGED",

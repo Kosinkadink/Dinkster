@@ -5,6 +5,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -58,7 +59,7 @@ def test_powershell_setup_pins_native_windows_test_environments() -> None:
         "packaging",
         "numpy>=1.26",
         "scipy>=1.11",
-        "simpleeval==1.0.3",
+        "simpleeval==1.0.8",
         "onnxruntime==1.29.0",
         "opencv-python-headless==5.0.0.93",
         "pillow==12.0.0",
@@ -66,7 +67,7 @@ def test_powershell_setup_pins_native_windows_test_environments() -> None:
         "sentencepiece==0.2.1",
         "tokenizers==0.23.1",
         "transformers==5.16.1",
-        "dinkster-aimdo==0.5.5.post2",
+        "comfy-aimdo==0.6.0",
         "$KitchenCpuWheel",
     ]
     assert _powershell_dependency_array(setup, "GpuDependencies") == [
@@ -80,8 +81,8 @@ def test_powershell_setup_pins_native_windows_test_environments() -> None:
         "safetensors==0.8.0",
         "sentencepiece==0.2.1",
         "tokenizers==0.23.1",
-        "dinkster-kitchen==0.2.35.post1",
-        "dinkster-aimdo==0.5.5.post2",
+        "comfy-kitchen==0.2.40",
+        "comfy-aimdo==0.6.0",
         "triton-windows==3.7.1.post27",
     ]
     assert '"3.12"' in setup
@@ -89,13 +90,27 @@ def test_powershell_setup_pins_native_windows_test_environments() -> None:
     assert '"torch==2.13.0+cu130"' in setup
     assert '"triton-windows==3.7.1.post27"' in setup
     assert (
-        "dinkster_kitchen-0.2.35.post1-py3-none-any.whl#sha256="
-        "31458547cdcf9ff26974a4955cf79e83ebdf50077666720d3bb3255786c5fc4f"
+        "comfy_kitchen-0.2.40-py3-none-any.whl#sha256="
+        "e5834f2ce993c8d5ea8c01650157c639742b5a28ecb0d95253777f31b5248099"
     ) in setup
     assert "Test-Path (Join-Path" in setup
     assert '"Python.h"' in setup
     assert "Get-Command nvidia-smi -ErrorAction SilentlyContinue" in setup
     assert "no enabled NVIDIA GPU detected - skipping .venv-gpu" in setup
+
+
+def test_setup_math_dependency_matches_workspace_lock() -> None:
+    lock = tomllib.loads((REPO_ROOT / "uv.lock").read_text())
+    version = next(item["version"] for item in lock["package"] if item["name"] == "simpleeval")
+    requirement = f"simpleeval=={version}"
+    project = tomllib.loads(
+        (REPO_ROOT / "packages/dinkster-nodes-comfy/pyproject.toml").read_text()
+    )
+    assert requirement in project["project"]["dependencies"]
+    assert requirement in _powershell_dependency_array(
+        POWERSHELL_SETUP.read_text(), "CpuDependencies"
+    )
+    assert f'"{requirement}"' in POSIX_SETUP.read_text()
 
 
 def test_powershell_setup_limits_force_and_has_no_private_installer() -> None:
@@ -111,8 +126,8 @@ def test_powershell_setup_limits_force_and_has_no_private_installer() -> None:
         assert f'${variable} = Join-Path $RepoRoot "{path}"' in setup
     assert force_body.count("Remove-Item -Recurse") == 1
     assert "$RootEnvironment, $TorchEnvironment, $GpuEnvironment, $SetupExtras" in force_body
-    assert "DINKSTER_AIMDO_TOKEN" not in setup
-    assert "install_dinkster_aimdo.py" not in setup
+    assert "COMFY_AIMDO_TOKEN" not in setup
+    assert "install_comfy_aimdo.py" not in setup
 
 
 def test_setup_scripts_skip_optional_acceptance_package_when_absent() -> None:

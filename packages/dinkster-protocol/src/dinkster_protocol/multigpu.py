@@ -6,9 +6,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal, cast
 
-SingleJobMultiGpuMode = Literal["auto", "guidance", "sequence", "window"]
+SingleJobMultiGpuMode = Literal["auto", "guidance", "sequence"]
 
-_MODES = ("auto", "guidance", "sequence", "window")
+_MODES = ("auto", "guidance", "sequence")
 
 
 @dataclass(frozen=True, slots=True)

@@ -331,12 +331,12 @@ from .events import (
 from .execution_journal import ExecutionJournal, add_execution_journal_routes
 from .history import HistoryStore, add_history_routes
 from .library import LIBRARY_KEY, ServerLibrary, add_library_routes
-from .p2p_plugin import default_p2p_settings
 from .pack_settings import PackSettingsStore
 from .pack_surfaces import FrontendModuleRead, PackRouteDispatch, install_pack_surfaces
 from .paging import decode_cursor, encode_cursor
 from .preflight import (
     asset_preflight,
+    bind_model_names,
     graph_asset_names,
     graph_node_types,
     graph_provider_selections,
@@ -1399,7 +1399,6 @@ class ServerState:
                 "worker-comfy-args": (),
                 "jobs": {"maxRunningJobs": max_running_jobs},
                 "logging": {"level": "info", "overrides": {}},
-                "p2p": default_p2p_settings(),
             },
             {category: "default" for category in SETTINGS_CATEGORIES},
         )
@@ -2616,6 +2615,7 @@ async def handle_nodes(request: web.Request) -> web.Response:
             for pack_id, info in state.packs.items()
         },
         "nodes": nodes,
+        "typeOwners": state.engine.registry.type_owners(),
     }
     # Present exactly while the host is still announcing packs: this table
     # is real but not final - expect more epochs, then a
@@ -3412,6 +3412,13 @@ async def handle_submit(request: web.Request) -> web.Response:
             raise _bad_request(str(exc)) from exc
         graph = lowered.graph
         targets = list(lowered.targets)
+        graph, missing_names = await asyncio.to_thread(
+            bind_model_names, graph, execution.schemas, library
+        )
+        if missing_names:
+            return web.json_response(
+                {"error": "assets-missing", "assets": missing_names}, status=409
+            )
         execution = state.place_execution(execution, placement)
         execution_graph = graph
         if execution.resolve_providers is not None:

@@ -11,8 +11,10 @@ from typing import Any, Protocol, cast
 
 import numpy as np
 from dinkster_values import (
+    CURVE_TYPE,
     TIMELINE_ACTIVE_FRAME_LIMIT_BYTES,
     TIMELINE_AUDIO_WINDOW_LIMIT_BYTES,
+    VIDEO_TYPE,
     coerce_video,
     edit_video,
 )
@@ -74,7 +76,7 @@ class TimelineKernels(Protocol):
 def scalar(value: Any, time: Fraction, kernels: TimelineKernels) -> float:
     if isinstance(value, dict):
         value = cast(dict[str, Any], value)
-        if value.get("type") != "dinkster.curve":
+        if value.get("type") != CURVE_TYPE:
             raise TimelineError("invalid_curve", "$", "expected type dinkster.curve")
         return kernels.curve(value["value"], float(time))
     return float(seconds(value, "scalar"))
@@ -85,7 +87,7 @@ def parameters(
 ) -> dict[str, Any]:
     return {
         key: scalar(item, time, kernels)
-        if isinstance(item, dict) and cast(dict[str, Any], item).get("type") == "dinkster.curve"
+        if isinstance(item, dict) and cast(dict[str, Any], item).get("type") == CURVE_TYPE
         else item
         for key, item in value.items()
     }
@@ -161,7 +163,7 @@ def single_clip_video(value: object, media: TimelineMedia) -> dict[str, object] 
     ):
         return None
     reference = source_for(obj, item, "tracks.children[0].children[0]")
-    if reference["type"] != "comfy.VIDEO":
+    if reference["type"] != VIDEO_TYPE:
         return None
     return clip_video(media.video(reference), item)
 
@@ -431,7 +433,7 @@ def iter_timeline_frames(
                     end = start if placement.speed < 0 else placement.source_time(placement.end)
                     try:
                         media_end = None
-                        if reference["type"] == "comfy.VIDEO":
+                        if reference["type"] == VIDEO_TYPE:
                             duration = effective_video_facts(coerce_video(media.video(reference)))[
                                 "duration"
                             ]

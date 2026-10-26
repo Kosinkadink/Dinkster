@@ -28,7 +28,7 @@ from dinkster_workers.doctor import (
 
 HEALTHY_MANIFEST = """\
 [pack]
-name = "healthy-pack"
+name = "healthy"
 namespaces = ["healthy"]
 requires = ["numpy>=1.26"]
 
@@ -57,8 +57,8 @@ class Doubler(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="healthy.doubler",
-            inputs=(InputSpec("value", TypeExpr.concrete("core.int")),),
-            outputs=(OutputSpec("doubled", TypeExpr.concrete("core.int")),),
+            inputs=(InputSpec("value", TypeExpr.concrete("INT")),),
+            outputs=(OutputSpec("doubled", TypeExpr.concrete("INT")),),
         )
 
     @classmethod
@@ -71,7 +71,7 @@ class Tagger(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="healthy.tagger",
-            inputs=(InputSpec("text", TypeExpr.concrete("core.string")),),
+            inputs=(InputSpec("text", TypeExpr.concrete("STRING")),),
             outputs=(OutputSpec("tag", TypeExpr.concrete("healthy.tag")),),
         )
 
@@ -108,7 +108,7 @@ def test_healthy_pack_is_healthy(tmp_path: Path) -> None:
     manifest = write_pack(tmp_path / "healthy", HEALTHY_MANIFEST, "healthy_nodes", HEALTHY_NODES)
     report = diagnose(manifest)
     assert report.ok, render_text(report)
-    assert report.pack_name == "healthy-pack"
+    assert report.pack_name == "healthy"
     assert report.entry_path == str((manifest.parent / "healthy_nodes.py").resolve())
     assert report.interpreter == str(Path(sys.executable).absolute())
     assert report.node_types == ("healthy.doubler", "healthy.tagger")
@@ -134,15 +134,15 @@ privileges = ["frontend"]
 capabilities = ["filesystem"]
 
 [[pack.extension.frontend-modules]]
-id = "healthy-pack.frontend"
+id = "healthy.frontend"
 module = "./frontend.js"
 privileges = ["app-workflow"]
 contributions = [
-  { id = "healthy-pack.editor", kind = "editor" },
-  { id = "healthy-pack.binding", kind = "editorBinding" },
-  { id = "healthy-pack.panel", kind = "panel" },
-  { id = "healthy-pack.note", kind = "virtualNode" },
-  { id = "healthy-pack.observer", kind = "workflowObserver" },
+  { id = "healthy.editor", kind = "editor" },
+  { id = "healthy.binding", kind = "editorBinding" },
+  { id = "healthy.panel", kind = "panel" },
+  { id = "healthy.note", kind = "virtualNode" },
+  { id = "healthy.observer", kind = "workflowObserver" },
 ]
 """
     )
@@ -155,14 +155,14 @@ contributions = [
     by_code = {finding.code: finding for finding in report.findings}
     contribution = by_code["extension.contribution-unconsumed"]
     assert contribution.severity == "warning"
-    assert "pack 'healthy-pack'" in contribution.message
+    assert "pack 'healthy'" in contribution.message
     assert "'workflowObserver'" in contribution.message
     assert (
         sum(finding.code == "extension.contribution-unconsumed" for finding in report.findings) == 1
     )
     capability = by_code["extension.capability-unconsumed"]
     assert capability.severity == "warning"
-    assert "pack 'healthy-pack'" in capability.message
+    assert "pack 'healthy'" in capability.message
     assert "'filesystem'" in capability.message
 
 
@@ -176,10 +176,10 @@ def test_doctor_rejects_an_unknown_frontend_contribution_kind(tmp_path: Path) ->
 privileges = ["frontend"]
 
 [[pack.extension.frontend-modules]]
-id = "healthy-pack.frontend"
+id = "healthy.frontend"
 module = "./frontend.js"
 privileges = ["graph-editor-canvas"]
-contributions = [{ id = "healthy-pack.future", kind = "futureKind" }]
+contributions = [{ id = "healthy.future", kind = "futureKind" }]
 """,
         "healthy_nodes",
         HEALTHY_NODES,
@@ -486,15 +486,28 @@ def test_doctor_reports_invalid_locale_catalogs(tmp_path: Path, data: str, messa
     assert finding.fix
 
 
-def test_doctor_accepts_valid_locale_catalog(tmp_path: Path) -> None:
-    manifest_path = write_pack(
-        tmp_path / "catalog-pack", HEALTHY_MANIFEST, "healthy_nodes", HEALTHY_NODES
-    )
+@pytest.mark.parametrize("exact_node", [False, True])
+def test_doctor_accepts_valid_locale_catalog(tmp_path: Path, exact_node: bool) -> None:
+    manifest = HEALTHY_MANIFEST
+    source = HEALTHY_NODES
+    node_type = "healthy.doubler"
+    if exact_node:
+        node_type = "TextEncodeAceStepAudio1.5"
+        manifest = manifest.replace(
+            'name = "healthy"\n',
+            'name = "healthy"\npublisher = "dinkster"\n',
+        ).replace('["healthy"]', f'["healthy", "{node_type}"]')
+        source = source.replace("healthy.doubler", node_type)
+    manifest_path = write_pack(tmp_path / "catalog-pack", manifest, "healthy_nodes", source)
     locales = manifest_path.parent / "locales"
     locales.mkdir()
     (locales / "en.json").write_text(
-        '{"nodes":{"healthy.doubler":{"displayName":"Doubler"}},'
-        '"searchTerms":{"healthy.doubler":["double"]}}\n'
+        json.dumps(
+            {
+                "nodes": {node_type: {"displayName": "Doubler"}},
+                "searchTerms": {node_type: ["double"]},
+            }
+        )
     )
 
     report = diagnose(manifest_path)
@@ -728,10 +741,13 @@ def test_invalid_asset_is_a_publish_gate_error(tmp_path: Path) -> None:
 
 def test_uncovered_node_type_is_an_error(tmp_path: Path) -> None:
     """Every probed node type must fall under a declared namespace claim
-    (DESIGN M8): the default claim is the pack name, and healthy-pack does
+    (DESIGN M8): the default claim is the pack name, and healthy does
     not cover healthy.* - the registry and composition both refuse this,
     so doctor says it first, naming the node type and the claims."""
-    manifest = HEALTHY_MANIFEST.replace('namespaces = ["healthy"]\n', "")
+    manifest = HEALTHY_MANIFEST.replace(
+        'name = "healthy"\nnamespaces = ["healthy"]\n',
+        'name = "healthy-pack"\npublisher = "dinkster"\n',
+    )
     manifest_path = write_pack(tmp_path / "uncovered", manifest, "healthy_nodes", HEALTHY_NODES)
     report = diagnose(manifest_path)
     assert not report.ok
@@ -763,7 +779,7 @@ def test_reserved_namespace_claim_warns(tmp_path: Path) -> None:
     it is not looking at a first-party pack)."""
     manifest = HEALTHY_MANIFEST.replace(
         'namespaces = ["healthy"]', 'namespaces = ["healthy", "std.extras"]'
-    )
+    ).replace('name = "healthy"\n', 'name = "healthy"\npublisher = "dinkster"\n')
     manifest_path = write_pack(tmp_path / "reserved", manifest, "healthy_nodes", HEALTHY_NODES)
     report = diagnose(manifest_path)
     assert report.ok  # warning, not error
@@ -956,7 +972,7 @@ def test_import_time_pack_logging_is_structured_not_raw_output(
 ) -> None:
     source = (
         "from dinkster_api.v1 import pack_logger\n"
-        '_log = pack_logger("healthy-pack")\n'
+        '_log = pack_logger("healthy")\n'
         '_log.info("registering %d nodes", 2)\n' + HEALTHY_NODES
     )
     manifest = write_pack(tmp_path / "logging", HEALTHY_MANIFEST, "healthy_nodes", source)
@@ -968,7 +984,7 @@ def test_import_time_pack_logging_is_structured_not_raw_output(
     assert report.ok, render_text(report)
     log_finding = next(f for f in report.findings if f.code == "import.log")
     assert log_finding.severity == "info"
-    assert "dinkster.pack.healthy-pack" in log_finding.message
+    assert "dinkster.pack.healthy" in log_finding.message
     assert "registering 2 nodes" in log_finding.message
 
 
@@ -984,13 +1000,13 @@ def test_logging_under_another_packs_origin_warns(tmp_path: Path) -> None:
     finding = next(f for f in report.findings if f.code == "import.log-foreign-origin")
     assert finding.severity == "warning"
     assert "dinkster.pack.somebody-else" in finding.message
-    assert "healthy-pack" in finding.fix
+    assert "healthy" in finding.fix
 
 
 def test_raw_prints_still_warn_alongside_structured_logs(tmp_path: Path) -> None:
     source = (
         "from dinkster_api.v1 import pack_logger\n"
-        'pack_logger("healthy-pack").info("fine")\n'
+        'pack_logger("healthy").info("fine")\n'
         'print("not fine")\n' + HEALTHY_NODES
     )
     manifest = write_pack(tmp_path / "mixed", HEALTHY_MANIFEST, "healthy_nodes", source)

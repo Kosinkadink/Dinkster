@@ -51,6 +51,16 @@ consumers for the immediate shortfall before allocation. This is pressure
 handling, not a default RAM cap: an unbudgeted request still grants when
 consumers cannot free enough or the memory query is unavailable.
 
+`dinkster_api.v1.obtain_resident(key, load, ram_bytes=...)` reuses an expensive
+loading sub-step in the existing shared inference resident pool. Validate bound
+asset access before every call, including hits. A key distinguishes the loader
+purpose, asset digest or local binding, and all loading parameters (for example
+authorized embedding roots); cheap strength transforms do not belong in it.
+`load()` returns the value and `ram_bytes(value)` reports its retained RAM bytes.
+Concurrent callers for the same key share one load. Failed loads can be retried.
+The lookup retains resident ids, not a second strong-reference value cache;
+ordinary governed release removes its keys, so later use loads again.
+
 ## Learn more
 
 See DESIGN 3.10 for parallel execution and memory governance, including

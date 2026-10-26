@@ -23,7 +23,7 @@ from dinkster.cli import main
 
 HEALTHY_MANIFEST = """\
 [pack]
-name = "healthy-pack"
+name = "healthy"
 namespaces = ["healthy"]
 requires = ["numpy>=1.26"]
 
@@ -40,8 +40,8 @@ class Doubler(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="healthy.doubler",
-            inputs=(InputSpec("value", TypeExpr.concrete("core.int")),),
-            outputs=(OutputSpec("doubled", TypeExpr.concrete("core.int")),),
+            inputs=(InputSpec("value", TypeExpr.concrete("INT")),),
+            outputs=(OutputSpec("doubled", TypeExpr.concrete("INT")),),
         )
 
     @classmethod
@@ -70,7 +70,6 @@ def test_help_lists_every_command_exit_0(capsys) -> None:
         "pack",
         "installs",
         "port",
-        "p2p-diagnostics",
         "demo",
         "isolated-demo",
     ):

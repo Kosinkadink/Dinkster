@@ -11,8 +11,8 @@ and enforces the ownership contract around it:
 - an invocation arriving without a selection is a wiring error, loudly;
 - every resident input's owner token (RESOURCE_OWNER_META_KEY) must resolve
   to the selected arm's opaque worker-session domain;
-- producer-arm provenance must match the selected arm even when several
-  arms share one session and residency domain;
+- producer-arm provenance must match the selected arm or a compatible
+  cross-pack default body in the same residency domain;
 - every resident OUTPUT must satisfy the same two facts, or it would poison
   the cache entry the selection's tag names.
 
@@ -28,6 +28,9 @@ from dataclasses import dataclass, replace
 from typing import cast
 
 from dinkster_protocol import (
+    AdmissionInvocation,
+    AdmissionResult,
+    AdmissionWorker,
     Invocation,
     InvocationResult,
     LazyStatusInvocation,
@@ -42,9 +45,10 @@ from dinkster_values import (
     RESOURCE_OWNER_META_KEY,
     RESOURCE_PRODUCER_ARM_META_KEY,
     ListPayload,
+    TuplePayload,
     Value,
     ValueMeta,
-    list_children,
+    value_children,
     value_resource_provenance_refs,
 )
 
@@ -100,12 +104,12 @@ class ArmWorker:
 
 
 def _qualify_producer_arm(value: Value, owner: str, arm: str) -> Value:
-    children = list_children(value)
+    children = value_children(value)
     if children is not None:
         qualified = tuple(_qualify_producer_arm(child, owner, arm) for child in children)
         if qualified != children:
             payload = value.payload
-            assert isinstance(payload, ListPayload)
+            assert isinstance(payload, ListPayload | TuplePayload)
             value = replace(value, payload=replace(payload, children=qualified))
     if (
         isinstance(value.meta.get(RESOURCE_ID_META_KEY), str)
@@ -125,6 +129,7 @@ class DispatchWorker:
         resolve_owner: ResolveOwner,
         arm_domains: Mapping[str, ResidencyDomain],
         default_arms: Mapping[str, str],
+        producer_targets: Mapping[str, str] | None = None,
     ) -> None:
         if not arms:
             raise ValueError("DispatchWorker needs at least one arm")
@@ -135,6 +140,15 @@ class DispatchWorker:
         self._resolve_owner = resolve_owner
         self._arm_domains = dict(arm_domains)
         self._default_arms = dict(default_arms)
+        self._producer_targets = {arm: arm for arm in arms}
+        if producer_targets is not None:
+            self._producer_targets.update(producer_targets)
+        if any(target not in arms for target in self._producer_targets.values()):
+            raise ValueError("DispatchWorker producer_targets must name executable arms")
+        if any(self._producer_targets[arm] != arm for arm in arms):
+            raise ValueError(
+                "DispatchWorker producer_targets must preserve executable arm affinity"
+            )
         if set(self._arm_domains) != set(self._arms):
             raise ValueError("DispatchWorker arm_domains must exactly match arms")
         if set(self._default_arms) != set(self._arms):
@@ -194,12 +208,12 @@ class DispatchWorker:
                 if not require_producer_arm:
                     continue
                 if producer_present:
-                    if not isinstance(producer, str) or producer not in self._arms:
+                    if not isinstance(producer, str) or producer not in self._producer_targets:
                         return (
                             f"{direction} '{name}' references resource {rid!r} "
                             f"with malformed or unknown producer arm {producer!r}"
                         )
-                    producer_arm = producer
+                    producer_arm = self._producer_targets[producer]
                 else:
                     producer_arm = self._default_arms[target]
                 if producer_arm != target:
@@ -268,5 +282,17 @@ class DispatchWorker:
                 )
             )
         return await cast("LazyStatusWorker", worker).check_lazy_status(
+            invocation, on_event=on_event
+        )
+
+    async def validate_admission(
+        self, invocation: AdmissionInvocation, on_event: OnInvocationEvent | None = None
+    ) -> AdmissionResult:
+        worker = self._arms[self._owner_arm]
+        if not callable(getattr(worker, "validate_admission", None)):
+            return AdmissionResult(
+                "admission-protocol-skew: dispatch owner does not support admission validation"
+            )
+        return await cast("AdmissionWorker", worker).validate_admission(
             invocation, on_event=on_event
         )

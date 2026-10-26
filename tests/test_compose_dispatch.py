@@ -29,6 +29,7 @@ from dinkster_protocol import (
     AttentionPolicyConfig,
     AttentionRouteToken,
     BeginWorkGroup,
+    CachedResult,
     CacheKey,
     CancelWorkGroup,
     CommitWorkGroup,
@@ -945,9 +946,9 @@ def _attention_capabilities(*, kitchen: bool = False) -> AttentionCapabilityEvid
         device_sm=None,
         sdpa_torch_runtime="2.13.0",
         adapter_contract_revision="dinkster.attention-kernel.v1",
-        available_policies=("sdpa", "dinkster_kitchen_int8") if kitchen else ("sdpa",),
+        available_policies=("sdpa", "comfy_kitchen_int8") if kitchen else ("sdpa",),
         provider_versions=(
-            (("dinkster-kitchen", "0.2.31"), ("torch", "2.13.0"))
+            (("comfy-kitchen", "0.2.31"), ("torch", "2.13.0"))
             if kitchen
             else (("torch", "2.13.0"),)
         ),
@@ -1020,7 +1021,7 @@ class Own(Node):
 from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_values import TypeRegistry
 
-STRING = TypeExpr.concrete("core.string")
+STRING = TypeExpr.concrete("STRING")
 
 def register_types(registry: TypeRegistry) -> None:
     pass
@@ -1059,7 +1060,8 @@ NODES = [{nodes}]
     arm_entry = f'arm_nodes = "{module}:ARM_NODES"\n' if body_arm else ""
     manifest = root / "dinkster-pack.toml"
     manifest.write_text(
-        f'[pack]\nname = "{name}"\nnamespaces = ["{namespace}"]\n'
+        f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
+        f'namespaces = ["{namespace}"]\n'
         f"{executes_line}{schema_only_line}{arms_table}\n[pack.entry]\n"
         f'nodes = "{module}:NODES"\ntypes = "{module}:register_types"\n{arm_entry}'
     )
@@ -1095,8 +1097,8 @@ def _write_vision_provider_packs(
 
 from dinkster_api.v1 import ComboWidget, InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 
-STRING = TypeExpr.concrete("core.string")
-COMBO = TypeExpr.concrete("core.combo")
+STRING = TypeExpr.concrete("STRING")
+COMBO = TypeExpr.concrete("COMBO")
 
 class Vision(Node):
     @classmethod
@@ -1134,6 +1136,7 @@ def choices() -> dict[str, tuple[str, ...]]:
     owner_manifest.write_text(
         """[pack]
 name = "vision-owner"
+publisher = "dinkster"
 namespaces = ["vision"]
 [pack.entry]
 nodes = "vision_owner_nodes:NODES"
@@ -1448,8 +1451,8 @@ def _write_generation_provider_packs(root: Path) -> tuple[Path, Path, Path]:
 
 from dinkster_api.v1 import ComboWidget, InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 
-STRING = TypeExpr.concrete("core.string")
-COMBO = TypeExpr.concrete("core.combo")
+STRING = TypeExpr.concrete("STRING")
+COMBO = TypeExpr.concrete("COMBO")
 
 class Generate(Node):
     @classmethod
@@ -1512,6 +1515,7 @@ def choices() -> dict[str, tuple[str, ...]]:
     owner_manifest.write_text(
         """[pack]
 name = "generation-owner"
+publisher = "dinkster"
 namespaces = ["fixture"]
 schema-only = ["fixture.generate"]
 [pack.capabilities]
@@ -1914,7 +1918,7 @@ def test_composer_keeps_portable_attention_arms_and_respects_placement() -> None
         weak = arm("weak", kitchen=False)
         strong = arm("strong", kitchen=True)
         topology = {"nativepack.echo": (weak, strong)}
-        config = AttentionPolicyConfig("dinkster_kitchen_int8")
+        config = AttentionPolicyConfig("comfy_kitchen_int8")
         composer = ServingComposer()
 
         selected = await composer._plan_execution(
@@ -1927,9 +1931,9 @@ def test_composer_keeps_portable_attention_arms_and_respects_placement() -> None
         )
         assert selected is not None
         assert selected.target == "weak"
-        assert selected.attention_policy == "dinkster_kitchen_int8"
+        assert selected.attention_policy == "comfy_kitchen_int8"
         assert selected.attention_route_token is not None
-        assert selected.attention_route_token.requested_policy == "dinkster_kitchen_int8"
+        assert selected.attention_route_token.requested_policy == "comfy_kitchen_int8"
         assert selected.attention_route_token.version == 3
         assert all(route.primary == "sdpa" for route in selected.attention_route_token.routes)
 
@@ -2120,7 +2124,7 @@ def test_composer_fallback_keeps_requested_policy_in_cache_identity() -> None:
             get_calls = 0
             put_calls = 0
 
-            async def get(self, key: CacheKey) -> Mapping[str, Value] | None:
+            async def get(self, key: CacheKey) -> CachedResult | None:
                 self.get_calls += 1
                 return await super().get(key)
 
@@ -2171,7 +2175,7 @@ def test_composer_fallback_keeps_requested_policy_in_cache_identity() -> None:
             cache=cache,
             plan_execution=plan,  # type: ignore[arg-type]
         )
-        for policy in ("dinkster_kitchen_int8", "sdpa", "dinkster_kitchen_int8"):
+        for policy in ("comfy_kitchen_int8", "sdpa", "comfy_kitchen_int8"):
             await engine.run(
                 Graph(nodes={"n": GraphNode(schema.node_type, {})}),
                 ["n"],
@@ -2181,7 +2185,7 @@ def test_composer_fallback_keeps_requested_policy_in_cache_identity() -> None:
         assert cache.get_calls == 3
         assert cache.put_calls == 2
         assert [token.requested_policy for token in execution_worker.tokens] == [
-            "dinkster_kitchen_int8",
+            "comfy_kitchen_int8",
             "sdpa",
         ]
         assert execution_worker.tokens[0].version == 3
@@ -2230,6 +2234,7 @@ ARM_NODES = {"alt": [AltResident]}
     manifest.write_text(
         """[pack]
 name = "resident"
+publisher = "dinkster"
 [pack.arms]
 alt = ["resident.make"]
 [pack.entry]
@@ -2243,6 +2248,65 @@ arm_nodes = "resident_nodes:ARM_NODES"
 
 def _graph(node_type: str, value: str = "x") -> Graph:
     return Graph(nodes={"n": GraphNode(node_type, {"value": value})})
+
+
+@pytest.mark.parametrize("shared_group", [True, False])
+def test_crosspack_resident_models_survive_group_reload(tmp_path: Path, shared_group: bool) -> None:
+    async def scenario() -> None:
+        manifests = []
+        for name, entry in (("source", "SOURCE_NODES"), ("merge", "MERGE_NODES")):
+            root = tmp_path / name
+            root.mkdir()
+            manifest = root / "dinkster-pack.toml"
+            manifest.write_text(
+                f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
+                f'namespaces = ["{name}"]\n'
+                f'[pack.entry]\nnodes = "crosspack_nodes:{entry}"\n'
+                'types = "dinkster_inference_wire:register_inference_types"\n'
+            )
+            manifests.append(manifest)
+        composer = ServingComposer(worker_env=_env(Path(__file__).parent))
+        try:
+            for manifest in manifests:
+                await composer.add_pack(
+                    PackSpec(
+                        manifest,
+                        worker_group="crosspack-models" if shared_group else None,
+                        group_manifests=tuple(manifests) if shared_group else (),
+                    )
+                )
+            graph = Graph(
+                nodes={
+                    "a": GraphNode("source.model", {"weight": 10.0}),
+                    "b": GraphNode("source.model", {"weight": -4.0}),
+                    "m": GraphNode(
+                        "merge.simple",
+                        {"a": Link("a", "model"), "b": Link("b", "model"), "ratio": 0.25},
+                    ),
+                    "w": GraphNode("source.weight", {"model": Link("m", "model")}),
+                    "mixed": GraphNode(
+                        "merge.simple",
+                        {"a": Link("a", "model"), "b": Link("m", "model"), "ratio": 0.25},
+                    ),
+                    "mixed_weight": GraphNode("source.weight", {"model": Link("mixed", "model")}),
+                }
+            )
+            if not shared_group:
+                with pytest.raises(ExecutionError, match="unknown producer arm"):
+                    await composer.composition.make_engine(lambda event: None).run(graph, ["w"])
+                return
+            for reload in (False, True):
+                if reload:
+                    await composer.reload_pack("source")
+                result = await composer.composition.make_engine(lambda event: None).run(
+                    graph, ["w", "mixed_weight"]
+                )
+                assert result.outputs["w"]["weight"].resolve() == -0.5
+                assert result.outputs["mixed_weight"]["weight"].resolve() == 2.125
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
 
 
 def test_enrollment_publishes_dispatch_and_keeps_claimed_schema_private(
@@ -2340,7 +2404,7 @@ def test_cross_pack_provider_may_publish_same_session_body_arms(tmp_path: Path) 
                     invocation_id=target,
                     node_id=target,
                     node_type="owned.echo",
-                    inputs={"value": registry.wrap("core.string", "ok")},
+                    inputs={"value": registry.wrap("STRING", "ok")},
                     effective_schema=schema,
                     executor=target,
                     expected_execution_identity="identity",
@@ -2438,7 +2502,7 @@ def test_schema_only_owner_routes_only_after_provider_composes(
 
 
 def _fixture_alias_registry(carrier: str) -> ComfyAliasRegistry:
-    string = TypeExpr.concrete("core.string")
+    string = TypeExpr.concrete("STRING")
     source = ComfyAliasSource("comfy-core", "Echo", "comfy.Echo", "b78cec87")
     return ComfyAliasRegistry(
         source_schemas=(
@@ -3093,7 +3157,7 @@ def test_same_session_body_arm_routes_without_selector_bleed(tmp_path: Path) -> 
                     invocation_id=f"inv-{index}",
                     node_id=f"n-{index}",
                     node_type="same.echo",
-                    inputs={"value": registry.wrap("core.string", str(index))},
+                    inputs={"value": registry.wrap("STRING", str(index))},
                     effective_schema=schema,
                     executor=target,
                     expected_execution_identity=f"identity-{index}",
@@ -3211,7 +3275,7 @@ def test_single_job_topology_follows_replacement_rank_workers(tmp_path: Path) ->
                     invocation_id="replacement",
                     node_id="replacement",
                     node_type="same.echo",
-                    inputs={"value": registry.wrap("core.string", "ok")},
+                    inputs={"value": registry.wrap("STRING", "ok")},
                     effective_schema=composer.composition.schemas["same.echo"],
                     executor=arms[1].name,
                 )

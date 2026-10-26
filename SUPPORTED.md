@@ -14,7 +14,6 @@ changes what is supported.
 | Pack routes, events, and frontend modules | [View details](docs/supported/pack-routes-events-and-frontend-modules.md) |
 | CPU and Apple Silicon hosts | [View details](docs/supported/cpu-and-apple-silicon-hosts.md) |
 | AMD ROCm and Intel XPU hosts | [View details](docs/supported/rocm-and-xpu-hosts.md) |
-| Peer-to-peer host support | [View details](docs/supported/peer-to-peer-host-support.md) |
 | Model families (native execution) | [View details](docs/supported/model-families-native-execution.md) |
 | Text encoders and VAEs | [View details](docs/supported/text-encoders-and-vaes.md) |
 | Dtypes and quantization | [View details](docs/supported/dtypes-and-quantization.md) |

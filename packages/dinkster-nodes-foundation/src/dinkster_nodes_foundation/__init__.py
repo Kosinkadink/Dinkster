@@ -58,6 +58,7 @@ from .string_ops import (
     StringTest,
     StringTransform,
 )
+from .tuples import GetTupleItem, MakeTuple
 from .types import CURVE_TYPE, Curve, register_foundation_types
 
 FOUNDATION_NODES = [
@@ -80,6 +81,8 @@ FOUNDATION_NODES = [
     IntegerRange,
     RepeatItem,
     CrossProduct,
+    MakeTuple,
+    GetTupleItem,
     *PRIMITIVE_NODES,
     *COMBO_EDGE_NODES,
     *STRING_OPERATION_NODES,
@@ -117,6 +120,8 @@ __all__ = [
     "ListElement",
     "ListLength",
     "MakeList",
+    "MakeTuple",
+    "GetTupleItem",
     "MathExpression",
     "MathExpressions",
     "MultiplyFloats",

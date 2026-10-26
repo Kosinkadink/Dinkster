@@ -537,7 +537,8 @@ def write_iso_manifest(
         else "namespaces = [" + ", ".join(f'"{c}"' for c in namespaces) + "]\n"
     )
     body = (
-        f'[pack]\nname = "{name}"\n{claims}\n[pack.entry]\n'
+        f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
+        f'type-namespaces = ["iso"]\n{claims}\n[pack.entry]\n'
         'nodes = "isopack_nodes:NODES"\ntypes = "isopack_nodes:register_types"\n'
     )
     if presentation:
@@ -555,19 +556,16 @@ def write_contract_manifest(
     declarations: str = "",
     *,
     namespace: str = "iso",
-    nodes_entry: str = "isopack_nodes:NODES",
+    nodes_entry: str = "empty_pack_nodes:NODES",
 ) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     manifest = directory / "dinkster-pack.toml"
-    types_entry = (
-        'types = "isopack_nodes:register_types"\n' if nodes_entry == "isopack_nodes:NODES" else ""
-    )
     manifest.write_text(
-        f'[pack]\nname = "{name}"\nnamespaces = ["{namespace}"]\n'
+        f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
+        f'namespaces = ["{namespace}"]\n'
         '[pack.contracts]\nhost = "dinkster-pack-host/1"\napi = "dinkster-api/v1"\n'
         f"{declarations}"
-        f'[pack.entry]\nnodes = "{nodes_entry}"\n'
-        f"{types_entry}",
+        f'[pack.entry]\nnodes = "{nodes_entry}"\n',
         encoding="utf-8",
     )
     return manifest
@@ -697,13 +695,13 @@ def test_serving_composer_registers_inference_boundary_types() -> None:
     from dinkster_values import TypeRegistry
 
     inference_types = {
-        "dinkster.conditioning",
-        "dinkster.model",
-        "dinkster.clip",
-        "dinkster.vae",
-        "dinkster.sampler",
-        "dinkster.sigmas",
-        "dinkster.noise",
+        "CONDITIONING",
+        "MODEL",
+        "CLIP",
+        "VAE",
+        "SAMPLER",
+        "SIGMAS",
+        "NOISE",
     }
     default = ServingComposer()
     supplied_registry = TypeRegistry()
@@ -922,7 +920,7 @@ def test_compose_defaults_only(tmp_path: Path) -> None:
                 STANDARD_OWNER_PACKS | STANDARD_VISION_PACKS | {"dinkster-nodes-remote"}
             )
             assert set(composition.node_packs.values()) == STANDARD_OWNER_PACKS
-            assert len(FOUNDATION_NODES) == 52
+            assert len(FOUNDATION_NODES) == 54
             assert len(IMAGE_NODES) == 87
             assert len(MEDIA_IO_NODES) == 66
             assert {
@@ -1056,19 +1054,19 @@ def test_compose_serving_default_resolution_is_atomic(
     [
         (
             "dinkster-nodes-foundation",
-            "blake3:62d4ad93db627dd51bb738ea987a2dedd240fc7d6eafd5bf302b66a3d13c23bf",
+            "blake3:0bf806a210d79b1a1f2c74f6a135cdc92f5dad7cb8e7a50984cdc28644749caf",
         ),
         (
             "dinkster-nodes-media-io",
-            "blake3:1f96fc07b4868b6beb922936d59c93ad53041598ed167320d14d79adf7370c8a",
+            "blake3:76b4f2ab36f964b80382d2ee61f7e4092956df21540b23fff4da1faa8b2975e7",
         ),
         (
             "dinkster-nodes-image",
-            "blake3:7a44b85c68f0f1e59bdd8eb54a6c8012c82b2b93052f952839c8763a433b3dde",
+            "blake3:2939448809f359f767e8575ece6c5b466b990c6a30aaba84a4fd63acbde63191",
         ),
         (
             "dinkster-nodes-remote",
-            "blake3:db56d16df9059930093ac30166558e96a90644d0fc754a58ef7bc8c37baca6b4",
+            "blake3:580eee23612ab4193cf4b636a9c7e87452f8d8ebacd16632b6aca2e68c052e39",
         ),
     ],
 )
@@ -1399,7 +1397,7 @@ def test_vision_pack_license_checkout_endings_do_not_change_digest(tmp_path: Pat
     manifest = copied / "dinkster_vision_hed_pack/dinkster-pack.toml"
     module = copied / "src/dinkster_nodes_vision/hed"
     expected = compose._installed_pack_digest(manifest, module)
-    assert expected == ("blake3:da3d4f989afa330e68c479afac8bdc13a5a6df878f56cbf38d0444f1fabd2019")
+    assert expected == ("blake3:bf77bad675bff0dd1e33d78af78ade49dc764a23d49f246808157a391a28aa8c")
     license_file = manifest.parent / "MLSD_LICENSE"
     license_bytes = license_file.read_bytes().replace(b"\r\n", b"\n")
     license_file.write_bytes(license_bytes.replace(b"\n", b"\r\n"))
@@ -1535,7 +1533,7 @@ def test_default_suite_package_matches_managed_lock() -> None:
     }
 
 
-def test_compose_dev_pack_adds_scaffold_nodes() -> None:
+def test_compose_dev_pack_adds_scaffold_nodes(tmp_path: Path) -> None:
     """The development manifest composes its complete node surface."""
     from dinkster_nodes_dev import PACK_NODES
 
@@ -1544,12 +1542,23 @@ def test_compose_dev_pack_adds_scaffold_nodes() -> None:
         try:
             expected = set(build_schemas(DEFAULT_NODES)) | set(build_schemas(PACK_NODES))
             assert set(composition.schemas) == expected
+            info = composition.packs["dinkster-nodes-dev"]
+            assert info.source == f"local:{DEV_PACK_MANIFEST.parent.resolve()}"
+            assert info.version == ""
+            assert info.artifact_digest == ""
             engine = composition.make_engine(lambda event: None)
             graph = Graph(nodes={"g": GraphNode("dev.image.gradient", {"width": 8, "height": 4})})
             result = await engine.run(graph, ["g"])
             assert "g" in result.outputs
         finally:
             await composition.close()
+
+        second = write_iso_manifest(tmp_path, name="other-dev", namespaces=("dev",))
+        with pytest.raises(
+            CompositionError,
+            match="'dev' claimed by 'other-dev' overlaps 'dev' claimed by 'dinkster-nodes-dev'",
+        ):
+            await compose_serving([DEV_PACK_MANIFEST, second], worker_env=WORKER_ENV)
 
     asyncio.run(scenario())
 
@@ -1558,7 +1567,7 @@ def test_conformance_proof_nodes_follow_explicit_dev_pack_composition() -> None:
     """Conformance probes appear only when the development pack is composed."""
 
     async def scenario() -> None:
-        dev = await compose_serving([DEV_PACK_MANIFEST])
+        dev = await compose_serving([PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)])
         try:
             assert "dev.conformance.preview" in dev.schemas
             assert "dev.conformance.cancellable" in dev.schemas
@@ -1576,7 +1585,9 @@ def test_conformance_proof_nodes_follow_explicit_dev_pack_composition() -> None:
         finally:
             await production.close()
 
-        manifest_composition = await compose_serving([DEV_PACK_MANIFEST])
+        manifest_composition = await compose_serving(
+            [PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)]
+        )
         try:
             assert "dev.image.gradient" in manifest_composition.schemas
             assert "dev.conformance.preview" in manifest_composition.schemas
@@ -1591,7 +1602,9 @@ def test_compose_dev_mode(caplog: pytest.LogCaptureFixture) -> None:
     render as one structured log line per crossing."""
 
     async def scenario() -> None:
-        composition = await compose_serving([DEV_PACK_MANIFEST], dev=True)
+        composition = await compose_serving(
+            [PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)], dev=True
+        )
         try:
             events: list[object] = []
             engine = composition.make_engine(events.append)
@@ -1613,7 +1626,7 @@ def test_compose_dev_mode(caplog: pytest.LogCaptureFixture) -> None:
         node_id="n",
         node_type="iso.echo",
         pack="isopack",
-        inputs=(EdgeCost("text", "core.string", "inline", 12, 0.2, True, False),),
+        inputs=(EdgeCost("text", "STRING", "inline", 12, 0.2, True, False),),
         outputs=(EdgeCost("out", "iso.blob", "shm", 4096, 1.5, False, False),),
         execute_ms=10.0,
         round_trip_ms=14.0,
@@ -1633,7 +1646,7 @@ def test_composed_layered_cache_reuses_disk_then_promotes_to_memory(tmp_path: Pa
 
         async def compose():
             return await compose_serving(
-                [DEV_PACK_MANIFEST],
+                [PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)],
                 include_default_packs=False,
                 dev=True,
                 cache_mode="layered",
@@ -1683,7 +1696,7 @@ def test_full_free_clears_memory_execution_cache_but_preserves_disk(
             cache_disk_budget=1024**2,
         )
         try:
-            await composer.add_pack(DEV_PACK_MANIFEST)
+            await composer.add_pack(PackSpec(DEV_PACK_MANIFEST, trust_reserved=True))
             events: list[EngineEvent] = []
             engine = composer.composition.make_engine(events.append)
             graph = Graph(nodes={"g": GraphNode("dev.image.gradient", {"width": 8, "height": 4})})
@@ -1692,7 +1705,7 @@ def test_full_free_clears_memory_execution_cache_but_preserves_disk(
             events.clear()
 
             staged = composer.spawn_empty()
-            await staged.add_pack(DEV_PACK_MANIFEST)
+            await staged.add_pack(PackSpec(DEV_PACK_MANIFEST, trust_reserved=True))
             old = composer.adopt(staged)
             await old.close()
             assert isinstance(engine.cache, LayeredCache)
@@ -1782,11 +1795,222 @@ def test_compose_rejects_namespace_collision(tmp_path: Path) -> None:
     async def scenario() -> None:
         first = write_iso_manifest(tmp_path / "a", name="isopack", presentation=False)
         second = write_iso_manifest(tmp_path / "b", name="isopack2", presentation=False)
+        second.write_text(
+            second.read_text()
+            .replace('type-namespaces = ["iso"]\n', "")
+            .replace('types = "isopack_nodes:register_types"\n', "")
+        )
         with pytest.raises(
             CompositionError,
             match="'iso' claimed by 'isopack2' overlaps 'iso' claimed by 'isopack'",
         ):
             await compose_serving([first, second], worker_env=WORKER_ENV)
+
+    asyncio.run(scenario())
+
+
+def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(tmp_path: Path) -> None:
+    from dinkster_nodes_comfy import COMFY_NODES
+
+    claims = tuple(node.schema().node_type for node in COMFY_NODES)
+    manifest = TESTS_DIR.parent / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+    assert load_manifest(manifest).namespaces == claims
+    other_manifest = tmp_path / "dinkster-pack.toml"
+    other_manifest.write_text(
+        '[pack]\nname = "other-owner"\npublisher = "dinkster"\n'
+        'namespaces = ["StringLength"]\n'
+        '[pack.entry]\nnodes = "other_owner_fixture:NODES"\n'
+    )
+    (tmp_path / "other_owner_fixture.py").write_text(
+        "from dinkster_nodes_comfy.text import StringLength\nNODES = (StringLength,)\n"
+    )
+
+    async def scenario() -> None:
+        composer = ServingComposer()
+        try:
+            await composer.add_pack(PackSpec(manifest=manifest))
+            assert set(composer.composition.schemas) == set(claims)
+            assert set(composer.composition.node_packs.values()) == {"dinkster-nodes-comfy"}
+            await composer.reload_pack("dinkster-nodes-comfy")
+            result = await composer.composition.make_engine(lambda _event: None).run(
+                Graph(
+                    nodes={
+                        "text": GraphNode("PrimitiveString", {"value": "a\U0001f600"}),
+                        "length": GraphNode("StringLength", {"string": Link("text", "STRING")}),
+                        "false": GraphNode("PrimitiveBoolean", {"value": False}),
+                        "not": GraphNode("ComfyNotNode", {"value": Link("length", "length")}),
+                        "and": GraphNode(
+                            "ComfyAndNode",
+                            {
+                                "values.value0": Link("length", "length"),
+                                "values.value1": Link("false", "BOOLEAN"),
+                            },
+                        ),
+                        "or": GraphNode(
+                            "ComfyOrNode",
+                            {
+                                "values.value0": Link("false", "BOOLEAN"),
+                                "values.value1": Link("length", "length"),
+                            },
+                        ),
+                    }
+                ),
+                ["length", "not", "and", "or"],
+            )
+            assert result.outputs["length"]["length"].resolve() == 2
+            assert result.outputs["not"]["BOOLEAN"].resolve() is False
+            assert result.outputs["and"]["BOOLEAN"].resolve() is False
+            assert result.outputs["or"]["BOOLEAN"].resolve() is True
+            with pytest.raises(CompositionError, match="overlaps"):
+                await composer.add_pack(PackSpec(manifest=other_manifest))
+            assert set(composer.composition.schemas) == set(claims)
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("in_process", "supplied_registry"), ((True, False), (False, False), (False, True))
+)
+@pytest.mark.parametrize("verified", (False, True))
+def test_asset_literals_use_host_and_worker_resolvers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    in_process: bool,
+    supplied_registry: bool,
+    verified: bool,
+) -> None:
+    from dinkster_assets import (
+        LocalAssetRef,
+        MountDef,
+        MountSnapshotResolver,
+        MountTable,
+        register_asset_type,
+    )
+    from dinkster_values import register_core_types
+
+    root = tmp_path / "models"
+    root.mkdir()
+    payload = b"model bytes for the ordinary asset input"
+    (root / "weights.bin").write_bytes(payload)
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot, index_root=tmp_path / "indexes")
+    table.add(MountDef(id="models", path=root), kind="model/checkpoint")
+    if verified:
+        table.scan("models")
+    ref = table.bind_name("weights.bin", "model/checkpoint")
+    assert isinstance(ref, AssetRef if verified else LocalAssetRef)
+    module = f"asset_input_{in_process}_{supplied_registry}_{verified}"
+    (tmp_path / f"{module}.py").write_text(
+        "from assetpack_nodes import NODES, register_types\n", encoding="ascii"
+    )
+    manifest = tmp_path / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname = "apack"\npublisher = "dinkster"\nnamespaces = ["apack"]\n'
+        f'[pack.entry]\nnodes = "{module}:NODES"\ntypes = "{module}:register_types"\n',
+        encoding="ascii",
+    )
+    env = {
+        **WORKER_ENV,
+        "PYTHONPATH": os.pathsep.join((str(tmp_path), WORKER_ENV["PYTHONPATH"])),
+        "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
+    }
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+    registry = None
+    if supplied_registry:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        register_asset_type(registry, MountSnapshotResolver(snapshot))
+
+    async def scenario() -> None:
+        composer = ServingComposer(worker_env=env, registry=registry)
+        try:
+            await composer.add_pack(PackSpec(manifest, in_process=in_process, env=env))
+            engine = composer.composition.make_engine(lambda _event: None)
+            graph = Graph(nodes={"read": GraphNode("apack.read", {"data": ref.to_wire()})})
+            for _ in range(2):
+                result = await engine.run(graph, ["read"])
+                assert result.outputs["read"]["text"].resolve() == payload.decode()
+                assert result.outputs["read"]["size"].resolve() == len(payload)
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("verified", (False, True))
+def test_comfy_manifest_registers_bound_assets_with_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, verified: bool
+) -> None:
+    from dinkster_api.v1 import ASSET_TYPE
+    from dinkster_assets import (
+        LocalAssetRef,
+        MountDef,
+        MountTable,
+    )
+
+    root = tmp_path / "models"
+    root.mkdir()
+    payload = b"bound model bytes"
+    (root / "weights.bin").write_bytes(payload)
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot, index_root=tmp_path / "indexes")
+    table.add(MountDef(id="models", path=root), kind="model/checkpoint")
+    if verified:
+        table.scan("models")
+    ref = table.bind_name("weights.bin", "model/checkpoint")
+    assert isinstance(ref, AssetRef if verified else LocalAssetRef)
+    comfy = TESTS_DIR.parent / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+    env = {
+        **WORKER_ENV,
+        "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
+    }
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        composer = ServingComposer(registry=registry, worker_env=env)
+        try:
+            assert ASSET_TYPE not in registry
+            await composer.add_pack(PackSpec(comfy, in_process=in_process, env=env))
+            for _ in range(2):
+                bound = registry.wrap(ASSET_TYPE, ref.to_wire()).resolve()
+                restored = registry.spec(ASSET_TYPE).decode(registry.spec(ASSET_TYPE).encode(bound))
+                assert isinstance(restored, AssetRef if verified else LocalAssetRef)
+                assert restored.local_path().read_bytes() == payload
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_native_comfy_pack_registers_container_literals(in_process: bool) -> None:
+    async def scenario() -> None:
+        composer = ServingComposer(worker_env=WORKER_ENV)
+        try:
+            manifest = TESTS_DIR.parent / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+            await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
+            result = await composer.composition.make_engine(lambda _event: None).run(
+                Graph(
+                    nodes={
+                        "dictionary": GraphNode(
+                            "ConvertDictionaryToString",
+                            {"dictionary": {"key": [3, True]}, "indent": 0},
+                        ),
+                        "array": GraphNode(
+                            "ConvertArrayToString", {"array": [3, {"key": False}], "indent": 0}
+                        ),
+                    }
+                ),
+                ["dictionary", "array"],
+            )
+            assert result.outputs["dictionary"]["STRING"].resolve() == '{"key": [3, true]}'
+            assert result.outputs["array"]["STRING"].resolve() == '[3, {"key": false}]'
+        finally:
+            await composer.close()
 
     asyncio.run(scenario())
 
@@ -1985,6 +2209,158 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize(
+    "in_process, cold", [(False, False), (False, True), (True, False), (True, True)]
+)
+def test_pack_type_owners_are_discovered_without_activation_and_retracted(
+    tmp_path: Path, in_process: bool, cold: bool
+) -> None:
+    module = f"type_owner_pack_{int(in_process)}_{int(cold)}"
+    source = tmp_path / f"{module}.py"
+    source.write_text(
+        'NODES = []\ndef register_types(registry):\n    registry.register("mypack.thing")\n'
+    )
+    manifest = tmp_path / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname = "mypack"\npublisher = "someone"\n'
+        "[pack.entry]\n"
+        f'nodes = "{module}:NODES"\ntypes = "{module}:register_types"\n'
+    )
+    if cold:
+        assert prepare_catalog(manifest, environment=os.environ).ok
+
+    async def scenario() -> None:
+        composer = ServingComposer()
+        client: TestClient | None = None
+        try:
+            await composer.add_pack(PackSpec(manifest, in_process=in_process, require_catalog=cold))
+            registry = composer.composition._registry
+            assert registry.type_owners()["mypack.thing"] == "mypack"
+            if cold:
+                assert composer._records["mypack"].worker.cold
+                assert "mypack.thing" not in registry
+            client = TestClient(
+                TestServer(
+                    create_app(composer.composition.make_engine, composer.composition.schemas)
+                )
+            )
+            await client.start_server()
+            data = await (await client.get("/api/nodes")).json()
+            assert data["typeOwners"]["mypack.thing"] == "mypack"
+            if cold:
+                assert composer._records["mypack"].worker.cold
+            if not in_process:
+                original_manifest = manifest.read_text()
+                manifest.write_text(
+                    original_manifest.replace(
+                        "[pack.entry]", 'type-namespaces = ["FOREIGN"]\n[pack.entry]'
+                    )
+                )
+                with pytest.raises(CompositionError, match="must be prefixed"):
+                    await composer.reload_pack("mypack")
+                data = await (await client.get("/api/nodes")).json()
+                assert data["typeOwners"]["mypack.thing"] == "mypack"
+                manifest.write_text(original_manifest)
+                source.write_text(source.read_text().replace("mypack.thing", "mypack.replacement"))
+                if cold:
+                    assert prepare_catalog(manifest, environment=os.environ).ok
+                await composer.reload_pack("mypack")
+                data = await (await client.get("/api/nodes")).json()
+                assert "mypack.thing" not in data["typeOwners"]
+                assert data["typeOwners"]["mypack.replacement"] == "mypack"
+            await composer.remove_pack("mypack")
+            data = await (await client.get("/api/nodes")).json()
+            assert "mypack.thing" not in data["typeOwners"]
+            assert "mypack.replacement" not in data["typeOwners"]
+            assert registry.owner_of("mypack.thing") is None
+            assert "mypack.thing" not in registry
+        finally:
+            if client is not None:
+                await client.close()
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
+def test_dependent_pack_references_shared_type_without_claiming_it(tmp_path: Path) -> None:
+    owner = tmp_path / "owner"
+    consumer = tmp_path / "consumer"
+    owner.mkdir()
+    consumer.mkdir()
+    (owner / "shared_type_owner.py").write_text(
+        "from dinkster_api.v1 import Node, NodeSchema, OutputSpec, TypeExpr\n"
+        "def register_types(registry):\n"
+        "    registry.register('owner.thing')\n"
+        "class Produce(Node):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema(node_type='owner.produce', outputs=(\n"
+        "            OutputSpec('thing', TypeExpr.concrete('owner.thing')),))\n"
+        "    @classmethod\n"
+        "    def execute(cls):\n"
+        "        return cls.outputs(thing={'width': 11, 'height': 29})\n"
+        "NODES = [Produce]\n"
+    )
+    (consumer / "shared_type_consumer.py").write_text(
+        "from dinkster_api.v1 import Node, NodeSchema, InputSpec, OutputSpec, TypeExpr\n"
+        "from dinkster_values import CORE_INT\n"
+        "class Consume(Node):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema(node_type='consumer.consume', inputs=(\n"
+        "            InputSpec('thing', TypeExpr.concrete('owner.thing')),), outputs=(\n"
+        "            OutputSpec('difference', TypeExpr.concrete(CORE_INT)),))\n"
+        "    @classmethod\n"
+        "    def execute(cls, *, thing):\n"
+        "        return cls.outputs(difference=thing['height'] - thing['width'])\n"
+        "NODES = [Consume]\n"
+    )
+    owner_manifest = owner / "dinkster-pack.toml"
+    owner_manifest.write_text(
+        '[pack]\nname = "owner"\npublisher = "owner-author"\n'
+        '[pack.entry]\nnodes = "shared_type_owner:NODES"\n'
+        'types = "shared_type_owner:register_types"\n'
+    )
+    consumer_manifest = consumer / "dinkster-pack.toml"
+    consumer_manifest.write_text(
+        '[pack]\nname = "consumer"\npublisher = "consumer-author"\n'
+        '[pack.dependencies]\nowner = ">=1,<2"\n'
+        '[pack.entry]\nnodes = "shared_type_consumer:NODES"\n'
+    )
+
+    async def scenario() -> None:
+        composer = ServingComposer()
+        try:
+            with pytest.raises(CompositionError, match="requires pack 'owner'.*not composed"):
+                await composer.add_pack(PackSpec(consumer_manifest, in_process=True))
+            await composer.add_pack(
+                PackSpec(
+                    owner_manifest,
+                    in_process=True,
+                    packs={"owner": PackInfo(display_name="Owner", version="1.0.0")},
+                )
+            )
+            await composer.add_pack(PackSpec(consumer_manifest, in_process=True))
+            engine = composer.composition.make_engine(lambda _event: None)
+            result = await engine.run(
+                Graph(
+                    nodes={
+                        "produce": GraphNode("owner.produce"),
+                        "consume": GraphNode(
+                            "consumer.consume", {"thing": Link("produce", "thing")}
+                        ),
+                    }
+                ),
+                ["consume"],
+            )
+            assert result.outputs["consume"]["difference"].resolve() == 18
+            assert composer.composition._registry.type_owners()["owner.thing"] == "owner"
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
 def test_serving_composer_replaces_and_retracts_pack_renditions(tmp_path: Path) -> None:
     async def scenario() -> None:
         composer = ServingComposer(worker_env=WORKER_ENV)
@@ -2102,6 +2478,59 @@ def test_add_pack_applies_host_types_at_commit(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
+def test_reload_preserves_pack_owned_host_codecs_and_providers(tmp_path: Path) -> None:
+    def host_types(registry: TypeRegistry) -> None:
+        if "iso.blob" not in registry:
+            registry.register(
+                "iso.blob",
+                encode=lambda obj: b"host:" + json.dumps(obj).encode(),
+                decode=lambda data: json.loads(data.removeprefix(b"host:")),
+            )
+            registry.register_asset_decoder(
+                "iso.blob", provider_id="host.decode", decode=lambda obj: obj
+            )
+            registry.register_batch_merge(
+                "iso.blob", provider_id="host.merge", merge=lambda values: list(values)
+            )
+            registry.register_rendition(
+                "iso.blob", "host", mime="text/plain", render=lambda _obj: b"host rendition"
+            )
+
+    def check_registry(registry: TypeRegistry) -> None:
+        value = registry.wrap("iso.blob", {"n": 17})
+        assert registry.owner_of("iso.blob") == "hostpack"
+        assert registry.spec("iso.blob").encode(value.resolve()) == b'host:{"n": 17}'
+        assert registry.spec("iso.blob").decode(b'host:{"n": 29}') == {"n": 29}
+        decoder = registry.asset_decoder_for("iso.blob")
+        merger = registry.batch_merge_for("iso.blob")
+        assert decoder is not None and decoder.decode({"n": 31}) == {"n": 31}
+        assert merger is not None and merger.merge([7, 19]) == [7, 19]
+        assert registry.render(value, "host").data == b"host rendition"
+
+    async def scenario() -> None:
+        composer = ServingComposer(worker_env=WORKER_ENV)
+        spec = PackSpec(
+            write_iso_manifest(tmp_path / "pack", name="hostpack"), host_types=host_types
+        )
+        try:
+            await composer.add_pack(spec)
+            check_registry(composer.composition._registry)
+            await composer.reload_pack("hostpack")
+            check_registry(composer.composition._registry)
+
+            def failed_host_types(registry: TypeRegistry) -> None:
+                host_types(registry)
+                raise ValueError("host codec refused")
+
+            with pytest.raises(ValueError, match="host codec refused"):
+                await composer.reload_pack("hostpack", replace(spec, host_types=failed_host_types))
+            check_registry(composer.composition._registry)
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
 def test_comfy_compat_specs_carry_host_types(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2170,9 +2599,9 @@ def test_pack_spec_validates_single_job_mode(tmp_path: Path) -> None:
     from dinkster.compose import PackSpec
 
     manifest = write_iso_manifest(tmp_path)
-    for mode in ("auto", "guidance", "sequence", "window"):
+    for mode in ("auto", "guidance", "sequence"):
         assert PackSpec(manifest, single_job_mode=mode).single_job_mode == mode
-    for mode in ("model", "four-way"):
+    for mode in ("model", "four-way", "window"):
         with pytest.raises(ValueError, match="single_job_mode is invalid"):
             PackSpec(manifest, single_job_mode=mode)
 
@@ -2298,7 +2727,8 @@ def test_broken_default_pack_leaves_zero_node_host_and_registry_healthy(tmp_path
     )
     manifest = tmp_path / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname = "dinkster-nodes-media-io"\nnamespaces = ["dinkster"]\n'
+        '[pack]\nname = "dinkster-nodes-media-io"\npublisher = "dinkster"\n'
+        'type-namespaces = ["dinkster", "broken"]\nnamespaces = ["dinkster"]\n'
         '[pack.entry]\nnodes = "broken_media:NODES"\n'
         'types = "broken_media:register_types"\n',
         encoding="utf-8",
@@ -2340,7 +2770,7 @@ def test_generation_staging_rebuilds_pack_type_registrations(tmp_path: Path) -> 
         )
         manifest = tmp_path / "dinkster-pack.toml"
         manifest.write_text(
-            '[pack]\nname = "generation-types"\nnamespaces = ["generation"]\n'
+            '[pack]\nname = "generation"\npublisher = "fixture-author"\n'
             '[pack.entry]\nnodes = "generation_types_nodes:NODES"\n'
             'types = "generation_types_nodes:register_types"\n',
             encoding="utf-8",
@@ -2510,6 +2940,11 @@ def test_serving_composer_failed_add_pack_reaps_on_close(
         try:
             await composer.add_pack(write_iso_manifest(tmp_path / "a"))
             bad = write_iso_manifest(tmp_path / "b", name="isopack2", namespaces=None)
+            bad.write_text(
+                bad.read_text()
+                .replace('type-namespaces = ["iso"]\n', "")
+                .replace('types = "isopack_nodes:register_types"\n', "")
+            )
             with pytest.raises(CompositionError, match="outside the pack's declared namespaces"):
                 await composer.add_pack(bad)
         finally:
@@ -2653,7 +3088,12 @@ def test_failed_start_reaps_started_workers(
             presentation=False,
             namespaces=("zzbad",),
         )
-        bad.write_text(bad.read_text().replace("isopack_nodes:NODES", "missing_nodes:NODES"))
+        bad.write_text(
+            bad.read_text()
+            .replace("isopack_nodes:NODES", "missing_nodes:NODES")
+            .replace('type-namespaces = ["iso"]\n', "")
+            .replace('types = "isopack_nodes:register_types"\n', "")
+        )
         with pytest.raises(RuntimeError, match="failed to start"):
             await compose_serving([good, bad], worker_env=WORKER_ENV)
         assert len(started) == 1
@@ -2959,7 +3399,7 @@ def test_comfy_host_types_register_save_target_runtime_values() -> None:
     explicit = {"mount": "comfy-output", "prefix": "renders/scene"}
     wrapped = registry.wrap(SAVE_TARGET_TYPE, explicit)
     assert wrapped.resolve() == SaveTarget(**explicit)
-    assert wrapped.fingerprint == "dinkster.save_target:comfy-output/renders/scene"
+    assert wrapped.fingerprint == "SAVE_TARGET:comfy-output/renders/scene"
     encoded = registry.spec(SAVE_TARGET_TYPE).encode(explicit)
     assert registry.spec(SAVE_TARGET_TYPE).decode(encoded) == SaveTarget(**explicit)
 
@@ -3041,7 +3481,8 @@ def test_compose_serving_relays_pack_consumers_to_governor(tmp_path: Path) -> No
         governor = MemoryGovernor()
         manifest = tmp_path / "dinkster-pack.toml"
         manifest.write_text(
-            '[pack]\nname = "memorypack"\nnamespaces = ["mem"]\n\n[pack.entry]\n'
+            '[pack]\nname = "memorypack"\npublisher = "dinkster"\n'
+            'type-namespaces = ["mem"]\nnamespaces = ["mem"]\n\n[pack.entry]\n'
             'nodes = "memorypack_nodes:NODES"\ntypes = "memorypack_nodes:register_types"\n'
             'consumers = "memorypack_nodes:memory_consumers"\n'
         )
@@ -3083,7 +3524,8 @@ def test_serving_composer_full_free_releases_live_worker_without_startup_guard(
         governor = MemoryGovernor({"ram": 1000})
         manifest = tmp_path / "dinkster-pack.toml"
         manifest.write_text(
-            '[pack]\nname = "memorypack"\nnamespaces = ["mem"]\n\n[pack.entry]\n'
+            '[pack]\nname = "memorypack"\npublisher = "dinkster"\n'
+            'type-namespaces = ["mem"]\nnamespaces = ["mem"]\n\n[pack.entry]\n'
             'nodes = "memorypack_nodes:NODES"\ntypes = "memorypack_nodes:register_types"\n'
             'consumers = "memorypack_nodes:memory_consumers"\n'
         )
@@ -3095,7 +3537,7 @@ def test_serving_composer_full_free_releases_live_worker_without_startup_guard(
             cache_dir=tmp_path / "execution-cache",
         )
         try:
-            await composer.add_pack(DEV_PACK_MANIFEST)
+            await composer.add_pack(PackSpec(DEV_PACK_MANIFEST, trust_reserved=True))
             await composer.add_pack(manifest)
             events: list[EngineEvent] = []
             engine = composer.composition.make_engine(events.append)
@@ -3257,7 +3699,8 @@ def test_compose_serving_delivers_pack_telemetry(tmp_path: Path) -> None:
         governor = MemoryGovernor(telemetry=reported.probe, telemetry_devices=reported.devices)
         manifest = tmp_path / "dinkster-pack.toml"
         manifest.write_text(
-            '[pack]\nname = "memorypack"\nnamespaces = ["mem"]\n\n[pack.entry]\n'
+            '[pack]\nname = "memorypack"\npublisher = "dinkster"\n'
+            'type-namespaces = ["mem"]\nnamespaces = ["mem"]\n\n[pack.entry]\n'
             'nodes = "memorypack_nodes:NODES"\ntypes = "memorypack_nodes:register_types"\n'
             'consumers = "memorypack_nodes:memory_consumers"\n'
             'telemetry = "memorypack_nodes:memory_telemetry"\n'
@@ -3293,7 +3736,8 @@ def test_compose_serving_wires_worker_reservations(tmp_path: Path) -> None:
         governor = MemoryGovernor({"ram": 100})
         manifest = tmp_path / "dinkster-pack.toml"
         manifest.write_text(
-            '[pack]\nname = "isopack"\nnamespaces = ["iso"]\n\n[pack.entry]\n'
+            '[pack]\nname = "isopack"\npublisher = "dinkster"\n'
+            'type-namespaces = ["iso"]\nnamespaces = ["iso"]\n\n[pack.entry]\n'
             'nodes = "isopack_nodes:NODES"\ntypes = "isopack_nodes:register_types"\n'
             'reservations = "isopack_nodes:plan_reservations"\n'
         )

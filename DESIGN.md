@@ -768,7 +768,7 @@ list fingerprint derives from element fingerprints - caching is element-aware by
 construction. The schema says `list<IMAGE>`, so the hidden calling convention
 does not exist. **There is no implicit coercion in either direction**: a
 list-to-scalar edge is a document-time type error whose diagnostic names the fix,
-never executor magic. The type grammar is recursive (`list<list<core.int>>`);
+never executor magic. The type grammar is recursive (`list<list<INT>>`);
 canonical runtime ids share one parser between schema and values.
 
 **Combining as combinator nodes.** Where v1 guessed, the graph says it:

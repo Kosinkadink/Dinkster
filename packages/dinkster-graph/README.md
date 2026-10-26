@@ -42,8 +42,14 @@ assert plan(graph, ["double"]) == ["source", "double"]
 Given a mapping of node type to `NodeSchema`, `validate(graph, schemas,
 targets)` returns structured `Diagnostic` objects. Structural errors are
 authoritative; type mismatches are advisory warnings except for the scoped
-`core.combo` boundary, which is hard so strings and combos require explicit
+`COMBO` boundary, which is hard so strings and combos require explicit
 converter nodes.
+
+Loop boundaries are paired innermost-first across the document. Validation
+rejects unmatched boundaries, ambiguous nesting, paths escaping a paired end,
+and an `accumulate` control driven from inside its loop. Diagnostics use
+`loop.unmatchedStart`, `loop.unmatchedEnd`, `loop.ambiguousNesting`,
+`loop.bodyEscape`, and `loop.accumulateFromBody`.
 
 ## Learn more
 

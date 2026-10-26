@@ -17,7 +17,6 @@ from dinkster_schema import (
     configure_logging,
 )
 
-from .p2p_plugin import P2PSettingsError, normalize_p2p_settings
 from .queue import JobQueue
 
 SettingsSource = Literal["cli", "persisted", "config", "default", "runtime"]
@@ -31,7 +30,6 @@ SETTINGS_CATEGORIES = (
     "worker-comfy-args",
     "jobs",
     "logging",
-    "p2p",
 )
 _CATEGORY_SET = frozenset(SETTINGS_CATEGORIES)
 _MUTABILITY = {
@@ -43,7 +41,6 @@ _MUTABILITY = {
     "worker-comfy-args": "on-worker-restart",
     "jobs": "live",
     "logging": "live",
-    "p2p": "live",
 }
 _LOG_LEVELS = frozenset({"debug", "info", "warning", "error", "critical"})
 _DTYPE_MODES = frozenset({"auto", "float16", "bfloat16", "float32"})
@@ -255,21 +252,16 @@ def normalize_setting(category: str, value: object) -> object:
         return _jobs(value)
     if category == "logging":
         return _logging(value)
-    if category == "p2p":
-        try:
-            return normalize_p2p_settings(value)
-        except P2PSettingsError as exc:
-            raise SettingsError(str(exc)) from exc
     raise SettingsError(f"unknown settings category: {category!r}")
 
 
 def normalize_features(value: object) -> dict[str, dict[str, bool]]:
     body = _object(value, "features")
-    unknown = set(body) - {"p2p", "templates"}
+    unknown = set(body) - {"resolver", "templates"}
     if unknown:
         raise SettingsError(f"unknown features: {sorted(unknown)}")
     features: dict[str, dict[str, bool]] = {}
-    for name in ("p2p", "templates"):
+    for name in ("resolver", "templates"):
         feature = _object(body.get(name, {"enabled": False}), f"features.{name}")
         _exact_keys(feature, {"enabled"}, f"features.{name}")
         features[name] = {"enabled": _boolean(feature["enabled"], f"features.{name}.enabled")}
@@ -333,7 +325,6 @@ class RuntimeSettings:
         self._governor: MemoryGovernor | None = None
         self._queue: JobQueue | None = None
         self._memory_headroom_changed: Callable[[int], None] | None = None
-        self._p2p_changed: Callable[[dict[str, object]], None] | None = None
 
     @property
     def aimdo_policy(self) -> str:
@@ -362,10 +353,6 @@ class RuntimeSettings:
         )
 
     @property
-    def p2p(self) -> dict[str, object]:
-        return cast("dict[str, object]", deepcopy(self._values["p2p"]))
-
-    @property
     def granted(self) -> list[str]:
         return [category for category in SETTINGS_CATEGORIES if category in self._granted]
 
@@ -379,9 +366,6 @@ class RuntimeSettings:
         self._governor = governor
         self._queue = queue
         self._memory_headroom_changed = memory_headroom_changed
-
-    def bind_p2p(self, changed: Callable[[dict[str, object]], None]) -> None:
-        self._p2p_changed = changed
 
     def section(self, category: str) -> dict[str, object]:
         if category not in _CATEGORY_SET:
@@ -447,8 +431,6 @@ class RuntimeSettings:
         self._runtime_values = staged
         if category == "memory-headroom" and self._memory_headroom_changed is not None:
             self._memory_headroom_changed(cast("int", value))
-        if category == "p2p" and self._p2p_changed is not None:
-            self._p2p_changed(cast("dict[str, object]", deepcopy(value)))
         return self.section(category)
 
     def _write(self, values: Mapping[str, object]) -> None:
