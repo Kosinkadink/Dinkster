@@ -55,11 +55,9 @@ class TextEncodeMageFlowEdit(Node):
                     widget=StringWidget(multiline=True, dynamic_prompts=True),
                 ),
                 InputSpec("vae", _VAE, required=False),
-                InputSpec("width", _INT, default=0, widget=NumberWidget(min=0, max=8192)),
-                InputSpec("height", _INT, default=0, widget=NumberWidget(min=0, max=8192)),
-                InputSpec(
-                    "batch_size", _INT, default=1, widget=NumberWidget(min=1, max=4096, step=1)
-                ),
+                InputSpec("width", _INT, default=0, widget=NumberWidget(min=0, max=8192, step=16)),
+                InputSpec("height", _INT, default=0, widget=NumberWidget(min=0, max=8192, step=16)),
+                InputSpec("batch_size", _INT, default=1, widget=NumberWidget(min=1, max=4096)),
             ),
             input_families=(
                 InputFamilySpec(
