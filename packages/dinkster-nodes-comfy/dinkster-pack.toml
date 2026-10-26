@@ -406,6 +406,13 @@ namespaces = [
     "MiniMaxH3AddGuide",
     "ColorToRGBInt",
     "ResolutionSelector",
+    "SaveImage",
+    "PreviewImage",
+    "LoadImage",
+    "LoadImageMask",
+    "LoadImageOutput",
+    "LoadLatent",
+    "SaveLatent",
 ]
 
 [pack.sandbox]
