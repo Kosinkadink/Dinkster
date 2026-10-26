@@ -6,8 +6,9 @@
   unit surface normals, or sRGB albedo.
 - Native video dataset transforms lazily crop continuous frame ranges and
   shuffle video lists or video-text pairs with seeded ordering.
-- Native list construction preserves member order and nested values;
-  indexed selection supports positive and negative indices.
+- Native list construction preserves member order and nested values when all
+  inputs share an element type; indexed selection supports positive and negative
+  indices. Mixed-element-type lists are not supported.
 - Native image tile lists split batches with overlap and merge tiles using
   feathered weights; mask previews retain their mask output, and arbitrary
   values can be inspected as text.

@@ -14,7 +14,8 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 
-_ITEMS = TypeExpr.list_of(TypeExpr.wildcard())
+_ITEM = TypeExpr.variable("T")
+_ITEMS = TypeExpr.list_of(_ITEM)
 
 
 class CreateList(Node):
@@ -57,7 +58,7 @@ class GetItemFromList(Node):
                     default=0,
                 ),
             ),
-            outputs=(OutputSpec("item", TypeExpr.wildcard(), display_name="*"),),
+            outputs=(OutputSpec("item", _ITEM, display_name="*"),),
         )
 
     @classmethod
