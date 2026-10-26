@@ -6,6 +6,10 @@ rescale classifier-free guidance; select compute dtype; and select a supported
 dense attention backend. They use the pinned `dinkster_inference` sampler and
 model patcher.
 
+`LoraSave` extracts standard low-rank or full-difference LoRA checkpoints from
+model and text-encoder differences, optionally includes bias differences, and
+saves a safetensors file to the selected writable mount.
+
 `ChromaRadianceOptions` applies Chroma Radiance transformer options over an
 inclusive sigma range while optionally retaining an existing model wrapper.
 

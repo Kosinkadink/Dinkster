@@ -1,7 +1,10 @@
 """Encoder export schemas retain their source inputs and mount layout."""
 
-from dinkster_api.v1 import CLIP_TYPE, VAE_TYPE, MountWidget, TypeExpr
+from dinkster_api.v1 import CLIP_TYPE, MODEL_TYPE, VAE_TYPE, MountWidget, TypeExpr
+from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.lora_extract_save import LoraSave
 from dinkster_nodes_comfy.model_file_savers import CLIPSave, VAESave
+from dinkster_workers import load_manifest
 
 
 def test_encoder_savers_keep_model_inputs_and_append_the_public_mount() -> None:
@@ -18,3 +21,27 @@ def test_encoder_savers_keep_model_inputs_and_append_the_public_mount() -> None:
         assert schema.inputs[2].default is None and not schema.inputs[2].required
         assert schema.outputs == ()
         assert schema.output_node and not schema.idempotent
+
+
+def test_lora_save_keeps_source_inputs_and_native_manifest_claim() -> None:
+    schema = LoraSave.schema()
+    assert [item.id for item in schema.inputs] == [
+        "filename_prefix",
+        "rank",
+        "lora_type",
+        "bias_diff",
+        "model_diff",
+        "text_encoder_diff",
+        "mount",
+    ]
+    assert schema.inputs[0].default == "loras/ComfyUI_extracted_lora"
+    assert schema.inputs[4].type == TypeExpr.concrete(MODEL_TYPE)
+    assert schema.inputs[5].type == TypeExpr.concrete(CLIP_TYPE)
+    assert not schema.inputs[4].required and not schema.inputs[5].required
+    assert schema.inputs[6].widget == MountWidget()
+    assert schema.inputs[6].adjacent_to == "filename_prefix"
+    assert not schema.inputs[6].required and schema.inputs[6].default is None
+    assert schema.outputs == () and schema.output_node and not schema.idempotent
+    assert LoraSave in COMFY_NODES
+    manifest = load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml")
+    assert tuple(node.schema().node_type for node in COMFY_NODES) == manifest.namespaces

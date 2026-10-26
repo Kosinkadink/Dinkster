@@ -80,6 +80,7 @@ from .latent_upscale import LATENT_UPSCALE_NODES
 from .latent_upscale_loader import LATENT_UPSCALE_LOADER_NODES
 from .logic import LOGIC_NODES
 from .loops import LOOP_NODES
+from .lora_extract_save import LoraSave
 from .ltx_audio import LTX_AUDIO_NODES
 from .ltx_av_latent import LTX_AV_LATENT_NODES
 from .ltx_duration import LTXVDurationPredictor
@@ -267,6 +268,7 @@ COMFY_NODES = (
     *MODEL_FILE_SAVE_NODES,
     SaveAnimatedWEBP,
     SaveAnimatedPNG,
+    LoraSave,
 )
 
 

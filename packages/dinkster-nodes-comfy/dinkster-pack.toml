@@ -417,6 +417,7 @@ namespaces = [
     "VAESave",
     "SaveAnimatedWEBP",
     "SaveAnimatedPNG",
+    "LoraSave",
 ]
 
 [pack.sandbox]
