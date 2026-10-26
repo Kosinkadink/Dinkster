@@ -29,8 +29,10 @@ from dinkster.compose import PackSpec, ServingComposer
 
 class TripleEncoder:
     def tokenize(self, text: str) -> dict[str, list[list[int]]]:
-        chunks = [[ord(character)] for character in text] or [[0]]
-        return {"g": chunks.copy(), "l": chunks.copy(), "t5xxl": chunks.copy()}
+        return {
+            key: [[offset + ord(character)] for character in text] or [[offset]]
+            for key, offset in (("g", 1000), ("l", 2000), ("t5xxl", 3000), ("extra", 4000))
+        }
 
     def encode_from_tokens_scheduled(self, tokens: dict[str, list[list[int]]]) -> list[list[Any]]:
         token_streams = {key: value.copy() for key, value in tokens.items()}
@@ -58,22 +60,25 @@ def _tokens(
 @pytest.mark.parametrize(
     ("clip_l", "clip_g", "expected_g", "expected_l"),
     (
-        ("a", "wxyz", [[119], [120], [121], [122]], [[97], [0], [0], [0]]),
-        ("wxyz", "a", [[97], [0], [0], [0]], [[119], [120], [121], [122]]),
+        ("a", "wxyz", [[1119], [1120], [1121], [1122]], [[2097], [2000], [2000], [2000]]),
+        ("wxyz", "a", [[1097], [1000], [1000], [1000]], [[2119], [2120], [2121], [2122]]),
     ),
 )
 def test_sd3_aligns_asymmetric_clip_streams_in_both_directions(
     clip_l: str, clip_g: str, expected_g: list[list[int]], expected_l: list[list[int]]
 ) -> None:
     tokens = _tokens(clip_l=clip_l, clip_g=clip_g, t5xxl="t5", empty_padding="none")
-    assert tokens == {"g": expected_g, "l": expected_l, "t5xxl": [[116], [53]]}
+    assert tokens["g"] == expected_g
+    assert tokens["l"] == expected_l
+    assert tokens["t5xxl"] == [[3116], [3053]]
+    assert tokens["extra"] == ([[4119], [4120], [4121], [4122]] if clip_g == "wxyz" else [[4097]])
 
 
 @pytest.mark.parametrize(
     ("empty_padding", "expected"),
     (
-        ("none", {"g": [], "l": [], "t5xxl": []}),
-        ("empty_prompt", {"g": [[0]], "l": [[0]], "t5xxl": [[0]]}),
+        ("none", {"g": [], "l": [], "t5xxl": [], "extra": [[4000]]}),
+        ("empty_prompt", {"g": [[1000]], "l": [[2000]], "t5xxl": [[3000]], "extra": [[4000]]}),
     ),
 )
 def test_sd3_empty_padding_selects_empty_stream_or_empty_prompt(
@@ -208,9 +213,10 @@ def test_sd3_conditioning_transports_through_both_ordinary_hosts(
                 assert values[0][1]["start_percent"] == 0.25
                 assert values[1][1]["start_percent"] == 0.75
                 assert values[0][1]["token_streams"] == {
-                    "g": [[98], [99]],
-                    "l": [[97], [0]],
-                    "t5xxl": [[100], [101], [102]],
+                    "g": [[1098], [1099]],
+                    "l": [[2097], [2000]],
+                    "t5xxl": [[3100], [3101], [3102]],
+                    "extra": [[4098], [4099]],
                 }
                 assert values[1][1]["token_streams"] == values[0][1]["token_streams"]
         finally:
