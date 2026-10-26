@@ -8,6 +8,8 @@
   bounding-box elements. MOSS layout prompts place enclosing boxes in centered
   pixel coordinates; MOSS edit conditioning preserves the selected reference
   layout and optional vision-token prompts.
+- Text generation supports image, video-frame and audio context, optional
+  sampling controls and separate completed or truncated reasoning output.
 - `CLIPTextEncodeSDXL` encodes separate global and local prompts with size,
   crop and target-size conditioning. Unequal token streams are padded with
   empty-prompt tokens. `CLIPTextEncodeSDXLRefiner` adds aesthetic-score and

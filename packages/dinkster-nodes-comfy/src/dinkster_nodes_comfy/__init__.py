@@ -116,6 +116,7 @@ from .stable_cascade import STABLE_CASCADE_NODES
 from .style_model import STYLE_MODEL_NODES
 from .switch import ComfySwitchNode
 from .text import TEXT_NODES
+from .text_generation import TextGenerate
 from .utilities import ComfyNumberConvert, SeedNode
 from .vae import VAE_NODES
 from .video_conditioning import VIDEO_CONDITIONING_NODES
@@ -242,6 +243,7 @@ COMFY_NODES = (
     BuildJsonPromptIdeogram,
     MOSSImageLayoutPrompt,
     TextEncodeMOSSImageEdit,
+    TextGenerate,
 )
 
 
