@@ -26,6 +26,7 @@ class GLIGENTextBoxApply(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="GLIGENTextBoxApply",
+            display_name="Apply GLIGEN Text Box",
             category="model/conditioning/gligen",
             inputs=(
                 InputSpec("conditioning_to", TypeExpr.concrete(CONDITIONING_TYPE)),
