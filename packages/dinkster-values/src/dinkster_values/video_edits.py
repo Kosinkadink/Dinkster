@@ -2,10 +2,24 @@
 
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Mapping
 from fractions import Fraction
 from typing import cast
+
+from .builtin_types import VIDEO_EDIT_TYPE
+from .registry import TypeRegistry
+
+
+def register_video_edit_type(registry: TypeRegistry) -> None:
+    """Retain the shared VIDEO_EDIT JSON wire format and first registration."""
+    if VIDEO_EDIT_TYPE not in registry:
+        registry.register(
+            VIDEO_EDIT_TYPE,
+            encode=lambda obj: json.dumps(obj, sort_keys=True, allow_nan=False).encode(),
+            decode=json.loads,
+        )
 
 
 def seconds(value: object, name: str) -> Fraction:
