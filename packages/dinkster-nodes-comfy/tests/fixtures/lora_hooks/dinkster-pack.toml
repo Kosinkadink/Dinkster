@@ -1,0 +1,8 @@
+[pack]
+name = "lora-hooks-fixture"
+publisher = "dinkster"
+namespaces = ["lora-hooks-fixture", "CreateHookLora", "CreateHookLoraModelOnly"]
+
+[pack.entry]
+nodes = "lora_hooks_fixture:LORA_HOOK_FIXTURES"
+types = "lora_hooks_fixture:register_types"
