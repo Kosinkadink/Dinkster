@@ -190,6 +190,7 @@ GOLDEN_V1_SURFACE = (
     "LATENT_TYPE",
     "LATENT_UPSCALE_MODEL_TYPE",
     "LAYERS_TYPE",
+    "LOAD3D_CAMERA_TYPE",
     "MASK_TYPE",
     "MESH_TYPE",
     "MODEL3D_TYPE",
@@ -265,7 +266,10 @@ GOLDEN_V1_SURFACE = (
     # same way dev.image and the compat surface do.
     "IMAGE_BATCH_MERGER_ID",
     "PNG_CONTAINER_VERSION",
+    "ImageComponents",
+    "ReadableImageSource",
     "decode_image_array",
+    "decode_image_components",
     "encode_image_array",
     "image_array_fingerprint",
     "image_array_meta",
@@ -353,6 +357,9 @@ GOLDEN_V1_SURFACE = (
     "digest_file",
     "is_digest",
     "mount_roots_for_kind",
+    "asset_selection_names",
+    "asset_selection_options",
+    "resolve_asset_selection",
     "register_asset_type",
     "resolver_from_env",
     # -- mounted saves (dinkster-assets + current dinkster-schema widgets)
