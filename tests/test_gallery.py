@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 
 import pytest
@@ -34,7 +35,7 @@ from dinkster_schema.wire import SCHEMA_WIRE_VERSION, schema_to_wire
 from dinkster_server import create_app
 from dinkster_workers.manifest import load_pack_templates
 
-from dinkster.compose import PackSpec, compose_serving
+from dinkster.compose import Composition, PackSpec, compose_serving
 
 REPO_ROOT = Path(__file__).parent.parent
 DEV_PACK_MANIFEST = REPO_ROOT / "packages" / "dinkster-nodes-dev" / "dinkster-pack.toml"
@@ -238,8 +239,11 @@ def test_gallery_socket_wire_coverage() -> None:
     asyncio.run(scenario())
 
 
-def test_gallery_explicit_pack_surface() -> None:
+def test_gallery_explicit_pack_surface(
+    shared_default_composition: tuple[asyncio.Runner, AbstractAsyncContextManager[Composition]],
+) -> None:
     """The explicit pack serves gallery nodes, choices, and its template."""
+    runner, defaults = shared_default_composition
 
     async def scenario() -> None:
         dev = await compose_serving(
@@ -254,8 +258,7 @@ def test_gallery_explicit_pack_surface() -> None:
         finally:
             await dev.close()
 
-        plain = await compose_serving()
-        try:
+        async with defaults as plain:
             assert not any(t.startswith("dev.") for t in plain.schemas)
             assert set(plain.choices) == {
                 "dinkster.detection.detect.providers",
@@ -288,10 +291,8 @@ def test_gallery_explicit_pack_surface() -> None:
                 "dinkster-vision-sam31",
                 "dinkster-vision-upscale",
             }
-        finally:
-            await plain.close()
 
-    asyncio.run(scenario())
+    runner.run(scenario())
 
 
 def test_gallery_choice_and_template_endpoints() -> None:

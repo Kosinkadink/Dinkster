@@ -3432,15 +3432,16 @@ def test_serve_pack_failure_recorded_and_survivors_serve(tmp_path: Path) -> None
     (the anti-ComfyUI: broken extensions were just silently absent)."""
     manifest = write_iso_manifest(tmp_path / "pack", name="core")
     port = free_port()
+    bootstrap = """
+from dinkster import serve
+
+serve.default_pack_ids = lambda: ("dinkster-nodes-foundation",)
+serve.model_pack_specs = lambda: ()
+serve.comfy_compat_specs = lambda *args, **kwargs: ()
+serve.main()
+"""
     process = subprocess.Popen(
-        serve_command(
-            port,
-            "--no-default-packs",
-            "--pack",
-            str(TESTS_DIR.parent / "packages" / "dinkster-nodes-foundation"),
-            "--pack",
-            str(manifest),
-        ),
+        [sys.executable, "-c", bootstrap, *serve_command(port, "--pack", str(manifest))[3:]],
         cwd=tmp_path,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -3706,12 +3707,19 @@ def test_serve_mounted_save_end_to_end(tmp_path: Path) -> None:
         "NODES = [Gradient, Save]\n"
     )
     port = free_port()
+    bootstrap = """
+from dinkster import serve
+
+serve.default_pack_ids = lambda: ("dinkster-nodes-media-io",)
+serve.model_pack_specs = lambda: ()
+serve.comfy_compat_specs = lambda *args, **kwargs: ()
+serve.main()
+"""
     process, log = start_logged_serve(
         [
             sys.executable,
-            "-m",
-            "dinkster.serve",
-            "--no-default-packs",
+            "-c",
+            bootstrap,
             "--host",
             "127.0.0.1",
             "--port",

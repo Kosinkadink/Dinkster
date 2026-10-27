@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tomllib
 import weakref
+from contextlib import AbstractAsyncContextManager
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -908,12 +909,15 @@ def test_unpinned_pack_records_development_mode_when_production_was_requested(
     asyncio.run(scenario())
 
 
-def test_compose_defaults_only(tmp_path: Path) -> None:
+def test_compose_defaults_only(
+    tmp_path: Path,
+    shared_default_composition: tuple[asyncio.Runner, AbstractAsyncContextManager[Composition]],
+) -> None:
     """Installed defaults provide the standard surface through independent packs."""
+    runner, defaults = shared_default_composition
 
     async def scenario() -> None:
-        composition = await compose_serving()
-        try:
+        async with defaults as composition:
             assert set(composition.schemas) == set(build_schemas(DEFAULT_NODES))
             assert not any(t.startswith("dev.") for t in composition.schemas)
             assert set(composition.packs) == (
@@ -1031,10 +1035,8 @@ def test_compose_defaults_only(tmp_path: Path) -> None:
                 assert "provider" not in exact_node.inputs
             finally:
                 await client.close()
-        finally:
-            await composition.close()
 
-    asyncio.run(scenario())
+    runner.run(scenario())
 
 
 def test_compose_serving_default_resolution_is_atomic(
@@ -1565,8 +1567,11 @@ def test_compose_dev_pack_adds_scaffold_nodes(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
-def test_conformance_proof_nodes_follow_explicit_dev_pack_composition() -> None:
+def test_conformance_proof_nodes_follow_explicit_dev_pack_composition(
+    shared_default_composition: tuple[asyncio.Runner, AbstractAsyncContextManager[Composition]],
+) -> None:
     """Conformance probes appear only when the development pack is composed."""
+    runner, defaults = shared_default_composition
 
     async def scenario() -> None:
         dev = await compose_serving(
@@ -1578,16 +1583,13 @@ def test_conformance_proof_nodes_follow_explicit_dev_pack_composition() -> None:
         finally:
             await dev.close()
 
-        production = await compose_serving()
-        try:
+        async with defaults as production:
             assert not any(
                 node_type.startswith("dev.conformance.") for node_type in production.schemas
             )
             assert not any(
                 node_type.startswith("dev.conformance.") for node_type in production.node_packs
             )
-        finally:
-            await production.close()
 
         manifest_composition = await compose_serving(
             [PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)], include_default_packs=False
@@ -1598,7 +1600,7 @@ def test_conformance_proof_nodes_follow_explicit_dev_pack_composition() -> None:
         finally:
             await manifest_composition.close()
 
-    asyncio.run(scenario())
+    runner.run(scenario())
 
 
 def test_compose_dev_mode(caplog: pytest.LogCaptureFixture) -> None:
