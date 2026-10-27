@@ -60,6 +60,7 @@ from .builtin_types import (
     FLOATS_TYPE,
     GLIGEN_TYPE,
     GUIDER_TYPE,
+    HISTOGRAM_TYPE,
     HOOK_KEYFRAMES_TYPE,
     HOOKS_TYPE,
     IC_LORA_PARAMETERS_TYPE,
@@ -244,6 +245,7 @@ from .registry import (
     default_decode,
     default_encode,
     register_core_types,
+    register_histogram_type,
 )
 from .resident import (
     ResidencyTable,
@@ -329,6 +331,7 @@ __all__ = [
     "DEVICE_MEMORY_RECONCILIATION_BOUND_BYTES",
     "DICT_TYPE",
     "FLOATS_TYPE",
+    "HISTOGRAM_TYPE",
     "Detection",
     "EncodedPayload",
     "EncodedLatentTensor",
@@ -531,6 +534,7 @@ __all__ = [
     "prepare_image_array_encoding",
     "process_instance_token",
     "register_core_types",
+    "register_histogram_type",
     "register_model3d_type",
     "register_resident_type",
     "resident_owners",

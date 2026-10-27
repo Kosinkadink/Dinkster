@@ -71,6 +71,8 @@ GOLDEN_V1_SURFACE = (
     "extension_behavior_hash",
     # -- training session boundary values (dinkster-protocol)
     "TrainingSessionHandle",
+    "ExportSnapshot",
+    "current_export_snapshot",
     "MirrorSpec",
     "MirrorTolerance",
     "SourceFilenameSpec",
@@ -178,6 +180,7 @@ GOLDEN_V1_SURFACE = (
     "DICT_TYPE",
     "FLOATS_TYPE",
     "GLIGEN_TYPE",
+    "HISTOGRAM_TYPE",
     "PHOTOMAKER_TYPE",
     "GUIDER_TYPE",
     "HOOK_KEYFRAMES_TYPE",

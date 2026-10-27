@@ -102,6 +102,7 @@ from dinkster_protocol import (
     BehaviorValue,
     CompositionMode,
     ContributionSurfaceDescriptor,
+    ExportSnapshot,
     ExtensionDeclaration,
     ExtensionEntryPoints,
     ExtensionScope,
@@ -111,6 +112,7 @@ from dinkster_protocol import (
     GuidanceRegistrySnapshot,
     TrainingSessionHandle,
     canonical_extension_snapshot,
+    current_export_snapshot,
     extension_behavior_hash,
 )
 from dinkster_protocol.frontend_modules import FrontendContribution, FrontendModule
@@ -235,6 +237,7 @@ from dinkster_values import (
     GIBIBYTE,
     GLIGEN_TYPE,
     GUIDER_TYPE,
+    HISTOGRAM_TYPE,
     HOOK_KEYFRAMES_TYPE,
     HOOKS_TYPE,
     IC_LORA_PARAMETERS_TYPE,
@@ -525,6 +528,8 @@ __all__ = [
     "extension_behavior_hash",
     # -- training session boundary values (dinkster-protocol)
     "TrainingSessionHandle",
+    "ExportSnapshot",
+    "current_export_snapshot",
     # -- node authoring (dinkster-schema)
     "ABSENT",
     "BLOCKED",
@@ -627,6 +632,7 @@ __all__ = [
     "DICT_TYPE",
     "FLOATS_TYPE",
     "GLIGEN_TYPE",
+    "HISTOGRAM_TYPE",
     "PHOTOMAKER_TYPE",
     "GUIDER_TYPE",
     "HOOK_KEYFRAMES_TYPE",
