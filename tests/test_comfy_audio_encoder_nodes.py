@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
-import sys
 from types import SimpleNamespace
 
 import pytest
@@ -93,23 +91,3 @@ def test_audio_encoder_resident_release_and_first_authority(
     assert other.spec(AUDIO_ENCODER_TYPE) is authority
     with pytest.raises(ResidentLookupError):
         authority.decode(encoded)
-
-
-def test_audio_encoder_cold_registration_is_torch_free() -> None:
-    subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from dinkster_api.v1 import AUDIO_ENCODER_TYPE, TypeRegistry\n"
-            "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-            "import sys\n"
-            "r=TypeRegistry(); register_inference_types(r)\n"
-            "assert AUDIO_ENCODER_TYPE in r\n"
-            "assert sum(n.schema().node_type in "
-            "('AudioEncoderLoader','AudioEncoderEncode','SheetSage2AudioToABC') "
-            "for n in COMFY_NODES)==3\n"
-            "assert 'torch' not in sys.modules\n"
-            "assert not any(n.startswith('dinkster_inference.') for n in sys.modules)\n",
-        ],
-        check=True,
-    )

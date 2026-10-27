@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.attention_multiply import ATTENTION_MULTIPLY_NODES, CLIPAttentionMultiply
-from dinkster_workers import load_manifest
 
 
 def test_attention_multiplier_nodes_are_exported_by_the_complete_pack() -> None:
@@ -23,13 +22,3 @@ def test_attention_multiplier_nodes_are_exported_by_the_complete_pack() -> None:
         "v",
         "out",
     )
-
-
-def test_attention_multiplier_nodes_are_declared_by_the_complete_manifest() -> None:
-    manifest = load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml")
-    assert {
-        "UNetSelfAttentionMultiply",
-        "UNetCrossAttentionMultiply",
-        "CLIPAttentionMultiply",
-        "UNetTemporalAttentionMultiply",
-    }.issubset(manifest.namespaces)

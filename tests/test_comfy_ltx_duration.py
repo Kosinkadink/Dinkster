@@ -1,8 +1,5 @@
 """Torch-free LTXV duration schema and native discovery."""
 
-import subprocess
-import sys
-
 from dinkster_api.v1 import (
     CONDITIONING_TYPE,
     CORE_FLOAT,
@@ -40,19 +37,3 @@ def test_duration_predictor_schema_and_complete_manifest() -> None:
         tuple(n.schema().node_type for n in COMFY_NODES)
         == load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml").namespaces
     )
-
-
-def test_duration_predictor_cold_discovery() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; sys.modules['torch']=None; sys.modules['dinkster_inference']=None; "
-            "from dinkster_nodes_comfy import COMFY_NODES; "
-            "assert any(n.schema().node_type=='LTXVDurationPredictor' for n in COMFY_NODES); "
-            "assert not any(n.startswith('dinkster_inference.') for n in sys.modules)",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr

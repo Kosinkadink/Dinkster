@@ -3,7 +3,6 @@
 from dinkster_api.v1 import CORE_BOOLEAN, CORE_FLOAT, MODEL_TYPE, NumberWidget, TypeExpr
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.cache import CACHE_NODES, EasyCache, FluxKVCache, LazyCache
-from dinkster_workers import load_manifest
 
 
 def test_cache_nodes_publish_the_fixed_core_interfaces() -> None:
@@ -41,8 +40,3 @@ def test_cache_nodes_publish_the_fixed_core_interfaces() -> None:
         assert [(item.id, item.type) for item in schema.outputs] == [
             ("MODEL", TypeExpr.concrete(MODEL_TYPE))
         ]
-
-
-def test_cache_nodes_are_in_the_ordinary_pack_manifest() -> None:
-    manifest = load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml")
-    assert {"EasyCache", "LazyCache", "FluxKVCache"}.issubset(manifest.namespaces)
