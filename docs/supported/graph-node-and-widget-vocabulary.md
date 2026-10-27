@@ -79,10 +79,13 @@
   widget descriptors. Clients use these declarations without matching node IDs;
   native video trim and crop declare their exact `VIDEO_EDIT` features.
 - Values: INT, FLOAT, STRING, COMBO, BOOLEAN,
-  core.absent, immutable linear or monotone-cubic `dinkster.curve`, ordered
-  `dinkster.layers`, strict versioned `dinkster.compositor`, HISTOGRAM as a plain
-  ordered integer list with no length or positivity restriction through shared structural
-  transport, parametric `list<T>` and `asset<T>`
+  core.absent, immutable `CURVE` with monotone-cubic default or explicit linear
+  interpolation, stable-sorted points including duplicate positions and empty
+  curves that evaluate to zero; the 4096-point limit applies only to curve
+  preview renditions, not value transport. HISTOGRAM is a plain ordered integer
+  list with no length or positivity restriction through shared structural
+  transport. Ordered `dinkster.layers`, strict versioned `dinkster.compositor`,
+  parametric `list<T>` and `asset<T>`
 - Integer, float, text, and boolean primitive nodes declare their exact output
   values before execution for downstream presentation. Text switches between
   single-line and multiline views; the legacy multiline type remains loadable
