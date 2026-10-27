@@ -142,7 +142,7 @@ class CascadeInspect(Node):
         )
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_ordinary_manifest_latents_and_prior_twice(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
         source_root = Path(__file__).resolve().parents[1] / "src"

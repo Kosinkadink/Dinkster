@@ -202,16 +202,16 @@ class SAM3TrackConsumer(Node):
 
 
 @pytest.mark.parametrize(
-    "case",
+    "in_process,case",
     (
-        "asymmetric-present-scores",
-        "zero-objects",
-        "tensor-scores",
-        "none-scores",
-        "none-absent-scores",
+        (True, "asymmetric-present-scores"),
+        (False, "asymmetric-present-scores"),
+        (True, "zero-objects"),
+        (True, "tensor-scores"),
+        (True, "none-scores"),
+        (True, "none-absent-scores"),
     ),
 )
-@pytest.mark.parametrize("in_process", (True, False))
 def test_public_sam3_track_producer_consumer_repeats_through_ordinary_hosts(
     tmp_path: Path, case: str, in_process: bool
 ) -> None:

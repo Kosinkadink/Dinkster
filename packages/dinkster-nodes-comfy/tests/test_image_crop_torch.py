@@ -125,8 +125,16 @@ def test_crop_and_bounding_box_execute_twice_through_ordinary_manifest(
             }
         )
         try:
-            for manifest in (native_manifest, fixture_manifest):
-                await composer.add_pack(PackSpec(manifest, in_process=in_process))
+            manifests = (native_manifest, fixture_manifest)
+            for manifest in manifests:
+                pack = PackSpec(manifest, in_process=True)
+                if not in_process:
+                    pack = PackSpec(
+                        manifest,
+                        worker_group="crop-fixture",
+                        group_manifests=manifests,
+                    )
+                await composer.add_pack(pack)
             graph = Graph(
                 nodes={
                     "source": GraphNode("crop-fixture.source"),

@@ -65,6 +65,9 @@ def test_invalid_conversion_preserves_error_kind_and_message(
 
 
 def test_seed_preserves_large_integer_and_positional_controller_metadata() -> None:
+    # ComfyUI provenance: comfy_extras.nodes_seed.SeedNode, F bc5f880dbdd43e426077f42ccec53bb577ffee9f.  # noqa: E501
+    # Inputs: {"seed": 9223372036854775807}.
+    # comfy-replay: {"class": "comfy_extras.nodes_seed.SeedNode", "method": "execute", "inputs": {"seed": 9223372036854775807}, "result": {"0": "seed"}}  # noqa: E501
     assert SeedNode.execute(seed=sys.maxsize) == {"seed": 9223372036854775807}
     wire = schema_to_wire(SeedNode.schema())
     interface = cast(list[dict[str, object]], wire["interface"])

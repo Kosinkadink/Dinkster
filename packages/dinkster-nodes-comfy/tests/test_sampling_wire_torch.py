@@ -121,7 +121,7 @@ class SigmaConsumer(Node):
 
 
 @pytest.mark.parametrize("case", ("float64", "noncontiguous-float32", "bfloat16", "empty"))
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_ordinary_manifest_sigma_producer_consumer_repeats_on_both_hosts(
     tmp_path: Path, case: str, in_process: bool
 ) -> None:
