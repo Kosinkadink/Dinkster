@@ -3,7 +3,6 @@
 from dinkster_api.v1 import (
     ASSET_TYPE,
     AUDIO_TYPE,
-    BOUNDING_BOX_TYPE,
     VIDEO_TYPE,
     TypeRegistry,
     register_asset_type,
@@ -24,14 +23,17 @@ from .audio_combine import AUDIO_COMBINE_NODES
 from .audio_effects import AUDIO_EFFECT_NODES
 from .audio_encoder import AUDIO_ENCODER_NODES
 from .audio_generators import AUDIO_GENERATOR_NODES
+from .audio_io import LoadAudio, PreviewAudio
 from .audio_latent import AUDIO_LATENT_NODES, GetAudioLatentSize
 from .audio_music_conditioning import AUDIO_MUSIC_CONDITIONING_NODES
+from .audio_save import SaveAudio, SaveAudioAdvanced, SaveAudioMP3, SaveAudioOpus
 from .audio_transform import AUDIO_TRANSFORM_NODES
 from .audio_vae import AUDIO_VAE_NODES
 from .bbox_crop import CropByBBoxes
 from .bernini_conditioning import BERNINI_CONDITIONING_NODES
 from .boogu_encoders import TextEncodeBooguEdit
 from .cache import CACHE_NODES
+from .camera_angle import CameraAngle
 from .cfg_guidance import CFG_GUIDANCE_NODES
 from .cfg_guiders import CFG_GUIDER_NODES
 from .chroma_options import ChromaRadianceOptions
@@ -49,8 +51,10 @@ from .controlnet import CONTROLNET_NODES
 from .cosmos_conditioning import COSMOS_CONDITIONING_NODES
 from .custom_sampling import CUSTOM_SAMPLING_NODES
 from .dataset_collections import DATASET_COLLECTION_NODES
+from .dataset_folders import FOLDER_DATASET_NODES
 from .dataset_groups import DATASET_GROUP_NODES, MakeTrainingDataset
 from .dataset_images import DATASET_IMAGE_NODES
+from .dataset_shards import LoadTrainingDataset
 from .dataset_text import DATASET_TEXT_NODES
 from .dataset_video import DATASET_VIDEO_NODES
 from .device_routing import DEVICE_ROUTING_NODES
@@ -94,7 +98,15 @@ from .lora_file_loaders import LORA_FILE_LOADER_NODES
 from .lotus import LotusConditioning
 from .ltx_audio import LTX_AUDIO_NODES
 from .ltx_av_latent import LTX_AV_LATENT_NODES
+from .ltx_dual_cfg import LTXVDualCFGGuider
 from .ltx_duration import LTXVDurationPredictor
+from .ltx_guidance import LTXVModalityGuidance, LTXVReferenceAudio, LTXVSpatioTemporalGuidance
+from .ltx_guides import GetICLoRAParameters, LTXVAddGuide, LTXVAddLatentGuide
+from .ltx_keyframe_guides import (
+    LTXVAddGeneratedKeyframes,
+    LTXVGeneratedKeyframesToGuides,
+    LTXVSeparateGeneratedKeyframes,
+)
 from .ltx_sampling import LTX_SAMPLING_NODES
 from .ltx_video_conditioning import LTX_VIDEO_CONDITIONING_NODES
 from .ltx_video_preprocess import LTX_VIDEO_PREPROCESS_NODES
@@ -104,7 +116,9 @@ from .mask import MASK_NODES
 from .mask_preview import MaskPreview
 from .math import ComfyMathExpression
 from .ming_image_encoders import TextEncodeMingImageEdit
+from .minimax_h3_control import MiniMaxH3FunControlNetApply
 from .minimax_h3_latent import EmptyMiniMaxH3LatentAV, MiniMaxH3AddGuide, MiniMaxH3ImageToVideo
+from .minimax_h3_reference import MiniMaxH3ReferenceToVideo
 from .minimax_h3_sampling import MiniMaxH3SigmaShift
 from .mochi import EmptyMochiLatentVideo
 from .model_advanced import MODEL_ADVANCED_NODES
@@ -140,6 +154,7 @@ from .reference_conditioning import REFERENCE_CONDITIONING_NODES
 from .rope_and_mask import ROPE_AND_MASK_NODES
 from .rtdetr import RTDETR_NODES
 from .sam3 import SAM3_TRACKING_NODES
+from .sam3_detection import SAM3_Detect
 from .sampler_factories import SAMPLER_FACTORY_NODES
 from .save_text import SaveText
 from .scail_masks import SCAIL2ColoredMask
@@ -161,7 +176,11 @@ from .supir import SUPIRApply
 from .switch import ComfySwitchNode
 from .text import TEXT_NODES
 from .text_generation import TextGenerate, TextGenerateLTX2Prompt
-from .triposplat import TripoSplatPreprocessImage, TripoSplatSamplingPreview
+from .triposplat import (
+    TripoSplatConditioning,
+    TripoSplatPreprocessImage,
+    TripoSplatSamplingPreview,
+)
 from .utilities import ComfyNumberConvert, PreviewAny, SeedNode
 from .vae import VAE_NODES
 from .video_conditioning import VIDEO_CONDITIONING_NODES
@@ -184,6 +203,7 @@ from .wan_sound import WanHuMoImageToVideo, WanSoundImageToVideo, WanSoundImageT
 from .wan_track_conditioning import WanTrackToVideo
 from .wan_uni3c import WanUni3CControlnetApply
 from .wandancer_keyframes import WANDANCER_KEYFRAME_NODES
+from .yue2_conditioning import YUE2_CONDITIONING_NODES
 from .zimage_encoders import TextEncodeZImageOmni
 
 COMFY_NODES = (
@@ -318,7 +338,19 @@ COMFY_NODES = (
     SeedVR2PostProcessing,
     *WANDANCER_KEYFRAME_NODES,
     LTXVDurationPredictor,
+    GetICLoRAParameters,
+    LTXVAddGuide,
+    LTXVAddLatentGuide,
+    LTXVAddGeneratedKeyframes,
+    LTXVSeparateGeneratedKeyframes,
+    LTXVGeneratedKeyframesToGuides,
+    LTXVReferenceAudio,
+    LTXVSpatioTemporalGuidance,
+    LTXVModalityGuidance,
+    LTXVDualCFGGuider,
     MiniMaxH3AddGuide,
+    MiniMaxH3ReferenceToVideo,
+    MiniMaxH3FunControlNetApply,
     *DATASET_VIDEO_NODES,
     *LIST_UTILITY_NODES,
     SplitImageToTileList,
@@ -369,13 +401,25 @@ COMFY_NODES = (
     *RTDETR_NODES,
     *MODEL_SELECTION_NODES,
     *SAM3_TRACKING_NODES,
+    SAM3_Detect,
     VideoFrameSample,
     *MODEL_FILE_LOADER_NODES,
     *LORA_FILE_LOADER_NODES,
     CropByBBoxes,
+    CameraAngle,
     MakeTrainingDataset,
     TripoSplatPreprocessImage,
     TripoSplatSamplingPreview,
+    TripoSplatConditioning,
+    LoadTrainingDataset,
+    LoadAudio,
+    PreviewAudio,
+    SaveAudio,
+    SaveAudioMP3,
+    SaveAudioOpus,
+    SaveAudioAdvanced,
+    *YUE2_CONDITIONING_NODES,
+    *FOLDER_DATASET_NODES,
 )
 
 
@@ -387,8 +431,6 @@ def register_inference_types(registry: TypeRegistry) -> None:
     if VIDEO_TYPE not in registry:
         register_video_value_type(registry, VIDEO_TYPE, resolver_from_env())
     register_video_edit_type(registry)
-    if BOUNDING_BOX_TYPE not in registry:
-        registry.register(BOUNDING_BOX_TYPE)
     _register_inference_types(registry)
 
 

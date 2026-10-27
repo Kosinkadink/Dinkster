@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from collections.abc import Mapping
 from dataclasses import replace
@@ -136,8 +137,21 @@ class ExecutionContextProbe(Node):
         )
 
 
-def test_sync_node_does_not_block_loop_and_reports_from_thread() -> None:
+def test_sync_node_does_not_block_loop_and_reports_from_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     async def scenario() -> None:
+        loop = asyncio.get_running_loop()
+        entered = asyncio.Event()
+        release = threading.Event()
+        original_execute = SlowSyncNode.execute
+
+        def pause_execution(_cls: type[SlowSyncNode]) -> Mapping[str, object]:
+            loop.call_soon_threadsafe(entered.set)
+            assert release.wait(2)
+            return original_execute()
+
+        monkeypatch.setattr(SlowSyncNode, "execute", classmethod(pause_execution))
         events: list[EngineEvent] = []
         registry = TypeRegistry()
         register_core_types(registry)
@@ -151,9 +165,12 @@ def test_sync_node_does_not_block_loop_and_reports_from_thread() -> None:
         run = asyncio.create_task(
             engine.run(Graph(nodes={"slow": GraphNode("review.slow", {})}), ["slow"])
         )
-        await asyncio.sleep(0.02)
-        assert not run.done()
-        await run
+        try:
+            await asyncio.wait_for(entered.wait(), 2)
+            assert not run.done()
+        finally:
+            release.set()
+            await run
         assert any(
             event.kind == "node_event" and event.detail["name"] == "review.thread"
             for event in events

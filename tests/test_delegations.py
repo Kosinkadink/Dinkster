@@ -2,6 +2,7 @@ import asyncio
 import sqlite3
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from aiohttp import WSMsgType, web
@@ -242,14 +243,24 @@ def test_delegate_ceiling_ownership_kind_revocation_and_durable_attribution(
 
 
 @pytest.mark.parametrize("withdrawal", ["revoke", "read-toggle", "expiry"])
-@pytest.mark.parametrize("event_delay", [0, 1.1], ids=["immediate-event", "idle-close"])
+@pytest.mark.parametrize("idle_close", [False, True], ids=["immediate-event", "idle-close"])
 def test_job_event_stream_closes_when_delegate_authority_is_withdrawn(
-    withdrawal: str, event_delay: float
+    monkeypatch: pytest.MonkeyPatch, withdrawal: str, idle_close: bool
 ) -> None:
+    import dinkster_server.app as app_module
+    import dinkster_server.auth as auth_module
     from dinkster_server.app import create_app
     from test_server import SCHEMAS, echo_graph, make_engine, submit_body
 
+    monkeypatch.setattr(app_module, "_EVENT_AUTHORITY_RECHECK_SECONDS", 0.001)
+
     async def scenario() -> None:
+        authority_time = time.time()
+        monkeypatch.setattr(
+            auth_module,
+            "time",
+            SimpleNamespace(time=lambda: authority_time, monotonic=time.monotonic),
+        )
         key = OKPKey.generate_key("Ed25519")
         jwks = _JwksService(key)
         url = await jwks.start()
@@ -309,32 +320,20 @@ def test_job_event_stream_closes_when_delegate_authority_is_withdrawn(
                 )
                 assert response.status == 200
             else:
-                await asyncio.sleep(max(0, delegation["expiresAt"] - time.time()))
-            withdrawn_at = time.monotonic()
+                authority_time = delegation["expiresAt"]
             expected_status = 401 if withdrawal == "expiry" else 403
-            if withdrawal == "expiry":
-                deadline = time.monotonic() + 3
-                response = await client.get("/api/jobs", headers=agent)
-                while response.status == 200 and time.monotonic() < deadline:
-                    await asyncio.sleep(0.01)
-                    response = await client.get("/api/jobs", headers=agent)
-                assert response.status == expected_status, (
-                    f"delegation expiry returned HTTP {response.status}; "
-                    f"expected HTTP {expected_status} within 3 seconds"
-                )
-            else:
-                response = await client.get("/api/jobs", headers=agent)
-                assert response.status == expected_status
-                if withdrawal == "revoke":
-                    assert await response.json() == {
-                        "error": "delegation-revoked",
-                        "delegationId": delegation["id"],
-                    }
+            response = await client.get("/api/jobs", headers=agent)
+            assert response.status == expected_status
+            if withdrawal == "revoke":
+                assert await response.json() == {
+                    "error": "delegation-revoked",
+                    "delegationId": delegation["id"],
+                }
             async with asyncio.timeout(5):
                 closing = asyncio.create_task(observer.receive())
                 try:
                     closed = None
-                    if event_delay:
+                    if idle_close:
                         closed = await closing
                     submitted = await client.post(
                         "/api/jobs",
@@ -355,7 +354,6 @@ def test_job_event_stream_closes_when_delegate_authority_is_withdrawn(
                         if withdrawal == "revoke"
                         else "authorization-expired"
                     )
-                    assert time.monotonic() - withdrawn_at < 2
                 finally:
                     closing.cancel()
                     await asyncio.gather(closing, return_exceptions=True)

@@ -180,6 +180,7 @@ GOLDEN_V1_SURFACE = (
     "DICT_TYPE",
     "FLOATS_TYPE",
     "GLIGEN_TYPE",
+    "HISTOGRAM_TYPE",
     "PHOTOMAKER_TYPE",
     "GUIDER_TYPE",
     "HOOK_KEYFRAMES_TYPE",
@@ -591,6 +592,46 @@ except ResidentLookupError:
 else:
     raise AssertionError("released {type_name} remained resolvable")
 assert "torch" not in sys.modules
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_bounding_box_registration_is_shared_cold_and_preserves_first_authority() -> None:
+    script = """
+import sys
+sys.modules['torch'] = None
+sys.modules['dinkster_inference'] = None
+from dinkster_api.v1 import BOUNDING_BOX_TYPE, TypeRegistry, register_inference_types
+from dinkster_nodes_comfy import register_inference_types as register_pack_types
+
+# Hand-derived plain JSON values: an optional default, one frame, and
+# multiple frames including an empty frame must retain structure and order.
+values = (
+    {'x': 0, 'y': 0, 'width': 512, 'height': 512},
+    [{'x': 7, 'y': 3, 'width': 11, 'height': 5}],
+    [[], [{'x': 7, 'y': 3, 'width': 11, 'height': 5, 'score': 0.75}]],
+)
+for registrations in (
+    (register_inference_types, register_pack_types),
+    (register_pack_types, register_inference_types),
+):
+    for preexisting in (False, True):
+        registry = TypeRegistry()
+        first = registry.register(BOUNDING_BOX_TYPE) if preexisting else None
+        registrations[0](registry)
+        spec = registry.spec(BOUNDING_BOX_TYPE)
+        assert first is None or spec is first
+        registrations[1](registry)
+        register_inference_types(registry)
+        register_pack_types(registry)
+        assert registry.spec(BOUNDING_BOX_TYPE) is spec
+        for value in values:
+            assert spec.decode(spec.encode(value)) == value
+assert sys.modules['torch'] is None
+assert sys.modules['dinkster_inference'] is None
 """
     result = subprocess.run(
         [sys.executable, "-c", script], capture_output=True, text=True, timeout=30

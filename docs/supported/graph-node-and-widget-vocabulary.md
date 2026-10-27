@@ -2,6 +2,11 @@
 
 - Input types: concrete, union, wildcard, variable, list, asset;
   scalar/list cardinality; required/advanced/hidden/lazy input flags
+- Replacement input-family copies can declare historical template input IDs
+  and a flat member-port path without retaining a predecessor schema. Existing
+  mappings without that metadata retain their wire shape. Historical same-type
+  templates are distinct from the current node interface. This describes the
+  backend declaration contract, not frontend migration support.
 - Backend `list<*>` values retain independently typed child envelopes through
   ordinary worker and persistent-cache boundaries. Outputs collect existing
   typed values rather than guessing types from Python objects. Nested lists,
@@ -82,9 +87,10 @@
   core.absent, immutable `CURVE` with monotone-cubic default or explicit linear
   interpolation, stable-sorted points including duplicate positions and empty
   curves that evaluate to zero; the 4096-point limit applies only to curve
-  preview renditions, not value transport. Ordered
-  `dinkster.layers`, strict versioned `dinkster.compositor`, parametric `list<T>` and
-  `asset<T>`
+  preview renditions, not value transport. HISTOGRAM is a plain ordered integer
+  list with no length or positivity restriction through shared structural
+  transport. Ordered `dinkster.layers`, strict versioned `dinkster.compositor`,
+  parametric `list<T>` and `asset<T>`
 - Integer, float, text, and boolean primitive nodes declare their exact output
   values before execution for downstream presentation. Text switches between
   single-line and multiline views; the legacy multiline type remains loadable
