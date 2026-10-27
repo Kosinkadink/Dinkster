@@ -494,6 +494,7 @@ namespaces = [
     "DiffusersLoader",
     "SAM3_VideoTrack",
     "SAM3_TrackToMask",
+    "SAM3_Detect",
     "VideoFrameSample",
     "CheckpointLoaderSimple",
     "CheckpointLoader",

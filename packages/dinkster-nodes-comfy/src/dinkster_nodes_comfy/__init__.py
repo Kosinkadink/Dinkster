@@ -3,7 +3,6 @@
 from dinkster_api.v1 import (
     ASSET_TYPE,
     AUDIO_TYPE,
-    BOUNDING_BOX_TYPE,
     VIDEO_TYPE,
     TypeRegistry,
     register_asset_type,
@@ -143,6 +142,7 @@ from .reference_conditioning import REFERENCE_CONDITIONING_NODES
 from .rope_and_mask import ROPE_AND_MASK_NODES
 from .rtdetr import RTDETR_NODES
 from .sam3 import SAM3_TRACKING_NODES
+from .sam3_detection import SAM3_Detect
 from .sampler_factories import SAMPLER_FACTORY_NODES
 from .save_text import SaveText
 from .scail_masks import SCAIL2ColoredMask
@@ -373,6 +373,7 @@ COMFY_NODES = (
     *RTDETR_NODES,
     *MODEL_SELECTION_NODES,
     *SAM3_TRACKING_NODES,
+    SAM3_Detect,
     VideoFrameSample,
     *MODEL_FILE_LOADER_NODES,
     *LORA_FILE_LOADER_NODES,
@@ -398,8 +399,6 @@ def register_inference_types(registry: TypeRegistry) -> None:
     if VIDEO_TYPE not in registry:
         register_video_value_type(registry, VIDEO_TYPE, resolver_from_env())
     register_video_edit_type(registry)
-    if BOUNDING_BOX_TYPE not in registry:
-        registry.register(BOUNDING_BOX_TYPE)
     _register_inference_types(registry)
 
 
