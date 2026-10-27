@@ -17,10 +17,10 @@ The registration makes three deliberate choices:
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import cast
 
 from dinkster_values import (
@@ -45,15 +45,8 @@ from dinkster_values.video_probe import probe_video
 from .audio import bind_audio_value
 from .declared import MOUNTS_ENV, produced_output_scratch
 from .identity import AssetError, digest_bytes, digest_file
-from .model import (
-    AssetRef,
-    AssetResolver,
-    LocalAssetRef,
-    LocalAssetResolver,
-    MountAssetRef,
-    MountAssetResolver,
-)
-from .mounts import MountSnapshotResolver, MountTable
+from .model import AssetRef, AssetResolver, LocalAssetRef, LocalAssetResolver
+from .mounts import MountSnapshotResolver
 
 ASSET_TYPE = ASSET_BASE_TYPE
 """Aliases dinkster_values.ASSET_BASE_TYPE (typed assets pinned the constant
@@ -158,56 +151,38 @@ def _publish_video_source(source: bytes | Path) -> AssetRef:
     )
 
 
-def admit_video_source(
-    source: bytes | Path | AssetRef | LocalAssetRef | MountAssetRef,
-    *,
-    publish: bool = False,
-) -> dict[str, object]:
-    """Reference granted files; bound copied or explicitly published sources to 1 GiB."""
-    if isinstance(source, MountAssetRef):
-        path = source.local_path()
-        if not publish:
-            return video_from_source(source)
-        source = path
+def admit_video_source(source: bytes | Path | AssetRef | LocalAssetRef) -> dict[str, object]:
+    """Admit indexed files by reference; publish only produced byte streams."""
     if isinstance(source, AssetRef):
-        if not publish and isinstance(source.resolver, MountAssetResolver):
-            mounted = source.resolver.reference_path(source.local_path())
-            if mounted is not None:
-                return admit_video_source(mounted)
-        with source.open() as handle:
-            handle.seek(0, 2)
-            if handle.tell() > GIBIBYTE:
-                raise AssetError("VIDEO source exceeds 1 GiB")
+        with source.open():
+            pass
         return video_from_source(source)
     if isinstance(source, LocalAssetRef):
-        path = source.local_path()
-        if publish:
-            return admit_video_source(path, publish=True)
-        if isinstance(source.resolver, (MountTable, MountSnapshotResolver)):
-            return admit_video_source(source.resolver.reference_local(source.binding))
-        with TemporaryDirectory(prefix="dinkster-video-") as directory:
-            path = Path(directory) / "video"
-            with source.open() as handle, path.open("wb") as output:
-                size = 0
-                while chunk := handle.read(MEBIBYTE):
-                    size += len(chunk)
-                    if size > GIBIBYTE:
-                        raise AssetError("VIDEO source exceeds 1 GiB")
-                    output.write(chunk)
-            return admit_video_source(path, publish=True)
-    if isinstance(source, Path) and not publish:
-        import os
-
+        source.local_path()
+        verified = source.verified()
+        if verified is None:
+            raise AssetError("VIDEO file selection must be indexed before admission")
+        return admit_video_source(verified)
+    if isinstance(source, Path):
         snapshot = os.environ.get(MOUNTS_ENV)
         if snapshot:
-            mounted = MountSnapshotResolver(snapshot).reference_path(source)
-            if mounted is not None:
-                return admit_video_source(mounted)
-    size = len(source) if isinstance(source, bytes) else source.stat().st_size
+            resolver = MountSnapshotResolver(snapshot)
+            path = source.resolve(strict=True)
+            for kind in ("media/video", "directory/input"):
+                for root in resolver.roots_for_kind(kind):
+                    root = root.resolve()
+                    if path.is_relative_to(root):
+                        return admit_video_source(
+                            resolver.bind_relative_file(
+                                kind, root, path.relative_to(root).as_posix()
+                            )
+                        )
+        raise AssetError("VIDEO file selection requires an indexed asset reference")
+    size = len(source)
     if size > GIBIBYTE:
         raise AssetError("VIDEO source exceeds 1 GiB")
     if size <= VIDEO_INLINE_LIMIT:
-        return video_from_source(source if isinstance(source, bytes) else source.read_bytes())
+        return video_from_source(source)
     probe = probe_video(source)
     effective_video_facts({"probe": probe, "edits": []})
     return video_from_source(_publish_video_source(source))
@@ -221,16 +196,8 @@ def bind_video_value(
 ) -> dict[str, object]:
     """Bind clips and publish large sources, or only audio-bearing sources for extraction."""
     value = coerce_video(obj)
-
-    def reference(wire: Mapping[str, object]) -> AssetRef | MountAssetRef:
-        if "mount" in wire:
-            return MountAssetRef.from_wire(
-                wire, resolver if isinstance(resolver, MountAssetResolver) else None
-            )
-        return AssetRef.from_wire(wire, resolver)
-
     if "timeline" in value:
-        return bind_video_sources(value, reference)
+        return bind_video_sources(value, lambda wire: AssetRef.from_wire(wire, resolver))
 
     def publish(clip: dict[str, object]) -> None:
         source = clip.get("source")
@@ -242,8 +209,6 @@ def bind_video_value(
             clip["source"] = _publish_video_source(source)
         if isinstance(source, AssetRef) and source.resolver is None:
             clip["source"] = AssetRef.from_wire(source.to_wire(), resolver)
-        if isinstance(source, MountAssetRef) and source.resolver is None:
-            clip["source"] = reference(source.to_wire())
         if "components" in clip:
             components = dict(cast("Mapping[str, object]", clip["components"]))
             if components["audio"] is not None:
@@ -254,11 +219,11 @@ def bind_video_value(
                 publish(child)
 
     publish(value)
-    value = bind_video_sources(value, reference)
+    value = bind_video_sources(value, lambda wire: AssetRef.from_wire(wire, resolver))
 
     def verify(clip: dict[str, object]) -> None:
         source = clip.get("source")
-        if isinstance(source, (AssetRef, MountAssetRef)) and source.resolver is not None:
+        if isinstance(source, AssetRef) and source.resolver is not None:
             video_source(clip)
         for edit in cast("list[dict[str, object]]", clip["edits"]):
             for child in cast("list[dict[str, object]]", edit.get("concat", [])):

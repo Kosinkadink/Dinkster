@@ -92,7 +92,7 @@ from .media import (
     classify_media_handle,
     raster_image_facts,
 )
-from .model import AssetRef, AssetResolver, LocalAssetRef, MountAssetRef
+from .model import AssetRef, AssetResolver, LocalAssetRef
 from .mounts import (
     MOUNT_MODES,
     MOUNT_NAMESPACE,
@@ -246,7 +246,6 @@ __all__ = [
     "MediaClassification",
     "RasterImageFacts",
     "MediaGrant",
-    "MountAssetRef",
     "MountDef",
     "EmbeddingNameIndex",
     "MountSnapshotResolver",

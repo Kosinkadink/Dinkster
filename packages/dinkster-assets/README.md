@@ -6,6 +6,14 @@ vaults and acquisition, save targets, and value-type registration. It uses
 values and BLAKE3 for identity, and SQLAlchemy and Alembic for catalog schema
 migrations. Caches, workers, and the server build on it.
 
+Selected indexed files use ordinary `AssetRef` values from the engine-written
+index. The live mounts snapshot remains their resolver, so revoked grants stop
+resolving without a worker restart. Unindexed selections retain invocation-local
+`LocalAssetRef` bindings and cannot be admitted as portable VIDEO until scanned.
+Admission never copies selected input files into the vault or worker scratch.
+`produced_output_scratch` is only the writable publication store for produced
+outputs; uploads, downloads and remote transfers retain their separate vault paths.
+
 ## Setup
 
 This package is a uv workspace member and is not published separately yet.
@@ -39,15 +47,6 @@ same file revision. Local bindings cross worker boundaries as opaque,
 server-scoped grants, not filesystem paths or content identities. File
 replacement and mount revocation invalidate them. Their cache fingerprints
 use an `unverified-local:` prefix and cannot be redeemed on another host.
-
-`admit_video_source` retains granted files as `MountAssetRef` values: the mount
-ID, exact kind, relative path and existing file signature identify a revision
-without hashing or copying the file. A receiving mount resolver checks the
-current grant, containment and revision before opening it. These references
-survive the selecting invocation and VIDEO wire transport, but do not claim a
-content digest or access to another host's files. Bytes, ungranted paths and
-`publish=True` admissions retain the 1 GiB copy limit. Frame and audio decode
-working-set limits apply independently of the encoded source size.
 
 For `model/text-encoder`, the same method also accepts slash-separated
 source-relative filenames. These select an exact file in the first ranked

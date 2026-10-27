@@ -307,8 +307,7 @@ def document_meta(value: object) -> dict[str, object]:
             else [ref["asset"], *ref.get("resources", [])]
         )
         for asset in cast(list[dict[str, Any]], assets):
-            identity = asset["digest"] if "digest" in asset else stable_hash([json_bytes(asset)])
-            refs[identity] = asset
+            refs[asset["digest"]] = asset
     return {"version": 1, "asset_refs": [refs[k] for k in sorted(refs)]}
 
 
