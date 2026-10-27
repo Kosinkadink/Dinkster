@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import math
 from collections.abc import Mapping
 from typing import Any
 
@@ -278,6 +279,40 @@ class SDTurboScheduler(Node):
         return cls.outputs(SIGMAS=torch.cat((sigmas, sigmas.new_zeros((1,)))))
 
 
+class Flux2Scheduler(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="Flux2Scheduler",
+            category=_CATEGORY,
+            inputs=(
+                _integer("steps", 20, 1, 4096),
+                InputSpec(
+                    "width", _INT, default=1024, widget=NumberWidget(min=16, max=16384, step=1)
+                ),
+                InputSpec(
+                    "height", _INT, default=1024, widget=NumberWidget(min=16, max=16384, step=1)
+                ),
+            ),
+            outputs=(OutputSpec("SIGMAS", _SIGMAS),),
+        )
+
+    @classmethod
+    def execute(cls, *, steps: int, width: int, height: int) -> Mapping[str, object]:
+        torch = importlib.import_module("torch")
+        sequence_length = round(width * height / (16 * 16))
+        long_schedule = 0.00016927 * sequence_length + 0.45666666
+        if sequence_length > 4300:
+            mu = long_schedule
+        else:
+            short_schedule = 8.73809524e-05 * sequence_length + 1.89833333
+            slope = (long_schedule - short_schedule) / 190.0
+            mu = slope * steps + (long_schedule - 200.0 * slope)
+        timesteps = torch.linspace(1, 0, steps + 1)
+        exponential = math.exp(float(mu))
+        return cls.outputs(SIGMAS=exponential / (exponential + (1 / timesteps - 1) ** 1.0))
+
+
 SIGMA_SCHEDULER_NODES = (
     BasicScheduler,
     KarrasScheduler,
@@ -287,4 +322,5 @@ SIGMA_SCHEDULER_NODES = (
     VPScheduler,
     BetaSamplingScheduler,
     SDTurboScheduler,
+    Flux2Scheduler,
 )

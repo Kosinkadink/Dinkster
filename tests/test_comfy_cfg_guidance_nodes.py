@@ -13,6 +13,7 @@ def test_cfg_guidance_schemas_are_registered_with_canonical_types() -> None:
         ("TCFG", ("model",)),
         ("Mahiro", ("model",)),
         ("NAGuidance", ("model", "nag_scale", "nag_alpha", "nag_tau")),
+        ("RenormCFG", ("model", "cfg_trunc", "renorm_cfg")),
     )
     assert (
         tuple(
