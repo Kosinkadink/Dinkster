@@ -38,7 +38,12 @@ class CropByBBoxes(Node):
             ),
             inputs=(
                 InputSpec("image", TypeExpr.concrete(IMAGE_TYPE)),
-                InputSpec("bboxes", TypeExpr.concrete(BOUNDING_BOX_TYPE)),
+                InputSpec(
+                    "bboxes",
+                    TypeExpr.concrete(BOUNDING_BOX_TYPE),
+                    force_input=True,
+                    default={"x": 0, "y": 0, "width": 512, "height": 512},
+                ),
                 InputSpec(
                     "output_width",
                     TypeExpr.concrete(CORE_INT),
