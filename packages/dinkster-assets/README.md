@@ -45,7 +45,10 @@ exact-kind grants. `resolve_asset_selection(kind, name)` returns a checked
 directory subtree, an existing invocation-local file reference, an
 encoder/decoder pair of those references, or `None` for the file-free
 `pixel_space` option. Pair members must coexist in one `model/vae-approx`
-root. Resolution never searches a library, vault or ungranted directory.
+root. An existing `AssetRef` or `LocalAssetRef` is returned unchanged only
+when its resolved file is an admitted option in the current exact-kind
+grants; its verification policy is unchanged. Resolution never searches a
+library, vault or ungranted directory for a selection name.
 
 `model/diffusers` discovers `model_index.json`, including the granted root
 itself as `.`. `directory/input` lists recursive non-root directories without

@@ -36,6 +36,7 @@ from dinkster_assets import (
     PackagedSource,
     RemoteSource,
     acquire_need,
+    asset_selection_names,
     is_digest,
 )
 from dinkster_assets.model import NamedAssetResolver
@@ -80,12 +81,14 @@ def bind_model_names(
             if (
                 not isinstance(value, str)
                 or not isinstance(widget, AssetWidget)
-                or not widget.kind.startswith("model/")
+                or not (widget.selection or widget.kind.startswith("model/"))
             ):
+                continue
+            if widget.selection and value in asset_selection_names(widget.kind):
                 continue
             ref = (
                 resolver.bind_name(value, widget.kind)
-                if isinstance(resolver, NamedAssetResolver)
+                if not widget.selection and isinstance(resolver, NamedAssetResolver)
                 else None
             )
             if ref is None:

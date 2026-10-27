@@ -54,7 +54,7 @@
   input subdirectories and saved datasets. It resolves literals, same-root
   file pairs and contained directory subtrees without filesystem or library
   fallback. The options API returns names and shapes, not host paths.
-  This does not claim frontend picker or native loader integration.
+  This does not claim frontend picker support.
 - FLOAT number descriptors, including one-level FLOAT lists, accept `round: false`
   for explicit no-round presentation, or a positive finite numeric precision.
   Omission leaves precision unspecified; false is distinct from numeric zero.

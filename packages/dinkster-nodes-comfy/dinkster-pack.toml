@@ -453,6 +453,8 @@ namespaces = [
     "PhotoMakerEncode",
     "ImageCropV2",
     "PrimitiveBoundingBox",
+    "VAELoader",
+    "DiffusersLoader",
 ]
 
 [pack.sandbox]

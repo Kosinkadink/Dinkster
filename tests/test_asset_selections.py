@@ -8,10 +8,12 @@ from pathlib import Path
 import pytest
 from dinkster_api.v1 import (
     AssetError,
+    AssetRef,
     LocalAssetRef,
     asset_selection_names,
     resolve_asset_selection,
 )
+from dinkster_assets import digest_bytes
 
 
 def grants(tmp_path: Path, *rows: tuple[str, Path]) -> dict[str, str]:
@@ -132,6 +134,35 @@ def test_no_filesystem_or_library_fallback_and_changed_bytes_fail_closed(tmp_pat
     path.write_bytes(b"other")
     with pytest.raises(AssetError):
         ref.read_bytes()
+
+
+@pytest.mark.parametrize("verified", [False, True])
+def test_existing_file_refs_keep_verification_and_require_live_exact_grants(
+    tmp_path: Path, verified: bool
+) -> None:
+    path = seed(tmp_path / "vae", "real.safetensors", b"weights")
+    env = grants(tmp_path, ("model/vae", path.parent))
+    local = resolve_asset_selection("model/vae", path.name, env=env)
+    assert isinstance(local, LocalAssetRef)
+
+    class Resolver:
+        def resolve(self, digest: str) -> Path | None:
+            return path if digest == digest_bytes(b"weights") else None
+
+    ref = (
+        AssetRef(digest_bytes(b"weights"), path.name, 7, resolver=Resolver()) if verified else local
+    )
+    assert resolve_asset_selection("model/vae", ref, env=env) is ref
+    assert ref.read_bytes() == b"weights"
+    assert ("digest" in ref.to_wire()) is verified
+    with pytest.raises(AssetError):
+        resolve_asset_selection("model/diffusers", ref, env=env)
+    shadow = seed(tmp_path / "higher-priority", path.name, b"other-weights")
+    grants(tmp_path, ("model/vae", shadow.parent), ("model/vae", path.parent))
+    assert resolve_asset_selection("model/vae", ref, env=env) is ref
+    grants(tmp_path, ("model/checkpoint", path.parent))
+    with pytest.raises(AssetError):
+        resolve_asset_selection("model/vae", ref, env=env)
 
 
 def test_directory_selection_rejects_links_outside_subtree_and_cycles(tmp_path: Path) -> None:
