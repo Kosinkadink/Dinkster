@@ -1,5 +1,15 @@
 ## ComfyUI compatibility
 
+- Core schema comparison permits the optional output mount for output nodes
+  with a scalar STRING filename prefix, including CLIPSave, VAESave,
+  CheckpointSave, and ModelSave, without relying on their class-name spelling.
+- The native pack declares bound-file checkpoint, diffusion-model, text
+  encoder, vision-encoder, ControlNet, style-model and GLIGEN loader schemas.
+  Model construction uses the pinned inference package; file inputs grant
+  access only to the selected asset.
+- Native LoRA file loaders apply model and text-encoder strengths separately,
+  retain weight metadata, and support ordered stacks and bypass application.
+  Disabled stack entries and zero strengths do not resolve their file inputs.
 - Native Anima LLLite applies image and optional mask guidance to cloned models
   through scheduled input, self-attention, cross-attention and MLP patches.
 - Native SUPIR applies scheduled control strength and optional restoration
@@ -115,6 +125,14 @@
   latents, preserving visible-point weights and per-batch image conditioning.
 - Native Wan Animate conditioning combines reference, pose, face and continuation
   inputs. Animate 2 supports timed pose guidance and cleanup-scoped pose caching.
+- Native Wan camera trajectories and image-start conditioning preserve camera
+  embeddings and optional vision states. Wan Move generates and combines visible
+  trajectories, conditions image starts, and renders colored tracks.
+- Native Wan Sound, HuMo and InfiniteTalk conditioning use audio-encoder layers
+  with image starts, continuation motion and single- or two-speaker controls.
+- Native SCAIL-2 colored masks render packed SAM3 tracks with identity selection,
+  appearance/area ordering, palette controls and background masks. Source
+  experimental presentation badges are not preserved.
 - Native LTXV preprocessing applies the model's optional per-frame H.264 image
   compression before encoding video starts.
 - Native LTXV image-to-video and frame-rate conditioning nodes encode image starts,
@@ -151,3 +169,6 @@
   current support claim.
 - Pack HTTP routes, web assets, and executor hooks are diagnosed rather than
   emulated.
+- Reference file-input metadata includes manually enumerated file choices whose
+  declared execution method directly resolves the input as an annotated path.
+  Empty file lists retain this classification; unrelated empty combos do not.

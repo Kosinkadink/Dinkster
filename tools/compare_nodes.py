@@ -312,8 +312,11 @@ def compare(row: dict[str, Any], schema: dict[str, Any]) -> list[str]:
         expected = [by_name[name] for name in names]
     actual = _native_inputs(schema.get("interface", []))
     differences = []
-    save_node = row["class_name"].startswith("Save") and any(
-        item["name"] == "filename_prefix" for item in expected
+    save_node = row.get("output_node") is True and any(
+        item["name"] == "filename_prefix"
+        and item["type"] == "STRING"
+        and not item.get("_list_flag")
+        for item in expected
     )
     if actual and actual[-1]["name"] == "mount" and save_node:
         mount = actual.pop()
