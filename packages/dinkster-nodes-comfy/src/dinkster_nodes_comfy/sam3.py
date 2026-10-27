@@ -188,7 +188,7 @@ class SAM3_TrackToMask(Node):
                     TypeExpr.concrete(CORE_STRING),
                     display_name="object_indices",
                     default="",
-                    widget=StringWidget(),
+                    widget=StringWidget(multiline=False),
                     doc=(
                         "Comma-separated object indices to include (e.g. '0,2,3'). "
                         "Empty = all objects."
