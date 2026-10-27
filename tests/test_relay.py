@@ -127,6 +127,21 @@ def relay_worker(
     )
 
 
+def observe_memory_reports(
+    worker: IsolatedWorker, monkeypatch: pytest.MonkeyPatch
+) -> asyncio.Queue[None]:
+    reports: asyncio.Queue[None] = asyncio.Queue()
+    original = worker._session._apply_measured
+
+    def apply_measured(header: Mapping[str, Any]) -> None:
+        original(header)
+        if header.get("type") == "memoryReport":
+            reports.put_nowait(None)
+
+    monkeypatch.setattr(worker._session, "_apply_measured", apply_measured)
+    return reports
+
+
 def make_engine(
     registry: TypeRegistry,
     worker: IsolatedWorker,
@@ -346,21 +361,25 @@ def test_ram_release_crosses_the_gate_and_recomputes(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
-def test_full_release_visits_all_consumers_and_preserves_worker(tmp_path: Path) -> None:
+def test_full_release_visits_all_consumers_and_preserves_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     async def scenario() -> None:
         governor = MemoryGovernor({VRAM0: 1000, "ram": 1000})
         registry = core_registry()
         cache = MemoryLRUCache()
         pins, guard = wire_gate(cache)
         worker = relay_worker(tmp_path, registry, governor, release_guard=guard)
+        reports = observe_memory_reports(worker, monkeypatch)
         await worker.start()
         try:
+            await asyncio.wait_for(reports.get(), 8)
             engine = make_engine(registry, worker, cache=cache, pins=pins)
             await engine.run(load_graph(vram=0, ram=0), ["load"])
             token = worker.instance_token
             assert token is not None
             assert len(cache) == 1
-            await asyncio.sleep(0.05)
+            await asyncio.wait_for(reports.get(), 8)
 
             results = await worker.full_release("maintenance-1", token)
             assert results.status == "complete"
@@ -382,7 +401,8 @@ def test_full_release_visits_all_consumers_and_preserves_worker(tmp_path: Path) 
             assert rerun.outputs["use"]["name"].resolve() == "sd15.safetensors"
             assert worker.instance_token == token
 
-            await asyncio.sleep(0.05)
+            for _ in rerun.executed:
+                await asyncio.wait_for(reports.get(), 8)
             repeated = await worker.full_release("maintenance-2", token)
             assert repeated.status == "complete"
             assert all(result["status"] == "complete" for result in repeated.consumers)
@@ -392,7 +412,9 @@ def test_full_release_visits_all_consumers_and_preserves_worker(tmp_path: Path) 
     asyncio.run(scenario())
 
 
-def test_consumer_factory_is_enumerated_once_and_shared_with_release(tmp_path: Path) -> None:
+def test_consumer_factory_is_enumerated_once_and_shared_with_release(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     async def scenario() -> None:
         registry = core_registry()
         worker = relay_worker(
@@ -401,8 +423,10 @@ def test_consumer_factory_is_enumerated_once_and_shared_with_release(tmp_path: P
             MemoryGovernor({"ram": 1000}),
             release_guard=ReleaseGuard(ResourcePins(), ()),
         )
+        reports = observe_memory_reports(worker, monkeypatch)
         await worker.start()
         try:
+            await asyncio.wait_for(reports.get(), 8)
             cache = MemoryLRUCache()
             engine = make_engine(registry, worker, cache=cache)
             graph = Graph(nodes={"state": GraphNode("mem.consumer_state", {})})
@@ -411,7 +435,7 @@ def test_consumer_factory_is_enumerated_once_and_shared_with_release(tmp_path: P
             assert before.outputs["state"]["live"].resolve() == 1
             token = worker.instance_token
             assert token is not None
-            await asyncio.sleep(0.05)
+            await asyncio.wait_for(reports.get(), 8)
             result = await worker.full_release("factory", token)
             assert result.status == "complete"
             cache.clear()
@@ -463,15 +487,23 @@ def test_full_release_refuses_active_worker_invocation(tmp_path: Path) -> None:
             release_guard=ReleaseGuard(ResourcePins(), ()),
         )
         await worker.start()
+        entered = tmp_path / "entered"
+        finish = tmp_path / "finish"
         try:
             engine = make_engine(registry, worker)
             running = asyncio.create_task(
                 engine.run(
-                    Graph(nodes={"hold": GraphNode("mem.hold", {"milliseconds": 200})}),
+                    Graph(
+                        nodes={
+                            "hold": GraphNode(
+                                "mem.thread_hold", {"entered": str(entered), "finish": str(finish)}
+                            )
+                        }
+                    ),
                     ["hold"],
                 )
             )
-            await asyncio.sleep(0.05)
+            assert await eventually(entered.exists)
             token = worker.instance_token
             assert token is not None
             results = await worker.full_release("maintenance-active", token)
@@ -480,22 +512,28 @@ def test_full_release_refuses_active_worker_invocation(tmp_path: Path) -> None:
                 {"consumer": "models", "status": "busy"},
                 {"consumer": "zero-cost", "status": "busy"},
             )
+            finish.touch()
             assert (await running).outputs["hold"]["done"].resolve() == "done"
         finally:
+            finish.touch()
             await worker.close()
 
     asyncio.run(scenario())
 
 
-def test_full_release_refuses_pinned_resident(tmp_path: Path) -> None:
+def test_full_release_refuses_pinned_resident(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     async def scenario() -> None:
         governor = MemoryGovernor({VRAM0: 1000, "ram": 1000})
         registry = core_registry()
         cache = MemoryLRUCache()
         pins, guard = wire_gate(cache)
         worker = relay_worker(tmp_path, registry, governor, release_guard=guard)
+        reports = observe_memory_reports(worker, monkeypatch)
         await worker.start()
         try:
+            await asyncio.wait_for(reports.get(), 8)
             engine = make_engine(registry, worker, cache=cache, pins=pins)
             await engine.run(load_graph(), ["load"])
             assert await eventually(lambda: len(governor.details().get(CONSUMER, ())) == 1)
@@ -503,7 +541,7 @@ def test_full_release_refuses_pinned_resident(tmp_path: Path) -> None:
             assert pins.pin(resource_id)
             token = worker.instance_token
             assert token is not None
-            await asyncio.sleep(0.05)
+            await asyncio.wait_for(reports.get(), 8)
 
             results = await worker.full_release("maintenance-busy", token)
             assert results.status == "complete"
@@ -522,7 +560,9 @@ def test_full_release_refuses_pinned_resident(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
-def test_full_release_covers_two_live_worker_processes(tmp_path: Path) -> None:
+def test_full_release_covers_two_live_worker_processes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     async def scenario() -> None:
         workers: list[tuple[IsolatedWorker, Engine, str]] = []
         for index in range(2):
@@ -531,14 +571,16 @@ def test_full_release_covers_two_live_worker_processes(tmp_path: Path) -> None:
             cache = MemoryLRUCache()
             pins, guard = wire_gate(cache)
             worker = relay_worker(tmp_path, registry, governor, release_guard=guard)
+            reports = observe_memory_reports(worker, monkeypatch)
             await worker.start()
+            await asyncio.wait_for(reports.get(), 8)
             engine = make_engine(registry, worker, cache=cache, pins=pins)
             await engine.run(load_graph(name=f"model-{index}", ram=0), ["load"])
             token = worker.instance_token
             assert token is not None
             workers.append((worker, engine, token))
+            await asyncio.wait_for(reports.get(), 8)
         try:
-            await asyncio.sleep(0.05)
             results = await asyncio.gather(
                 *(
                     worker.full_release(f"maintenance-{index}", token)
@@ -602,20 +644,20 @@ def test_group_full_release_stays_busy_until_cancelled_thread_settles(tmp_path: 
         try:
             assert await eventually(entered.exists)
             running.cancel()
-            await asyncio.sleep(0.02)
-            close_alpha = asyncio.create_task(cast("Any", alpha)._session.close())
-            await asyncio.sleep(0.05)
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(running, 8)
+            await asyncio.wait_for(cast("Any", alpha)._session.close(), 8)
             token = beta.instance_token
             assert token is not None
             refused = await beta.full_release("while-thread-active", token)
             assert refused.status == "busy"
             assert all(item["status"] == "busy" for item in refused.consumers)
             finish.touch()
-            with pytest.raises(asyncio.CancelledError):
-                await running
-            await close_alpha
-            await asyncio.sleep(0.05)
-            completed = await beta.full_release("after-thread", token)
+            async with asyncio.timeout(8):
+                while True:
+                    completed = await beta.full_release("after-thread", token)
+                    if completed.status != "busy":
+                        break
             assert completed.status == "complete"
         finally:
             finish.touch()
@@ -1328,9 +1370,24 @@ def test_full_release_timeout_waits_for_terminal_acknowledgement(
         relay: MemoryRelay
         commit_started = asyncio.Event()
         commit_finished = asyncio.Event()
+        timeout_reached = asyncio.Event()
+        original_wait = MemoryRelay._wait_until_done
+
+        async def wait_after_timeout(
+            future: asyncio.Future[Mapping[str, Any] | None],
+        ) -> tuple[Mapping[str, Any] | None, bool]:
+            timeout_reached.set()
+            return await original_wait(future)
+
+        monkeypatch.setattr(MemoryRelay, "_wait_until_done", staticmethod(wait_after_timeout))
 
         async def finish_commit(header: dict[str, object]) -> None:
-            await asyncio.sleep(0.05)
+            try:
+                await asyncio.wait_for(timeout_reached.wait(), 4)
+            except TimeoutError:
+                # A broken timeout path must still receive a terminal reply:
+                # cancellation-resistant cleanup would otherwise wait forever.
+                pass
             relay.on_release_reply(
                 {
                     **header,
@@ -1357,9 +1414,11 @@ def test_full_release_timeout_waits_for_terminal_acknowledgement(
 
         monkeypatch.setattr("dinkster_workers.relay._RELEASE_TIMEOUT_S", 0.01)
         relay = MemoryRelay(send, None, ReleaseGuard(ResourcePins(), ()))
-        result = await relay.full_release("operation", "worker-instance")
+        async with asyncio.timeout(8):
+            result = await relay.full_release("operation", "worker-instance")
         assert commit_started.is_set()
         assert commit_finished.is_set()
+        assert timeout_reached.is_set()
         assert result is not None
         assert result.status == "error"
         assert result.error == "worker full release timed out"

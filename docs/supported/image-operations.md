@@ -1,7 +1,9 @@
 ## Image operations
 
-- Color strings, ordered color palettes, and optional resolution-preview
-  metadata pass between node packs without rewriting their values.
+- Native `TripoSplatPreprocessImage` erodes alpha, crops foreground to a padded
+  square, resizes with Lanczos, and composites the image over black.
+- Color strings, ordered color palettes, bounding boxes, and optional
+  resolution-preview metadata pass between node packs without rewriting their values.
 - Native `PrimitiveBoundingBox` constructs pixel bounding boxes; `ImageCropV2`
   crops each image in a batch to that box and reports a PNG preview.
 - Native `CropByBBoxes` crops each frame to its bounding-box union and resizes
@@ -12,6 +14,8 @@
 - Native `SAM3_VideoTrack` tracks initial masks or text-prompted objects across
   video frames. `SAM3_TrackToMask` selects tracked objects and resizes their union
   to the original frame dimensions using the portable packed-track value.
+- Native `SAM3_Detect` segments text, box or point prompts with optional mask
+  refinement, returning per-object or union masks and scored text detections.
 - Native `ColorToRGBInt` preserves RGB letter casing and separates optional alpha;
   `ResolutionSelector` rounds aspect-ratio and megapixel dimensions to a chosen multiple.
 - Marigold V2 decoded predictions convert to per-image normalized depth,
@@ -99,6 +103,8 @@
 - Training dataset preparation with RGB VAE encoding and scheduled CLIP
   conditioning, preserving image-list order and supporting omitted, shared,
   or per-image captions
+- Encoded training datasets loaded from granted dataset folders, preserving
+  sorted shard order, latent tensors and conditioning metadata
 - Image and image-caption datasets loaded from granted input folders, with
   per-file RGB images, optional sidecar captions and one-level repeated folders
 - Row-major image grid composition and decomposition; image stitching; split

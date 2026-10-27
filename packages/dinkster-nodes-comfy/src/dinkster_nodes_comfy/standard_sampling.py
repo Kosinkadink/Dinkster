@@ -26,6 +26,7 @@ from dinkster_api.v1 import (
 )
 
 from .sampler_factories import SAMPLER_NAMES
+from .sampling_boundary import to_public, to_runtime
 from .sigma_schedulers import SCHEDULER_NAMES
 
 _CONDITIONING = TypeExpr.concrete(CONDITIONING_TYPE)
@@ -77,7 +78,8 @@ def _sample(
     if not isinstance(source, Mapping):
         raise TypeError("latent_image must be a mapping")
     source = cast(Mapping[str, Any], source)
-    latent = source["samples"]
+    public_latent = source["samples"]
+    latent = to_runtime(public_latent)
     initialize_inference_process()
     sampling = importlib.import_module("dinkster_inference.sample")
     latent = sampling.fix_empty_latent_channels(
@@ -106,7 +108,7 @@ def _sample(
         start_step=start_step,
         last_step=last_step,
         force_full_denoise=force_full_denoise,
-        noise_mask=source.get("noise_mask"),
+        noise_mask=to_runtime(source.get("noise_mask")),
         callback=None,
         disable_pbar=True,
         seed=seed,
@@ -114,7 +116,7 @@ def _sample(
     output = dict(source)
     output.pop("downscale_ratio_spacial", None)
     output.pop("downscale_ratio_temporal", None)
-    output["samples"] = result
+    output["samples"] = to_public(result, public_latent)
     return output
 
 
