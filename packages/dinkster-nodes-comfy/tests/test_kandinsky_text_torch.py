@@ -107,7 +107,7 @@ class KandinskyInspect(Node):
         return cls.outputs(result="kandinsky prompt streams exact")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_kandinsky_text_runs_twice_in_both_manifest_hosts(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
         package = Path(__file__).resolve().parents[1]

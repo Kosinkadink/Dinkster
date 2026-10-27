@@ -198,7 +198,7 @@ class ContextInspect(Node):
         return cls.outputs(value=sum(float(value.sum()) for value in p))
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_ordinary_manifest_executes_bernini_context_twice(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
         native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"

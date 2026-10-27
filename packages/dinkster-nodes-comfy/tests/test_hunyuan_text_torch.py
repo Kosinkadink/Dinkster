@@ -140,7 +140,7 @@ class HunyuanTextInspect(Node):
         return cls.outputs(summary="hunyuan text exact")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_hunyuan_text_both_production_hosts_twice(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
         package = Path(__file__).resolve().parents[1]

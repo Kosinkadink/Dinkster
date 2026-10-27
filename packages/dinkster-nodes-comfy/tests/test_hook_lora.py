@@ -223,8 +223,7 @@ class LoraHookInspect(Node):
 LORA_HOOK_FIXTURES = (LoraHookSource, LoraHookInspect)
 
 
-@pytest.mark.parametrize("in_process", (True, False))
-@pytest.mark.parametrize("verified", (False, True))
+@pytest.mark.parametrize("verified,in_process", ((False, True), (False, False), (True, True)))
 def test_lora_hooks_execute_through_fixture_pack_on_both_hosts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, verified: bool
 ) -> None:

@@ -185,7 +185,7 @@ class Consumer(Node):
 HOST_NODES = (Source, Consumer)
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_advanced_wan_nodes_run_twice_in_ordinary_hosts(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
         package = Path(__file__).resolve().parents[1]

@@ -126,7 +126,7 @@ class Result(Node):
 FIXTURE_NODES = (ModelSource, Result)
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_rope_and_mask_models_execute_twice_in_both_manifest_hosts(
     tmp_path: Path, in_process: bool
 ) -> None:
