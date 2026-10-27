@@ -15,6 +15,7 @@ from dinkster_values import (
     CURVE_TYPE,
     INLINE_STRING_CAP,
     BufferEncoding,
+    Curve,
     EncodedPayload,
     Rendition,
     TypeRegistry,
@@ -30,6 +31,24 @@ def make_registry() -> TypeRegistry:
     registry = TypeRegistry()
     register_core_types(registry)
     return registry
+
+
+def test_core_registration_registers_curve_and_preserves_first_authority() -> None:
+    registry = make_registry()
+    curve = Curve(((3.5, -2.0), (-1.0, 4.25), (0.0, 0.5)), "linear")
+    spec = registry.spec(CURVE_TYPE)
+
+    assert spec.decode(spec.encode(curve)) == curve
+    assert registry.wrap(CURVE_TYPE, curve).resolve() == curve
+
+    first = TypeRegistry()
+    first_spec = first.register(
+        CURVE_TYPE, encode=lambda _value: b"first", decode=lambda _data: "first"
+    )
+    register_core_types(first)
+
+    assert first.spec(CURVE_TYPE) is first_spec
+    assert first.spec(CURVE_TYPE).decode(b"ignored") == "first"
 
 
 def test_type_claims_refuse_overlapping_owners_and_preserve_reference_access() -> None:
@@ -108,19 +127,14 @@ def test_declared_type_can_activate_and_release_its_codec_and_providers() -> Non
     assert registry.wrap("mypack.thing", 23).payload.load() == 23
 
 
-def test_builtin_owner_survives_official_codec_registration_and_pack_removal() -> None:
+def test_builtin_curve_owner_is_available_in_core_registry() -> None:
     registry = make_registry()
     assert registry.owner_of(CURVE_TYPE) == "dinkster-nodes-foundation"
-    assert CURVE_TYPE not in registry
+    assert CURVE_TYPE in registry
     with pytest.raises(ValueError, match="overlaps"):
         registry.claim_types("another-official", (CURVE_TYPE,))
-    with registry.registering_pack("official-provider", ("official-provider",), allow_bare=True):
-        registry.register(CURVE_TYPE)
     assert registry.type_owners()[CURVE_TYPE] == "dinkster-nodes-foundation"
-    registry.remove_pack_types("official-provider")
-    registry.remove_pack_types("dinkster-nodes-foundation")
-    assert registry.wrap(CURVE_TYPE, {"points": [2, 7]}).resolve() == {"points": [2, 7]}
-    assert registry.owner_of(CURVE_TYPE) == "dinkster-nodes-foundation"
+    assert registry.wrap(CURVE_TYPE, {"points": [[2, 7]]}).resolve() == Curve(((2, 7),))
     assert registry.wrap(CORE_INT, 17).resolve() == 17
 
 
