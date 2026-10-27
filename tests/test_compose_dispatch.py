@@ -794,10 +794,21 @@ def test_single_job_pool_retries_failed_replacement_startup(tmp_path: Path) -> N
     asyncio.run(scenario())
 
 
-def test_single_job_pool_serializes_complete_workgroup_attempts(tmp_path: Path) -> None:
+def test_single_job_pool_serializes_complete_workgroup_attempts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     async def scenario() -> None:
         pool, workers = _single_job_pool(tmp_path)
         gate = asyncio.Event()
+        waiting = asyncio.Event()
+        original_acquire = pool._invoke_lock.acquire
+
+        async def acquire() -> bool:
+            if pool._invoke_lock.locked():
+                waiting.set()
+            return await original_acquire()
+
+        monkeypatch.setattr(pool._invoke_lock, "acquire", acquire)
         for worker in workers:
             worker.gate = gate
 
@@ -806,7 +817,7 @@ def test_single_job_pool_serializes_complete_workgroup_attempts(tmp_path: Path) 
             while any(len(worker.calls) < 1 for worker in workers):
                 await asyncio.sleep(0)
         second = asyncio.create_task(pool.invoke(_single_job_invocation()))
-        await asyncio.sleep(0.01)
+        await asyncio.wait_for(waiting.wait(), 5)
         assert [len(worker.calls) for worker in workers] == [1, 1]
 
         gate.set()

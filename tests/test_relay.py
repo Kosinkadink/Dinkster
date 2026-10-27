@@ -644,20 +644,20 @@ def test_group_full_release_stays_busy_until_cancelled_thread_settles(tmp_path: 
         try:
             assert await eventually(entered.exists)
             running.cancel()
-            await asyncio.sleep(0.02)
-            close_alpha = asyncio.create_task(cast("Any", alpha)._session.close())
-            await asyncio.sleep(0.05)
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(running, 8)
+            await asyncio.wait_for(cast("Any", alpha)._session.close(), 8)
             token = beta.instance_token
             assert token is not None
             refused = await beta.full_release("while-thread-active", token)
             assert refused.status == "busy"
             assert all(item["status"] == "busy" for item in refused.consumers)
             finish.touch()
-            with pytest.raises(asyncio.CancelledError):
-                await running
-            await close_alpha
-            await asyncio.sleep(0.05)
-            completed = await beta.full_release("after-thread", token)
+            async with asyncio.timeout(8):
+                while True:
+                    completed = await beta.full_release("after-thread", token)
+                    if completed.status != "busy":
+                        break
             assert completed.status == "complete"
         finally:
             finish.touch()
