@@ -367,11 +367,12 @@ async def handle_mount_add(request: web.Request) -> web.Response:
     if not isinstance(raw, dict):
         return _json_error(400, "request body must be an object")
     body: dict[str, object] = {str(k): v for k, v in raw.items()}
-    mount_id, path, mode, priority = (
+    mount_id, path, mode, priority, kind = (
         body.get("id"),
         body.get("path"),
         body.get("mode", "read"),
         body.get("priority", 0),
+        body.get("kind", ""),
     )
     if not isinstance(mount_id, str) or not isinstance(path, str) or not path:
         return _json_error(400, "id and path must be non-empty strings")
@@ -379,12 +380,15 @@ async def handle_mount_add(request: web.Request) -> web.Response:
         return _json_error(400, "mode must be a string")
     if isinstance(priority, bool) or not isinstance(priority, int):
         return _json_error(400, "priority must be an integer")
+    if not isinstance(kind, str):
+        return _json_error(400, "kind must be a string")
     try:
         mount = MountDef(
             id=mount_id,
             path=Path(path),
             mode=mode,
             priority=priority,
+            kind=kind,
         )
     except MountsError as exc:
         return _json_error(400, str(exc))

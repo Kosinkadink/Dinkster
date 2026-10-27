@@ -14,11 +14,9 @@ estimate requires stream duration and does not use container duration.
 The fallback starts its count at 1 and calculates `end_pts == start_pts`
 for the untrimmed duration-0 sentinel. It stops at the next frame.
 
-Reproduce with the `alpha` and `vfr_mkv` fixtures and the real upstream
-getter in `tests/test_video_vhs_live.py`. Set `DINKSTER_COMFYUI_ROOT`,
-`DINKSTER_EXECUTION_PYTHON`, and `DINKSTER_VHS_ROOT` to the pinned live environment
-described in that test, then run it with pytest. The receipt includes
-upstream, wrapper, and VHS source getters independently of decoded counts.
+To reproduce, create an untrimmed ten-frame FFV1 MKV or a six-frame
+variable-rate H.264 MKV with no stream duration, then compare the pinned
+upstream `VideoFromFile.get_frame_count` with the decoded frame count.
 
 An upstream fix should use container duration as a fallback for metadata
 estimation and represent duration 0 as an unbounded end in decode counting.

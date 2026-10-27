@@ -40,6 +40,32 @@ server-scoped grants, not filesystem paths or content identities. File
 replacement and mount revocation invalidate them. Their cache fingerprints
 use an `unverified-local:` prefix and cannot be redeemed on another host.
 
+For `model/text-encoder`, the same method also accepts slash-separated
+source-relative filenames. These select an exact file in the first ranked
+exact-kind root, without basename ambiguity. Absolute paths, dot/parent
+components and links escaping the grant are rejected. Ordinary ASSET inputs
+and filename preflight use the same existing file carriers and grants.
+
+`asset_selection_names(kind)` enumerates source-relative options from live
+exact-kind grants. `resolve_asset_selection(kind, name)` returns a checked
+directory subtree, an existing invocation-local file reference, an
+encoder/decoder pair of those references, or `None` for the file-free
+`pixel_space` option. Pair members must coexist in one `model/vae-approx`
+root. An existing `AssetRef` or `LocalAssetRef` is returned unchanged only
+when its resolved file is an admitted option in the current exact-kind
+grants; its verification policy is unchanged. Resolution never searches a
+library, vault or ungranted directory for a selection name.
+
+`model/diffusers` discovers `model_index.json`, including the granted root
+itself as `.`. `directory/input` lists recursive non-root directories without
+following directory links. `directory/dataset` lists non-root directories
+containing `metadata.json` or a `.safetensors` file and stops descending below
+matches. Dataset lookup selects the first ranked existing same-named directory,
+even when only a later root supplied the discovery marker. Selected subtrees
+reject escaping links, cycles and non-file members.
+The returned paths and pair references are invocation-scoped, not graph values.
+`asset_selection_options` exposes only option names and shapes for pickers.
+
 Library scans reject partial-download extensions even with custom ignore
 rules and admit files only after two size/mtime observations agree. Unchanged
 verified rows avoid rehashing. Missing or replaced identities remain in the

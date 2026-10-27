@@ -826,6 +826,19 @@ flow). Granted mounts persist to `<library-root>/mounts.toml`. Off by
 default: runtime mount mutation is a filesystem capability grant and
 stays operator-only. Requires `--library-root`.
 
+Mount entries and `POST /api/mounts` accept an optional `kind` purpose such as
+`model/vae`, `model/vae-approx`, `model/diffusers`, `directory/input` or
+`directory/dataset`. The purpose persists with the grant and is an exact match,
+not a path convention or prefix permission. Omitting it leaves an untyped
+mount; an untyped mount does not supply selection roots. Read-only grants use
+`mode = "read"` (the default). For example:
+
+```toml
+[mounts.datasets]
+path = "/data/training-datasets"
+kind = "directory/dataset"
+```
+
 Mount scans store their indexes in `<library-root>/asset-indexes`, never in
 the mounted directory. If a mount still contains the former
 `.dinkster-asset-index.json`, its rows seed the library-owned index once; after

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any, cast
 
+import pytest
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link
@@ -85,5 +86,24 @@ def test_combo_edge_nodes_execute_as_identity() -> None:
         assert result.outputs["c"]["choice"].type_id == "COMBO"
         assert result.outputs["t"]["text"].resolve() == "not-a-choice.txt"
         assert result.outputs["t"]["text"].type_id == "STRING"
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "choice, expected", [(8, "8"), (1.5, "1.5"), (True, "True"), (False, "False")]
+)
+def test_scalar_combo_literals_execute_without_string_payload_leaks(
+    choice: object, expected: str
+) -> None:
+    async def scenario() -> None:
+        engine = make_engine()
+        graph = Graph(nodes={"t": GraphNode("dinkster.combo_to_string", {"choice": choice})})
+        for _ in range(2):
+            result = await engine.run(graph, ["t"])
+            value = result.outputs["t"]["text"]
+            assert value.type_id == "STRING"
+            assert type(value.resolve()) is str
+            assert value.resolve() == expected
 
     asyncio.run(scenario())

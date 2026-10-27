@@ -46,6 +46,7 @@ def main(argv: list[str] | None = None) -> int:
             path=mount.path,
             mode="readwrite",
             priority=mount.priority,
+            kind=mount.kind,
         )
     default_output_mount = mounts[default_output_index].id
     output_mount = load_output_mount(mounts_path) or default_output_mount

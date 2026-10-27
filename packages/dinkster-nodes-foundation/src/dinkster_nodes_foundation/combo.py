@@ -1,9 +1,9 @@
 """Explicit bridges across the STRING/COMBO boundary.
 
-``COMBO`` values remain plain strings at execution, in literals, and in
+``COMBO`` values preserve scalar types at execution, in literals, and in
 caches, but their envelope type is distinct from ``STRING``. Direct
 links across that boundary are hard-invalid in either direction; these two
-identity nodes are the one explicit bridge. Combo-to-combo links remain
+nodes are the explicit bridge. Combo-to-combo links remain
 legal regardless of their choice lists because vocabulary is presentation,
 not type identity.
 
@@ -62,7 +62,7 @@ class StringToCombo(Node):
 
 
 class ComboToString(Node):
-    """Identity bridge: use a combo selection as a plain string."""
+    """Convert a scalar combo selection to its string representation."""
 
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -71,7 +71,7 @@ class ComboToString(Node):
             display_name="Convert Combo to String",
             category="string",
             description=(
-                "Passes a combo choice through as a plain string, for "
+                "Converts a combo choice to a plain string, for "
                 "feeding a dropdown selection into ordinary string inputs."
             ),
             search_terms=("combo to string", "dropdown to text", "combo"),
@@ -80,8 +80,8 @@ class ComboToString(Node):
         )
 
     @classmethod
-    def execute(cls, *, choice: str) -> Mapping[str, object]:
-        return cls.outputs(text=choice)
+    def execute(cls, *, choice: str | bool | int | float) -> Mapping[str, object]:
+        return cls.outputs(text=str(choice))
 
 
 COMBO_EDGE_NODES: list[type[Node]] = [StringToCombo, ComboToString]

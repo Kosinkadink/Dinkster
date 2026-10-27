@@ -4,7 +4,12 @@ import asyncio
 import sys
 import textwrap
 from pathlib import Path
+from types import SimpleNamespace
 
+import dinkster_supervisor.supervisor as supervisor
+import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestServer
 from dinkster_supervisor import EngineLink, EngineProcess
 
 
@@ -55,6 +60,44 @@ def test_startup_timeout_reaps_stalled_health_process(tmp_path: Path) -> None:
         assert link.exit_code == process.returncode
         assert "did not become healthy" in link.detail
         await engine.close()
+
+    asyncio.run(scenario())
+
+
+def test_health_answer_after_startup_deadline_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def scenario() -> None:
+        clock = 0.0
+
+        async def late_health(request: web.Request) -> web.Response:
+            nonlocal clock
+            clock = 2.0
+            return web.json_response({"ok": True})
+
+        app = web.Application()
+        app.router.add_get("/api/health", late_health)
+        async with TestServer(app) as server:
+            monkeypatch.setattr(supervisor, "_free_port", lambda host: server.port)
+            monkeypatch.setattr(supervisor, "time", SimpleNamespace(monotonic=lambda: clock))
+            link = EngineLink()
+            engine = EngineProcess(
+                [sys.executable, "-c", "import time; time.sleep(60)"],
+                link,
+                startup_timeout=1,
+            )
+            try:
+                await engine.start()
+                process = engine._process
+                watch_task = engine._watch_task
+                assert process is not None
+                assert watch_task is not None
+                await asyncio.wait_for(watch_task, timeout=7)
+                assert clock == 2.0
+                assert process.returncode is not None
+                assert link.state == "failed"
+                assert link.exit_code == process.returncode
+                assert "did not become healthy" in link.detail
+            finally:
+                await engine.close()
 
     asyncio.run(scenario())
 

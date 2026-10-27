@@ -148,6 +148,7 @@ from .resolver_subscription import (
     ResolverSuggestion,
 )
 from .save_target import SAVE_TARGET_TYPE, SaveTarget, register_save_target_type
+from .selections import asset_selection_names, asset_selection_options, resolve_asset_selection
 from .transport import (
     DEFAULT_TRANSFER_STALL_TIMEOUT,
     MAX_TRANSPORT_CANDIDATES,
@@ -253,6 +254,9 @@ __all__ = [
     "MountWriteAuthority",
     "MountsError",
     "mount_roots_for_kind",
+    "asset_selection_names",
+    "asset_selection_options",
+    "resolve_asset_selection",
     "KnownTransports",
     "PackAssetCatalog",
     "PackagedSource",

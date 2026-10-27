@@ -425,6 +425,7 @@ class AssetWidget:
     accept: tuple[str, ...] = ()
     kind: str = ""
     allow_upload: bool = False
+    selection: bool = False
 
     def __post_init__(self) -> None:
         if any(not media_type for media_type in self.accept):
@@ -436,6 +437,14 @@ class AssetWidget:
             )
         if type(self.allow_upload) is not bool:
             raise ValueError("asset widget allow_upload must be a bool")
+        if type(self.selection) is not bool:
+            raise ValueError("asset widget selection must be a bool")
+        if self.selection and (
+            self.kind
+            not in {"model/vae", "model/diffusers", "directory/input", "directory/dataset"}
+            or self.allow_upload
+        ):
+            raise ValueError("asset selection requires a supported exact kind and forbids upload")
 
 
 @dataclass(frozen=True)
@@ -466,14 +475,22 @@ class SaveTargetWidget:
 class ComboOption:
     """One combo value plus optional dropdown presentation metadata."""
 
-    value: str
+    value: str | bool | int | float
     label: str | None = None
     info: str | None = None
     folder: str | None = None
 
     def __post_init__(self) -> None:
-        if type(self.value) is not str or not self.value:
-            raise ValueError("combo option value must be a non-empty string")
+        if not (
+            (type(self.value) is str and bool(self.value))
+            or type(self.value) is bool
+            or (type(self.value) is int and abs(self.value) <= _JSON_SAFE_INT)
+            or (type(self.value) is float and math.isfinite(self.value))
+        ):
+            raise ValueError(
+                "combo option value must be a non-empty string, boolean, JSON-safe integer "
+                "or finite float"
+            )
         for field_name in ("label", "info"):
             field_value = getattr(self, field_name)
             if field_value is not None and (type(field_value) is not str or not field_value):
@@ -488,12 +505,33 @@ class ComboOption:
             )
 
 
-def _validate_static_combo_options(options: tuple[str | ComboOption, ...], *, subject: str) -> None:
+def _validate_static_combo_options(
+    options: tuple[str | bool | int | float | ComboOption, ...],
+    *,
+    subject: str,
+    strings_only: bool = False,
+) -> None:
     if not isinstance(cast("object", options), tuple) or any(
-        not (type(option) is ComboOption or (type(option) is str and bool(option)))
+        not (
+            (type(option) is ComboOption and (not strings_only or type(option.value) is str))
+            or (type(option) is str and bool(option))
+            or (
+                not strings_only
+                and (
+                    type(option) is bool
+                    or (type(option) is int and abs(option) <= _JSON_SAFE_INT)
+                    or (type(option) is float and math.isfinite(option))
+                )
+            )
+        )
         for option in cast("tuple[object, ...]", options)
     ):
-        raise ValueError(f"{subject} options must be non-empty strings or ComboOption values")
+        choices = (
+            "non-empty strings"
+            if strings_only
+            else "non-empty strings, booleans, JSON-safe integers or finite floats"
+        )
+        raise ValueError(f"{subject} options must be {choices} or ComboOption values")
 
 
 @dataclass(frozen=True)
@@ -519,7 +557,8 @@ class ComboWidget:
     """Presentation request for a combo-choice dropdown.
 
     The socket has concrete ``COMBO`` identity while its runtime value,
-    literal, cache payload, and node-facing object stay a plain string.
+    literal, cache payload, and node-facing object stay a string, boolean or
+    finite number without type conversion.
     Choice vocabulary is never identity within combos: different option
     lists remain compatible, and a stored value outside the current options
     is the frontend's diagnostic to surface, not a schema error. This
@@ -553,7 +592,7 @@ class ComboWidget:
     ``control_after_generate`` is the optional closed initial controller
     mode, with the same client-owned live-state semantics as NumberWidget."""
 
-    options: tuple[str | ComboOption, ...] = ()
+    options: tuple[str | bool | int | float | ComboOption, ...] = ()
     option_source: InputFamilyOptionSource | None = None
     remote_route: str = ""
     refresh_button: bool = False
@@ -647,7 +686,9 @@ class MultiComboWidget:
     chip: bool | None = None
 
     def __post_init__(self) -> None:
-        _validate_static_combo_options(self.options, subject="multi combo widget")
+        _validate_static_combo_options(
+            self.options, subject="multi combo widget", strings_only=True
+        )
         if self.remote_route:
             _remote_choice_id(self.remote_route)
         if not self.options and not self.remote_route:
@@ -968,7 +1009,7 @@ def _widget_value_domain(widget: WidgetDescriptor) -> str:
     if isinstance(widget, CustomWidgetDescriptor):
         return widget.widget_type
     if isinstance(widget, AssetWidget):
-        return "asset"
+        return "asset-selection" if widget.selection else "asset"
     if isinstance(widget, SaveTargetWidget):
         return "save-target"
     if isinstance(widget, ComboWidget):
@@ -1143,8 +1184,25 @@ def _validate_widget_binding(
         TypeExpr.concrete(CORE_COMBO)
     ):
         raise ValueError(f"input {input_id}: multi combo widget requires a list<COMBO> input")
+    selection_union = (
+        isinstance(widget, AssetWidget)
+        and widget.selection
+        and widget.kind == "model/vae"
+        and input_type.kind == "union"
+        and set(input_type.types) == {CORE_COMBO, ASSET_TYPE}
+    )
+    if (
+        isinstance(widget, AssetWidget)
+        and widget.selection
+        and not (input_type == TypeExpr.concrete(CORE_COMBO) or selection_union)
+    ):
+        raise ValueError(
+            f"input {input_id}: asset selection requires a scalar COMBO input "
+            "or the model/vae COMBO/ASSET union"
+        )
     if isinstance(widget, AssetWidget) and not (
-        input_type == TypeExpr.concrete(ASSET_TYPE)
+        selection_union
+        or input_type == TypeExpr.concrete(ASSET_TYPE)
         or (input_type.kind == "asset" and input_type.runtime_type_id() is not None)
         or input_type.kind == "concrete"
         or (widget.allow_upload and input_type == TypeExpr.list_of(TypeExpr.concrete(ASSET_TYPE)))
@@ -1284,6 +1342,19 @@ class InputSpec:
         elif self.widget is not None:
             _validate_widget_binding(self.id, self.type, self.widget, force_input=self.force_input)
         default: object = self.default
+        if (
+            self.type == TypeExpr.concrete(CORE_COMBO)
+            and default is not None
+            and not (
+                type(default) in (str, bool)
+                or (type(default) is int and abs(default) <= _JSON_SAFE_INT)
+                or (type(default) is float and math.isfinite(default))
+            )
+        ):
+            raise ValueError(
+                f"input {self.id}: combo default must be a string, boolean, JSON-safe integer "
+                "or finite float"
+            )
         if (
             any(isinstance(widget, MultiComboWidget) for widget in descriptors)
             and (

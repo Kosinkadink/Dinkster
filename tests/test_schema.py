@@ -8,6 +8,7 @@ from dinkster_schema import (
     AssetWidget,
     BooleanWidget,
     ColorWidget,
+    ComboOption,
     ComboWidget,
     CompositorWidget,
     CurveWidget,
@@ -58,6 +59,100 @@ def test_schema_reexports_custom_widget_descriptor() -> None:
     assert CustomWidgetDescriptor is ValuesCustomWidgetDescriptor
     with pytest.raises(ValueError, match="MOUNT.*reserved"):
         CustomWidgetDescriptor("MOUNT")
+
+
+def test_scalar_combo_choices_preserve_wire_types_and_metadata() -> None:
+    options = ("auto", 8, 10, True, 1, 1.5, "8", ComboOption(False, label="Disabled"))
+    schema = dataclasses.replace(
+        SCHEMA,
+        inputs=(
+            InputSpec(
+                "depth", TypeExpr.concrete("COMBO"), default=8, widget=ComboWidget(options=options)
+            ),
+        ),
+    )
+    wire = schema_to_wire(schema)
+    interface = cast("list[dict[str, Any]]", wire["interface"])
+    assert interface[0]["widget"]["options"] == [
+        "auto",
+        8,
+        10,
+        True,
+        1,
+        1.5,
+        "8",
+        {"value": False, "label": "Disabled"},
+    ]
+    decoded = schema_from_wire(json.loads(json.dumps(wire)))
+    assert decoded == schema
+    widget = decoded.inputs[0].widget
+    assert isinstance(widget, ComboWidget)
+    assert tuple(type(option) for option in widget.options) == tuple(type(x) for x in options)
+    assert type(decoded.inputs[0].default) is int
+    assert schema_to_wire(decoded) == wire
+
+
+@pytest.mark.parametrize("value", [-(2**53 - 1), 2**53 - 1])
+def test_static_combo_safe_integer_choices_roundtrip(value: int) -> None:
+    schema = NodeSchema(
+        node_type="test.safe-combo",
+        inputs=(
+            InputSpec(
+                "choice",
+                TypeExpr.concrete("COMBO"),
+                default=value,
+                widget=ComboWidget(options=(value, ComboOption(value, label="Boundary"))),
+            ),
+        ),
+    )
+    assert schema_from_wire(json.loads(json.dumps(schema_to_wire(schema)))) == schema
+
+
+@pytest.mark.parametrize("value", [-(2**53 + 1), -(2**53), 2**53, 2**53 + 1])
+@pytest.mark.parametrize("presented", [False, True])
+def test_static_combo_wire_rejects_unsafe_integer_choices(value: int, presented: bool) -> None:
+    wire = schema_to_wire(
+        NodeSchema(
+            node_type="test.unsafe-combo",
+            inputs=(
+                InputSpec("choice", TypeExpr.concrete("COMBO"), widget=ComboWidget(options=(1,))),
+            ),
+        )
+    )
+    cast("list[dict[str, Any]]", wire["interface"])[0]["widget"]["options"] = [
+        {"value": value, "label": "Unsafe"} if presented else value
+    ]
+    with pytest.raises(ValueError):
+        schema_from_wire(wire)
+
+
+@pytest.mark.parametrize("value", [None, [], {}, "", float("nan"), float("inf"), -(2**53), 2**53])
+def test_static_combo_rejects_non_choices(value: Any) -> None:
+    with pytest.raises(ValueError):
+        ComboWidget(options=(value,))
+    with pytest.raises(ValueError):
+        ComboOption(value)
+
+
+@pytest.mark.parametrize("value", [8, True, 1.5, ComboOption(8)])
+def test_multi_combo_retains_string_choices(value: Any) -> None:
+    with pytest.raises(ValueError):
+        MultiComboWidget(options=(value,))
+
+
+@pytest.mark.parametrize("value", [-(2**53), 2**53, float("inf"), float("nan"), [], {}])
+def test_scalar_combo_rejects_invalid_defaults_in_model_and_wire(value: Any) -> None:
+    with pytest.raises(ValueError, match="combo default"):
+        InputSpec("choice", TypeExpr.concrete("COMBO"), default=value)
+    wire = schema_to_wire(
+        NodeSchema(
+            node_type="test.combo-default",
+            inputs=(InputSpec("choice", TypeExpr.concrete("COMBO")),),
+        )
+    )
+    cast("list[dict[str, Any]]", wire["interface"])[0]["default"] = value
+    with pytest.raises(ValueError, match="combo default"):
+        schema_from_wire(wire)
 
 
 @pytest.mark.parametrize("input_values", [False, True])

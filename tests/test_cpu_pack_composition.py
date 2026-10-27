@@ -76,7 +76,12 @@ def test_generation_and_comfy_compat_compose_with_cpu_torch(
             comfy_nodes=["TestNode"],
         )
         composition = await compose_serving(
-            (default_pack_spec("dinkster-nodes-media-io"), *specs),
+            (
+                default_pack_spec("dinkster-nodes-foundation"),
+                default_pack_spec("dinkster-nodes-media-io"),
+                default_pack_spec("dinkster-nodes-image"),
+                *specs,
+            ),
             include_default_packs=False,
         )
         try:

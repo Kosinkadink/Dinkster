@@ -24,7 +24,10 @@
 - Required closed dynamic slots can bind their selected variant type to shared
   input and output variables, including list and asset element types
 - Widgets: asset, save-target, combo and multi-combo with optional labels,
-  per-option info, and folder paths; combo options derived from dynamic input
+  per-option info, and folder paths; static combo choices preserve strings,
+  booleans, JSON-safe integers and finite floats without conversion. Integer
+  choices outside -(2^53 - 1) to 2^53 - 1 are rejected. Multi-combo choices
+  remain strings. Combo options derived from dynamic input
   family members with stable stored IDs and separately editable labels;
   boolean; number (number/slider/knob/gradientslider displays), string, color,
   curve editor and graph-native image compositor,
@@ -48,6 +51,18 @@
 - Backend mount widgets present one scalar STRING mount id. Input adjacency
   hints name a sibling input without changing interface order or execution
   identity. This does not claim frontend rendering or native save-node support.
+- Backend asset-selection widgets retain one source-named COMBO input; VAE
+  selection also permits the existing ASSET carrier for real files. The public
+  asset authority enumerates only exact granted kinds for VAE, Diffusers,
+  input subdirectories and saved datasets. It resolves literals, same-root
+  file pairs and contained directory subtrees without filesystem or library
+  fallback. The options API returns names and shapes, not host paths.
+  Explicit mount purposes persist in config and runtime grants; omitted kinds
+  remain untyped and do not authorize source selections.
+  This does not claim frontend picker support.
+- Ordinary text-encoder ASSET inputs accept contained source-relative filenames
+  through model-name preflight, with exact-kind root priority and existing
+  verified or unverified file references. Traversal and escaping links refuse.
 - FLOAT number descriptors, including one-level FLOAT lists, accept `round: false`
   for explicit no-round presentation, or a positive finite numeric precision.
   Omission leaves precision unspecified; false is distinct from numeric zero.

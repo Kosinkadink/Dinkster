@@ -225,6 +225,7 @@ from dinkster_assets import (
     AssetError,
     AssetIntegrityError,
     DeclaredAsset,
+    asset_selection_options,
     is_digest,
 )
 from dinkster_assets.acquisition_plan import AcquisitionSource
@@ -4425,6 +4426,15 @@ async def handle_assets_list(request: web.Request) -> web.Response:
     return web.json_response({"digests": sorted(digests)})
 
 
+async def handle_asset_selections(request: web.Request) -> web.Response:
+    kind = request.query.get("kind", "")
+    try:
+        options = await asyncio.to_thread(asset_selection_options, kind)
+    except AssetError:
+        return web.json_response({"error": "unsupported-selection-kind"}, status=400)
+    return web.json_response({"kind": kind, "options": list(options)})
+
+
 async def handle_asset_bytes(request: web.Request) -> web.StreamResponse:
     digest = request.match_info["digest"]
     if not is_digest(digest):
@@ -4635,6 +4645,7 @@ def create_app(
         app[ASSET_EXPORT_KEY] = asset_export
         app.router.add_get("/assets", handle_assets_list)
         app.router.add_get("/assets/{digest}", handle_asset_bytes)
+    app.router.add_get("/api/assets/selections", handle_asset_selections)
     if library is not None:
         add_library_routes(app, library)
     if history is not None:

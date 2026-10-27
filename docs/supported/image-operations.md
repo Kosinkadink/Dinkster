@@ -4,9 +4,14 @@
   metadata pass between node packs without rewriting their values.
 - Native `PrimitiveBoundingBox` constructs pixel bounding boxes; `ImageCropV2`
   crops each image in a batch to that box and reports a PNG preview.
+- Native `CropByBBoxes` crops each frame to its bounding-box union and resizes
+  with stretching or aspect-preserving black padding.
 - Native `RTDETR_detect` returns per-frame pixel bounding boxes filtered by
   confidence and COCO class, ordered by score and limited per frame.
   `DrawBBoxes` overlays boxes and labels on images or a black canvas.
+- Native `SAM3_VideoTrack` tracks initial masks or text-prompted objects across
+  video frames. `SAM3_TrackToMask` selects tracked objects and resizes their union
+  to the original frame dimensions using the portable packed-track value.
 - Native `ColorToRGBInt` preserves RGB letter casing and separates optional alpha;
   `ResolutionSelector` rounds aspect-ratio and megapixel dimensions to a chosen multiple.
 - Marigold V2 decoded predictions convert to per-image normalized depth,

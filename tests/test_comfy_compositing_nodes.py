@@ -1,6 +1,6 @@
 """Torch-free public interfaces for ComfyUI compositing nodes."""
 
-from dinkster_api.v1 import ComboWidget, schema_to_wire
+from dinkster_api.v1 import ComboOption, ComboWidget, schema_to_wire
 from dinkster_nodes_comfy.compositing import (
     COMPOSITING_NODES,
     PorterDuffImageComposite,
@@ -47,7 +47,7 @@ def test_compositing_schemas_match_the_fixed_reference_contract() -> None:
     assert schema.inputs[-1].default == "DST"
     assert isinstance(schema.inputs[-1].widget, ComboWidget)
     assert tuple(
-        option if isinstance(option, str) else option.value
+        option.value if isinstance(option, ComboOption) else option
         for option in schema.inputs[-1].widget.options
     ) == tuple(mode.name for mode in PorterDuffMode)
     for node in COMPOSITING_NODES:

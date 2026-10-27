@@ -170,10 +170,34 @@ def test_wrap_combo_lists_preserves_empty_order_and_duplicates() -> None:
     assert ordered.fingerprint != registry.wrap("list<COMBO>", ["a", "b", "b"]).fingerprint
 
 
-@pytest.mark.parametrize("invalid", [["ok", 1], [None], [["nested"]]])
-def test_wrap_combo_lists_recursively_rejects_non_strings(invalid: object) -> None:
+@pytest.mark.parametrize("nested", [False, True])
+def test_wrap_combo_lists_preserves_scalar_types_across_boundary(nested: bool) -> None:
     registry = make_registry()
-    with pytest.raises(TypeError, match="COMBO expects a string"):
+    selected = ["ok", 1, True, 1.5, "1", False, 0]
+    children = [registry.wrap(CORE_COMBO, item) for item in selected]
+    element_type = "list<COMBO>" if nested else CORE_COMBO
+    raw = [selected] if nested else selected
+    wrapped = [make_list_value(CORE_COMBO, children)] if nested else children
+    value = registry.wrap(list_type_id(element_type), raw)
+    assert value.fingerprint == make_list_value(element_type, wrapped).fingerprint
+    codec = ValueCodec(registry, use_shm=False, accept_shm=False)
+    blobs: list[bytes] = []
+    wire, _ = codec.encode(value, blobs, [])
+    decoded, _ = codec.decode(wire, blobs, [])
+    result = decoded.resolve()
+    assert isinstance(result, list)
+    if nested:
+        result = result[0]
+        assert isinstance(result, list)
+    assert result == selected
+    assert [type(item) for item in result] == [type(item) for item in selected]
+    assert decoded.fingerprint == value.fingerprint
+
+
+@pytest.mark.parametrize("invalid", [[None], [["nested"]]])
+def test_wrap_combo_lists_recursively_rejects_non_scalars(invalid: object) -> None:
+    registry = make_registry()
+    with pytest.raises(TypeError, match="COMBO expects a JSON scalar"):
         registry.wrap("list<COMBO>", invalid)
 
 

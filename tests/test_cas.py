@@ -614,14 +614,17 @@ def test_encoded_validator_failure_is_counted_as_disk_cache_miss(tmp_path: Path)
     asyncio.run(scenario())
 
 
-def test_core_combo_encoded_validation_is_enforced_by_disk_cache(tmp_path: Path) -> None:
+@pytest.mark.parametrize("encoded", [b"json:null", b"json:9007199254740993"])
+def test_core_combo_encoded_validation_is_enforced_by_disk_cache(
+    tmp_path: Path, encoded: bytes
+) -> None:
     async def scenario() -> None:
         registry = make_registry()
         value = Value(
             type_id=CORE_COMBO,
             fingerprint="untrusted-fingerprint",
             meta=ValueMeta(),
-            payload=EncodedPayload(CORE_COMBO, b"json:1", None),
+            payload=EncodedPayload(CORE_COMBO, encoded, None),
         )
         store = DiskCacheStore(tmp_path, registry)
         await store.put("invalid-combo", {"out": value})
