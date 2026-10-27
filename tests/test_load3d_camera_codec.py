@@ -154,6 +154,21 @@ class CameraConsumer(Node):
         return cls.outputs(result="camera")
 
 
+class CameraTransportConsumer(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="load3d-camera-transport.consumer",
+            inputs=(InputSpec("camera", TypeExpr.concrete(LOAD3D_CAMERA_TYPE)),),
+            outputs=(OutputSpec("camera", TypeExpr.concrete(LOAD3D_CAMERA_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls, *, camera: object) -> Mapping[str, object]:
+        assert camera == PERSPECTIVE
+        return cls.outputs(camera=camera)
+
+
 @pytest.mark.parametrize("in_process", (True, False))
 def test_load3d_camera_crosses_ordinary_hosts_twice(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
@@ -203,6 +218,74 @@ def test_load3d_camera_crosses_ordinary_hosts_twice(tmp_path: Path, in_process: 
             for _ in range(2):
                 result = await engine.run(graph, ["consumer"])
                 assert result.outputs["consumer"]["result"].resolve() == "camera"
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
+def test_load3d_camera_crosses_distinct_isolated_workers_with_cached_replay(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        test_directory = Path(__file__).parent
+        modules = {
+            "load3d_camera_source": ("CameraSource", "load3d-camera-fixture"),
+            "load3d_camera_consumer": ("CameraTransportConsumer", "load3d-camera-transport"),
+        }
+        manifests: dict[str, Path] = {}
+        for module, (node, namespace) in modules.items():
+            (tmp_path / f"{module}.py").write_text(
+                f"from test_load3d_camera_codec import {node}\n"
+                "from dinkster_api.v1 import register_inference_types\n"
+                f"NODES = ({node},)\n",
+                encoding="ascii",
+            )
+            manifest = tmp_path / f"{module}-pack.toml"
+            manifest.write_text(
+                f'[pack]\nname="{module}"\npublisher="dinkster"\n'
+                f'namespaces=["{namespace}"]\n[pack.entry]\n'
+                f'nodes="{module}:NODES"\ntypes="{module}:register_inference_types"\n',
+                encoding="ascii",
+            )
+            manifests[module] = manifest
+        composer = ServingComposer(
+            cache_mode="layered",
+            cache_dir=tmp_path / "cache",
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "PYTHONPATH": os.pathsep.join((str(tmp_path), str(test_directory))),
+            },
+        )
+        try:
+            await composer.add_pack(
+                PackSpec(
+                    manifest=manifests["load3d_camera_source"],
+                    worker_group="load3d-camera-source",
+                    group_manifests=(manifests["load3d_camera_source"],),
+                )
+            )
+            await composer.add_pack(
+                PackSpec(
+                    manifest=manifests["load3d_camera_consumer"],
+                    worker_group="load3d-camera-consumer",
+                    group_manifests=(manifests["load3d_camera_consumer"],),
+                )
+            )
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("load3d-camera-fixture.source"),
+                    "consumer": GraphNode(
+                        "load3d-camera-transport.consumer", {"camera": Link("source", "camera")}
+                    ),
+                }
+            )
+            engine = composer.composition.make_engine(lambda _event: None)
+            first = await engine.run(graph, ["consumer"])
+            assert first.outputs["consumer"]["camera"].resolve() == PERSPECTIVE
+            assert set(first.executed) == {"source", "consumer"}
+            replay = await engine.run(graph, ["consumer"])
+            assert replay.outputs["consumer"]["camera"].resolve() == PERSPECTIVE
+            assert set(replay.cached) == {"source", "consumer"}
         finally:
             await composer.close()
 
