@@ -206,6 +206,19 @@ def _save_batch_process(snapshot: str, queue: StringQueue) -> None:
     queue.put(ref[0].name)
 
 
+def _save_encoded_process(snapshot: str, queue: StringQueue) -> None:
+    def encoder(stem: str, counter: int) -> BinaryIO:
+        return io.BytesIO(f"{stem} {counter}".encode())
+
+    ref = AssetWriter(MountSnapshotWriter(snapshot)).save_encoded(
+        {"mount": "out", "prefix": "checkpoint"},
+        encoder,
+        suffix=".safetensors",
+        limit=32,
+    )
+    queue.put(ref.name)
+
+
 def test_separate_prefix_and_mount_write_to_selected_grant(tmp_path: Path) -> None:
     roots = {name: tmp_path / name for name in ("default", "selected", "readonly")}
     for root in roots.values():
@@ -476,6 +489,83 @@ def test_concurrent_process_batches_never_collide(tmp_path: Path) -> None:
         assert process.exitcode == 0
     assert len(set(names)) == 4
     assert all((root / name).read_bytes() == b"process" for name in names)
+
+
+def test_save_encoded_reserves_source_title_before_encoding(tmp_path: Path) -> None:
+    writer, root = make_writer(tmp_path)
+    (root / "checkpoint_00004.safetensors").write_bytes(b"existing")
+    seen: list[tuple[str, int]] = []
+
+    def encoder(stem: str, counter: int) -> BinaryIO:
+        seen.append((stem, counter))
+        return io.BytesIO(f"modelspec.title={stem} {counter}".encode())
+
+    ref = writer.save_encoded(
+        {"mount": "out", "prefix": "checkpoint"},
+        encoder,
+        suffix=".safetensors",
+        limit=64,
+    )
+    assert seen == [("checkpoint", 5)]
+    assert ref.name == "checkpoint_00005.safetensors"
+    assert (root / ref.name).read_bytes() == b"modelspec.title=checkpoint 5"
+
+
+def test_save_encoded_refuses_late_collision_without_renaming_metadata(tmp_path: Path) -> None:
+    writer, root = make_writer(tmp_path)
+
+    def encoder(stem: str, counter: int) -> BinaryIO:
+        (root / f"{stem}_{counter:05d}.safetensors").write_bytes(b"external")
+        return io.BytesIO(b"encoded")
+
+    with pytest.raises(AssetError, match="selected save name"):
+        writer.save_encoded(
+            {"mount": "out", "prefix": "checkpoint"},
+            encoder,
+            suffix=".safetensors",
+            limit=16,
+        )
+    assert (root / "checkpoint_00001.safetensors").read_bytes() == b"external"
+    assert list(root.glob(".dinkster-save-*")) == []
+
+
+def test_save_encoded_rechecks_revocation_after_encoder_returns(tmp_path: Path) -> None:
+    writer, root = make_writer(tmp_path)
+    snapshot = tmp_path / "mounts.json"
+
+    def encoder(stem: str, counter: int) -> BinaryIO:
+        del stem, counter
+        snapshot.write_text(json.dumps({"mounts": []}), "utf-8")
+        return io.BytesIO(b"encoded")
+
+    with pytest.raises(AssetError, match="no ready mount"):
+        writer.save_encoded(
+            {"mount": "out", "prefix": "checkpoint"},
+            encoder,
+            suffix=".safetensors",
+            limit=16,
+        )
+    assert list(root.iterdir()) == []
+
+
+def test_concurrent_process_encoders_receive_distinct_selected_counters(tmp_path: Path) -> None:
+    _, root = make_writer(tmp_path)
+    snapshot = tmp_path / "mounts.json"
+    context = get_context("spawn")
+    queue = context.Queue()
+    processes = [
+        context.Process(target=_save_encoded_process, args=(str(snapshot), queue)) for _ in range(4)
+    ]
+    for process in processes:
+        process.start()
+    names = [queue.get(timeout=10) for _ in processes]
+    for process in processes:
+        process.join(timeout=10)
+        assert process.exitcode == 0
+    assert sorted(names) == [f"checkpoint_{counter:05d}.safetensors" for counter in range(1, 5)]
+    assert {path.read_bytes() for path in root.iterdir() if path.suffix == ".safetensors"} == {
+        f"checkpoint {counter}".encode() for counter in range(1, 5)
+    }
 
 
 # ---------------------------------------------------------------------------

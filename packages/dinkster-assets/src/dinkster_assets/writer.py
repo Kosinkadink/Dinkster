@@ -25,12 +25,14 @@ any rescan of the mount.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
 import time
 import uuid
-from collections.abc import Iterable
+from collections.abc import Callable, Generator, Iterable
+from contextlib import contextmanager
 from pathlib import Path
 from typing import BinaryIO, Protocol, cast
 
@@ -182,13 +184,47 @@ class AssetWriter:
     ) -> AssetRef:
         """Boundedly copy a held seekable source and atomically publish it."""
         parsed = self._validated_target(target, suffix, limit)
-        ref, _ = self._write_stream(
-            parsed,
-            source,
-            suffix=suffix,
-            media_type=media_type,
-            limit=limit,
-        )
+        _, folder = self._writable_folder(parsed)
+        with self._directory_claim(folder):
+            ref, _ = self._write_stream(
+                parsed,
+                source,
+                suffix=suffix,
+                media_type=media_type,
+                limit=limit,
+            )
+        return ref
+
+    def save_encoded(
+        self,
+        target: object,
+        encoder: Callable[[str, int], BinaryIO],
+        *,
+        suffix: str,
+        media_type: str = "application/octet-stream",
+        limit: int,
+    ) -> AssetRef:
+        """Reserve a source-compatible name while an encoder records it.
+
+        ``encoder`` receives the filename stem and integer counter, never a
+        host path or an output placeholder. A pre-existing final name after
+        encoding is an error rather than a renamed publication, because the
+        encoded metadata may carry that selected name.
+        """
+        parsed = self._validated_target(target, suffix, limit)
+        _, folder = self._writable_folder(parsed)
+        with self._directory_claim(folder):
+            counter = self._next_counter(folder, parsed.stem)
+            source = encoder(parsed.stem, counter)
+            ref, _ = self._write_stream(
+                parsed,
+                source,
+                suffix=suffix,
+                media_type=media_type,
+                limit=limit,
+                counter=counter,
+                strict_counter=True,
+            )
         return ref
 
     def save_stream_batch(
@@ -209,21 +245,22 @@ class AssetWriter:
         """
         parsed = self._validated_target(target, suffix, limit)
         root, folder = self._writable_folder(parsed)
-        counter = self._next_counter(folder, parsed.stem)
-        refs: list[AssetRef] = []
-        for batch_num, source in enumerate(sources):
-            stem = parsed.stem.replace("%batch_num%", str(batch_num))
-            ref, counter = self._write_stream(
-                parsed,
-                source,
-                suffix=suffix,
-                media_type=media_type,
-                limit=limit,
-                counter=counter,
-                stem=stem,
-                expected_root=root,
-            )
-            refs.append(ref)
+        with self._directory_claim(folder):
+            counter = self._next_counter(folder, parsed.stem)
+            refs: list[AssetRef] = []
+            for batch_num, source in enumerate(sources):
+                stem = parsed.stem.replace("%batch_num%", str(batch_num))
+                ref, counter = self._write_stream(
+                    parsed,
+                    source,
+                    suffix=suffix,
+                    media_type=media_type,
+                    limit=limit,
+                    counter=counter,
+                    stem=stem,
+                    expected_root=root,
+                )
+                refs.append(ref)
         return refs
 
     @staticmethod
@@ -255,6 +292,7 @@ class AssetWriter:
         counter: int | None = None,
         stem: str | None = None,
         expected_root: Path | None = None,
+        strict_counter: bool = False,
     ) -> tuple[AssetRef, int]:
         root, folder = self._writable_folder(parsed)
         if expected_root is not None and root.resolve() != expected_root.resolve():
@@ -291,7 +329,9 @@ class AssetWriter:
                 if any(getattr(before, field) != getattr(after, field) for field in fields):
                     raise AssetError("save source changed while it was copied")
             digest = DIGEST_PREFIX + hasher.hexdigest()
-            final, used_counter = self._claim_and_land(folder, stem, suffix, tmp, counter)
+            final, used_counter = self._claim_and_land(
+                folder, stem, suffix, tmp, counter, strict_counter=strict_counter
+            )
         finally:
             tmp.unlink(missing_ok=True)
         assert final is not None and used_counter is not None
@@ -334,6 +374,17 @@ class AssetWriter:
             )
 
     @staticmethod
+    @contextmanager
+    def _directory_claim(folder: Path) -> Generator[None]:
+        descriptor = os.open(folder, os.O_RDONLY)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            yield
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            os.close(descriptor)
+
+    @staticmethod
     def _next_counter(folder: Path, stem: str) -> int:
         """Match ComfyUI's ``get_save_image_path`` filename scan exactly."""
         counters: list[int] = []
@@ -368,7 +419,13 @@ class AssetWriter:
 
     @staticmethod
     def _claim_and_land(
-        folder: Path, stem: str, suffix: str, tmp: Path, counter: int | None = None
+        folder: Path,
+        stem: str,
+        suffix: str,
+        tmp: Path,
+        counter: int | None = None,
+        *,
+        strict_counter: bool = False,
     ) -> tuple[Path, int]:
         """Publish the temp file under the next free counter name.
 
@@ -383,6 +440,8 @@ class AssetWriter:
             try:
                 os.link(tmp, final)
             except FileExistsError:
+                if strict_counter:
+                    raise AssetError("selected save name was claimed before publication") from None
                 counter += 1
                 continue
             return final, counter
