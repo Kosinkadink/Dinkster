@@ -493,6 +493,23 @@ namespaces = [
     "SAM3_VideoTrack",
     "SAM3_TrackToMask",
     "VideoFrameSample",
+    "CheckpointLoaderSimple",
+    "CheckpointLoader",
+    "unCLIPCheckpointLoader",
+    "ControlNetLoader",
+    "DiffControlNetLoader",
+    "UNETLoader",
+    "CLIPLoader",
+    "DualCLIPLoader",
+    "CLIPVisionLoader",
+    "StyleModelLoader",
+    "GLIGENLoader",
+    "LoraLoader",
+    "LoraLoaderModelOnly",
+    "LoadLoraModel",
+    "LoadLoraTextEncoder",
+    "LoraLoaderBypass",
+    "LoraLoaderBypassModelOnly",
 ]
 
 [pack.sandbox]
