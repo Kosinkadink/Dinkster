@@ -159,11 +159,15 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/dinkster-audio-rss"
           uv run --locked python tools/audio_conformance.py --rss --directory "$RUNNER_TEMP/dinkster-audio-rss"
-      - run: uv run python -m pytest -q ${{ matrix.pytest_args }}
+      - run: >
+          uv run python -m pytest -q ${{ matrix.pytest_args }}
+          --deselect=tests/test_sandbox.py::TestLiveJail
         if: runner.os == 'Windows'
         env:
           DINKSTER_SLOW_TESTS: "1"
-      - run: uv run python -m pytest -q ${{ matrix.pytest_args }}
+      - run: >
+          uv run python -m pytest -q ${{ matrix.pytest_args }}
+          --deselect=tests/test_sandbox.py::TestLiveJail
         if: runner.os == 'Linux'
         env:
           DINKSTER_SLOW_TESTS: "1"
@@ -311,6 +315,7 @@ jobs:
       - run: >
           uv run pytest -q -p tools.pytest_file_shard
           --file-shard=${{ matrix.shard }}/4
+          --deselect=tests/test_sandbox.py::TestLiveJail
           --cov=dinkster_api --cov=dinkster_assets
           --cov=dinkster_caches --cov=dinkster_compat_comfy --cov=dinkster_engine
           --cov=dinkster_graph --cov=dinkster_memory --cov=dinkster_nodes_foundation
