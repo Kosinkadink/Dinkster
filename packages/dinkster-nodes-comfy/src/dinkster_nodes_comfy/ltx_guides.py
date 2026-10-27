@@ -170,6 +170,81 @@ def attach_guide_latent(
     return positive, negative, latent_image, noise_mask
 
 
+def add_image_guide(
+    positive: Sequence[Sequence[Any]],
+    negative: Sequence[Sequence[Any]],
+    vae: Any,
+    latent: object,
+    image: object,
+    frame_idx: int,
+    strength: float,
+    attention_mask: object = None,
+    iclora_parameters: Mapping[str, Any] | None = None,
+) -> tuple[Any, Any, dict[str, Any]]:
+    initialize_inference_process()
+    torch = importlib.import_module("torch")
+    utils = importlib.import_module("dinkster_inference.utils")
+    source = materialize_latent(latent)
+    samples = source["samples"]
+    images = materialize_image(image)
+    scales = vae.downscale_index_formula
+    temporal_scale, width_scale, height_scale = scales
+    _, _, length, height, width = samples.shape
+    try:
+        factor = max(
+            1, round(float((iclora_parameters or {}).get("reference_downscale_factor", 1)))
+        )
+    except (TypeError, ValueError):
+        factor = 1
+    if factor > 1 and (width % factor != 0 or height % factor != 0):
+        raise ValueError(
+            f"Latent spatial size {width}x{height} must be divisible by "
+            f"reference_downscale_factor {factor} from the IC-LoRA parameters."
+        )
+    _, keyframes = get_keyframe_idxs(positive, samples.shape)
+    resolved_index = (
+        frame_idx
+        if frame_idx >= 0
+        else max((length - keyframes - 1) * temporal_scale + 1 + frame_idx, 0)
+    )
+    kept = (images.shape[0] - 1) // temporal_scale * temporal_scale + 1
+    causal_fix = resolved_index == 0 or kept == 1
+    if not causal_fix:
+        images = torch.cat((images[:1], images), dim=0)
+    images = images[: (images.shape[0] - 1) // temporal_scale * temporal_scale + 1]
+    pixels = utils.common_upscale(
+        images.movedim(-1, 1),
+        int(width * width_scale / factor),
+        int(height * height_scale / factor),
+        "bilinear",
+        crop="center",
+    ).movedim(1, -1)[..., :3]
+    guide = vae.encode(pixels)
+    if not causal_fix:
+        guide, pixels = guide[:, :, 1:], pixels[1:]
+    frame_idx = resolved_index
+    if len(pixels) > 1 and frame_idx != 0:
+        frame_idx = (frame_idx - 1) // temporal_scale * temporal_scale + 1
+    latent_idx = (frame_idx + temporal_scale - 1) // temporal_scale
+    assert latent_idx + guide.shape[2] <= length, (
+        "Conditioning frames exceed the length of the latent sequence."
+    )
+    positive, negative, samples, mask = attach_guide_latent(
+        positive,
+        negative,
+        samples,
+        get_noise_mask(source, torch),
+        guide,
+        frame_idx,
+        strength,
+        scales,
+        factor,
+        causal_fix=causal_fix,
+        attention_mask=materialize_image(attention_mask) if attention_mask is not None else None,
+    )
+    return positive, negative, {"samples": samples, "noise_mask": mask}
+
+
 class LTXVAddLatentGuide(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
