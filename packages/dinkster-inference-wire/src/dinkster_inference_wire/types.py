@@ -17,6 +17,7 @@ from dinkster_values import (
     GUIDER_TYPE,
     HOOK_KEYFRAMES_TYPE,
     HOOKS_TYPE,
+    IC_LORA_PARAMETERS_TYPE,
     INFERENCE_LATENT_OPERATION_TYPE,
     LATENT_UPSCALE_MODEL_TYPE,
     MODEL_PATCH_TYPE,
@@ -43,6 +44,7 @@ from .hook_values import (
     normalize_hook_owners,
     register_hook_structural_type,
 )
+from .ic_lora_parameters import register_ic_lora_parameters_type
 from .media_wire import (
     materialize_audio,
     materialize_image,
@@ -131,6 +133,11 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
             if type_id in registry
             else register_hook_structural_type(registry, type_id)
         )
+    registered.append(
+        registry.spec(IC_LORA_PARAMETERS_TYPE)
+        if IC_LORA_PARAMETERS_TYPE in registry
+        else register_ic_lora_parameters_type(registry)
+    )
     if CLIP_VISION_OUTPUT_TYPE not in registry:
         registry.register(
             CLIP_VISION_OUTPUT_TYPE,
