@@ -28,7 +28,7 @@ from dinkster_api.v1 import (
 )
 
 from .expression import MAX_INTEGER_BITS
-from .types import CURVE_TYPE, MAX_CURVE_POINTS, Curve
+from .types import CURVE_TYPE, Curve
 
 INT = TypeExpr.concrete(CORE_INT)
 FLOAT = TypeExpr.concrete(CORE_FLOAT)
@@ -224,8 +224,8 @@ class ValueConvert(Node):
 def _curve_from_values(values: Sequence[float], start: float, step: float) -> Curve:
     if isinstance(values, (str, bytes)):
         raise TypeError("curve values must be a sequence of numbers")
-    if not 1 <= len(values) <= MAX_CURVE_POINTS:
-        raise ValueError(f"curve values must contain between 1 and {MAX_CURVE_POINTS} items")
+    if not values:
+        raise ValueError("curve values must contain at least one item")
     start = _finite_float(start, "curve start")
     step = _finite_float(step, "curve step")
     if step <= 0:
@@ -236,7 +236,7 @@ def _curve_from_values(values: Sequence[float], start: float, step: float) -> Cu
         if not math.isfinite(position):
             raise ValueError("curve positions must be finite")
         points.append((position, _finite_float(value, f"curve value {index}")))
-    return Curve(tuple(points))
+    return Curve(tuple(points), "linear")
 
 
 class CurveFromValues(Node):
@@ -288,7 +288,7 @@ class CurveSample(Node):
                     "count",
                     INT,
                     default=10,
-                    widget=NumberWidget(min=1, max=MAX_CURVE_POINTS, step=1),
+                    widget=NumberWidget(min=1, step=1),
                 ),
             ),
             outputs=(OutputSpec("values", LIST_FLOAT),),
@@ -296,8 +296,8 @@ class CurveSample(Node):
 
     @classmethod
     def execute(cls, *, curve: Curve, count: int) -> Mapping[str, object]:
-        if type(count) is not int or not 1 <= count <= MAX_CURVE_POINTS:
-            raise ValueError(f"sample count must be between 1 and {MAX_CURVE_POINTS}")
+        if type(count) is not int or count < 1:
+            raise ValueError("sample count must be at least one")
         if count == 1:
             positions = (curve.start,)
         else:
@@ -350,8 +350,6 @@ def parse_schedule(text: str) -> Curve:
         entries.pop()
     if not entries or any(not entry for entry in entries):
         raise ValueError("schedule must contain comma-separated position:value entries")
-    if len(entries) > MAX_CURVE_POINTS:
-        raise ValueError(f"schedule exceeds {MAX_CURVE_POINTS} points")
     points: list[tuple[float, float]] = []
     for index, entry in enumerate(entries):
         parts = entry.split(":")
@@ -371,7 +369,9 @@ def parse_schedule(text: str) -> Curve:
             )
         )
     points.sort(key=lambda point: point[0])
-    return Curve(tuple(points))
+    if any(left[0] == right[0] for left, right in zip(points, points[1:], strict=False)):
+        raise ValueError("schedule positions must be distinct")
+    return Curve(tuple(points), "linear")
 
 
 class StringScheduleParse(Node):

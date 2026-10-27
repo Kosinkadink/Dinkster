@@ -403,7 +403,8 @@ def test_envelope_passes_empty_audio_through() -> None:
     result = ExtractAudioEnvelope.execute(audio=_empty())
     assert _envelope(result) == []
     assert cast("dict[str, object]", result)["frames"] == 0
-    assert _envelope_curve(result) == Curve(((0.0, 0.0),))
+    # Hand-derived: the native audio envelope explicitly retains linear interpolation.
+    assert _envelope_curve(result) == Curve(((0.0, 0.0),), "linear")
 
 
 def test_envelope_curve_reduces_to_bounded_time_aligned_peaks() -> None:

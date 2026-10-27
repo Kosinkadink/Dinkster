@@ -694,14 +694,14 @@ def _frame_bounds(total_samples: int, samples_per_frame: float) -> tuple[int, ..
 
 def _envelope_curve(values: list[float], edges: tuple[int, ...], sample_rate: int) -> Curve:
     if not values:
-        return Curve(((0.0, 0.0),))
+        return Curve(((0.0, 0.0),), "linear")
     group_size = max(1, math.ceil(len(values) / 4096))
     points: list[tuple[float, float]] = []
     for start in range(0, len(values), group_size):
         stop = min(start + group_size, len(values))
         peak = max(range(start, stop), key=values.__getitem__)
         points.append((edges[peak] / sample_rate, values[peak]))
-    return Curve(tuple(points))
+    return Curve(tuple(points), "linear")
 
 
 class ExtractAudioEnvelope(Node):
@@ -926,7 +926,7 @@ class AudioOnsets(Node):
         if facts["frames"] is None:
             raise ValueError("onset detection requires a trim duration")
         hop = max(1, round(facts["sample_rate"] / fps))
-        # CURVE carries at most 4096 control points; retain the strongest onset in each group.
+        # Retain the strongest onset per group within the curve preview budget.
         group_size = max(1, math.ceil(math.ceil(facts["frames"] / hop) / 4096))
         if group_size > 1:
             warnings.warn("onsets are peak-aggregated to the 4096-point CURVE budget", stacklevel=2)
@@ -956,7 +956,7 @@ class AudioOnsets(Node):
         if peak:
             values = [value / peak for value in values]
         points = tuple(zip(times, values, strict=True)) or ((0.0, 0.0),)
-        return cls.outputs(curve=Curve(points))
+        return cls.outputs(curve=Curve(points, "linear"))
 
 
 AUDIO_OPS_NODES: tuple[type[Node], ...] = (
