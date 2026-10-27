@@ -11,6 +11,12 @@ inputs:
   pytest-args:
     description: Additional pytest arguments for model suites
     default: ""
+  suite:
+    description: Non-model suites to run (all, comfy, or vision)
+    default: "all"
+  comfy-pytest-args:
+    description: Additional pytest arguments for the comfy suite
+    default: ""
   evidence-deploy-key:
     description: Read-only dinkster-evidence deploy key
     required: true
@@ -59,13 +65,13 @@ runs:
         # is non-asserting, so a probe failure fails instead of being masked.
         MKL_VERBOSE=1 .venv-torch/bin/python -c "import torch; a = torch.randn(512, 512); b = a @ a" > "$RUNNER_TEMP/mkl-verbose.log" 2>&1
         grep -m1 -o 'CNR:[A-Z0-9_,]*' "$RUNNER_TEMP/mkl-verbose.log" || echo 'no MKL verbose GEMM line'
-    - if: env.DINKSTER_MODEL_TEST_GROUP == ''
+    - if: env.DINKSTER_MODEL_TEST_GROUP == '' && inputs.suite != 'vision'
       shell: bash
       run: |
         uv pip install --python .venv-torch/bin/python \
           --constraint "${{ runner.temp }}/torch-constraints.txt" \
           -e . -e packages/dinkster-nodes-comfy
-        .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-comfy/tests
+        .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-comfy/tests ${{ inputs.comfy-pytest-args }}
     - name: Acquire pinned line and edge parity artifacts
       if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-fast'
       shell: bash
@@ -104,10 +110,10 @@ runs:
         b9037964149c55156c6adbffdfbd7e8ca7d2ef2a4d90573520efa7f3a1aacf06  $RUNNER_TEMP/7_model.pth
         a3c2d8a8ce9422555c787160bd46362d761325a565333c0e3f6a53e0bae2abdb  $RUNNER_TEMP/MTEED.pth
         EOF
-    - if: env.DINKSTER_MODEL_TEST_GROUP == ''
+    - if: env.DINKSTER_MODEL_TEST_GROUP == '' && inputs.suite != 'comfy'
       shell: bash
       run: .venv/bin/pyright -p packages/dinkster-nodes-vision
-    - if: env.DINKSTER_MODEL_TEST_GROUP == ''
+    - if: env.DINKSTER_MODEL_TEST_GROUP == '' && inputs.suite != 'comfy'
       shell: bash
       run: .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_hed.py
     - if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-fast'
@@ -137,7 +143,7 @@ runs:
         f872d837d3c90ed2e05227bed711af5671a6fd1c9f7d7e91c911a61f155e99da  $RUNNER_TEMP/RealESRGAN_x4plus_anime_6B.pth
         8dc7edb9ac80ccdc30c3a5dca6616509367f05fbc184ad95b731f05bece96292  $RUNNER_TEMP/realesr-general-x4v3.pth
         EOF
-    - if: env.DINKSTER_MODEL_TEST_GROUP == ''
+    - if: env.DINKSTER_MODEL_TEST_GROUP == '' && inputs.suite != 'comfy'
       shell: bash
       run: .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_upscale.py
     - if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-fast'
@@ -155,7 +161,7 @@ runs:
           --output "$RUNNER_TEMP/depth-anything-v2-large.safetensors" \
           https://huggingface.co/depth-anything/Depth-Anything-V2-Large-hf/resolve/7581137eff8d4e94f6e796d3baea0e9fa79b22d2/model.safetensors
         echo "4e01e34ed5549b529b70b92d53226bc370f03041977b390d3dde45d47f516cf9  $RUNNER_TEMP/depth-anything-v2-large.safetensors" | sha256sum --check
-    - if: env.DINKSTER_MODEL_TEST_GROUP == ''
+    - if: env.DINKSTER_MODEL_TEST_GROUP == '' && inputs.suite != 'comfy'
       shell: bash
       run: .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_depth_anything_v2.py
     - if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-detection'
@@ -172,7 +178,7 @@ runs:
           --output "$RUNNER_TEMP/detr-r50-e632da11.pth" \
           https://dl.fbaipublicfiles.com/detr/detr-r50-e632da11.pth
         echo "e632da11ec76ae67bac2f8579fbed3724e08dead7d200ca13e019b197784eadc  $RUNNER_TEMP/detr-r50-e632da11.pth" | sha256sum --check
-    - if: env.DINKSTER_MODEL_TEST_GROUP == ''
+    - if: env.DINKSTER_MODEL_TEST_GROUP == '' && inputs.suite != 'comfy'
       shell: bash
       run: .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_detr.py
     - if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-detection'
@@ -189,7 +195,7 @@ runs:
           --output "$RUNNER_TEMP/rt_detr_v4-x-hgnet_fp16.safetensors" \
           https://huggingface.co/Comfy-Org/SDPose/resolve/f122ac7976997885e3bfeab2bb3a537a6bc250bc/diffusion_models/rt_detr_v4-x-hgnet_fp16.safetensors
         echo "581f9af9bbabb664d1891cbccd823308b176ecd409146f954dfa39af3bec2476  $RUNNER_TEMP/rt_detr_v4-x-hgnet_fp16.safetensors" | sha256sum --check
-    - if: env.DINKSTER_MODEL_TEST_GROUP == ''
+    - if: env.DINKSTER_MODEL_TEST_GROUP == '' && inputs.suite != 'comfy'
       shell: bash
       run: .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_rtdetr.py
     - if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-detection'
@@ -212,7 +218,7 @@ runs:
         84ed466ffcc5c1f8d08409bc34a23bb364ab2c15e402cb12d4335a42be0e0951  $RUNNER_TEMP/efficient-sam-vitt-encoder-d525f622.onnx
         a62f8fa5ea080447c0689418d69e58f1e83e0b7adf9c142e2bd9bcc8045c0b11  $RUNNER_TEMP/efficient-sam-vitt-decoder-d525f622.onnx
         EOF
-    - if: env.DINKSTER_MODEL_TEST_GROUP == ''
+    - if: env.DINKSTER_MODEL_TEST_GROUP == '' && inputs.suite != 'comfy'
       shell: bash
       run: .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_efficient_sam.py
     - if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-fast'
@@ -230,7 +236,7 @@ runs:
           --output "$RUNNER_TEMP/birefnet.safetensors" \
           https://huggingface.co/Comfy-Org/BiRefNet/resolve/35767b272f2846752a3aee1259abdd4586f735c8/background_removal/birefnet.safetensors
         echo "9ab37426bf4de0567af6b5d21b16151357149139362e6e8992021b8ce356a154  $RUNNER_TEMP/birefnet.safetensors" | sha256sum --check
-    - if: env.DINKSTER_MODEL_TEST_GROUP == ''
+    - if: env.DINKSTER_MODEL_TEST_GROUP == '' && inputs.suite != 'comfy'
       shell: bash
       run: .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_birefnet.py
     - if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-large'
@@ -247,7 +253,7 @@ runs:
           --output "$RUNNER_TEMP/depth-anything-3-mono-large.safetensors" \
           https://huggingface.co/Comfy-Org/Depth-Anything-3/resolve/913d1a7ab58ddbfbf94a33bf536c4fc2ff25465d/geometry_estimation/depth_anything_3_mono_large.safetensors
         echo "9b44eda5bedba5b4e125686fdb79d1db309c1b9785277576eb930f885b008f96  $RUNNER_TEMP/depth-anything-3-mono-large.safetensors" | sha256sum --check
-    - if: env.DINKSTER_MODEL_TEST_GROUP == ''
+    - if: env.DINKSTER_MODEL_TEST_GROUP == '' && inputs.suite != 'comfy'
       shell: bash
       run: .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_depth_anything_v3.py
     - if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-large'
@@ -264,7 +270,7 @@ runs:
           --output "$RUNNER_TEMP/sam3.1_multiplex_fp16.safetensors" \
           https://huggingface.co/Comfy-Org/sam3.1/resolve/f38cd62b71494b53ac2b56ca36e24f3c8d565581/checkpoints/sam3.1_multiplex_fp16.safetensors
         echo "9ba99c92703c2e8b4f47de2d34a539bb8e18923049e238b780d70dbe6368eb03  $RUNNER_TEMP/sam3.1_multiplex_fp16.safetensors" | sha256sum --check
-    - if: env.DINKSTER_MODEL_TEST_GROUP == ''
+    - if: env.DINKSTER_MODEL_TEST_GROUP == '' && inputs.suite != 'comfy'
       shell: bash
       run: .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_sam31.py
     - if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-sam'
