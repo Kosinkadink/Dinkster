@@ -197,8 +197,28 @@ jobs:
   torch-cpu:
     needs: validation-plan
     if: needs.validation-plan.outputs.run-heavy == 'true'
+    name: torch-cpu (${{ matrix.suite }}${{ matrix.shard }})
     runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: comfy
+            shard: ", shard 1"
+            pytest-args: "-p tools.pytest_file_shard --file-shard 1/4"
+          - suite: comfy
+            shard: ", shard 2"
+            pytest-args: "-p tools.pytest_file_shard --file-shard 2/4"
+          - suite: comfy
+            shard: ", shard 3"
+            pytest-args: "-p tools.pytest_file_shard --file-shard 3/4"
+          - suite: comfy
+            shard: ", shard 4"
+            pytest-args: "-p tools.pytest_file_shard --file-shard 4/4"
+          - suite: vision
+            shard: ""
+            pytest-args: ""
     env:
       ATEN_CPU_CAPABILITY: avx2
       ONEDNN_MAX_CPU_ISA: AVX2
@@ -211,6 +231,8 @@ jobs:
         with:
           evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
           run-model-tests: "false"
+          suite: ${{ matrix.suite }}
+          comfy-pytest-args: ${{ matrix.pytest-args }}
 
   model-tests:
     needs: validation-plan
