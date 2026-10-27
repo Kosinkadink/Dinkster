@@ -10,7 +10,9 @@ from typing import Any
 import pytest
 import torch
 from dinkster_api.v1 import (
+    CONDITIONING_TYPE,
     CORE_FLOAT,
+    IMAGE_TYPE,
     MODEL_TYPE,
     InputSpec,
     Node,
@@ -19,7 +21,10 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.hidream_patches import HiDreamO1PatchSeamSmoothing
+from dinkster_nodes_comfy.hidream_patches import (
+    HiDreamO1PatchSeamSmoothing,
+    HiDreamO1ReferenceImages,
+)
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -46,6 +51,96 @@ class Model:
 
     def add_wrapper_with_key(self, point: str, name: str, wrapper: Any) -> None:
         self.wrappers[point, name] = wrapper
+
+
+def test_reference_order_append_and_shallow_identity() -> None:
+    token, negative_token, marker = object(), object(), object()
+    prior, negative_prior = torch.tensor([-7.0]), torch.tensor([-13.0])
+    positive = [[token, {"reference_latents": [prior], "marker": marker}]]
+    negative = [[negative_token, {"reference_latents": [negative_prior], "prompt_type": "old"}]]
+    images = {
+        name: torch.full((1, 2, 3, 3), float(index))
+        for name, index in (
+            ("extra", 201),
+            ("image_100", 100),
+            ("image_10", 10),
+            ("image_2", 2),
+            ("tail", 301),
+        )
+    }
+    images["image_1"] = None
+    result = HiDreamO1ReferenceImages.execute(positive=positive, negative=negative, images=images)
+    for output, original, previous in (
+        ("positive", positive, prior),
+        ("negative", negative, negative_prior),
+    ):
+        entry = result[output][0]
+        assert entry[0] is original[0][0] and entry[1] is not original[0][1]
+        refs = entry[1]["reference_latents"]
+        assert refs[0] is previous and refs[1] is None
+        assert all(
+            actual is images[name]
+            for actual, name in zip(
+                refs[2:], ("image_2", "image_10", "image_100", "extra", "tail"), strict=True
+            )
+        )
+        assert len(original[0][1]["reference_latents"]) == 1
+    assert result["positive"][0][1]["marker"] is marker
+    assert result["negative"][0][1]["prompt_type"] == "negative"
+    assert negative[0][1]["prompt_type"] == "old"
+    for empty in (None, {}):
+        unchanged = HiDreamO1ReferenceImages.execute(
+            positive=positive, negative=negative, images=empty
+        )
+        assert unchanged["positive"] is positive and unchanged["negative"] is negative
+
+
+class ReferenceSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "hidream-fixture.references",
+            outputs=(
+                OutputSpec("positive", TypeExpr.concrete(CONDITIONING_TYPE)),
+                OutputSpec("negative", TypeExpr.concrete(CONDITIONING_TYPE)),
+                *(
+                    OutputSpec(f"image{index}", TypeExpr.concrete(IMAGE_TYPE))
+                    for index in (2, 10, 100)
+                ),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        return cls.outputs(
+            positive=[[torch.tensor([2.0]), {"reference_latents": [torch.tensor([-7.0])]}]],
+            negative=[[torch.tensor([-3.0]), {"reference_latents": [torch.tensor([-13.0])]}]],
+            **{f"image{index}": torch.full((1, 2, 3, 3), float(index)) for index in (2, 10, 100)},
+        )
+
+
+class ReferenceInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "hidream-fixture.reference-inspect",
+            inputs=tuple(
+                InputSpec(name, TypeExpr.concrete(CONDITIONING_TYPE))
+                for name in ("positive", "negative")
+            ),
+            outputs=(OutputSpec("value", TypeExpr.concrete(CORE_FLOAT)),),
+        )
+
+    @classmethod
+    def execute(cls, *, positive: Any, negative: Any) -> dict[str, object]:
+        for conditioning, token, prior in ((positive, 2.0, -7.0), (negative, -3.0, -13.0)):
+            assert torch.equal(conditioning[0][0], torch.tensor([token]))
+            refs = conditioning[0][1]["reference_latents"]
+            assert len(refs) == 4 and torch.equal(refs[0], torch.tensor([prior]))
+            for reference, value in zip(refs[1:], (2.0, 10.0, 100.0), strict=True):
+                assert torch.equal(reference, torch.full((1, 2, 3, 3), value))
+        assert negative[0][1]["prompt_type"] == "negative"
+        return cls.outputs(value=112.0)
 
 
 def test_shifted_grid_average_preserves_edges_and_scales_strength() -> None:
@@ -192,9 +287,10 @@ def test_ordinary_manifest_executes_hidream_smoothing_twice(
         native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
         module = f"hidream_fixture_{in_process}"
         (tmp_path / f"{module}.py").write_text(
-            "from test_hidream_patches_torch import ModelSource, ModelInspect\n"
+            "from test_hidream_patches_torch import (\n"
+            "    ModelSource, ModelInspect, ReferenceSource, ReferenceInspect,\n)\n"
             "from dinkster_inference_wire import register_inference_types\n"
-            "NODES = (ModelSource, ModelInspect)\n",
+            "NODES = (ModelSource, ModelInspect, ReferenceSource, ReferenceInspect)\n",
             encoding="ascii",
         )
         fixture = tmp_path / "fixture.toml"
@@ -243,13 +339,33 @@ def test_ordinary_manifest_executes_hidream_smoothing_twice(
                     "inspect": GraphNode(
                         "hidream-fixture.inspect", {"model": Link("patch", "MODEL")}
                     ),
+                    "references": GraphNode("hidream-fixture.references"),
+                    "append": GraphNode(
+                        "HiDreamO1ReferenceImages",
+                        {
+                            "positive": Link("references", "positive"),
+                            "negative": Link("references", "negative"),
+                            **{
+                                f"images.image_{index}": Link("references", f"image{index}")
+                                for index in (100, 10, 2)
+                            },
+                        },
+                    ),
+                    "inspect_references": GraphNode(
+                        "hidream-fixture.reference-inspect",
+                        {
+                            "positive": Link("append", "positive"),
+                            "negative": Link("append", "negative"),
+                        },
+                    ),
                 }
             )
             engine = composer.composition.make_engine(lambda _event: None)
-            results = [
-                (await engine.run(graph, ["inspect"])).outputs["inspect"]["value"].resolve()
-                for _ in range(2)
-            ]
+            results = []
+            for _ in range(2):
+                outputs = (await engine.run(graph, ["inspect", "inspect_references"])).outputs
+                results.append(outputs["inspect"]["value"].resolve())
+                assert outputs["inspect_references"]["value"].resolve() == 112.0
             assert results[0] == results[1] and results[0] > 0
         finally:
             await composer.close()

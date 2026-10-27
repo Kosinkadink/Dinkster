@@ -53,7 +53,7 @@ from .flux_conditioning import FLUX_CONDITIONING_NODES
 from .flux_image_layout import FLUX_IMAGE_LAYOUT_NODES
 from .freeu import FREEU_NODES
 from .gligen_conditioning import GLIGENTextBoxApply
-from .hidream_patches import HiDreamO1PatchSeamSmoothing
+from .hidream_patches import HiDreamO1PatchSeamSmoothing, HiDreamO1ReferenceImages
 from .hook_checkpoint import HOOK_CHECKPOINT_NODES
 from .hook_conditioning import HOOK_CONDITIONING_NODES
 from .hook_lora import HOOK_LORA_NODES
@@ -181,6 +181,7 @@ COMFY_NODES = (
     *ATTENTION_GUIDANCE_NODES,
     *CACHE_NODES,
     HiDreamO1PatchSeamSmoothing,
+    HiDreamO1ReferenceImages,
     TripleCLIPLoader,
     QuadrupleCLIPLoader,
     *MODEL_MERGE_NODES,

@@ -1,4 +1,4 @@
-"""HiDream-O1 patch-grid smoothing through the inference model wrapper."""
+"""HiDream-O1 reference conditioning and shifted patch-grid smoothing."""
 
 from __future__ import annotations
 
@@ -7,10 +7,13 @@ from collections.abc import Mapping
 from typing import Any
 
 from dinkster_api.v1 import (
+    CONDITIONING_TYPE,
     CORE_COMBO,
     CORE_FLOAT,
+    IMAGE_TYPE,
     MODEL_TYPE,
     ComboWidget,
+    InputFamilySpec,
     InputSpec,
     Node,
     NodeSchema,
@@ -18,7 +21,51 @@ from dinkster_api.v1 import (
     OutputSpec,
     TypeExpr,
     initialize_inference_process,
+    materialize_image,
 )
+
+from .conditioning import conditioning_set_values
+
+
+class HiDreamO1ReferenceImages(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        conditioning = TypeExpr.concrete(CONDITIONING_TYPE)
+        return NodeSchema(
+            node_type="HiDreamO1ReferenceImages",
+            display_name="HiDream-O1 Reference Images",
+            category="model/conditioning/hidream",
+            description="Attach ordered reference images to positive and negative conditioning.",
+            inputs=(InputSpec("positive", conditioning), InputSpec("negative", conditioning)),
+            input_families=(
+                InputFamilySpec(
+                    "images",
+                    (InputSpec("image", TypeExpr.concrete(IMAGE_TYPE)),),
+                    min_members=0,
+                    member_names=tuple(f"image_{index}" for index in range(1, 101)),
+                    required=False,
+                    doc="Reference images are used in numeric socket order.",
+                ),
+            ),
+            outputs=(OutputSpec("positive", conditioning), OutputSpec("negative", conditioning)),
+        )
+
+    @classmethod
+    def execute(
+        cls, *, positive: Any, negative: Any, images: Mapping[str, object] | None = None
+    ) -> Mapping[str, object]:
+        images = images or {}
+        ordered_names = [f"image_{index}" for index in range(1, 101) if f"image_{index}" in images]
+        known_names = set(ordered_names)
+        references = [images[name] for name in ordered_names]
+        references.extend(image for name, image in images.items() if name not in known_names)
+        if not references:
+            return cls.outputs(positive=positive, negative=negative)
+        refs = [materialize_image(image) if image is not None else None for image in references]
+        positive = conditioning_set_values(positive, {"reference_latents": refs}, append=True)
+        negative = conditioning_set_values(negative, {"prompt_type": "negative"})
+        negative = conditioning_set_values(negative, {"reference_latents": refs}, append=True)
+        return cls.outputs(positive=positive, negative=negative)
 
 
 class HiDreamO1PatchSeamSmoothing(Node):

@@ -60,6 +60,7 @@ namespaces = [
     "LazyCache",
     "FluxKVCache",
     "HiDreamO1PatchSeamSmoothing",
+    "HiDreamO1ReferenceImages",
     "TripleCLIPLoader",
     "QuadrupleCLIPLoader",
     "ModelMergeSimple",
