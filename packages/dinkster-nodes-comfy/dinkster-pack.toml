@@ -314,6 +314,7 @@ namespaces = [
     "ImageRotate",
     "ImageFlip",
     "ImageScaleToMaxDimension",
+    "PadImageNode",
     "Morphology",
     "ImageRGBToYUV",
     "ImageYUVToRGB",

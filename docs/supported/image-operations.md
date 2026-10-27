@@ -4,6 +4,8 @@
   metadata pass between node packs without rewriting their values.
 - Native `PrimitiveBoundingBox` constructs pixel bounding boxes; `ImageCropV2`
   crops each image in a batch to that box and reports a PNG preview.
+- Native `PadImageNode` adds per-side, multiplier, or divisible-size padding
+  with repeated mirrored edges or a solid color and optional edge feathering.
 - Native `RTDETR_detect` returns per-frame pixel bounding boxes filtered by
   confidence and COCO class, ordered by score and limited per frame.
   `DrawBBoxes` overlays boxes and labels on images or a black canvas.

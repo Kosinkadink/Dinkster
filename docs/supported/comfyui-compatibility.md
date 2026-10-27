@@ -95,8 +95,8 @@
   outpainting, preserving source color, alpha, resize, and feathering behavior.
 - Five native image filters blend, blur, quantize, sharpen, and scale to a total
   pixel count under their exact ComfyUI interfaces.
-- Nine native image transforms crop, repeat and select batches, add seeded noise,
-  stitch, resize with padding, rotate, flip, and scale to a maximum dimension.
+- Ten native image transforms crop, repeat and select batches, add seeded noise,
+  stitch, resize with padding, mirror or color-pad, rotate, flip, and scale to a maximum dimension.
 - Native morphology applies erosion, dilation, opening, closing, gradients and
   top/bottom hats; RGB/YUV conversion splits and joins three image channels.
 - Native dataset nodes merge image batches into frame lists and bucket training
