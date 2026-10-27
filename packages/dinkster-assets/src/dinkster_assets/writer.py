@@ -303,9 +303,13 @@ class AssetWriter:
 
     def _writable_folder(self, parsed: SaveTarget) -> tuple[Path, Path]:
         root = self._authority.writable_root(parsed.mount)
-        folder = root / parsed.subfolder if parsed.subfolder else root
-        folder.mkdir(parents=True, exist_ok=True)
-        self._require_contained(root, folder, parsed)
+        if not root.is_dir():
+            raise AssetError(f"output mount {parsed.mount!r} is unavailable at {root}")
+        folder = root
+        for part in Path(parsed.subfolder).parts:
+            folder = folder / part
+            self._require_contained(root, folder, parsed)
+            folder.mkdir(exist_ok=True)
         return root, folder
 
     def _write_stream(

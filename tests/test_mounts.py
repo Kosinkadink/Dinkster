@@ -933,6 +933,69 @@ def test_public_mount_roots_in_ordinary_hosts(
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize("operation", ["add", "add-project", "remove", "output", "project"])
+def test_failed_folder_persistence_preserves_live_and_saved_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, restart: bool, operation: str
+) -> None:
+    import os
+
+    config = tmp_path / "mounts.toml"
+    snapshot = tmp_path / "snapshot.json"
+    table = MountTable(snapshot, output_mount="first")
+    for name in ("first", "second"):
+        seed(tmp_path / name, {"file.bin": name.encode()})
+        table.add(MountDef(name, tmp_path / name, "readwrite"))
+        table.scan(name)
+    service = MountService(table, config, allow_changes=True, restart_for_changes=restart)
+    service.persist()
+    before = config.read_bytes()
+    snapshot_before = snapshot.read_bytes()
+    replace = os.replace
+
+    def fail_settings_replace(source: object, destination: object) -> None:
+        target = tmp_path / (
+            "project-folders.json" if operation in ("project", "add-project") else "mounts.toml"
+        )
+        if destination == target:
+            raise OSError("settings volume is unavailable")
+        replace(source, destination)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(os, "replace", fail_settings_replace)
+
+    async def scenario() -> None:
+        client = await make_client(service)
+        try:
+            if operation in ("add", "add-project"):
+                seed(tmp_path / "third", {"file.bin": b"third"})
+                response = await client.post(
+                    "/api/mounts",
+                    json={"id": "third", "path": str(tmp_path / "third"), "mode": "readwrite"},
+                )
+            elif operation == "remove":
+                response = await client.delete("/api/mounts/second")
+            elif operation == "output":
+                response = await client.put("/api/mounts/output", json={"id": "second"})
+            else:
+                response = await client.put(
+                    "/api/mounts/projects/default",
+                    json={"mounts": ["second"], "outputMount": "second"},
+                )
+            assert response.status == 500
+            current = await (await client.get("/api/mounts")).json()
+            assert [row["id"] for row in current["mounts"]] == ["first", "second"]
+            assert current["outputMount"] == "first"
+            assert current["restartRequired"] is False
+            assert snapshot.read_bytes() == snapshot_before
+            assert config.read_bytes() == before
+            assert (await client.get("/api/mounts/second/entries")).status == 200
+        finally:
+            await service.close()
+            await client.close()
+
+    asyncio.run(scenario())
+
+
 # --- the API surface ----------------------------------------------------------
 
 

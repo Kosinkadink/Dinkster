@@ -96,11 +96,7 @@ class MountService:
         self.restart_for_changes = restart_for_changes
         self.settings_table = table
         if restart_for_changes:
-            self.settings_table = MountTable(output_mount=table.output_mount)
-            for row in table.descriptors():
-                mount = table.get(str(row["id"]))
-                assert mount is not None
-                self.settings_table.add(mount, source=str(row["source"]), kind=table.kind(mount.id))
+            self.settings_table = self.copy_settings()
         self._config_path = config_path
         self._scan_lock = asyncio.Lock()
         self._tasks: set[asyncio.Task[None]] = set()
@@ -110,6 +106,15 @@ class MountService:
             config_path.with_name("project-folders.json") if config_path is not None else None
         )
         self.projects.initialize(self.mount_ids())
+
+    def copy_settings(self) -> MountTable:
+        table = MountTable(output_mount=self.settings_table.output_mount)
+        for row in self.settings_table.descriptors():
+            mount_id = str(row["id"])
+            mount = self.settings_table.get(mount_id)
+            assert mount is not None
+            table.add(mount, source=str(row["source"]), kind=self.settings_table.kind(mount_id))
+        return table
 
     def mount_ids(self, *, settings: bool = False) -> tuple[str, ...]:
         table = self.settings_table if settings else self.table
@@ -181,22 +186,28 @@ class MountService:
         )
         self._resolution_store.replace_mount_snapshot(self._resolution_scopes, rows)
 
-    def persist(self) -> None:
-        """Rewrite mounts.toml from the table's config-sourced mounts,
-        atomically - the durable record under the live table."""
+    def persist(self, table: MountTable | None = None) -> None:
+        """Durably replace settings before publishing changed live grants."""
         if self._config_path is None:
             return
-        mounts = self.settings_table.config_defs()
+        table = self.settings_table if table is None else table
+        mounts = table.config_defs()
         configured_ids = {mount.id for mount in mounts}
-        selected = self.settings_table.output_mount
+        selected = table.output_mount
         text = dump_mounts(
             mounts,
             output_mount=selected if selected in configured_ids else None,
         )
         tmp = self._config_path.with_name(self._config_path.name + f".tmp-{os.getpid()}")
         self._config_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp.write_text(text, "utf-8")
-        os.replace(tmp, self._config_path)
+        try:
+            with tmp.open("w", encoding="utf-8", newline="\n") as file:
+                file.write(text)
+                file.flush()
+                os.fsync(file.fileno())
+            os.replace(tmp, self._config_path)
+        finally:
+            tmp.unlink(missing_ok=True)
 
     async def scan(self, app: web.Application, mount_id: str) -> None:
         """Scan one mount off-loop and announce the change. A failed scan
@@ -489,19 +500,23 @@ async def handle_mount_add(request: web.Request) -> web.Response:
     # drive is unplugged degrades to a failed row instead.
     if not mount.path.is_dir():
         return _json_error(400, f"not a directory: {mount.path}")
+    candidate = service.copy_settings()
     try:
         if service.restart_for_changes and service.table.get(mount.id) is not None:
             return _json_error(409, "mount id remains active until restart")
-        service.settings_table.add(mount, source="config")
+        candidate.add(mount, source="config")
     except MountsError as exc:
         return _json_error(409, str(exc))
     try:
-        service.persist()
+        service.persist(candidate)
         service.projects.register(mount.id, project=project, shared=shared)
     except OSError:
-        service.settings_table.remove(mount.id)
         service.persist()
         raise
+    if service.restart_for_changes:
+        service.settings_table = candidate
+    else:
+        service.table.add(mount, source="config")
     service.publish(request.app)
     # Fixed sandbox grants cannot be rebound; only live additions are scanned.
     if not service.restart_for_changes:
@@ -531,11 +546,16 @@ async def handle_mount_remove(request: web.Request) -> web.Response:
         return _json_error(
             409, f"select replacement output folders for projects: {', '.join(affected)}"
         )
+    candidate = service.copy_settings()
     try:
-        service.settings_table.remove(mount_id)
+        candidate.remove(mount_id)
     except MountsError as exc:
         return _json_error(409, str(exc))
-    service.persist()
+    service.persist(candidate)
+    if service.restart_for_changes:
+        service.settings_table = candidate
+    else:
+        service.table.remove(mount_id)
     service.refresh_resolution_store()
     service.publish(request.app)
     return web.json_response({"removed": mount_id, **service.pending_changes()})
@@ -553,11 +573,16 @@ async def handle_output_mount_update(request: web.Request) -> web.Response:
     mount_id = body.get("id") if isinstance(body, dict) else None
     if not isinstance(mount_id, str):
         return _json_error(400, "id must be a mount id")
+    candidate = service.copy_settings()
     try:
-        service.settings_table.select_output_mount(mount_id)
-        service.persist()
+        candidate.select_output_mount(mount_id)
     except MountsError as exc:
         return _json_error(400, str(exc))
+    service.persist(candidate)
+    if service.restart_for_changes:
+        service.settings_table = candidate
+    else:
+        service.table.select_output_mount(mount_id)
     service.publish(request.app)
     return web.json_response({"outputMount": mount_id, **service.pending_changes()})
 

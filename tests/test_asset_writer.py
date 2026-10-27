@@ -176,6 +176,21 @@ def test_project_output_overrides_default_without_granting_writes(tmp_path: Path
         assert ref.virtual_path == "mounts/project/render_00001.bin"
         assert (tmp_path / "project" / ref.name).read_bytes() == b"project result"
         assert writer.output_target("render", "global")["mount"] == "global"
+        detached = tmp_path / "detached-project"
+        (tmp_path / "project").rename(detached)
+        with pytest.raises(AssetError, match="unavailable"):
+            writer.save_bytes(
+                writer.output_target("nested/frames/render"), b"offline", suffix=".bin"
+            )
+        assert not (tmp_path / "project").exists()
+        assert not (detached / "nested").exists()
+        detached.rename(tmp_path / "project")
+        restored = writer.save_bytes(
+            writer.output_target("nested/frames/render"), b"restored", suffix=".bin"
+        )
+        assert (
+            tmp_path / "project" / "nested" / "frames" / restored.name
+        ).read_bytes() == b"restored"
         table.remove("project")
         with pytest.raises(AssetError, match="no ready mount"):
             writer.save_bytes(writer.output_target("render"), b"revoked", suffix=".bin")
