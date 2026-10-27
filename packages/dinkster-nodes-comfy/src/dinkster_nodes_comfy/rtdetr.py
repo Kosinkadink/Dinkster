@@ -21,6 +21,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     TypeExpr,
     initialize_inference_process,
+    materialize_image,
 )
 
 _COCO_CLASSES = (
@@ -156,6 +157,7 @@ class RTDETR_detect(Node):
         initialize_inference_process()
         management = importlib.import_module("dinkster_inference.model_management")
         utils = importlib.import_module("dinkster_inference.utils")
+        image = materialize_image(image)
         batch_size, height, width, _ = image.shape
         management.load_model_gpu(model)
         results: list[dict[str, Any]] = []
@@ -221,6 +223,7 @@ class DrawBBoxes(Node):
         torch = importlib.import_module("torch")
         transforms = importlib.import_module("torchvision.transforms")
         management = importlib.import_module("dinkster_inference.model_management")
+        image = None if image is None else materialize_image(image)
         batch_size = image.shape[0] if image is not None else 1
         if isinstance(bboxes, dict):
             bboxes = [[bboxes]]
