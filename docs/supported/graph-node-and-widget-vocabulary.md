@@ -80,8 +80,9 @@
   native video trim and crop declare their exact `VIDEO_EDIT` features.
 - Values: INT, FLOAT, STRING, COMBO, BOOLEAN,
   core.absent, immutable linear or monotone-cubic `dinkster.curve`, ordered
-  `dinkster.layers`, strict versioned `dinkster.compositor`, parametric `list<T>` and
-  `asset<T>`
+  `dinkster.layers`, strict versioned `dinkster.compositor`, HISTOGRAM as a plain
+  ordered integer list with no length or positivity restriction through shared structural
+  transport, parametric `list<T>` and `asset<T>`
 - Integer, float, text, and boolean primitive nodes declare their exact output
   values before execution for downstream presentation. Text switches between
   single-line and multiline views; the legacy multiline type remains loadable

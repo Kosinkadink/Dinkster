@@ -27,6 +27,7 @@ from dinkster_values.builtin_types import HISTOGRAM_TYPE as CANONICAL_HISTOGRAM_
 
 from dinkster.compose import PackSpec, ServingComposer
 
+# Hand-derived synthetic contract input; not a ComfyUI source fixture.
 HISTOGRAM = [0, -7, 2**63, -(2**63), 13]
 
 
