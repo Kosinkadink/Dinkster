@@ -1,5 +1,8 @@
 ## Media I/O
 
+- Portable SAM3 track values preserve packed uint8 masks, empty object axes or
+  absent masks, original dimensions, frame counts, optional scores, and structural
+  metadata across worker boundaries
 - Portable camera embeddings, motion tracks with optional visibility, and complete
   audio-encoder outputs preserve tensor dtype, shape and bytes, ordered layer
   sequences, sample counts and structural metadata across execution hosts and caches
