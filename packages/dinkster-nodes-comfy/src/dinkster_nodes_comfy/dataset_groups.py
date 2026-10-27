@@ -18,6 +18,7 @@ from dinkster_api.v1 import (
     Node,
     NodeSchema,
     OutputSpec,
+    StringWidget,
     TypeExpr,
     materialize_image,
     materialize_latent,
@@ -142,6 +143,7 @@ class MakeTrainingDataset(Node):
                     TypeExpr.list_of(TypeExpr.concrete(CORE_STRING)),
                     required=False,
                     force_input=True,
+                    widget=StringWidget(multiline=False),
                     doc=(
                         "List of text captions. Can be length n (matching images), "
                         "1 (repeated for all), or omitted (uses empty string)."
