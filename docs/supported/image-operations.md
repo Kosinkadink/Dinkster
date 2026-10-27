@@ -8,6 +8,14 @@
   `ResolutionSelector` rounds aspect-ratio and megapixel dimensions to a chosen multiple.
 - Marigold V2 decoded predictions convert to per-image normalized depth,
   unit surface normals, or sRGB albedo.
+- Native video dataset transforms lazily crop continuous frame ranges and
+  shuffle video lists or video-text pairs with seeded ordering.
+- Native list construction preserves member order and nested values across
+  independently typed elements; indexed selection supports positive and negative
+  indices and retains the selected element's type.
+- Native image tile lists split batches with overlap and merge tiles using
+  feathered weights; mask previews retain their mask output, and arbitrary
+  values can be inspected as text.
 - Native `Canny` edge detection with low/high hysteresis thresholds and RGB output
 - Native Stable Cascade stage C/B latent creation, stage C VAE encoding,
   stage B prior conditioning, and super-resolution control inputs

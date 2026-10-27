@@ -121,6 +121,9 @@
   materialize bounded AUDIO values, match the lower sample rate to the higher
   rate, and preserve ComfyUI channel, trimming, padding, and normalization
   behavior
+- Native bound-checkpoint Audio Encoder loading, audio conditioning through
+  AUDIO_ENCODER_OUTPUT, and SheetSage2 music transcription to ordered ABC
+  strings in melody-only or full melody-and-chords mode
 - Audio amplitude-envelope extraction to a per-video-frame float list and
   editable time-aligned CURVE (the audio-reactive replacement path):
   band-limited FFT magnitude with avg/max/sum aggregation at a chosen frame

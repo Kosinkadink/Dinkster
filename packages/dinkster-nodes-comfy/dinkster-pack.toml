@@ -2,6 +2,9 @@
 name = "dinkster-nodes-comfy"
 publisher = "dinkster"
 namespaces = [
+    "AudioEncoderLoader",
+    "AudioEncoderEncode",
+    "SheetSage2AudioToABC",
     "StringFormat",
     "StringConcatenate",
     "StringSubstring",
@@ -428,6 +431,16 @@ namespaces = [
     "WanDancerPadKeyframesList",
     "LTXVDurationPredictor",
     "MiniMaxH3AddGuide",
+    "VideoTemporalCrop",
+    "VideoRandomTemporalCrop",
+    "ShuffleVideoDataset",
+    "ShuffleVideoTextDataset",
+    "CreateList",
+    "GetItemFromList",
+    "SplitImageToTileList",
+    "ImageMergeTileList",
+    "MaskPreview",
+    "PreviewAny",
     "WanImageToVideo",
     "WanFirstLastFrameToVideo",
     "WanFunInpaintToVideo",
