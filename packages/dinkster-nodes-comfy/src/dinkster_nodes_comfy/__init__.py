@@ -185,6 +185,11 @@ from .video_frame_sample import VideoFrameSample
 from .video_guidance import VIDEO_GUIDANCE_NODES
 from .video_latent import VIDEO_LATENT_NODES
 from .video_latent_ops import VIDEO_LATENT_OPERATION_NODES
+from .void_conditioning import (
+    VOIDInpaintConditioning,
+    VOIDQuadmaskPreprocess,
+    VOIDWarpedNoiseSource,
+)
 from .wan22_latent import Wan22ImageToVideoLatent
 from .wan_animate import WAN_ANIMATE_NODES
 from .wan_camera import WanCameraEmbedding
@@ -417,6 +422,9 @@ COMFY_NODES = (
     *YUE2_CONDITIONING_NODES,
     *FOLDER_DATASET_NODES,
     UpscaleModelLoader,
+    VOIDQuadmaskPreprocess,
+    VOIDInpaintConditioning,
+    VOIDWarpedNoiseSource,
 )
 
 

@@ -545,6 +545,9 @@ namespaces = [
     "LoadImageDataSetFromFolder",
     "LoadImageTextDataSetFromFolder",
     "UpscaleModelLoader",
+    "VOIDQuadmaskPreprocess",
+    "VOIDInpaintConditioning",
+    "VOIDWarpedNoiseSource",
 ]
 
 [pack.sandbox]
