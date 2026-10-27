@@ -2145,12 +2145,15 @@ def test_isolated_close_cancellation_still_kills_reaps_and_cleans(
         original_wait = process.wait
 
         async def wait_for_exit() -> int:
-            waiting.set()
+            if asyncio.current_task() is not worker._process_watch:
+                waiting.set()
             return await original_wait()
 
         monkeypatch.setattr(process, "wait", wait_for_exit)
         close = asyncio.create_task(worker.close())
         await asyncio.wait_for(waiting.wait(), 5)
+        assert worker._close_task is not None and not worker._close_task.done()
+        assert process.returncode is None
         close.cancel()
         with pytest.raises(asyncio.CancelledError):
             await close

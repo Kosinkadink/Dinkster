@@ -1409,7 +1409,8 @@ def test_full_release_timeout_waits_for_terminal_acknowledgement(
 
         monkeypatch.setattr("dinkster_workers.relay._RELEASE_TIMEOUT_S", 0.01)
         relay = MemoryRelay(send, None, ReleaseGuard(ResourcePins(), ()))
-        result = await relay.full_release("operation", "worker-instance")
+        async with asyncio.timeout(8):
+            result = await relay.full_release("operation", "worker-instance")
         assert commit_started.is_set()
         assert commit_finished.is_set()
         assert result is not None

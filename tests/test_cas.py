@@ -21,6 +21,7 @@ from collections.abc import Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
+from types import SimpleNamespace
 
 import dinkster_workers.boundary as boundary_module
 import pytest
@@ -774,20 +775,22 @@ def test_disk_cache_process_lock_waits_for_another_instance(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     blocked = threading.Event()
+    retry = threading.Event()
     if os.name == "nt":
-        import msvcrt
+        import dinkster_caches.disk as disk_module
 
-        original_locking = msvcrt.locking
+        retries = 0
 
-        def observe_locking(fd: int, mode: int, count: int) -> None:
-            try:
-                original_locking(fd, mode, count)
-            except OSError:
-                if mode == msvcrt.LK_NBLCK:
-                    blocked.set()
-                raise
+        def retry_sleep(interval: float) -> None:
+            nonlocal retries
+            assert interval == 0.05
+            retries += 1
+            # Drive 10.55 seconds of retries while the real OS lock remains held.
+            if retries >= 211:
+                blocked.set()
+                assert retry.wait(15)
 
-        monkeypatch.setattr(msvcrt, "locking", observe_locking)
+        monkeypatch.setattr(disk_module, "time", SimpleNamespace(sleep=retry_sleep))
     else:
         import fcntl
 
@@ -823,6 +826,7 @@ def test_disk_cache_process_lock_waits_for_another_instance(
                 assert not waiting.done()
             finally:
                 release.set()
+                retry.set()
             store = waiting.result(timeout=15)
         asyncio.run(store.put("after-lock", {"out": registry.wrap("INT", 7)}))
         assert asyncio.run(store.get("after-lock")) is not None
