@@ -155,3 +155,6 @@
   current support claim.
 - Pack HTTP routes, web assets, and executor hooks are diagnosed rather than
   emulated.
+- Reference file-input metadata includes manually enumerated file choices whose
+  declared execution method directly resolves the input as an annotated path.
+  Empty file lists retain this classification; unrelated empty combos do not.
