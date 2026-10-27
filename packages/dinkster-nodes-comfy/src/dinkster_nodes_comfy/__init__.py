@@ -135,6 +135,7 @@ from .noise_guidance import NOISE_GUIDANCE_NODES
 from .perpneg import PERPNEG_NODES
 from .photomaker import PhotoMakerEncode, PhotoMakerLoader
 from .pid_conditioning import PiDConditioning
+from .pixal_conditioning import Pixal3DConditioning, Pixal3DMultiViewConditioning
 from .post_processing import POST_PROCESSING_NODES
 from .primitive import (
     PrimitiveBoolean,
@@ -415,6 +416,8 @@ COMFY_NODES = (
     SaveAudioAdvanced,
     *YUE2_CONDITIONING_NODES,
     *FOLDER_DATASET_NODES,
+    Pixal3DConditioning,
+    Pixal3DMultiViewConditioning,
 )
 
 

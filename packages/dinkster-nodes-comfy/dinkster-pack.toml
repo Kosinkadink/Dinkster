@@ -544,6 +544,8 @@ namespaces = [
     "YuE2GenerateMusic",
     "LoadImageDataSetFromFolder",
     "LoadImageTextDataSetFromFolder",
+    "Pixal3DConditioning",
+    "Pixal3DMultiViewConditioning",
 ]
 
 [pack.sandbox]

@@ -2,6 +2,9 @@
 
 - Native `CameraAngle` produces an orbit-camera dictionary and shot description
   from horizontal angle, elevation, and zoom.
+- Native `Pixal3DConditioning` and `Pixal3DMultiViewConditioning` combine DINO
+  vision tokens, optional NAF features, and per-view camera projection features
+  for single images or a fixed front/left/back/right orbit rig.
 - Native `TripoSplatPreprocessImage` erodes alpha, crops foreground to a padded
   square, resizes with Lanczos, and composites the image over black.
 - Native `TripoSplatConditioning` combines normalized vision tokens and VAE
