@@ -56,6 +56,7 @@ from .model import (
     AssetResolution,
     LocalAssetRef,
     LocalFileSignature,
+    MountAssetRef,
     local_file_signature,
 )
 
@@ -845,6 +846,36 @@ class MountTable:
             )
         return None
 
+    def reference_local(self, binding: str) -> MountAssetRef:
+        if self.resolve_local(binding) is None:
+            raise AssetError("local asset binding is unavailable, revoked or changed")
+        with self._lock:
+            mount, relative, signature = self._local_bindings[binding]
+            kind = self._rows[mount.id].kind
+        return MountAssetRef(mount.id, kind, relative, signature, self)
+
+    def resolve_mount(self, ref: MountAssetRef) -> Path | None:
+        with self._lock:
+            row = self._rows.get(ref.mount)
+            root = row.mount.path if row is not None and row.kind == ref.kind else None
+        return _mount_file(root, ref)
+
+    def reference_path(self, path: Path) -> MountAssetRef | None:
+        with self._lock:
+            rows = sorted(self._rows.values(), key=lambda row: (row.mount.priority, row.mount.id))
+        path = path.resolve(strict=True)
+        for row in rows:
+            root = row.mount.path.resolve()
+            if row.kind and path.is_relative_to(root) and path.is_file():
+                return MountAssetRef(
+                    row.mount.id,
+                    row.kind,
+                    path.relative_to(root).as_posix(),
+                    local_file_signature(path.stat()),
+                    self,
+                )
+        return None
+
     def resolve_local(self, binding: str) -> tuple[Path, LocalFileSignature] | None:
         with self._lock:
             registered = self._local_bindings.get(binding)
@@ -1006,6 +1037,7 @@ class MountSnapshotResolver:
         self._stamp: tuple[int, int] | None = None
         self._resolvers: list[tuple[str, IndexedAssetResolver]] = []
         self._roots: tuple[tuple[str, Path], ...] = ()
+        self._mount_roots: dict[str, tuple[str, Path]] = {}
         self._local_bindings: dict[str, object] = {}
         self._selected_files: dict[str, tuple[str, Path, str, LocalFileSignature]] = {}
 
@@ -1045,6 +1077,54 @@ class MountSnapshotResolver:
         with self._lock:
             self._selected_files[binding] = (kind, root, relative, signature)
         return LocalAssetRef(binding, path.name, signature[0], relative, resolver=self)
+
+    def reference_local(self, binding: str) -> MountAssetRef:
+        location = self.resolve_local(binding)
+        if location is None:
+            raise AssetError("local asset binding is unavailable, revoked or changed")
+        path, signature = location
+        with self._lock:
+            selected = self._selected_files.get(binding)
+            raw = self._local_bindings.get(binding)
+            if selected is not None:
+                kind, root, relative, _ = selected
+            elif isinstance(raw, dict):
+                entry = cast("dict[str, object]", raw)
+                root = Path(cast(str, entry["root"]))
+                relative = cast(str, entry["relative"])
+                kind = None
+            else:
+                raise AssetError("local asset binding has no mount grant")
+            roots = dict(self._mount_roots)
+        for mount_id, (mount_kind, mount_root) in roots.items():
+            if mount_root.resolve() == root.resolve() and (kind is None or kind == mount_kind):
+                ref = MountAssetRef(mount_id, mount_kind, relative, signature, self)
+                if ref.local_path() == path:
+                    return ref
+        raise AssetError("local asset binding has no mount grant")
+
+    def reference_path(self, path: Path) -> MountAssetRef | None:
+        self._refresh()
+        with self._lock:
+            roots = dict(self._mount_roots)
+        path = path.resolve(strict=True)
+        for mount_id, (kind, root) in roots.items():
+            root = root.resolve()
+            if kind and path.is_relative_to(root) and path.is_file():
+                return MountAssetRef(
+                    mount_id,
+                    kind,
+                    path.relative_to(root).as_posix(),
+                    local_file_signature(path.stat()),
+                    self,
+                )
+        return None
+
+    def resolve_mount(self, ref: MountAssetRef) -> Path | None:
+        self._refresh()
+        with self._lock:
+            row = self._mount_roots.get(ref.mount)
+        return _mount_file(row[1] if row is not None and row[0] == ref.kind else None, ref)
 
     def resolve(self, digest: str) -> Path | None:
         for _kind, resolver in self._refresh():
@@ -1158,6 +1238,7 @@ class MountSnapshotResolver:
         self._stamp = stamp
         self._resolvers = []
         self._roots = ()
+        self._mount_roots = {}
         self._local_bindings = {}
         if stamp is None:
             return
@@ -1198,8 +1279,28 @@ class MountSnapshotResolver:
             prepared.append((priority, mount_id, kind, root, index))
         ordered = sorted(prepared)
         self._roots = tuple((kind, Path(root)) for _, _, kind, root, _ in ordered if root)
+        self._mount_roots = {
+            mount_id: (kind, Path(root)) for _, mount_id, kind, root, _ in ordered if root
+        }
         for _priority, _mount_id, kind, root, index in ordered:
             try:
                 self._resolvers.append((kind, IndexedAssetResolver(root, index_path=index)))
             except AssetError:
                 continue  # index gone since the snapshot: that mount is dark
+
+
+def _mount_file(root: Path | None, ref: MountAssetRef) -> Path | None:
+    if root is None:
+        return None
+    try:
+        root = root.resolve(strict=True)
+        path = root / ref.relative
+        if (
+            path.resolve(strict=True).is_relative_to(root)
+            and path.is_file()
+            and local_file_signature(path.stat()) == ref.signature
+        ):
+            return path
+    except (OSError, RuntimeError):
+        pass
+    return None

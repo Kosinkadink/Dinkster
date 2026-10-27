@@ -73,6 +73,30 @@ def _asset_wire(source: object) -> dict[str, object]:
     value = (
         source.to_wire() if isinstance(source, VideoAssetSource) else mapping(source, "VIDEO asset")
     )
+    if "mount" in value:
+        signature = value.get("signature")
+        if (
+            set(value) != {"mount", "kind", "relative", "size", "signature"}
+            or not all(
+                isinstance(value[key], str) and value[key] for key in ("mount", "kind", "relative")
+            )
+            or not isinstance(signature, list)
+            or len(cast(list[object], signature)) != 5
+            or any(type(item) is not int for item in cast(list[object], signature))
+            or type(value["size"]) is not int
+            or value["size"] < 0
+            or value["size"] != signature[0]
+        ):
+            raise ValueError("invalid VIDEO mount reference")
+        relative = cast(str, value["relative"])
+        if (
+            "\\" in relative
+            or ":" in relative
+            or any(part in {"", ".", ".."} for part in relative.split("/"))
+            or any(ord(char) < 32 or ord(char) == 127 for char in relative)
+        ):
+            raise ValueError("VIDEO mount reference requires a safe relative path")
+        return dict(value)
     digest = value.get("digest")
     if (
         not isinstance(digest, str)
@@ -129,7 +153,10 @@ class _SourceProbe(dict[str, object]):
 
     @staticmethod
     def _source_identity(source: bytes | VideoAssetSource) -> str:
-        return _digest(source) if isinstance(source, bytes) else str(_asset_wire(source)["digest"])
+        if isinstance(source, bytes):
+            return _digest(source)
+        ref = _asset_wire(source)
+        return str(ref["digest"]) if "digest" in ref else _json(ref).decode("utf-8")
 
     def verify(self, source: bytes | VideoAssetSource) -> None:
         identity = self._source_identity(source)
@@ -365,7 +392,7 @@ def video_source(obj: object) -> bytes | VideoAssetSource:
     if isinstance(source, (bytes, VideoAssetSource)):
         cast(_SourceProbe, value["probe"]).verify(source)
         return source
-    raise ValueError(f"VIDEO source {_asset_wire(source)['digest']} has no local asset binding")
+    raise ValueError(f"VIDEO source {_asset_wire(source)} has no local asset binding")
 
 
 def bind_video_sources(
@@ -434,7 +461,9 @@ def _pack_video(
                 chunks.append(source)
         else:
             asset = _asset_wire(source)
-            wire["source"] = {"digest": asset["digest"]} if identity else {"asset": asset}
+            wire["source"] = (
+                {"digest": asset["digest"]} if identity and "digest" in asset else {"asset": asset}
+            )
     else:
         components = dict(mapping(value["components"], "VIDEO components"))
         for key, encoder, meta in (
@@ -728,7 +757,7 @@ def video_meta(obj: object) -> Mapping[str, object]:
                 byte_size += len(source)
             else:
                 ref = _asset_wire(source)
-                refs[str(ref["digest"])] = ref
+                refs[str(ref["digest"]) if "digest" in ref else _json(ref).decode("utf-8")] = ref
                 byte_size += cast("int", ref["size"])
         else:
             components = mapping(video["components"], "components")

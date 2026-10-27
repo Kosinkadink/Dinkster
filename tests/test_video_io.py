@@ -97,7 +97,7 @@ def test_public_video_admission_respects_bound_sources(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, published: bool
 ) -> None:
     from dinkster_api.v1 import admit_video_source
-    from dinkster_assets import LocalAssetRef, MountDef, MountTable
+    from dinkster_assets import LocalAssetRef, MountAssetRef, MountDef, MountTable
     from dinkster_assets import value as asset_value
     from dinkster_values import video_source
     from dinkster_video import save_video_stream
@@ -116,33 +116,27 @@ def test_public_video_admission_respects_bound_sources(
     monkeypatch.setattr(asset_value, "VIDEO_INLINE_LIMIT", 0 if published else len(data))
     admitted = admit_video_source(bound)
     source = video_source(admitted)
-    if published:
-        assert isinstance(source, AssetRef)
-        assert source.digest == digest_bytes(data)
-        assert source.read_bytes() == data
-        assert video_source(admit_video_source(source)) is source
-    else:
-        assert source == data
+    assert isinstance(source, MountAssetRef)
+    assert source.local_path() == path
+    with source.open() as handle:
+        assert handle.read() == data
+    assert video_source(admit_video_source(source)) is source
+    assert not (tmp_path / "vault").exists()
     assert bound.read_bytes() == data
 
 
-@pytest.mark.parametrize("source_kind", ("bytes", "path", "local", "asset"))
+@pytest.mark.parametrize("source_kind", ("bytes", "path", "asset"))
 def test_video_admission_enforces_size_before_probe(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_kind: str
 ) -> None:
     from dinkster_api.v1 import admit_video_source
-    from dinkster_assets import AssetError, LocalAssetRef, MountDef, MountTable
+    from dinkster_assets import AssetError
     from dinkster_assets import value as asset_value
 
     data = b"too large to admit"
     path = tmp_path / "clip.mp4"
     path.write_bytes(data)
-    if source_kind == "local":
-        table = MountTable()
-        table.add(MountDef(id="input", path=tmp_path), kind="media/video")
-        source = table.bind_name(path.name, "media/video")
-        assert isinstance(source, LocalAssetRef)
-    elif source_kind == "asset":
+    if source_kind == "asset":
         vault = AssetVault(tmp_path / "vault")
         digest = digest_bytes(data)
         with vault.writer(digest) as writer:
@@ -154,6 +148,75 @@ def test_video_admission_enforces_size_before_probe(
     monkeypatch.setattr(asset_value, "GIBIBYTE", len(data) - 1)
     with pytest.raises(AssetError, match="exceeds 1 GiB"):
         admit_video_source(source)
+
+
+def test_granted_video_source_over_copy_limit_is_reference_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_api.v1 import admit_video_source
+    from dinkster_assets import AssetError, ChainResolver, MountAssetRef
+    from dinkster_assets.value import bind_video_value
+    from dinkster_values import GIBIBYTE, decode_video, encode_video, video_source
+    from dinkster_video import save_video_stream
+
+    root = tmp_path / "training"
+    root.mkdir()
+    path = root / "large.mp4"
+    with path.open("w+b") as handle:
+        save_video_stream(assemble_video(_frames(), fps=7), handle)
+        handle.truncate(GIBIBYTE + 1)
+    snapshot = tmp_path / "mounts.json"
+    snapshot.write_text(
+        json.dumps(
+            {
+                "mounts": [
+                    {
+                        "id": "training",
+                        "kind": "media/video",
+                        "root": str(root),
+                        "index": str(root / "missing-index.json"),
+                    }
+                ]
+            }
+        )
+    )
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "vault"))
+    selecting = MountSnapshotResolver(snapshot)
+    bound = selecting.bind_relative_file("media/video", root, path.name)
+    value = admit_video_source(bound)
+    source = video_source(value)
+    assert isinstance(source, MountAssetRef)
+    assert source.size == GIBIBYTE + 1
+    assert source.local_path() == path
+    path_source = video_source(admit_video_source(path))
+    assert isinstance(path_source, MountAssetRef)
+    assert path_source.to_wire() == source.to_wire()
+    for published in (path, bound, source):
+        with pytest.raises(AssetError, match="exceeds 1 GiB"):
+            admit_video_source(published, publish=True)
+    encoded = encode_video(value)
+    del selecting, bound, source, value
+    receiving = ChainResolver(MountSnapshotResolver(snapshot))
+    restored = video_source(bind_video_value(decode_video(encoded), receiving))
+    assert isinstance(restored, MountAssetRef)
+    assert restored.local_path() == path
+    assert not (tmp_path / "vault").exists()
+    snapshot.write_text('{"mounts": []}')
+    with pytest.raises(AssetError, match="revoked"):
+        restored.open()
+
+
+def test_ungranted_video_source_over_copy_limit_is_rejected(tmp_path: Path) -> None:
+    from dinkster_api.v1 import admit_video_source
+    from dinkster_assets import AssetError
+    from dinkster_values import GIBIBYTE
+
+    path = tmp_path / "ungranted.mp4"
+    with path.open("wb") as handle:
+        handle.truncate(GIBIBYTE + 1)
+    with pytest.raises(AssetError, match="exceeds 1 GiB"):
+        admit_video_source(path)
 
 
 @pytest.mark.parametrize("change", ("replace", "revoke", "regrant"))

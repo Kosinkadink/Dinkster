@@ -40,6 +40,15 @@ server-scoped grants, not filesystem paths or content identities. File
 replacement and mount revocation invalidate them. Their cache fingerprints
 use an `unverified-local:` prefix and cannot be redeemed on another host.
 
+`admit_video_source` retains granted files as `MountAssetRef` values: the mount
+ID, exact kind, relative path and existing file signature identify a revision
+without hashing or copying the file. A receiving mount resolver checks the
+current grant, containment and revision before opening it. These references
+survive the selecting invocation and VIDEO wire transport, but do not claim a
+content digest or access to another host's files. Bytes, ungranted paths and
+`publish=True` admissions retain the 1 GiB copy limit. Frame and audio decode
+working-set limits apply independently of the encoded source size.
+
 For `model/text-encoder`, the same method also accepts slash-separated
 source-relative filenames. These select an exact file in the first ranked
 exact-kind root, without basename ambiguity. Absolute paths, dot/parent

@@ -11,6 +11,7 @@ identity, equality, and fingerprint never change.
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -56,6 +57,96 @@ class LocalAssetResolver(Protocol):
 @runtime_checkable
 class NamedAssetResolver(Protocol):
     def bind_name(self, name: str, kind: str) -> AssetRef | LocalAssetRef | None: ...
+
+
+@runtime_checkable
+class MountAssetResolver(Protocol):
+    def resolve_mount(self, ref: MountAssetRef) -> Path | None: ...
+
+    def reference_path(self, path: Path) -> MountAssetRef | None: ...
+
+
+@dataclass(frozen=True)
+class MountAssetRef:
+    """An unchanged file revision under a current mount grant, not a content digest."""
+
+    mount: str
+    kind: str
+    relative: str
+    signature: LocalFileSignature
+    resolver: MountAssetResolver | None = field(default=None, compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        from .kind import require_asset_kind
+
+        require_asset_kind(self.kind)
+        if (
+            re.fullmatch(r"[a-z0-9][a-z0-9-]*", self.mount) is None
+            or not self.relative
+            or "\\" in self.relative
+            or re.match(r"^[A-Za-z]:", self.relative)
+            or any(part in {"", ".", ".."} for part in self.relative.split("/"))
+            or any(ord(char) < 32 or ord(char) == 127 for char in self.relative)
+            or not isinstance(self.signature, tuple)
+            or len(self.signature) != 5
+            or any(type(value) is not int for value in self.signature)
+            or self.signature[0] < 0
+        ):
+            raise AssetError("invalid mount asset reference")
+
+    @property
+    def size(self) -> int:
+        return self.signature[0]
+
+    def local_path(self) -> Path:
+        path = self.resolver.resolve_mount(self) if self.resolver else None
+        if path is None:
+            raise AssetError("mount asset is unavailable, revoked or changed")
+        return path
+
+    def open(self) -> BinaryIO:
+        handle = self.local_path().open("rb")
+        try:
+            if local_file_signature(os.fstat(handle.fileno())) != self.signature:
+                raise AssetError("mount asset changed while opening")
+        except BaseException:
+            handle.close()
+            raise
+        return handle
+
+    def to_wire(self) -> dict[str, object]:
+        return {
+            "mount": self.mount,
+            "kind": self.kind,
+            "relative": self.relative,
+            "size": self.size,
+            "signature": list(self.signature),
+        }
+
+    @classmethod
+    def from_wire(
+        cls, wire: Mapping[str, object], resolver: MountAssetResolver | None = None
+    ) -> MountAssetRef:
+        from typing import cast
+
+        signature = wire.get("signature")
+        if (
+            set(wire) != {"mount", "kind", "relative", "size", "signature"}
+            or not all(isinstance(wire[key], str) for key in ("mount", "kind", "relative"))
+            or not isinstance(signature, list)
+            or len(cast(list[object], signature)) != 5
+            or any(type(value) is not int for value in cast(list[object], signature))
+            or type(wire["size"]) is not int
+            or wire["size"] != signature[0]
+        ):
+            raise AssetError("invalid mount asset wire value")
+        return cls(
+            cast(str, wire["mount"]),
+            cast(str, wire["kind"]),
+            cast(str, wire["relative"]),
+            cast(LocalFileSignature, tuple(cast(list[object], signature))),
+            resolver,
+        )
 
 
 @dataclass(frozen=True)

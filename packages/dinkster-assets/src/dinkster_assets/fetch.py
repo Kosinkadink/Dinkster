@@ -41,6 +41,8 @@ from .model import (
     AssetResolver,
     LocalAssetResolver,
     LocalFileSignature,
+    MountAssetRef,
+    MountAssetResolver,
     RecordedAssetResolver,
 )
 from .vault import AssetVault
@@ -434,6 +436,22 @@ class ChainResolver:
                 location = resolver.resolve_local(binding)
                 if location is not None:
                     return location
+        return None
+
+    def resolve_mount(self, ref: MountAssetRef) -> Path | None:
+        for resolver in self._resolvers:
+            if isinstance(resolver, MountAssetResolver):
+                path = resolver.resolve_mount(ref)
+                if path is not None:
+                    return path
+        return None
+
+    def reference_path(self, path: Path) -> MountAssetRef | None:
+        for resolver in self._resolvers:
+            if isinstance(resolver, MountAssetResolver):
+                ref = resolver.reference_path(path)
+                if ref is not None:
+                    return ref
         return None
 
     def reconcile_local(self, binding: str) -> AssetRef | None:
