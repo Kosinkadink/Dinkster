@@ -39,6 +39,9 @@ def test_model_file_loaders_use_bound_asset_inputs_and_expected_outputs() -> Non
         "CLIPVisionLoader",
         "StyleModelLoader",
         "GLIGENLoader",
+        "ImageOnlyCheckpointLoader",
+        "LTXVAudioVAELoader",
+        "LTXAVTextEncoderLoader",
     )
     assert schemas["CheckpointLoader"].display_name == "Load Checkpoint With Config (DEPRECATED)"
     assert schemas["CheckpointLoader"].deprecation is not None
@@ -74,6 +77,18 @@ def test_model_file_loaders_use_bound_asset_inputs_and_expected_outputs() -> Non
     )
     assert not schemas["CLIPLoader"].inputs[2].required
     assert not schemas["DualCLIPLoader"].inputs[3].required
+    assert tuple(output.id for output in schemas["ImageOnlyCheckpointLoader"].outputs) == (
+        "MODEL",
+        "CLIP_VISION",
+        "VAE",
+    )
+    assert schemas["LTXVAudioVAELoader"].outputs[0].display_name == "Audio VAE"
+    assert tuple(input.id for input in schemas["LTXAVTextEncoderLoader"].inputs) == (
+        "text_encoder",
+        "ckpt_name",
+        "device",
+    )
+    assert schemas["LTXAVTextEncoderLoader"].inputs[2].required
     assert schemas["CheckpointLoaderSimple"].inputs[0].doc == (
         "The name of the checkpoint (model) to load."
     )
@@ -84,7 +99,7 @@ def test_model_file_loaders_use_bound_asset_inputs_and_expected_outputs() -> Non
     )
     for schema in schemas.values():
         for input in schema.inputs:
-            if input.id.endswith("name"):
+            if input.id.endswith("name") or input.id == "text_encoder":
                 assert input.type == TypeExpr.concrete(ASSET_TYPE)
                 assert isinstance(input.widget, AssetWidget)
 
@@ -112,7 +127,7 @@ def test_model_file_loader_schema_discovery_does_not_import_torch() -> None:
 import sys
 sys.modules['torch'] = None
 from dinkster_nodes_comfy.model_file_loaders import MODEL_FILE_LOADER_NODES
-assert len(MODEL_FILE_LOADER_NODES) == 11
+assert len(MODEL_FILE_LOADER_NODES) == 14
 assert sys.modules['torch'] is None
 """,
         ],

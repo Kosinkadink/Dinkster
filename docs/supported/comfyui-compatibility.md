@@ -7,6 +7,10 @@
   encoder, vision-encoder, ControlNet, style-model and GLIGEN loader schemas.
   Model construction uses the pinned inference package; file inputs grant
   access only to the selected asset.
+- Image-only checkpoint loading returns separate model, vision encoder and VAE
+  outputs. LTXV audio VAE loading retains audio and vocoder weights and checkpoint
+  metadata; LTXAV text encoding loads its text encoder before its checkpoint.
+  Loader CPU checks use tiny files and controlled model constructors, not full models.
 - Native LoRA file loaders apply model and text-encoder strengths separately,
   retain weight metadata, and support ordered stacks and bypass application.
   Disabled stack entries and zero strengths do not resolve their file inputs.
