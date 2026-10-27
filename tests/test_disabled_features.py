@@ -52,6 +52,7 @@ def test_server_exposes_only_supported_features_and_keeps_templates_disabled() -
             assert resource is not None
             namespaces.add("/".join(resource.canonical.split("/")[:3]))
         assert namespaces == {
+            "/api/assets",
             "/api/auth",
             "/api/choices",
             "/api/composition",

@@ -1054,7 +1054,7 @@ def test_compose_serving_default_resolution_is_atomic(
     [
         (
             "dinkster-nodes-foundation",
-            "blake3:0bf806a210d79b1a1f2c74f6a135cdc92f5dad7cb8e7a50984cdc28644749caf",
+            "blake3:dd743459818287a5b68265e60ecfeff518cfcc101ff4636c822f1570b53cc31e",
         ),
         (
             "dinkster-nodes-media-io",
