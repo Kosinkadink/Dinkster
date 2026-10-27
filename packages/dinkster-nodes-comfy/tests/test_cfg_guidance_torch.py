@@ -153,6 +153,36 @@ class ModelConsumer(Node):
         return cls.outputs(value=float(model.post(args).item()))
 
 
+class RenormConsumer(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "cfg-guidance-fixture.renorm",
+            inputs=(InputSpec("model", TypeExpr.concrete(MODEL_TYPE)),),
+            outputs=(OutputSpec("value", TypeExpr.concrete(CORE_FLOAT)),),
+        )
+
+    @classmethod
+    def execute(cls, *, model: Patcher) -> Mapping[str, object]:
+        for timestep, expected in (
+            (49.0, [12.5 / math.sqrt(61), 15.0 / math.sqrt(61), 7.0, -9.0]),
+            (50.0, [3.0, 4.0, 7.0, -9.0]),
+        ):
+            actual = model.pre(
+                {
+                    "cond_denoised": torch.tensor([3.0, 4.0, 7.0, -9.0]).reshape(1, 2, 1, 2),
+                    "uncond_denoised": torch.tensor([1.0, 2.0, -5.0, 8.0]).reshape(1, 2, 1, 2),
+                    "cond_scale": 2.0,
+                    "timestep": torch.tensor([timestep]),
+                    "input": torch.zeros((1, 2, 1, 2)),
+                }
+            )
+            torch.testing.assert_close(
+                actual, -torch.tensor(expected).reshape(1, 2, 1, 2), rtol=1e-6, atol=0
+            )
+        return cls.outputs(value=2.0)
+
+
 @pytest.mark.parametrize("in_process", (True, False))
 def test_ordinary_manifest_links_cfg_guidance_producer_and_consumer_twice(
     tmp_path: Path, in_process: bool
@@ -169,23 +199,28 @@ def test_ordinary_manifest_links_cfg_guidance_producer_and_consumer_twice(
             manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
             module = "cfg_guidance_fixture_" + str(in_process)
             (tmp_path / f"{module}.py").write_text(
-                "from test_cfg_guidance_torch import ModelConsumer, ModelSource\n"
-                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "NODES = (*COMFY_NODES, ModelSource, ModelConsumer)\n",
+                "from test_cfg_guidance_torch import ModelConsumer, ModelSource, RenormConsumer\n"
+                "from dinkster_nodes_comfy import register_inference_types\n"
+                "NODES = (ModelSource, ModelConsumer, RenormConsumer)\n",
                 encoding="ascii",
             )
             fixture_manifest = tmp_path / "dinkster-pack.toml"
             fixture_manifest.write_text(
-                manifest.read_text(encoding="ascii")
-                .replace("namespaces = [", 'namespaces = ["cfg-guidance-fixture",')
-                .replace("dinkster_nodes_comfy:COMFY_NODES", f"{module}:NODES")
-                .replace(
-                    "dinkster_nodes_comfy:register_inference_types",
-                    f"{module}:register_inference_types",
-                ),
+                '[pack]\nname = "cfg-guidance-fixture"\npublisher = "dinkster"\n'
+                'namespaces = ["cfg-guidance-fixture"]\n[pack.entry]\n'
+                f'nodes = "{module}:NODES"\ntypes = "{module}:register_inference_types"\n',
                 encoding="ascii",
             )
-            await composer.add_pack(PackSpec(manifest=fixture_manifest, in_process=in_process))
+            for pack in (manifest, fixture_manifest):
+                await composer.add_pack(
+                    PackSpec(manifest=pack, in_process=True)
+                    if in_process
+                    else PackSpec(
+                        manifest=pack,
+                        worker_group="cfg-guidance-fixture",
+                        group_manifests=(manifest, fixture_manifest),
+                    )
+                )
             graph = Graph(
                 nodes={
                     "source": GraphNode("cfg-guidance-fixture.source"),
@@ -193,13 +228,20 @@ def test_ordinary_manifest_links_cfg_guidance_producer_and_consumer_twice(
                     "consumer": GraphNode(
                         "cfg-guidance-fixture.consumer", {"model": Link("patch", "MODEL")}
                     ),
+                    "renorm": GraphNode(
+                        "RenormCFG",
+                        {"model": Link("source", "MODEL"), "cfg_trunc": 50, "renorm_cfg": 0.5},
+                    ),
+                    "renorm-consumer": GraphNode(
+                        "cfg-guidance-fixture.renorm", {"model": Link("renorm", "MODEL")}
+                    ),
                 }
             )
             engine = composer.composition.make_engine(lambda _event: None)
             for _ in range(2):
-                assert (await engine.run(graph, ["consumer"])).outputs["consumer"][
-                    "value"
-                ].resolve() == 13.0
+                outputs = (await engine.run(graph, ["consumer", "renorm-consumer"])).outputs
+                assert outputs["consumer"]["value"].resolve() == 13.0
+                assert outputs["renorm-consumer"]["value"].resolve() == 2.0
         finally:
             await composer.close()
 

@@ -282,6 +282,73 @@ class ModelConsumer(Node):
         return cls.outputs(value=float(len(model.wrappers)))
 
 
+class FluxModel:
+    def __init__(self, params: bool = True) -> None:
+        self.model = SimpleNamespace(diffusion_model=SimpleNamespace())
+        if params:
+            self.model.diffusion_model.params = SimpleNamespace()
+        self.attention: Any = None
+        self.post_input: Any = None
+        self.objects: dict[str, object] = {}
+
+    def clone(self) -> FluxModel:
+        return FluxModel(hasattr(self.model.diffusion_model, "params"))
+
+    def set_model_attn1_patch(self, callback: Any) -> None:
+        self.attention = callback
+
+    def set_model_post_input_patch(self, callback: Any) -> None:
+        self.post_input = callback
+
+    def add_object_patch(self, path: str, value: object) -> None:
+        self.objects[path] = value
+
+
+class FluxSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema("cache-fixture.flux-source", outputs=(OutputSpec("MODEL", _MODEL),))
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        return cls.outputs(MODEL=FluxModel())
+
+
+class FluxConsumer(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "cache-fixture.flux-consumer",
+            inputs=(InputSpec("model", _MODEL), InputSpec("source", _MODEL)),
+            outputs=(OutputSpec("value", TypeExpr.concrete(CORE_FLOAT)),),
+        )
+
+    @classmethod
+    def execute(cls, *, model: FluxModel, source: FluxModel) -> dict[str, object]:
+        q = torch.arange(8, dtype=torch.float32).reshape(1, 1, 4, 2)
+        k, v = q + 10, q + 30
+        options = {"reference_image_num_tokens": [1, 1], "block_type": "double", "block_index": 3}
+        image = q.reshape(1, 4, 2)
+        assert model.post_input({"img": image, "transformer_options": options})["img"] is image
+        initial = model.attention(q, k, v, options)
+        assert torch.equal(initial["k"], k) and torch.equal(initial["v"], v)
+        assert torch.equal(
+            model.post_input({"img": image, "transformer_options": options})["img"], image[:, :2]
+        )
+        next_q = q[:, :, :1].repeat(3, 1, 1, 1)
+        next_k, next_v = next_q + 100, next_q + 200
+        reused = model.attention(next_q, next_k, next_v, options)
+        assert torch.equal(reused["k"], torch.cat((next_k, k[:, :, -2:].repeat(3, 1, 1, 1)), 2))
+        assert torch.equal(reused["v"], torch.cat((next_v, v[:, :, -2:].repeat(3, 1, 1, 1)), 2))
+        independent = model.attention(next_q, next_k, next_v, {**options, "block_index": 4})
+        assert torch.equal(independent["k"], next_k)
+        model.attention.cleanup()
+        reset = model.attention(next_q, next_k, next_v, options)
+        assert torch.equal(reset["k"], next_k)
+        assert source.attention is None and source.objects == {}
+        return cls.outputs(value=3.0)
+
+
 def test_cache_nodes_execute_twice_in_both_ordinary_hosts(tmp_path: Any) -> None:
     async def scenario(in_process: bool) -> None:
         composer = ServingComposer(
@@ -296,23 +363,29 @@ def test_cache_nodes_execute_twice_in_both_ordinary_hosts(tmp_path: Any) -> None
             module = f"cache_fixture_{in_process}"
             (tmp_path / f"{module}.py").write_text(
                 "from test_cache_torch import ModelConsumer, ModelSource\n"
-                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "NODES = (*COMFY_NODES, ModelSource, ModelConsumer)\n",
+                "from test_cache_torch import FluxSource, FluxConsumer\n"
+                "from dinkster_nodes_comfy import register_inference_types\n"
+                "NODES = (ModelSource, ModelConsumer, FluxSource, FluxConsumer)\n",
                 encoding="ascii",
             )
             manifest = Path(__file__).parents[1] / "dinkster-pack.toml"
             fixture_manifest = tmp_path / "dinkster-pack.toml"
             fixture_manifest.write_text(
-                manifest.read_text(encoding="ascii")
-                .replace("namespaces = [", 'namespaces = ["cache-fixture",')
-                .replace("dinkster_nodes_comfy:COMFY_NODES", f"{module}:NODES")
-                .replace(
-                    "dinkster_nodes_comfy:register_inference_types",
-                    f"{module}:register_inference_types",
-                ),
+                '[pack]\nname = "cache-fixture"\npublisher = "dinkster"\n'
+                'namespaces = ["cache-fixture"]\n[pack.entry]\n'
+                f'nodes = "{module}:NODES"\ntypes = "{module}:register_inference_types"\n',
                 encoding="ascii",
             )
-            await composer.add_pack(PackSpec(manifest=fixture_manifest, in_process=in_process))
+            for pack in (manifest, fixture_manifest):
+                await composer.add_pack(
+                    PackSpec(manifest=pack, in_process=True)
+                    if in_process
+                    else PackSpec(
+                        manifest=pack,
+                        worker_group="cache-fixture",
+                        group_manifests=(manifest, fixture_manifest),
+                    )
+                )
             graph = Graph(
                 nodes={
                     "source": GraphNode("cache-fixture.source", {}),
@@ -322,12 +395,19 @@ def test_cache_nodes_execute_twice_in_both_ordinary_hosts(tmp_path: Any) -> None
                         "cache-fixture.consumer",
                         {"model": Link("lazy", "MODEL"), "source": Link("source", "MODEL")},
                     ),
+                    "flux-source": GraphNode("cache-fixture.flux-source"),
+                    "flux": GraphNode("FluxKVCache", {"model": Link("flux-source", "MODEL")}),
+                    "flux-consumer": GraphNode(
+                        "cache-fixture.flux-consumer",
+                        {"model": Link("flux", "MODEL"), "source": Link("flux-source", "MODEL")},
+                    ),
                 }
             )
             engine = composer.composition.make_engine(lambda _event: None)
             for _ in range(2):
-                result = await engine.run(graph, ["consumer"])
+                result = await engine.run(graph, ["consumer", "flux-consumer"])
                 assert result.outputs["consumer"]["value"].resolve() == 5.0
+                assert result.outputs["flux-consumer"]["value"].resolve() == 3.0
         finally:
             await composer.close()
 
@@ -338,32 +418,11 @@ def test_cache_nodes_execute_twice_in_both_ordinary_hosts(tmp_path: Any) -> None
 
 
 def test_flux_reference_cache_keeps_blocks_independent_and_repeats_changed_batch() -> None:
-    class Model:
-        def __init__(self, params: bool = True) -> None:
-            self.model = SimpleNamespace(diffusion_model=SimpleNamespace())
-            if params:
-                self.model.diffusion_model.params = SimpleNamespace()
-            self.attention: Any = None
-            self.post_input: Any = None
-            self.objects: dict[str, object] = {}
-
-        def clone(self) -> Any:
-            return Model(hasattr(self.model.diffusion_model, "params"))
-
-        def set_model_attn1_patch(self, callback: Any) -> None:
-            self.attention = callback
-
-        def set_model_post_input_patch(self, callback: Any) -> None:
-            self.post_input = callback
-
-        def add_object_patch(self, path: str, value: object) -> None:
-            self.objects[path] = value
-
     q = torch.arange(8, dtype=torch.float32).reshape(1, 1, 4, 2)
     k, v = q + 10, q + 30
     image = q.reshape(1, 4, 2)
     for params in (True, False):
-        source = Model(params)
+        source = FluxModel(params)
         patched = FluxKVCache.execute(model=source)["MODEL"]
         path = "diffusion_model." + ("params." if params else "") + "default_ref_method"
         assert patched.objects == {path: "index_timestep_zero"}
