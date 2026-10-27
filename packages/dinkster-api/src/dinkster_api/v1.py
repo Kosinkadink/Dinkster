@@ -102,6 +102,7 @@ from dinkster_protocol import (
     BehaviorValue,
     CompositionMode,
     ContributionSurfaceDescriptor,
+    ExportSnapshot,
     ExtensionDeclaration,
     ExtensionEntryPoints,
     ExtensionScope,
@@ -111,6 +112,7 @@ from dinkster_protocol import (
     GuidanceRegistrySnapshot,
     TrainingSessionHandle,
     canonical_extension_snapshot,
+    current_export_snapshot,
     extension_behavior_hash,
 )
 from dinkster_protocol.frontend_modules import FrontendContribution, FrontendModule
@@ -525,6 +527,8 @@ __all__ = [
     "extension_behavior_hash",
     # -- training session boundary values (dinkster-protocol)
     "TrainingSessionHandle",
+    "ExportSnapshot",
+    "current_export_snapshot",
     # -- node authoring (dinkster-schema)
     "ABSENT",
     "BLOCKED",
