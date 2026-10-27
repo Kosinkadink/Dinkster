@@ -1,4 +1,22 @@
-"""YuE2 graph defaults and conditioning through ordinary native pack hosts."""
+"""YuE2 graph defaults and conditioning through ordinary native pack hosts.
+
+Expected-value provenance: ComfyUI F bc5f880dbdd43e426077f42ccec53bb577ffee9f,
+comfy_extras/nodes_yue2.py, YuE2GenerateABC and YuE2GenerateMusic; frame rate
+from comfy/text_encoders/yue2.py at that same immutable revision:
+FRAMES_PER_SECOND = 25. No expected value is a recorded model prediction.
+
+ABC inputs: controlled Clip below, style="piano", lyrics="verse", seed=5,
+mode="melody"; omitted controls use schema defaults max_abc_tokens=8192,
+temperature=0.7, top_p=0.9, top_k=30, repetition_penalty=1.005, penalty_window=100.
+Music inputs: same Clip/style/lyrics, seed=7, mode="full", max_duration=2.25,
+abc="X:5" or omitted (schema default ""), cfg_scale=0.375 or omitted (schema
+default 1.0); other schema defaults are temperature=1.0, top_p=0.95, top_k=100,
+repetition_penalty=1.2. execute uses max(1, round(max_duration * FRAMES_PER_SECOND)),
+sets mode="off" when not abc.strip(), and returns the first yue2_frames / fps.
+The hand-chosen fixture returns "X:5", ones(1, 2), and yue2_frames=75; therefore
+the hand-derived duration is 75 / 25 = 3.0 and token budget max(1, round(2.25 * 25))
+is 56. Summary strings below are hand-derived from the fixture's own formatting.
+"""
 
 from __future__ import annotations
 
@@ -41,7 +59,7 @@ class Clip:
         return generated
 
     def encode_from_tokens_scheduled(self, tokens: dict[str, Any]) -> list[Any]:
-        # Hand-derived fixture: 75 frames / the pinned backend's 25 fps = 3 seconds.
+        # Hand-chosen frame count; exact rate and duration derivation are documented above.
         return [[torch.ones(1, 2), {"yue2_frames": 75, "observed": dict(tokens)}]]
 
 
@@ -76,12 +94,10 @@ class Consumer(Node):
     def execute(
         cls, *, conditioning: Any, seconds: float, expected_cfg: float, expected_abc: str
     ) -> dict[str, object]:
-        assert seconds == 3.0  # Hand-derived from the 75-frame fixture above.
+        assert seconds == 3.0  # Hand-derived 75 / 25; immutable sources and inputs above.
         assert torch.equal(conditioning[0][0], torch.ones(1, 2))
         observed = conditioning[0][1]["observed"]
-        # YuE2GenerateMusic, F bc5f880d: style=piano, lyrics=verse, seed=7,
-        # mode=full, duration=2.25, abc=X:5 or empty, cfg omitted or 0.375.
-        # 2.25 * 25 = 56.25 rounds to 56; blank ABC selects off mode.
+        # YuE2GenerateMusic: exact inputs, source revision and expressions above.
         assert observed["max_tokens"] == 56
         assert observed["cot"] == ("full" if expected_abc else "off")
         assert observed["abc"] == expected_abc
@@ -165,8 +181,8 @@ def test_yue2_cfg_defaults_and_explicit_values_in_native_hosts(
                             **({"cfg_scale": 0.375} if cfg == "explicit" else {}),
                         },
                     )
-                    # YuE2GenerateMusic, F bc5f880d, the inputs above: omitted
-                    # cfg_scale is the declared graph default 1.0, even in off mode.
+                    # YuE2GenerateMusic.define_schema at the revision above:
+                    # cfg_scale default=1.0, optional=True, even for empty ABC.
                     nodes[f"check-{name}"] = GraphNode(
                         "yue2-host-fixture.consumer",
                         {
@@ -187,8 +203,7 @@ def test_yue2_cfg_defaults_and_explicit_values_in_native_hosts(
                         expected = f"{'X:5' if abc == 'score' else ''}:"
                         expected += str(0.375 if cfg == "explicit" else 1.0)
                         assert result.outputs[f"check-{abc}-{cfg}"]["summary"].resolve() == expected
-                if attempt:
-                    assert set(result.cached) == set(graph.nodes)
+                assert set(result.cached) == (set(graph.nodes) if attempt else set())
         finally:
             await composer.close()
 
