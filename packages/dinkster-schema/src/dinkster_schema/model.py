@@ -474,11 +474,13 @@ class ComboOption:
     def __post_init__(self) -> None:
         if not (
             (type(self.value) is str and bool(self.value))
-            or type(self.value) in (bool, int)
+            or type(self.value) is bool
+            or (type(self.value) is int and abs(self.value) <= _JSON_SAFE_INT)
             or (type(self.value) is float and math.isfinite(self.value))
         ):
             raise ValueError(
-                "combo option value must be a non-empty string, boolean or finite number"
+                "combo option value must be a non-empty string, boolean, JSON-safe integer "
+                "or finite float"
             )
         for field_name in ("label", "info"):
             field_value = getattr(self, field_name)
@@ -507,14 +509,18 @@ def _validate_static_combo_options(
             or (
                 not strings_only
                 and (
-                    type(option) in (bool, int) or (type(option) is float and math.isfinite(option))
+                    type(option) is bool
+                    or (type(option) is int and abs(option) <= _JSON_SAFE_INT)
+                    or (type(option) is float and math.isfinite(option))
                 )
             )
         )
         for option in cast("tuple[object, ...]", options)
     ):
         choices = (
-            "non-empty strings" if strings_only else "non-empty strings, booleans or finite numbers"
+            "non-empty strings"
+            if strings_only
+            else "non-empty strings, booleans, JSON-safe integers or finite floats"
         )
         raise ValueError(f"{subject} options must be {choices} or ComboOption values")
 

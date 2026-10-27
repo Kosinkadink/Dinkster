@@ -299,7 +299,9 @@ class ComboStringSubclass(str):
     pass
 
 
-@pytest.mark.parametrize("selected", [False, True, 0, 1, 8, 10, 1.5, -2.75, "8"])
+@pytest.mark.parametrize(
+    "selected", [False, True, 0, 1, 8, 10, 1.5, -2.75, "8", -(2**53 - 1), 2**53 - 1]
+)
 def test_core_combo_preserves_scalar_type_and_identity(selected: object) -> None:
     registry = make_registry()
     value = registry.wrap(CORE_COMBO, selected)
@@ -320,7 +322,18 @@ def test_core_combo_preserves_scalar_type_and_identity(selected: object) -> None
 
 
 @pytest.mark.parametrize(
-    "invalid", [None, {}, [], ["euler"], ComboStringSubclass("euler"), float("nan"), float("inf")]
+    "invalid",
+    [
+        None,
+        {},
+        [],
+        ["euler"],
+        ComboStringSubclass("euler"),
+        float("nan"),
+        float("inf"),
+        -(2**53),
+        2**53,
+    ],
 )
 def test_core_combo_rejects_non_scalar_values(invalid: object) -> None:
     registry = make_registry()
@@ -342,6 +355,10 @@ def test_core_combo_rejects_non_scalar_values(invalid: object) -> None:
         b'json:["euler"]',
         b'json: "euler"',
         b'pickle:"euler"',
+        b"json:9007199254740992",
+        b"json:-9007199254740992",
+        b"json:9007199254740993",
+        b"json:-9007199254740993",
     ],
 )
 def test_core_combo_rejects_noncanonical_or_non_scalar_encoded_values(

@@ -1012,6 +1012,8 @@ class TypeRegistry:
 def _coerce_combo(obj: object) -> str | bool | int | float:
     if type(obj) not in (str, bool, int, float):
         raise TypeError(f"COMBO expects a JSON scalar, got {type(obj).__name__}")
+    if type(obj) is int and abs(obj) > 2**53 - 1:
+        raise ValueError("COMBO expects a JSON-safe integer")
     if type(obj) is float and not math.isfinite(obj):
         raise ValueError("COMBO expects a finite number")
     return cast("str | bool | int | float", obj)
