@@ -886,7 +886,7 @@ def save_video_stream(
     *,
     container: str = "auto",
     codec: str = "auto",
-    crf: int | None = None,
+    crf: int | float | None = None,
     metadata: Mapping[str, object] | None = None,
     profile: str = "auto",
     audio_layout: str = "preserve",
@@ -1133,8 +1133,10 @@ def save_video_stream(
     if crf is not None and name not in _ENCODERS:
         format_diagnostic({"crf": crf}, {"crf": None, "codec": name}, on_diagnostic)
         crf = None
-    if crf is not None and (type(crf) is not int or not 0 <= crf <= limit):
-        raise ValueError(f"crf must be an integer in 0..{limit}")
+    if crf is not None and (
+        type(crf) not in (int, float) or not 0 <= crf <= limit or not math.isfinite(crf)
+    ):
+        raise ValueError(f"crf must be a finite number in 0..{limit}")
     rate = cast("Fraction | None", facts["fps"])
     if rate is None:
         raise ValueError("encoding requires a known frame rate")

@@ -103,8 +103,10 @@ def _number_constraint_from_wire(value: object, field: str, wire_version: int) -
     return value
 
 
-def _combo_option_to_wire(option: str | ComboOption, wire_version: int) -> object:
-    if isinstance(option, str):
+def _combo_option_to_wire(
+    option: str | bool | int | float | ComboOption, wire_version: int
+) -> object:
+    if not isinstance(option, ComboOption):
         return option
     wire: dict[str, object] = {"value": option.value}
     for field_name in ("label", "info", "folder"):
@@ -285,16 +287,16 @@ def _reject_unknown_fields(data: dict[str, object], allowed: frozenset[str], sub
         raise ValueError(f"{subject} has unknown fields: {unknown}")
 
 
-def _combo_option_from_wire(value: object, wire_version: int, *, subject: str) -> str | ComboOption:
-    if type(value) is str and value:
-        return value
+def _combo_option_from_wire(
+    value: object, wire_version: int, *, subject: str
+) -> str | bool | int | float | ComboOption:
     if not isinstance(value, dict):
-        raise ValueError(f"{subject} must be a non-empty string" + " or structured choice")
+        scalar = cast("str | bool | int | float", value)
+        ComboOption(scalar)
+        return scalar
     option = cast("dict[str, object]", value)
     _reject_unknown_fields(option, frozenset({"value", "label", "info", "folder"}), subject)
-    raw_value = option.get("value")
-    if type(raw_value) is not str or not raw_value:
-        raise ValueError(f"{subject}.value must be a non-empty string")
+    raw_value = cast("str | bool | int | float", option.get("value"))
     presentation: dict[str, str] = {}
     for field_name in ("label", "info", "folder"):
         if field_name not in option:
@@ -514,7 +516,7 @@ def _widget_descriptor_from_wire(
         if "chip" in widget_data and type(chip) is not bool:
             raise ValueError("MULTI_COMBO widget chip must be a boolean")
         return MultiComboWidget(
-            options=decoded_options,
+            options=cast("tuple[str | ComboOption, ...]", decoded_options),
             remote_route=remote_route,
             refresh_button=refresh_button,
             control_after_refresh=cast("Literal['first', 'last'] | None", control_after_refresh),
