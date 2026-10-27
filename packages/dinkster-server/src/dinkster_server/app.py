@@ -263,6 +263,7 @@ from dinkster_protocol import (
     AttentionPolicy,
     AttentionPolicyConfig,
     CompatGateDiagnostic,
+    ExportSnapshot,
     PackSettingsSchema,
     PreviewPolicy,
     attention_policy_config_from_wire,
@@ -3291,6 +3292,26 @@ async def handle_submit(request: web.Request) -> web.Response:
     source_document = body.get("sourceDocument", "")
     if not isinstance(source_document, str) or (source_document and not is_digest(source_document)):
         raise _bad_request("'sourceDocument' must be a canonical asset digest ('blake3:<64 hex>')")
+    export_snapshot = None
+    if "exportSnapshot" in body:
+        raw_snapshot = body["exportSnapshot"]
+        if not isinstance(raw_snapshot, dict):
+            raise _bad_request("'exportSnapshot' must be an object")
+        snapshot_fields = cast("dict[str, object]", raw_snapshot)
+        if set(snapshot_fields) - {"prompt", "extraPnginfo"}:
+            raise _bad_request("'exportSnapshot' has unknown fields")
+        prompt = snapshot_fields.get("prompt")
+        extra_pnginfo = snapshot_fields.get("extraPnginfo")
+        if not isinstance(prompt, dict) or (
+            extra_pnginfo is not None and not isinstance(extra_pnginfo, dict)
+        ):
+            raise _bad_request(
+                "'exportSnapshot' requires object 'prompt' and optional object 'extraPnginfo'"
+            )
+        export_snapshot = ExportSnapshot(
+            prompt=cast("dict[str, object]", prompt),
+            extra_pnginfo=cast("dict[str, object] | None", extra_pnginfo),
+        )
     try:
         graph = graph_from_wire(body.get("graph"))
     except GraphWireError as exc:
@@ -3328,6 +3349,11 @@ async def handle_submit(request: web.Request) -> web.Response:
         "scope": scope,
         "sourceDocument": source_document,
     }
+    if export_snapshot is not None:
+        fingerprint_payload["exportSnapshot"] = {
+            "prompt": export_snapshot.prompt,
+            "extraPnginfo": export_snapshot.extra_pnginfo,
+        }
     if placement:
         # Placement is opaque to graph/document and node cache identity, but
         # it is content of the active job idempotency request. Reusing one
@@ -3549,6 +3575,7 @@ async def handle_submit(request: web.Request) -> web.Response:
                 principal_id=principal.principal_id,
                 principal_kind=principal.kind,
                 source_document=source_document,
+                export_snapshot=export_snapshot,
                 fingerprint=fingerprint,
                 execution=execution,
                 compiled_graph=compiled_graph,

@@ -102,6 +102,7 @@ from dinkster_protocol import (
     BehaviorValue,
     CompositionMode,
     ContributionSurfaceDescriptor,
+    ExportSnapshot,
     ExtensionDeclaration,
     ExtensionEntryPoints,
     ExtensionScope,
@@ -111,6 +112,7 @@ from dinkster_protocol import (
     GuidanceRegistrySnapshot,
     TrainingSessionHandle,
     canonical_extension_snapshot,
+    current_export_snapshot,
     extension_behavior_hash,
 )
 from dinkster_protocol.frontend_modules import FrontendContribution, FrontendModule
@@ -252,6 +254,7 @@ from dinkster_values import (
     LENGTH_META_KEY,
     LOAD3D_CAMERA_TYPE,
     LORA_MODEL_TYPE,
+    LOSS_MAP_TYPE,
     MASK_TYPE,
     MAX_CURVE_POINTS,
     MEBIBYTE,
@@ -282,6 +285,7 @@ from dinkster_values import (
     STYLE_MODEL_TYPE,
     TIMESTEPS_RANGE_TYPE,
     TRACKS_TYPE,
+    UPSCALE_MODEL_TYPE,
     VAE_TYPE,
     VECTOR_TYPE,
     VIDEO_AUDIO_WORKING_SET_LIMIT_BYTES,
@@ -523,6 +527,8 @@ __all__ = [
     "extension_behavior_hash",
     # -- training session boundary values (dinkster-protocol)
     "TrainingSessionHandle",
+    "ExportSnapshot",
+    "current_export_snapshot",
     # -- node authoring (dinkster-schema)
     "ABSENT",
     "BLOCKED",
@@ -637,6 +643,7 @@ __all__ = [
     "LATENT_TYPE",
     "LATENT_UPSCALE_MODEL_TYPE",
     "LAYERS_TYPE",
+    "LOSS_MAP_TYPE",
     "LOAD3D_CAMERA_TYPE",
     "LORA_MODEL_TYPE",
     "MASK_TYPE",
@@ -664,6 +671,7 @@ __all__ = [
     "STYLE_MODEL_TYPE",
     "TIMESTEPS_RANGE_TYPE",
     "TRACKS_TYPE",
+    "UPSCALE_MODEL_TYPE",
     "WAN_CAMERA_EMBEDDING_TYPE",
     "VAE_TYPE",
     "VECTOR_TYPE",
