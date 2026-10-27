@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -38,7 +39,7 @@ def diffusers(path, *, output_vae, output_clip, embedding_directory):
     return SimpleNamespace(), SimpleNamespace(), vae
 
 def register_types(registry):
-    from dinkster_api.v1 import register_inference_types
+    from dinkster_nodes_comfy import register_inference_types
     register_inference_types(registry)
     model_selections.initialize_inference_process = lambda: None
     sys.modules['torch'] = SimpleNamespace(tensor=lambda value: value)
@@ -58,7 +59,28 @@ class Inspect(Node):
         return cls.outputs(summary=json.dumps({**vae.arguments,
             'reload': hasattr(vae.patcher, 'cached_patcher_init')}))
 
-NODES = (Inspect,)
+class ReadEncoder(Node):
+    @classmethod
+    def define_schema(cls):
+        from dinkster_api.v1 import AssetWidget
+        return NodeSchema(node_type='selectionprobe.encoder', inputs=(
+            InputSpec('file', TypeExpr.concrete('ASSET'),
+                widget=AssetWidget(kind='model/text-encoder')),
+            InputSpec('readonly', TypeExpr.concrete('BOOLEAN')),
+        ), outputs=(OutputSpec('text', TypeExpr.concrete('STRING')),), idempotent=False)
+    @classmethod
+    def execute(cls, *, file, readonly):
+        path = file.local_path()
+        if readonly:
+            try:
+                path.open('ab').close()
+            except OSError:
+                pass
+            else:
+                raise AssertionError('encoder grant was writable')
+        return cls.outputs(text=path.read_text())
+
+NODES = (Inspect, ReadEncoder)
 """
 
 SCENARIO = """
@@ -86,6 +108,12 @@ async def main():
         worker_env={'DINKSTER_MOUNTS_SNAPSHOT':str(root / 'snapshot.json')}, sandbox_policy=policy)
     try:
         engine = composition.make_engine(lambda event: None)
+        encoder = Graph({'read':GraphNode('selectionprobe.encoder', {
+            'file':json.loads((root / 'encoder-wire.json').read_text()),
+            'readonly':mode == 'sandbox'})})
+        for _ in range(2):
+            read = await engine.run(encoder,['read'])
+            assert read.outputs['read']['text'].resolve() == 'encoder bytes'
         async def run(node_type, input_id, value):
             graph = Graph({'load':GraphNode(node_type, {input_id:value}),
                 'inspect':GraphNode('selectionprobe.inspect', {'vae':Link('load','VAE')})})
@@ -162,6 +190,7 @@ def test_native_selection_loaders_in_public_hosts(tmp_path: Path, mode: str) -> 
             {"taesd_encoder.safetensors": "enc", "taesd_decoder.safetensors": "dec"},
         ),
         ("model/diffusers", {"model/model_index.json": "{}", "model/weights.bin": "tree"}),
+        ("model/text-encoder", {"vendor/encoder.bin": "encoder bytes"}),
     ):
         path = tmp_path / kind.replace("/", "-")
         for relative, text in files.items():
@@ -169,7 +198,11 @@ def test_native_selection_loaders_in_public_hosts(tmp_path: Path, mode: str) -> 
             member.parent.mkdir(parents=True, exist_ok=True)
             member.write_text(text)
         table.add(MountDef(kind.replace("/", "-"), path, kind=kind))
-        table.scan(kind.replace("/", "-"))
+        if kind != "model/text-encoder":
+            table.scan(kind.replace("/", "-"))
+    encoder = table.bind_name("vendor/encoder.bin", "model/text-encoder")
+    assert encoder is not None
+    (tmp_path / "encoder-wire.json").write_text(json.dumps(encoder.to_wire()))
     native = root / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
     environment = {
         **os.environ,

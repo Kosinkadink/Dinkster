@@ -788,9 +788,17 @@ class MountTable:
         return None
 
     def bind_name(self, name: str, kind: str) -> AssetRef | LocalAssetRef | None:
-        """Bind an exact basename in ranked category roots, without reading bytes."""
+        """Bind a basename or text-encoder relative file in ranked exact-kind roots."""
         require_asset_kind(kind)
-        if not name or name in {".", ".."} or any(c in name for c in "/\\\0"):
+        relative_name = "/" in name
+        if (
+            not name
+            or "\\" in name
+            or re.match(r"^[A-Za-z]:", name)
+            or any(ord(char) < 32 or ord(char) == 127 for char in name)
+            or any(part in {"", ".", ".."} for part in name.split("/"))
+            or (relative_name and kind != "model/text-encoder")
+        ):
             return None
         with self._lock:
             rows = sorted(
@@ -800,10 +808,13 @@ class MountTable:
         for row in rows:
             try:
                 root = row.mount.path.resolve()
+                candidates = (root / name,) if relative_name else root.rglob(glob.escape(name))
                 paths = [
                     path
-                    for path in root.rglob(glob.escape(name))
-                    if path.name == name and path.is_file() and path.resolve().is_relative_to(root)
+                    for path in candidates
+                    if (relative_name or path.name == name)
+                    and path.is_file()
+                    and path.resolve().is_relative_to(root)
                 ]
                 if not paths:
                     continue
@@ -812,7 +823,7 @@ class MountTable:
                 path = paths[0]
                 signature = local_file_signature(path.stat())
                 relative = path.relative_to(root).as_posix()
-            except OSError:
+            except (OSError, RuntimeError):
                 continue
             with self._lock:
                 if self._rows.get(row.mount.id) is not row:

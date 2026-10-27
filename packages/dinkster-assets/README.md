@@ -40,6 +40,12 @@ server-scoped grants, not filesystem paths or content identities. File
 replacement and mount revocation invalidate them. Their cache fingerprints
 use an `unverified-local:` prefix and cannot be redeemed on another host.
 
+For `model/text-encoder`, the same method also accepts slash-separated
+source-relative filenames. These select an exact file in the first ranked
+exact-kind root, without basename ambiguity. Absolute paths, dot/parent
+components and links escaping the grant are rejected. Ordinary ASSET inputs
+and filename preflight use the same existing file carriers and grants.
+
 `asset_selection_names(kind)` enumerates source-relative options from live
 exact-kind grants. `resolve_asset_selection(kind, name)` returns a checked
 directory subtree, an existing invocation-local file reference, an

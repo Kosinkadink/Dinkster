@@ -17,7 +17,7 @@ from dinkster_api.v1 import (
     schema_to_wire,
 )
 from dinkster_assets import digest_bytes
-from dinkster_graph import Graph, GraphNode
+from dinkster_graph import Graph, GraphNode, TypedLiteral
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy import model_selections as loaders
 from dinkster_server.preflight import bind_model_names
@@ -113,7 +113,9 @@ def test_preflight_keeps_source_selection_names_and_reports_missing_options(gran
     )
     schemas = {node.schema().node_type: node.schema() for node in loaders.MODEL_SELECTION_NODES}
     bound, missing = bind_model_names(graph, schemas, None)
-    assert bound == graph
+    assert bound.nodes["literal"].inputs["vae_name"] == TypedLiteral("COMBO", "pixel_space")
+    assert bound.nodes["tree"] == graph.nodes["tree"]
+    assert bound.nodes["missing"] == graph.nodes["missing"]
     assert len(missing) == 1
     assert missing[0]["nodeId"] == "missing"
     assert missing[0]["name"] == "not-granted.safetensors"

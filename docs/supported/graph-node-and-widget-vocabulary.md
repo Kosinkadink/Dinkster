@@ -57,6 +57,9 @@
   Explicit mount purposes persist in config and runtime grants; omitted kinds
   remain untyped and do not authorize source selections.
   This does not claim frontend picker support.
+- Ordinary text-encoder ASSET inputs accept contained source-relative filenames
+  through model-name preflight, with exact-kind root priority and existing
+  verified or unverified file references. Traversal and escaping links refuse.
 - FLOAT number descriptors, including one-level FLOAT lists, accept `round: false`
   for explicit no-round presentation, or a positive finite numeric precision.
   Omission leaves precision unspecified; false is distinct from numeric zero.
