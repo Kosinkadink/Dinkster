@@ -2449,17 +2449,21 @@ def register_types(registry):
 NODES = [Source]
 """)
     port = free_port()
+    bootstrap = """
+from dinkster import serve
+
+serve.default_pack_ids = lambda: ("dinkster-nodes-media-io",)
+serve.model_pack_specs = lambda: ()
+serve.comfy_compat_specs = lambda *args, **kwargs: ()
+serve.main()
+"""
     process = subprocess.Popen(
-        serve_command(
-            port,
-            "--no-default-packs",
-            "--pack",
-            str(TESTS_DIR.parent / "packages" / "dinkster-nodes-media-io"),
-            "--pack",
-            str(PROOF_ROOT),
-            "--pack",
-            str(source),
-        ),
+        [
+            sys.executable,
+            "-c",
+            bootstrap,
+            *serve_command(port, "--pack", str(PROOF_ROOT), "--pack", str(source))[3:],
+        ],
         env={**os.environ, "PYTHONPATH": str(source)},
         cwd=tmp_path,
         stdout=subprocess.DEVNULL,
@@ -2484,6 +2488,9 @@ NODES = [Source]
                     except aiohttp.ClientError:
                         pass
                     await asyncio.sleep(0.05)
+            async with session.get(base + "/api/composition") as response:
+                report = await response.json()
+            assert report["packs"]["dinkster-nodes-media-io"]["state"] == "announced"
             async with session.get(base + PROOF_ROUTE) as response:
                 assert response.status == 200
                 assert await response.json() == {
