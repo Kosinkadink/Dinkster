@@ -89,10 +89,10 @@ def make_list_value(element_type_id: str, children: Sequence[Value]) -> Value:
 
     Wrapping machinery only (worker shims, boundary decode, cache
     rehydration) - node authors never construct envelopes (hazard H9).
-    Children must already carry the element type: a mismatch here is a bug
-    in wrapping code, not user input."""
+    Concrete element types require matching children. The wildcard element
+    retains independently typed children without inferring types from payloads."""
     for child in children:
-        if child.type_id != element_type_id:
+        if element_type_id != "*" and child.type_id != element_type_id:
             raise ValueError(f"list<{element_type_id}> child has type '{child.type_id}'")
     ordered = tuple(children)
     return Value(
