@@ -15,6 +15,7 @@ import shutil
 import signal
 import subprocess
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -2193,7 +2194,12 @@ def test_group_isolated_close_is_idempotent(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
-def test_isolated_host_supplies_export_snapshot(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "prompt", [{"save": {"class_type": "Save", "inputs": {"seed": 4}}}, {}, None]
+)
+def test_isolated_host_supplies_export_snapshot(
+    tmp_path: Path, prompt: Mapping[str, object] | None
+) -> None:
     async def scenario() -> None:
         registry = core_registry()
         worker = iso_worker(tmp_path, registry)
@@ -2207,7 +2213,7 @@ def test_isolated_host_supplies_export_snapshot(tmp_path: Path) -> None:
             )
             graph = Graph(nodes={"submitted-node-29": GraphNode("iso.execution_context", {})})
             snapshot = ExportSnapshot(
-                prompt={"save": {"class_type": "Save", "inputs": {"seed": 4}}},
+                prompt=prompt,
                 extra_pnginfo={"workflow": {"nodes": [4, 2]}},
             )
             result = await engine.run(graph, ["submitted-node-29"], export_snapshot=snapshot)
