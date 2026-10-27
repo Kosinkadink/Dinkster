@@ -103,6 +103,8 @@
 - Training dataset preparation with RGB VAE encoding and scheduled CLIP
   conditioning, preserving image-list order and supporting omitted, shared,
   or per-image captions
+- Encoded training datasets loaded from granted dataset folders, preserving
+  sorted shard order, latent tensors and conditioning metadata
 - Row-major image grid composition and decomposition; image stitching; split
   and merge with overlapping tiles
 - Image transitions between inputs, within a batch, or while joining batches,

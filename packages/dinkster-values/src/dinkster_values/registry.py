@@ -30,6 +30,7 @@ from .builtin_types import (
     CORE_INT,
     CORE_STRING,
     DICT_TYPE,
+    HISTOGRAM_TYPE,
 )
 from .lists import make_list_value, parse_list_type_id, value_children
 from .model import (
@@ -1028,6 +1029,34 @@ def _validate_combo_encoded(data: bytes, _metadata: Mapping[str, object]) -> Non
         raise ValueError("COMBO expects canonical JSON encoding")
 
 
+def _coerce_histogram(obj: object) -> list[int]:
+    if type(obj) is not list:
+        raise TypeError("HISTOGRAM requires a list of integers")
+    values = cast("list[object]", obj)
+    if any(type(value) is not int for value in values):
+        raise TypeError("HISTOGRAM requires a list of integers")
+    return cast("list[int]", values)
+
+
+def _validate_histogram_encoded(data: bytes, _metadata: Mapping[str, object]) -> None:
+    if not data.startswith(b"json:"):
+        raise ValueError("HISTOGRAM expects canonical JSON encoding")
+    value = _coerce_histogram(default_decode(data))
+    if default_encode(value) != data:
+        raise ValueError("HISTOGRAM expects canonical JSON encoding")
+
+
+def register_histogram_type(registry: TypeRegistry) -> TypeSpec:
+    """Register the built-in structural histogram value without replacing an authority."""
+    if HISTOGRAM_TYPE in registry:
+        return registry.spec(HISTOGRAM_TYPE)
+    return registry.register(
+        HISTOGRAM_TYPE,
+        coerce=_coerce_histogram,
+        validate_encoded=_validate_histogram_encoded,
+    )
+
+
 def register_core_types(registry: TypeRegistry) -> None:
     """Primitives are envelope types like everything else (hazard H2)."""
     # Core scalars inline as themselves (DESIGN 3.5): peeking an int or a
@@ -1044,6 +1073,7 @@ def register_core_types(registry: TypeRegistry) -> None:
     registry.register(CORE_BOOLEAN, inline=lambda obj: obj)
     registry.register(DICT_TYPE)
     registry.register(ARRAY_TYPE)
+    register_histogram_type(registry)
     # core.absent registers with the default codec (payload is None, which
     # JSON-encodes) so absences cross boundaries and caches like any value.
     registry.register(CORE_ABSENT)
