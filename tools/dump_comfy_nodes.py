@@ -22,6 +22,35 @@ from pathlib import Path
 from typing import Any
 
 
+class FileChoices(list):
+    """Source provenance retained through v1 schema projection."""
+
+    def __init__(self, values: list[str], selection_kind: str = "") -> None:
+        super().__init__(values)
+        self.selection_kind = selection_kind
+
+
+def annotate_files(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: annotate_files(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        converted = [annotate_files(item) for item in value]
+        if len(value) in (1, 2) and isinstance(value[0], (str, list)):
+            options = value[1] if len(value) == 2 else {}
+            if isinstance(options, dict):
+                choices = value[0] if isinstance(value[0], FileChoices) else options.get("options")
+                if isinstance(choices, FileChoices) or any(
+                    options.get(key) for key in ("image_upload", "audio_upload", "video_upload")
+                ):
+                    if len(converted) == 1:
+                        converted.append({})
+                    converted[1]["file_input"] = True
+                    if isinstance(choices, FileChoices) and choices.selection_kind:
+                        converted[1]["asset_selection_kind"] = choices.selection_kind
+        return converted
+    return value
+
+
 def annotated_file_arguments(cls: type) -> set[str]:
     """Recognize file choices resolved directly by the declared execution method."""
     function = getattr(cls, getattr(cls, "FUNCTION", ""), None)
@@ -110,44 +139,32 @@ def main() -> None:
     import folder_paths
     import nodes
 
-    class FileChoices(list):
-        """Keep the origin of file-combo choices through v1 schema projection."""
-
     get_filename_list = folder_paths.get_filename_list
 
     def file_choices(category: str) -> list[str]:
-        return FileChoices(get_filename_list(category))
+        return FileChoices(get_filename_list(category), "model/vae" if category == "vae" else "")
 
     folder_paths.get_filename_list = file_choices
-
-    def annotate_files(value: Any) -> Any:
-        if isinstance(value, dict):
-            return {key: annotate_files(item) for key, item in value.items()}
-        if isinstance(value, (tuple, list)):
-            converted = [annotate_files(item) for item in value]
-            if len(value) in (1, 2) and isinstance(value[0], (str, list)):
-                options = value[1] if len(value) == 2 else {}
-                if isinstance(options, dict) and (
-                    isinstance(value[0], FileChoices)
-                    or isinstance(options.get("options"), FileChoices)
-                    or any(
-                        options.get(key)
-                        for key in (
-                            "image_upload",
-                            "audio_upload",
-                            "video_upload",
-                        )
-                    )
-                ):
-                    if len(converted) == 1:
-                        converted.append({})
-                    converted[1]["file_input"] = True
-            return converted
-        return value
+    get_input_subfolders = folder_paths.get_input_subfolders
+    folder_paths.get_input_subfolders = lambda: FileChoices(
+        get_input_subfolders(), "directory/input"
+    )
+    model_paths = nodes.DiffusersLoader._model_paths
+    nodes.DiffusersLoader._model_paths = classmethod(
+        lambda cls: FileChoices(model_paths(), "model/diffusers")
+    )
 
     async def dump() -> dict[str, Any]:
         base_names = set(nodes.NODE_CLASS_MAPPINGS)
         await nodes.init_builtin_extra_nodes()
+        dataset_cls = nodes.NODE_CLASS_MAPPINGS.get("LoadTrainingDataset")
+        if dataset_cls is not None:
+            dataset_module = inspect.getmodule(dataset_cls)
+            if dataset_module is not None:
+                list_dataset_folders = dataset_module.list_dataset_folders
+                dataset_module.list_dataset_folders = lambda: FileChoices(
+                    list_dataset_folders(), "directory/dataset"
+                )
         rows = []
         for name, cls in nodes.NODE_CLASS_MAPPINGS.items():
             source = inspect.getsourcefile(cls)
