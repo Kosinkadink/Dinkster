@@ -14,6 +14,10 @@ permissions:
   actions: read
   contents: read
 
+env:
+  # Pin the frontend decoder; decoder changes bump this in a companion Dinkster PR before landing.
+  FRONTEND_REF: 18df8c5aa66c9b929044220850d1913a41a9948e
+
 # Pushes batch behind the active run while scheduled and release validation always finish.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'push' && 'push' || 'durable' }}
@@ -173,7 +177,7 @@ jobs:
         with:
           clean: true
           repository: Kosinkadink/Dinkster-Frontend
-          ref: main
+          ref: ${{ env.FRONTEND_REF }}
           path: .frontend-validation
           persist-credentials: false
       - uses: pnpm/action-setup@v4
@@ -185,7 +189,7 @@ jobs:
         if: matrix.os == 'linux' && matrix.run_checks
         with:
           node-version: 22
-      - name: Decode real registries with frontend main
+      - name: Decode real registries with pinned frontend
         if: matrix.os == 'linux' && matrix.run_checks
         working-directory: .frontend-validation
         run: |

@@ -492,6 +492,8 @@ namespaces = [
     "DrawBBoxes",
     "VAELoader",
     "DiffusersLoader",
+    "SAM3_VideoTrack",
+    "SAM3_TrackToMask",
     "VideoFrameSample",
     "CheckpointLoaderSimple",
     "CheckpointLoader",
