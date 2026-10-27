@@ -517,6 +517,7 @@ namespaces = [
     "LoraLoaderBypass",
     "LoraLoaderBypassModelOnly",
     "CropByBBoxes",
+    "CameraAngle",
     "MakeTrainingDataset",
     "TripoSplatPreprocessImage",
     "LoadTrainingDataset",

@@ -1,5 +1,7 @@
 ## Image operations
 
+- Native `CameraAngle` produces an orbit-camera dictionary and shot description
+  from horizontal angle, elevation, and zoom.
 - Native `TripoSplatPreprocessImage` erodes alpha, crops foreground to a padded
   square, resizes with Lanczos, and composites the image over black.
 - Color strings, ordered color palettes, bounding boxes, and optional
