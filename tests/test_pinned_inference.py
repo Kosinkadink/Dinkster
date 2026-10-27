@@ -41,7 +41,7 @@ def test_runtime_dependencies_do_not_require_git() -> None:
             document.get("tool", {}).get("uv", {}).get("sources", {}),
         ]
         if Path(relative).name == "uv.lock":
-            sources.extend(package.get("source", {}) for package in document.get("package", []))
+            sources = [document]
         while sources:
             source = sources.pop()
             if isinstance(source, dict):
