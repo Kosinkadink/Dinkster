@@ -723,6 +723,7 @@ def test_unbind_refuses_active_channels_and_releases_settled_channels() -> None:
 def test_protocol_corruption_closes_boundary_and_fails_pending_receive() -> None:
     async def scenario() -> None:
         accepted: asyncio.Future[asyncio.StreamWriter] = asyncio.get_running_loop().create_future()
+        receiving = asyncio.Event()
 
         async def corrupt(_reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
             accepted.set_result(writer)
@@ -737,7 +738,7 @@ def test_protocol_corruption_closes_boundary_and_fails_pending_receive() -> None
                 },
                 [],
             )
-            await asyncio.sleep(0.05)
+            await asyncio.wait_for(receiving.wait(), 2)
             await write_frame(
                 writer,
                 {"type": WORKGROUP_FRAME_TYPE, "message": {"type": "unknown"}},
@@ -755,8 +756,13 @@ def test_protocol_corruption_closes_boundary_and_fails_pending_receive() -> None
             endpoint = session.bind_workgroup_endpoint(
                 definition("worker-a"), ReplicaId("replica-a")
             )
+
+            async def receive() -> None:
+                receiving.set()
+                await endpoint.receive()
+
             with pytest.raises(WorkGroupTransportClosed):
-                await asyncio.wait_for(endpoint.receive(), 2)
+                await asyncio.wait_for(receive(), 2)
             assert not session.alive
         finally:
             await session.close()

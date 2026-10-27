@@ -385,7 +385,7 @@ def test_station_two_real_engines_share_one_store(
                                 f"{entry.install.name}: {entry.link.state} ({entry.link.detail})"
                             )
                         served = [await packs_of(install.port) for install in installs]
-                        await asyncio.sleep(0.2)
+                        await asyncio.sleep(0)
 
                 served_a, served_b = served
                 assert served_a is not None and served_b is not None

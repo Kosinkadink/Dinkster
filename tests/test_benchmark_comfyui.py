@@ -2547,29 +2547,46 @@ class TestShimUnloadEndpoint:
         handler = harness.handlers[("POST", "/dinkster_benchmark/unload")]
 
         async def scenario() -> Any:
+            polling = asyncio.Event()
+            flags_consumed = asyncio.Event()
+            polled_incomplete = asyncio.Event()
+            completed = asyncio.Event()
+
+            async def poll(_interval: float) -> None:
+                if not polling.is_set():
+                    polling.set()
+                    await flags_consumed.wait()
+                else:
+                    polled_incomplete.set()
+                    await completed.wait()
+
+            monkeypatch.setattr(harness.shim, "asyncio", SimpleNamespace(sleep=poll))
+
             async def prompt_worker() -> None:
+                await asyncio.wait_for(polling.wait(), 5)
                 # The worker consumes the flags first (clearing them)...
-                while not harness.queue.get_flags(reset=False):
-                    await asyncio.sleep(0.01)
                 flags = harness.queue.get_flags()
                 assert flags.get("free_memory") is True
                 # ...then unload_all_models(), whose internal
                 # soft_empty_cache() must not count as completion...
                 harness.model_management.soft_empty_cache()
-                await asyncio.sleep(0.2)
+                flags_consumed.set()
+                await asyncio.wait_for(polled_incomplete.wait(), 5)
                 # ...then the executor reset and the trailing
                 # gc + soft_empty_cache that end the free path.
                 harness.executor.reset()
                 harness.model_management.soft_empty_cache()
                 harness.events.append("free_path_finished")
+                completed.set()
 
             async def request_json() -> dict[str, int]:
                 return {"drain_target_bytes": 1_048_576}
 
             worker = asyncio.create_task(prompt_worker())
-            response = await handler(SimpleNamespace(json=request_json))
-            harness.events.append("handler_returned")
-            await worker
+            async with asyncio.timeout(5):
+                response = await handler(SimpleNamespace(json=request_json))
+                harness.events.append("handler_returned")
+                await worker
             return response
 
         response = asyncio.run(scenario())

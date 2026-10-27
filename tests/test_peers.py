@@ -37,8 +37,10 @@ from dinkster_server import (
     RunningServer,
     start_server,
 )
+from dinkster_server.peers import PeerLease
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
+from test_leases import lease_clock as lease_clock
 
 STRING = TypeExpr.concrete("STRING")
 
@@ -281,16 +283,37 @@ def test_ungoverned_peer_raises_peer_ungoverned() -> None:
     asyncio.run(scenario())
 
 
-def test_held_renews_past_the_original_ttl_and_releases_on_exit() -> None:
+def test_held_renews_past_the_original_ttl_and_releases_on_exit(
+    monkeypatch: pytest.MonkeyPatch,
+    lease_clock: tuple[list[float], asyncio.Queue[float]],
+) -> None:
+    now, _ = lease_clock
+
     async def scenario() -> None:
         governor = MemoryGovernor({"ram": 100})
         async with (
             await governed_instance(governor) as server,
             PeerClient(server.endpoint) as client,
         ):
-            async with client.held("ram", 60, ttl=0.2):
+            renewed: asyncio.Queue[PeerLease] = asyncio.Queue()
+            original_renew = client.renew
+
+            async def note_renew(lease_id: str, *, ttl: float | None = None) -> PeerLease | None:
+                now[0] += 0.1
+                result = await original_renew(lease_id, ttl=ttl)
+                if result is not None:
+                    renewed.put_nowait(result)
+                return result
+
+            monkeypatch.setattr(client, "renew", note_renew)
+            started = now[0]
+            async with client.held("ram", 60, ttl=0.2) as held:
                 assert governor.reserved("ram") == 60
-                await asyncio.sleep(0.5)  # several original lifetimes
+                for _ in range(3):
+                    renewal = await asyncio.wait_for(renewed.get(), 2)
+                    assert renewal.lease_id == held.lease_id
+                    assert renewal.expires_in > 0
+                assert now[0] > started + 0.2
                 assert governor.reserved("ram") == 60  # renewal kept it alive
             assert governor.reserved("ram") == 0  # exit released it
 
