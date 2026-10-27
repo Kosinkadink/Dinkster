@@ -48,7 +48,13 @@ from dinkster_schema import (
     build_node_types,
     build_schemas,
 )
-from dinkster_values import CORE_INT, CORE_STRING, TypeRegistry, register_core_types
+from dinkster_values import (
+    AUDIO_RECORD_TYPE,
+    CORE_INT,
+    CORE_STRING,
+    TypeRegistry,
+    register_core_types,
+)
 from dinkster_workers import InProcessWorker, ValueCodec
 
 # --- identity ---------------------------------------------------------------
@@ -397,6 +403,7 @@ def asset_registry(resolver: AssetResolver | None = None) -> TypeRegistry:
     registry = TypeRegistry()
     register_core_types(registry)
     register_asset_type(registry, resolver)
+    register_asset_type(registry, resolver, type_id=AUDIO_RECORD_TYPE)
     return registry
 
 
@@ -436,8 +443,10 @@ def test_comfy_manifest_registers_bound_assets_without_replacing_authority(
     assert callable(register)
     register(registry)
     first = registry.spec(ASSET_TYPE)
+    first_recording = registry.spec(AUDIO_RECORD_TYPE)
     register(registry)
     assert registry.spec(ASSET_TYPE) is first
+    assert registry.spec(AUDIO_RECORD_TYPE) is first_recording
     if original is not None:
         assert first is original
     rebound = registry.wrap(ASSET_TYPE, ref.to_wire()).resolve()
@@ -463,8 +472,30 @@ def test_wrap_literal_mapping_becomes_resolver_bound_ref(tmp_path: Path) -> None
 
 def test_wrap_rejects_paths() -> None:
     registry = asset_registry()
-    with pytest.raises(AssetError, match="never.*filesystem paths"):
-        registry.wrap(ASSET_TYPE, "/etc/passwd")
+    for type_id in (ASSET_TYPE, AUDIO_RECORD_TYPE):
+        with pytest.raises(AssetError, match="never.*filesystem paths"):
+            registry.wrap(type_id, "/etc/passwd")
+
+
+def test_audio_record_uses_asset_identity_with_its_own_type_stamp(tmp_path: Path) -> None:
+    root = make_models_dir(tmp_path)
+    library = LocalAssetLibrary(root)
+    library.scan()
+    registry = asset_registry(library)
+    first = library.ref("models/loras/style.safetensors")
+    second = AssetRef(first.digest, "renamed.wav", first.size, resolver=library)
+
+    asset = registry.wrap(ASSET_TYPE, first.to_wire())
+    recorded = registry.wrap(AUDIO_RECORD_TYPE, second.to_wire())
+
+    assert asset.fingerprint == recorded.fingerprint == first.digest
+    assert asset.type_id == ASSET_TYPE
+    assert recorded.type_id == AUDIO_RECORD_TYPE
+    record_ref = recorded.resolve()
+    assert isinstance(record_ref, AssetRef)
+    assert record_ref.read_bytes() == b"lora bytes"
+    with pytest.raises(AssetError, match="digest"):
+        registry.wrap(AUDIO_RECORD_TYPE, {"name": "recording.wav", "size": 1})
 
 
 def test_codec_crossing_carries_identity_not_bytes(tmp_path: Path) -> None:
@@ -489,6 +520,30 @@ def test_codec_crossing_carries_identity_not_bytes(tmp_path: Path) -> None:
     ref = crossed.resolve()
     assert isinstance(ref, AssetRef)
     assert ref.read_bytes() == b"lora bytes"
+
+
+def test_audio_record_crossing_keeps_asset_cache_identity_separate_by_type(tmp_path: Path) -> None:
+    root = make_models_dir(tmp_path)
+    sender_library = LocalAssetLibrary(root)
+    sender_library.scan()
+    receiver_library = LocalAssetLibrary(root, index_path=tmp_path / "idx2.json")
+    receiver_library.scan()
+    sender_registry = asset_registry(sender_library)
+    receiver_registry = asset_registry(receiver_library)
+    value = sender_registry.wrap(
+        AUDIO_RECORD_TYPE, sender_library.ref("models/loras/style.safetensors").to_wire()
+    )
+
+    blobs: list[bytes] = []
+    wire, stat = ValueCodec(sender_registry).encode(value, blobs, [])
+    crossed, _ = ValueCodec(receiver_registry).decode(wire, blobs, [])
+
+    assert stat.size_bytes < 512
+    assert crossed.type_id == AUDIO_RECORD_TYPE
+    assert crossed.fingerprint == value.fingerprint
+    record_ref = crossed.resolve()
+    assert isinstance(record_ref, AssetRef)
+    assert record_ref.read_bytes() == b"lora bytes"
 
 
 def test_unverified_local_binding_crosses_worker_codec_and_reconciles_after_scan(
@@ -733,6 +788,7 @@ def test_unresolvable_ref_still_flows_but_fails_to_materialize() -> None:
 # --- end to end: a node consumes an asset input via the engine ---------------
 
 ASSET = TypeExpr.concrete(ASSET_TYPE)
+AUDIO_RECORD = TypeExpr.concrete(AUDIO_RECORD_TYPE)
 INT = TypeExpr.concrete(CORE_INT)
 STRING = TypeExpr.concrete(CORE_STRING)
 
@@ -754,6 +810,18 @@ class AssetStat(Node):
     @classmethod
     def execute(cls, *, asset: AssetRef) -> Mapping[str, object]:
         return cls.outputs(bytes=len(asset.read_bytes()), name=asset.name)
+
+
+class AudioRecordStat(AssetStat):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="test.audio.record.stat",
+            display_name="Audio Record Stat",
+            category="test",
+            inputs=(InputSpec("asset", AUDIO_RECORD),),
+            outputs=(OutputSpec("bytes", INT), OutputSpec("name", STRING)),
+        )
 
 
 def test_engine_run_with_asset_literal(tmp_path: Path) -> None:
@@ -786,5 +854,33 @@ def test_engine_run_with_asset_literal(tmp_path: Path) -> None:
             Graph(nodes={"s": GraphNode("test.asset.stat", {"asset": alias})}), ["s"]
         )
         assert again.executed == ()
+
+    asyncio.run(scenario())
+
+
+def test_engine_cache_separates_asset_and_audio_record_type(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        root = make_models_dir(tmp_path)
+        library = LocalAssetLibrary(root)
+        library.scan()
+        registry = asset_registry(library)
+        nodes: list[type[Node]] = [AssetStat, AudioRecordStat]
+        engine = Engine(
+            schemas=build_schemas(nodes),
+            registry=registry,
+            worker=InProcessWorker(build_node_types(nodes), registry),
+            cache=MemoryLRUCache(),
+        )
+        literal = library.ref("models/checkpoints/tiny.safetensors").to_wire()
+
+        asset_result = await engine.run(
+            Graph(nodes={"s": GraphNode("test.asset.stat", {"asset": literal})}), ["s"]
+        )
+        record_result = await engine.run(
+            Graph(nodes={"s": GraphNode("test.audio.record.stat", {"asset": literal})}), ["s"]
+        )
+
+        assert asset_result.executed == ("s",)
+        assert record_result.executed == ("s",)
 
     asyncio.run(scenario())

@@ -1,3 +1,5 @@
+from dinkster_values import AUDIO_RECORD_TYPE
+
 from .acquire import AcquisitionResult, AcquisitionStatus, acquire_need
 from .audio import bind_audio_value, register_audio_value_type
 from .catalog import (
@@ -174,6 +176,7 @@ from .writer import AssetWriter, MountSnapshotWriter, MountWriteAuthority
 
 __all__ = [
     "ASSET_TYPE",
+    "AUDIO_RECORD_TYPE",
     "admit_video_source",
     "AssetScanProgress",
     "DEFAULT_SCOPE",

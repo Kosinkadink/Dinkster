@@ -9,7 +9,7 @@
   Built-in identities remain owned by foundation independently of the
   official pack that provides their codec and survive pack removal.
 - Dinkster-specific built-in socket types use bare uppercase ids, including
-  ASSET, CURVE, REGION, DETECTION, RESOURCE and VIDEO_DOCUMENT. Schemas,
+  ASSET, AUDIO_RECORD, CURVE, REGION, DETECTION, RESOURCE and VIDEO_DOCUMENT. Schemas,
   codecs and generators share their canonical spelling module. The internal
   core.absent execution envelope is not a socket type.
 - Non-dinkster publishers' node schemas and type claims require the pack-name
