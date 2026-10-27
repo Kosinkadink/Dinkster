@@ -454,6 +454,13 @@ def test_exact_primary_and_local_route_matrix(tmp_path: Path) -> None:
             response = await client.post("/api/queue/pause")
             assert response.status == 200
             assert (await response.json())["engine"] == "alpha"
+            for route in (
+                "/api/compat/comfy/prompt",
+                "/api/compat/comfy/prompt?dryRun=1",
+                "/api/compat/comfy/prompt/extra",
+            ):
+                for method in ("GET", "POST"):
+                    assert (await client.request(method, route)).status == 404, route
             assert (await (await client.get("/supervisor/status")).json())["role"] == "ingress"
             assert (await client.get("/supervisor/not-real")).status == 404
             await store.claim_key("default", "client", "job", "alpha")

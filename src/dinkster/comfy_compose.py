@@ -242,21 +242,6 @@ def find_compat_manifest(name: str = "dinkster-pack.toml") -> Path:
     return manifest
 
 
-def find_native_manifest() -> Path:
-    """Locate the native provider manifest without importing execution bodies."""
-    spec = importlib.util.find_spec("dinkster_native")
-    if spec is None or spec.origin is None:
-        raise CompositionError("dinkster-native is not installed")
-    package_dir = Path(spec.origin).parent
-    manifest = package_dir.parents[1] / "dinkster-pack.toml"
-    if not manifest.is_file():
-        distribution = importlib.metadata.distribution("dinkster-native")
-        manifest = Path(str(distribution.locate_file("dinkster_native_pack/dinkster-pack.toml")))
-    if not manifest.is_file():
-        raise CompositionError(f"native manifest not found at {manifest}")
-    return manifest
-
-
 RETIRED_EXECUTION_PYTHON_ENV = "DINKSTER_COMFYUI_PYTHON"
 RETIRED_EXECUTION_PYTHON_ENV_MESSAGE = (
     "DINKSTER_COMFYUI_PYTHON is retired; set DINKSTER_EXECUTION_PYTHON instead"
@@ -589,10 +574,9 @@ def comfy_compat_specs(
     multi_device_cuda_indices: tuple[int, ...] = (),
     single_job_multi_gpu: SingleJobMultiGpuConfig | None = None,
 ) -> list[PackSpec]:
-    """PackSpecs for the universal generation owner and ComfyUI compat surface.
+    """PackSpecs for native core nodes or an explicit ComfyUI installation.
 
-    Without a root the provider uses native bodies and pinned import schemas.
-    The generation schema owner precedes the execution provider.
+    Without a root the native core pack owns both schemas and execution.
     The legacy quarantine worker follows when ``legacy_packs``
     names custom pack directories (or single-file packs). ``comfy_nodes``
     optionally filters the v1 translation (DINKSTER_COMFY_NODES) - mostly a
@@ -604,45 +588,50 @@ def comfy_compat_specs(
         raise CompositionError(f"ComfyUI root not found: {root}")
     if legacy_packs and root is None:
         raise CompositionError("legacy packs require --comfy-root")
-    core_manifest = find_native_manifest() if root is None else find_compat_manifest()
-    generation_spec = default_pack_spec("dinkster-nodes-generation")
     if root is None:
-        native_executes = load_manifest(core_manifest).executes
-        generation_spec = replace(
-            generation_spec,
-            optional_execution=tuple(
-                node_type
-                for node_type in load_manifest(find_compat_manifest()).executes
-                if node_type not in native_executes
-            ),
-        )
-    selection = (
-        _execution_python_selection(root, python)
-        if root is not None
-        else _ExecutionPythonSelection(
-            python or os.environ.get("DINKSTER_EXECUTION_PYTHON") or sys.executable,
-            (
-                "--execution-python"
-                if python
-                else "DINKSTER_EXECUTION_PYTHON"
-                if os.environ.get("DINKSTER_EXECUTION_PYTHON")
-                else "current Python"
-            ),
-        )
-    )
+        spec = default_pack_spec("dinkster-nodes-comfy")
+        environment: dict[str, str] = {}
+        pythonpath = dinkster_pythonpath(Path(spec.manifest))
+        if pythonpath:
+            environment["PYTHONPATH"] = pythonpath
+        if asset_vault:
+            environment["DINKSTER_ASSET_VAULT"] = str(asset_vault)
+        if mounts_snapshot:
+            environment["DINKSTER_MOUNTS_SNAPSHOT"] = str(mounts_snapshot)
+        return [
+            replace(
+                spec,
+                in_process=False,
+                trust_reserved=False,
+                python=python or os.environ.get("DINKSTER_EXECUTION_PYTHON") or sys.executable,
+                env=environment,
+                aimdo=aimdo,
+                vram_budgets=cuda_vram_budgets(memory_budgets or {}),
+                reserve_vram=reserve_vram,
+                comfy_args=comfy_args,
+                runtime_settings=True,
+                replica_cuda_indices=multi_device_cuda_indices,
+                single_job_cuda_indices=(
+                    () if single_job_multi_gpu is None else single_job_multi_gpu.cuda_indices
+                ),
+                single_job_mode=(
+                    "auto" if single_job_multi_gpu is None else single_job_multi_gpu.mode
+                ),
+                start_timeout=_CORE_START_TIMEOUT,
+            )
+        ]
+    core_manifest = find_compat_manifest()
+    generation_spec = default_pack_spec("dinkster-nodes-generation")
+    selection = _execution_python_selection(root, python)
     interpreter = selection.interpreter
     try:
         preflight_interpreter(interpreter)
     except InterpreterPreflightError as exc:
         raise CompositionError(f"ComfyUI compat interpreter refused: {exc}") from exc
-    if root is not None and not _requirements_checked:
+    if not _requirements_checked:
         _probe_comfy_requirements(root, selection)
     _probe_comfy_blake3(interpreter)
-    base_env = (
-        {"DINKSTER_COMFYUI_ROOT": str(root), "DINKSTER_COMFY_NATIVE_ONLY": "0"}
-        if root is not None
-        else {"DINKSTER_COMFY_NATIVE_ONLY": "1", "DINKSTER_COMFYUI_ROOT": ""}
-    )
+    base_env = {"DINKSTER_COMFYUI_ROOT": str(root), "DINKSTER_COMFY_NATIVE_ONLY": "0"}
     pythonpath = dinkster_pythonpath(core_manifest)
     if pythonpath:
         base_env["PYTHONPATH"] = pythonpath

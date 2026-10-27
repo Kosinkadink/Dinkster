@@ -66,6 +66,8 @@ def runtime_type_atom(type_id: str) -> str | None:
     atom = type_id
     while True:
         inner = parse_list_type_id(atom)
+        if inner == "*":
+            return None
         if inner is None:
             inner = parse_asset_type_id(atom)
         if inner is None:
@@ -89,6 +91,8 @@ def runtime_type_atoms(type_id: str) -> tuple[str, ...] | None:
             pending.extend(reversed(positions))
             continue
         inner = parse_list_type_id(current)
+        if inner == "*":
+            continue
         if inner is None:
             inner = parse_asset_type_id(current)
         if inner is None:

@@ -106,3 +106,24 @@ def test_selected_encoded_frames_release_asset_and_match_requested_order(
     np.testing.assert_array_equal(
         disassemble_video(result)["images"], _pixels()[[1, 3, 4]].astype(np.float32) / 255
     )
+
+
+@pytest.mark.parametrize(("strategy", "indices"), [("head", [0, 1, 2]), ("tail", [4, 5, 6])])
+def test_fractional_rate_encoded_windows_select_exact_requested_frames(
+    tmp_path: Path, strategy: str, indices: list[int]
+) -> None:
+    pixels = (np.arange(7 * 4 * 32 * 3).reshape(7, 4, 32, 3) % 251).astype(np.uint8)
+    encoded = io.BytesIO()
+    save_video_stream(
+        assemble_video(pixels, fps=Fraction(30000, 1001)), encoded, codec="ffv1", container="mkv"
+    )
+    data = encoded.getvalue()
+    digest = digest_bytes(data)
+    vault = AssetVault(tmp_path)
+    with vault.writer(digest) as writer:
+        writer.write(data)
+        writer.commit()
+    video = video_from_source(AssetRef(digest, "fractional.mkv", len(data), resolver=vault))
+    result = VideoFrameSample.execute(video=video, num_frames=3, strategy=strategy, seed=0)["video"]
+    assert effective_video_facts(result)["fps"] == Fraction(30000, 1001)
+    np.testing.assert_array_equal(disassemble_video(result)["images"], pixels[indices])

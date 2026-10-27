@@ -1,5 +1,11 @@
 ## Media I/O
 
+- Portable SAM3 track values preserve packed uint8 masks, empty object axes or
+  absent masks, original dimensions, frame counts, optional scores, and structural
+  metadata across worker boundaries
+- Portable camera embeddings, motion tracks with optional visibility, and complete
+  audio-encoder outputs preserve tensor dtype, shape and bytes, ordered layer
+  sequences, sample counts and structural metadata across execution hosts and caches
 - Typed PNG, JPEG, and WebP image loading with EXIF orientation, ICC-to-sRGB
   conversion, alpha masks, bounded metadata inspection, and input- or
   output-category asset selection. Media outputs retain compact pixel or PCM
@@ -55,6 +61,8 @@
   resampling matching native video loading; deferred assembly with optional
   audio, 8/10-bit precision, sRGB, HLG, and HDR PQ; disassembly to frames,
   optional audio, fps, duration, bit depth, and color space
+- Native Sample Video Frame selects head or tail windows with audio retained,
+  or ordered uniform/random frames at the source frame rate without audio
 - Public `iter_video_pixels` yields edited, display-oriented float32 pixels
   with rational timestamps without accumulating the complete frame batch.
   Consumers that stop early close the iterator to release the decoder and
@@ -63,6 +71,8 @@
 - VIDEO values retain an encoded source or deferred components, rational
   source probe facts, and ordered lazy trim, crop, scale, and restricted
   identical-codec concat edits. Info and lazy edits do not decode frames.
+  Decoded source trims select half-open stream-tick windows while retaining
+  rational timeline bounds and independent audio sample windows.
   Encoded sources can be MP4, MKV, MOV, WebM, AVI, or GIF. Source-copy saves
   preserve original bytes; exact closed packet cuts use stream copy and
   other edits transcode frame-at-a-time. Alpha and source precision are
@@ -75,6 +85,11 @@
   audio mixing, CURVE parameters, and deterministic CPU text effects
 - Streamed media uploads and video encoding with explicit upload, decoded
   frame, decoded audio, and encoded output limits
+- Native Comfy packs exchange portable VIDEO and VIDEO_EDIT values without
+  requiring the media I/O pack. Video admission accepts verified assets and
+  granted local files, rejecting revoked or changed local bindings before
+  probing or publishing; admitted local bytes use bounded inline or published
+  asset storage without decoding video frames.
 - Bounded frame-record export to GIF (Pillow or FFmpeg dithering), animated
   WebP, 8/16-bit APNG with alpha, and ZIP PNG sequences; variable frame
   durations, animation loops, workflow metadata, and declared-count checks
@@ -107,6 +122,9 @@
   materialize bounded AUDIO values, match the lower sample rate to the higher
   rate, and preserve ComfyUI channel, trimming, padding, and normalization
   behavior
+- Native bound-checkpoint Audio Encoder loading, audio conditioning through
+  AUDIO_ENCODER_OUTPUT, and SheetSage2 music transcription to ordered ABC
+  strings in melody-only or full melody-and-chords mode
 - Audio amplitude-envelope extraction to a per-video-frame float list and
   editable time-aligned CURVE (the audio-reactive replacement path):
   band-limited FFT magnitude with avg/max/sum aggregation at a chosen frame
