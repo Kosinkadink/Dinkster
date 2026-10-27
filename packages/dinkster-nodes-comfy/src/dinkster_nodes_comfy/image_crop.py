@@ -10,9 +10,9 @@ from typing import Any
 
 from dinkster_api.v1 import (
     BOUNDING_BOX_TYPE,
+    COLOR_TYPE,
     CORE_FLOAT,
     CORE_INT,
-    CORE_STRING,
     IMAGE_TYPE,
     MASK_TYPE,
     ColorWidget,
@@ -222,7 +222,7 @@ class ImageCropToMask(Node):
                 ),
                 InputSpec(
                     "background",
-                    TypeExpr.concrete(CORE_STRING),
+                    TypeExpr.concrete(COLOR_TYPE),
                     default="#000000",
                     widget=ColorWidget(),
                     doc="Background color behind the masked subject.",

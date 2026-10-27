@@ -12,6 +12,59 @@ from types import SimpleNamespace
 import pytest
 
 
+@pytest.mark.parametrize(
+    "name", ["SaveExample", "CLIPSave", "VAESave", "CheckpointSave", "ModelSave"]
+)
+@pytest.mark.parametrize(
+    "output_node,prefix_type", [(True, "STRING"), (False, "STRING"), (True, "INT")]
+)
+@pytest.mark.parametrize("input_is_list", [False, True])
+def test_save_mount_admission_uses_source_output_contract(
+    name: str, output_node: bool, prefix_type: str, input_is_list: bool
+) -> None:
+    from dinkster_schema import InputSpec, MountWidget, NodeSchema, TypeExpr, schema_to_wire
+
+    from tools.compare_nodes import compare_registry
+
+    reference = {
+        "nodes": [
+            {
+                "class_name": name,
+                "output_node": output_node,
+                "input_is_list": input_is_list,
+                "input_types": {"required": {"filename_prefix": [prefix_type]}},
+                "return_types": [],
+            }
+        ]
+    }
+    native = schema_to_wire(
+        NodeSchema(
+            node_type=name,
+            output_node=output_node,
+            inputs=(
+                InputSpec(
+                    "filename_prefix",
+                    TypeExpr.list_of(TypeExpr.concrete(prefix_type))
+                    if input_is_list
+                    else TypeExpr.concrete(prefix_type),
+                ),
+                InputSpec(
+                    "mount",
+                    TypeExpr.concrete("STRING"),
+                    required=False,
+                    default=None,
+                    widget=MountWidget(),
+                    adjacent_to="filename_prefix",
+                ),
+            ),
+        )
+    )
+    result = compare_registry(reference, {"nodes": {name: native}})
+    assert result["passed"] is (output_node and prefix_type == "STRING" and not input_is_list)
+    if not result["passed"]:
+        assert "inputs" in result["rows"][0]["differences"]
+
+
 def test_reference_file_arguments_follow_declared_execution_source(tmp_path: Path) -> None:
     import importlib.util
 
@@ -222,6 +275,7 @@ def test_save_mount_is_not_an_arbitrary_extra_input(field: str, value: object) -
         "nodes": [
             {
                 "class_name": "SaveExample",
+                "output_node": True,
                 "input_types": {"required": {"filename_prefix": ["STRING"]}},
                 "return_types": [],
             }
@@ -231,6 +285,7 @@ def test_save_mount_is_not_an_arbitrary_extra_input(field: str, value: object) -
         "nodes": {
             "SaveExample": {
                 "nodeType": "SaveExample",
+                "outputNode": True,
                 "interface": [
                     {
                         "role": "input",
@@ -794,3 +849,63 @@ def test_engine_nodes_are_compared_despite_historical_exclusion_metadata(name: s
     assert result["counts"] == {"differs": 1}
     assert result["engine_exclusions"] == {}
     assert compare_registry(reference, {"nodes": {}})["counts"] == {"absent": 1}
+
+
+@pytest.mark.parametrize("v3", [False, True])
+@pytest.mark.parametrize(
+    "kind", ["model/vae", "model/diffusers", "directory/input", "directory/dataset"]
+)
+def test_source_marked_selections_require_exact_picker_kind_and_socket(kind: str, v3: bool) -> None:
+    from dinkster_api.v1 import AssetWidget, InputSpec, NodeSchema, TypeExpr, schema_to_wire
+
+    from tools.compare_nodes import compare
+    from tools.dump_comfy_nodes import FileChoices, annotate_files
+
+    options = FileChoices(["source-option"], kind)
+    spec = ("COMBO", {"options": options}) if v3 else (options,)
+    row = {
+        "class_name": "SelectionExample",
+        "input_types": annotate_files({"required": {"selection": spec}}),
+        "return_types": [],
+    }
+    schema = schema_to_wire(
+        NodeSchema(
+            node_type="SelectionExample",
+            inputs=(
+                InputSpec(
+                    "selection",
+                    TypeExpr.union("COMBO", "ASSET")
+                    if kind == "model/vae"
+                    else TypeExpr.concrete("COMBO"),
+                    widget=AssetWidget(kind=kind, selection=True),
+                ),
+            ),
+        )
+    )
+    assert compare(row, schema) == []
+    interface = schema["interface"]
+    assert isinstance(interface, list)
+    item = interface[0]
+    assert isinstance(item, dict)
+    widget = item["widget"]
+    widget["kind"] = "directory/input" if kind != "directory/input" else "directory/dataset"
+    assert compare(row, schema)
+    widget["kind"] = kind
+    widget.pop("selection")
+    assert compare(row, schema)
+    widget["selection"] = True
+    original_type = item["type"]
+    for invalid_type in (
+        {"kind": "concrete", "types": ["ASSET"]},
+        {"kind": "concrete", "types": ["STRING"]},
+        {"kind": "union", "types": ["COMBO", "ASSET", "STRING"]},
+        {"kind": "list", "element": original_type},
+    ):
+        item["type"] = invalid_type
+        assert compare(row, schema)
+    item["type"] = original_type
+    unmarked = ["source-option"]
+    row["input_types"] = annotate_files(
+        {"required": {"selection": ("COMBO", {"options": unmarked}) if v3 else (unmarked,)}}
+    )
+    assert compare(row, schema)

@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from dinkster_api.v1 import (
+    COLOR_TYPE,
     CORE_BOOLEAN,
     CORE_COMBO,
     CORE_FLOAT,
@@ -61,7 +62,7 @@ class TextOverlay(Node):
                 ),
                 InputSpec(
                     "color",
-                    TypeExpr.concrete(CORE_STRING),
+                    TypeExpr.concrete(COLOR_TYPE),
                     default="#ffffff",
                     widget=ColorWidget(),
                     doc="Color of the text.",

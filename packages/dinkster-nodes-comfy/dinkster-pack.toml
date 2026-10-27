@@ -492,6 +492,10 @@ namespaces = [
     "ImageCropToMask",
     "RTDETR_detect",
     "DrawBBoxes",
+    "VAELoader",
+    "DiffusersLoader",
+    "SAM3_VideoTrack",
+    "SAM3_TrackToMask",
     "VideoFrameSample",
     "CheckpointLoaderSimple",
     "CheckpointLoader",
@@ -510,6 +514,9 @@ namespaces = [
     "LoadLoraTextEncoder",
     "LoraLoaderBypass",
     "LoraLoaderBypassModelOnly",
+    "CropByBBoxes",
+    "MakeTrainingDataset",
+    "TripoSplatPreprocessImage",
     "TextOverlay",
 ]
 

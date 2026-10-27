@@ -3,7 +3,11 @@
 from typing import Any, cast
 
 from dinkster_api.v1 import schema_to_wire
-from dinkster_nodes_comfy.dataset_groups import MergeImageLists, ResolutionBucket
+from dinkster_nodes_comfy.dataset_groups import (
+    MakeTrainingDataset,
+    MergeImageLists,
+    ResolutionBucket,
+)
 
 
 def test_dataset_group_interfaces_preserve_list_elements() -> None:
@@ -22,3 +26,13 @@ def test_dataset_group_interfaces_preserve_list_elements() -> None:
                 "kind": "list",
                 "element": {"kind": "concrete", "types": [element]},
             }
+
+
+def test_training_dataset_caption_socket_retains_text_widget_metadata() -> None:
+    interface = cast(
+        list[dict[str, Any]], schema_to_wire(MakeTrainingDataset.schema())["interface"]
+    )
+    texts = next(item for item in interface if item["id"] == "texts")
+    assert texts["required"] is False
+    assert texts["forceInput"] is True
+    assert texts["widget"]["multiline"] is False
