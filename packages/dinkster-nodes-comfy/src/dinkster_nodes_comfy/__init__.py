@@ -126,6 +126,7 @@ from .qwen_image_encoders import (
 from .rebatch import REBATCH_NODES
 from .reference_conditioning import REFERENCE_CONDITIONING_NODES
 from .rope_and_mask import ROPE_AND_MASK_NODES
+from .rtdetr import RTDETR_NODES
 from .sampler_factories import SAMPLER_FACTORY_NODES
 from .save_text import SaveText
 from .sd_upscale_conditioning import SD_UPSCALE_CONDITIONING_NODES
@@ -318,6 +319,7 @@ COMFY_NODES = (
     PhotoMakerEncode,
     ImageCropV2,
     PrimitiveBoundingBox,
+    *RTDETR_NODES,
 )
 
 
