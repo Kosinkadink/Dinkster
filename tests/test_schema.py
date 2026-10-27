@@ -140,6 +140,21 @@ def test_multi_combo_retains_string_choices(value: Any) -> None:
         MultiComboWidget(options=(value,))
 
 
+@pytest.mark.parametrize("value", [-(2**53), 2**53, float("inf"), float("nan"), [], {}])
+def test_scalar_combo_rejects_invalid_defaults_in_model_and_wire(value: Any) -> None:
+    with pytest.raises(ValueError, match="combo default"):
+        InputSpec("choice", TypeExpr.concrete("COMBO"), default=value)
+    wire = schema_to_wire(
+        NodeSchema(
+            node_type="test.combo-default",
+            inputs=(InputSpec("choice", TypeExpr.concrete("COMBO")),),
+        )
+    )
+    cast("list[dict[str, Any]]", wire["interface"])[0]["default"] = value
+    with pytest.raises(ValueError, match="combo default"):
+        schema_from_wire(wire)
+
+
 @pytest.mark.parametrize("input_values", [False, True])
 def test_wire_roundtrip_uses_only_version_one(input_values: bool) -> None:
     schema = dataclasses.replace(SCHEMA, input_values=input_values)

@@ -1317,6 +1317,19 @@ class InputSpec:
             _validate_widget_binding(self.id, self.type, self.widget, force_input=self.force_input)
         default: object = self.default
         if (
+            self.type == TypeExpr.concrete(CORE_COMBO)
+            and default is not None
+            and not (
+                type(default) in (str, bool)
+                or (type(default) is int and abs(default) <= _JSON_SAFE_INT)
+                or (type(default) is float and math.isfinite(default))
+            )
+        ):
+            raise ValueError(
+                f"input {self.id}: combo default must be a string, boolean, JSON-safe integer "
+                "or finite float"
+            )
+        if (
             any(isinstance(widget, MultiComboWidget) for widget in descriptors)
             and (
                 type(default) is not list
