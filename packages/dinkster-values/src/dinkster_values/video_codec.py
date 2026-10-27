@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import math
 import struct
 from collections.abc import Callable, Mapping
 from fractions import Fraction
 from typing import Any, Protocol, cast, runtime_checkable
 
 from .audio_codec import (
+    append_audio_edit,
     audio_encoded_meta,
     audio_meta,
     bind_audio_sources,
@@ -28,7 +30,14 @@ from .limits import MEBIBYTE, VIDEO_AUDIO_COMPONENT_LIMIT_BYTES, VIDEO_VALUE_LIM
 from .model import stable_hash
 from .resources import COST_META_KEY
 from .storage import BFLOAT16_FIELD, array_storage_meta, storage_dtype
-from .video_edits import VIDEO_TREE_CLIP_LIMIT, effective_video_facts, integer, mapping, seconds
+from .video_edits import (
+    VIDEO_TREE_CLIP_LIMIT,
+    effective_video_facts,
+    integer,
+    mapping,
+    seconds,
+    trim_window,
+)
 from .video_probe import VideoSource, color_space_label, open_video_source, probe_video
 
 VIDEO_CONTAINERS = frozenset({"mp4", "mkv", "mov", "webm", "avi", "gif"})
@@ -407,6 +416,27 @@ def edit_video(obj: object, edit: Mapping[str, object]) -> dict[str, object]:
     value = coerce_video(obj)
     if "timeline" in value:
         raise ValueError("VIDEO v3 edits must use video_document nodes")
+    if "complete_audio" in value and "trim" in edit:
+        params = mapping(edit["trim"], "trim")
+        start, duration = trim_window(
+            cast(Fraction | None, effective_video_facts(value)["duration"]),
+            params.get("start_time", 0),
+            params.get("duration", 0),
+            edit.get("strict_duration", False),
+        )
+        audio = value["complete_audio"]
+        facts = effective_audio_facts(audio)
+        rate = facts["sample_rate"]
+        first = math.ceil(start * rate)
+        if duration is None:
+            duration = seconds(params.get("duration", 0), "duration") or None
+        last = math.ceil((start + duration) * rate) if duration is not None else facts["frames"]
+        if last is None:
+            raise ValueError("soundtrack trim requires a finite AUDIO or VIDEO duration")
+        # The soundtrack is attached in current presentation time, not source time.
+        value["complete_audio"] = append_audio_edit(
+            audio, {"trim": {"start_sample": first, "sample_count": max(0, last - first)}}
+        )
     value["edits"] = [*cast("list[object]", value["edits"]), dict(edit)]
     return coerce_video(value)
 

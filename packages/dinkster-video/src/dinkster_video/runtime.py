@@ -136,19 +136,28 @@ def concatenate_video(
 
     def flatten(value: dict[str, object]) -> list[dict[str, object]]:
         nonlocal inherited
-        edits = cast("list[object]", value["edits"])
-        if len(edits) != 1 or "concat" not in mapping(edits[0], "VIDEO edit"):
-            if value.get("complete_audio") is not None:
-                inherited = value["complete_audio"]
-            return [value]
         root = dict(value)
-        root["edits"] = []
-        result = flatten(root)
-        for child in cast("list[object]", mapping(edits[0], "VIDEO edit")["concat"]):
-            result.extend(flatten(cast(dict[str, object], child)))
-        if value.get("complete_audio") is not None:
-            inherited = value["complete_audio"]
-        return result
+        soundtrack = root.pop("complete_audio", None)
+        edits: list[object] = []
+        for raw in cast("list[object]", root["edits"]):
+            edit = dict(mapping(raw, "VIDEO edit"))
+            if "concat" in edit:
+                edit["concat"] = [
+                    leaf
+                    for child in cast("list[object]", edit["concat"])
+                    for leaf in flatten(cast(dict[str, object], child))
+                ]
+            edits.append(edit)
+        root["edits"] = edits
+        if soundtrack is not None:
+            inherited = soundtrack
+        if len(edits) == 1 and "concat" in mapping(edits[0], "VIDEO edit"):
+            root["edits"] = []
+            return [
+                root,
+                *cast("list[dict[str, object]]", mapping(edits[0], "VIDEO edit")["concat"]),
+            ]
+        return [root]
 
     clips: list[dict[str, object]] = []
     for raw in supplied:

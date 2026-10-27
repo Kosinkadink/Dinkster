@@ -399,13 +399,78 @@ def test_public_concatenate_video_limits_direct_inputs_not_unrelated_trees(count
 
 
 def test_public_concatenate_video_preserves_nonflattened_first_clip_edits() -> None:
+    from dinkster_values.audio_codec import audio_window
+
     source = video_from_source(_source())
     trimmed = edit_video(source, {"trim": {"start_time": 0.5, "duration": 0.5}})
-    single = concatenate_video([trimmed])
+    # Hand-derived: attaching audio after the source trim starts at sample zero.
+    waveform = np.repeat(np.array([0.125, 0.5], np.float32), 4000)[None, None]
+    single = concatenate_video(
+        [trimmed], complete_audio={"waveform": waveform, "sample_rate": 8000}
+    )
     multiple = concatenate_video([trimmed, source])
     assert effective_video_facts(single)["frame_count"] == 5
     assert effective_video_facts(multiple)["frame_count"] == 25
+    np.testing.assert_array_equal(
+        audio_window(disassemble_video(single)["audio"], 0, 4000)["waveform"],
+        waveform[..., :4000],
+    )
     assert cast(np.ndarray, disassemble_video(multiple)["images"]).shape[0] == 25
+
+
+@pytest.mark.parametrize("inherited", (False, True))
+@pytest.mark.parametrize(
+    ("windows", "start", "count"),
+    [([(1, 1)], 48000, 48000), ([(0.5, 1.5), (-0.5, 0.5)], 72000, 24000)],
+)
+def test_complete_soundtrack_follows_post_concat_trims(
+    inherited: bool,
+    windows: list[tuple[float, float]],
+    start: int,
+    count: int,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_assets.value import bind_video_value
+    from dinkster_values.audio_codec import audio_window
+    from dinkster_video.runtime import iter_video_audio
+
+    # Hand-derived local fixture: two one-second clips, 48kHz mono audio
+    # changing every quarter second. The windows select [1,2) or [1.5,2).
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path))
+    waveform = np.repeat(np.arange(8, dtype=np.float32) / 16, 12000)[None, None]
+    first = assemble_video(np.zeros((2, 16, 16, 3), np.uint8), fps=2)
+    second = assemble_video(np.full((2, 16, 16, 3), 255, np.uint8), fps=2)
+    joined = concatenate_video(
+        [first, second],
+        codec="ffv1",
+        complete_audio={"waveform": waveform, "sample_rate": 48000},
+    )
+    if inherited:
+        joined = concatenate_video([joined])
+    for offset, duration in windows:
+        joined = edit_video(joined, {"trim": {"start_time": offset, "duration": duration}})
+    joined = bind_video_value(
+        decode_video(encode_video(bind_video_value(joined))), AssetVault(tmp_path)
+    )
+    expected = waveform[..., start : start + count]
+    result = disassemble_video(joined)
+    np.testing.assert_array_equal(audio_window(result["audio"], 0, count)["waveform"], expected)
+    np.testing.assert_array_equal(
+        np.concatenate([frame.to_ndarray() for _, frame in iter_video_audio(joined)], axis=1)[None],
+        expected,
+    )
+    saved = io.BytesIO()
+    save_video_stream(joined, saved, container="mkv", codec="ffv1")
+    reloaded = video_from_source(saved.getvalue())
+    np.testing.assert_array_equal(
+        np.concatenate([frame.to_ndarray() for _, frame in iter_video_audio(reloaded)], axis=1)[
+            None
+        ],
+        expected,
+    )
+    assert cast(np.ndarray, result["images"]).shape[0] == count // 24000
+    np.testing.assert_array_equal(result["images"], np.full((count // 24000, 16, 16, 3), 255))
 
 
 @pytest.mark.parametrize("codec", ("h264", "ffv1"))

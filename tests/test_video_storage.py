@@ -75,6 +75,44 @@ def test_nested_complete_soundtrack_precedence_roundtrip_and_fingerprint() -> No
     assert fingerprint(inherited) != fingerprint(explicit)
 
 
+@pytest.mark.parametrize("trimmed", (False, True))
+def test_explicit_soundtrack_removes_superseded_descendant_identity_and_cost(trimmed: bool) -> None:
+    from dinkster_api.v1 import VIDEO_TYPE, video_fingerprint
+    from dinkster_values import video_meta
+
+    # Hand-derived local fixture: obsolete tracks differ in sample values and
+    # size; neither may influence a concatenation with the same explicit track.
+    source = concatenate_video([assemble_video(np.zeros((1, 16, 16, 3), np.uint8), fps=2)])
+    override = {"waveform": np.full((1, 1, 24000), 0.25, np.float32), "sample_rate": 8000}
+    results = []
+    for count, level in ((8000, 0.125), (32000, -0.5)):
+        inner = concatenate_video(
+            [source, source],
+            complete_audio={
+                "waveform": np.full((1, 1, count), level, np.float32),
+                "sample_rate": 8000,
+            },
+        )
+        if trimmed:
+            inner = edit_video(inner, {"trim": {"start_time": 0, "duration": 0.5}})
+        original = encode_video(inner)
+        results.append(concatenate_video([source, inner], complete_audio=override))
+        assert encode_video(inner) == original
+    first, second = results
+    assert encode_video(first) == encode_video(second)
+    fingerprint = video_fingerprint(VIDEO_TYPE)
+    assert fingerprint(first) == fingerprint(second)
+    assert video_meta(first) == video_meta(second)
+
+    def assert_no_nested_soundtrack(value: dict[str, Any]) -> None:
+        for edit in value["edits"]:
+            for child in edit.get("concat", []):
+                assert "complete_audio" not in child
+                assert_no_nested_soundtrack(child)
+
+    assert_no_nested_soundtrack(decode_video(encode_video(first)))
+
+
 def test_complete_audio_wire_rejects_forged_metadata() -> None:
     from dinkster_values import video_meta
     from dinkster_values.video_codec import validate_video_encoded
