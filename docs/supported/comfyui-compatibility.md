@@ -7,6 +7,17 @@
   encoder, vision-encoder, ControlNet, style-model and GLIGEN loader schemas.
   Model construction uses the pinned inference package; file inputs grant
   access only to the selected asset.
+- Image-only checkpoint loading returns separate model, vision encoder and VAE
+  outputs. LTXV audio VAE loading retains audio and vocoder weights and checkpoint
+  metadata; LTXAV text encoding loads its text encoder before its checkpoint.
+  Loader CPU checks use tiny files and controlled model constructors, not full models.
+- Native Load Audio decodes bound audio files with preserved channel order and PCM
+  scaling. Preview Audio returns the audio without writing a preview file.
+- Native audio saves write FLAC, MP3 and Opus through the selected output mount,
+  preserving audio outputs and batch-specific filename prefixes.
+- Native YuE2 ABC and music conditioning preserve generation controls, automatic
+  off mode for empty scores, guidance defaults and generated duration. CPU checks
+  use controlled encoders, not full-model music generation.
 - Native LoRA file loaders apply model and text-encoder strengths separately,
   retain weight metadata, and support ordered stacks and bypass application.
   Disabled stack entries and zero strengths do not resolve their file inputs.
@@ -70,6 +81,10 @@
   loading Torch during registration.
 - LATENT_UPSCALE_MODEL preserves resident identity, ownership, and cache lifetime
   across ordinary native pack hosts without loading Torch during registration.
+- UPSCALE_MODEL preserves the live image-upscale descriptor and its patcher as a
+  resident value across ordinary pack hosts; model contents are not serialized.
+- LOSS_MAP transports ordered training loss values and structural extras through
+  the shared latent framing without changing the recorded numeric values.
 - Hunyuan Video 1.5 and LTXV latent upscale consumers preserve core resize,
   normalization, dtype, device, and latent metadata behavior.
 - Nine native advanced latent nodes add, subtract, multiply, interpolate,

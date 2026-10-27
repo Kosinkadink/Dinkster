@@ -1,4 +1,8 @@
-"""Scalar conversion and curve standard library coverage."""
+"""Scalar conversion and curve standard library coverage.
+
+Conversion and native curve expectations are hand-derived unless a test
+explicitly identifies an external source below.
+"""
 
 from __future__ import annotations
 
@@ -200,7 +204,7 @@ def test_conversion_alias_operation_mappings() -> None:
 
 
 def test_curve_is_frozen_validated_and_interpolates() -> None:
-    curve = Curve(((-2, 10), (0, 0), (4, 8)))
+    curve = Curve(((-2, 10), (0, 0), (4, 8)), "linear")
     assert curve.points == ((-2.0, 10.0), (0.0, 0.0), (4.0, 8.0))
     assert curve.start == -2.0
     assert curve.end == 4.0
@@ -220,9 +224,6 @@ def test_curve_is_frozen_validated_and_interpolates() -> None:
 @pytest.mark.parametrize(
     "points",
     [
-        (),
-        ((0, 1), (0, 2)),
-        ((1, 1), (0, 2)),
         ((math.inf, 1),),
         ((0, math.nan),),
         ((True, 1),),
@@ -233,12 +234,52 @@ def test_curve_rejects_invalid_points(points: object) -> None:
         Curve(points)  # type: ignore[arg-type]
 
 
-def test_curve_codec_is_canonical_and_bounded() -> None:
+def test_curve_defaults_and_source_forms_share_monotone_interpolation() -> None:
+    registry = TypeRegistry()
+    register_foundation_types(registry)
+    spec = registry.spec(CURVE_TYPE)
+    # ComfyUI CurveInput.from_raw, F bc5f880d: points [(1,1),(0,0),(.25,.8)],
+    # interpolation omitted, interp(.1). The native object form has identical meaning.
+    expected = 0.3778232634051082
+    points = [(1.0, 1.0), (0.0, 0.0), (0.25, 0.8)]
+    for raw in (
+        points,
+        {"points": points},
+        {"points": [{"position": x, "value": y} for x, y in points]},
+        Curve(tuple(points)),
+    ):
+        curve = registry.wrap(CURVE_TYPE, raw).resolve()
+        assert isinstance(curve, Curve)
+        assert curve.interpolation == "monotone_cubic"
+        assert curve.points == ((0.0, 0.0), (0.25, 0.8), (1.0, 1.0))
+        assert curve.evaluate(0.1) == pytest.approx(expected, rel=0, abs=1e-15)
+        assert spec.decode(spec.encode(curve)) == curve
+    # ComfyUI CurveInput.from_raw, F bc5f880d: empty points, omitted mode,
+    # interp(-1), interp(0), interp(.1), interp(2) all return exactly zero.
+    for raw in ([], {"points": []}, Curve(())):
+        empty = registry.wrap(CURVE_TYPE, raw).resolve()
+        assert isinstance(empty, Curve)
+        assert [empty.evaluate(x) for x in (-1.0, 0.0, 0.1, 2.0)] == [0.0] * 4
+        assert spec.decode(spec.encode(empty)) == empty
+
+
+def test_curve_duplicate_positions_preserve_stable_order_and_interpolation() -> None:
+    # ComfyUI CurveInput.from_raw, F bc5f880d: these unsorted points with duplicate
+    # x=.5, both explicit modes, interp(0), interp(.5), interp(.75), interp(1).
+    points = ((1.0, 0.0), (0.5, 0.25), (0.0, 0.0), (0.5, 1.0))
+    smooth = Curve(points)
+    linear = Curve(points, "linear")
+    assert smooth.points == linear.points == ((0.0, 0.0), (0.5, 0.25), (0.5, 1.0), (1.0, 0.0))
+    assert [smooth.evaluate(x) for x in (0.0, 0.5, 0.75, 1.0)] == [0.0, 1.0, 0.625, 0.0]
+    assert [linear.evaluate(x) for x in (0.0, 0.5, 0.75, 1.0)] == [0.0, 1.0, 0.5, 0.0]
+
+
+def test_curve_codec_is_canonical_without_a_value_point_limit() -> None:
     registry = TypeRegistry()
     register_foundation_types(registry)
     register_foundation_types(registry)
     spec = registry.spec(CURVE_TYPE)
-    curve = Curve(((0, 1), (2.5, -3)))
+    curve = Curve(((0, 1), (2.5, -3)), "linear")
     encoded = (
         b'{"interpolation":"linear","points":[{"position":0.0,"value":1.0},'
         b'{"position":2.5,"value":-3.0}]}'
@@ -252,10 +293,11 @@ def test_curve_codec_is_canonical_and_bounded() -> None:
     assert spec.meta(curve) == {"pointCount": 2, "start": 0.0, "end": 2.5}
     with pytest.raises(ValueError, match="invalid CURVE payload"):
         spec.decode(b"not json")
-    with pytest.raises(ValueError, match="strictly increasing"):
-        spec.decode(b'{"points":[{"position":1,"value":0},{"position":1,"value":2}]}')
-    with pytest.raises(ValueError, match="between 1 and 4096"):
-        Curve(tuple((index, index) for index in range(4097)))
+    # Hand-derived: equal-position entries retain their original order across the codec.
+    duplicates = Curve(((1, 0), (1, 2)))
+    assert spec.decode(spec.encode(duplicates)) == duplicates
+    oversized = Curve(tuple((index, index) for index in range(4097)))
+    assert spec.decode(spec.encode(oversized)) == oversized
 
 
 def test_curve_points_rendition_declares_and_enforces_point_bound() -> None:
@@ -275,14 +317,14 @@ def test_curve_points_rendition_declares_and_enforces_point_bound() -> None:
 
     render = cast(Callable[[object], bytes], rendition.render)
     oversized = {"points": [{"position": index, "value": index} for index in range(4097)]}
-    with pytest.raises(RenditionUnavailable, match="between 1 and 4096"):
+    with pytest.raises(RenditionUnavailable, match="preview exceeds 4096"):
         render(oversized)
 
 
 def test_curve_interpolation_is_explicit_and_shape_preserving() -> None:
     with pytest.raises(ValueError, match="interpolation"):
         Curve(((0, 0),), "spline")  # type: ignore[arg-type]
-    linear = Curve(((0, 0), (1, 2), (3, 3)))
+    linear = Curve(((0, 0), (1, 2), (3, 3)), "linear")
     smooth = Curve(linear.points, "monotone_cubic")
     assert linear.evaluate(0.5) == 1.0
     assert smooth.evaluate(0.5) == pytest.approx(1.09375)
@@ -332,19 +374,19 @@ def test_curve_nodes_build_evaluate_and_sample() -> None:
         "Curve",
         CurveFromValues.execute(values=[2.0, 4.0, 8.0], start=-1.0, step=2.0)["curve"],
     )
-    assert curve == Curve(((-1, 2), (1, 4), (3, 8)))
+    assert curve == Curve(((-1, 2), (1, 4), (3, 8)), "linear")
     assert CurveEvaluate.execute(curve=curve, position=0.0) == {"value": 3.0}
     assert CurveSample.execute(curve=curve, count=5) == {"values": [2.0, 3.0, 4.0, 6.0, 8.0]}
     assert CurveSample.execute(curve=curve, count=1) == {"values": [2.0]}
     with pytest.raises(ValueError, match="greater than zero"):
         CurveFromValues.execute(values=[1.0], start=0.0, step=0.0)
-    with pytest.raises(ValueError, match="between 1 and"):
+    with pytest.raises(ValueError, match="at least one"):
         CurveSample.execute(curve=curve, count=0)
 
 
 def test_numeric_schedule_parser_is_strict_and_orders_points() -> None:
     assert parse_schedule("10:(1.0), 0: (0.5), 20:-2,") == Curve(
-        ((0.0, 0.5), (10.0, 1.0), (20.0, -2.0))
+        ((0.0, 0.5), (10.0, 1.0), (20.0, -2.0)), "linear"
     )
     for invalid in ("", "0:1,,2:3", "0:(1", "0:sin(1)", "0:1:2", "0:1,0:2"):
         with pytest.raises(ValueError):

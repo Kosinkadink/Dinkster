@@ -79,7 +79,10 @@
   widget descriptors. Clients use these declarations without matching node IDs;
   native video trim and crop declare their exact `VIDEO_EDIT` features.
 - Values: INT, FLOAT, STRING, COMBO, BOOLEAN,
-  core.absent, immutable linear or monotone-cubic `dinkster.curve`, ordered
+  core.absent, immutable `CURVE` with monotone-cubic default or explicit linear
+  interpolation, stable-sorted points including duplicate positions and empty
+  curves that evaluate to zero; the 4096-point limit applies only to curve
+  preview renditions, not value transport. Ordered
   `dinkster.layers`, strict versioned `dinkster.compositor`, parametric `list<T>` and
   `asset<T>`
 - Integer, float, text, and boolean primitive nodes declare their exact output
