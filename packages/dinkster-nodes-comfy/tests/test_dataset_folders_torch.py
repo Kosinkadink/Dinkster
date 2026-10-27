@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import sys
@@ -72,6 +73,7 @@ def seed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
 
 
 def expected(directory: Path, paired: bool) -> list[str]:
+    # Hand-derived order: raw directory entries, with b.png repeated twice by 2_repeat.
     order = []
     for name in os.listdir(directory):
         if name in ("z.PNG", "a.png"):
@@ -82,6 +84,7 @@ def expected(directory: Path, paired: bool) -> list[str]:
 
 
 def check_images(images: Any, names: list[str]) -> None:
+    # Hand-derived from seed pixels: discard alpha, repeat grayscale over RGB, divide by 255.
     values = {
         "z.PNG": [[[17, 31, 61], [127, 191, 251]]],
         "a.png": [[[41, 41, 41]], [[83, 83, 83]], [[167, 167, 167]]],
@@ -94,6 +97,14 @@ def check_images(images: Any, names: list[str]) -> None:
         assert torch.equal(tensor, torch.tensor(values[name], dtype=torch.float32)[None] / 255)
 
 
+def source_tree_digests(directory: Path) -> dict[Path, str]:
+    return {
+        path.relative_to(directory): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in directory.rglob("*")
+        if path.is_file()
+    }
+
+
 def test_folder_images_and_repeated_caption_pairs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -103,6 +114,7 @@ def test_folder_images_and_repeated_caption_pairs(
     result = LoadImageTextDataSetFromFolder.execute(folder="dataset")
     names = expected(directory, True)
     check_images(result["images"], names)
+    # Hand-derived: strip the seeded sidecars and use empty text for the missing a.txt.
     assert result["texts"] == [
         {"z.PNG": "caption z", "a.png": "", "b.png": "repeated"}[n] for n in names
     ]
@@ -146,6 +158,7 @@ class FolderInspect(Node):
         check_images(images, expected(directory, False))
         names = expected(directory, True)
         check_images(paired, names)
+        # Hand-derived from the seeded sidecars, as in the direct caption assertion.
         assert texts == [{"z.PNG": "caption z", "a.png": "", "b.png": "repeated"}[n] for n in names]
         return cls.outputs(valid=True)
 
@@ -155,6 +168,7 @@ def test_folder_dataset_ordinary_hosts_reread_sources(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool
 ) -> None:
     directory, snapshot = seed(tmp_path, monkeypatch)
+    source_before = source_tree_digests(directory)
     monkeypatch.setenv("FOLDER_DATASET_FIXTURE", str(directory))
 
     async def scenario() -> None:
@@ -219,7 +233,9 @@ def test_folder_dataset_ordinary_hosts_reread_sources(
                 result = await engine.run(graph, ["inspect"])
                 assert result.outputs["inspect"]["valid"].resolve() is True
                 assert not ({"images", "pairs"} & set(result.cached))
+                assert source_tree_digests(directory) == source_before
         finally:
             await composer.close()
 
     asyncio.run(scenario())
+    assert source_tree_digests(directory) == source_before
