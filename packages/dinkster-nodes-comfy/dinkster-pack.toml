@@ -515,6 +515,7 @@ namespaces = [
     "CropByBBoxes",
     "MakeTrainingDataset",
     "TripoSplatPreprocessImage",
+    "ImageUpscaleWithModel",
 ]
 
 [pack.sandbox]
