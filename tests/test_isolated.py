@@ -2579,15 +2579,22 @@ def test_cancellation_reaches_the_worker(tmp_path: Path) -> None:
         worker = iso_worker(tmp_path, registry)
         await worker.start()
         try:
+            entered = asyncio.Event()
+
+            def on_event(event: EngineEvent) -> None:
+                if event.kind == "node_event" and event.detail.get("name") == "progress":
+                    entered.set()
+
             engine = Engine(
                 schemas=dict(worker.schemas),
                 registry=registry,
                 worker=worker,
                 cache=MemoryLRUCache(),
+                on_event=on_event,
             )
-            slow = Graph(nodes={"s": GraphNode("iso.sleepy", {"value": "never", "seconds": 30.0})})
+            slow = Graph(nodes={"s": GraphNode("iso.chatty", {"value": "never", "seconds": 30.0})})
             task = asyncio.create_task(engine.run(slow, ["s"]))
-            await asyncio.sleep(0.5)  # let the invocation reach the child
+            await asyncio.wait_for(entered.wait(), 5)
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
