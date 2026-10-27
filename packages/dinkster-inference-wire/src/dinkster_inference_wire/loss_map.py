@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import cast
 
 from dinkster_values import (
     LOSS_MAP_TYPE,
@@ -16,12 +17,15 @@ from dinkster_values import (
 
 def _decode(data: bytes) -> dict[str, object]:
     frame = decode_latent(data)
-    if type(frame) is not dict or set(frame) != {"samples"}:
+    if type(frame) is not dict:
         raise ValueError("LOSS_MAP frame must contain only samples")
-    value = frame["samples"]
+    loss_frame = cast("dict[str, object]", frame)
+    if set(loss_frame) != {"samples"}:
+        raise ValueError("LOSS_MAP frame must contain only samples")
+    value = loss_frame["samples"]
     if type(value) is not dict:
         raise ValueError("LOSS_MAP samples must be a mapping")
-    loss_map = value
+    loss_map = cast("dict[str, object]", value)
     if type(loss_map.get("loss")) is not list:
         raise ValueError("LOSS_MAP loss must be an ordered list")
     return loss_map
@@ -30,7 +34,7 @@ def _decode(data: bytes) -> dict[str, object]:
 def _encode(value: object) -> bytes:
     if type(value) is not dict:
         raise TypeError("LOSS_MAP requires a mapping")
-    data = encode_latent({"samples": value})
+    data = encode_latent({"samples": cast("dict[str, object]", value)})
     _decode(data)
     return data
 
