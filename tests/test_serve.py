@@ -3294,16 +3294,18 @@ async def close_together(worker):
 isolated.IsolatedWorker._close = close_together
 main()
 """
-    process = subprocess.Popen(
-        [sys.executable, "-c", bootstrap, *serve_command(port, *args)[3:]],
-        env={
-            **os.environ,
-            "PYTHONPATH": os.pathsep.join(str(manifest.parent) for manifest in manifests),
-        },
-        cwd=tmp_path,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    stderr_path = tmp_path / "serve.stderr.log"
+    with stderr_path.open("wb") as stderr:
+        process = subprocess.Popen(
+            [sys.executable, "-c", bootstrap, *serve_command(port, *args)[3:]],
+            env={
+                **os.environ,
+                "PYTHONPATH": os.pathsep.join(str(manifest.parent) for manifest in manifests),
+            },
+            cwd=tmp_path,
+            stdout=subprocess.DEVNULL,
+            stderr=stderr,
+        )
     children: tuple[int, ...] = ()
 
     try:
