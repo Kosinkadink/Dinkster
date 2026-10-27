@@ -21,6 +21,21 @@ def test_visualization_draws_tracks_without_mutating_sources() -> None:
     assert torch.equal(images, before)
 
 
+def test_visualization_blends_trail_over_circle_instead_of_replacing_it() -> None:
+    result = WanMoveVisualizeTracks.execute(
+        images=torch.zeros(2, 8, 8, 3),
+        tracks={
+            "track_path": torch.tensor([[[2.0, 2.0]], [[3.0, 2.0]]]),
+            "track_visibility": torch.ones(2, 1, dtype=torch.bool),
+        },
+        line_resolution=2,
+        circle_size=1,
+        opacity=0.5,
+        line_width=1,
+    )["IMAGE"]
+    assert torch.equal(result[1, 2, 3], torch.tensor([76.0, 114.0, 190.0]) / 255.0)
+
+
 def test_visualization_absent_tracks_is_identity() -> None:
     images = torch.arange(24, dtype=torch.float32).reshape(1, 2, 4, 3) / 24
     assert (

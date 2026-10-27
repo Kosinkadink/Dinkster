@@ -45,6 +45,7 @@ def _draw(
     for time, frame in enumerate(frames):
         overlay = image.new("RGBA", (frame.shape[1], frame.shape[0]), (0, 0, 0, 0))
         draw = drawing.Draw(overlay)
+        polylines: list[Any] = []
         for track in range(paths.shape[1]):
             if not visible[time, track]:
                 continue
@@ -55,33 +56,40 @@ def _draw(
             )
             points = paths[max(time - line_resolution, 0) : time + 1, track][::-1]
             if len(points) > 1:
-                length = sum(
-                    ((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2) ** 0.5
-                    for a, b in zip(points[:-1], points[1:], strict=False)
-                )
-                if length:
-                    walked = 0.0
-                    for start, end in zip(points[:-1], points[1:], strict=False):
-                        segment = ((end[0] - start[0]) ** 2 + (end[1] - start[1]) ** 2) ** 0.5
-                        for step in range(max(int(segment), 1)):
-                            ratio = (walked + step / max(int(segment), 1) * segment) / length
-                            x = int(start[0] + (end[0] - start[0]) * step / max(int(segment), 1))
-                            y = int(start[1] + (end[1] - start[1]) * step / max(int(segment), 1))
-                            draw.line(
-                                [(x, y), (x + 1, y)],
-                                fill=color[:3] + (int(255 * (1 - ratio) * opacity),),
-                                width=max(int(line_width * (1 - ratio)), 1),
-                            )
-                        walked += segment
+                polylines.append((points, color[:3]))
         layer = numpy.array(overlay)
         alpha = layer[:, :, 3:4] / 255.0
-        result.append(
-            image.fromarray(
-                (layer[:, :, :3] * alpha + frame.astype(numpy.float32) * (1 - alpha)).astype(
-                    numpy.uint8
-                )
-            )
-        )
+        frame_rgb = layer[:, :, :3] * alpha + frame.astype(numpy.float32) * (1 - alpha)
+        if polylines:
+            trail_overlay = image.new("RGBA", (frame.shape[1], frame.shape[0]), (0, 0, 0, 0))
+            trail_draw = drawing.Draw(trail_overlay, "RGBA")
+            for points, color in polylines:
+                lengths = [
+                    ((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2) ** 0.5
+                    for a, b in zip(points[:-1], points[1:], strict=False)
+                ]
+                length = sum(lengths)
+                if not length:
+                    continue
+                walked = 0.0
+                for (start, end), segment in zip(
+                    zip(points[:-1], points[1:], strict=False), lengths, strict=True
+                ):
+                    steps = max(int(segment), 1)
+                    for step in range(steps):
+                        ratio = (walked + step / steps * segment) / length
+                        x = int(start[0] + (end[0] - start[0]) * step / steps)
+                        y = int(start[1] + (end[1] - start[1]) * step / steps)
+                        trail_draw.line(
+                            [(x, y), (x + 1, y)],
+                            fill=color + (int(255 * (1 - ratio) * opacity),),
+                            width=max(int(line_width * (1 - ratio)), 1),
+                        )
+                    walked += segment
+            trail_layer = numpy.array(trail_overlay)
+            alpha = trail_layer[:, :, 3:4] / 255.0
+            frame_rgb = trail_layer[:, :, :3] * alpha + frame_rgb * (1 - alpha)
+        result.append(image.fromarray(frame_rgb.astype(numpy.uint8)))
     return result
 
 

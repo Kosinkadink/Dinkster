@@ -111,7 +111,7 @@ class WanMoveTrackToVideo(Node):
                     "length", _INT, default=81, widget=NumberWidget(min=1, max=16384, step=4)
                 ),
                 InputSpec("batch_size", _INT, default=1, widget=NumberWidget(min=1, max=4096)),
-                InputSpec("start_image", _IMAGE, required=False),
+                InputSpec("start_image", _IMAGE),
                 InputSpec(
                     "clip_vision_output", TypeExpr.concrete(CLIP_VISION_OUTPUT_TYPE), required=False
                 ),
