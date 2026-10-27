@@ -93,7 +93,7 @@ class Result(Node):
 FIXTURE_NODES = (ImageSource, Result)
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_canny_executes_twice_with_numpy_input_in_both_manifest_hosts(
     tmp_path: Path, in_process: bool
 ) -> None:

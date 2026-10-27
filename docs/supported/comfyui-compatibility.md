@@ -1,5 +1,8 @@
 ## ComfyUI compatibility
 
+- The `--comfy-root` and `--execution-python` composition supports an installed
+  inference package alongside source-only ComfyUI modules from the checkout,
+  while sharing one inference module state and leaving source files unchanged.
 - Core schema comparison permits the optional output mount for output nodes
   with a scalar STRING filename prefix, including CLIPSave, VAESave,
   CheckpointSave, and ModelSave, without relying on their class-name spelling.

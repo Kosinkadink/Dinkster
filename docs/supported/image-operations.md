@@ -6,6 +6,8 @@
   from horizontal angle, elevation, and zoom.
 - Native `TripoSplatPreprocessImage` erodes alpha, crops foreground to a padded
   square, resizes with Lanczos, and composites the image over black.
+- Native `TripoSplatConditioning` combines normalized vision tokens and VAE
+  reference latents with zero negative conditioning and fixed shape/camera noise targets.
 - Color strings, ordered color palettes, bounding boxes, and optional
   resolution-preview metadata pass between node packs without rewriting their values.
 - Native `PrimitiveBoundingBox` constructs pixel bounding boxes; `ImageCropV2`
@@ -109,6 +111,8 @@
   or per-image captions
 - Encoded training datasets loaded from granted dataset folders, preserving
   sorted shard order, latent tensors and conditioning metadata
+- Image and image-caption datasets loaded from granted input folders, with
+  per-file RGB images, optional sidecar captions and one-level repeated folders
 - Row-major image grid composition and decomposition; image stitching; split
   and merge with overlapping tiles
 - Image transitions between inputs, within a batch, or while joining batches,

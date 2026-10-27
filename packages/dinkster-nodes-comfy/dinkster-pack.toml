@@ -532,6 +532,7 @@ namespaces = [
     "CameraAngle",
     "MakeTrainingDataset",
     "TripoSplatPreprocessImage",
+    "TripoSplatConditioning",
     "LoadTrainingDataset",
     "LoadAudio",
     "PreviewAudio",
@@ -541,6 +542,8 @@ namespaces = [
     "SaveAudioAdvanced",
     "YuE2GenerateABC",
     "YuE2GenerateMusic",
+    "LoadImageDataSetFromFolder",
+    "LoadImageTextDataSetFromFolder",
     "Trellis2TextureStage",
 ]
 

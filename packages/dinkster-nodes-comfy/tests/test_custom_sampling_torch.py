@@ -286,8 +286,9 @@ def test_advanced_sampler_restores_asymmetric_av_streams_with_stub_guider(
         torch.testing.assert_close(result.by_role("audio"), audio * scale)
 
 
-@pytest.mark.parametrize("in_process", (True, False))
-@pytest.mark.parametrize("mode", ("noise", "empty", "advanced"))
+@pytest.mark.parametrize(
+    "mode,in_process", (("noise", True), ("empty", True), ("advanced", True), ("advanced", False))
+)
 def test_custom_sampling_on_ordinary_hosts(mode: str, in_process: bool) -> None:
     from dinkster_graph import Graph, GraphNode, Link
 

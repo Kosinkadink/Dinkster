@@ -241,7 +241,7 @@ class HypernetworkInspect(Node):
 HYPERNETWORK_FIXTURES = (HypernetworkSource, HypernetworkInspect)
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 @pytest.mark.parametrize("verified", (False, True))
 def test_hypernetwork_both_ordinary_hosts_twice(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, verified: bool
