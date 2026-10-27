@@ -513,6 +513,8 @@ namespaces = [
     "LoraLoaderBypass",
     "LoraLoaderBypassModelOnly",
     "CropByBBoxes",
+    "LoadImageDataSetFromFolder",
+    "LoadImageTextDataSetFromFolder",
 ]
 
 [pack.sandbox]
