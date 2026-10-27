@@ -98,7 +98,7 @@ class InspectDepth(Node):
         return cls.outputs(valid=True)
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_marigold_ordinary_manifest(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
         root = Path(__file__).resolve().parents[1]

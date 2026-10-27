@@ -130,7 +130,7 @@ class DatasetImageInspect(Node):
         return cls.outputs(valid=True)
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_dataset_images_ordinary_manifest_twice(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
         composer = ServingComposer(

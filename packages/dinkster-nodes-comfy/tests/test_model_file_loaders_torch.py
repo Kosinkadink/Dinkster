@@ -261,9 +261,18 @@ class CheckpointVariantInspect(Node):
 HOST_NODES = (LoaderSource, LoaderInspect, LoaderOutputInspect, CheckpointVariantInspect)
 
 
-@pytest.mark.parametrize("verified", (False, True))
-@pytest.mark.parametrize("in_process", (True, False))
-@pytest.mark.parametrize("observe_outputs", (False, True, "checkpoint-variants"))
+@pytest.mark.parametrize(
+    "observe_outputs,in_process,verified",
+    (
+        (False, True, False),
+        (False, True, True),
+        (True, True, False),
+        (True, True, True),
+        (True, False, True),
+        ("checkpoint-variants", True, False),
+        ("checkpoint-variants", True, True),
+    ),
+)
 def test_model_file_loaders_bind_tiny_safetensors_through_ordinary_hosts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

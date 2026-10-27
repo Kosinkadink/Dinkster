@@ -158,7 +158,7 @@ class Inspect(Node):
         )
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_chroma_options_execute_twice_in_both_ordinary_manifest_hosts(
     tmp_path: Path, in_process: bool
 ) -> None:

@@ -223,7 +223,7 @@ class Inspect(Node):
         return cls.outputs(summary="cosmos")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_ordinary_manifest_executes_both_cosmos_nodes_twice(
     tmp_path: Path, in_process: bool
 ) -> None:

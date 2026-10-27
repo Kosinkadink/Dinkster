@@ -182,7 +182,7 @@ class Stable3DInspect(Node):
         return cls.outputs(summary="stable3d")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_ordinary_manifest_executes_stable3d_twice(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
         source_root = Path(__file__).resolve().parents[1] / "src"

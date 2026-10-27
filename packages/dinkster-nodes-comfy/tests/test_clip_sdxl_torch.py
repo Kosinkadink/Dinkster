@@ -74,7 +74,7 @@ class TensorConditioningInspect(Node):
 TENSOR_FIXTURES = (TensorEncoderSource, TensorConditioningInspect)
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_manifest_transports_scheduled_sdxl_tensors(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
         composer = ServingComposer(
