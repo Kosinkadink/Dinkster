@@ -20,6 +20,10 @@
 - Filesystem mount scans report file, byte, and elapsed progress; publish
   indexed assets before the scan finishes; reuse unchanged-file indexes; and
   keep per-mount indexes under the configured library root
+- Operators can persist project folder membership, independent display order,
+  shared folders, and project output selections through the mount API.
+  Removing a project association does not delete files or revoke the grant.
+  Failed mounts can be explicitly rescanned after reconnecting a drive.
 - Scans exclude partial downloads and files changing between observations.
   Missing and replaced asset identities survive rescans and restart without
   being offered as live content; restored content recovers its digest.

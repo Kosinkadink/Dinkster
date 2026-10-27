@@ -846,6 +846,20 @@ the library index exists, the mount copy is ignored. `GET /api/mounts` reports
 scan progress as files, bytes, and elapsed seconds while unchanged size and
 mtime rows are reused.
 
+`GET /api/mounts?project=<project-id>` returns the project's ordered folders
+and selected output. `POST /api/mounts` accepts `project` (default `default`)
+and `shared` (default `false`): a new grant belongs only to that project unless
+Shared is explicitly requested. `PUT /api/mounts/projects/<project-id>` accepts
+`{"mounts": ["first", "second"], "outputMount": "second"}` to replace the
+project's order and membership without revoking any grants. The output must be
+a writable folder in that list, or null for no project output. Excluding a
+derived folder does not alter its source installation. Existing grants are
+initialized as shared when project settings are first created. Project settings
+persist in `<library-root>/project-folders.json`; mount priorities are unchanged.
+`POST /api/mounts/<id>/retry` queues a rescan of an unavailable folder.
+Location listings and mutations require a human operator with `settings:write`,
+not just `assets:write`; delegated agents cannot grant filesystem authority.
+
 ## Logging
 
 ### --log-level

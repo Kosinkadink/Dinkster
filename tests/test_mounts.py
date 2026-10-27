@@ -1605,3 +1605,168 @@ def test_mount_revoke_persists_even_when_catalog_refresh_fails(
 
     asyncio.run(scenario())
     store.close()
+
+
+def test_project_folders_persist_order_membership_and_derived_exclusions(tmp_path: Path) -> None:
+    config = tmp_path / "mounts.toml"
+    table = MountTable()
+    table.add(MountDef("derived", tmp_path / "derived"), source="derived")
+    service = MountService(table, config, allow_changes=True)
+    for name in ("first", "second", "common"):
+        seed(tmp_path / name, {"same.bin": name.encode()})
+
+    async def scenario() -> None:
+        client = await make_client(service)
+        try:
+            for name in ("first", "second", "common"):
+                response = await client.post(
+                    "/api/mounts",
+                    json={
+                        "id": name,
+                        "path": str(tmp_path / name),
+                        "project": "project-a",
+                        "shared": name == "common",
+                        "mode": "readwrite",
+                        "kind": "model/vae",
+                    },
+                )
+                assert response.status == 201
+                await wait_for_state(client, name, "ready")
+            response = await client.get("/api/mounts?project=project-b")
+            assert [row["id"] for row in (await response.json())["mounts"]] == ["derived", "common"]
+            for project, order in (
+                ("project-a", ["second", "first", "common"]),
+                ("project-b", ["common", "first"]),
+            ):
+                response = await client.put(
+                    f"/api/mounts/projects/{project}",
+                    json={
+                        "mounts": order,
+                        "outputMount": "common",
+                    },
+                )
+                assert response.status == 200
+                assert [row["id"] for row in (await response.json())["mounts"]] == order
+            assert (await client.delete("/api/mounts/common")).status == 409
+            assert table.get("derived") is not None
+            assert all(mount.id != "derived" for mount in load_mounts(config))
+            response = await client.put(
+                "/api/mounts/projects/project-b",
+                json={
+                    "mounts": [],
+                    "outputMount": None,
+                },
+            )
+            assert response.status == 200
+            assert (await response.json())["outputMount"] is None
+        finally:
+            await service.close()
+            await client.close()
+
+    asyncio.run(scenario())
+    restarted_table = MountTable()
+    for mount in load_mounts(config):
+        restarted_table.add(mount)
+    restarted_table.add(MountDef("derived", tmp_path / "derived"), source="derived")
+    restarted = MountService(restarted_table, config, allow_changes=True)
+    project_a = cast(list[dict[str, object]], restarted.project_response("project-a")["mounts"])
+    assert [row["id"] for row in project_a] == [
+        "second",
+        "first",
+        "common",
+    ]
+    assert restarted.project_response("project-b")["mounts"] == []
+    new_project = cast(list[dict[str, object]], restarted.project_response("new-project")["mounts"])
+    assert [row["id"] for row in new_project] == [
+        "derived",
+        "common",
+    ]
+    assert [mount.priority for mount in load_mounts(config)] == [0, 0, 0]
+    for name in ("first", "second", "common"):
+        assert (tmp_path / name / "same.bin").read_bytes() == name.encode()
+
+
+def test_project_folder_validation_keeps_previous_settings(tmp_path: Path) -> None:
+    table = MountTable()
+    table.add(MountDef("existing", tmp_path, mode="readwrite"))
+    service = MountService(table, tmp_path / "mounts.toml", allow_changes=True)
+
+    async def scenario() -> None:
+        client = await make_client(service)
+        try:
+            for mounts, output in (
+                (["unknown"], None),
+                (["existing", "existing"], None),
+                (["existing"], "unknown"),
+                ([], "existing"),
+                (False, None),
+            ):
+                response = await client.put(
+                    "/api/mounts/projects/default",
+                    json={
+                        "mounts": mounts,
+                        "outputMount": output,
+                    },
+                )
+                assert response.status == 400
+            response = await client.get("/api/mounts?project=Bad%20Project")
+            assert response.status == 400
+            response = await client.get("/api/mounts?project=default")
+            assert [row["id"] for row in (await response.json())["mounts"]] == ["existing"]
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_project_folder_paths_and_mutations_require_operator(tmp_path: Path) -> None:
+    from dinkster_server.auth import Principal, StaticBearerAuthenticator
+
+    table = MountTable()
+    table.add(MountDef("private-location", tmp_path / "private-location"))
+    service = MountService(table, allow_changes=True)
+    authenticator = StaticBearerAuthenticator(
+        {
+            "asset-editor-token": Principal(
+                "editor", {"local": frozenset({"assets:read", "assets:write"})}
+            ),
+            "agent-token": Principal(
+                "agent",
+                {
+                    "local": frozenset(
+                        {
+                            "assets:read",
+                            "assets:write",
+                            "settings:write",
+                        }
+                    )
+                },
+                kind="agent",
+            ),
+        }
+    )
+
+    async def scenario() -> None:
+        app = create_app(make_engine, SCHEMAS, authenticator=authenticator)
+        add_mount_routes(app, service)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            for token in ("asset-editor-token", "agent-token"):
+                headers = {"Authorization": f"Bearer {token}"}
+                for method, path, body in (
+                    ("GET", "/api/mounts", None),
+                    ("GET", "/api/mounts?project=default", None),
+                    ("POST", "/api/mounts", {"id": "new", "path": str(tmp_path)}),
+                    ("PUT", "/api/mounts/projects/default", {"mounts": [], "outputMount": None}),
+                    ("DELETE", "/api/mounts/private-location", None),
+                    ("POST", "/api/mounts/private-location/retry", None),
+                ):
+                    response = await client.request(method, path, json=body, headers=headers)
+                    assert response.status == 403
+                    assert str(tmp_path) not in await response.text()
+            assert table.get("private-location") is not None
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
