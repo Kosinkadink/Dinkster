@@ -490,6 +490,8 @@ namespaces = [
     "PrimitiveBoundingBox",
     "RTDETR_detect",
     "DrawBBoxes",
+    "VAELoader",
+    "DiffusersLoader",
     "SAM3_VideoTrack",
     "SAM3_TrackToMask",
     "SAM3_Detect",
@@ -512,6 +514,8 @@ namespaces = [
     "LoraLoaderBypass",
     "LoraLoaderBypassModelOnly",
     "CropByBBoxes",
+    "MakeTrainingDataset",
+    "TripoSplatPreprocessImage",
 ]
 
 [pack.sandbox]

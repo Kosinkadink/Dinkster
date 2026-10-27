@@ -1,5 +1,7 @@
 ## Image operations
 
+- Native `TripoSplatPreprocessImage` erodes alpha, crops foreground to a padded
+  square, resizes with Lanczos, and composites the image over black.
 - Color strings, ordered color palettes, bounding boxes, and optional
   resolution-preview metadata pass between node packs without rewriting their values.
 - Native `PrimitiveBoundingBox` constructs pixel bounding boxes; `ImageCropV2`
@@ -98,6 +100,9 @@
   conversion and rebatching
 - Dataset image and image-text pair shuffling, perceptual-hash deduplication,
   row-major image grids, and deprecated text-list merging
+- Training dataset preparation with RGB VAE encoding and scheduled CLIP
+  conditioning, preserving image-list order and supporting omitted, shared,
+  or per-image captions
 - Row-major image grid composition and decomposition; image stitching; split
   and merge with overlapping tiles
 - Image transitions between inputs, within a batch, or while joining batches,
