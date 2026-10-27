@@ -66,6 +66,7 @@ class TextOverlay(Node):
                     default="#ffffff",
                     doc="Color of the text.",
                     widget=ColorWidget(),
+                    socketless=True,
                 ),
                 InputSpec(
                     "position",

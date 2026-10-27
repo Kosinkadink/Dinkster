@@ -40,6 +40,7 @@ def test_text_overlay_public_schema_preserves_required_inputs_and_tooltips() -> 
         "outline",
     ]
     assert all(entry["required"] is True for entry in inputs)
+    assert [entry["id"] for entry in inputs if entry.get("socketless", False)] == ["color"]
     docs = {entry["id"]: entry.get("doc", "") for entry in inputs}
     assert docs == {
         "images": "",
