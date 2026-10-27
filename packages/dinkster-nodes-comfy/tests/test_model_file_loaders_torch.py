@@ -186,13 +186,34 @@ class LoaderOutputInspect(Node):
             outputs["checkpoint_model"].model.weight, torch.tensor([[3.0, 3.5]]), rtol=0, atol=0
         )
         torch.testing.assert_close(
+            outputs["configured_model"].model.weight, torch.tensor([[3.0, 3.5]]), rtol=0, atol=0
+        )
+        torch.testing.assert_close(
             outputs["control"].model.weight, torch.tensor([[13.0, 13.5]]), rtol=0, atol=0
+        )
+        torch.testing.assert_close(
+            outputs["diff_control"].model.weight, torch.tensor([[13.0, 13.5]]), rtol=0, atol=0
+        )
+        torch.testing.assert_close(
+            outputs["unet"].model.weight, torch.tensor([[3.0, 3.5]]), rtol=0, atol=0
+        )
+        torch.testing.assert_close(
+            outputs["checkpoint_clip"].cond_stage_model.weight,
+            torch.tensor([[-7.0, -6.5]]),
+            rtol=0,
+            atol=0,
         )
         torch.testing.assert_close(
             outputs["clip"].cond_stage_model.weight, torch.tensor([[-7.0, -6.5]]), rtol=0, atol=0
         )
         torch.testing.assert_close(
+            outputs["dual"].cond_stage_model.weight, torch.tensor([[-7.0, -6.5]]), rtol=0, atol=0
+        )
+        torch.testing.assert_close(
             outputs["style"].weight, torch.tensor([[13.0, -17.0]]), rtol=0, atol=0
+        )
+        torch.testing.assert_close(
+            outputs["gligen"].model.weight, torch.tensor([[19.0, 19.5]]), rtol=0, atol=0
         )
         for name in ("checkpoint_vae", "unclip_vision", "vision"):
             assert outputs[name]["marker"].tolist() == [3.0, -7.0]
