@@ -1338,11 +1338,15 @@ def _validate_graph_node(
             diags,
             asset_stamp_required=(
                 (
-                    isinstance(spec.widget, AssetWidget)
+                    (
+                        isinstance(spec.widget, AssetWidget)
+                        and not (spec.widget.selection and isinstance(value, str))
+                    )
                     or (
                         isinstance(spec.widget, WidgetRepresentations)
                         and all(
                             isinstance(representation.widget, AssetWidget)
+                            and not (representation.widget.selection and isinstance(value, str))
                             for representation in spec.widget.representations
                         )
                     )

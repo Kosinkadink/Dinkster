@@ -8,7 +8,8 @@ pinned runtime. Layered window plans and RES4LYF samplers are unsupported.
 
 SamplerCustom and SamplerCustomAdvanced combine native noise, conditioning,
 guiders, sampler choices and sigma schedules, returning sampled and denoised
-latents while preserving source samples, masks and metadata.
+latents while preserving source samples, masks and metadata. They support
+ordered native audio/video latent streams without exposing runtime nested tensors.
 
 Align Your Steps, GITS, Optimal Steps, and Ideogram 4 scheduler nodes produce
 native SIGMAS tensors for model-specific schedule selection.
@@ -51,7 +52,8 @@ Portable sampling selections remain supported. Runtime handles cannot be
 resolved in another worker or after their resident state is released.
 
 RandomNoise, DisableNoise, and AddNoise provide seeded noise, zero noise, and
-model-scaled noise while preserving latent metadata and the source samples.
+model-scaled noise while preserving latent metadata, source samples, and native
+audio/video stream roles.
 
 Native sampler factory nodes provide KSampler selection, Euler ancestral,
 DPM++, LMS, adaptive DPM, ER-SDE, SA-Solver, and SEEDS-2 runtime samplers.

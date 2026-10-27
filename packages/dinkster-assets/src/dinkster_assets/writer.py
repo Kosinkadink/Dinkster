@@ -25,11 +25,17 @@ any rescan of the mount.
 
 from __future__ import annotations
 
+import errno
+import importlib
 import json
 import os
 import re
+import stat
+import threading
 import time
 import uuid
+from collections.abc import Callable, Generator, Iterable
+from contextlib import contextmanager
 from pathlib import Path
 from typing import BinaryIO, Protocol, cast
 
@@ -44,7 +50,23 @@ from .save_target import SaveTarget, coerce_save_target
 
 __all__ = ["AssetWriter", "MountSnapshotWriter", "MountWriteAuthority"]
 
-_SUFFIX_RE = re.compile(r"^\.[A-Za-z0-9][A-Za-z0-9.]*$")
+_SUFFIX_RE = re.compile(r"^_?\.[A-Za-z0-9][A-Za-z0-9.]*$")
+_WRITER_PATH_LOCKS_GUARD = threading.Lock()
+_WRITER_PATH_LOCKS: dict[str, threading.RLock] = {}
+
+
+class _Fcntl(Protocol):
+    LOCK_EX: int
+    LOCK_UN: int
+
+    def flock(self, fd: int, operation: int, /) -> None: ...
+
+
+class _Msvcrt(Protocol):
+    LK_NBLCK: int
+    LK_UNLCK: int
+
+    def locking(self, fd: int, mode: int, nbytes: int, /) -> None: ...
 
 
 class MountWriteAuthority(Protocol):
@@ -180,17 +202,126 @@ class AssetWriter:
         limit: int,
     ) -> AssetRef:
         """Boundedly copy a held seekable source and atomically publish it."""
+        parsed = self._validated_target(target, suffix, limit)
+        _, folder = self._writable_folder(parsed)
+        with self._directory_claim(folder):
+            ref, _ = self._write_stream(
+                parsed,
+                source,
+                suffix=suffix,
+                media_type=media_type,
+                limit=limit,
+            )
+        return ref
+
+    def save_encoded(
+        self,
+        target: object,
+        encoder: Callable[[str, int], BinaryIO],
+        *,
+        suffix: str,
+        media_type: str = "application/octet-stream",
+        limit: int,
+    ) -> AssetRef:
+        """Reserve a source-compatible name while an encoder records it.
+
+        ``encoder`` receives the filename stem and integer counter, never a
+        host path or an output placeholder. It owns its returned stream; the
+        writer reads it without closing it. A pre-existing final name after
+        encoding is an error rather than a renamed publication, because the
+        encoded metadata may carry that selected name.
+        """
+        parsed = self._validated_target(target, suffix, limit)
+        root, folder = self._writable_folder(parsed)
+        with self._directory_claim(folder):
+            counter = self._next_counter(folder, parsed.stem)
+            source = encoder(parsed.stem, counter)
+            ref, _ = self._write_stream(
+                parsed,
+                source,
+                suffix=suffix,
+                media_type=media_type,
+                limit=limit,
+                counter=counter,
+                expected_root=root,
+                strict_counter=True,
+            )
+        return ref
+
+    def save_stream_batch(
+        self,
+        target: object,
+        sources: Iterable[BinaryIO],
+        *,
+        suffix: str,
+        media_type: str = "application/octet-stream",
+        limit: int,
+    ) -> list[AssetRef]:
+        """Publish a source-ordered batch with one source-compatible counter.
+
+        ``%batch_num%`` expands in the filename stem after the initial
+        counter is selected from the unexpanded target. ``suffix`` may start
+        with ``_`` (``_.png``) when the caller needs the source filename tail.
+        Files already published before a later source fails remain complete.
+        """
+        parsed = self._validated_target(target, suffix, limit)
+        root, folder = self._writable_folder(parsed)
+        with self._directory_claim(folder):
+            counter = self._next_counter(folder, parsed.stem)
+            refs: list[AssetRef] = []
+            for batch_num, source in enumerate(sources):
+                stem = parsed.stem.replace("%batch_num%", str(batch_num))
+                ref, counter = self._write_stream(
+                    parsed,
+                    source,
+                    suffix=suffix,
+                    media_type=media_type,
+                    limit=limit,
+                    counter=counter,
+                    stem=stem,
+                    expected_root=root,
+                )
+                refs.append(ref)
+        return refs
+
+    @staticmethod
+    def _validated_target(target: object, suffix: str, limit: int) -> SaveTarget:
         if type(limit) is not int or limit < 0:
             raise AssetError("limit must be a non-negative integer")
         parsed = coerce_save_target(target)
         if not _SUFFIX_RE.match(suffix):
-            raise AssetError(f"save suffix must be a bare extension like '.png': {suffix!r}")
+            raise AssetError(
+                f"save suffix must be a bare extension like '.png' or '_.png': {suffix!r}"
+            )
+        return parsed
+
+    def _writable_folder(self, parsed: SaveTarget) -> tuple[Path, Path]:
         root = self._authority.writable_root(parsed.mount)
         folder = root / parsed.subfolder if parsed.subfolder else root
         folder.mkdir(parents=True, exist_ok=True)
         self._require_contained(root, folder, parsed)
+        return root, folder
+
+    def _write_stream(
+        self,
+        parsed: SaveTarget,
+        source: BinaryIO,
+        *,
+        suffix: str,
+        media_type: str,
+        limit: int,
+        counter: int | None = None,
+        stem: str | None = None,
+        expected_root: Path | None = None,
+        strict_counter: bool = False,
+    ) -> tuple[AssetRef, int]:
+        root, folder = self._writable_folder(parsed)
+        if expected_root is not None and root.resolve() != expected_root.resolve():
+            raise AssetError(f"mount {parsed.mount!r} changed its root during batch save")
+        stem = parsed.stem if stem is None else stem
         tmp = folder / f".dinkster-save-{uuid.uuid4().hex}"
         final: Path | None = None
+        used_counter: int | None = None
         try:
             try:
                 source.seek(0)
@@ -219,10 +350,12 @@ class AssetWriter:
                 if any(getattr(before, field) != getattr(after, field) for field in fields):
                     raise AssetError("save source changed while it was copied")
             digest = DIGEST_PREFIX + hasher.hexdigest()
-            final = self._claim_and_land(folder, parsed.stem, suffix, tmp)
+            final, used_counter = self._claim_and_land(
+                folder, stem, suffix, tmp, counter, strict_counter=strict_counter
+            )
         finally:
             tmp.unlink(missing_ok=True)
-        assert final is not None
+        assert final is not None and used_counter is not None
         stat = final.stat()
         record = verification_record_for_publication(digest, verified_stat, stat)
         relative = final.relative_to(root).as_posix()
@@ -237,12 +370,15 @@ class AssetWriter:
             )
         except OSError:
             pass  # resolvability degrades to next-scan; the save itself stood
-        return AssetRef(
-            digest=digest,
-            name=final.name,
-            size=size,
-            media_type=media_type,
-            virtual_path=f"{MOUNT_NAMESPACE}/{parsed.mount}/{relative}",
+        return (
+            AssetRef(
+                digest=digest,
+                name=final.name,
+                size=size,
+                media_type=media_type,
+                virtual_path=f"{MOUNT_NAMESPACE}/{parsed.mount}/{relative}",
+            ),
+            used_counter + 1,
         )
 
     @staticmethod
@@ -258,14 +394,158 @@ class AssetWriter:
                 f"mount (symlinked folder leaves {resolved_root})"
             )
 
-    @staticmethod
-    def _claim_and_land(folder: Path, stem: str, suffix: str, tmp: Path) -> Path:
-        """Publish the temp file under the next free counter name.
+    @contextmanager
+    def _directory_claim(self, folder: Path) -> Generator[None]:
+        lock_path = folder / ".dinkster-asset-writer.lock"
+        with self._path_lock(lock_path), self._open_lock_file(lock_path) as handle:
+            if handle.seek(0, os.SEEK_END) == 0:
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            if os.name == "nt":  # pragma: no cover - exercised on Windows CI
+                msvcrt = cast("_Msvcrt", importlib.import_module("msvcrt"))
+                while True:
+                    try:
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                    except OSError as exc:
+                        if (
+                            exc.errno not in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}
+                            and getattr(exc, "winerror", None) != 33
+                        ):
+                            raise
+                        time.sleep(0.05)
+                    else:
+                        break
+                try:
+                    yield
+                finally:
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl = cast("_Fcntl", importlib.import_module("fcntl"))
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
-        A hard link publishes the already-complete same-directory temp with
-        atomic no-replace semantics. Concurrent savers therefore get distinct
-        names, without exposing an empty placeholder to readers.
-        """
+    @staticmethod
+    def _open_lock_file(lock_path: Path) -> BinaryIO:
+        if os.name == "nt":  # pragma: no cover - exercised on Windows CI
+            return AssetWriter._open_windows_lock_file(lock_path)
+        nofollow = getattr(os, "O_NOFOLLOW", None)
+        if nofollow is None:
+            raise AssetError("safe writer lock opening is unavailable on this platform")
+        try:
+            descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT | nofollow, 0o600)
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                raise AssetError(f"unsafe writer lock path: {lock_path}") from None
+            raise
+        file_stat = os.fstat(descriptor)
+        if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_nlink != 1:
+            os.close(descriptor)
+            raise AssetError(f"unsafe writer lock path: {lock_path}")
+        return os.fdopen(descriptor, "r+b")
+
+    @staticmethod
+    def _open_windows_lock_file(lock_path: Path) -> BinaryIO:
+        ctypes = importlib.import_module("ctypes")
+        wintypes = importlib.import_module("ctypes.wintypes")
+        msvcrt = importlib.import_module("msvcrt")
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        create_file = kernel32.CreateFileW
+        create_file.argtypes = [
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.HANDLE,
+        ]
+        create_file.restype = wintypes.HANDLE
+        get_file_information = kernel32.GetFileInformationByHandle
+        get_file_information.argtypes = [wintypes.HANDLE, wintypes.LPVOID]
+        get_file_information.restype = wintypes.BOOL
+        close_handle = kernel32.CloseHandle
+        close_handle.argtypes = [wintypes.HANDLE]
+        close_handle.restype = wintypes.BOOL
+
+        class FileInformation(ctypes.Structure):
+            _fields_ = [
+                ("attributes", wintypes.DWORD),
+                ("creation_time", wintypes.FILETIME),
+                ("last_access_time", wintypes.FILETIME),
+                ("last_write_time", wintypes.FILETIME),
+                ("volume_serial_number", wintypes.DWORD),
+                ("file_size_high", wintypes.DWORD),
+                ("file_size_low", wintypes.DWORD),
+                ("number_of_links", wintypes.DWORD),
+                ("file_index_high", wintypes.DWORD),
+                ("file_index_low", wintypes.DWORD),
+            ]
+
+        generic_read_write = 0xC0000000
+        share_all = 0x00000007
+        open_always = 4
+        file_attribute_normal = 0x00000080
+        file_flag_open_reparse_point = 0x00200000
+        file_attribute_reparse_point = 0x00000400
+        invalid_handle_value = wintypes.HANDLE(-1).value
+        handle = create_file(
+            str(lock_path),
+            generic_read_write,
+            share_all,
+            None,
+            open_always,
+            file_attribute_normal | file_flag_open_reparse_point,
+            None,
+        )
+        if handle == invalid_handle_value:
+            raise OSError(ctypes.get_last_error(), f"cannot open writer lock {lock_path}")
+        information = FileInformation()
+        try:
+            if not get_file_information(handle, ctypes.byref(information)):
+                raise OSError(ctypes.get_last_error(), f"cannot inspect writer lock {lock_path}")
+            if (
+                information.attributes & file_attribute_reparse_point
+                or information.number_of_links != 1
+            ):
+                raise AssetError(f"unsafe writer lock path: {lock_path}")
+            descriptor = msvcrt.open_osfhandle(handle, os.O_RDWR)
+        except BaseException:
+            close_handle(handle)
+            raise
+        return os.fdopen(descriptor, "r+b")
+
+    @staticmethod
+    def _path_lock(path: Path) -> threading.RLock:
+        key = str(path.absolute())
+        with _WRITER_PATH_LOCKS_GUARD:
+            return _WRITER_PATH_LOCKS.setdefault(key, threading.RLock())
+
+    @staticmethod
+    def _next_counter(folder: Path, stem: str) -> int:
+        """Match ComfyUI's ``get_save_image_path`` filename scan exactly."""
+        counters: list[int] = []
+        try:
+            with os.scandir(folder) as entries:
+                for entry in entries:
+                    prefix = f"{stem}_"
+                    if not entry.name.startswith(prefix):
+                        continue
+                    try:
+                        counter = int(entry.name[len(prefix) :].split(".", 1)[0].split("_", 1)[0])
+                    except ValueError:
+                        counter = 0
+                    counters.append(counter)
+        except OSError:
+            pass
+        return max(counters, default=0) + 1
+
+    @staticmethod
+    def _next_counter_for_suffix(folder: Path, stem: str, suffix: str) -> int:
         pattern = re.compile(rf"^{re.escape(stem)}_(\d+){re.escape(suffix)}$")
         counter = 1
         try:
@@ -276,11 +556,33 @@ class AssetWriter:
                         counter = max(counter, int(match.group(1)) + 1)
         except OSError:
             pass
+        return counter
+
+    @staticmethod
+    def _claim_and_land(
+        folder: Path,
+        stem: str,
+        suffix: str,
+        tmp: Path,
+        counter: int | None = None,
+        *,
+        strict_counter: bool = False,
+    ) -> tuple[Path, int]:
+        """Publish the temp file under the next free counter name.
+
+        A hard link publishes the already-complete same-directory temp with
+        atomic no-replace semantics. Concurrent savers therefore get distinct
+        names, without exposing an empty placeholder to readers.
+        """
+        if counter is None:
+            counter = AssetWriter._next_counter_for_suffix(folder, stem, suffix)
         while True:
             final = folder / f"{stem}_{counter:05d}{suffix}"
             try:
                 os.link(tmp, final)
             except FileExistsError:
+                if strict_counter:
+                    raise AssetError("selected save name was claimed before publication") from None
                 counter += 1
                 continue
-            return final
+            return final, counter
