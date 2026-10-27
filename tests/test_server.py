@@ -8,7 +8,6 @@ import asyncio
 import hashlib
 import json
 import os
-import time
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
@@ -700,18 +699,24 @@ def test_queue_history_forgets_oldest_terminal_jobs() -> None:
     asyncio.run(scenario())
 
 
-def test_new_job_ref_globally_unique_and_time_ordered() -> None:
+def test_new_job_ref_globally_unique_and_time_ordered(monkeypatch: pytest.MonkeyPatch) -> None:
     """jobRef contract (platform plan): server-assigned, globally unique,
     opaque; lexical order approximates submission order (ms-timestamp
     prefix + 80 random bits)."""
+    from types import SimpleNamespace
+
+    import dinkster_server.queue as queue_module
     from dinkster_server.queue import new_job_ref
+
+    now = 1000.0
+    monkeypatch.setattr(queue_module, "time", SimpleNamespace(time=lambda: now))
 
     refs = [new_job_ref() for _ in range(1000)]
     assert len(set(refs)) == len(refs)
     assert all(len(r) == 32 and int(r, 16) >= 0 for r in refs)
-    # Refs minted across a real clock tick sort after earlier ones.
+    # Refs minted across a clock tick sort after earlier ones.
     early = new_job_ref()
-    time.sleep(0.002)
+    now += 0.002
     assert new_job_ref() > early
 
 
@@ -2641,7 +2646,7 @@ def test_prepared_surface_validation_keeps_requests_responsive(
         defer_unpublished_carriers: bool = False,
     ) -> None:
         validation_started.set()
-        release_validation.wait()
+        assert release_validation.wait(2)
         original_validate(
             packs,
             schemas,
@@ -2673,18 +2678,19 @@ def test_prepared_surface_validation_keeps_requests_responsive(
                     {"late.echo": "native"},
                 )
             )
-        fallback_release = threading.Timer(2, release_validation.set)
-        fallback_release.start()
         try:
-            assert await asyncio.to_thread(validation_started.wait)
-            started = time.monotonic()
-            health_response, job_response, nodes_response = await asyncio.gather(
-                client.get("/api/health"),
-                client.get("/api/jobs/client/missing"),
-                client.get("/api/nodes"),
+            assert await asyncio.to_thread(validation_started.wait, 2)
+            assert not validation.done()
+            health_response, job_response, nodes_response = await asyncio.wait_for(
+                asyncio.gather(
+                    client.get("/api/health"),
+                    client.get("/api/jobs/client/missing"),
+                    client.get("/api/nodes"),
+                ),
+                2,
             )
-            elapsed = time.monotonic() - started
-            assert elapsed < 1
+            assert not validation.done()
+            assert not release_validation.is_set()
             assert health_response.status == 200
             assert job_response.status == 404
             assert "late.echo" not in (await nodes_response.json())["nodes"]
@@ -2714,10 +2720,10 @@ def test_prepared_surface_validation_keeps_requests_responsive(
             assert "late.echo" in (await (await client.get("/api/nodes")).json())["nodes"]
         finally:
             release_validation.set()
-            fallback_release.cancel()
-            if not validation.done():
+            try:
                 await validation
-            await client.close()
+            finally:
+                await client.close()
 
     asyncio.run(scenario())
 

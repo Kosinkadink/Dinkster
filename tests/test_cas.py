@@ -16,7 +16,7 @@ import asyncio
 import mmap
 import multiprocessing
 import os
-import time
+import threading
 from collections.abc import Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from multiprocessing.shared_memory import SharedMemory
@@ -770,7 +770,41 @@ def test_disk_cache_shared_root_concurrent_writes_are_complete(tmp_path: Path) -
     asyncio.run(scenario())
 
 
-def test_disk_cache_process_lock_waits_for_another_instance(tmp_path: Path) -> None:
+def test_disk_cache_process_lock_waits_for_another_instance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    blocked = threading.Event()
+    if os.name == "nt":
+        import msvcrt
+
+        original_locking = msvcrt.locking
+
+        def observe_locking(fd: int, mode: int, count: int) -> None:
+            try:
+                original_locking(fd, mode, count)
+            except OSError:
+                if mode == msvcrt.LK_NBLCK:
+                    blocked.set()
+                raise
+
+        monkeypatch.setattr(msvcrt, "locking", observe_locking)
+    else:
+        import fcntl
+
+        original_flock = fcntl.flock
+
+        def observe_flock(fd: int, operation: int) -> None:
+            if operation == fcntl.LOCK_EX:
+                try:
+                    original_flock(fd, operation | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    blocked.set()
+                else:
+                    return
+            original_flock(fd, operation)
+
+        monkeypatch.setattr(fcntl, "flock", observe_flock)
+
     context = multiprocessing.get_context("spawn")
     ready = context.Event()
     release = context.Event()
@@ -784,9 +818,11 @@ def test_disk_cache_process_lock_waits_for_another_instance(tmp_path: Path) -> N
         registry = make_registry()
         with ThreadPoolExecutor(max_workers=1) as pool:
             waiting = pool.submit(DiskCacheStore, tmp_path, registry)
-            time.sleep(10.5 if os.name == "nt" else 0.2)
-            assert not waiting.done()
-            release.set()
+            try:
+                assert blocked.wait(15)
+                assert not waiting.done()
+            finally:
+                release.set()
             store = waiting.result(timeout=15)
         asyncio.run(store.put("after-lock", {"out": registry.wrap("INT", 7)}))
         assert asyncio.run(store.get("after-lock")) is not None

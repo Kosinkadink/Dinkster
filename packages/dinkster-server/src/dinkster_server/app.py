@@ -351,6 +351,7 @@ _log = core_logger("server")
 
 SCHEMA_VERSION = 1
 JOB_EVENT_BUFFER = 512
+_EVENT_AUTHORITY_RECHECK_SECONDS = 1.0
 
 PlaceExecution = Callable[
     [ExecutionRuntime, Mapping[str, str]],
@@ -4013,7 +4014,7 @@ async def handle_events(request: web.Request) -> web.WebSocketResponse:
                 )
                 return
             try:
-                event = await asyncio.wait_for(sub.get(), timeout=1)
+                event = await asyncio.wait_for(sub.get(), timeout=_EVENT_AUTHORITY_RECHECK_SECONDS)
             except TimeoutError:
                 continue
             if event is None:
