@@ -510,6 +510,7 @@ namespaces = [
     "LoadLoraTextEncoder",
     "LoraLoaderBypass",
     "LoraLoaderBypassModelOnly",
+    "CropByBBoxes",
 ]
 
 [pack.sandbox]
