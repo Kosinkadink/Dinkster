@@ -2,12 +2,28 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
-from dinkster_api.v1 import IC_LORA_PARAMETERS_TYPE, TypeRegistry, register_inference_types
+from dinkster_api.v1 import (
+    CORE_STRING,
+    IC_LORA_PARAMETERS_TYPE,
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+    TypeRegistry,
+    register_inference_types,
+)
+from dinkster_graph import Graph, GraphNode, Link
 from dinkster_values import EncodedLatentTensor, encode_latent
+
+from dinkster.compose import PackSpec, ServingComposer
 
 
 def test_ic_lora_parameters_roundtrip_preserves_mapping_order_and_extras() -> None:
@@ -71,3 +87,134 @@ def test_ic_lora_parameters_public_registration_is_cold_and_idempotent() -> None
         ],
         check=True,
     )
+
+
+class ICLoRAParametersSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="ic-lora-source.node",
+            outputs=(OutputSpec("parameters", TypeExpr.concrete(IC_LORA_PARAMETERS_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        return cls.outputs(
+            parameters={
+                "reference_downscale_factor": 3,
+                "source_only": {"ordered": ("first", 2), "enabled": True},
+                "extra": ["preserve", {"nested": None}],
+            }
+        )
+
+
+class ICLoRAParametersConsumer(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="ic-lora-consumer.node",
+            inputs=(InputSpec("parameters", TypeExpr.concrete(IC_LORA_PARAMETERS_TYPE)),),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, parameters: object) -> dict[str, object]:
+        assert parameters == {
+            "reference_downscale_factor": 3,
+            "source_only": {"ordered": ("first", 2), "enabled": True},
+            "extra": ["preserve", {"nested": None}],
+        }
+        assert list(parameters) == ["reference_downscale_factor", "source_only", "extra"]
+        return cls.outputs(summary="IC-LoRA parameters preserved")
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_ic_lora_parameters_cross_hosts_cache_preserves_mapping(
+    tmp_path: Path, in_process: bool
+) -> None:
+    async def scenario() -> None:
+        module = "ic_lora_parameters_fixture"
+        source_root = Path(__file__).resolve().parents[1] / "packages"
+        (tmp_path / f"{module}.py").write_text(
+            "from test_ic_lora_parameters import ICLoRAParametersConsumer, ICLoRAParametersSource\n"
+            "from dinkster_api.v1 import register_inference_types\n"
+            "SOURCE_NODES = (ICLoRAParametersSource,)\n"
+            "CONSUMER_NODES = (ICLoRAParametersConsumer,)\n",
+            encoding="ascii",
+        )
+        source_manifest = tmp_path / "source-dinkster-pack.toml"
+        consumer_manifest = tmp_path / "consumer-dinkster-pack.toml"
+        for manifest, name, namespace, nodes in (
+            (
+                source_manifest,
+                "ic-lora-parameters-source",
+                "ic-lora-source",
+                "SOURCE_NODES",
+            ),
+            (
+                consumer_manifest,
+                "ic-lora-parameters-consumer",
+                "ic-lora-consumer",
+                "CONSUMER_NODES",
+            ),
+        ):
+            manifest.write_text(
+                f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
+                f'namespaces = ["{namespace}"]\n\n[pack.entry]\n'
+                f'nodes = "{module}:{nodes}"\n'
+                f'types = "{module}:register_inference_types"\n',
+                encoding="ascii",
+            )
+        composer = ServingComposer(
+            cache_mode="layered",
+            cache_dir=tmp_path / "cache",
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "PYTHONPATH": os.pathsep.join(
+                    (str(tmp_path), str(Path(__file__).parent), str(source_root))
+                ),
+            },
+        )
+        try:
+            if in_process:
+                specs = (
+                    PackSpec(manifest=source_manifest, in_process=True),
+                    PackSpec(manifest=consumer_manifest, in_process=True),
+                )
+            else:
+                specs = (
+                    PackSpec(
+                        manifest=source_manifest,
+                        worker_group="ic-lora-producer",
+                        group_manifests=(source_manifest,),
+                    ),
+                    PackSpec(
+                        manifest=consumer_manifest,
+                        worker_group="ic-lora-consumer",
+                        group_manifests=(consumer_manifest,),
+                    ),
+                )
+            for spec in specs:
+                await composer.add_pack(spec)
+            engine = composer.composition.make_engine(lambda _event: None)
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("ic-lora-source.node", {}),
+                    "consumer": GraphNode(
+                        "ic-lora-consumer.node",
+                        {"parameters": Link("source", "parameters")},
+                    ),
+                }
+            )
+            for repeat in range(2):
+                result = await engine.run(graph, ["consumer"])
+                assert (
+                    result.outputs["consumer"]["summary"].resolve()
+                    == "IC-LoRA parameters preserved"
+                )
+                assert set(result.cached if repeat else result.executed) == {"source", "consumer"}
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
