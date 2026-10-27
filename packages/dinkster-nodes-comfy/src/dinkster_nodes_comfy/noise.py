@@ -151,7 +151,7 @@ class AddNoise(Node):
                 if len(materialized_sigmas) > 1
                 else materialized_sigmas[0]
             )
-            input_samples = samples
+            input_samples: Any = samples
             nested = getattr(input_samples, "is_nested", False)
             tensors = input_samples.unbind() if nested else (input_samples,)
             if any(torch.count_nonzero(tensor) > 0 for tensor in tensors):
@@ -159,9 +159,9 @@ class AddNoise(Node):
             noisy = model_sampling.noise_scaling(scale, noisy, input_samples)
             noisy = process_latent_out(noisy)
             if nested:
-                noisy = noisy.apply_operation(
-                    None,
-                    lambda tensor, _: torch.nan_to_num(tensor, nan=0.0, posinf=0.0, neginf=0.0),
+                noisy = type(noisy)(
+                    torch.nan_to_num(tensor, nan=0.0, posinf=0.0, neginf=0.0)
+                    for tensor in noisy.unbind()
                 )
             else:
                 noisy = torch.nan_to_num(noisy, nan=0.0, posinf=0.0, neginf=0.0)
