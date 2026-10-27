@@ -708,7 +708,6 @@ source = { editable = "packages/dinkster-assets" }
 dependencies = [
     { name = "alembic" },
     { name = "blake3" },
-    { name = "dinkster-protocol" },
     { name = "dinkster-values" },
     { name = "sqlalchemy" },
 ]
@@ -717,7 +716,6 @@ dependencies = [
 requires-dist = [
     { name = "alembic", specifier = ">=1.16,<2" },
     { name = "blake3", specifier = ">=0.4" },
-    { name = "dinkster-protocol", editable = "packages/dinkster-protocol" },
     { name = "dinkster-values", editable = "packages/dinkster-values" },
     { name = "sqlalchemy", specifier = ">=2.0,<3" },
 ]

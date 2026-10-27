@@ -46,7 +46,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from dinkster_protocol.asset_folders import current_asset_folders
+from dinkster_values.asset_folders import current_asset_folders
 
 from .catalog import AssetEntry, FolderListing
 from .identity import AssetError, require_digest

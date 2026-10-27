@@ -24,8 +24,8 @@ from typing import Literal, Protocol, cast
 
 from dinkster_schema import NodeSchema, RunExecutionContext
 from dinkster_values import Value
+from dinkster_values.asset_folders import AssetFolderContext
 
-from .asset_folders import AssetFolderContext
 from .attention import (
     ATTENTION_CAPABILITY_EVIDENCE_VERSION,
     ATTENTION_POLICIES,

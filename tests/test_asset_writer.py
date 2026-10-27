@@ -36,8 +36,8 @@ from dinkster_assets import (
     register_save_target_type,
 )
 from dinkster_protocol import AssetFolderContext
-from dinkster_protocol.asset_folders import use_asset_folders
 from dinkster_values import TypeRegistry
+from dinkster_values.asset_folders import use_asset_folders
 
 from tests.platform_support import symlink_or_skip
 

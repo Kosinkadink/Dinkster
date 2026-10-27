@@ -28,7 +28,7 @@ from dinkster_protocol import (
     validate_preview_animation,
     validate_preview_mode,
 )
-from dinkster_protocol.asset_folders import use_asset_folders
+from dinkster_values.asset_folders import use_asset_folders
 
 
 def _not_cancelled() -> bool:

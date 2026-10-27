@@ -277,7 +277,6 @@ from dinkster_protocol import (
     validate_preview_animation,
     validate_preview_mode,
 )
-from dinkster_protocol.asset_folders import use_asset_folders
 from dinkster_schema import (
     PROGRESS_EVENT,
     SCHEMA_WIRE_VERSION,
@@ -311,6 +310,7 @@ from dinkster_values import (
     Value,
     list_children,
 )
+from dinkster_values.asset_folders import use_asset_folders
 
 from ._federated_asset_catalog import add_federated_asset_routes
 from .asset_stream import open_verified_sized, stream_verified
@@ -3453,7 +3453,8 @@ async def handle_submit(request: web.Request) -> web.Response:
                 {"error": "assets-missing", "assets": missing_names}, status=409
             )
         execution = state.place_execution(execution, placement)
-        execution = replace(execution, asset_folders=asset_folders)
+        if asset_folders is not None:
+            execution = replace(execution, asset_folders=asset_folders)
         execution_graph = graph
         if execution.resolve_providers is not None:
             try:

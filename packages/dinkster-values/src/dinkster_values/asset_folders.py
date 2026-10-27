@@ -1,4 +1,4 @@
-"""Per-job folder preference, never filesystem authority or a host path."""
+"""Immutable folder preference, never filesystem authority or a host path."""
 
 from __future__ import annotations
 

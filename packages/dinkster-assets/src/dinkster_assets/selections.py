@@ -8,7 +8,7 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from dinkster_protocol.asset_folders import use_asset_folders
+from dinkster_values.asset_folders import use_asset_folders
 
 from .declared import MOUNTS_ENV, mount_roots_for_kind
 from .identity import AssetError

@@ -1838,7 +1838,7 @@ def test_project_folder_validation_keeps_previous_settings(tmp_path: Path) -> No
 
 def test_project_name_order_never_substitutes_for_digest_identity(tmp_path: Path) -> None:
     from dinkster_assets import resolve_asset_selection
-    from dinkster_protocol.asset_folders import use_asset_folders
+    from dinkster_values.asset_folders import use_asset_folders
 
     snapshot = tmp_path / "snapshot.json"
     table = MountTable(snapshot, index_root=tmp_path / "indexes")

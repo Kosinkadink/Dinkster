@@ -39,8 +39,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import BinaryIO, Protocol, cast
 
-from dinkster_protocol.asset_folders import current_asset_folders
 from dinkster_values import MEBIBYTE
+from dinkster_values.asset_folders import current_asset_folders
 
 from .identity import DIGEST_PREFIX, AssetError, new_hasher
 from .integrity import verification_record_for_publication
