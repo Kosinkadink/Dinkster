@@ -25,6 +25,7 @@
 - Bernini conditioning encodes source video, reference video, and ordered reference images.
 - HiDream-O1 reference conditioning appends images in numeric socket order to
   both prompt branches, retaining prior references and marking the negative prompt type.
+- Lotus conditioning supplies its frozen null-prompt embedding without loading an encoder.
 - `CLIPTextEncodeSDXL` encodes separate global and local prompts with size,
   crop and target-size conditioning. Unequal token streams are padded with
   empty-prompt tokens. `CLIPTextEncodeSDXLRefiner` adds aesthetic-score and

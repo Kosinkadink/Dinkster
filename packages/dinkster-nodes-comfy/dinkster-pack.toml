@@ -63,6 +63,7 @@ namespaces = [
     "HiDreamO1ReferenceImages",
     "TripleCLIPLoader",
     "QuadrupleCLIPLoader",
+    "LotusConditioning",
     "ModelMergeSimple",
     "ModelMergeSubtract",
     "ModelMergeAdd",
