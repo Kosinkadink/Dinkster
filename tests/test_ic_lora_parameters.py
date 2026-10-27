@@ -63,6 +63,19 @@ def test_ic_lora_parameters_rejects_non_mapping_and_invalid_frames() -> None:
         spec.validate_encoded(payload, {})
 
 
+@pytest.mark.parametrize("entry", ("ab", 12, None, {"a": 1}, ("a",), ("a", 1, 2)))
+def test_ic_lora_parameters_rejects_malformed_mapping_entries(entry: object) -> None:
+    registry = TypeRegistry()
+    register_inference_types(registry)
+    spec = registry.spec(IC_LORA_PARAMETERS_TYPE)
+    assert spec.validate_encoded is not None
+    payload = encode_latent({"samples": [entry]})
+    with pytest.raises(ValueError, match="string-keyed pairs"):
+        spec.decode(payload)
+    with pytest.raises(ValueError, match="string-keyed pairs"):
+        spec.validate_encoded(payload, {})
+
+
 def test_ic_lora_parameters_public_registration_is_cold_and_idempotent() -> None:
     script = "\n".join(
         (

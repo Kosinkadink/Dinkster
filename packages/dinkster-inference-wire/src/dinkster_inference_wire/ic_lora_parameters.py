@@ -25,6 +25,8 @@ def _decode(data: bytes, *, type_id: str) -> object:
         raise ValueError(f"{type_id} must contain ordered mapping entries")
     result: dict[str, object] = {}
     for item in cast("list[object]", pairs):
+        if not isinstance(item, (tuple, list)):
+            raise ValueError(f"{type_id} entries must be string-keyed pairs")
         pair = cast("tuple[object, ...]", item)
         if len(pair) != 2 or not isinstance(pair[0], str):
             raise ValueError(f"{type_id} entries must be string-keyed pairs")
