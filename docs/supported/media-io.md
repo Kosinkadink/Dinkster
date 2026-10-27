@@ -6,6 +6,8 @@
 - Portable camera embeddings, motion tracks with optional visibility, and complete
   audio-encoder outputs preserve tensor dtype, shape and bytes, ordered layer
   sequences, sample counts and structural metadata across execution hosts and caches
+- Portable `SVG` values retain immutable ordered raw byte streams, including empty
+  and duplicate members, across execution hosts and caches without XML rewriting
 - Typed PNG, JPEG, and WebP image loading with EXIF orientation, ICC-to-sRGB
   conversion, alpha masks, bounded metadata inspection, and input- or
   output-category asset selection. Media outputs retain compact pixel or PCM
