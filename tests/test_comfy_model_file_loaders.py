@@ -31,7 +31,6 @@ def test_model_file_loaders_use_bound_asset_inputs_and_expected_outputs() -> Non
         "CheckpointLoaderSimple",
         "CheckpointLoader",
         "unCLIPCheckpointLoader",
-        "VAELoader",
         "ControlNetLoader",
         "DiffControlNetLoader",
         "UNETLoader",
@@ -113,7 +112,7 @@ def test_model_file_loader_schema_discovery_does_not_import_torch() -> None:
 import sys
 sys.modules['torch'] = None
 from dinkster_nodes_comfy.model_file_loaders import MODEL_FILE_LOADER_NODES
-assert len(MODEL_FILE_LOADER_NODES) == 12
+assert len(MODEL_FILE_LOADER_NODES) == 11
 assert sys.modules['torch'] is None
 """,
         ],
@@ -133,15 +132,6 @@ def test_model_file_loader_execution_adapts_bound_assets_to_pinned_loader_calls(
     calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
     model, clip, vae, vision = object(), object(), object(), object()
     controlnet, style_model, gligen = object(), object(), object()
-    state_dict = {"weight": object()}
-
-    class LoadedVAE:
-        def __init__(self, **kwargs: object) -> None:
-            calls.append(("VAE", (), kwargs))
-            self.patcher = SimpleNamespace()
-
-        def throw_exception_if_invalid(self) -> None:
-            calls.append(("validate", (), {}))
 
     def record(name: str, result: object):
         def call(*args: object, **kwargs: object) -> object:
@@ -152,20 +142,15 @@ def test_model_file_loader_execution_adapts_bound_assets_to_pinned_loader_calls(
 
     sd = SimpleNamespace(
         CLIPType=SimpleNamespace(STABLE_DIFFUSION="stable-diffusion", SDXL="sdxl"),
-        VAE=LoadedVAE,
         load_checkpoint=record("checkpoint", (model, clip, vae)),
         load_checkpoint_guess_config=record("checkpoint-guess", (model, clip, vae, vision)),
         load_diffusion_model=record("diffusion", model),
         load_clip=record("clip", clip),
-        load_vae_patcher=object(),
         load_style_model=record("style-model", style_model),
         load_gligen=record("gligen", gligen),
     )
     modules = {
         "dinkster_inference.sd": sd,
-        "dinkster_inference.utils": SimpleNamespace(
-            load_torch_file=record("torch-file", (state_dict, {"format": "test"}))
-        ),
         "dinkster_inference.clip_vision": SimpleNamespace(load=record("vision", vision)),
         "dinkster_inference.controlnet": SimpleNamespace(
             load_controlnet=record("controlnet", controlnet)
@@ -197,12 +182,6 @@ def test_model_file_loader_execution_adapts_bound_assets_to_pinned_loader_calls(
         "VAE": vae,
         "CLIP_VISION": vision,
     }
-    loaded_vae = model_file_loaders.VAELoader.execute(vae_name=asset)["VAE"]
-    assert isinstance(loaded_vae, LoadedVAE)
-    assert loaded_vae.patcher.cached_patcher_init == (
-        sd.load_vae_patcher,
-        (str(path), {"format": "test"}, None),
-    )
     assert model_file_loaders.ControlNetLoader.execute(control_net_name=asset) == {
         "CONTROL_NET": controlnet
     }
@@ -246,9 +225,6 @@ def test_model_file_loader_execution_adapts_bound_assets_to_pinned_loader_calls(
                 "embedding_directory": [root],
             },
         ),
-        ("torch-file", (str(path),), {"safe_load": True, "return_metadata": True}),
-        ("VAE", (), {"sd": state_dict, "metadata": {"format": "test"}}),
-        ("validate", (), {}),
         ("controlnet", (str(path),), {}),
         ("controlnet", (str(path), model), {}),
         ("diffusion", (str(path),), {"model_options": {"dtype": "fp8-e4m3fn"}}),

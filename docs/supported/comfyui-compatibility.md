@@ -1,6 +1,6 @@
 ## ComfyUI compatibility
 
-- The native pack declares bound-file checkpoint, VAE, diffusion-model, text
+- The native pack declares bound-file checkpoint, diffusion-model, text
   encoder, vision-encoder, ControlNet, style-model and GLIGEN loader schemas.
   Model construction uses the pinned inference package; file inputs grant
   access only to the selected asset.

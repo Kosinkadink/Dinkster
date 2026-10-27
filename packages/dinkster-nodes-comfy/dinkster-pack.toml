@@ -422,7 +422,6 @@ namespaces = [
     "CheckpointLoaderSimple",
     "CheckpointLoader",
     "unCLIPCheckpointLoader",
-    "VAELoader",
     "ControlNetLoader",
     "DiffControlNetLoader",
     "UNETLoader",

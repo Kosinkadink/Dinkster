@@ -279,30 +279,6 @@ class unCLIPCheckpointLoader(Node):
         return cls.outputs(MODEL=model, CLIP=clip, VAE=vae, CLIP_VISION=clip_vision)
 
 
-class VAELoader(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="VAELoader",
-            display_name="Load VAE",
-            category="model/loaders",
-            inputs=(_asset("vae_name", "model/vae"),),
-            outputs=(OutputSpec("VAE", _VAE),),
-        )
-
-    @classmethod
-    def execute(cls, *, vae_name: object) -> Mapping[str, object]:
-        path = _path(vae_name, "vae_name")
-        initialize_inference_process()
-        utils = importlib.import_module("dinkster_inference.utils")
-        sd = importlib.import_module("dinkster_inference.sd")
-        state_dict, metadata = utils.load_torch_file(path, safe_load=True, return_metadata=True)
-        vae = sd.VAE(sd=state_dict, metadata=metadata)
-        vae.throw_exception_if_invalid()
-        vae.patcher.cached_patcher_init = (sd.load_vae_patcher, (path, metadata, None))
-        return cls.outputs(VAE=vae)
-
-
 class ControlNetLoader(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -536,7 +512,6 @@ MODEL_FILE_LOADER_NODES = (
     CheckpointLoaderSimple,
     CheckpointLoader,
     unCLIPCheckpointLoader,
-    VAELoader,
     ControlNetLoader,
     DiffControlNetLoader,
     UNETLoader,
