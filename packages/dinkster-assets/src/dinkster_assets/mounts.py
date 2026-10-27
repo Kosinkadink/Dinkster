@@ -643,6 +643,8 @@ class MountTable:
             row.progress = None
             row.scan_started = time.monotonic()
         try:
+            if not row.mount.path.is_dir():
+                raise AssetError(f"asset library root is not a directory: {row.mount.path}")
             library = row.library
             if library is None:
                 index_path = (

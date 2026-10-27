@@ -24,6 +24,8 @@
   shared folders, and project output selections through the mount API.
   Removing a project association does not delete files or revoke the grant.
   Failed mounts can be explicitly rescanned after reconnecting a drive.
+  With fixed pack sandboxes, folder grant edits persist as restart-required
+  changes without altering live worker authority or restarting the server.
 - Jobs retain their project's folder preferences in both in-process and
   isolated execution. Name and directory selections follow that order;
   saved digest references retain their identity independently of folder order.

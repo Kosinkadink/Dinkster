@@ -89,9 +89,18 @@ class MountService:
         config_path: Path | None = None,
         *,
         allow_changes: bool = False,
+        restart_for_changes: bool = False,
     ) -> None:
         self.table = table
         self.allow_changes = allow_changes
+        self.restart_for_changes = restart_for_changes
+        self.settings_table = table
+        if restart_for_changes:
+            self.settings_table = MountTable(output_mount=table.output_mount)
+            for row in table.descriptors():
+                mount = table.get(str(row["id"]))
+                assert mount is not None
+                self.settings_table.add(mount, source=str(row["source"]), kind=table.kind(mount.id))
         self._config_path = config_path
         self._scan_lock = asyncio.Lock()
         self._tasks: set[asyncio.Task[None]] = set()
@@ -102,21 +111,44 @@ class MountService:
         )
         self.projects.initialize(self.mount_ids())
 
-    def mount_ids(self) -> tuple[str, ...]:
+    def mount_ids(self, *, settings: bool = False) -> tuple[str, ...]:
+        table = self.settings_table if settings else self.table
         rows = sorted(
-            self.table.descriptors(), key=lambda row: (cast(int, row["priority"]), str(row["id"]))
+            table.descriptors(), key=lambda row: (cast(int, row["priority"]), str(row["id"]))
         )
         return tuple(str(row["id"]) for row in rows)
 
+    def settings_descriptors(self) -> list[dict[str, object]]:
+        live = {str(row["id"]): row for row in self.table.descriptors()}
+        rows = self.settings_table.descriptors()
+        for row in rows:
+            mount_id = str(row["id"])
+            if self.table.get(mount_id) == self.settings_table.get(mount_id):
+                row.update(live[mount_id])
+            else:
+                row["state"] = "restart-required"
+        return rows
+
+    def pending_changes(self) -> dict[str, object]:
+        removed = sorted(set(self.mount_ids()) - set(self.mount_ids(settings=True)))
+        changed = self.restart_for_changes and (
+            {mount.id: mount for mount in self.table.config_defs()}
+            != {mount.id: mount for mount in self.settings_table.config_defs()}
+            or self.table.output_mount != self.settings_table.output_mount
+        )
+        return {"restartRequired": changed, "pendingRemovals": removed}
+
     def project_response(self, project: str) -> dict[str, object]:
-        order = self.projects.ordered(project, self.mount_ids())
-        rows = {str(row["id"]): row for row in self.table.descriptors()}
-        selected = self.projects.output(project, self.table.output_mount)
+        order = self.projects.ordered(project, self.mount_ids(settings=True))
+        rows = {str(row["id"]): row for row in self.settings_descriptors()}
+        selected = self.projects.output(project, self.settings_table.output_mount)
         return {
             "project": project,
             "mounts": [rows[mount_id] for mount_id in order],
             "outputMount": selected if selected in order else None,
+            "activeOutputMount": self.project_context(project).output_mount,
             "mountChangesAllowed": self.allow_changes,
+            **self.pending_changes(),
         }
 
     def project_context(self, project: str) -> AssetFolderContext:
@@ -154,9 +186,9 @@ class MountService:
         atomically - the durable record under the live table."""
         if self._config_path is None:
             return
-        mounts = self.table.config_defs()
+        mounts = self.settings_table.config_defs()
         configured_ids = {mount.id for mount in mounts}
-        selected = self.table.output_mount
+        selected = self.settings_table.output_mount
         text = dump_mounts(
             mounts,
             output_mount=selected if selected in configured_ids else None,
@@ -281,13 +313,21 @@ async def handle_mounts_list(request: web.Request) -> web.Response:
 
 async def handle_mount_locations(request: web.Request) -> web.Response:
     _require_operator(request)
-    table = request.app[MOUNTS_KEY].table
-    rows = table.descriptors()
+    service = request.app[MOUNTS_KEY]
+    table = service.settings_table
+    rows = service.settings_descriptors()
     for row in rows:
         mount = table.get(str(row["id"]))
         if mount is not None:
             row["path"] = str(mount.path)
-    return web.json_response({"mounts": rows})
+    active_rows = service.table.descriptors()
+    for row in active_rows:
+        mount = service.table.get(str(row["id"]))
+        if mount is not None:
+            row["path"] = str(mount.path)
+    return web.json_response(
+        {"mounts": rows, "activeMounts": active_rows, **service.pending_changes()}
+    )
 
 
 async def handle_mount_folder(request: web.Request) -> web.Response:
@@ -450,20 +490,24 @@ async def handle_mount_add(request: web.Request) -> web.Response:
     if not mount.path.is_dir():
         return _json_error(400, f"not a directory: {mount.path}")
     try:
-        service.table.add(mount, source="config")
+        if service.restart_for_changes and service.table.get(mount.id) is not None:
+            return _json_error(409, "mount id remains active until restart")
+        service.settings_table.add(mount, source="config")
     except MountsError as exc:
         return _json_error(409, str(exc))
     try:
+        service.persist()
         service.projects.register(mount.id, project=project, shared=shared)
     except OSError:
-        service.table.remove(mount.id)
+        service.settings_table.remove(mount.id)
+        service.persist()
         raise
-    service.persist()
     service.publish(request.app)
-    # The grant is durable and visible NOW (state "pending"); the catalog
-    # fills in behind it and mounts_changed announces completion.
-    service.scan_soon(request.app, mount.id)
-    descriptor = next(row for row in service.table.descriptors() if row["id"] == mount.id)
+    # Fixed sandbox grants cannot be rebound; only live additions are scanned.
+    if not service.restart_for_changes:
+        service.scan_soon(request.app, mount.id)
+    descriptor = next(row for row in service.settings_descriptors() if row["id"] == mount.id)
+    descriptor.update(service.pending_changes())
     return web.json_response(descriptor, status=201)
 
 
@@ -473,7 +517,7 @@ async def handle_mount_remove(request: web.Request) -> web.Response:
     if not service.allow_changes:
         return _json_error(403, "mount-changes-disabled")
     mount_id = request.match_info["mountId"]
-    source = service.table.source(mount_id)
+    source = service.settings_table.source(mount_id)
     if source is None:
         return _json_error(404, f"unknown mount: {mount_id}")
     if source != "config":
@@ -488,13 +532,13 @@ async def handle_mount_remove(request: web.Request) -> web.Response:
             409, f"select replacement output folders for projects: {', '.join(affected)}"
         )
     try:
-        service.table.remove(mount_id)
+        service.settings_table.remove(mount_id)
     except MountsError as exc:
         return _json_error(409, str(exc))
     service.persist()
     service.refresh_resolution_store()
     service.publish(request.app)
-    return web.json_response({"removed": mount_id})
+    return web.json_response({"removed": mount_id, **service.pending_changes()})
 
 
 async def handle_output_mount_update(request: web.Request) -> web.Response:
@@ -510,12 +554,12 @@ async def handle_output_mount_update(request: web.Request) -> web.Response:
     if not isinstance(mount_id, str):
         return _json_error(400, "id must be a mount id")
     try:
-        service.table.select_output_mount(mount_id)
+        service.settings_table.select_output_mount(mount_id)
         service.persist()
     except MountsError as exc:
         return _json_error(400, str(exc))
     service.publish(request.app)
-    return web.json_response({"outputMount": mount_id})
+    return web.json_response({"outputMount": mount_id, **service.pending_changes()})
 
 
 def _is_operator(request: web.Request) -> bool:
@@ -548,12 +592,12 @@ async def handle_project_update(request: web.Request) -> web.Response:
     project = request.match_info["project"]
     output = body["outputMount"]
     if output is not None:
-        mount = service.table.get(output) if isinstance(output, str) else None
+        mount = service.settings_table.get(output) if isinstance(output, str) else None
         if mount is None or mount.mode != "readwrite":
             return _json_error(400, "outputMount must name a writable grant or be null")
     try:
         service.projects.update(
-            project, body["mounts"], available=service.mount_ids(), output=output
+            project, body["mounts"], available=service.mount_ids(settings=True), output=output
         )
     except MountsError as exc:
         return _json_error(400, str(exc))

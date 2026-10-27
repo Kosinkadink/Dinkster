@@ -1602,7 +1602,11 @@ def test_output_mount_selection_is_persisted_and_published(tmp_path: Path) -> No
         client = await make_client(service)
         response = await client.put("/api/mounts/output", json={"id": "renders"})
         assert response.status == 200
-        assert await response.json() == {"outputMount": "renders"}
+        assert await response.json() == {
+            "outputMount": "renders",
+            "restartRequired": False,
+            "pendingRemovals": [],
+        }
         listing = await (await client.get("/api/mounts")).json()
         assert listing["outputMount"] == "renders"
         await client.close()
@@ -1924,6 +1928,110 @@ def test_project_folder_paths_and_mutations_require_operator(tmp_path: Path) -> 
                     assert str(tmp_path) not in await response.text()
             assert table.get("private-location") is not None
         finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_sandbox_folder_edits_preserve_live_grants_until_restart(tmp_path: Path) -> None:
+    config = tmp_path / "mounts.toml"
+    snapshot = tmp_path / "snapshot.json"
+    for name in ("old", "next"):
+        seed(tmp_path / name, {"file.bin": name.encode()})
+    table = MountTable(snapshot, output_mount="old")
+    table.add(MountDef("old", tmp_path / "old", "readwrite"))
+    table.scan("old")
+    old_digest = table.ref("mounts/old/file.bin").digest
+    original_snapshot = snapshot.read_bytes()
+    service = MountService(table, config, allow_changes=True, restart_for_changes=True)
+    service.persist()
+
+    async def scenario() -> None:
+        client = await make_client(service)
+        try:
+            response = await client.post(
+                "/api/mounts",
+                json={"id": "next", "path": str(tmp_path / "next"), "mode": "readwrite"},
+            )
+            assert response.status == 201
+            added = await response.json()
+            assert added["state"] == "restart-required"
+            assert added["restartRequired"] is True
+            assert (await client.get("/api/mounts/next/list")).status == 404
+            assert (await client.delete("/api/mounts/old")).status == 409
+            assert (await client.put("/api/mounts/output", json={"id": "next"})).status == 200
+            response = await client.delete("/api/mounts/old")
+            assert response.status == 200
+            removed = await response.json()
+            assert removed["restartRequired"] is True
+            assert removed["pendingRemovals"] == ["old"]
+            listing = await (await client.get("/api/mounts")).json()
+            assert listing["outputMount"] == "next"
+            assert listing["activeOutputMount"] == "old"
+            locations = await (await client.get("/api/mounts/locations")).json()
+            assert [row["id"] for row in locations["mounts"]] == ["next"]
+            assert [(row["id"], row["path"]) for row in locations["activeMounts"]] == [
+                ("old", str(tmp_path / "old"))
+            ]
+            response = await client.post(
+                "/api/mounts", json={"id": "old", "path": str(tmp_path / "next")}
+            )
+            assert response.status == 409
+            assert table.output_mount == "old"
+            assert (
+                MountSnapshotResolver(snapshot).resolve(old_digest) == tmp_path / "old" / "file.bin"
+            )
+            assert snapshot.read_bytes() == original_snapshot
+        finally:
+            await service.close()
+            await client.close()
+
+    asyncio.run(scenario())
+    assert [mount.id for mount in load_mounts(config)] == ["next"]
+    restarted = MountTable(output_mount=load_output_mount(config))
+    for mount in load_mounts(config):
+        restarted.add(mount)
+        restarted.scan(mount.id)
+    assert restarted.get("old") is None
+    assert restarted.output_mount == "next"
+    assert restarted.ref("mounts/next/file.bin").digest == digest_bytes(b"next")
+    assert (tmp_path / "old" / "file.bin").read_bytes() == b"old"
+
+
+def test_offline_folder_retry_retains_location_and_digest(tmp_path: Path) -> None:
+    root = tmp_path / "mounted-network-share" / "Project A"
+    detached = tmp_path / "detached-share"
+    seed(root, {"source.bin": b"network source"})
+    table = MountTable(tmp_path / "snapshot.json", index_root=tmp_path / "indexes")
+    table.add(MountDef("network", root, kind="model/vae"))
+    table.scan("network")
+    digest = table.ref("mounts/network/source.bin").digest
+    root.rename(detached)
+    service = MountService(table, tmp_path / "mounts.toml", allow_changes=True)
+    service.persist()
+
+    async def scenario() -> None:
+        client = await make_client(service)
+        try:
+            response = await client.post("/api/mounts/network/retry")
+            assert response.status == 202
+            await wait_for_state(client, "network", "failed")
+            response = await client.get("/api/mounts/locations")
+            (row,) = (await response.json())["mounts"]
+            assert row["path"] == str(root)
+            assert row["state"] == "failed"
+            assert not root.exists()
+            assert table.resolve(digest) is None
+            detached.rename(root)
+            assert (await client.post("/api/mounts/network/retry")).status == 202
+            await wait_for_state(client, "network", "ready")
+            response = await client.get("/api/mounts/network/entries")
+            (entry,) = (await response.json())["entries"]
+            assert entry["digest"] == digest
+            assert entry["virtualPath"] == "mounts/network/source.bin"
+            assert (root / "source.bin").read_bytes() == b"network source"
+        finally:
+            await service.close()
             await client.close()
 
     asyncio.run(scenario())

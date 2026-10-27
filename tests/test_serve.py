@@ -967,13 +967,26 @@ def test_openai_generation_environment_fails_with_argparse_diagnostic(
     assert message in capsys.readouterr().err
 
 
-def test_sandbox_refuses_live_mount_mutation(
+def test_sandbox_mount_edits_require_restart(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
     from dinkster import serve
+    from dinkster.mounts_api import MOUNTS_KEY
 
+    def fake_run_app(awaitable: object, **_kwargs: object) -> None:
+        async def inspect() -> None:
+            app = await awaitable  # type: ignore[misc]
+            service = app[MOUNTS_KEY]
+            assert service.allow_changes
+            assert service.restart_for_changes
+            assert service.settings_table is not service.table
+            app.freeze()
+            await app.cleanup()
+
+        asyncio.run(inspect())
+
+    monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -985,9 +998,7 @@ def test_sandbox_refuses_live_mount_mutation(
             "--allow-mount-changes",
         ],
     )
-    with pytest.raises(SystemExit, match="2"):
-        serve.main()
-    assert "cannot be combined with --sandbox-packs" in capsys.readouterr().err
+    serve.main()
 
 
 def test_sandbox_host_grants_require_the_flag(

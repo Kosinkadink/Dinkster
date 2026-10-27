@@ -1600,11 +1600,6 @@ def main(argv: list[str] | None = None) -> None:
             "--allow-mount-changes requires a library root "
             "(granted mounts persist to <library-root>/mounts.toml)"
         )
-    if args.sandbox_packs and args.allow_mount_changes:
-        parser.error(
-            "--allow-mount-changes cannot be combined with --sandbox-packs; "
-            "a running mount namespace cannot add or revoke bind grants"
-        )
     if (args.sandbox_grant_gpu or args.sandbox_grant_network) and not args.sandbox_packs:
         parser.error("sandbox pack grants require --sandbox-packs")
     for name in args.sandbox_grant_gpu:
@@ -1707,7 +1702,10 @@ def main(argv: list[str] | None = None) -> None:
             elif comfy_output_mount is not None and comfy_output_mount.mode == "readwrite":
                 mount_table.select_output_mount("comfy-output", require_config=False)
         mount_service = MountService(
-            mount_table, mounts_config, allow_changes=args.allow_mount_changes
+            mount_table,
+            mounts_config,
+            allow_changes=args.allow_mount_changes,
+            restart_for_changes=args.sandbox_packs,
         )
         # Publish the (initially empty - nothing has scanned yet) snapshot
         # and point THIS process at it: media I/O save nodes run in-process, and

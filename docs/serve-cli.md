@@ -407,8 +407,14 @@ configured as `readwrite`; all other configured mounts remain read-only.
 Every jailed worker has an unshared network namespace, including workers with
 granted egress. Allowed HTTPS connections cross a per-worker Unix-socket proxy;
 the worker never receives host or raw network access.
-`--allow-mount-changes` cannot be combined with this flag because a running
-mount namespace cannot add or revoke bind grants.
+With `--allow-mount-changes`, folder grants are saved for the next controlled
+server restart. Responses report `restartRequired` and `pendingRemovals`;
+new folders have state `restart-required`. Running workers retain their
+original grants and output selection because a running mount namespace cannot
+add or revoke bind grants. Listings distinguish saved `outputMount` from
+`activeOutputMount`; operator locations include `activeMounts` so pending
+removals do not hide the paths still granted. Changing a project preference
+does not rebind it.
 
 ### --sandbox-grant-gpu
 
@@ -825,6 +831,9 @@ filesystem mounts while running (the desktop-shell folder-picker
 flow). Granted mounts persist to `<library-root>/mounts.toml`. Off by
 default: runtime mount mutation is a filesystem capability grant and
 stays operator-only. Requires `--library-root`.
+With `--sandbox-packs`, grant additions/removals and the global output selection
+are persisted but do not change live authority until the server restarts.
+No restart is triggered by a folder API request.
 
 Mount entries and `POST /api/mounts` accept an optional `kind` purpose such as
 `model/vae`, `model/vae-approx`, `model/diffusers`, `directory/input` or
