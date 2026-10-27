@@ -2125,7 +2125,13 @@ def test_opaque_value_relays_back_across_the_boundary(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(not hasattr(signal, "SIGSTOP"), reason="requires POSIX signals")
-def test_isolated_close_cancellation_still_kills_reaps_and_cleans(tmp_path: Path) -> None:
+def test_isolated_close_cancellation_still_kills_reaps_and_cleans(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import dinkster_workers.isolated as isolated_module
+
+    monkeypatch.setattr(isolated_module, "_CHILD_SHUTDOWN_GRACE", 0.05)
+
     async def scenario() -> None:
         worker = iso_worker(tmp_path, core_registry())
         await worker.start()
@@ -2135,8 +2141,16 @@ def test_isolated_close_cancellation_still_kills_reaps_and_cleans(tmp_path: Path
         assert cleanup_dir is not None
         os.kill(process.pid, _SIGSTOP)
 
+        waiting = asyncio.Event()
+        original_wait = process.wait
+
+        async def wait_for_exit() -> int:
+            waiting.set()
+            return await original_wait()
+
+        monkeypatch.setattr(process, "wait", wait_for_exit)
         close = asyncio.create_task(worker.close())
-        await asyncio.sleep(0.05)
+        await asyncio.wait_for(waiting.wait(), 5)
         close.cancel()
         with pytest.raises(asyncio.CancelledError):
             await close
