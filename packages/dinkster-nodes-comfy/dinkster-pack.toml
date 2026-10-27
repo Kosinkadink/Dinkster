@@ -544,6 +544,7 @@ namespaces = [
     "YuE2GenerateMusic",
     "LoadImageDataSetFromFolder",
     "LoadImageTextDataSetFromFolder",
+    "UpscaleModelLoader",
     "TextOverlay",
 ]
 
