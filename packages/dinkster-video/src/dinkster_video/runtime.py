@@ -376,8 +376,10 @@ def _video_frames(segments: list[_Segment]) -> Generator[tuple[Fraction, Any]]:
                 container = cast(Any, opened)
                 stream = container.streams.video[0]
                 origin = cast(Fraction, probe["start_time"])
+                start_pts = int((origin + segment.start) / stream.time_base)
+                end_pts = int((origin + end) / stream.time_base) if end is not None else None
                 if segment.start:
-                    container.seek(int((origin + segment.start) / stream.time_base), stream=stream)
+                    container.seek(start_pts, stream=stream)
                 for frame in _decoded_video(container, stream):
                     # VP8 cannot signal a matrix; the container outranks its decoder default.
                     if stream.codec_context.codec.canonical_name == "vp8" and probe[
@@ -390,11 +392,12 @@ def _video_frames(segments: list[_Segment]) -> Generator[tuple[Fraction, Any]]:
                         frame.color_range = probe["range"]
                     if frame.pts is None:
                         raise ValueError("video frame has no timestamp")
-                    t = Fraction(frame.pts) * frame.time_base - origin
-                    if t < segment.start:
+                    # Frame selection uses truncated stream ticks, not rounded timeline bounds.
+                    if frame.pts < start_pts:
                         continue
-                    if end is not None and t >= end:
+                    if end_pts is not None and frame.pts >= end_pts:
                         break
+                    t = Fraction(frame.pts) * frame.time_base - origin
                     if segment.spatial or probe["rotation"]:
                         array = _pixels(frame, depth, bool(probe["alpha"]))
                         yield offset + t - segment.start, _transform(array, segment, depth)
@@ -883,7 +886,7 @@ def save_video_stream(
     *,
     container: str = "auto",
     codec: str = "auto",
-    crf: int | None = None,
+    crf: int | float | None = None,
     metadata: Mapping[str, object] | None = None,
     profile: str = "auto",
     audio_layout: str = "preserve",
@@ -1130,8 +1133,10 @@ def save_video_stream(
     if crf is not None and name not in _ENCODERS:
         format_diagnostic({"crf": crf}, {"crf": None, "codec": name}, on_diagnostic)
         crf = None
-    if crf is not None and (type(crf) is not int or not 0 <= crf <= limit):
-        raise ValueError(f"crf must be an integer in 0..{limit}")
+    if crf is not None and (
+        type(crf) not in (int, float) or not 0 <= crf <= limit or not math.isfinite(crf)
+    ):
+        raise ValueError(f"crf must be a finite number in 0..{limit}")
     rate = cast("Fraction | None", facts["fps"])
     if rate is None:
         raise ValueError("encoding requires a known frame rate")
