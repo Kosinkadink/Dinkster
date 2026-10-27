@@ -28,6 +28,9 @@ from dinkster_nodes_comfy.noise import AddNoise, DisableNoise, RandomNoise
 
 from dinkster.compose import PackSpec, ServingComposer
 
+# Arithmetic and identity expectations below are hand-derived from the supplied
+# tensors and fixture transforms, except the explicitly attributed random draw.
+
 
 def test_random_noise_uses_seeded_batch_indices_and_disable_noise_preserves_layout() -> None:
     latent = {
@@ -35,6 +38,8 @@ def test_random_noise_uses_seeded_batch_indices_and_disable_noise_preserves_layo
         "batch_index": [7, 3],
     }
     noise = RandomNoise.execute(noise_seed=42)["NOISE"].generate_noise(latent)
+    # ComfyUI Noise_Random, F bc5f880d: seed=42, float32 zeros (2,1,2,2),
+    # batch_index=[7,3]; generate_noise delegates to comfy.sample.prepare_noise.
     assert noise.flatten().tolist() == [
         -0.049903348088264465,
         0.5263369679450989,
@@ -139,6 +144,41 @@ def test_add_noise_uses_absolute_endpoint_delta_and_transforms_nonzero_latents()
         model=_Model(), noise=Noise(), sigmas=torch.tensor([3.0]), latent_image=latent
     )["LATENT"]
     assert torch.equal(one_sigma["samples"], torch.tensor([[[[34.0, -2.0]]]]))
+
+
+@pytest.mark.parametrize("empty", (False, True))
+def test_add_noise_handles_native_av_arithmetic_and_preserves_source(empty: bool) -> None:
+    class Model:
+        def get_model_object(self, name: str) -> object:
+            return {
+                "model_sampling": _Sampling(),
+                "process_latent_in": lambda value: value + 10,
+                "process_latent_out": lambda value: value * 2,
+            }[name]
+
+    video = torch.zeros((1, 1, 2, 2, 3), dtype=torch.float64)
+    audio = torch.zeros((1, 1, 4), dtype=torch.float32)
+    if not empty:
+        audio[0, 0] = torch.tensor([3.0, float("nan"), float("inf"), -float("inf")])
+    original_audio = audio.clone()
+    samples = MultiStreamLatent.from_pairs((("video", video), ("audio", audio)))
+    source = {"samples": samples, "note": "kept"}
+    result = AddNoise.execute(
+        model=Model(),
+        noise=DisableNoise.execute()["NOISE"],
+        sigmas=torch.tensor([4.0, 1.0]),
+        latent_image=source,
+    )["LATENT"]
+    assert result["note"] == "kept"
+    assert result["samples"].roles == ("video", "audio")
+    # Hand-derived: zero noise, shift both streams iff any stream is nonzero,
+    # then multiply by two. Mixed empty/nonempty streams detect per-stream shifts.
+    shift = 0 if empty else 10
+    torch.testing.assert_close(result["samples"].by_role("video"), (video + shift) * 2)
+    expected_audio = torch.zeros_like(audio) if empty else torch.tensor([[[26.0, 0.0, 0.0, 0.0]]])
+    torch.testing.assert_close(result["samples"].by_role("audio"), expected_audio)
+    torch.testing.assert_close(audio, original_audio, equal_nan=True)
+    assert source["samples"] is samples
 
 
 class _PackSampling:

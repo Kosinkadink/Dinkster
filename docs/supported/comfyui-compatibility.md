@@ -16,6 +16,9 @@
   guidance, using checkpoint denoise-encoder weights when present.
 - Native KSampler and KSamplerAdvanced use the inference sampling engine with
   seeded batch noise, masks, denoise strength and advanced step boundaries.
+- Native standard and custom samplers retain ordered audio/video stream roles
+  and masks through sampling and denoised outputs. AddNoise retains those roles
+  through empty-latent handling and replaces nonfinite output values with zero.
 - Native Wan Uni3C applies render-video guidance with temporal padding, spatial
   alignment, scheduled residuals and shared conditional-batch computation.
 - Native Qwen DiffSynth and Z-Image Fun ControlNet apply scheduled image and

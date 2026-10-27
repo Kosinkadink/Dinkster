@@ -10,8 +10,12 @@ from typing import Any
 import pytest
 import torch
 from dinkster_api.v1 import MultiStreamLatent, initialize_inference_process
-from dinkster_nodes_comfy import standard_sampling
+from dinkster_nodes_comfy import custom_sampling, standard_sampling
+from dinkster_nodes_comfy.noise import DisableNoise
 from dinkster_nodes_comfy.standard_sampling import KSampler, KSamplerAdvanced
+
+# Expected values below are hand-derived from the fixture model x -> x / 4,
+# Euler's one-step update, and the explicitly supplied noise and masks.
 
 
 class _LatentFormat:
@@ -37,7 +41,7 @@ class _SamplingSpace:
     def noise_scaling(
         self, sigma: torch.Tensor, noise: torch.Tensor, latent: torch.Tensor, _maximum: bool
     ) -> torch.Tensor:
-        return latent + sigma.reshape((-1, 1, 1, 1)) * noise
+        return latent + sigma.reshape((-1,) + (1,) * (noise.ndim - 1)) * noise
 
     def inverse_noise_scaling(self, _sigma: torch.Tensor, samples: torch.Tensor) -> torch.Tensor:
         return samples
@@ -220,7 +224,62 @@ def test_ksampler_advanced_uses_noise_and_step_boundaries() -> None:
     assert torch.equal(source["samples"], original)
 
 
-def test_standard_sampler_restores_asymmetric_av_streams_after_pinned_sampling(
+@pytest.mark.parametrize("advanced", (False, True))
+def test_av_streams_execute_real_pinned_cpu_sampler_and_callback(advanced: bool) -> None:
+    from dinkster_inference import samplers
+
+    model, raw = _model()
+    video = torch.tensor([[[[[1.0, 2.0, -3.0], [4.0, -5.0, 6.0]]]]])
+    audio = torch.tensor([[[2.0, -1.0, 3.0, -4.0]]])
+    samples = MultiStreamLatent.from_pairs((("video", video), ("audio", audio)))
+    masks = MultiStreamLatent.from_pairs(
+        (("video", torch.ones_like(video)), ("audio", torch.zeros_like(audio)))
+    )
+    source = {"samples": samples, "noise_mask": masks, "note": "preserved"}
+    if advanced:
+        guider = samplers.CFGGuider(model)
+        guider.set_conds(_conditioning(), _conditioning())
+        guider.set_cfg(1.0)
+        result = custom_sampling.SamplerCustomAdvanced.execute(
+            noise=DisableNoise.execute()["NOISE"],
+            guider=guider,
+            sampler=samplers.ksampler("euler"),
+            sigmas=torch.tensor([1.0, 0.0]),
+            latent_image=source,
+        )
+        outputs = (result["output"], result["denoised_output"])
+    else:
+        outputs = (
+            KSamplerAdvanced.execute(
+                model=model,
+                add_noise="disable",
+                noise_seed=19,
+                steps=1,
+                cfg=1.0,
+                sampler_name="euler",
+                scheduler="normal",
+                positive=_conditioning(),
+                negative=_conditioning(),
+                latent_image=source,
+                start_at_step=0,
+                end_at_step=1,
+                return_with_leftover_noise="disable",
+            )["LATENT"],
+        )
+    assert len(raw.inputs) == 1
+    # Hand-derived: sigma 1 -> 0 with zero noise yields x / 4 on the video
+    # mask and leaves the fully masked audio unchanged, including the callback.
+    for output in outputs:
+        assert output["note"] == "preserved"
+        assert output["samples"].roles == ("video", "audio")
+        torch.testing.assert_close(output["samples"].by_role("video"), video / 4)
+        torch.testing.assert_close(output["samples"].by_role("audio"), audio)
+    assert source["samples"] is samples
+    torch.testing.assert_close(video, torch.tensor([[[[[1.0, 2.0, -3.0], [4.0, -5.0, 6.0]]]]]))
+    torch.testing.assert_close(audio, torch.tensor([[[2.0, -1.0, 3.0, -4.0]]]))
+
+
+def test_standard_sampler_restores_asymmetric_av_streams_with_stub_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class Sampling:
