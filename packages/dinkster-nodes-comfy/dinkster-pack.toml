@@ -514,6 +514,7 @@ namespaces = [
     "LoraLoaderBypassModelOnly",
     "CropByBBoxes",
     "MakeTrainingDataset",
+    "TripoSplatPreprocessImage",
 ]
 
 [pack.sandbox]
