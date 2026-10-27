@@ -8,8 +8,8 @@ import asyncio
 import hashlib
 import json
 import os
-import time
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
@@ -18,6 +18,7 @@ import aiohttp
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from dinkster_api.v1 import current_export_snapshot
 from dinkster_caches import MemoryLRUCache
 from dinkster_collab import SessionService, add_session_routes
 from dinkster_engine import (
@@ -527,6 +528,7 @@ def test_queue_export_snapshot_changes_default_fingerprint_and_resubmission() ->
         assert first.fingerprint != without_snapshot.fingerprint
         first_prompt["save"]["inputs"]["seed"] = 99
         assert first.export_snapshot is not None
+        assert first.export_snapshot.prompt is not None
         assert first.export_snapshot.prompt["save"] == {"inputs": {"seed": 1}}
         with pytest.raises(ValueError, match="different content"):
             queue.submit("c", "snapshot", graph, targets, export_snapshot=second_snapshot)
@@ -629,14 +631,22 @@ def test_queue_cancel_queued_and_running() -> None:
     asyncio.run(scenario())
 
 
-def test_queue_pause_holds_dispatch_and_resume_releases() -> None:
+def test_queue_pause_holds_dispatch_and_resume_releases(monkeypatch: pytest.MonkeyPatch) -> None:
     async def scenario() -> None:
         queue = JobQueue(make_engine())
+        dispatch_checked = asyncio.Event()
+        original_clear = queue._wakeup.clear
+
+        def clear_wakeup() -> None:
+            original_clear()
+            dispatch_checked.set()
+
+        monkeypatch.setattr(queue._wakeup, "clear", clear_wakeup)
         queue.start()
         assert not queue.paused
         queue.pause()
         job = queue.submit("c", "j1", echo_graph(), ["s"])
-        await asyncio.sleep(0.05)  # dispatcher had every chance to misbehave
+        await asyncio.wait_for(dispatch_checked.wait(), 5)
         assert job.state == "queued"
         assert queue.status()["paused"] is True
         queue.resume()
@@ -700,18 +710,24 @@ def test_queue_history_forgets_oldest_terminal_jobs() -> None:
     asyncio.run(scenario())
 
 
-def test_new_job_ref_globally_unique_and_time_ordered() -> None:
+def test_new_job_ref_globally_unique_and_time_ordered(monkeypatch: pytest.MonkeyPatch) -> None:
     """jobRef contract (platform plan): server-assigned, globally unique,
     opaque; lexical order approximates submission order (ms-timestamp
     prefix + 80 random bits)."""
+    from types import SimpleNamespace
+
+    import dinkster_server.queue as queue_module
     from dinkster_server.queue import new_job_ref
+
+    now = 1000.0
+    monkeypatch.setattr(queue_module, "time", SimpleNamespace(time=lambda: now))
 
     refs = [new_job_ref() for _ in range(1000)]
     assert len(set(refs)) == len(refs)
     assert all(len(r) == 32 and int(r, 16) >= 0 for r in refs)
-    # Refs minted across a real clock tick sort after earlier ones.
+    # Refs minted across a clock tick sort after earlier ones.
     early = new_job_ref()
-    time.sleep(0.002)
+    now += 0.002
     assert new_job_ref() > early
 
 
@@ -2641,7 +2657,7 @@ def test_prepared_surface_validation_keeps_requests_responsive(
         defer_unpublished_carriers: bool = False,
     ) -> None:
         validation_started.set()
-        release_validation.wait()
+        assert release_validation.wait(2)
         original_validate(
             packs,
             schemas,
@@ -2673,18 +2689,19 @@ def test_prepared_surface_validation_keeps_requests_responsive(
                     {"late.echo": "native"},
                 )
             )
-        fallback_release = threading.Timer(2, release_validation.set)
-        fallback_release.start()
         try:
-            assert await asyncio.to_thread(validation_started.wait)
-            started = time.monotonic()
-            health_response, job_response, nodes_response = await asyncio.gather(
-                client.get("/api/health"),
-                client.get("/api/jobs/client/missing"),
-                client.get("/api/nodes"),
+            assert await asyncio.to_thread(validation_started.wait, 2)
+            assert not validation.done()
+            health_response, job_response, nodes_response = await asyncio.wait_for(
+                asyncio.gather(
+                    client.get("/api/health"),
+                    client.get("/api/jobs/client/missing"),
+                    client.get("/api/nodes"),
+                ),
+                2,
             )
-            elapsed = time.monotonic() - started
-            assert elapsed < 1
+            assert not validation.done()
+            assert not release_validation.is_set()
             assert health_response.status == 200
             assert job_response.status == 404
             assert "late.echo" not in (await nodes_response.json())["nodes"]
@@ -2714,10 +2731,10 @@ def test_prepared_surface_validation_keeps_requests_responsive(
             assert "late.echo" in (await (await client.get("/api/nodes")).json())["nodes"]
         finally:
             release_validation.set()
-            fallback_release.cancel()
-            if not validation.done():
+            try:
                 await validation
-            await client.close()
+            finally:
+                await client.close()
 
     asyncio.run(scenario())
 
@@ -3662,6 +3679,152 @@ def test_diagnostics_surfaces_sorted_core_and_legacy_compat_skips() -> None:
     asyncio.run(scenario())
 
 
+def test_native_export_snapshot_admission_and_idempotency() -> None:
+    async def scenario() -> None:
+        client = await make_client()
+        try:
+            assert (await client.post("/api/queue/pause")).status == 200
+            snapshot = {
+                "prompt": {"17": {"class_type": "SaveImage", "inputs": {"filename_prefix": "x"}}},
+                "extraPnginfo": {"workflow": {"nodes": [17, 3]}, "custom": ["b", "a"]},
+            }
+            body = submit_body(echo_graph(), ["s"], exportSnapshot=snapshot)
+            first = await client.post("/api/jobs", json=body)
+            assert first.status == 202
+            accepted = await first.json()
+            job = client.app[STATE_KEY].queue.jobs()[0]
+            assert job.export_snapshot == ExportSnapshot(
+                prompt=snapshot["prompt"], extra_pnginfo=snapshot["extraPnginfo"]
+            )
+            duplicate = await client.post("/api/jobs", json=body)
+            assert duplicate.status == 202
+            assert (await duplicate.json())["jobRef"] == accepted["jobRef"]
+            for changed in (
+                {"prompt": {}},
+                {"prompt": snapshot["prompt"], "extraPnginfo": {"custom": ["a", "b"]}},
+            ):
+                conflict = await client.post(
+                    "/api/jobs", json=submit_body(echo_graph(), ["s"], exportSnapshot=changed)
+                )
+                assert conflict.status == 409
+            for invalid in (
+                None,
+                [],
+                {"prompt": None},
+                {"prompt": []},
+                {"extraPnginfo": None},
+                {"prompt": {}, "extraPnginfo": []},
+                {"prompt": {}, "unknown": True},
+            ):
+                response = await client.post(
+                    "/api/jobs",
+                    json=submit_body(echo_graph(), ["s"], jobId="bad", exportSnapshot=invalid),
+                )
+                assert response.status == 400
+                assert "exportSnapshot" in (await response.json())["error"]
+            minimal = await client.post(
+                "/api/jobs",
+                json=submit_body(
+                    echo_graph(), ["s"], jobId="minimal", exportSnapshot={"prompt": {}}
+                ),
+            )
+            assert minimal.status == 202
+            workflow_only = {"extraPnginfo": snapshot["extraPnginfo"]}
+            admitted = await client.post(
+                "/api/jobs",
+                json=submit_body(
+                    echo_graph(), ["s"], jobId="workflow", exportSnapshot=workflow_only
+                ),
+            )
+            assert admitted.status == 202
+            for fields in (
+                {"exportSnapshot": {**workflow_only, "prompt": {}}},
+                {},
+            ):
+                conflict = await client.post(
+                    "/api/jobs", json=submit_body(echo_graph(), ["s"], jobId="workflow", **fields)
+                )
+                assert conflict.status == 409
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_native_http_output_reads_detached_export_metadata() -> None:
+    class MetadataOutput(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(node_type="test.metadata_output", output_node=True, idempotent=False)
+
+        @classmethod
+        def execute(cls) -> Mapping[str, object]:
+            snapshot = current_export_snapshot()
+            if snapshot is None:
+                observed.append(None)
+            else:
+                observed.append(current_export_snapshot())
+                if snapshot.prompt:
+                    assert isinstance(snapshot.prompt["nested"], dict)
+                    snapshot.prompt["nested"]["value"] = "mutated"
+                    assert current_export_snapshot() != snapshot
+                if snapshot.extra_pnginfo:
+                    assert isinstance(snapshot.extra_pnginfo["workflow"], dict)
+                    snapshot.extra_pnginfo["workflow"]["nodes"] = [99]
+                    assert current_export_snapshot() != snapshot
+            return cls.outputs()
+
+    observed: list[object] = []
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        schemas = build_schemas([MetadataOutput])
+
+        def factory(on_event: EventListener | None = None) -> Engine:
+            return Engine(
+                schemas=schemas,
+                registry=registry,
+                worker=InProcessWorker(build_node_types([MetadataOutput]), registry),
+                cache=MemoryLRUCache(),
+                on_event=on_event,
+            )
+
+        client = TestClient(TestServer(create_app(factory, schemas)))
+        await client.start_server()
+        try:
+            graph = Graph({"save": GraphNode("test.metadata_output", {})})
+            metadata = {
+                "prompt": {"nested": {"value": "original"}},
+                "extraPnginfo": {"workflow": {"nodes": [3, 17]}},
+            }
+            for job_id, fields in (
+                ("with", {"exportSnapshot": metadata}),
+                ("workflow", {"exportSnapshot": {"extraPnginfo": metadata["extraPnginfo"]}}),
+                ("empty", {"exportSnapshot": {"prompt": {}}}),
+                ("without", {}),
+            ):
+                response = await client.post(
+                    "/api/jobs", json=submit_body(graph, ["save"], jobId=job_id, **fields)
+                )
+                assert response.status == 202
+                await wait_for_http_state(client, "c1", job_id, "completed")
+            assert observed == [
+                ExportSnapshot(
+                    prompt={"nested": {"value": "original"}},
+                    extra_pnginfo=metadata["extraPnginfo"],
+                ),
+                ExportSnapshot(extra_pnginfo=metadata["extraPnginfo"]),
+                ExportSnapshot(prompt={}),
+                None,
+            ]
+            assert current_export_snapshot() is None
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
 def test_source_document_passthrough() -> None:
     """sourceDocument (frontend contract 2026-07) is an execution-OPAQUE
     provenance reference: a canonical asset digest ("blake3:<hex>") of the
@@ -4306,6 +4469,20 @@ def test_server_compile_once_preserves_raw_fingerprint_and_pinned_generation(
 
         app = create_app(factory, SCHEMAS)
         app[STATE_KEY].queue.pause()
+        admission_entered = asyncio.Event()
+        admission_calls = 0
+        original_admission = app[STATE_KEY].job_admission
+
+        @asynccontextmanager
+        async def observe_admission(client_id: str, job_id: str) -> AsyncIterator[None]:
+            nonlocal admission_calls
+            admission_calls += 1
+            if admission_calls == 2:
+                admission_entered.set()
+            async with original_admission(client_id, job_id):
+                yield
+
+        monkeypatch.setattr(app[STATE_KEY], "job_admission", observe_admission)
         client = TestClient(TestServer(app))
         await client.start_server()
         try:
@@ -4313,7 +4490,8 @@ def test_server_compile_once_preserves_raw_fingerprint_and_pinned_generation(
             first_task = asyncio.create_task(client.post("/api/jobs", json=body))
             await compile_entered.wait()
             duplicate_task = asyncio.create_task(client.post("/api/jobs", json=body))
-            await asyncio.sleep(0.01)
+            await asyncio.wait_for(admission_entered.wait(), 5)
+            assert not duplicate_task.done()
             assert len(calls) == 1
             compile_release.set()
             first_response, duplicate_response = await asyncio.gather(
@@ -4773,10 +4951,19 @@ def test_progress_events_throttled_at_ingestion_final_survives_in_replay() -> No
     asyncio.run(scenario())
 
 
-def test_queue_endpoints_over_http() -> None:
+def test_queue_endpoints_over_http(monkeypatch: pytest.MonkeyPatch) -> None:
     async def scenario() -> None:
         reset_sleeper()
         client = await make_client()
+        queue = client.app[STATE_KEY].queue
+        dispatch_checked = asyncio.Event()
+        original_clear = queue._wakeup.clear
+
+        def clear_wakeup() -> None:
+            original_clear()
+            dispatch_checked.set()
+
+        monkeypatch.setattr(queue._wakeup, "clear", clear_wakeup)
         try:
             # Baseline shape: nothing queued, nothing running, not paused.
             status = await (await client.get("/api/queue")).json()
@@ -4788,9 +4975,10 @@ def test_queue_endpoints_over_http() -> None:
             }
 
             assert (await client.post("/api/queue/pause")).status == 200
+            dispatch_checked.clear()
             graph = Graph(nodes={"n": GraphNode("test.sleeper", {"tag": "x"})})
             assert (await client.post("/api/jobs", json=submit_body(graph, ["n"]))).status == 202
-            await asyncio.sleep(0.05)
+            await asyncio.wait_for(dispatch_checked.wait(), 5)
             status = await (await client.get("/api/queue")).json()
             assert status["paused"] is True
             assert [j["jobId"] for j in status["queued"]] == ["j1"]
@@ -6003,7 +6191,7 @@ def test_values_endpoint_curve_points_rendition_is_authoritative_and_bounded() -
                 False,
                 "rendition_unavailable",
             )
-            assert "between 1 and 4096" in refusal["error"]
+            assert "preview exceeds 4096" in refusal["error"]
         finally:
             await client.close()
 

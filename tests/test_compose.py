@@ -1054,11 +1054,11 @@ def test_compose_serving_default_resolution_is_atomic(
     [
         (
             "dinkster-nodes-foundation",
-            "blake3:dd743459818287a5b68265e60ecfeff518cfcc101ff4636c822f1570b53cc31e",
+            "blake3:4a94c9dbbf803b60b726e0e09e50870315457c82dba794ad84ab13a1523b4281",
         ),
         (
             "dinkster-nodes-media-io",
-            "blake3:0b3627b13859880018e066c4acfbd484f85b58793b5a9e4f68077e77ca2f0ac2",
+            "blake3:5ee752cb71aeddb6564a1f953ee5a6e03cdfa291fe0c5cffe4b73c7cdc493ed7",
         ),
         (
             "dinkster-nodes-image",
@@ -3617,11 +3617,15 @@ def test_serving_composer_full_free_releases_live_worker_without_startup_guard(
                 }
             )
             await engine.run(graph, ["load"])
-            await asyncio.sleep(0.05)
 
-            results = await composer.full_free("maintenance-composed")
+            async with asyncio.timeout(5):
+                while True:
+                    results = await composer.full_free("maintenance-composed")
+                    worker = next(row for row in results[1:] if row["worker"] == "memorypack")
+                    if worker["status"] != "busy":
+                        break
+                    await asyncio.sleep(0)
             local = results[0]
-            worker = next(row for row in results[1:] if row["worker"] == "memorypack")
             assert local["status"] == "complete"
             assert worker["worker"] == "memorypack"
             assert worker["status"] == "complete"

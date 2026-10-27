@@ -921,7 +921,9 @@ def test_boundary_accepts_schema_reload_only_after_hello_negotiation() -> None:
                         await asyncio.wait_for(called.wait(), 1)
                         assert session.alive
                     else:
-                        await asyncio.sleep(0.05)
+                        async with asyncio.timeout(1):
+                            while session.alive:
+                                await asyncio.sleep(0)
                         assert not called.is_set()
                         assert not session.alive
                 finally:

@@ -1677,8 +1677,9 @@ def test_concurrent_duplicate_run_id_is_rejected() -> None:
         events: list[EngineEvent] = []
         engine = make_engine(events)
         first = asyncio.create_task(engine.run(image_graph(), ["s"], run_id="shared"))
-        while not any(event.kind == "run_started" for event in events):
-            await asyncio.sleep(0)
+        async with asyncio.timeout(5):
+            while not any(event.kind == "run_started" for event in events):
+                await asyncio.sleep(0)
         with pytest.raises(ActiveRunIdError, match="already active"):
             await engine.run(image_graph(), ["s"], run_id="shared")
         assert (await first).run_id == "shared"

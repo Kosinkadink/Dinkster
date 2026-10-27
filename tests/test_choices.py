@@ -532,6 +532,20 @@ def test_lazy_choice_timeout_and_recovery(tmp_path: Path, monkeypatch: pytest.Mo
     timeout cannot wedge the channel."""
 
     async def scenario() -> None:
+        from dinkster_workers import session
+        from dinkster_workers.boundary import read_frame
+
+        late_reply = asyncio.Event()
+
+        async def observed_read(reader: asyncio.StreamReader):
+            frame = await read_frame(reader)
+            if frame is not None:
+                header, _ = frame
+                if header.get("type") == "choicesResult" and header.get("values") == ["slow-1"]:
+                    late_reply.set()
+            return frame
+
+        monkeypatch.setattr(session, "read_frame", observed_read)
         counter = tmp_path / "count"
         composer = ServingComposer(
             worker_env={**WORKER_ENV, "CHOICEPACK_LAZY_COUNTER": str(counter)}
@@ -565,7 +579,7 @@ def test_lazy_choice_timeout_and_recovery(tmp_path: Path, monkeypatch: pytest.Mo
                 # Let the hung first invocation finish so its late reply
                 # arrives (and is discarded) before the second fetch proves
                 # the channel is still healthy.
-                await asyncio.sleep(2.2)
+                await asyncio.wait_for(late_reply.wait(), 5)
                 resp = await client.get("/api/choices/cp.slow")
                 assert resp.status == 200
                 assert await resp.json() == ["slow-2"]
