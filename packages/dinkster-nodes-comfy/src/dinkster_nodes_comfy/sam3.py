@@ -28,7 +28,7 @@ from dinkster_api.v1 import (
 )
 
 
-def _extract_text_prompts(conditioning: Any, device: Any, dtype: Any) -> list[Any]:
+def extract_text_prompts(conditioning: Any, device: Any, dtype: Any) -> list[Any]:
     torch = importlib.import_module("torch")
     metadata = conditioning[0][1]
     multiple = metadata.get("sam3_multi_cond")
@@ -153,7 +153,7 @@ class SAM3_VideoTrack(Node):
             conditioning = materialize_latent(conditioning)
             text_prompts = [
                 (embedding, mask)
-                for embedding, mask, _ in _extract_text_prompts(conditioning, device, dtype)
+                for embedding, mask, _ in extract_text_prompts(conditioning, device, dtype)
             ]
         elif initial_mask is None:
             raise ValueError("Either initial_mask or conditioning must be provided")

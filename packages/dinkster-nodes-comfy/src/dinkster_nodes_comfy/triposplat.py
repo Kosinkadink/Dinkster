@@ -1,4 +1,4 @@
-"""Native image and alpha preprocessing for TripoSplat."""
+"""Native image preprocessing and vision conditioning for TripoSplat."""
 
 from __future__ import annotations
 
@@ -7,10 +7,15 @@ from collections.abc import Mapping
 from typing import Any
 
 from dinkster_api.v1 import (
+    CLIP_VISION_TYPE,
+    CONDITIONING_TYPE,
     CORE_INT,
     IMAGE_TYPE,
+    LATENT_TYPE,
     MASK_TYPE,
+    VAE_TYPE,
     InputSpec,
+    MultiStreamLatent,
     Node,
     NodeSchema,
     NumberWidget,
@@ -117,3 +122,68 @@ class TripoSplatPreprocessImage(Node):
             dim=0,
         )
         return cls.outputs(image=prepared)
+
+
+class TripoSplatConditioning(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="TripoSplatConditioning",
+            display_name="TripoSplat Conditioning",
+            category="model/conditioning/triposplat",
+            description=(
+                "Encode the image with DINOv3 and the Flux2 VAE into TripoSplat "
+                "positive/negative conditioning, and create the fixed size noise target "
+                "(latent + camera) for the KSampler"
+            ),
+            inputs=(
+                InputSpec(
+                    "clip_vision",
+                    TypeExpr.concrete(CLIP_VISION_TYPE),
+                    doc="DINOv3 ViT-H/16+ image encoder",
+                ),
+                InputSpec("vae", TypeExpr.concrete(VAE_TYPE), doc="Flux2 VAE"),
+                InputSpec("image", TypeExpr.concrete(IMAGE_TYPE)),
+            ),
+            outputs=(
+                OutputSpec("positive", TypeExpr.concrete(CONDITIONING_TYPE)),
+                OutputSpec("negative", TypeExpr.concrete(CONDITIONING_TYPE)),
+                OutputSpec(
+                    "latent",
+                    TypeExpr.concrete(LATENT_TYPE),
+                    doc="The fixed size noise target (latent +camera).",
+                ),
+            ),
+        )
+
+    @classmethod
+    def execute(cls, *, clip_vision: Any, vae: Any, image: object) -> Mapping[str, object]:
+        initialize_inference_process()
+        torch = importlib.import_module("torch")
+        functional = importlib.import_module("torch.nn.functional")
+        management = importlib.import_module("dinkster_inference.model_management")
+        image_tensor = materialize_image(image)
+        management.load_model_gpu(clip_vision.patcher)
+        device = clip_vision.load_device
+        pixels = image_tensor.movedim(-1, 1).to(device)
+        mean = torch.tensor([0.485, 0.456, 0.406], device=device).view(1, 3, 1, 1)
+        std = torch.tensor([0.229, 0.224, 0.225], device=device).view(1, 3, 1, 1)
+        pixels = (pixels - mean) / std
+        sequence = clip_vision.model(pixel_values=pixels.float())[0]
+        feature = functional.layer_norm(sequence.float(), sequence.shape[-1:]).to(
+            management.intermediate_device()
+        )
+        reference = vae.encode(image_tensor).to(management.intermediate_device())
+        batch = reference.shape[0]
+        positive = [[feature, {"reference_latents": [reference]}]]
+        negative = [
+            [torch.zeros_like(feature), {"reference_latents": [torch.zeros_like(reference)]}]
+        ]
+        device = management.intermediate_device()
+        samples = MultiStreamLatent[Any].from_pairs(
+            (
+                ("shape", torch.zeros([batch, 8192, 16], device=device)),
+                ("camera", torch.zeros([batch, 1, 5], device=device)),
+            )
+        )
+        return cls.outputs(positive=positive, negative=negative, latent={"samples": samples})
