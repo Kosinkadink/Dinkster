@@ -87,7 +87,7 @@ class MountAssetRef:
             or re.match(r"^[A-Za-z]:", self.relative)
             or any(part in {"", ".", ".."} for part in self.relative.split("/"))
             or any(ord(char) < 32 or ord(char) == 127 for char in self.relative)
-            or not isinstance(self.signature, tuple)
+            or type(self.signature) is not tuple
             or len(self.signature) != 5
             or any(type(value) is not int for value in self.signature)
             or self.signature[0] < 0
