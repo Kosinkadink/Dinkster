@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from functools import partial
 from typing import cast
@@ -56,10 +57,15 @@ def _decode(data: bytes, *, type_id: str) -> object:
         else:
             if not isinstance(mapping.get("audio_feature"), EncodedLatentTensor):
                 raise ValueError("AUDIO_ENCODER_OUTPUT audio_feature must be a tensor")
-            if type(mapping.get("fps")) is not float:
-                raise ValueError("AUDIO_ENCODER_OUTPUT fps must be a float")
-            if "audio_inject_scale" in mapping and type(mapping["audio_inject_scale"]) is not float:
-                raise ValueError("AUDIO_ENCODER_OUTPUT audio_inject_scale must be a float")
+            fps = mapping.get("fps")
+            if type(fps) is not float or not math.isfinite(fps):
+                raise ValueError("AUDIO_ENCODER_OUTPUT fps must be a finite float")
+            if "audio_inject_scale" in mapping:
+                scale = mapping["audio_inject_scale"]
+                if type(scale) is not float or not math.isfinite(scale):
+                    raise ValueError(
+                        "AUDIO_ENCODER_OUTPUT audio_inject_scale must be a finite float"
+                    )
     return mapping
 
 

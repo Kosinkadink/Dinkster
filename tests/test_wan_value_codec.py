@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 
@@ -60,6 +61,11 @@ WANDANCER_ENCODER = {
             AUDIO_ENCODER_OUTPUT_TYPE,
             WANDANCER_ENCODER,
             {**WANDANCER_ENCODER, "fps": 30.0},
+        ),
+        (
+            AUDIO_ENCODER_OUTPUT_TYPE,
+            {**WANDANCER_ENCODER, "fps": 0.0, "audio_inject_scale": 11.0},
+            {**WANDANCER_ENCODER, "fps": 0.0, "audio_inject_scale": 12.0},
         ),
     ),
 )
@@ -147,6 +153,27 @@ def test_public_codec_rejects_invalid_fields_on_encode_and_decode(
         spec.decode(payload)
     with pytest.raises(ValueError):
         spec.validate_encoded(payload, {})
+
+
+@pytest.mark.parametrize("field", ("fps", "audio_inject_scale"))
+@pytest.mark.parametrize("value", (float("nan"), float("inf"), float("-inf")))
+def test_wandancer_codec_rejects_nonfinite_scalars(field: str, value: float) -> None:
+    registry = TypeRegistry()
+    register_inference_types(registry)
+    spec = registry.spec(AUDIO_ENCODER_OUTPUT_TYPE)
+    assert spec.validate_encoded is not None
+    payload = encode_latent({"samples": WANDANCER_ENCODER})
+    original = json.dumps(field).encode() + b":" + str(WANDANCER_ENCODER[field]).encode()
+    assert payload.count(original) == 1
+    malformed = payload.replace(
+        original, json.dumps(field).encode() + b":" + json.dumps(value).encode()
+    )
+    with pytest.raises(ValueError):
+        spec.encode({**WANDANCER_ENCODER, field: value})
+    with pytest.raises(ValueError):
+        spec.decode(malformed)
+    with pytest.raises(ValueError):
+        spec.validate_encoded(malformed, {})
 
 
 @pytest.mark.parametrize(
