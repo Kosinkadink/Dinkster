@@ -2,6 +2,8 @@
 
 - Native checkpoint and text-encoder loading uses the configured embedding
   directory roots in mount priority order, restricted to embedding grants.
+- Triple and quadruple CLIP loaders retain checkpoint order across three or
+  four admitted text-encoder assets and use the configured embedding grants.
 - Native PixArt Alpha, Lumina 2, and HiDream prompt nodes preserve resolution,
   system prompts, and per-encoder text when supplied a matching CLIP model.
   Controlnet text conditioning keeps existing embeddings and metadata; T5

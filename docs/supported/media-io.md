@@ -50,7 +50,8 @@
   AAC audio for MP4, Opus for WebM, PCM for ProRes, and FLAC for FFV1.
   Save Video accepts VIDEO with container, codec, ProRes profile, declared
   audio-layout preservation or explicit mono/stereo downmix, trim-to-audio
-  or silence padding, optional CRF, and JSON metadata controls. It outputs the unchanged VIDEO
+  or silence padding, optional finite integer or fractional CRF within the
+  codec's range without rounding, and JSON metadata controls. It outputs the unchanged VIDEO
   plus the saved asset. Persisted frame-input savers migrate through deferred
   assembly while preserving codec settings and saved-asset output links.
   Component audio without proven sample coverage preserves finite VIDEO length
@@ -69,6 +70,8 @@
 - VIDEO values retain an encoded source or deferred components, rational
   source probe facts, and ordered lazy trim, crop, scale, and restricted
   identical-codec concat edits. Info and lazy edits do not decode frames.
+  Decoded source trims select half-open stream-tick windows while retaining
+  rational timeline bounds and independent audio sample windows.
   Encoded sources can be MP4, MKV, MOV, WebM, AVI, or GIF. Source-copy saves
   preserve original bytes; exact closed packet cuts use stream copy and
   other edits transcode frame-at-a-time. Alpha and source precision are
@@ -118,6 +121,9 @@
   materialize bounded AUDIO values, match the lower sample rate to the higher
   rate, and preserve ComfyUI channel, trimming, padding, and normalization
   behavior
+- Native bound-checkpoint Audio Encoder loading, audio conditioning through
+  AUDIO_ENCODER_OUTPUT, and SheetSage2 music transcription to ordered ABC
+  strings in melody-only or full melody-and-chords mode
 - Audio amplitude-envelope extraction to a per-video-frame float list and
   editable time-aligned CURVE (the audio-reactive replacement path):
   band-limited FFT magnitude with avg/max/sum aggregation at a chosen frame

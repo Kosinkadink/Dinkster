@@ -8,6 +8,11 @@ model patcher.
 
 `ChromaRadianceOptions` applies Chroma Radiance transformer options over an
 inclusive sigma range while optionally retaining an existing model wrapper.
+`FluxKVCache` reuses reference-image attention keys and values independently
+for each model block, including changes in prompt batch size.
+`HiDreamO1PatchSeamSmoothing` blends shifted patch-grid predictions over a
+sampling window, with fixed or ramped pass counts and average, Hann-window,
+or median blending while preserving the image edges.
 
 `MultiGPU_WorkUnits` creates reusable model deep clones for the visible devices.
 `SelectModelDevice`, `SelectCLIPDevice`, and `SelectVAEDevice` route their
@@ -49,6 +54,8 @@ Self-Attention Guidance, Perturbed Attention Guidance, and both Skip Layer
 Guidance DiT nodes clone a model and install sampler or attention callbacks.
 They use the inference sampler's conditional-routing and model-patch mechanisms;
 they do not load or apply LoRA weights.
+`SkipLayerGuidanceSD3` applies the double-block skip-layer guidance controls used
+by SD3 workflows.
 
 ControlNet values use the native `CONTROL_NET` type and stay resident in their
 owning worker, with the same governed lifetime as other loaded models.
