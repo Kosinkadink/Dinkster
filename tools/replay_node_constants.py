@@ -19,6 +19,7 @@ class ReplayCase:
     class_path: str
     method: str
     inputs: dict[str, object]
+    result_projection: dict[int, str] | None
     expected: object
 
 
@@ -33,8 +34,9 @@ def parse_cases(test_path: Path) -> list[ReplayCase]:
         annotation = lines[node.lineno - 2].strip()
         if not annotation.startswith(ANNOTATION_PREFIX):
             continue
-        class_path, method, inputs = _parse_metadata(
-            annotation.removeprefix(ANNOTATION_PREFIX).strip(), node.lineno
+        class_path, method, inputs, result_projection = _parse_metadata(
+            annotation.removeprefix(ANNOTATION_PREFIX).partition("  # noqa:")[0].strip(),
+            node.lineno,
         )
         expected = _expected_literal(node, node.lineno)
         cases.append(
@@ -43,6 +45,7 @@ def parse_cases(test_path: Path) -> list[ReplayCase]:
                 class_path=class_path,
                 method=method,
                 inputs=inputs,
+                result_projection=result_projection,
                 expected=expected,
             )
         )
@@ -53,7 +56,9 @@ def parse_cases(test_path: Path) -> list[ReplayCase]:
     return sorted(cases, key=lambda case: case.line)
 
 
-def _parse_metadata(text: str, line: int) -> tuple[str, str, dict[str, object]]:
+def _parse_metadata(
+    text: str, line: int
+) -> tuple[str, str, dict[str, object], dict[int, str] | None]:
     try:
         metadata = json.loads(text)
     except json.JSONDecodeError as error:
@@ -71,7 +76,31 @@ def _parse_metadata(text: str, line: int) -> tuple[str, str, dict[str, object]]:
         raise ValueError(
             f"line {line}: replay metadata inputs must be a JSON object with string keys"
         )
-    return class_path, method, inputs
+    return class_path, method, inputs, _parse_result_projection(metadata.get("result"), line)
+
+
+def _parse_result_projection(value: object, line: int) -> dict[int, str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(
+            f"line {line}: replay metadata result must map source slots to output names"
+        )
+    projection: dict[int, str] = {}
+    for slot, output in value.items():
+        if (
+            not isinstance(slot, str)
+            or not slot.isdecimal()
+            or not isinstance(output, str)
+            or not output
+        ):
+            raise ValueError(
+                f"line {line}: replay metadata result must use non-negative slots and names"
+            )
+        projection[int(slot)] = output
+    if len(set(projection.values())) != len(projection):
+        raise ValueError(f"line {line}: replay metadata result output names must be unique")
+    return projection
 
 
 def _expected_literal(node: ast.Assert, line: int) -> object:
@@ -92,7 +121,18 @@ def replay_case(case: ReplayCase) -> object:
     module_name, _, class_name = case.class_path.rpartition(".")
     module = importlib.import_module(module_name)
     node_class = getattr(module, class_name)
-    return getattr(node_class(), case.method)(**case.inputs)
+    result = getattr(node_class(), case.method)(**case.inputs)
+    if case.result_projection is None:
+        return result
+    source = result.result
+    if not isinstance(source, tuple):
+        raise ValueError(f"line {case.line}: projected source result must be a tuple")
+    try:
+        return {output: source[slot] for slot, output in case.result_projection.items()}
+    except IndexError as error:
+        raise ValueError(
+            f"line {case.line}: projected source result slot is unavailable"
+        ) from error
 
 
 def main() -> int:

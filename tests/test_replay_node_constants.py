@@ -12,9 +12,15 @@ SCRIPT = Path(__file__).parents[1] / "tools" / "replay_node_constants.py"
 
 def _write_fake_comfyui(root: Path) -> None:
     (root / "nodes.py").write_text(
+        "class NodeOutput:\n"
+        "    def __init__(self, *values):\n"
+        "        self.result = values\n\n"
         "class AddNode:\n"
         "    def execute(self, left, right):\n"
-        "        return {'total': left + right}\n",
+        "        return {'total': left + right}\n\n"
+        "class SeedNode:\n"
+        "    def execute(self, seed):\n"
+        "        return NodeOutput(seed)\n",
         encoding="utf-8",
     )
 
@@ -73,6 +79,40 @@ def test_replay_reports_matching_and_mismatching_constants_without_writes(tmp_pa
     assert after == before
 
 
+@pytest.mark.parametrize(
+    ("expected", "returncode", "status"),
+    [(9, 0, "MATCH"), (10, 1, "MISMATCH")],
+)
+def test_replay_projects_explicit_source_result_slot(
+    tmp_path: Path, expected: int, returncode: int, status: str
+) -> None:
+    comfyui = tmp_path / "ComfyUI"
+    comfyui.mkdir()
+    _write_fake_comfyui(comfyui)
+    test = tmp_path / "test_seed.py"
+    metadata = (
+        '{"class": "nodes.SeedNode", "method": "execute", "inputs": {"seed": 9}, '
+        '"result": {"0": "seed"}}'
+    )
+    test.write_text(
+        "def test_seed():\n"
+        "    # Hand-derived synthetic fixture constant; this is not ComfyUI provenance.\n"
+        f"    # comfy-replay: {metadata}\n"
+        f"    assert result == {{'seed': {expected}}}\n",
+        encoding="utf-8",
+    )
+
+    result = _run(comfyui, test)
+
+    assert result.returncode == returncode
+    assert f"{status} line 4: nodes.SeedNode.execute" in result.stdout
+    if returncode == 0:
+        assert "MATCH line 4: nodes.SeedNode.execute -> {'seed': 9}" in result.stdout
+    else:
+        assert "expected: {'seed': 10}" in result.stdout
+        assert "actual:   {'seed': 9}" in result.stdout
+
+
 def test_replay_rejects_unannotated_tests(tmp_path: Path) -> None:
     comfyui = tmp_path / "ComfyUI"
     comfyui.mkdir()
@@ -115,6 +155,13 @@ def test_replay_rejects_nonliteral_expected_value(tmp_path: Path) -> None:
         (
             '{"class": "nodes.AddNode", "method": "execute", "inputs": []}',
             "inputs must be a JSON object",
+        ),
+        (
+            (
+                '{"class": "nodes.AddNode", "method": "execute", "inputs": {}, '
+                '"result": {"zero": "total"}}'
+            ),
+            "result must use non-negative slots and names",
         ),
     ],
 )

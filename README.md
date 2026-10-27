@@ -89,14 +89,17 @@ installation and runtime use do not require that checkout.
 
   ```python
   # ComfyUI provenance: ExampleNode, F bc5f880dbdd43e426077f42ccec53bb577ffee9f, inputs {"value": 2}.
-  # comfy-replay: {"class": "nodes.ExampleNode", "method": "execute", "inputs": {"value": 2}}
+  # comfy-replay: {"class": "nodes.ExampleNode", "method": "execute", "inputs": {"value": 2}, "result": {"0": "value"}}
   assert result == {"value": 4}
   ```
 
   The tool parses rather than imports the Dinkster test, runs only annotated
   cases from the supplied checkout, prints matching or mismatching constants,
   disables bytecode writes, and creates no golden files. Unannotated tests and
-  pytest fixtures are intentionally unsupported.
+  pytest fixtures are intentionally unsupported. Omit `result` when the
+  source return value already equals the asserted literal. Otherwise `result`
+  explicitly maps each decimal source result slot to an asserted output name;
+  the tool never guesses output names or projections.
 - `uv run dinkster demo` - demo: toy graph through the real engine; shows caching,
   partial re-execution, non-idempotent nodes, and value interrogation
 - `uv run dinkster-pack prepare-catalogs --defaults` - prepare installed
