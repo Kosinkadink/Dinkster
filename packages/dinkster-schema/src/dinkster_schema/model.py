@@ -425,6 +425,7 @@ class AssetWidget:
     accept: tuple[str, ...] = ()
     kind: str = ""
     allow_upload: bool = False
+    selection: bool = False
 
     def __post_init__(self) -> None:
         if any(not media_type for media_type in self.accept):
@@ -436,6 +437,14 @@ class AssetWidget:
             )
         if type(self.allow_upload) is not bool:
             raise ValueError("asset widget allow_upload must be a bool")
+        if type(self.selection) is not bool:
+            raise ValueError("asset widget selection must be a bool")
+        if self.selection and (
+            self.kind
+            not in {"model/vae", "model/diffusers", "directory/input", "directory/dataset"}
+            or self.allow_upload
+        ):
+            raise ValueError("asset selection requires a supported exact kind and forbids upload")
 
 
 @dataclass(frozen=True)
@@ -1000,7 +1009,7 @@ def _widget_value_domain(widget: WidgetDescriptor) -> str:
     if isinstance(widget, CustomWidgetDescriptor):
         return widget.widget_type
     if isinstance(widget, AssetWidget):
-        return "asset"
+        return "asset-selection" if widget.selection else "asset"
     if isinstance(widget, SaveTargetWidget):
         return "save-target"
     if isinstance(widget, ComboWidget):
@@ -1175,8 +1184,25 @@ def _validate_widget_binding(
         TypeExpr.concrete(CORE_COMBO)
     ):
         raise ValueError(f"input {input_id}: multi combo widget requires a list<COMBO> input")
+    selection_union = (
+        isinstance(widget, AssetWidget)
+        and widget.selection
+        and widget.kind == "model/vae"
+        and input_type.kind == "union"
+        and set(input_type.types) == {CORE_COMBO, ASSET_TYPE}
+    )
+    if (
+        isinstance(widget, AssetWidget)
+        and widget.selection
+        and not (input_type == TypeExpr.concrete(CORE_COMBO) or selection_union)
+    ):
+        raise ValueError(
+            f"input {input_id}: asset selection requires a scalar COMBO input "
+            "or the model/vae COMBO/ASSET union"
+        )
     if isinstance(widget, AssetWidget) and not (
-        input_type == TypeExpr.concrete(ASSET_TYPE)
+        selection_union
+        or input_type == TypeExpr.concrete(ASSET_TYPE)
         or (input_type.kind == "asset" and input_type.runtime_type_id() is not None)
         or input_type.kind == "concrete"
         or (widget.allow_upload and input_type == TypeExpr.list_of(TypeExpr.concrete(ASSET_TYPE)))

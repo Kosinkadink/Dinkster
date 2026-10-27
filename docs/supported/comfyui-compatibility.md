@@ -1,5 +1,8 @@
 ## ComfyUI compatibility
 
+- Core schema comparison permits the optional output mount for output nodes
+  with a scalar STRING filename prefix, including CLIPSave, VAESave,
+  CheckpointSave, and ModelSave, without relying on their class-name spelling.
 - The native pack declares bound-file checkpoint, diffusion-model, text
   encoder, vision-encoder, ControlNet, style-model and GLIGEN loader schemas.
   Model construction uses the pinned inference package; file inputs grant
@@ -19,6 +22,10 @@
   inpaint guidance; USO prepends projected vision features to text tokens.
 - Native LoRA hook loaders use bound model/lora assets, preserve prior hooks
   and apply separate model and CLIP strengths while retaining loaded weights.
+- Native VAELoader accepts granted VAE files, video approximation files, six
+  same-root image TAESD encoder/decoder pairs and the file-free pixel_space
+  option on one input. Native DiffusersLoader accepts a granted model subtree.
+  Selection names are rechecked on each execution, not reused from result caches.
 - Native WanDancer keyframe padding places reference frames and masks into
   video segments, with matching audio slices and scalar or list outputs.
 - Native LTXV duration prediction uses caption connectors and the duration head,

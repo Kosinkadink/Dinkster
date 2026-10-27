@@ -130,6 +130,8 @@ def _widget_descriptor_to_wire(
             asset_wire["kind"] = widget.kind
         if widget.allow_upload:
             asset_wire["allowUpload"] = True
+        if widget.selection:
+            asset_wire["selection"] = True
         return asset_wire
     if isinstance(widget, ComboWidget):
         combo_wire: dict[str, object] = {"type": "COMBO"}
@@ -316,6 +318,7 @@ def _widget_descriptor_from_wire(
         if strict:
             allowed = {"type", "accept", "kind"}
             allowed.add("allowUpload")
+            allowed.add("selection")
             _reject_unknown_fields(widget_data, frozenset(allowed), "ASSET widget")
         accept = widget_data.get("accept", ())
         if not isinstance(accept, list):
@@ -333,6 +336,7 @@ def _widget_descriptor_from_wire(
             accept=tuple(cast("list[str]", accept_values)),
             kind=asset_kind,
             allow_upload=allow_upload,
+            selection=cast("bool", widget_data.get("selection", False)),
         )
     if kind == "MOUNT":
         _reject_unknown_fields(widget_data, frozenset({"type"}), "MOUNT widget")
