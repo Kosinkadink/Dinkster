@@ -1,5 +1,8 @@
 ## ComfyUI compatibility
 
+- Core schema comparison permits the optional output mount for output nodes
+  with a scalar STRING filename prefix, including CLIPSave, VAESave,
+  CheckpointSave, and ModelSave, without relying on their class-name spelling.
 - The native pack declares bound-file checkpoint, diffusion-model, text
   encoder, vision-encoder, ControlNet, style-model and GLIGEN loader schemas.
   Model construction uses the pinned inference package; file inputs grant
