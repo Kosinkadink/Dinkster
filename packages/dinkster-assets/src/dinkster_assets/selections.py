@@ -229,6 +229,16 @@ def resolve_asset_selection(
             return path
         if choice.shape == "pair":
             return _file_ref(choice, choice.paths[0], env), _file_ref(choice, choice.paths[1], env)
+        if kind == "model/vae":
+            # Source discovery accepts video prefixes, but loading routes
+            # only exact video stems to vae-approx, even on name collisions.
+            file_kind = "model/vae-approx" if os.path.splitext(name)[0] in _VIDEO_TAES else kind
+            for root in mount_roots_for_kind(file_kind, env=env):
+                root = root.resolve()
+                path = _files(root).get(name)
+                if path is not None:
+                    return _file_ref(_Choice(file_kind, root, (path,), "file"), path, env)
+            raise AssetError(f"asset selection {name!r} is not granted for {file_kind!r}")
         return _file_ref(choice, choice.paths[0], env)
     except (OSError, RuntimeError) as exc:
         raise AssetError(f"asset selection {name!r} is no longer readable") from exc

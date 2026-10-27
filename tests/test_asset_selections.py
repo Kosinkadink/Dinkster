@@ -118,6 +118,33 @@ def test_vae_pairs_stay_in_one_root_and_file_refs_revalidate_grants(tmp_path: Pa
     assert asset_selection_names("model/vae", env=env) == ("pixel_space",)
 
 
+def test_video_vae_names_follow_exact_source_category_routing(tmp_path: Path) -> None:
+    ordinary, approx, fallback = tmp_path / "vae", tmp_path / "approx", tmp_path / "fallback"
+    seed(ordinary, "taehv.safetensors", b"ordinary collision")
+    seed(approx, "taehv.safetensors", b"preferred video")
+    seed(fallback, "taehv.safetensors", b"fallback video")
+    seed(approx, "taehv_custom.safetensors", b"prefix only")
+    env = grants(
+        tmp_path,
+        ("model/vae", ordinary),
+        ("model/vae-approx", approx),
+        ("model/vae-approx", fallback),
+    )
+    selected = resolve_asset_selection("model/vae", "taehv.safetensors", env=env)
+    assert isinstance(selected, LocalAssetRef)
+    assert selected.read_bytes() == b"preferred video"
+    assert "taehv_custom.safetensors" in asset_selection_names("model/vae", env=env)
+    with pytest.raises(AssetError, match="not granted"):
+        resolve_asset_selection("model/vae", "taehv_custom.safetensors", env=env)
+    seed(ordinary, "taehv_custom.safetensors", b"ordinary prefix")
+    selected = resolve_asset_selection("model/vae", "taehv_custom.safetensors", env=env)
+    assert isinstance(selected, LocalAssetRef)
+    assert selected.read_bytes() == b"ordinary prefix"
+    grants(tmp_path, ("model/vae", ordinary))
+    with pytest.raises(AssetError, match="not granted"):
+        resolve_asset_selection("model/vae", "taehv.safetensors", env=env)
+
+
 @pytest.mark.parametrize("name", ["../outside", "/outside", "C:/outside", "a\\b", "a/../b", "a//b"])
 def test_unsafe_selection_names_never_open_files(tmp_path: Path, name: str) -> None:
     env = grants(tmp_path, ("model/diffusers", tmp_path))
