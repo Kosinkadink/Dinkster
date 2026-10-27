@@ -85,6 +85,8 @@ def bind_model_names(
             ):
                 continue
             if widget.selection and value in asset_selection_names(widget.kind):
+                if not isinstance(raw, TypedLiteral) and spec.type.runtime_type_id() is None:
+                    inputs[spec.id] = TypedLiteral("COMBO", value)
                 continue
             ref = (
                 resolver.bind_name(value, widget.kind)
