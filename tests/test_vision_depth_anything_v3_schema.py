@@ -101,6 +101,8 @@ def test_depth_anything_v3_populates_owner_choice_and_scopes_model() -> None:
     async def scenario() -> None:
         composition = await compose_serving(
             [
+                default_pack_spec("dinkster-nodes-foundation"),
+                default_pack_spec("dinkster-nodes-media-io"),
                 default_pack_spec("dinkster-nodes-image"),
                 default_pack_spec("dinkster-vision-depth-anything-v2"),
                 default_pack_spec("dinkster-vision-depth-anything-v3"),
@@ -129,6 +131,8 @@ def test_depth_model_choice_resolves_provider_without_changing_stored_graph() ->
     async def scenario() -> None:
         composition = await compose_serving(
             [
+                default_pack_spec("dinkster-nodes-foundation"),
+                default_pack_spec("dinkster-nodes-media-io"),
                 default_pack_spec("dinkster-nodes-image"),
                 default_pack_spec("dinkster-vision-depth-anything-v2"),
                 default_pack_spec("dinkster-vision-depth-anything-v3"),

@@ -89,6 +89,8 @@ def test_provider_populates_owner_choice_and_scopes_model() -> None:
     async def scenario() -> None:
         composition = await compose_serving(
             [
+                default_pack_spec("dinkster-nodes-foundation"),
+                default_pack_spec("dinkster-nodes-media-io"),
                 default_pack_spec("dinkster-nodes-image"),
                 default_pack_spec("dinkster-vision-detr"),
                 default_pack_spec("dinkster-vision-rtdetr"),
@@ -120,6 +122,8 @@ def test_detection_model_choice_resolves_rtdetr_provider_without_mutating_graph(
     async def scenario() -> None:
         composition = await compose_serving(
             [
+                default_pack_spec("dinkster-nodes-foundation"),
+                default_pack_spec("dinkster-nodes-media-io"),
                 default_pack_spec("dinkster-nodes-image"),
                 default_pack_spec("dinkster-vision-detr"),
                 default_pack_spec("dinkster-vision-rtdetr"),

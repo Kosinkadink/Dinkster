@@ -97,7 +97,12 @@ def test_hed_wheel_contains_pack_runtime_and_manifest() -> None:
 def test_hed_provider_populates_owner_choice_and_scopes_its_model() -> None:
     async def scenario() -> None:
         composition = await compose_serving(
-            [default_pack_spec("dinkster-nodes-image"), default_pack_spec("dinkster-vision-hed")],
+            [
+                default_pack_spec("dinkster-nodes-foundation"),
+                default_pack_spec("dinkster-nodes-media-io"),
+                default_pack_spec("dinkster-nodes-image"),
+                default_pack_spec("dinkster-vision-hed"),
+            ],
             include_default_packs=False,
         )
         try:

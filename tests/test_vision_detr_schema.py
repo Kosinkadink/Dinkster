@@ -74,6 +74,8 @@ def test_detr_provider_populates_owner_choice_and_scopes_its_model() -> None:
     async def scenario() -> None:
         composition = await compose_serving(
             [
+                default_pack_spec("dinkster-nodes-foundation"),
+                default_pack_spec("dinkster-nodes-media-io"),
                 default_pack_spec("dinkster-nodes-image"),
                 default_pack_spec("dinkster-vision-detr"),
                 default_pack_spec("dinkster-vision-rtdetr"),
