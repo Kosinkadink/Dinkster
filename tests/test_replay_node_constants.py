@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from tools.replay_node_constants import parse_cases
+
 SCRIPT = Path(__file__).parents[1] / "tools" / "replay_node_constants.py"
 
 
@@ -111,6 +113,19 @@ def test_replay_projects_explicit_source_result_slot(
     else:
         assert "expected: {'seed': 10}" in result.stdout
         assert "actual:   {'seed': 9}" in result.stdout
+
+
+def test_seed_annotation_declares_the_explicit_native_output_projection() -> None:
+    utility_tests = Path(__file__).parent / "test_comfy_utility_nodes.py"
+
+    cases = parse_cases(utility_tests)
+
+    assert len(cases) == 1
+    assert cases[0].class_path == "comfy_extras.nodes_seed.SeedNode"
+    assert cases[0].method == "execute"
+    assert cases[0].inputs == {"seed": 9223372036854775807}
+    assert cases[0].result_projection == {0: "seed"}
+    assert cases[0].expected == {"seed": 9223372036854775807}
 
 
 def test_replay_rejects_unannotated_tests(tmp_path: Path) -> None:
