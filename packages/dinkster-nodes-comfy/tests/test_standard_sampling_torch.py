@@ -224,14 +224,18 @@ def test_standard_sampler_restores_asymmetric_av_streams_after_pinned_sampling(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class Sampling:
-        def fix_empty_latent_channels(self, _model: object, samples: object, *_ratios: object) -> object:
+        def fix_empty_latent_channels(
+            self, _model: object, samples: object, *_ratios: object
+        ) -> object:
             assert getattr(samples, "is_nested", False)
             return samples
 
         def prepare_empty_noise(self, samples: object) -> object:
             return samples * 0
 
-        def sample(self, _model: object, _noise: object, *_args: object, **kwargs: object) -> object:
+        def sample(
+            self, _model: object, _noise: object, *_args: object, **kwargs: object
+        ) -> object:
             assert getattr(kwargs["noise_mask"], "is_nested", False)
             return _args[6]
 

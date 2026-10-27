@@ -197,7 +197,9 @@ class SamplerCustomAdvanced(Node):
         cls, *, noise: Any, guider: Any, sampler: Any, sigmas: Any, latent_image: object
     ) -> Mapping[str, object]:
         initialize_inference_process()
-        latent, public_samples, samples, noise_mask = _prepare_latent(guider.model_patcher, latent_image)
+        latent, public_samples, samples, noise_mask = _prepare_latent(
+            guider.model_patcher, latent_image
+        )
         x0_output: dict[str, object] = {}
         callback = _capture_x0(x0_output)
         sampled = guider.sample(

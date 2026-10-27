@@ -67,7 +67,9 @@ def test_disable_noise_uses_pinned_cpu_nested_noise_preparation() -> None:
 
 
 @pytest.mark.parametrize("noise_node", (RandomNoise, DisableNoise))
-def test_public_noise_preserves_asymmetric_av_roles_shapes_and_dtypes(noise_node: type[Any]) -> None:
+def test_public_noise_preserves_asymmetric_av_roles_shapes_and_dtypes(
+    noise_node: type[Any],
+) -> None:
     video = torch.zeros((1, 3, 2, 2, 3), dtype=torch.float64)
     audio = torch.zeros((1, 2, 4), dtype=torch.float32)
     samples = MultiStreamLatent.from_pairs((("video", video), ("audio", audio)))

@@ -234,7 +234,9 @@ def test_advanced_sampler_restores_asymmetric_av_streams_after_pinned_sampling(
     monkeypatch: Any, noise_node: type[Any]
 ) -> None:
     class Sample:
-        def fix_empty_latent_channels(self, _model: object, samples: object, *_ratios: object) -> object:
+        def fix_empty_latent_channels(
+            self, _model: object, samples: object, *_ratios: object
+        ) -> object:
             assert getattr(samples, "is_nested", False)
             return samples
 
