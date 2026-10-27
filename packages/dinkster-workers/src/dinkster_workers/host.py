@@ -1535,6 +1535,7 @@ async def serve_connection(
                     ),
                     node_id=invocation.node_id,
                     export_snapshot=invocation.export_snapshot,
+                    asset_folders=invocation.asset_folders,
                     materialize_source=(materialize_source if source_staging is not None else None),
                 )
             ):
@@ -1814,6 +1815,7 @@ async def serve_connection(
                 attention_policy=ordinary.attention_policy,
                 attention_route_token=ordinary.attention_route_token,
                 extension_snapshot_digest=ordinary.extension_snapshot_digest,
+                asset_folders=ordinary.asset_folders,
             )
             if invocation.arm is not None:
                 raise ValueError("lazy-dispatch-unsupported: alternate body arm")

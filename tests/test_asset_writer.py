@@ -35,6 +35,8 @@ from dinkster_assets import (
     load_write_records,
     register_save_target_type,
 )
+from dinkster_protocol import AssetFolderContext
+from dinkster_protocol.asset_folders import use_asset_folders
 from dinkster_values import TypeRegistry
 
 from tests.platform_support import symlink_or_skip
@@ -156,6 +158,32 @@ def test_snapshot_writer_sees_live_grant_and_revoke(tmp_path: Path) -> None:
     one_mount_snapshot(tmp_path, root)
     again = writer.save_bytes({"mount": "out", "prefix": "a"}, b"third", suffix=".bin")
     assert again.name == "a_00002.bin"
+
+
+def test_project_output_overrides_default_without_granting_writes(tmp_path: Path) -> None:
+    snapshot = tmp_path / "snapshot.json"
+    table = MountTable(snapshot)
+    for name in ("global", "project"):
+        root = tmp_path / name
+        root.mkdir()
+        table.add(MountDef(name, root, mode="readwrite"))
+        table.scan(name)
+    table.select_output_mount("global")
+    writer = AssetWriter(MountSnapshotWriter(snapshot))
+    context = AssetFolderContext(("project",), "project")
+    with use_asset_folders(context):
+        ref = writer.save_bytes(writer.output_target("render"), b"project result", suffix=".bin")
+        assert ref.virtual_path == "mounts/project/render_00001.bin"
+        assert (tmp_path / "project" / ref.name).read_bytes() == b"project result"
+        assert writer.output_target("render", "global")["mount"] == "global"
+        table.remove("project")
+        with pytest.raises(AssetError, match="no ready mount"):
+            writer.save_bytes(writer.output_target("render"), b"revoked", suffix=".bin")
+    with use_asset_folders(AssetFolderContext(("global",))):
+        with pytest.raises(AssetError, match="for this project"):
+            writer.output_target("render")
+    assert writer.output_target("render")["mount"] == "global"
+    assert list((tmp_path / "global").glob("render*")) == []
 
 
 def test_mount_table_writable_root(tmp_path: Path) -> None:

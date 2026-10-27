@@ -16,7 +16,7 @@ import json
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 from threading import Event
 from typing import cast
@@ -28,6 +28,8 @@ from dinkster_api.v1 import mount_roots_for_kind
 from dinkster_assets import (
     AssetError,
     AssetScanProgress,
+    AssetVault,
+    LibraryStore,
     LocalAssetLibrary,
     MountDef,
     MountsError,
@@ -44,7 +46,8 @@ from dinkster_assets.model import AssetRef
 from dinkster_assets.resolution import MountMaterialization, ResolutionStore
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EventListener
-from dinkster_graph import Graph, GraphNode
+from dinkster_graph import Graph, GraphNode, graph_to_wire
+from dinkster_protocol import AssetFolderContext
 from dinkster_schema import (
     InputSpec,
     Node,
@@ -54,7 +57,7 @@ from dinkster_schema import (
     build_node_types,
     build_schemas,
 )
-from dinkster_server import create_app
+from dinkster_server import ServerLibrary, create_app
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker, IsolatedWorker, load_manifest
 from dinkster_workers.host import load_pack
@@ -819,6 +822,111 @@ def test_public_mount_roots_in_ordinary_hosts(
                 actual = result.outputs["read"]["roots"].resolve()
                 assert isinstance(actual, str)
                 assert json.loads(actual) == expected
+            graph = Graph(nodes={"read": GraphNode("rootprobe.read", {})})
+            base = engine.pin_execution()
+            contexts = (
+                AssetFolderContext(("late", "first")),
+                AssetFolderContext(("first", "late")),
+                AssetFolderContext(()),
+            )
+            results = await asyncio.gather(
+                *(
+                    engine.run(graph, ["read"], execution=replace(base, asset_folders=context))
+                    for context in contexts
+                )
+            )
+            assert [
+                json.loads(cast(str, result.outputs["read"]["roots"].resolve()))
+                for result in results
+            ] == [
+                [
+                    [str(tmp_path / "late"), "late embedding"],
+                    [str(tmp_path / "first"), "preferred embedding"],
+                ],
+                [
+                    [str(tmp_path / "first"), "preferred embedding"],
+                    [str(tmp_path / "late"), "late embedding"],
+                ],
+                [],
+            ]
+            service = MountService(table, tmp_path / "mounts.toml", allow_changes=True)
+            service.projects.update(
+                "project-a", ["late", "first"], available=service.mount_ids(), output=None
+            )
+            service.projects.update(
+                "project-b", ["first", "late"], available=service.mount_ids(), output=None
+            )
+            store = LibraryStore(tmp_path / "library.sqlite")
+            library = ServerLibrary(
+                AssetVault(tmp_path / "vault"),
+                store,
+                resolver=table,
+                project_folders_for=service.project_context,
+            )
+
+            def serve_engine(on_event: EventListener | None = None) -> Engine:
+                return Engine(
+                    schemas=dict(worker.schemas),
+                    registry=registry,
+                    worker=worker,
+                    cache=MemoryLRUCache(),
+                    on_event=on_event,
+                )
+
+            app = create_app(
+                serve_engine, dict(worker.schemas), library=library, max_running_jobs=2
+            )
+            client = TestClient(TestServer(app))
+            await client.start_server()
+            try:
+                for project in ("project-a", "project-b"):
+                    response = await client.post(
+                        "/api/jobs",
+                        json={
+                            "clientId": "projects",
+                            "jobId": project,
+                            "project": project,
+                            "graph": graph_to_wire(graph),
+                            "targets": ["read"],
+                        },
+                    )
+                    assert response.status == 202, await response.text()
+                async with asyncio.timeout(10):
+                    for project, first_name in (("project-a", "late"), ("project-b", "first")):
+                        while True:
+                            status = await (
+                                await client.get(f"/api/jobs/projects/{project}")
+                            ).json()
+                            assert status["state"] != "failed", status
+                            if status["state"] == "completed":
+                                actual = json.loads(status["outputs"]["read"]["roots"]["value"])
+                                assert actual[0][0] == str(tmp_path / first_name)
+                                break
+                response = await client.post(
+                    "/api/jobs",
+                    json={
+                        "clientId": "projects",
+                        "jobId": "bad",
+                        "project": "Bad Project",
+                        "graph": graph_to_wire(graph),
+                        "targets": ["read"],
+                    },
+                )
+                assert response.status == 400
+            finally:
+                await client.close()
+                store.close()
+            # A project preference never grants a revoked root, even in a pinned run context.
+            table.remove("late")
+            result = await engine.run(
+                graph,
+                ["read"],
+                execution=replace(base, asset_folders=contexts[0]),
+                cache_enabled=False,
+            )
+            assert json.loads(cast(str, result.outputs["read"]["roots"].resolve())) == [
+                [str(tmp_path / "first"), "preferred embedding"]
+            ]
         finally:
             await worker.close()
 
@@ -873,11 +981,16 @@ def test_selection_options_api_uses_live_grants_without_exposing_paths(
 
 
 async def wait_for_state(
-    client: TestClient, mount_id: str, state: str, timeout: float = 5.0
+    client: TestClient,
+    mount_id: str,
+    state: str,
+    timeout: float = 5.0,
+    *,
+    project: str = "default",
 ) -> None:
     async with asyncio.timeout(timeout):
         while True:
-            resp = await client.get("/api/mounts")
+            resp = await client.get("/api/mounts", params={"project": project})
             rows = (await resp.json())["mounts"]
             row = next((r for r in rows if r["id"] == mount_id), None)
             if row is not None and row["state"] == state:
@@ -1631,7 +1744,7 @@ def test_project_folders_persist_order_membership_and_derived_exclusions(tmp_pat
                     },
                 )
                 assert response.status == 201
-                await wait_for_state(client, name, "ready")
+                await wait_for_state(client, name, "ready", project="project-a")
             response = await client.get("/api/mounts?project=project-b")
             assert [row["id"] for row in (await response.json())["mounts"]] == ["derived", "common"]
             for project, order in (
@@ -1719,6 +1832,47 @@ def test_project_folder_validation_keeps_previous_settings(tmp_path: Path) -> No
     asyncio.run(scenario())
 
 
+def test_project_name_order_never_substitutes_for_digest_identity(tmp_path: Path) -> None:
+    from dinkster_assets import resolve_asset_selection
+    from dinkster_protocol.asset_folders import use_asset_folders
+
+    snapshot = tmp_path / "snapshot.json"
+    table = MountTable(snapshot, index_root=tmp_path / "indexes")
+    for name, data in (("first", b"first model"), ("second", b"different model")):
+        seed(tmp_path / name, {"same.safetensors": data})
+        table.add(
+            MountDef(
+                name, tmp_path / name, kind="model/vae", priority=-8 if name == "second" else 2
+            )
+        )
+        table.scan(name)
+    service = MountService(table, tmp_path / "mounts.toml", allow_changes=True)
+    assert service.project_context("new-project").mounts == ("second", "first")
+    first = table.ref("mounts/first/same.safetensors")
+    resolver = MountSnapshotResolver(snapshot)
+    for order, expected in (
+        (("second", "first"), b"different model"),
+        (("first", "second"), b"first model"),
+    ):
+        with use_asset_folders(AssetFolderContext(order)):
+            ref = table.bind_name("same.safetensors", "model/vae")
+            assert isinstance(ref, AssetRef)
+            assert ref.digest == digest_bytes(expected)
+            assert table.resolve(first.digest) == tmp_path / "first" / "same.safetensors"
+            assert resolver.resolve(first.digest) == tmp_path / "first" / "same.safetensors"
+    with use_asset_folders(AssetFolderContext(())):
+        assert table.bind_name("same.safetensors", "model/vae") is None
+        assert resolver.resolve(first.digest) == tmp_path / "first" / "same.safetensors"
+        assert (
+            resolve_asset_selection(
+                "model/vae", first, env={"DINKSTER_MOUNTS_SNAPSHOT": str(snapshot)}
+            )
+            is first
+        )
+    assert not (tmp_path / "vault").exists()
+    assert not (tmp_path / "produced-assets").exists()
+
+
 def test_project_folder_paths_and_mutations_require_operator(tmp_path: Path) -> None:
     from dinkster_server.auth import Principal, StaticBearerAuthenticator
 
@@ -1754,9 +1908,12 @@ def test_project_folder_paths_and_mutations_require_operator(tmp_path: Path) -> 
         try:
             for token in ("asset-editor-token", "agent-token"):
                 headers = {"Authorization": f"Bearer {token}"}
+                for path in ("/api/mounts", "/api/mounts?project=default"):
+                    response = await client.get(path, headers=headers)
+                    assert response.status == 200
+                    assert str(tmp_path) not in await response.text()
                 for method, path, body in (
-                    ("GET", "/api/mounts", None),
-                    ("GET", "/api/mounts?project=default", None),
+                    ("GET", "/api/mounts/locations", None),
                     ("POST", "/api/mounts", {"id": "new", "path": str(tmp_path)}),
                     ("PUT", "/api/mounts/projects/default", {"mounts": [], "outputMount": None}),
                     ("DELETE", "/api/mounts/private-location", None),

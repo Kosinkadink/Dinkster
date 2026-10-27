@@ -10,6 +10,7 @@ from typing import Protocol
 
 from dinkster_assets import AssetRef
 from dinkster_protocol import (
+    AssetFolderContext,
     AttentionCapabilityEvidence,
     AttentionPolicy,
     AttentionPolicyConfig,
@@ -27,6 +28,7 @@ from dinkster_protocol import (
     validate_preview_animation,
     validate_preview_mode,
 )
+from dinkster_protocol.asset_folders import use_asset_folders
 
 
 def _not_cancelled() -> bool:
@@ -80,6 +82,7 @@ class ExecutionContext:
     cancelled: Callable[[], bool] = _not_cancelled
     node_id: str | None = None
     export_snapshot: ExportSnapshot | None = None
+    asset_folders: AssetFolderContext | None = None
     materialize_source: SourceMaterializer | None = None
     artifact_sink: ArtifactSink | None = None
     started_at_ns: int = 0
@@ -138,7 +141,7 @@ def current_execution_context() -> ExecutionContext | None:
 def use_execution_context(context: ExecutionContext) -> Generator[None]:
     token = _execution_context.set(context)
     try:
-        with use_export_snapshot(context.export_snapshot):
+        with use_export_snapshot(context.export_snapshot), use_asset_folders(context.asset_folders):
             yield
     finally:
         _execution_context.reset(token)

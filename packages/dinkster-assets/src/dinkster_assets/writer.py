@@ -39,6 +39,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import BinaryIO, Protocol, cast
 
+from dinkster_protocol.asset_folders import current_asset_folders
 from dinkster_values import MEBIBYTE
 
 from .identity import DIGEST_PREFIX, AssetError, new_hasher
@@ -123,6 +124,11 @@ class MountSnapshotWriter:
         )
 
     def output_mount(self) -> str:
+        context = current_asset_folders()
+        if context is not None:
+            if context.output_mount is None:
+                raise AssetError("no default output mount is configured for this project")
+            return context.output_mount
         try:
             loaded: object = json.loads(self._path.read_text("utf-8"))
         except (OSError, ValueError):

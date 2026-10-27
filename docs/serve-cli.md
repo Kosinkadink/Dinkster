@@ -854,11 +854,21 @@ Shared is explicitly requested. `PUT /api/mounts/projects/<project-id>` accepts
 project's order and membership without revoking any grants. The output must be
 a writable folder in that list, or null for no project output. Excluding a
 derived folder does not alter its source installation. Existing grants are
-initialized as shared when project settings are first created. Project settings
-persist in `<library-root>/project-folders.json`; mount priorities are unchanged.
+initialized as shared in priority order when project settings are first
+created. Project settings persist in `<library-root>/project-folders.json`;
+mount priorities are unchanged.
+Job submissions and selection-options requests accept `project` (default
+`default`). Each accepted job pins its folder order and output selection for
+both in-process and isolated workers. Folder preferences restrict name and
+directory lookup, not digest identity; saved digest references still resolve
+through live grants, and revocation remains authoritative. Cached computations
+are separated by the pinned folder context.
 `POST /api/mounts/<id>/retry` queues a rescan of an unavailable folder.
-Location listings and mutations require a human operator with `settings:write`,
-not just `assets:write`; delegated agents cannot grant filesystem authority.
+`GET /api/mounts/locations` exposes operator location details. Other mount
+listings remain browsable without disclosing host paths or path-bearing errors
+to non-operators. Location listings and mutations require a human operator
+with `settings:write`, not just `assets:write`; delegated agents cannot grant
+filesystem authority.
 
 ## Logging
 

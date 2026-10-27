@@ -41,6 +41,7 @@ import contextlib
 import json
 import os
 from pathlib import Path
+from typing import cast
 
 from aiohttp import web
 from dinkster_assets import (
@@ -54,6 +55,7 @@ from dinkster_assets import (
     is_asset_kind,
 )
 from dinkster_assets.resolution import MountMaterialization, ResolutionStore
+from dinkster_protocol import AssetFolderContext
 from dinkster_schema import core_logger
 from dinkster_server import STATE_KEY, decode_cursor, encode_cursor
 from dinkster_server.auth import principal_for
@@ -101,7 +103,10 @@ class MountService:
         self.projects.initialize(self.mount_ids())
 
     def mount_ids(self) -> tuple[str, ...]:
-        return tuple(str(row["id"]) for row in self.table.descriptors())
+        rows = sorted(
+            self.table.descriptors(), key=lambda row: (cast(int, row["priority"]), str(row["id"]))
+        )
+        return tuple(str(row["id"]) for row in rows)
 
     def project_response(self, project: str) -> dict[str, object]:
         order = self.projects.ordered(project, self.mount_ids())
@@ -113,6 +118,11 @@ class MountService:
             "outputMount": selected if selected in order else None,
             "mountChangesAllowed": self.allow_changes,
         }
+
+    def project_context(self, project: str) -> AssetFolderContext:
+        order = self.projects.ordered(project, self.mount_ids())
+        output = self.projects.output(project, self.table.output_mount)
+        return AssetFolderContext(order, output if output in order else None)
 
     def attach_resolution_store(self, store: ResolutionStore, scopes: tuple[str, ...]) -> None:
         if scopes != tuple(sorted(set(scopes))) or any(not scope.strip() for scope in scopes):
@@ -255,20 +265,29 @@ class MountService:
 
 
 async def handle_mounts_list(request: web.Request) -> web.Response:
-    _require_operator(request)
     service = request.app[MOUNTS_KEY]
-    if "project" in request.query:
-        try:
-            return web.json_response(service.project_response(request.query["project"]))
-        except MountsError as exc:
-            return _json_error(400, str(exc))
-    return web.json_response(
-        {
-            "mounts": service.table.descriptors(),
-            "outputMount": service.table.output_mount,
-            "mountChangesAllowed": service.allow_changes,
-        }
-    )
+    try:
+        body = service.project_response(request.query.get("project", "default"))
+    except MountsError as exc:
+        return _json_error(400, str(exc))
+    if not _is_operator(request):
+        body["mountChangesAllowed"] = False
+        for row in cast(list[dict[str, object]], body["mounts"]):
+            row.pop("path", None)
+            if "error" in row:
+                row["error"] = "mount unavailable"
+    return web.json_response(body)
+
+
+async def handle_mount_locations(request: web.Request) -> web.Response:
+    _require_operator(request)
+    table = request.app[MOUNTS_KEY].table
+    rows = table.descriptors()
+    for row in rows:
+        mount = table.get(str(row["id"]))
+        if mount is not None:
+            row["path"] = str(mount.path)
+    return web.json_response({"mounts": rows})
 
 
 async def handle_mount_folder(request: web.Request) -> web.Response:
@@ -499,13 +518,17 @@ async def handle_output_mount_update(request: web.Request) -> web.Response:
     return web.json_response({"outputMount": mount_id})
 
 
-def _require_operator(request: web.Request) -> None:
+def _is_operator(request: web.Request) -> bool:
     principal = principal_for(request)
-    if not (
+    return (
         principal.kind == "human"
         and principal.delegation_id is None
         and principal.allows("settings:write")
-    ):
+    )
+
+
+def _require_operator(request: web.Request) -> None:
+    if not _is_operator(request):
         raise web.HTTPForbidden(
             text='{"error":"operator-required"}', content_type="application/json"
         )
@@ -553,6 +576,7 @@ async def handle_mount_retry(request: web.Request) -> web.Response:
 def add_mount_routes(app: web.Application, service: MountService) -> None:
     app[MOUNTS_KEY] = service
     app.router.add_get("/api/mounts", handle_mounts_list)
+    app.router.add_get("/api/mounts/locations", handle_mount_locations)
     app.router.add_get("/api/mounts/{mountId}/list", handle_mount_folder)
     app.router.add_get("/api/mounts/{mountId}/entries", handle_mount_entries)
     app.router.add_put("/api/mounts/output", handle_output_mount_update)

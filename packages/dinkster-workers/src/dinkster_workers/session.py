@@ -1743,6 +1743,7 @@ class BoundarySession:
             attention_policy=invocation.attention_policy,
             attention_route_token=invocation.attention_route_token,
             extension_snapshot_digest=invocation.extension_snapshot_digest,
+            asset_folders=invocation.asset_folders,
         )
         future: asyncio.Future[tuple[dict[str, Any], list[bytes]]] = (
             asyncio.get_running_loop().create_future()
