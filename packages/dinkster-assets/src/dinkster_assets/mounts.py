@@ -981,6 +981,7 @@ class MountSnapshotResolver:
         self._resolvers: list[tuple[str, IndexedAssetResolver]] = []
         self._roots: tuple[tuple[str, Path], ...] = ()
         self._local_bindings: dict[str, object] = {}
+        self._selected_files: dict[str, tuple[str, Path, str, LocalFileSignature]] = {}
 
     def roots_for_kind(self, kind: str) -> tuple[Path, ...]:
         """Authorized directory roots in priority then mount-id order.
@@ -992,6 +993,32 @@ class MountSnapshotResolver:
         with self._lock:
             self._refresh_locked()
             return tuple(root for row_kind, root in self._roots if row_kind == kind)
+
+    def bind_relative_file(self, kind: str, root: Path, relative: str) -> LocalAssetRef:
+        """Bind an invocation-local member of an exact granted root without hashing.
+
+        These references are consumed in the selecting process. They do not
+        publish a host binding or invent a transferable content identity.
+        """
+        if (
+            not relative
+            or "\\" in relative
+            or re.match(r"^[A-Za-z]:", relative)
+            or any(part in {"", ".", ".."} for part in relative.split("/"))
+            or any(ord(char) < 32 or ord(char) == 127 for char in relative)
+        ):
+            raise AssetError("selected file requires a safe relative name")
+        root = root.resolve()
+        if not any(granted.resolve() == root for granted in self.roots_for_kind(kind)):
+            raise AssetError("selected file root is not granted for this kind")
+        path = root / relative
+        if not path.resolve(strict=True).is_relative_to(root) or not path.is_file():
+            raise AssetError("selected file is outside its grant or unavailable")
+        signature = local_file_signature(path.stat())
+        binding = uuid.uuid4().hex
+        with self._lock:
+            self._selected_files[binding] = (kind, root, relative, signature)
+        return LocalAssetRef(binding, path.name, signature[0], relative, resolver=self)
 
     def resolve(self, digest: str) -> Path | None:
         for _kind, resolver in self._refresh():
@@ -1010,7 +1037,22 @@ class MountSnapshotResolver:
     def resolve_local(self, binding: str) -> tuple[Path, LocalFileSignature] | None:
         self._refresh()
         with self._lock:
+            selected = self._selected_files.get(binding)
             raw = self._local_bindings.get(binding)
+        if selected is not None:
+            kind, root, relative, signature = selected
+            if not any(granted.resolve() == root for granted in self.roots_for_kind(kind)):
+                return None
+            path = root / relative
+            try:
+                if (
+                    path.resolve(strict=True).is_relative_to(root)
+                    and local_file_signature(path.stat()) == signature
+                ):
+                    return path, signature
+            except (OSError, RuntimeError):
+                pass
+            return None
         if not isinstance(raw, dict):
             return None
         entry = cast("dict[str, object]", raw)

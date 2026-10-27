@@ -832,6 +832,39 @@ async def make_client(service: MountService) -> TestClient:
     return client
 
 
+def test_selection_options_api_uses_live_grants_without_exposing_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshot = tmp_path / "snapshot.json"
+    root = tmp_path / "private-model-directory"
+    seed(root, {"vendor/model/model_index.json": b"{}"})
+    table = MountTable(snapshot)
+    table.add(MountDef(id="diffusers", path=root), kind="model/diffusers")
+    table.scan("diffusers")
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+
+    async def scenario() -> None:
+        client = await make_client(MountService(table))
+        try:
+            response = await client.get("/api/assets/selections?kind=model/diffusers")
+            assert response.status == 200
+            assert await response.json() == {
+                "kind": "model/diffusers",
+                "options": [{"name": "vendor/model", "shape": "directory"}],
+            }
+            table.remove("diffusers")
+            response = await client.get("/api/assets/selections?kind=model/diffusers")
+            assert await response.json() == {"kind": "model/diffusers", "options": []}
+            for kind in ("", "../private-model-directory", "model/checkpoint"):
+                response = await client.get("/api/assets/selections", params={"kind": kind})
+                assert response.status == 400
+                assert await response.json() == {"error": "unsupported-selection-kind"}
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
 async def wait_for_state(
     client: TestClient, mount_id: str, state: str, timeout: float = 5.0
 ) -> None:

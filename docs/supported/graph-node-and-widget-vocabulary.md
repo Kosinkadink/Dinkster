@@ -48,6 +48,13 @@
 - Backend mount widgets present one scalar STRING mount id. Input adjacency
   hints name a sibling input without changing interface order or execution
   identity. This does not claim frontend rendering or native save-node support.
+- Backend asset-selection widgets retain one source-named COMBO input; VAE
+  selection also permits the existing ASSET carrier for real files. The public
+  asset authority enumerates only exact granted kinds for VAE, Diffusers,
+  input subdirectories and saved datasets. It resolves literals, same-root
+  file pairs and contained directory subtrees without filesystem or library
+  fallback. The options API returns names and shapes, not host paths.
+  This does not claim frontend picker or native loader integration.
 - FLOAT number descriptors, including one-level FLOAT lists, accept `round: false`
   for explicit no-round presentation, or a positive finite numeric precision.
   Omission leaves precision unspecified; false is distinct from numeric zero.
