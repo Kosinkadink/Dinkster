@@ -361,7 +361,7 @@ def test_save_stream_bound_failure_leaves_nothing(tmp_path: Path) -> None:
             suffix=".latent",
             limit=3,
         )
-    assert list(root.iterdir()) == []
+    assert {path.name for path in root.iterdir()} == {".dinkster-asset-writer.lock"}
 
 
 def test_concurrent_saves_get_distinct_names(tmp_path: Path) -> None:
@@ -529,6 +529,24 @@ def test_save_encoded_refuses_late_collision_without_renaming_metadata(tmp_path:
     assert list(root.glob(".dinkster-save-*")) == []
 
 
+def test_save_encoded_encoder_failure_releases_its_claim(tmp_path: Path) -> None:
+    writer, root = make_writer(tmp_path)
+
+    def failing_encoder(stem: str, counter: int) -> BinaryIO:
+        del stem, counter
+        raise RuntimeError("encoding failed")
+
+    with pytest.raises(RuntimeError, match="encoding failed"):
+        writer.save_encoded(
+            {"mount": "out", "prefix": "checkpoint"},
+            failing_encoder,
+            suffix=".safetensors",
+            limit=16,
+        )
+    ref = writer.save_bytes({"mount": "out", "prefix": "after-failure"}, b"ok", suffix=".bin")
+    assert (root / ref.name).read_bytes() == b"ok"
+
+
 def test_save_encoded_rechecks_revocation_after_encoder_returns(tmp_path: Path) -> None:
     writer, root = make_writer(tmp_path)
     snapshot = tmp_path / "mounts.json"
@@ -545,7 +563,32 @@ def test_save_encoded_rechecks_revocation_after_encoder_returns(tmp_path: Path) 
             suffix=".safetensors",
             limit=16,
         )
-    assert list(root.iterdir()) == []
+    assert {path.name for path in root.iterdir()} == {".dinkster-asset-writer.lock"}
+
+
+def test_save_encoded_rejects_mount_remap_after_encoder_returns(tmp_path: Path) -> None:
+    writer, root = make_writer(tmp_path)
+    remapped = tmp_path / "remapped"
+    remapped.mkdir()
+    snapshot = tmp_path / "mounts.json"
+
+    def encoder(stem: str, counter: int) -> BinaryIO:
+        del stem, counter
+        snapshot.write_text(
+            json.dumps({"mounts": [{"id": "out", "root": str(remapped), "mode": "readwrite"}]}),
+            "utf-8",
+        )
+        return io.BytesIO(b"encoded")
+
+    with pytest.raises(AssetError, match="changed its root"):
+        writer.save_encoded(
+            {"mount": "out", "prefix": "checkpoint"},
+            encoder,
+            suffix=".safetensors",
+            limit=16,
+        )
+    assert {path.name for path in root.iterdir()} == {".dinkster-asset-writer.lock"}
+    assert list(remapped.iterdir()) == []
 
 
 def test_concurrent_process_encoders_receive_distinct_selected_counters(tmp_path: Path) -> None:

@@ -25,10 +25,12 @@ any rescan of the mount.
 
 from __future__ import annotations
 
-import fcntl
+import errno
+import importlib
 import json
 import os
 import re
+import threading
 import time
 import uuid
 from collections.abc import Callable, Generator, Iterable
@@ -48,6 +50,22 @@ from .save_target import SaveTarget, coerce_save_target
 __all__ = ["AssetWriter", "MountSnapshotWriter", "MountWriteAuthority"]
 
 _SUFFIX_RE = re.compile(r"^_?\.[A-Za-z0-9][A-Za-z0-9.]*$")
+_WRITER_PATH_LOCKS_GUARD = threading.Lock()
+_WRITER_PATH_LOCKS: dict[str, threading.RLock] = {}
+
+
+class _Fcntl(Protocol):
+    LOCK_EX: int
+    LOCK_UN: int
+
+    def flock(self, fd: int, operation: int, /) -> None: ...
+
+
+class _Msvcrt(Protocol):
+    LK_NBLCK: int
+    LK_UNLCK: int
+
+    def locking(self, fd: int, mode: int, nbytes: int, /) -> None: ...
 
 
 class MountWriteAuthority(Protocol):
@@ -207,12 +225,13 @@ class AssetWriter:
         """Reserve a source-compatible name while an encoder records it.
 
         ``encoder`` receives the filename stem and integer counter, never a
-        host path or an output placeholder. A pre-existing final name after
+        host path or an output placeholder. It owns its returned stream; the
+        writer reads it without closing it. A pre-existing final name after
         encoding is an error rather than a renamed publication, because the
         encoded metadata may carry that selected name.
         """
         parsed = self._validated_target(target, suffix, limit)
-        _, folder = self._writable_folder(parsed)
+        root, folder = self._writable_folder(parsed)
         with self._directory_claim(folder):
             counter = self._next_counter(folder, parsed.stem)
             source = encoder(parsed.stem, counter)
@@ -223,6 +242,7 @@ class AssetWriter:
                 media_type=media_type,
                 limit=limit,
                 counter=counter,
+                expected_root=root,
                 strict_counter=True,
             )
         return ref
@@ -373,16 +393,46 @@ class AssetWriter:
                 f"mount (symlinked folder leaves {resolved_root})"
             )
 
-    @staticmethod
     @contextmanager
-    def _directory_claim(folder: Path) -> Generator[None]:
-        descriptor = os.open(folder, os.O_RDONLY)
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX)
-            yield
-        finally:
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
-            os.close(descriptor)
+    def _directory_claim(self, folder: Path) -> Generator[None]:
+        lock_path = folder / ".dinkster-asset-writer.lock"
+        with self._path_lock(lock_path), lock_path.open("a+b") as handle:
+            if handle.seek(0, os.SEEK_END) == 0:
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            if os.name == "nt":  # pragma: no cover - exercised on Windows CI
+                msvcrt = cast("_Msvcrt", importlib.import_module("msvcrt"))
+                while True:
+                    try:
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                    except OSError as exc:
+                        if (
+                            exc.errno not in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}
+                            and getattr(exc, "winerror", None) != 33
+                        ):
+                            raise
+                        time.sleep(0.05)
+                    else:
+                        break
+                try:
+                    yield
+                finally:
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl = cast("_Fcntl", importlib.import_module("fcntl"))
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+    @staticmethod
+    def _path_lock(path: Path) -> threading.RLock:
+        key = str(path.resolve())
+        with _WRITER_PATH_LOCKS_GUARD:
+            return _WRITER_PATH_LOCKS.setdefault(key, threading.RLock())
 
     @staticmethod
     def _next_counter(folder: Path, stem: str) -> int:
