@@ -1,16 +1,20 @@
-"""Native image and alpha preprocessing for TripoSplat."""
+"""Native image preprocessing and gaussian decoding for TripoSplat."""
 
 from __future__ import annotations
 
 import importlib
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from dinkster_api.v1 import (
     CORE_INT,
     IMAGE_TYPE,
+    LATENT_TYPE,
     MASK_TYPE,
+    SPLAT_TYPE,
+    VAE_TYPE,
     InputSpec,
+    MultiStreamLatent,
     Node,
     NodeSchema,
     NumberWidget,
@@ -18,6 +22,7 @@ from dinkster_api.v1 import (
     TypeExpr,
     initialize_inference_process,
     materialize_image,
+    materialize_latent,
 )
 
 
@@ -117,3 +122,80 @@ class TripoSplatPreprocessImage(Node):
             dim=0,
         )
         return cls.outputs(image=prepared)
+
+
+class VAEDecodeTripoSplat(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="VAEDecodeTripoSplat",
+            display_name="TripoSplat Decode",
+            category="model/latent/triposplat",
+            description=(
+                "Decode the sampled TripoSplat latent into a 3D gaussian splat. "
+                "Modify the number of gaussians to vary the density."
+            ),
+            inputs=(
+                InputSpec("samples", TypeExpr.concrete(LATENT_TYPE)),
+                InputSpec("vae", TypeExpr.concrete(VAE_TYPE), doc="TripoSplat VAE decoder"),
+                InputSpec(
+                    "num_gaussians",
+                    TypeExpr.concrete(CORE_INT),
+                    default=262144,
+                    widget=NumberWidget(min=32768, max=1048576, step=32),
+                    doc=(
+                        "Number of gaussians to produce (rounded to a multiple of 32). "
+                        "262144 matches the octree's point density; higher oversamples "
+                        "the same points (denser, but no new detail) and costs "
+                        "proportionally more VRAM/time."
+                    ),
+                ),
+                InputSpec(
+                    "seed",
+                    TypeExpr.concrete(CORE_INT),
+                    default=0,
+                    widget=NumberWidget(min=0, max=0xFFFFFFFFFFFFFFFF),
+                    doc="Seeds the octree point sampler (global RNG) for deterministic decodes.",
+                ),
+            ),
+            outputs=(OutputSpec("splat", TypeExpr.concrete(SPLAT_TYPE)),),
+        )
+
+    @classmethod
+    def execute(
+        cls, *, samples: object, vae: Any, num_gaussians: int, seed: int
+    ) -> Mapping[str, object]:
+        initialize_inference_process()
+        torch = importlib.import_module("torch")
+        management = importlib.import_module("dinkster_inference.model_management")
+        streams = materialize_latent(samples)["samples"]
+        if isinstance(streams, MultiStreamLatent):
+            latent = cast("MultiStreamLatent[Any]", streams).streams[0].payload
+        else:
+            latent = streams.unbind()[0] if getattr(streams, "is_nested", False) else streams
+        decoder = vae.first_stage_model
+        per_point = decoder.gaussians_per_point
+        count = max(32768, min(1048576, int(num_gaussians)))
+        if count % per_point != 0:
+            count = round(count / per_point) * per_point
+        memory = (
+            (latent.shape[1] * 4 + (count // per_point) * 10)
+            * decoder.gs.model_channels
+            * management.dtype_size(vae.vae_dtype)
+        )
+        management.load_models_gpu([vae.patcher], memory_required=memory)
+        latent = latent.to(device=vae.device, dtype=vae.vae_dtype)
+        generator = torch.Generator(device="cpu").manual_seed(seed)
+        parts = [
+            gaussian.render_tensors()
+            for gaussian in decoder.decode(latent, num_gaussians=count, generator=generator)
+        ]
+        return cls.outputs(
+            splat=dict(
+                zip(
+                    ("positions", "scales", "rotations", "opacities", "sh"),
+                    (torch.stack(tensors) for tensors in zip(*parts, strict=False)),
+                    strict=True,
+                )
+            )
+        )
