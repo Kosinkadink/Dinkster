@@ -8,7 +8,6 @@ enabled and disabled where the source checks cache-sensitive behavior.
 from __future__ import annotations
 
 import asyncio
-import time
 from collections.abc import Mapping
 
 import pytest
@@ -814,10 +813,24 @@ def test_for_loop(cache_enabled: bool) -> None:
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
-def test_parallel_sleep_nodes(cache_enabled: bool) -> None:
+def test_parallel_sleep_nodes(cache_enabled: bool, monkeypatch: pytest.MonkeyPatch) -> None:
     """Port of ComfyUI test_parallel_sleep_nodes."""
 
     async def scenario() -> None:
+        started: list[int] = []
+        all_started = asyncio.Event()
+        sleep = ExecutionSleep.execute
+
+        async def overlapping_sleep(
+            cls: type[ExecutionSleep], *, value: int, seconds: float
+        ) -> Mapping[str, object]:
+            started.append(value)
+            if len(started) == 2:
+                all_started.set()
+            await asyncio.wait_for(all_started.wait(), timeout=10)
+            return await sleep(value=value, seconds=seconds)
+
+        monkeypatch.setattr(ExecutionSleep, "execute", classmethod(overlapping_sleep))
         events = []
         engine = make_engine(events.append)
         graph = Graph(
@@ -826,9 +839,8 @@ def test_parallel_sleep_nodes(cache_enabled: bool) -> None:
                 "right": GraphNode("dev.execution.sleep", {"value": 5, "seconds": 0.1}),
             }
         )
-        started = time.monotonic()
         result = await engine.run(graph, ["left", "right"], cache_enabled=cache_enabled)
-        assert time.monotonic() - started < 0.18
+        assert sorted(started) == [3, 5]
         assert result.outputs["left"]["value"].resolve() == 3
         assert result.outputs["right"]["value"].resolve() == 5
 

@@ -1023,9 +1023,21 @@ def test_mount_service_does_not_republish_unchanged_elapsed_progress(
     )
 
     async def scenario() -> None:
+        polled = asyncio.Event()
+        polls = 0
+        original_progress = table.scan_progress
+
+        def scan_progress(mount_id: str):
+            nonlocal polls
+            polls += 1
+            if polls == 2:
+                polled.set()
+            return original_progress(mount_id)
+
+        monkeypatch.setattr(table, "scan_progress", scan_progress)
         scan = asyncio.create_task(service.scan(cast("web.Application", {}), "models"))
         assert await asyncio.to_thread(hashing.wait, 5)
-        await asyncio.sleep(0.05)
+        await asyncio.wait_for(polled.wait(), 5)
         assert refreshes == []
         assert publishes == []
         release.set()

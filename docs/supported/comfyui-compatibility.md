@@ -1,5 +1,8 @@
 ## ComfyUI compatibility
 
+- The `--comfy-root` and `--execution-python` composition supports an installed
+  inference package alongside source-only ComfyUI modules from the checkout,
+  while sharing one inference module state and leaving source files unchanged.
 - Core schema comparison permits the optional output mount for output nodes
   with a scalar STRING filename prefix, including CLIPSave, VAESave,
   CheckpointSave, and ModelSave, without relying on their class-name spelling.
@@ -48,6 +51,18 @@
   and work across isolated pack processes without a companion media pack.
 - Native LTXVCropGuides removes appended guide frames and their conditioning
   metadata while preserving the remaining video latent and noise mask.
+- Native LTXV latent-guide and generated-keyframe nodes attach, separate and
+  convert guide frames while preserving conditioning histories and source tensors.
+- Native LTXV image guides accept canonical IC-LoRA parameters extracted from
+  LoRA model metadata, including sparse spatial reference downscaling.
+- LTXV reference-audio, spatio-temporal and modality guidance preserve the source
+  model and apply guidance within the requested sampling window. The dual-CFG
+  guider applies separate video/audio scales to native multi-stream latents.
+  Controlled CPU predictions cover nonempty Euler sampling, masks, seeded noise
+  and denoised output restoration; real-model AV sampling is not validated.
+- MiniMax H3 reference conditioning pairs image, video and soundtrack inputs;
+  Fun ControlNet applies scheduled control while preserving the source model. CPU tests
+  use controlled encoders and predictions, not real-model or GPU execution.
 - Native SeedVR2 output post-processing aligns video frames, restores alpha
   and applies LAB, wavelet or AdaIN color matching with bounded chunks.
 - Native ARVideoI2V encodes the first start-image frame into a cloned model's
