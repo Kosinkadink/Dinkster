@@ -61,6 +61,11 @@
   resampling matching native video loading; deferred assembly with optional
   audio, 8/10-bit precision, sRGB, HLG, and HDR PQ; disassembly to frames,
   optional audio, fps, duration, bit depth, and color space
+- Public `iter_video_pixels` yields edited, display-oriented float32 pixels
+  with rational timestamps without accumulating the complete frame batch.
+  Consumers that stop early close the iterator to release the decoder and
+  source handle, and copy any selected arrays they retain. Iteration is forward
+  decoding, not random access; it yields pixels only, not audio.
 - VIDEO values retain an encoded source or deferred components, rational
   source probe facts, and ordered lazy trim, crop, scale, and restricted
   identical-codec concat edits. Info and lazy edits do not decode frames.
