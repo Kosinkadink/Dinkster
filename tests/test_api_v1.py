@@ -387,6 +387,7 @@ GOLDEN_V1_SURFACE = (
     "read_video_metadata",
     "save_video_frames",
     "assemble_video",
+    "concatenate_video",
     "disassemble_video",
     "iter_video_pixels",
     "save_frame_records",
