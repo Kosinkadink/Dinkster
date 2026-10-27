@@ -24,6 +24,11 @@ the same constraint for non-byte still images: 16-bit grayscale PNGs at 17x7,
 material rather than width alone. This is covered by Dinkster's public
 component decoder regression without changing the shared conversion path.
 
+An extracted execution of that immutable alignment branch gives the same
+result for PNG16 and lossy WebP: 17x17 and 33x31 images match the Dinkster
+component decoder float pixels exactly, while 17x3 and 17x15 raise the same
+`ArgumentError`. These are component-level probes, not LoadImage executions.
+
 The pinned PyAV path also changes samples in an otherwise valid 32x2 GIF:
 RGB differs from exact Pillow palette values by up to 0.00387579 and an
 opaque alpha mask contains values up to 0.000045776367. A two-page TIFF
