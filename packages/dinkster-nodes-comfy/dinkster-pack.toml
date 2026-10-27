@@ -518,6 +518,7 @@ namespaces = [
     "CropByBBoxes",
     "MakeTrainingDataset",
     "TripoSplatPreprocessImage",
+    "LoadTrainingDataset",
     "LoadAudio",
     "PreviewAudio",
     "SaveAudio",
