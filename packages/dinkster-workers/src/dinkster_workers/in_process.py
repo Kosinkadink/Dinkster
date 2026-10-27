@@ -79,6 +79,7 @@ from dinkster_schema import (
     elaborate,
     install_stream_capture,
     plan_asset_coercion,
+    resolved_type_expr,
     resolved_type_id,
     use_capture_budget,
     use_reporter,
@@ -843,7 +844,7 @@ class InProcessWorker:
             diagnostics.append({"code": "alpha_dropped", "inputId": input_id})
         type_id = spec.type.runtime_type_id() or value.type_id
         try:
-            result = apply_alpha_policy(obj, type_id, spec.alpha_policy)
+            result = apply_alpha_policy(obj, type_id, spec.alpha_policy, value)
             if media_inputs is not None and (type_id != value.type_id or result is not obj):
                 media_inputs[input_id] = media_input_value(result, type_id, value)
             return result
@@ -864,10 +865,12 @@ class InProcessWorker:
             return value.resolve()
 
         def input_object(type_id: str, obj: object) -> object:
-            return obj if spec.accepts_storage else self._registry.input_object(type_id, obj)
+            if spec.accepts_storage:
+                return obj.resolve() if isinstance(obj, Value) else obj
+            return self._registry.input_object(type_id, obj)
 
         if spec.type.accepts_concrete(value.type_id):
-            return input_object(value.type_id, value.resolve())
+            return input_object(value.type_id, value)
         plan = plan_asset_coercion(value.type_id, spec.type)
         if plan is None:
             if combo_type_mismatch_is_error(value.type_id, spec.type):
@@ -875,7 +878,7 @@ class InProcessWorker:
                     f"input '{input_id}' rejects runtime type {value.type_id}: "
                     "COMBO mismatches require an explicit converter"
                 )
-            return input_object(value.type_id, value.resolve())
+            return input_object(value.type_id, value)
         decoder = self._registry.asset_decoder_for(plan.target_type_id)
         merger = (
             self._registry.batch_merge_for(plan.merge_type_id)
@@ -1154,11 +1157,8 @@ class InProcessWorker:
                         meta=ValueMeta({**returned_value.meta.entries, "absent.forwarded": True}),
                     )
                     continue
-                if (
-                    returned_value.type_id != expected
-                    if expected is not None
-                    else not out.type.accepts_concrete(returned_value.type_id)
-                ):
+                resolved = resolved_type_expr(out.type, bindings or {}) or out.type
+                if not resolved.accepts_concrete(returned_value.type_id):
                     return contract_error(f"output '{out.id}' rejects {returned_value.type_id}")
                 outputs[out.id] = returned_value
                 continue

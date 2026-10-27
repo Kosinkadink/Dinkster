@@ -34,6 +34,7 @@ from .builtin_types import (
     ARRAY_TYPE,
     ASSET_TYPE,
     AUDIO_ENCODER_OUTPUT_TYPE,
+    AUDIO_ENCODER_TYPE,
     AUDIO_TYPE,
     BACKGROUND_REMOVAL_TYPE,
     BOUNDING_BOX_TYPE,
@@ -284,7 +285,7 @@ from .video_codec import (
     video_rendition_mime,
     video_source,
 )
-from .video_edits import effective_video_facts
+from .video_edits import effective_video_facts, register_video_edit_type
 from .video_probe import open_video_source
 
 __all__ = [
@@ -296,6 +297,7 @@ __all__ = [
     "ASSET_BASE_TYPE",
     "ASSET_TYPE",
     "AUDIO_ENCODER_OUTPUT_TYPE",
+    "AUDIO_ENCODER_TYPE",
     "AUDIO_TYPE",
     "BufferEncoding",
     "CLIP_TYPE",
@@ -554,6 +556,7 @@ __all__ = [
     "MediaStream",
     "Curve",
     "register_curve_type",
+    "register_video_edit_type",
     "curve",
     "timeline_video",
     "video_document",

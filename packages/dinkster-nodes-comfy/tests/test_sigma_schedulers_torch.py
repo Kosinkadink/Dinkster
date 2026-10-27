@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import math
+import os
 from pathlib import Path
 from typing import Any
 
 import pytest
 import torch
 from dinkster_api.v1 import (
+    CORE_FLOAT,
     CORE_STRING,
     MODEL_TYPE,
     SIGMAS_TYPE,
@@ -27,6 +29,7 @@ from dinkster_nodes_comfy.sigma_schedulers import (
     BasicScheduler,
     BetaSamplingScheduler,
     ExponentialScheduler,
+    Flux2Scheduler,
     KarrasScheduler,
     LaplaceScheduler,
     PolyexponentialScheduler,
@@ -57,6 +60,28 @@ class SigmaSummary(Node):
     @classmethod
     def execute(cls, *, sigmas: Any) -> dict[str, object]:
         return cls.outputs(summary=_summary(materialize_latent(sigmas)))
+
+
+class FluxSigmaInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "scheduler-sigmas.flux-inspect",
+            inputs=(
+                InputSpec("sigmas", SIGMAS),
+                InputSpec("midpoint", TypeExpr.concrete(CORE_FLOAT)),
+            ),
+            outputs=(OutputSpec("summary", STRING),),
+        )
+
+    @classmethod
+    def execute(cls, *, sigmas: Any, midpoint: float) -> dict[str, object]:
+        values = materialize_latent(sigmas)
+        assert values.dtype == torch.float32 and values.shape == (13,)
+        assert float(values[0]) == 1.0 and float(values[-1]) == 0.0
+        assert float(values[6]) == midpoint
+        assert torch.all(values[:-1] > values[1:])
+        return cls.outputs(summary=f"13;{midpoint}")
 
 
 class ModelSampling:
@@ -155,30 +180,38 @@ def test_all_scheduler_sigmas_cross_native_and_consumer_pack_hosts(
             worker_env={
                 "CUDA_VISIBLE_DEVICES": "",
                 "DINKSTER_ACCELERATOR": "cpu",
-                "PYTHONPATH": str(Path(__file__).parent),
+                "PYTHONPATH": os.pathsep.join(
+                    (str(Path(__file__).parent), os.environ.get("PYTHONPATH", ""))
+                ),
             }
         )
         try:
             module = f"scheduler_sigma_fixture_{int(in_process)}"
             (tmp_path / f"{module}.py").write_text(
                 "from test_sigma_schedulers_torch import ModelSource, SigmaSummary\n"
-                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
-                "NODES = (*COMFY_NODES, ModelSource, SigmaSummary)\n",
+                "from test_sigma_schedulers_torch import FluxSigmaInspect\n"
+                "from dinkster_nodes_comfy import register_inference_types\n"
+                "NODES = (ModelSource, SigmaSummary, FluxSigmaInspect)\n",
                 encoding="ascii",
             )
             native_manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
             fixture_manifest = tmp_path / "dinkster-pack.toml"
             fixture_manifest.write_text(
-                native_manifest.read_text(encoding="ascii")
-                .replace("namespaces = [", 'namespaces = ["scheduler-sigmas",')
-                .replace("dinkster_nodes_comfy:COMFY_NODES", f"{module}:NODES")
-                .replace(
-                    "dinkster_nodes_comfy:register_inference_types",
-                    f"{module}:register_inference_types",
-                ),
+                '[pack]\nname = "scheduler-sigmas"\npublisher = "dinkster"\n'
+                'namespaces = ["scheduler-sigmas"]\n[pack.entry]\n'
+                f'nodes = "{module}:NODES"\ntypes = "{module}:register_inference_types"\n',
                 encoding="ascii",
             )
-            await composer.add_pack(PackSpec(manifest=fixture_manifest, in_process=in_process))
+            for manifest in (native_manifest, fixture_manifest):
+                await composer.add_pack(
+                    PackSpec(manifest=manifest, in_process=True)
+                    if in_process
+                    else PackSpec(
+                        manifest=manifest,
+                        worker_group="scheduler-sigmas",
+                        group_manifests=(native_manifest, fixture_manifest),
+                    )
+                )
             cases = {
                 "basic": (
                     "BasicScheduler",
@@ -234,6 +267,16 @@ def test_all_scheduler_sigmas_cross_native_and_consumer_pack_hosts(
                     "scheduler-sigmas.summary", {"sigmas": Link(name, "SIGMAS")}
                 )
                 expected[f"{name}-consumer"] = _summary(torch.tensor(values, dtype=torch.float32))
+            for height, midpoint in ((860, 0.9057320952415466), (861, 0.765912652015686)):
+                name = f"flux-{height}"
+                nodes[name] = GraphNode(
+                    "Flux2Scheduler", {"steps": 12, "width": 1280, "height": height}
+                )
+                nodes[f"{name}-consumer"] = GraphNode(
+                    "scheduler-sigmas.flux-inspect",
+                    {"sigmas": Link(name, "SIGMAS"), "midpoint": midpoint},
+                )
+                expected[f"{name}-consumer"] = f"13;{midpoint}"
             graph = Graph(nodes=nodes)
             engine = composer.composition.make_engine(lambda _event: None)
             for _ in range(2):
@@ -244,3 +287,17 @@ def test_all_scheduler_sigmas_cross_native_and_consumer_pack_hosts(
             await composer.close()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("width", "height", "midpoint"),
+    [(1280, 860, 0.9057320952415466), (1280, 861, 0.765912652015686)],
+)
+def test_flux2_empirical_schedule_changes_at_sequence_length_boundary(
+    width: int, height: int, midpoint: float
+) -> None:
+    sigmas = Flux2Scheduler.execute(steps=12, width=width, height=height)["SIGMAS"]
+    assert sigmas.shape == (13,) and sigmas.dtype == torch.float32
+    assert float(sigmas[0]) == 1.0 and float(sigmas[-1]) == 0.0
+    assert float(sigmas[6]) == midpoint
+    assert torch.all(sigmas[:-1] > sigmas[1:])

@@ -2,6 +2,12 @@
 
 - Input types: concrete, union, wildcard, variable, list, asset;
   scalar/list cardinality; required/advanced/hidden/lazy input flags
+- Backend `list<*>` values retain independently typed child envelopes through
+  ordinary worker and persistent-cache boundaries. Outputs collect existing
+  typed values rather than guessing types from Python objects. Nested lists,
+  child input conversion and resident-resource discovery retain each child's
+  concrete identity; concrete `list<T>` remains homogeneous. This does not
+  claim native CreateList or frontend editor/importer support.
 - Backend schemas describe fixed positional tuples, derive tuple outputs from
   independently typed input families in document order, and select a position's
   type using a stored integer index. Tuple declarations round-trip through the

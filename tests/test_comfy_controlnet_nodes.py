@@ -13,6 +13,7 @@ from dinkster_nodes_comfy.controlnet import (
     CONTROLNET_NODES,
     ControlNetApply,
     ControlNetApplyAdvanced,
+    ControlNetApplySD3,
     SetUnionControlNetType,
 )
 
@@ -29,6 +30,9 @@ def test_controlnet_schemas_register_the_exact_core_ids() -> None:
         assert schema.node_type == node.__name__
         assert schema.node_type in manifest["pack"]["namespaces"]
         assert schema.category == "model/conditioning/controlnet"
+    legacy_sd3 = ControlNetApplySD3.define_schema()
+    assert legacy_sd3.deprecation is not None
+    assert legacy_sd3.search_visibility == "deprecated"
     schema = ControlNetApplyAdvanced.define_schema()
     assert [port.id for port in schema.inputs] == [
         "positive",
