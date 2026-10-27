@@ -81,6 +81,22 @@ installation and runtime use do not require that checkout.
 - `uv run pyright` - static type checking (strict for `packages/`, standard
   for `src/` and `tests/`)
 - `uv run ruff check .` - lint
+- `python -B tools/replay_node_constants.py <ComfyUI checkout> <node test>` -
+  replay explicitly annotated ComfyUI node assertions on demand. A supported
+  assertion has an immediately preceding `# comfy-replay:` JSON object with
+  `class`, `method`, and exact JSON `inputs`; the assertion's right side is
+  the committed Python-literal expected value. For example:
+
+  ```python
+  # ComfyUI provenance: ExampleNode, F bc5f880dbdd43e426077f42ccec53bb577ffee9f, inputs {"value": 2}.
+  # comfy-replay: {"class": "nodes.ExampleNode", "method": "execute", "inputs": {"value": 2}}
+  assert result == {"value": 4}
+  ```
+
+  The tool parses rather than imports the Dinkster test, runs only annotated
+  cases from the supplied checkout, prints matching or mismatching constants,
+  disables bytecode writes, and creates no golden files. Unannotated tests and
+  pytest fixtures are intentionally unsupported.
 - `uv run dinkster demo` - demo: toy graph through the real engine; shows caching,
   partial re-execution, non-idempotent nodes, and value interrogation
 - `uv run dinkster-pack prepare-catalogs --defaults` - prepare installed
