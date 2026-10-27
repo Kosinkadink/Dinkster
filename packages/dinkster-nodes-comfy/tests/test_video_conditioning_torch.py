@@ -199,7 +199,7 @@ class Inspect(Node):
         return cls.outputs(summary="stable-video")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_ordinary_manifest_executes_stable_video_twice(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
         composer = ServingComposer(

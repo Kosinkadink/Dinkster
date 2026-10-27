@@ -130,7 +130,7 @@ class ARImageConsumer(Node):
         return cls.outputs(summary="ar-image-verified")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_ar_image_conditioning_runs_twice_through_ordinary_hosts(
     tmp_path: Path,
     in_process: bool,

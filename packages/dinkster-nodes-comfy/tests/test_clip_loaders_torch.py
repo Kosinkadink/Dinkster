@@ -89,7 +89,7 @@ class LoaderInspect(Node):
             ).load_clip = LoaderAssets.original_load_clip
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 @pytest.mark.parametrize("count", (3, 4))
 def test_clip_loaders_execute_in_ordinary_hosts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, count: int

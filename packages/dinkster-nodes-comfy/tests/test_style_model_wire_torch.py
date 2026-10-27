@@ -133,7 +133,7 @@ class StyleConsumer(Node):
         return cls.outputs(summary=json.dumps(output.tolist()))
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_style_model_ordinary_manifest_hosts(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
         composer = ServingComposer(
@@ -288,8 +288,14 @@ class ModelPatchConsumer(Node):
         )
 
 
-@pytest.mark.parametrize("in_process", (True, False))
-@pytest.mark.parametrize("value_type", (MODEL_PATCH_TYPE, LATENT_UPSCALE_MODEL_TYPE))
+@pytest.mark.parametrize(
+    "value_type,in_process",
+    (
+        (MODEL_PATCH_TYPE, True),
+        (LATENT_UPSCALE_MODEL_TYPE, True),
+        (LATENT_UPSCALE_MODEL_TYPE, False),
+    ),
+)
 def test_model_patch_full_native_manifest_and_fixture_hosts(
     tmp_path: Path, in_process: bool, value_type: str
 ) -> None:

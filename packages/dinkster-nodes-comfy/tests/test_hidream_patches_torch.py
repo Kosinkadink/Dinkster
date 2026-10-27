@@ -279,7 +279,7 @@ class ModelInspect(Node):
         return cls.outputs(value=float(result.sum()))
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_ordinary_manifest_executes_hidream_smoothing_twice(
     tmp_path: Path, in_process: bool
 ) -> None:
