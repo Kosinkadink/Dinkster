@@ -357,6 +357,7 @@ GOLDEN_V1_SURFACE = (
     # -- mounted saves (dinkster-assets + current dinkster-schema widgets)
     "AssetWidget",
     "AssetWriter",
+    "admit_video_source",
     "bind_video_value",
     "MountSnapshotWriter",
     "SAVE_TARGET_TYPE",
@@ -365,6 +366,7 @@ GOLDEN_V1_SURFACE = (
     "register_save_target_type",
     "register_audio_value_type",
     "register_video_value_type",
+    "register_video_edit_type",
     "DITHERS",
     "FRAME_FORMATS",
     "read_video_metadata",

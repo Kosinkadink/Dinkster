@@ -20,6 +20,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import cast
 
 from dinkster_values import (
@@ -149,9 +150,28 @@ def _publish_video_source(source: bytes | Path) -> AssetRef:
     )
 
 
-def admit_video_source(source: bytes | Path) -> dict[str, object]:
+def admit_video_source(source: bytes | Path | AssetRef | LocalAssetRef) -> dict[str, object]:
     """Probe before publishing local media as a portable VIDEO value."""
+    if isinstance(source, AssetRef):
+        with source.open() as handle:
+            handle.seek(0, 2)
+            if handle.tell() > GIBIBYTE:
+                raise AssetError("VIDEO source exceeds 1 GiB")
+        return video_from_source(source)
+    if isinstance(source, LocalAssetRef):
+        with TemporaryDirectory(prefix="dinkster-video-") as directory:
+            path = Path(directory) / "video"
+            with source.open() as handle, path.open("wb") as output:
+                size = 0
+                while chunk := handle.read(MEBIBYTE):
+                    size += len(chunk)
+                    if size > GIBIBYTE:
+                        raise AssetError("VIDEO source exceeds 1 GiB")
+                    output.write(chunk)
+            return admit_video_source(path)
     size = len(source) if isinstance(source, bytes) else source.stat().st_size
+    if size > GIBIBYTE:
+        raise AssetError("VIDEO source exceeds 1 GiB")
     if size <= VIDEO_INLINE_LIMIT:
         return video_from_source(source if isinstance(source, bytes) else source.read_bytes())
     probe = probe_video(source)

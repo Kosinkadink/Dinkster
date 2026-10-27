@@ -1,7 +1,5 @@
 """Dinkster's first-party asset-backed media I/O nodes."""
 
-import json
-
 from dinkster_api.v1 import (
     ASSET_TYPE,
     IMAGE_BATCH_MERGER_ID,
@@ -10,7 +8,6 @@ from dinkster_api.v1 import (
     SAVE_TARGET_TYPE,
     SPLAT_FILE_DECODER_ID,
     SPLAT_PLY_MIME,
-    VIDEO_EDIT_TYPE,
     TypeRegistry,
     decode_image_array,
     decode_splat,
@@ -28,6 +25,7 @@ from dinkster_api.v1 import (
     register_curve_type,
     register_model3d_type,
     register_save_target_type,
+    register_video_edit_type,
     register_video_value_type,
     render_image_png,
     render_mask_png,
@@ -159,12 +157,7 @@ def register_media_types(registry: TypeRegistry) -> None:
             fingerprint=document_codec.document_fingerprint,
             meta=document_codec.document_meta,
         )
-    if VIDEO_EDIT_TYPE not in registry:
-        registry.register(
-            VIDEO_EDIT_TYPE,
-            encode=lambda obj: json.dumps(obj, sort_keys=True, allow_nan=False).encode(),
-            decode=json.loads,
-        )
+    register_video_edit_type(registry)
     if SAVE_TARGET_TYPE not in registry:
         register_save_target_type(registry)
     if ASSET_TYPE not in registry:

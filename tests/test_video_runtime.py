@@ -449,6 +449,100 @@ def test_native_video_chain_matches_across_worker_shared_memory() -> None:
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("in_process", (True, False))
+def test_native_video_values_cross_ordinary_hosts_twice_with_layered_cache(
+    tmp_path: Path, in_process: bool
+) -> None:
+    from dinkster_graph import Graph, GraphNode, Link
+    from dinkster_nodes_comfy import register_inference_types
+    from dinkster_values import VIDEO_EDIT_TYPE, effective_video_facts, video_source
+
+    from dinkster.compose import PackSpec, ServingComposer
+
+    edit = {"trim": {"duration": 1.0, "start_time": 0.5}, "unused": {"preserved": True}}
+    trim_edit = {"trim": edit["trim"]}
+    source = video_from_source(_source(depth=10))
+    expected = edit_video(source, trim_edit)
+    expected_facts = effective_video_facts(expected)
+    expected_fingerprint = video_fingerprint(VIDEO_TYPE)(expected)
+
+    registry = TypeRegistry()
+    register_inference_types(registry)
+    video_spec = registry.spec(VIDEO_TYPE)
+    edit_spec = registry.spec(VIDEO_EDIT_TYPE)
+    register_inference_types(registry)
+    assert registry.spec(VIDEO_TYPE) is video_spec
+    assert registry.spec(VIDEO_EDIT_TYPE) is edit_spec
+    encoded_edit = edit_spec.encode(edit)
+    assert (
+        encoded_edit
+        == b'{"trim": {"duration": 1.0, "start_time": 0.5}, "unused": {"preserved": true}}'
+    )
+    assert edit_spec.decode(encoded_edit) == edit
+
+    async def scenario() -> None:
+        root = Path(__file__).resolve().parents[1]
+        native_manifest = root / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+        fixture_manifest = Path(__file__).with_name("video-native-value-fixture.toml")
+        manifests = (native_manifest, fixture_manifest)
+        composer = ServingComposer(
+            cache_mode="layered",
+            cache_dir=tmp_path / "cache",
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "PYTHONPATH": str(Path(__file__).parent),
+            },
+        )
+        try:
+            for manifest in manifests:
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=manifest,
+                        host_types=register_inference_types
+                        if manifest == native_manifest
+                        else None,
+                        in_process=in_process,
+                        worker_group=None if in_process else "video-native-value-fixture",
+                        group_manifests=() if in_process else manifests,
+                    )
+                )
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("video-native-value-fixture.source", {}),
+                    "consumer": GraphNode(
+                        "video-native-value-fixture.consumer",
+                        {
+                            "video": Link("source", "video"),
+                            "video_edit": Link("source", "video_edit"),
+                        },
+                    ),
+                }
+            )
+            engine = composer.composition.make_engine(lambda _event: None)
+            for repeat in range(2):
+                result = await engine.run(graph, ["consumer"])
+                assert result.outputs["consumer"]["video_edit"].resolve() == edit
+                assert result.outputs["consumer"]["facts"].resolve() == json.dumps(
+                    expected_facts, default=str, sort_keys=True
+                )
+                assert result.outputs["consumer"]["fingerprint"].resolve() == expected_fingerprint
+                assert video_source(result.outputs["consumer"]["source"].resolve()) == _source(
+                    depth=10
+                )
+                assert encode_video(result.outputs["consumer"]["edited"].resolve()) == encode_video(
+                    expected
+                )
+                if repeat:
+                    assert set(result.cached) == {"source", "consumer"}
+                else:
+                    assert set(result.executed) == {"source", "consumer"}
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
 def test_concat_trim_to_second_source_never_exports_first_source() -> None:
     first, second = _source(), _source(offset=60)
     joined = edit_video(video_from_source(first), {"concat": [video_from_source(second)]})
