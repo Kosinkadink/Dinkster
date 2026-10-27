@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 import torch
 from dinkster_nodes_comfy.moge import MoGeGeometryToFOV
+from dinkster_values import decode_latent, encode_latent
 
 
 @pytest.mark.parametrize(
@@ -19,7 +20,10 @@ from dinkster_nodes_comfy.moge import MoGeGeometryToFOV
     ),
 )
 @pytest.mark.parametrize("unit", ("degrees", "radians"))
-def test_fov_uses_first_intrinsics_and_image_height(axis: str, radians: float, unit: str) -> None:
+@pytest.mark.parametrize("portable", (False, True))
+def test_fov_uses_first_intrinsics_and_image_height(
+    axis: str, radians: float, unit: str, portable: bool
+) -> None:
     # Hand-derived: fx=.5 -> tan(fov_x/2)=1; fy=1 -> tan(fov_y/2)=.5.
     # The second camera and other geometry heights must not influence either result.
     intrinsics = torch.tensor(
@@ -32,6 +36,8 @@ def test_fov_uses_first_intrinsics_and_image_height(axis: str, radians: float, u
         "depth": torch.zeros(2, 23, 29),
     }
     before = intrinsics.clone()
+    if portable:
+        geometry = decode_latent(encode_latent(geometry), require_samples=False)
     result = MoGeGeometryToFOV.execute(moge_geometry=geometry, axis=axis, unit=unit)
     assert result["fov"] == pytest.approx(math.degrees(radians) if unit == "degrees" else radians)
     assert result["focal_pixels"] == 7.0
