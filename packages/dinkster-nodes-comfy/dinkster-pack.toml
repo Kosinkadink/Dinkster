@@ -513,6 +513,7 @@ namespaces = [
     "LoraLoaderBypass",
     "LoraLoaderBypassModelOnly",
     "CropByBBoxes",
+    "CameraAngle",
 ]
 
 [pack.sandbox]

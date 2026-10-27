@@ -1,5 +1,7 @@
 ## Image operations
 
+- Native `CameraAngle` produces an orbit-camera dictionary and shot description
+  from horizontal angle, elevation, and zoom.
 - Color strings, ordered color palettes, and optional resolution-preview
   metadata pass between node packs without rewriting their values.
 - Native `PrimitiveBoundingBox` constructs pixel bounding boxes; `ImageCropV2`

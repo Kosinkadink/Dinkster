@@ -32,6 +32,7 @@ from .bbox_crop import CropByBBoxes
 from .bernini_conditioning import BERNINI_CONDITIONING_NODES
 from .boogu_encoders import TextEncodeBooguEdit
 from .cache import CACHE_NODES
+from .camera_angle import CameraAngle
 from .cfg_guidance import CFG_GUIDANCE_NODES
 from .cfg_guiders import CFG_GUIDER_NODES
 from .chroma_options import ChromaRadianceOptions
@@ -372,6 +373,7 @@ COMFY_NODES = (
     *MODEL_FILE_LOADER_NODES,
     *LORA_FILE_LOADER_NODES,
     CropByBBoxes,
+    CameraAngle,
 )
 
 
