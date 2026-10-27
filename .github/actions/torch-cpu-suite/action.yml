@@ -72,6 +72,26 @@ runs:
           --constraint "${{ runner.temp }}/torch-constraints.txt" \
           -e . -e packages/dinkster-nodes-comfy
         .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-comfy/tests ${{ inputs.comfy-pytest-args }}
+    - name: Test CPU torch root contracts and evidence tooling
+      if: env.DINKSTER_MODEL_TEST_GROUP == '' && inputs.suite == 'vision'
+      shell: bash
+      env:
+        DINKSTER_ACCELERATOR: cpu
+      run: |
+        uv pip install --python .venv-torch/bin/python \
+          --constraint "${{ runner.temp }}/torch-constraints.txt" \
+          -e . -e packages/dinkster-nodes-comfy
+        .venv-torch/bin/python -m pytest -v \
+          tests/test_audio_materializer.py \
+          tests/test_cpu_pack_composition.py \
+          tests/test_minimax_h3_multigpu_receipt.py \
+          tests/test_multigpu_modes.py \
+          tests/test_fork_attention.py \
+          tests/test_legacy_sources.py \
+          tests/test_compose.py::test_full_free_releases_tensors_held_by_memory_execution_cache
+        .venv-torch/bin/python -m pytest -v \
+          .evidence-source/h3-parity/test_run_comparison.py \
+          .evidence-source/model-family-comparison/test_validate.py
     - name: Acquire pinned line and edge parity artifacts
       if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-fast'
       shell: bash

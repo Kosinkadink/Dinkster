@@ -7,14 +7,18 @@ from collections.abc import Mapping
 from typing import Any, cast
 
 from dinkster_api.v1 import (
+    CLIP_TYPE,
     CONDITIONING_TYPE,
+    CORE_STRING,
     IMAGE_TYPE,
     LATENT_TYPE,
+    VAE_TYPE,
     Deprecation,
     InputSpec,
     Node,
     NodeSchema,
     OutputSpec,
+    StringWidget,
     TypeExpr,
     materialize_image,
     materialize_latent,
@@ -108,6 +112,69 @@ class ResolutionBucket(Node):
             latents=[{"samples": torch.stack(samples, dim=0)} for samples, _ in buckets.values()],
             conditioning=[conditions for _, conditions in buckets.values()],
         )
+
+
+class MakeTrainingDataset(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="MakeTrainingDataset",
+            display_name="Make Training Dataset",
+            category="model/training",
+            description=(
+                "Encode images with VAE and texts with CLIP to create a training dataset "
+                "of latents and conditionings."
+            ),
+            search_terms=("encode dataset",),
+            inputs=(
+                InputSpec("images", _IMAGES, doc="List of images to encode."),
+                InputSpec(
+                    "vae",
+                    TypeExpr.concrete(VAE_TYPE),
+                    doc="VAE model for encoding images to latents.",
+                ),
+                InputSpec(
+                    "clip",
+                    TypeExpr.concrete(CLIP_TYPE),
+                    doc="CLIP model for encoding text to conditioning.",
+                ),
+                InputSpec(
+                    "texts",
+                    TypeExpr.list_of(TypeExpr.concrete(CORE_STRING)),
+                    required=False,
+                    force_input=True,
+                    widget=StringWidget(multiline=False),
+                    doc=(
+                        "List of text captions. Can be length n (matching images), "
+                        "1 (repeated for all), or omitted (uses empty string)."
+                    ),
+                ),
+            ),
+            outputs=(
+                OutputSpec("latents", _LATENTS, doc="List of latent dicts"),
+                OutputSpec("conditioning", _CONDITIONS, doc="List of conditioning lists"),
+            ),
+        )
+
+    @classmethod
+    def execute(
+        cls, *, images: list[Any], vae: Any, clip: Any, texts: list[str] | None = None
+    ) -> Mapping[str, object]:
+        num_images = len(images)
+        if texts is None or len(texts) == 0:
+            texts = [""]
+        if len(texts) == 1 and num_images > 1:
+            texts = texts * num_images
+        elif len(texts) != num_images:
+            raise ValueError(
+                f"Number of texts ({len(texts)}) does not match number of images ({num_images}). "
+                f"Text list should have length {num_images}, 1, or 0."
+            )
+        latents = [
+            {"samples": vae.encode(materialize_image(image)[:, :, :, :3])} for image in images
+        ]
+        conditioning = [clip.encode_from_tokens_scheduled(clip.tokenize(text)) for text in texts]
+        return cls.outputs(latents=latents, conditioning=conditioning)
 
 
 DATASET_GROUP_NODES = (MergeImageLists, ResolutionBucket)
