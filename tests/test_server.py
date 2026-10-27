@@ -8,7 +8,8 @@ import asyncio
 import hashlib
 import json
 import os
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
@@ -628,14 +629,22 @@ def test_queue_cancel_queued_and_running() -> None:
     asyncio.run(scenario())
 
 
-def test_queue_pause_holds_dispatch_and_resume_releases() -> None:
+def test_queue_pause_holds_dispatch_and_resume_releases(monkeypatch: pytest.MonkeyPatch) -> None:
     async def scenario() -> None:
         queue = JobQueue(make_engine())
+        dispatch_checked = asyncio.Event()
+        original_clear = queue._wakeup.clear
+
+        def clear_wakeup() -> None:
+            original_clear()
+            dispatch_checked.set()
+
+        monkeypatch.setattr(queue._wakeup, "clear", clear_wakeup)
         queue.start()
         assert not queue.paused
         queue.pause()
         job = queue.submit("c", "j1", echo_graph(), ["s"])
-        await asyncio.sleep(0.05)  # dispatcher had every chance to misbehave
+        await asyncio.wait_for(dispatch_checked.wait(), 5)
         assert job.state == "queued"
         assert queue.status()["paused"] is True
         queue.resume()
@@ -4312,6 +4321,20 @@ def test_server_compile_once_preserves_raw_fingerprint_and_pinned_generation(
 
         app = create_app(factory, SCHEMAS)
         app[STATE_KEY].queue.pause()
+        admission_entered = asyncio.Event()
+        admission_calls = 0
+        original_admission = app[STATE_KEY].job_admission
+
+        @asynccontextmanager
+        async def observe_admission(client_id: str, job_id: str) -> AsyncIterator[None]:
+            nonlocal admission_calls
+            admission_calls += 1
+            if admission_calls == 2:
+                admission_entered.set()
+            async with original_admission(client_id, job_id):
+                yield
+
+        monkeypatch.setattr(app[STATE_KEY], "job_admission", observe_admission)
         client = TestClient(TestServer(app))
         await client.start_server()
         try:
@@ -4319,7 +4342,8 @@ def test_server_compile_once_preserves_raw_fingerprint_and_pinned_generation(
             first_task = asyncio.create_task(client.post("/api/jobs", json=body))
             await compile_entered.wait()
             duplicate_task = asyncio.create_task(client.post("/api/jobs", json=body))
-            await asyncio.sleep(0.01)
+            await asyncio.wait_for(admission_entered.wait(), 5)
+            assert not duplicate_task.done()
             assert len(calls) == 1
             compile_release.set()
             first_response, duplicate_response = await asyncio.gather(
@@ -4779,10 +4803,19 @@ def test_progress_events_throttled_at_ingestion_final_survives_in_replay() -> No
     asyncio.run(scenario())
 
 
-def test_queue_endpoints_over_http() -> None:
+def test_queue_endpoints_over_http(monkeypatch: pytest.MonkeyPatch) -> None:
     async def scenario() -> None:
         reset_sleeper()
         client = await make_client()
+        queue = client.app[STATE_KEY].queue
+        dispatch_checked = asyncio.Event()
+        original_clear = queue._wakeup.clear
+
+        def clear_wakeup() -> None:
+            original_clear()
+            dispatch_checked.set()
+
+        monkeypatch.setattr(queue._wakeup, "clear", clear_wakeup)
         try:
             # Baseline shape: nothing queued, nothing running, not paused.
             status = await (await client.get("/api/queue")).json()
@@ -4794,9 +4827,10 @@ def test_queue_endpoints_over_http() -> None:
             }
 
             assert (await client.post("/api/queue/pause")).status == 200
+            dispatch_checked.clear()
             graph = Graph(nodes={"n": GraphNode("test.sleeper", {"tag": "x"})})
             assert (await client.post("/api/jobs", json=submit_body(graph, ["n"]))).status == 202
-            await asyncio.sleep(0.05)
+            await asyncio.wait_for(dispatch_checked.wait(), 5)
             status = await (await client.get("/api/queue")).json()
             assert status["paused"] is True
             assert [j["jobId"] for j in status["queued"]] == ["j1"]
