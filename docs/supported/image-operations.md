@@ -1,5 +1,7 @@
 ## Image operations
 
+- Native `UpscaleModelLoader` loads granted single-image upscale checkpoints
+  into the shared `UPSCALE_MODEL` value.
 - Native `CameraAngle` produces an orbit-camera dictionary and shot description
   from horizontal angle, elevation, and zoom.
 - Native `TripoSplatPreprocessImage` erodes alpha, crops foreground to a padded

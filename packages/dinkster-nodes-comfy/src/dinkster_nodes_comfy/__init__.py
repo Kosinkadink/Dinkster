@@ -177,6 +177,7 @@ from .switch import ComfySwitchNode
 from .text import TEXT_NODES
 from .text_generation import TextGenerate, TextGenerateLTX2Prompt
 from .triposplat import TripoSplatConditioning, TripoSplatPreprocessImage
+from .upscale_model_loader import UpscaleModelLoader
 from .utilities import ComfyNumberConvert, PreviewAny, SeedNode
 from .vae import VAE_NODES
 from .video_conditioning import VIDEO_CONDITIONING_NODES
@@ -415,6 +416,7 @@ COMFY_NODES = (
     SaveAudioAdvanced,
     *YUE2_CONDITIONING_NODES,
     *FOLDER_DATASET_NODES,
+    UpscaleModelLoader,
 )
 
 
