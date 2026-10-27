@@ -20,14 +20,20 @@ from dinkster_values import (
 
 
 def test_svg_round_trip_preserves_order_duplicates_empty_and_non_text_bytes() -> None:
-    value = (b"<svg>one</svg>", b"", b"<svg>one</svg>", b"\xff\x00<svg/>")
+    value = (
+        b"<svg>one</svg>",
+        b"",
+        b"<svg>two</svg>",
+        b"<svg>one</svg>",
+        b"\xff\x00<svg/>",
+    )
     encoded = encode_svg(value)
     assert encoded == encode_svg(value)
     assert decode_svg(encoded) == value
-    assert svg_meta(value) == {"streams": 4, "byte_size": sum(map(len, value))}
+    assert svg_meta(value) == {"streams": 5, "byte_size": sum(map(len, value))}
     fingerprint = svg_fingerprint(SVG_TYPE)
     assert fingerprint(value) == fingerprint(decode_svg(encoded))
-    assert fingerprint(value) != fingerprint((value[2], value[1], value[0], value[3]))
+    assert fingerprint(value) != fingerprint((value[2], value[1], value[0], value[3], value[4]))
     assert fingerprint(value) != fingerprint(value[:-1])
 
 
@@ -57,6 +63,7 @@ def test_svg_rejects_mutable_or_non_byte_runtime_values(value: object) -> None:
 
 def test_svg_rejects_malformed_frames_and_metadata() -> None:
     data = encode_svg((b"<svg/>", b""))
+    truncated_stream = encode_svg((b"<svg/>",))
     with pytest.raises(ValueError, match="invalid SVG codec framing"):
         decode_svg(b"not-an-svg-frame")
     with pytest.raises(ValueError, match="unsupported SVG codec version"):
@@ -66,7 +73,7 @@ def test_svg_rejects_malformed_frames_and_metadata() -> None:
     with pytest.raises(ValueError, match="stream length is truncated"):
         decode_svg(data[: -len(b"<svg/>") - 2])
     with pytest.raises(ValueError, match="stream is truncated"):
-        decode_svg(data[:-1])
+        decode_svg(truncated_stream[:-1])
     with pytest.raises(ValueError, match="trailing bytes"):
         decode_svg(data + b"\x00")
     with pytest.raises(ValueError, match="metadata streams"):
@@ -88,7 +95,7 @@ def test_svg_registration_preserves_the_first_authority() -> None:
     spec.validate_encoded(encoded, svg_meta(value))
 
 
-def test_svg_public_type_registers_on_two_fresh_ordinary_hosts() -> None:
+def test_svg_public_type_registers_in_two_fresh_python_processes() -> None:
     script = """
 import sys
 from dinkster_api.v1 import SVG_TYPE, TypeRegistry, register_inference_types

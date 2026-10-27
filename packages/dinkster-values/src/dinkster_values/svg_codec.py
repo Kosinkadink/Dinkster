@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from typing import cast
 
 from .limits import ENCODED_MEDIA_LIMIT_BYTES
 from .model import stable_hash
@@ -28,16 +29,17 @@ _MAX_STREAMS = 1_000_000
 def _streams(value: object) -> tuple[bytes, ...]:
     if not isinstance(value, tuple):
         raise TypeError("SVG value must be an immutable tuple of bytes")
-    if len(value) > _MAX_STREAMS:
+    streams = cast("tuple[object, ...]", value)
+    if len(streams) > _MAX_STREAMS:
         raise ValueError("SVG value exceeds the stream count limit")
     total = 0
-    for stream in value:
+    for stream in streams:
         if not isinstance(stream, bytes):
             raise TypeError("SVG value members must be bytes")
         total += len(stream)
         if total > ENCODED_MEDIA_LIMIT_BYTES:
             raise ValueError("SVG value exceeds the encoded media size limit")
-    return value
+    return cast("tuple[bytes, ...]", streams)
 
 
 def encode_svg(value: object) -> bytes:
