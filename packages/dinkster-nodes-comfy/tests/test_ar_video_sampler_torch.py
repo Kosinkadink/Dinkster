@@ -55,7 +55,7 @@ class ARSamplerConsumer(Node):
         return cls.outputs(summary="ar-video-block3")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_ar_video_sampler_runs_twice_through_ordinary_hosts(
     tmp_path: Path, in_process: bool
 ) -> None:

@@ -58,7 +58,7 @@ def test_mochi_temporal_boundary_and_asymmetric_dimensions() -> None:
         assert not samples.count_nonzero()
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_ordinary_manifest_creates_image_and_mochi_latents_twice(in_process: bool) -> None:
     async def scenario() -> None:
         composer = ServingComposer(

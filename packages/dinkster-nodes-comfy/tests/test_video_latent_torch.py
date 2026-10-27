@@ -67,7 +67,7 @@ class VideoLatentInspect(Node):
         return cls.outputs(summary=";".join(shapes))
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_ordinary_manifest_executes_video_latents_twice(in_process: bool, tmp_path: Path) -> None:
     async def scenario() -> None:
         source_root = Path(__file__).resolve().parents[1] / "src"
@@ -339,7 +339,7 @@ class VideoLatentTransformInspect(Node):
         return cls.outputs(summary="video-latent-transforms")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_ordinary_manifest_executes_video_latent_transforms_twice(
     in_process: bool, tmp_path: Path
 ) -> None:

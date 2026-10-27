@@ -336,7 +336,8 @@ def test_standard_vision_pack_provisions_declared_runtime_before_composition(
     assert TESTS_DIR.parent / "packages" / "dinkster-video" in workspace
     if pack_name == "dinkster-vision-birefnet":
         assert any(
-            requirement.startswith("dinkster-inference @ git+") for requirement in manifest.requires
+            requirement.startswith("dinkster-inference @ https://")
+            for requirement in manifest.requires
         )
     assert str(manifest.root.parent / "src") in prepared.env["PYTHONPATH"].split(os.pathsep)
 

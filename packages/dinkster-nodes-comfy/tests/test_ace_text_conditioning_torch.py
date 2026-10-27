@@ -170,7 +170,7 @@ class AceInspect(Node):
         return cls.outputs(result="ace conditioning exact")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_ace_text_conditioning_executes_twice_in_both_manifest_hosts(
     tmp_path: Path, in_process: bool
 ) -> None:

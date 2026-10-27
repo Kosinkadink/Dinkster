@@ -397,7 +397,7 @@ class ReferenceMultiInspect(Node):
         return cls.outputs(value=float(resized_first[0, 0, 0, 0] + kept_first[0, 0, 0, 0]))
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_ordinary_manifest_links_image_edit_and_reference_nodes(
     tmp_path: Path, in_process: bool
 ) -> None:

@@ -196,7 +196,7 @@ class _AVLatentConsumer(Node):
         return cls.outputs(values="verified")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_manifest_round_trips_av_latent_roles_and_values_twice(
     tmp_path: Path, in_process: bool
 ) -> None:

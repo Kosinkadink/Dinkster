@@ -51,6 +51,7 @@ from .controlnet import CONTROLNET_NODES
 from .cosmos_conditioning import COSMOS_CONDITIONING_NODES
 from .custom_sampling import CUSTOM_SAMPLING_NODES
 from .dataset_collections import DATASET_COLLECTION_NODES
+from .dataset_folders import FOLDER_DATASET_NODES
 from .dataset_groups import DATASET_GROUP_NODES, MakeTrainingDataset
 from .dataset_images import DATASET_IMAGE_NODES
 from .dataset_shards import LoadTrainingDataset
@@ -175,7 +176,8 @@ from .supir import SUPIRApply
 from .switch import ComfySwitchNode
 from .text import TEXT_NODES
 from .text_generation import TextGenerate, TextGenerateLTX2Prompt
-from .triposplat import TripoSplatPreprocessImage
+from .triposplat import TripoSplatConditioning, TripoSplatPreprocessImage
+from .upscale_model_loader import UpscaleModelLoader
 from .utilities import ComfyNumberConvert, PreviewAny, SeedNode
 from .vae import VAE_NODES
 from .video_conditioning import VIDEO_CONDITIONING_NODES
@@ -404,6 +406,7 @@ COMFY_NODES = (
     CameraAngle,
     MakeTrainingDataset,
     TripoSplatPreprocessImage,
+    TripoSplatConditioning,
     LoadTrainingDataset,
     LoadAudio,
     PreviewAudio,
@@ -412,6 +415,8 @@ COMFY_NODES = (
     SaveAudioOpus,
     SaveAudioAdvanced,
     *YUE2_CONDITIONING_NODES,
+    *FOLDER_DATASET_NODES,
+    UpscaleModelLoader,
 )
 
 

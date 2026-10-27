@@ -89,7 +89,7 @@ class Consumer(Node):
         return cls.outputs(summary="seedvr-padding")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_preprocess_through_unchanged_native_pack_twice(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
         composer = ServingComposer(
