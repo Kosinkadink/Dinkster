@@ -28,6 +28,7 @@ from .audio_latent import AUDIO_LATENT_NODES, GetAudioLatentSize
 from .audio_music_conditioning import AUDIO_MUSIC_CONDITIONING_NODES
 from .audio_transform import AUDIO_TRANSFORM_NODES
 from .audio_vae import AUDIO_VAE_NODES
+from .background_removal import BACKGROUND_REMOVAL_NODES
 from .bernini_conditioning import BERNINI_CONDITIONING_NODES
 from .boogu_encoders import TextEncodeBooguEdit
 from .cache import CACHE_NODES
@@ -366,6 +367,7 @@ COMFY_NODES = (
     VideoFrameSample,
     *MODEL_FILE_LOADER_NODES,
     *LORA_FILE_LOADER_NODES,
+    *BACKGROUND_REMOVAL_NODES,
 )
 
 

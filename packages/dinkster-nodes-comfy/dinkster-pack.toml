@@ -508,6 +508,8 @@ namespaces = [
     "LoadLoraTextEncoder",
     "LoraLoaderBypass",
     "LoraLoaderBypassModelOnly",
+    "LoadBackgroundRemovalModel",
+    "RemoveBackground",
 ]
 
 [pack.sandbox]

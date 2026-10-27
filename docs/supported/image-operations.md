@@ -7,6 +7,8 @@
 - Native `RTDETR_detect` returns per-frame pixel bounding boxes filtered by
   confidence and COCO class, ordered by score and limited per frame.
   `DrawBBoxes` overlays boxes and labels on images or a black canvas.
+- Native `LoadBackgroundRemovalModel` loads an admitted background-removal
+  checkpoint; `RemoveBackground` generates its foreground mask for an image batch.
 - Native `ColorToRGBInt` preserves RGB letter casing and separates optional alpha;
   `ResolutionSelector` rounds aspect-ratio and megapixel dimensions to a chosen multiple.
 - Marigold V2 decoded predictions convert to per-image normalized depth,
