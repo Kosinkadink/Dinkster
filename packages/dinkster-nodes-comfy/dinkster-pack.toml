@@ -545,6 +545,8 @@ namespaces = [
     "LoadImageDataSetFromFolder",
     "LoadImageTextDataSetFromFolder",
     "UpscaleModelLoader",
+    "ImageOnlyCheckpointSave",
+    "VOIDSampler",
 ]
 
 [pack.sandbox]
