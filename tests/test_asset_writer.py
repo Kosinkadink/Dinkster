@@ -13,8 +13,11 @@ from __future__ import annotations
 import io
 import json
 import time
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from multiprocessing import get_context
 from pathlib import Path
+from typing import BinaryIO, Protocol
 
 import pytest
 from dinkster_assets import (
@@ -189,6 +192,20 @@ def make_writer(tmp_path: Path) -> tuple[AssetWriter, Path]:
     return AssetWriter(MountSnapshotWriter(snapshot)), root
 
 
+class StringQueue(Protocol):
+    def put(self, item: str) -> None: ...
+
+
+def _save_batch_process(snapshot: str, queue: StringQueue) -> None:
+    ref = AssetWriter(MountSnapshotWriter(snapshot)).save_stream_batch(
+        {"mount": "out", "prefix": "burst-%batch_num%"},
+        [io.BytesIO(b"process")],
+        suffix="_.bin",
+        limit=7,
+    )
+    queue.put(ref[0].name)
+
+
 def test_separate_prefix_and_mount_write_to_selected_grant(tmp_path: Path) -> None:
     roots = {name: tmp_path / name for name in ("default", "selected", "readonly")}
     for root in roots.values():
@@ -351,6 +368,114 @@ def test_concurrent_saves_get_distinct_names(tmp_path: Path) -> None:
     assert len(names) == 16  # no collisions, no overwrites
     for ref in refs:
         assert (root / ref.name).exists()
+
+
+def test_save_stream_batch_uses_one_counter_for_expanded_stems(tmp_path: Path) -> None:
+    writer, root = make_writer(tmp_path)
+    (root / "render-%batch_num%_00004_.webp").write_bytes(b"previous")
+    (root / "render-1_00099_.png").write_bytes(b"other stem")
+    LocalAssetLibrary(root, namespace="mounts/out").scan()
+
+    refs = writer.save_stream_batch(
+        {"mount": "out", "prefix": "render-%batch_num%"},
+        (io.BytesIO(data) for data in (b"zero", b"one", b"two")),
+        suffix="_.png",
+        media_type="image/png",
+        limit=4,
+    )
+
+    assert [ref.name for ref in refs] == [
+        "render-0_00005_.png",
+        "render-1_00006_.png",
+        "render-2_00007_.png",
+    ]
+    assert [ref.virtual_path for ref in refs] == [f"mounts/out/{ref.name}" for ref in refs]
+    resolver = IndexedAssetResolver(root)
+    assert [resolver.resolve(ref.digest) for ref in refs] == [root / ref.name for ref in refs]
+    assert (root / "render-1_00099_.png").read_bytes() == b"other stem"
+
+
+def test_save_stream_batch_repeats_with_next_source_counter(tmp_path: Path) -> None:
+    writer, _ = make_writer(tmp_path)
+    first = writer.save_stream_batch(
+        {"mount": "out", "prefix": "render-%batch_num%"},
+        [io.BytesIO(b"first"), io.BytesIO(b"second")],
+        suffix="_.png",
+        limit=6,
+    )
+    second = writer.save_stream_batch(
+        {"mount": "out", "prefix": "render-%batch_num%"},
+        [io.BytesIO(b"third")],
+        suffix="_.png",
+        limit=5,
+    )
+    assert [ref.name for ref in first + second] == [
+        "render-0_00001_.png",
+        "render-1_00002_.png",
+        "render-0_00002_.png",
+    ]
+
+
+def test_save_stream_batch_rejects_later_oversize_source_without_temp_files(tmp_path: Path) -> None:
+    writer, root = make_writer(tmp_path)
+    with pytest.raises(AssetError, match="exceeds limit"):
+        writer.save_stream_batch(
+            {"mount": "out", "prefix": "render-%batch_num%"},
+            [io.BytesIO(b"ok"), io.BytesIO(b"too large")],
+            suffix="_.png",
+            limit=2,
+        )
+    assert (root / "render-0_00001_.png").read_bytes() == b"ok"
+    assert list(root.glob(".dinkster-save-*")) == []
+
+
+def test_save_stream_batch_rechecks_revocation_and_containment(tmp_path: Path) -> None:
+    writer, root = make_writer(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    symlink_or_skip(root / "leak", outside, target_is_directory=True)
+    with pytest.raises(AssetError, match="escapes its mount"):
+        writer.save_stream_batch(
+            {"mount": "out", "prefix": "leak/render-%batch_num%"},
+            [io.BytesIO(b"x")],
+            suffix="_.png",
+            limit=1,
+        )
+    assert list(outside.iterdir()) == []
+
+    snapshot = tmp_path / "mounts.json"
+
+    def revoked_sources() -> Iterator[BinaryIO]:
+        yield io.BytesIO(b"first")
+        snapshot.write_text(json.dumps({"mounts": []}), "utf-8")
+        yield io.BytesIO(b"second")
+
+    with pytest.raises(AssetError, match="no ready mount"):
+        writer.save_stream_batch(
+            {"mount": "out", "prefix": "render-%batch_num%"},
+            revoked_sources(),
+            suffix="_.png",
+            limit=6,
+        )
+    assert (root / "render-0_00001_.png").read_bytes() == b"first"
+
+
+def test_concurrent_process_batches_never_collide(tmp_path: Path) -> None:
+    _, root = make_writer(tmp_path)
+    snapshot = tmp_path / "mounts.json"
+    context = get_context("spawn")
+    queue = context.Queue()
+    processes = [
+        context.Process(target=_save_batch_process, args=(str(snapshot), queue)) for _ in range(4)
+    ]
+    for process in processes:
+        process.start()
+    names = [queue.get(timeout=10) for _ in processes]
+    for process in processes:
+        process.join(timeout=10)
+        assert process.exitcode == 0
+    assert len(set(names)) == 4
+    assert all((root / name).read_bytes() == b"process" for name in names)
 
 
 # ---------------------------------------------------------------------------

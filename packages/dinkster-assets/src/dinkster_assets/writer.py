@@ -30,6 +30,7 @@ import os
 import re
 import time
 import uuid
+from collections.abc import Iterable
 from pathlib import Path
 from typing import BinaryIO, Protocol, cast
 
@@ -44,7 +45,7 @@ from .save_target import SaveTarget, coerce_save_target
 
 __all__ = ["AssetWriter", "MountSnapshotWriter", "MountWriteAuthority"]
 
-_SUFFIX_RE = re.compile(r"^\.[A-Za-z0-9][A-Za-z0-9.]*$")
+_SUFFIX_RE = re.compile(r"^_?\.[A-Za-z0-9][A-Za-z0-9.]*$")
 
 
 class MountWriteAuthority(Protocol):
@@ -180,17 +181,88 @@ class AssetWriter:
         limit: int,
     ) -> AssetRef:
         """Boundedly copy a held seekable source and atomically publish it."""
+        parsed = self._validated_target(target, suffix, limit)
+        ref, _ = self._write_stream(
+            parsed,
+            source,
+            suffix=suffix,
+            media_type=media_type,
+            limit=limit,
+        )
+        return ref
+
+    def save_stream_batch(
+        self,
+        target: object,
+        sources: Iterable[BinaryIO],
+        *,
+        suffix: str,
+        media_type: str = "application/octet-stream",
+        limit: int,
+    ) -> list[AssetRef]:
+        """Publish a source-ordered batch with one source-compatible counter.
+
+        ``%batch_num%`` expands in the filename stem after the initial
+        counter is selected from the unexpanded target. ``suffix`` may start
+        with ``_`` (``_.png``) when the caller needs the source filename tail.
+        Files already published before a later source fails remain complete.
+        """
+        parsed = self._validated_target(target, suffix, limit)
+        root, folder = self._writable_folder(parsed)
+        counter = self._next_counter(folder, parsed.stem)
+        refs: list[AssetRef] = []
+        for batch_num, source in enumerate(sources):
+            stem = parsed.stem.replace("%batch_num%", str(batch_num))
+            ref, counter = self._write_stream(
+                parsed,
+                source,
+                suffix=suffix,
+                media_type=media_type,
+                limit=limit,
+                counter=counter,
+                stem=stem,
+                expected_root=root,
+            )
+            refs.append(ref)
+        return refs
+
+    @staticmethod
+    def _validated_target(target: object, suffix: str, limit: int) -> SaveTarget:
         if type(limit) is not int or limit < 0:
             raise AssetError("limit must be a non-negative integer")
         parsed = coerce_save_target(target)
         if not _SUFFIX_RE.match(suffix):
-            raise AssetError(f"save suffix must be a bare extension like '.png': {suffix!r}")
+            raise AssetError(
+                f"save suffix must be a bare extension like '.png' or '_.png': {suffix!r}"
+            )
+        return parsed
+
+    def _writable_folder(self, parsed: SaveTarget) -> tuple[Path, Path]:
         root = self._authority.writable_root(parsed.mount)
         folder = root / parsed.subfolder if parsed.subfolder else root
         folder.mkdir(parents=True, exist_ok=True)
         self._require_contained(root, folder, parsed)
+        return root, folder
+
+    def _write_stream(
+        self,
+        parsed: SaveTarget,
+        source: BinaryIO,
+        *,
+        suffix: str,
+        media_type: str,
+        limit: int,
+        counter: int | None = None,
+        stem: str | None = None,
+        expected_root: Path | None = None,
+    ) -> tuple[AssetRef, int]:
+        root, folder = self._writable_folder(parsed)
+        if expected_root is not None and root.resolve() != expected_root.resolve():
+            raise AssetError(f"mount {parsed.mount!r} changed its root during batch save")
+        stem = parsed.stem if stem is None else stem
         tmp = folder / f".dinkster-save-{uuid.uuid4().hex}"
         final: Path | None = None
+        used_counter: int | None = None
         try:
             try:
                 source.seek(0)
@@ -219,10 +291,10 @@ class AssetWriter:
                 if any(getattr(before, field) != getattr(after, field) for field in fields):
                     raise AssetError("save source changed while it was copied")
             digest = DIGEST_PREFIX + hasher.hexdigest()
-            final = self._claim_and_land(folder, parsed.stem, suffix, tmp)
+            final, used_counter = self._claim_and_land(folder, stem, suffix, tmp, counter)
         finally:
             tmp.unlink(missing_ok=True)
-        assert final is not None
+        assert final is not None and used_counter is not None
         stat = final.stat()
         record = verification_record_for_publication(digest, verified_stat, stat)
         relative = final.relative_to(root).as_posix()
@@ -237,12 +309,15 @@ class AssetWriter:
             )
         except OSError:
             pass  # resolvability degrades to next-scan; the save itself stood
-        return AssetRef(
-            digest=digest,
-            name=final.name,
-            size=size,
-            media_type=media_type,
-            virtual_path=f"{MOUNT_NAMESPACE}/{parsed.mount}/{relative}",
+        return (
+            AssetRef(
+                digest=digest,
+                name=final.name,
+                size=size,
+                media_type=media_type,
+                virtual_path=f"{MOUNT_NAMESPACE}/{parsed.mount}/{relative}",
+            ),
+            used_counter + 1,
         )
 
     @staticmethod
@@ -259,13 +334,26 @@ class AssetWriter:
             )
 
     @staticmethod
-    def _claim_and_land(folder: Path, stem: str, suffix: str, tmp: Path) -> Path:
-        """Publish the temp file under the next free counter name.
+    def _next_counter(folder: Path, stem: str) -> int:
+        """Match ComfyUI's ``get_save_image_path`` filename scan exactly."""
+        counters: list[int] = []
+        try:
+            with os.scandir(folder) as entries:
+                for entry in entries:
+                    prefix = f"{stem}_"
+                    if not entry.name.startswith(prefix):
+                        continue
+                    try:
+                        counter = int(entry.name[len(prefix) :].split(".", 1)[0].split("_", 1)[0])
+                    except ValueError:
+                        counter = 0
+                    counters.append(counter)
+        except OSError:
+            pass
+        return max(counters, default=0) + 1
 
-        A hard link publishes the already-complete same-directory temp with
-        atomic no-replace semantics. Concurrent savers therefore get distinct
-        names, without exposing an empty placeholder to readers.
-        """
+    @staticmethod
+    def _next_counter_for_suffix(folder: Path, stem: str, suffix: str) -> int:
         pattern = re.compile(rf"^{re.escape(stem)}_(\d+){re.escape(suffix)}$")
         counter = 1
         try:
@@ -276,6 +364,20 @@ class AssetWriter:
                         counter = max(counter, int(match.group(1)) + 1)
         except OSError:
             pass
+        return counter
+
+    @staticmethod
+    def _claim_and_land(
+        folder: Path, stem: str, suffix: str, tmp: Path, counter: int | None = None
+    ) -> tuple[Path, int]:
+        """Publish the temp file under the next free counter name.
+
+        A hard link publishes the already-complete same-directory temp with
+        atomic no-replace semantics. Concurrent savers therefore get distinct
+        names, without exposing an empty placeholder to readers.
+        """
+        if counter is None:
+            counter = AssetWriter._next_counter_for_suffix(folder, stem, suffix)
         while True:
             final = folder / f"{stem}_{counter:05d}{suffix}"
             try:
@@ -283,4 +385,4 @@ class AssetWriter:
             except FileExistsError:
                 counter += 1
                 continue
-            return final
+            return final, counter
