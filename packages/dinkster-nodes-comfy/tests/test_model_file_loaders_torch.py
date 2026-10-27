@@ -15,7 +15,14 @@ os.environ["DINKSTER_ACCELERATOR"] = "cpu"
 
 import torch
 from dinkster_api.v1 import (
+    CLIP_TYPE,
+    CLIP_VISION_TYPE,
+    CONTROL_NET_TYPE,
     CORE_STRING,
+    GLIGEN_TYPE,
+    MODEL_TYPE,
+    STYLE_MODEL_TYPE,
+    VAE_TYPE,
     InputSpec,
     Node,
     NodeSchema,
@@ -138,13 +145,72 @@ class LoaderInspect(Node):
         return cls.outputs(summary=f"loader-runtime-pid-{os.getpid()}")
 
 
-HOST_NODES = (LoaderSource, LoaderInspect)
+class LoaderOutputInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="model-file-loaders-fixture.output-inspect",
+            inputs=(
+                InputSpec("checkpoint_model", TypeExpr.concrete(MODEL_TYPE)),
+                InputSpec("checkpoint_clip", TypeExpr.concrete(CLIP_TYPE)),
+                InputSpec("checkpoint_vae", TypeExpr.concrete(VAE_TYPE)),
+                InputSpec("configured_model", TypeExpr.concrete(MODEL_TYPE)),
+                InputSpec("unclip_vision", TypeExpr.concrete(CLIP_VISION_TYPE)),
+                InputSpec("control", TypeExpr.concrete(CONTROL_NET_TYPE)),
+                InputSpec("diff_control", TypeExpr.concrete(CONTROL_NET_TYPE)),
+                InputSpec("unet", TypeExpr.concrete(MODEL_TYPE)),
+                InputSpec("clip", TypeExpr.concrete(CLIP_TYPE)),
+                InputSpec("dual", TypeExpr.concrete(CLIP_TYPE)),
+                InputSpec("vision", TypeExpr.concrete(CLIP_VISION_TYPE)),
+                InputSpec("style", TypeExpr.concrete(STYLE_MODEL_TYPE)),
+                InputSpec("gligen", TypeExpr.concrete(GLIGEN_TYPE)),
+            ),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, **outputs: Any) -> dict[str, object]:
+        from dinkster_inference.model_patcher import ModelPatcher
+        from dinkster_inference.sd import CLIP
+
+        assert type(outputs["checkpoint_model"]) is ModelPatcher
+        assert type(outputs["configured_model"]) is ModelPatcher
+        assert type(outputs["control"]) is ModelPatcher
+        assert type(outputs["diff_control"]) is ModelPatcher
+        assert type(outputs["unet"]) is ModelPatcher
+        assert type(outputs["gligen"]) is ModelPatcher
+        assert type(outputs["checkpoint_clip"]) is CLIP
+        assert type(outputs["clip"]) is CLIP
+        assert type(outputs["dual"]) is CLIP
+        torch.testing.assert_close(
+            outputs["checkpoint_model"].model.weight, torch.tensor([[3.0, 3.5]]), rtol=0, atol=0
+        )
+        torch.testing.assert_close(
+            outputs["control"].model.weight, torch.tensor([[13.0, 13.5]]), rtol=0, atol=0
+        )
+        torch.testing.assert_close(
+            outputs["clip"].cond_stage_model.weight, torch.tensor([[-7.0, -6.5]]), rtol=0, atol=0
+        )
+        torch.testing.assert_close(
+            outputs["style"].weight, torch.tensor([[13.0, -17.0]]), rtol=0, atol=0
+        )
+        for name in ("checkpoint_vae", "unclip_vision", "vision"):
+            assert outputs[name]["marker"].tolist() == [3.0, -7.0]
+        return cls.outputs(summary="all eleven output values reached observer")
+
+
+HOST_NODES = (LoaderSource, LoaderInspect, LoaderOutputInspect)
 
 
 @pytest.mark.parametrize("verified", (False, True))
 @pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("observe_outputs", (False, True))
 def test_model_file_loaders_bind_tiny_safetensors_through_ordinary_hosts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verified: bool, in_process: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    verified: bool,
+    in_process: bool,
+    observe_outputs: bool,
 ) -> None:
     checkpoint = tmp_path / "loader.safetensors"
     save_file({"marker": torch.tensor([3.0, -7.0])}, checkpoint, metadata={"loader": "host"})
@@ -253,30 +319,63 @@ def test_model_file_loaders_bind_tiny_safetensors_through_ordinary_hosts(
                     ),
                 }
             )
+            targets = [
+                "checkpoint",
+                "configured",
+                "unclip",
+                "control",
+                "diff-control",
+                "unet",
+                "clip",
+                "dual",
+                "vision",
+                "style",
+                "gligen",
+                "inspect",
+            ]
+            if observe_outputs:
+                graph = Graph(
+                    nodes={
+                        **graph.nodes,
+                        "output-inspect": GraphNode(
+                            "model-file-loaders-fixture.output-inspect",
+                            {
+                                "checkpoint_model": Link("checkpoint", "MODEL"),
+                                "checkpoint_clip": Link("checkpoint", "CLIP"),
+                                "checkpoint_vae": Link("checkpoint", "VAE"),
+                                "configured_model": Link("configured", "MODEL"),
+                                "unclip_vision": Link("unclip", "CLIP_VISION"),
+                                "control": Link("control", "CONTROL_NET"),
+                                "diff_control": Link("diff-control", "CONTROL_NET"),
+                                "unet": Link("unet", "MODEL"),
+                                "clip": Link("clip", "CLIP"),
+                                "dual": Link("dual", "CLIP"),
+                                "vision": Link("vision", "CLIP_VISION"),
+                                "style": Link("style", "STYLE_MODEL"),
+                                "gligen": Link("gligen", "GLIGEN"),
+                            },
+                        ),
+                    }
+                )
+                targets = ["output-inspect"]
             engine = composer.composition.make_engine(lambda _event: None)
             for attempt in range(2):
-                result = await engine.run(
-                    graph,
-                    [
-                        "checkpoint",
-                        "configured",
-                        "unclip",
-                        "control",
-                        "diff-control",
-                        "unet",
-                        "clip",
-                        "dual",
-                        "vision",
-                        "style",
-                        "gligen",
-                        "inspect",
-                    ],
-                )
-                assert (
-                    result.outputs["inspect"]["summary"].resolve().startswith("loader-runtime-pid-")
-                )
+                result = await engine.run(graph, targets)
+                if observe_outputs:
+                    assert result.outputs["output-inspect"]["summary"].resolve() == (
+                        "all eleven output values reached observer"
+                    )
+                else:
+                    assert (
+                        result.outputs["inspect"]["summary"]
+                        .resolve()
+                        .startswith("loader-runtime-pid-")
+                    )
                 if attempt:
-                    assert set(result.cached) == set(graph.nodes)
+                    expected_cached = set(graph.nodes)
+                    if observe_outputs:
+                        expected_cached -= {"source", "inspect"}
+                    assert set(result.cached) == expected_cached
         finally:
             await composer.close()
             _restore_controlled_runtime()
