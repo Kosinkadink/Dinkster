@@ -1,9 +1,9 @@
 name: torch-cpu suite
 description: >
-  Set up the torch environment and run the vision test suites
+  Set up the torch environment and run the comfy and vision test suites
   under the pinned CPU dispatch (job env must set ATEN_CPU_CAPABILITY
   and ONEDNN_MAX_CPU_ISA). Model lanes require explicit opt-in;
-  setup and vision typechecks always run.
+  non-model suites can run separately, with vision typechecks in the vision suite.
 inputs:
   run-model-tests:
     description: Run complete vision model-loader lanes
