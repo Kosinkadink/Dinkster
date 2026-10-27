@@ -10,10 +10,8 @@ from dinkster_api.v1 import (
     SPLAT_PLY_MIME,
     TypeRegistry,
     decode_image_array,
-    decode_splat,
     decode_splat_file,
     encode_image_array,
-    encode_splat,
     image_array_fingerprint,
     image_array_meta,
     image_input,
@@ -31,12 +29,12 @@ from dinkster_api.v1 import (
     render_mask_png,
     render_splat_ply,
     resolver_from_env,
-    splat_fingerprint,
-    splat_meta,
     validate_image_encoded,
-    validate_splat_encoded,
 )
 from dinkster_api.v1 import video_document as document_codec
+from dinkster_inference_wire.media_wire import (
+    register_media_types as register_inference_media_types,
+)
 
 from .audio import (
     AUDIO_IO_NODES,
@@ -208,21 +206,15 @@ def register_media_types(registry: TypeRegistry) -> None:
     if VIDEO_TYPE not in registry:
         register_video_value_type(registry, VIDEO_TYPE, resolver_from_env())
     register_model3d_type(registry, MODEL3D_TYPE)
-    if SPLAT_TYPE not in registry:
-        registry.register(
-            SPLAT_TYPE,
-            encode=encode_splat,
-            decode=decode_splat,
-            fingerprint=splat_fingerprint(SPLAT_TYPE),
-            meta=splat_meta,
-            validate_encoded_buffer=validate_splat_encoded,
-        )
+    register_inference_media_types(registry)
+    if not any(item.kind == "ply" for item in registry.renditions_of(SPLAT_TYPE)):
         registry.register_rendition(
             SPLAT_TYPE,
             "ply",
             mime=SPLAT_PLY_MIME,
             render=render_splat_ply,
         )
+    if registry.asset_decoder_for(SPLAT_TYPE) is None:
         registry.register_asset_decoder(
             SPLAT_TYPE,
             provider_id=SPLAT_FILE_DECODER_ID,

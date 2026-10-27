@@ -4,6 +4,8 @@
   square, resizes with Lanczos, and composites the image over black.
 - Native `VAEDecodeTripoSplat` decodes shape latents to portable gaussian splats
   with density selection and seeded point sampling.
+- Portable gaussian splats cross native inference and media I/O hosts while
+  retaining PLY rendering and asset loading in the media I/O pack.
 - Color strings, ordered color palettes, and optional resolution-preview
   metadata pass between node packs without rewriting their values.
 - Native `PrimitiveBoundingBox` constructs pixel bounding boxes; `ImageCropV2`

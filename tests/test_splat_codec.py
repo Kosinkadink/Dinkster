@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import io
 import struct
+import subprocess
+import sys
 from typing import Any, cast
 
 import numpy
 import pytest
+from dinkster_inference_wire import register_inference_types
 from dinkster_nodes_media_io import SPLAT_TYPE, register_media_types
 from dinkster_values import (
     SPLAT_CODEC_MAGIC,
@@ -260,13 +263,19 @@ def test_splat_file_decoder_reads_assets_and_names_failures() -> None:
         decode_splat_file(data)
 
 
-def test_splat_registration_wires_codec_rendition_and_asset_decoder() -> None:
+@pytest.mark.parametrize("shared_first", (False, True))
+def test_splat_registration_wires_codec_rendition_and_asset_decoder(shared_first: bool) -> None:
     registry = TypeRegistry()
+    if shared_first:
+        register_inference_types(registry)
     register_media_types(registry)
+    register_media_types(registry)
+    register_inference_types(registry)
     spec = registry.spec(SPLAT_TYPE)
     assert spec.declared_codec
     assert spec.validate_encoded_buffer is validate_splat_encoded
-    value = registry.wrap(SPLAT_TYPE, splat_value(batch=1, gaussians=5, coefficients=4))
+    original = splat_value(batch=1, gaussians=5, coefficients=4)
+    value = registry.wrap(SPLAT_TYPE, original)
     assert value.meta.entries == {"batch": 1, "gaussians": 5, "sh_coefficients": 4}
     assert [(s.kind, s.mime, s.default) for s in registry.renditions_of(SPLAT_TYPE)] == [
         ("ply", SPLAT_PLY_MIME, True)
@@ -274,3 +283,52 @@ def test_splat_registration_wires_codec_rendition_and_asset_decoder() -> None:
     rendition = registry.render(value)
     assert rendition.mime == SPLAT_PLY_MIME
     assert rendition.data.startswith(b"ply\n")
+    decoder = registry.asset_decoder_for(SPLAT_TYPE)
+    assert decoder is not None
+    decoded = cast("dict[str, Any]", decoder.decode(FakeAsset(rendition.data)))
+    assert numpy.allclose(decoded["positions"], original["positions"], atol=1e-5)
+
+
+def test_shared_splat_registration_is_cold_and_idempotent() -> None:
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys\n"
+            "sys.modules['torch'] = None\n"
+            "sys.modules['dinkster_inference'] = None\n"
+            "from dinkster_api.v1 import SPLAT_TYPE, TypeRegistry, register_inference_types\n"
+            "from dinkster_values.builtin_types import SPLAT_TYPE as builtin\n"
+            "registry = TypeRegistry()\n"
+            "register_inference_types(registry)\n"
+            "spec = registry.spec(SPLAT_TYPE)\n"
+            "register_inference_types(registry)\n"
+            "assert registry.spec(SPLAT_TYPE) is spec\n"
+            "assert SPLAT_TYPE is builtin\n"
+            "assert spec.declared_codec\n"
+            "assert 'dinkster_nodes_media_io' not in sys.modules\n",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_splat_registration_preserves_existing_value_and_ply_authority() -> None:
+    registry = TypeRegistry()
+    spec = registry.register(SPLAT_TYPE, encode=lambda value: b"retained", decode=lambda data: data)
+    rendition = registry.register_rendition(
+        SPLAT_TYPE, "ply", mime=SPLAT_PLY_MIME, render=lambda value: b"retained ply"
+    )
+    decoder = registry.register_asset_decoder(
+        SPLAT_TYPE, provider_id="fixture.splat", decode=lambda asset: "retained asset"
+    )
+    for _ in range(2):
+        register_inference_types(registry)
+        register_media_types(registry)
+    assert registry.spec(SPLAT_TYPE) is spec
+    assert registry.renditions_of(SPLAT_TYPE) == (rendition,)
+    assert registry.asset_decoder_for(SPLAT_TYPE) is decoder
+    assert spec.encode("input") == b"retained"
+    assert registry.render(registry.wrap(SPLAT_TYPE, "input")).data == b"retained ply"
+    assert decoder.decode(object()) == "retained asset"
