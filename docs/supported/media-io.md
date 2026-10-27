@@ -6,6 +6,8 @@
 - Portable camera embeddings, motion tracks with optional visibility, and complete
   audio-encoder outputs preserve tensor dtype, shape and bytes, ordered layer
   sequences, sample counts and structural metadata across execution hosts and caches
+- Portable IC-LoRA parameter mappings preserve source fields, ordering, and
+  structural extras across execution hosts and caches
 - Portable `LORA_MODEL` values preserve ordered state-dictionary keys and tensor
   dtype, shape, and bytes across execution hosts and caches
 - Portable LOAD3D_CAMERA values preserve perspective and orthographic camera

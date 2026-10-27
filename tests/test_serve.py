@@ -3798,6 +3798,7 @@ def test_serve_mounted_save_end_to_end(tmp_path: Path) -> None:
             assert status["state"] == "failed"
             assert "renders" in str(status["error"])
             assert sorted(p.name for p in (outdir / "shots").iterdir()) == [
+                ".dinkster-asset-writer.lock",
                 "frame_00001.pgm",
                 "frame_00002.pgm",
             ]

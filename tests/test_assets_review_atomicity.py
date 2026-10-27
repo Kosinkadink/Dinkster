@@ -54,12 +54,22 @@ def test_writer_refuses_record_for_rebound_final_path(
 ) -> None:
     real_land = AssetWriter._claim_and_land  # pyright: ignore[reportPrivateUsage]
 
-    def rebind_after_land(folder: Path, stem: str, suffix: str, tmp: Path) -> Path:
-        final = real_land(folder, stem, suffix, tmp)
+    def rebind_after_land(
+        folder: Path,
+        stem: str,
+        suffix: str,
+        tmp: Path,
+        counter: int | None = None,
+        *,
+        strict_counter: bool = False,
+    ) -> tuple[Path, int]:
+        final, counter = real_land(
+            folder, stem, suffix, tmp, counter, strict_counter=strict_counter
+        )
         replacement = folder / "replacement.tmp"
         replacement.write_bytes(b"attacker")
         os.replace(replacement, final)
-        return final
+        return final, counter
 
     monkeypatch.setattr(AssetWriter, "_claim_and_land", staticmethod(rebind_after_land))
     with pytest.raises(AssetError, match="rebound"):
@@ -74,11 +84,19 @@ def test_writer_refuses_temp_rebound_after_hash(
 ) -> None:
     real_land = AssetWriter._claim_and_land  # pyright: ignore[reportPrivateUsage]
 
-    def rebind_before_land(folder: Path, stem: str, suffix: str, tmp: Path) -> Path:
+    def rebind_before_land(
+        folder: Path,
+        stem: str,
+        suffix: str,
+        tmp: Path,
+        counter: int | None = None,
+        *,
+        strict_counter: bool = False,
+    ) -> tuple[Path, int]:
         replacement = folder / "replacement.tmp"
         replacement.write_bytes(b"attacker")
         os.replace(replacement, tmp)
-        return real_land(folder, stem, suffix, tmp)
+        return real_land(folder, stem, suffix, tmp, counter, strict_counter=strict_counter)
 
     monkeypatch.setattr(AssetWriter, "_claim_and_land", staticmethod(rebind_before_land))
     with pytest.raises(AssetError, match="rebound"):

@@ -96,6 +96,9 @@
   conversion and rebatching
 - Dataset image and image-text pair shuffling, perceptual-hash deduplication,
   row-major image grids, and deprecated text-list merging
+- Training dataset preparation with RGB VAE encoding and scheduled CLIP
+  conditioning, preserving image-list order and supporting omitted, shared,
+  or per-image captions
 - Image and image-caption datasets loaded from granted input folders, with
   per-file RGB images, optional sidecar captions and one-level repeated folders
 - Row-major image grid composition and decomposition; image stitching; split
