@@ -48,7 +48,7 @@ def _integer(
     )
 
 
-def _noise_mask(latent: Mapping[str, Any], torch: Any) -> Any:
+def get_noise_mask(latent: Mapping[str, Any], torch: Any) -> Any:
     noise_mask = latent.get("noise_mask")
     if noise_mask is not None:
         return noise_mask.clone()
@@ -156,7 +156,7 @@ class LTXVImgToVideoInplace(Node):
         encoded = vae.encode(pixels[:, :, :, :3])
         samples[:, :, : encoded.shape[2]] = encoded
         torch = importlib.import_module("torch")
-        noise_mask = _noise_mask(source, torch)
+        noise_mask = get_noise_mask(source, torch)
         noise_mask[:, :, : encoded.shape[2]] = 1.0 - strength
         return cls.outputs(latent={"samples": samples, "noise_mask": noise_mask})
 
@@ -226,7 +226,7 @@ class LTXVCropGuides(Node):
         torch = importlib.import_module("torch")
         source = materialize_latent(latent)
         samples = source["samples"].clone()
-        noise_mask = _noise_mask(source, torch)
+        noise_mask = get_noise_mask(source, torch)
         indices = next(
             (entry[1]["keyframe_idxs"] for entry in positive if "keyframe_idxs" in entry[1]), None
         )

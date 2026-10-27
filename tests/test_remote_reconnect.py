@@ -353,8 +353,35 @@ def test_failed_resume_publication_preserves_invocation_for_retry(
 
 
 def test_completed_result_replays_after_reconnect(tmp_path: Path) -> None:
+    finish = tmp_path / "finish"
+    retained = tmp_path / "retained"
+    (tmp_path / "resume_probe.py").write_text(
+        "import asyncio\n"
+        "from pathlib import Path\n"
+        "from dinkster_workers.resume import ResumableConversation\n"
+        "from isopack_nodes import NODES, Sleepy, register_types\n"
+        "\n"
+        "async def execute(cls, *, value, seconds):\n"
+        "    async with asyncio.timeout(10):\n"
+        f"        while not Path({str(finish)!r}).exists():\n"
+        "            await asyncio.sleep(0.005)\n"
+        "    return cls.outputs(value=value)\n"
+        "\n"
+        "Sleepy.execute = classmethod(execute)\n"
+        "send = ResumableConversation.send\n"
+        "\n"
+        "async def observed_send(self, header, blobs=()):\n"
+        "    await send(self, header, blobs)\n"
+        "    if header.get('type') == 'result':\n"
+        f"        Path({str(retained)!r}).touch()\n"
+        "\n"
+        "ResumableConversation.send = observed_send\n"
+    )
+    manifest = write_iso_manifest(tmp_path)
+    manifest.write_text(manifest.read_text().replace("isopack_nodes:", "resume_probe:"))
+
     async def scenario() -> None:
-        proc, host, port = await start_service(write_iso_manifest(tmp_path), tmp_path)
+        proc, host, port = await start_service(manifest, tmp_path, pythonpath=(tmp_path,))
         composer = ServingComposer()
         try:
             spec = remote_spec(host, port, tmp_path)
@@ -378,7 +405,10 @@ def test_completed_result_replays_after_reconnect(tmp_path: Path) -> None:
             assert session._writer is not None
             session._writer.transport.abort()
             await wait_for_connected(composer, "box1", False)
-            await asyncio.sleep(0.4)
+            finish.touch()
+            async with asyncio.timeout(10):
+                while not retained.exists():
+                    await asyncio.sleep(0.005)
             outcome = await composer.reattach_remote(spec)
             assert outcome.same_instance is True
             result = await asyncio.wait_for(run, 10.0)

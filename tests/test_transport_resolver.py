@@ -308,6 +308,12 @@ def test_one_writer_per_digest_and_waiters_reuse_result(tmp_path: Path) -> None:
     async def scenario() -> None:
         entered = asyncio.Event()
         release = asyncio.Event()
+        waiting = asyncio.Event()
+
+        class WaitingResolver(StaticResolver):
+            def resolve(self, digest: str) -> Path | None:
+                waiting.set()
+                return super().resolve(digest)
 
         async def pause_writer() -> None:
             entered.set()
@@ -316,23 +322,27 @@ def test_one_writer_per_digest_and_waiters_reuse_result(tmp_path: Path) -> None:
         backend = FakeBackend(vault, before_complete=pause_writer)
         resolvers = tuple(
             TransportResolver(
-                StaticResolver(),
+                local,
                 vault,
                 lambda _digest: (_candidate("only-source"),),
                 backend,
                 lambda _digest, _candidate, path: path.read_bytes() == ASSET_BYTES,
             )
-            for _ in range(2)
+            for local in (StaticResolver(), WaitingResolver())
         )
         first = asyncio.create_task(resolvers[0].resolve(ASSET_DIGEST))
         await asyncio.wait_for(entered.wait(), 2)
         second = asyncio.create_task(resolvers[1].resolve(ASSET_DIGEST))
-        await asyncio.sleep(0.05)
-        assert len(backend.attempts) == 1
-        release.set()
+        try:
+            await asyncio.wait_for(waiting.wait(), 2)
+            assert not second.done()
+            assert len(backend.attempts) == 1
+        finally:
+            release.set()
         results = await asyncio.wait_for(asyncio.gather(first, second), 2)
         assert len(backend.attempts) == 1
         assert results[0] == results[1]
+        assert results[0] is not None and results[0].read_bytes() == ASSET_BYTES
 
     asyncio.run(scenario())
 
