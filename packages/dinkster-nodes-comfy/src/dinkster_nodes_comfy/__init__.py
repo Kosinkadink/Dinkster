@@ -51,6 +51,7 @@ from .controlnet import CONTROLNET_NODES
 from .cosmos_conditioning import COSMOS_CONDITIONING_NODES
 from .custom_sampling import CUSTOM_SAMPLING_NODES
 from .dataset_collections import DATASET_COLLECTION_NODES
+from .dataset_folders import FOLDER_DATASET_NODES
 from .dataset_groups import DATASET_GROUP_NODES, MakeTrainingDataset
 from .dataset_images import DATASET_IMAGE_NODES
 from .dataset_shards import LoadTrainingDataset
@@ -413,6 +414,7 @@ COMFY_NODES = (
     SaveAudioOpus,
     SaveAudioAdvanced,
     *YUE2_CONDITIONING_NODES,
+    *FOLDER_DATASET_NODES,
 )
 
 

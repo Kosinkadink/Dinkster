@@ -109,6 +109,8 @@
   or per-image captions
 - Encoded training datasets loaded from granted dataset folders, preserving
   sorted shard order, latent tensors and conditioning metadata
+- Image and image-caption datasets loaded from granted input folders, with
+  per-file RGB images, optional sidecar captions and one-level repeated folders
 - Row-major image grid composition and decomposition; image stitching; split
   and merge with overlapping tiles
 - Image transitions between inputs, within a batch, or while joining batches,

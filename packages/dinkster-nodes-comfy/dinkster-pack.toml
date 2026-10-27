@@ -542,6 +542,8 @@ namespaces = [
     "SaveAudioAdvanced",
     "YuE2GenerateABC",
     "YuE2GenerateMusic",
+    "LoadImageDataSetFromFolder",
+    "LoadImageTextDataSetFromFolder",
 ]
 
 [pack.sandbox]
