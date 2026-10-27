@@ -111,6 +111,14 @@
   latents, preserving visible-point weights and per-batch image conditioning.
 - Native Wan Animate conditioning combines reference, pose, face and continuation
   inputs. Animate 2 supports timed pose guidance and cleanup-scoped pose caching.
+- Native Wan camera trajectories and image-start conditioning preserve camera
+  embeddings and optional vision states. Wan Move generates and combines visible
+  trajectories, conditions image starts, and renders colored tracks.
+- Native Wan Sound, HuMo and InfiniteTalk conditioning use audio-encoder layers
+  with image starts, continuation motion and single- or two-speaker controls.
+- Native SCAIL-2 colored masks render packed SAM3 tracks with identity selection,
+  appearance/area ordering, palette controls and background masks. Source
+  experimental presentation badges are not preserved.
 - Native LTXV preprocessing applies the model's optional per-frame H.264 image
   compression before encoding video starts.
 - Native LTXV image-to-video and frame-rate conditioning nodes encode image starts,

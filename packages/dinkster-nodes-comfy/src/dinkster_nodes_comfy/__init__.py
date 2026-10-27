@@ -138,6 +138,7 @@ from .rtdetr import RTDETR_NODES
 from .sam3 import SAM3_TRACKING_NODES
 from .sampler_factories import SAMPLER_FACTORY_NODES
 from .save_text import SaveText
+from .scail_masks import SCAIL2ColoredMask
 from .sd_upscale_conditioning import SD_UPSCALE_CONDITIONING_NODES
 from .seedvr_conditioning import SeedVR2Conditioning
 from .seedvr_postprocess import SeedVR2PostProcessing
@@ -159,14 +160,22 @@ from .text_generation import TextGenerate, TextGenerateLTX2Prompt
 from .utilities import ComfyNumberConvert, PreviewAny, SeedNode
 from .vae import VAE_NODES
 from .video_conditioning import VIDEO_CONDITIONING_NODES
+from .video_frame_sample import VideoFrameSample
 from .video_guidance import VIDEO_GUIDANCE_NODES
 from .video_latent import VIDEO_LATENT_NODES
 from .video_latent_ops import VIDEO_LATENT_OPERATION_NODES
 from .wan22_latent import Wan22ImageToVideoLatent
 from .wan_animate import WAN_ANIMATE_NODES
+from .wan_camera import WanCameraEmbedding
+from .wan_camera_conditioning import WanCameraImageToVideo
 from .wan_control_conditioning import WAN_CONTROL_CONDITIONING_NODES
 from .wan_image_conditioning import WanFirstLastFrameToVideo, WanFunInpaintToVideo, WanImageToVideo
+from .wan_infinite_talk import WanInfiniteTalkToVideo
+from .wan_move_conditioning import WanMoveTrackToVideo
+from .wan_move_tracks import GenerateTracks, WanMoveConcatTrack, WanMoveTracksFromCoords
+from .wan_move_visualize import WanMoveVisualizeTracks
 from .wan_scail_conditioning import WanSCAILToVideo
+from .wan_sound import WanHuMoImageToVideo, WanSoundImageToVideo, WanSoundImageToVideoExtend
 from .wan_track_conditioning import WanTrackToVideo
 from .wan_uni3c import WanUni3CControlnetApply
 from .wandancer_keyframes import WANDANCER_KEYFRAME_NODES
@@ -319,6 +328,18 @@ COMFY_NODES = (
     WanSCAILToVideo,
     WanTrackToVideo,
     *WAN_ANIMATE_NODES,
+    WanCameraEmbedding,
+    WanCameraImageToVideo,
+    WanMoveTracksFromCoords,
+    GenerateTracks,
+    WanMoveConcatTrack,
+    WanMoveTrackToVideo,
+    WanMoveVisualizeTracks,
+    WanSoundImageToVideo,
+    WanSoundImageToVideoExtend,
+    WanHuMoImageToVideo,
+    WanInfiniteTalkToVideo,
+    SCAIL2ColoredMask,
     *COLOR_RESOLUTION_NODES,
     BuildJsonPromptIdeogram,
     MOSSImageLayoutPrompt,
@@ -342,6 +363,7 @@ COMFY_NODES = (
     PrimitiveBoundingBox,
     *RTDETR_NODES,
     *SAM3_TRACKING_NODES,
+    VideoFrameSample,
 )
 
 
