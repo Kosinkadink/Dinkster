@@ -1,5 +1,8 @@
 ## ComfyUI compatibility
 
+- Core schema comparison permits the optional output mount for output nodes
+  with a scalar STRING filename prefix, including CLIPSave, VAESave,
+  CheckpointSave, and ModelSave, without relying on their class-name spelling.
 - Native Anima LLLite applies image and optional mask guidance to cloned models
   through scheduled input, self-attention, cross-attention and MLP patches.
 - Native SUPIR applies scheduled control strength and optional restoration
