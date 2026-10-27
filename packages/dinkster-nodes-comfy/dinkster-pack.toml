@@ -527,6 +527,7 @@ namespaces = [
     "SaveAudioAdvanced",
     "YuE2GenerateABC",
     "YuE2GenerateMusic",
+    "ImageHistogram",
 ]
 
 [pack.sandbox]

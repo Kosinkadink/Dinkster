@@ -1,5 +1,7 @@
 ## Image operations
 
+- Native `ImageHistogram` returns first-frame RGB-composite, luminance and
+  individual-channel bin counts, ignoring alpha and later batch frames.
 - Native `TripoSplatPreprocessImage` erodes alpha, crops foreground to a padded
   square, resizes with Lanczos, and composites the image over black.
 - Color strings, ordered color palettes, and optional resolution-preview
