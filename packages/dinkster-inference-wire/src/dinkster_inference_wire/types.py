@@ -35,6 +35,7 @@ from dinkster_values import (
     STYLE_MODEL_TYPE,
     TIMESTEPS_RANGE_TYPE,
     TRACKS_TYPE,
+    UPSCALE_MODEL_TYPE,
     VAE_TYPE,
     WAN_CAMERA_EMBEDDING_TYPE,
     TypeRegistry,
@@ -54,6 +55,7 @@ from .hook_values import (
     register_hook_structural_type,
 )
 from .ic_lora_parameters import register_ic_lora_parameters_type
+from .loss_map import register_loss_map_type
 from .media_wire import (
     materialize_audio,
     materialize_image,
@@ -94,6 +96,7 @@ _RESIDENT_TYPE_IDS = (
     PHOTOMAKER_TYPE,
     INFERENCE_LATENT_OPERATION_TYPE,
     LATENT_UPSCALE_MODEL_TYPE,
+    UPSCALE_MODEL_TYPE,
     HOOKS_TYPE,
     HOOK_KEYFRAMES_TYPE,
 )
@@ -184,6 +187,7 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
             registry.spec(type_id) if type_id in registry else register_wan_type(registry, type_id)
         )
     registered.extend(register_media_types(registry))
+    registered.append(register_loss_map_type(registry))
     return tuple(registered)
 
 

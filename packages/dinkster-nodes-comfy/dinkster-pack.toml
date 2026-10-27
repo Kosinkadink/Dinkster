@@ -517,6 +517,7 @@ namespaces = [
     "LoraLoaderBypassModelOnly",
     "CropByBBoxes",
     "MakeTrainingDataset",
+    "TripoSplatPreprocessImage",
     "LoadAudio",
     "PreviewAudio",
     "SaveAudio",
