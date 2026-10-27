@@ -6,7 +6,9 @@ import asyncio
 import os
 import subprocess
 import sys
+from collections.abc import Mapping
 from pathlib import Path
+from typing import cast
 
 import pytest
 from dinkster_api.v1 import (
@@ -40,7 +42,7 @@ def test_ic_lora_parameters_roundtrip_preserves_mapping_order_and_extras() -> No
     assert register_inference_types(registry) == registered
     encoded = spec.encode(value)
     assert spec.decode(encoded) == value
-    assert list(spec.decode(encoded)) == list(value)
+    assert list(cast("Mapping[str, object]", spec.decode(encoded))) == list(value)
     assert spec.fingerprint is not None
     assert spec.fingerprint(value) == spec.fingerprint(spec.decode(encoded))
     assert spec.fingerprint(value) != spec.fingerprint({**value, "extra": True})
@@ -99,12 +101,14 @@ class ICLoRAParametersSource(Node):
 
     @classmethod
     def execute(cls) -> dict[str, object]:
-        return cls.outputs(
-            parameters={
-                "reference_downscale_factor": 3,
-                "source_only": {"ordered": ("first", 2), "enabled": True},
-                "extra": ["preserve", {"nested": None}],
-            }
+        return dict(
+            cls.outputs(
+                parameters={
+                    "reference_downscale_factor": 3,
+                    "source_only": {"ordered": ("first", 2), "enabled": True},
+                    "extra": ["preserve", {"nested": None}],
+                }
+            )
         )
 
 
@@ -119,13 +123,14 @@ class ICLoRAParametersConsumer(Node):
 
     @classmethod
     def execute(cls, *, parameters: object) -> dict[str, object]:
+        mapping = cast("Mapping[str, object]", parameters)
         assert parameters == {
             "reference_downscale_factor": 3,
             "source_only": {"ordered": ("first", 2), "enabled": True},
             "extra": ["preserve", {"nested": None}],
         }
-        assert list(parameters) == ["reference_downscale_factor", "source_only", "extra"]
-        return cls.outputs(summary="IC-LoRA parameters preserved")
+        assert list(mapping) == ["reference_downscale_factor", "source_only", "extra"]
+        return dict(cls.outputs(summary="IC-LoRA parameters preserved"))
 
 
 @pytest.mark.parametrize("in_process", (True, False))

@@ -24,10 +24,12 @@ def _decode(data: bytes, *, type_id: str) -> object:
     if not isinstance(pairs, list):
         raise ValueError(f"{type_id} must contain ordered mapping entries")
     result: dict[str, object] = {}
-    for pair in pairs:
-        if not isinstance(pair, tuple) or len(pair) != 2 or not isinstance(pair[0], str):
+    for item in cast("list[object]", pairs):
+        pair = cast("tuple[object, ...]", item)
+        if len(pair) != 2 or not isinstance(pair[0], str):
             raise ValueError(f"{type_id} entries must be string-keyed pairs")
-        key, value = pair
+        key = pair[0]
+        value = pair[1]
         if key in result:
             raise ValueError(f"{type_id} entries must have unique keys")
         result[key] = value
@@ -37,7 +39,8 @@ def _decode(data: bytes, *, type_id: str) -> object:
 def _encode(value: object, *, type_id: str) -> bytes:
     if not isinstance(value, Mapping):
         raise ValueError(f"{type_id} must be a mapping")
-    data = encode_latent({"samples": list(value.items())})
+    mapping = cast("Mapping[str, object]", value)
+    data = encode_latent({"samples": list(mapping.items())})
     _decode(data, type_id=type_id)
     return data
 
