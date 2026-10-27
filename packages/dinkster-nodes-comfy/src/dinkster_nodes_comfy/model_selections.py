@@ -110,7 +110,7 @@ class DiffusersLoader(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="DiffusersLoader",
-            display_name="DiffusersLoader",
+            display_name="Load Diffusers Model (DEPRECATED)",
             category="model/loaders",
             inputs=(
                 InputSpec(
