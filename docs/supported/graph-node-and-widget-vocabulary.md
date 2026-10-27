@@ -2,6 +2,11 @@
 
 - Input types: concrete, union, wildcard, variable, list, asset;
   scalar/list cardinality; required/advanced/hidden/lazy input flags
+- Replacement input-family copies can declare historical template input IDs
+  and a flat member-port path without retaining a predecessor schema. Existing
+  mappings without that metadata retain their wire shape. Historical same-type
+  templates are distinct from the current node interface. This describes the
+  backend declaration contract, not frontend migration support.
 - Backend `list<*>` values retain independently typed child envelopes through
   ordinary worker and persistent-cache boundaries. Outputs collect existing
   typed values rather than guessing types from Python objects. Nested lists,

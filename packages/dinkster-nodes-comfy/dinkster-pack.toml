@@ -532,6 +532,7 @@ namespaces = [
     "CameraAngle",
     "MakeTrainingDataset",
     "TripoSplatPreprocessImage",
+    "TripoSplatConditioning",
     "LoadTrainingDataset",
     "LoadAudio",
     "PreviewAudio",
