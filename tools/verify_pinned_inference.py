@@ -10,8 +10,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REQUIREMENT_PATTERN = re.compile(
-    r"dinkster-inference @ git\+https://github\.com/Kosinkadink/"
-    r"dinkster-inference\.git@([0-9a-f]{40})"
+    r"dinkster-inference @ https://github\.com/Kosinkadink/"
+    r"dinkster-inference/archive/([0-9a-f]{40})\.zip"
 )
 
 
@@ -55,9 +55,10 @@ def verify_source_contracts(package_root: Path) -> None:
 def verify_installed(pin: str) -> None:
     distribution = importlib.metadata.distribution("dinkster-inference")
     direct_url = json.loads(distribution.read_text("direct_url.json") or "{}")
-    installed = direct_url.get("vcs_info", {}).get("commit_id")
-    if installed != pin:
-        raise RuntimeError(f"installed inference commit {installed!r} does not match pin {pin}")
+    installed = direct_url.get("url")
+    expected = f"https://github.com/Kosinkadink/dinkster-inference/archive/{pin}.zip"
+    if installed != expected or "archive_info" not in direct_url:
+        raise RuntimeError(f"installed inference archive {installed!r} does not match pin {pin}")
 
     package_root = Path(distribution.locate_file("dinkster_inference"))
     verify_source_contracts(package_root)
