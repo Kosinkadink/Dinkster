@@ -667,6 +667,64 @@ def test_rgb_encode_uses_declared_yuv_matrix(color: str, depth: int, kr: float) 
         assert np.max(np.abs(y.astype(int) - expected)) <= 1
 
 
+def test_fractional_crf_reaches_h264_encoder_without_rounding() -> None:
+    pixels = np.random.default_rng(174).integers(0, 256, (3, 32, 64, 3), dtype=np.uint8)
+    value = assemble_video(pixels, fps=3)
+    encoded: dict[float, bytes] = {}
+    for crf in (18, 18.5, 19):
+        output = io.BytesIO()
+        save_video_stream(value, output, codec="h264", crf=crf)
+        encoded[crf] = output.getvalue()
+        # libx264 records its effective rate-control settings in the encoded SEI.
+        assert f"crf={crf:.1f}".encode() in b"".join(_packets(encoded[crf]))
+        with av.open(io.BytesIO(encoded[crf]), mode="r") as container:
+            assert len(list(container.decode(video=0))) == 3
+    assert _packets(encoded[18.5]) != _packets(encoded[18])
+    assert _packets(encoded[18.5]) != _packets(encoded[19])
+
+
+@pytest.mark.parametrize("codec,limit", [("h264", 51), ("vp9", 63)])
+@pytest.mark.parametrize(
+    "crf", [True, False, float("nan"), float("inf"), float("-inf"), -0.01, 10**1000]
+)
+def test_video_crf_rejects_nonfinite_boolean_and_out_of_range(
+    codec: str, limit: int, crf: float
+) -> None:
+    value = assemble_video(np.zeros((1, 32, 64, 3), np.uint8))
+    output = io.BytesIO()
+    with pytest.raises(ValueError, match=f"crf must be a finite number in 0..{limit}"):
+        save_video_stream(value, output, codec=codec, crf=crf)
+    assert output.getvalue() == b""
+
+
+@pytest.mark.parametrize("codec,limit", [("h264", 51), ("vp9", 63)])
+def test_video_crf_accepts_integer_and_float_codec_bounds(codec: str, limit: int) -> None:
+    value = assemble_video(np.zeros((1, 32, 64, 3), np.uint8))
+    for crf in (0, 0.0, limit, float(limit)):
+        output = io.BytesIO()
+        save_video_stream(value, output, codec=codec, crf=crf)
+        with av.open(io.BytesIO(output.getvalue()), mode="r") as container:
+            assert len(list(container.decode(video=0))) == 1
+    with pytest.raises(ValueError, match=f"crf must be a finite number in 0..{limit}"):
+        save_video_stream(value, io.BytesIO(), codec=codec, crf=limit + 0.01)
+
+
+def test_video_crf_unsupported_codec_policy_is_unchanged() -> None:
+    value = assemble_video(np.zeros((1, 32, 64, 3), np.uint8))
+    output = io.BytesIO()
+    diagnostics: list[object] = []
+    save_video_stream(value, output, codec="ffv1", crf=18.5, on_diagnostic=diagnostics.append)
+    assert any(
+        item["requested"] == {"crf": 18.5} and item["effective"] == {"crf": None, "codec": "ffv1"}
+        for report in cast(list[dict[str, object]], diagnostics)
+        for item in cast(list[dict[str, object]], report["substitutions"])
+    )
+    assert (
+        cast(dict[str, object], video_from_source(output.getvalue())["probe"])["video_codec"]
+        == "ffv1"
+    )
+
+
 @pytest.mark.parametrize("depth", [8, 10])
 def test_av1_trim_uses_codec_identity_not_decoder_name(depth: int) -> None:
     value = assemble_video(

@@ -589,7 +589,7 @@ def test_encoded_output_spools_to_disk_and_enforces_limit() -> None:
 
 
 def test_bool_crf_is_rejected() -> None:
-    with pytest.raises(ValueError, match="crf.*integer"):
+    with pytest.raises(ValueError, match="crf must be a finite number in 0..51"):
         _save_frames(images=_frames(1), crf=True)
 
 
