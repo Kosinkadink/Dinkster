@@ -1784,12 +1784,17 @@ class SlotVariant:
     def __post_init__(self) -> None:
         if not VARIANT_KEY_PATTERN.fullmatch(self.key):
             raise ValueError(f"slot variant key must match [A-Za-z0-9_-]+: {self.key!r}")
-        type_id = self.type.runtime_type_id()
-        if type_id is None or "*" in type_id:
-            raise ValueError(
-                f"slot variant '{self.key}': type must be recursively concrete "
-                "(a variant is a type choice; use several variants for several types)"
-            )
+        pending = [self.type]
+        while pending:
+            part = pending.pop()
+            if part.kind == "wildcard" or part.runtime_type_id() is None:
+                raise ValueError(
+                    f"slot variant '{self.key}': type must be recursively concrete "
+                    "(a variant is a type choice; use several variants for several types)"
+                )
+            pending.extend(part.elements)
+            if part.element is not None:
+                pending.append(part.element)
         if len({entry.id for entry in self.inputs}) != len(self.inputs):
             raise ValueError(f"slot variant '{self.key}': duplicate dependent input ids")
         for entry in self.inputs:

@@ -128,6 +128,12 @@ def test_variant_type_must_be_recursively_concrete() -> None:
             SlotVariant(key="v", type=expr)
     # list-of-concrete IS a type choice and is allowed.
     SlotVariant(key="v", type=TypeExpr.list_of(STRING))
+    for concrete in (
+        TypeExpr.concrete("vendor*type"),
+        TypeExpr.list_of(TypeExpr.concrete("vendor*type")),
+        TypeExpr.tuple_of(STRING, TypeExpr.concrete("vendor*type")),
+    ):
+        SlotVariant(key="v", type=concrete)
 
 
 def test_slot_requires_variants_and_unique_keys() -> None:
