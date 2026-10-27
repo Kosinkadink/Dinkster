@@ -92,7 +92,15 @@ from .loops import LOOP_NODES
 from .lotus import LotusConditioning
 from .ltx_audio import LTX_AUDIO_NODES
 from .ltx_av_latent import LTX_AV_LATENT_NODES
+from .ltx_dual_cfg import LTXVDualCFGGuider
 from .ltx_duration import LTXVDurationPredictor
+from .ltx_guidance import LTXVModalityGuidance, LTXVReferenceAudio, LTXVSpatioTemporalGuidance
+from .ltx_guides import LTXVAddLatentGuide
+from .ltx_keyframe_guides import (
+    LTXVAddGeneratedKeyframes,
+    LTXVGeneratedKeyframesToGuides,
+    LTXVSeparateGeneratedKeyframes,
+)
 from .ltx_sampling import LTX_SAMPLING_NODES
 from .ltx_video_conditioning import LTX_VIDEO_CONDITIONING_NODES
 from .ltx_video_preprocess import LTX_VIDEO_PREPROCESS_NODES
@@ -102,7 +110,9 @@ from .mask import MASK_NODES
 from .mask_preview import MaskPreview
 from .math import ComfyMathExpression
 from .ming_image_encoders import TextEncodeMingImageEdit
+from .minimax_h3_control import MiniMaxH3FunControlNetApply
 from .minimax_h3_latent import EmptyMiniMaxH3LatentAV, MiniMaxH3AddGuide, MiniMaxH3ImageToVideo
+from .minimax_h3_reference import MiniMaxH3ReferenceToVideo
 from .minimax_h3_sampling import MiniMaxH3SigmaShift
 from .mochi import EmptyMochiLatentVideo
 from .model_advanced import MODEL_ADVANCED_NODES
@@ -302,7 +312,17 @@ COMFY_NODES = (
     SeedVR2PostProcessing,
     *WANDANCER_KEYFRAME_NODES,
     LTXVDurationPredictor,
+    LTXVAddLatentGuide,
+    LTXVAddGeneratedKeyframes,
+    LTXVSeparateGeneratedKeyframes,
+    LTXVGeneratedKeyframesToGuides,
+    LTXVReferenceAudio,
+    LTXVSpatioTemporalGuidance,
+    LTXVModalityGuidance,
+    LTXVDualCFGGuider,
     MiniMaxH3AddGuide,
+    MiniMaxH3ReferenceToVideo,
+    MiniMaxH3FunControlNetApply,
     *DATASET_VIDEO_NODES,
     *LIST_UTILITY_NODES,
     SplitImageToTileList,

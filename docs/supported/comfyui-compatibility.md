@@ -20,6 +20,15 @@
   and work across isolated pack processes without a companion media pack.
 - Native LTXVCropGuides removes appended guide frames and their conditioning
   metadata while preserving the remaining video latent and noise mask.
+- Native LTXV latent-guide and generated-keyframe nodes attach, separate and
+  convert guide frames while preserving conditioning histories and source tensors.
+- LTXV reference-audio, spatio-temporal and modality guidance preserve the source
+  model and apply guidance within the requested sampling window. The dual-CFG
+  guider exposes separate video/audio scales; native multi-stream AV sampling
+  compatibility is not established.
+- MiniMax H3 reference conditioning pairs image, video and soundtrack inputs;
+  Fun ControlNet applies scheduled control while preserving the source model. CPU tests
+  use controlled encoders and predictions, not real-model or GPU execution.
 - Native SeedVR2 output post-processing aligns video frames, restores alpha
   and applies LAB, wavelet or AdaIN color matching with bounded chunks.
 - Native ARVideoI2V encodes the first start-image frame into a cloned model's
