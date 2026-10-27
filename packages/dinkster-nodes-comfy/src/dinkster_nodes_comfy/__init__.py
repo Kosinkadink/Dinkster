@@ -22,6 +22,7 @@ from .attention_guidance import ATTENTION_GUIDANCE_NODES
 from .attention_multiply import ATTENTION_MULTIPLY_NODES
 from .audio_combine import AUDIO_COMBINE_NODES
 from .audio_effects import AUDIO_EFFECT_NODES
+from .audio_encoder import AUDIO_ENCODER_NODES
 from .audio_generators import AUDIO_GENERATOR_NODES
 from .audio_latent import AUDIO_LATENT_NODES, GetAudioLatentSize
 from .audio_music_conditioning import AUDIO_MUSIC_CONDITIONING_NODES
@@ -34,6 +35,7 @@ from .cfg_guidance import CFG_GUIDANCE_NODES
 from .cfg_guiders import CFG_GUIDER_NODES
 from .chroma_options import ChromaRadianceOptions
 from .clip import CLIP_NODES
+from .clip_loaders import QuadrupleCLIPLoader, TripleCLIPLoader
 from .clip_model_specific import MODEL_TEXT_ENCODER_NODES
 from .clip_sd3 import CLIPTextEncodeSD3
 from .clip_sdxl import CLIP_SDXL_NODES
@@ -56,6 +58,7 @@ from .flux_conditioning import FLUX_CONDITIONING_NODES
 from .flux_image_layout import FLUX_IMAGE_LAYOUT_NODES
 from .freeu import FREEU_NODES
 from .gligen_conditioning import GLIGENTextBoxApply
+from .hidream_patches import HiDreamO1PatchSeamSmoothing, HiDreamO1ReferenceImages
 from .hook_checkpoint import HOOK_CHECKPOINT_NODES
 from .hook_conditioning import HOOK_CONDITIONING_NODES
 from .hook_lora import HOOK_LORA_NODES
@@ -86,6 +89,7 @@ from .latent_upscale_loader import LATENT_UPSCALE_LOADER_NODES
 from .list_utilities import LIST_UTILITY_NODES
 from .logic import LOGIC_NODES
 from .loops import LOOP_NODES
+from .lotus import LotusConditioning
 from .ltx_audio import LTX_AUDIO_NODES
 from .ltx_av_latent import LTX_AV_LATENT_NODES
 from .ltx_duration import LTXVDurationPredictor
@@ -167,6 +171,7 @@ from .wandancer_keyframes import WANDANCER_KEYFRAME_NODES
 from .zimage_encoders import TextEncodeZImageOmni
 
 COMFY_NODES = (
+    *AUDIO_ENCODER_NODES,
     *TEXT_NODES,
     *DATASET_TEXT_NODES,
     SaveText,
@@ -185,6 +190,11 @@ COMFY_NODES = (
     *ATTENTION_MULTIPLY_NODES,
     *ATTENTION_GUIDANCE_NODES,
     *CACHE_NODES,
+    HiDreamO1PatchSeamSmoothing,
+    HiDreamO1ReferenceImages,
+    TripleCLIPLoader,
+    QuadrupleCLIPLoader,
+    LotusConditioning,
     *MODEL_MERGE_NODES,
     *MODEL_SPECIFIC_MERGE_NODES,
     *MODEL_ADVANCED_NODES,

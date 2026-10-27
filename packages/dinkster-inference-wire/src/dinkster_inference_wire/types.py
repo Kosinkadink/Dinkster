@@ -5,6 +5,7 @@ from __future__ import annotations
 from dinkster_memory.resident import default_pool
 from dinkster_values import (
     AUDIO_ENCODER_OUTPUT_TYPE,
+    AUDIO_ENCODER_TYPE,
     CLIP_TYPE,
     CLIP_VISION_OUTPUT_TYPE,
     CLIP_VISION_TYPE,
@@ -69,6 +70,7 @@ GUIDER_TYPE_ID = GUIDER_TYPE
 NOISE_TYPE_ID = NOISE_TYPE
 
 _RESIDENT_TYPE_IDS = (
+    AUDIO_ENCODER_TYPE,
     MODEL_TYPE_ID,
     MODEL_PATCH_TYPE,
     CLIP_TYPE_ID,
