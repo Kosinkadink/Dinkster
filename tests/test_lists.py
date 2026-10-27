@@ -17,15 +17,18 @@ import pytest
 from dinkster_caches import MemoryLRUCache, encode_entry, entry_from_wire, entry_to_wire
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link, RegionNode, RegionOutput, validate
+from dinkster_nodes_foundation import IntPrimitive, StringPrimitive
 from dinkster_schema import (
     InputSpec,
     Node,
     NodeSchema,
     OutputSpec,
     TypeExpr,
+    bind_type_variables,
     build_node_types,
     build_schemas,
     combo_type_mismatch_is_error,
+    resolved_type_id,
     schema_from_wire,
     schema_to_wire,
 )
@@ -36,6 +39,7 @@ from dinkster_values import (
     RESOURCE_OWNER_META_KEY,
     ResourceHandle,
     TypeRegistry,
+    Value,
     ValueMeta,
     iter_value_tree,
     list_children,
@@ -76,7 +80,7 @@ def test_type_expr_list_kind() -> None:
     assert expr.runtime_type_id() == "list<INT>"
     nested = TypeExpr.list_of(expr)
     assert nested.runtime_type_id() == "list<list<INT>>"
-    assert TypeExpr.list_of(TypeExpr.wildcard()).runtime_type_id() is None
+    assert TypeExpr.list_of(TypeExpr.wildcard()).runtime_type_id() == "list<*>"
 
     assert expr.cardinality() == "list"
     assert TypeExpr.concrete("INT").cardinality() == "scalar"
@@ -166,10 +170,34 @@ def test_wrap_combo_lists_preserves_empty_order_and_duplicates() -> None:
     assert ordered.fingerprint != registry.wrap("list<COMBO>", ["a", "b", "b"]).fingerprint
 
 
-@pytest.mark.parametrize("invalid", [["ok", 1], [None], [["nested"]]])
-def test_wrap_combo_lists_recursively_rejects_non_strings(invalid: object) -> None:
+@pytest.mark.parametrize("nested", [False, True])
+def test_wrap_combo_lists_preserves_scalar_types_across_boundary(nested: bool) -> None:
     registry = make_registry()
-    with pytest.raises(TypeError, match="COMBO expects a string"):
+    selected = ["ok", 1, True, 1.5, "1", False, 0]
+    children = [registry.wrap(CORE_COMBO, item) for item in selected]
+    element_type = "list<COMBO>" if nested else CORE_COMBO
+    raw = [selected] if nested else selected
+    wrapped = [make_list_value(CORE_COMBO, children)] if nested else children
+    value = registry.wrap(list_type_id(element_type), raw)
+    assert value.fingerprint == make_list_value(element_type, wrapped).fingerprint
+    codec = ValueCodec(registry, use_shm=False, accept_shm=False)
+    blobs: list[bytes] = []
+    wire, _ = codec.encode(value, blobs, [])
+    decoded, _ = codec.decode(wire, blobs, [])
+    result = decoded.resolve()
+    assert isinstance(result, list)
+    if nested:
+        result = result[0]
+        assert isinstance(result, list)
+    assert result == selected
+    assert [type(item) for item in result] == [type(item) for item in selected]
+    assert decoded.fingerprint == value.fingerprint
+
+
+@pytest.mark.parametrize("invalid", [[None], [["nested"]]])
+def test_wrap_combo_lists_recursively_rejects_non_scalars(invalid: object) -> None:
+    registry = make_registry()
+    with pytest.raises(TypeError, match="COMBO expects a JSON scalar"):
         registry.wrap("list<COMBO>", invalid)
 
 
@@ -188,6 +216,32 @@ def test_make_list_value_rejects_mismatched_children() -> None:
         make_list_value("FLOAT", [child])
     with pytest.raises(TypeError, match="rejects envelope"):
         registry.wrap("list<FLOAT>", [child])
+
+
+def test_heterogeneous_lists_preserve_typed_children_without_guessing() -> None:
+    registry = make_registry()
+    text = registry.wrap("STRING", "seven")
+    number = registry.wrap("INT", 29)
+    value = registry.wrap("list<*>", [text, number])
+    assert value.resolve() == ["seven", 29]
+    assert list_children(value) == (text, number)
+    assert value.fingerprint != registry.wrap("list<*>", [number, text]).fingerprint
+    assert registry.wrap("list<*>", []).resolve() == []
+    assert registry.wrap("list<list<*>>", [[number, text], []]).resolve() == [[29, "seven"], []]
+    assert registry.wrap("list<*>", [value, number]).resolve() == [["seven", 29], 29]
+    with pytest.raises(TypeError, match="typed child envelopes"):
+        registry.wrap("list<*>", ["seven", 29])
+    with pytest.raises(ValueError, match="child has type"):
+        make_list_value("STRING", [text, number])
+    expression = TypeExpr.list_of(TypeExpr.wildcard())
+    assert resolved_type_id(expression, {}) == "list<*>"
+    bindings = bind_type_variables(
+        (InputSpec("value", TypeExpr.variable("T")),), {"value": "list<*>"}
+    )
+    assert resolved_type_id(TypeExpr.variable("T"), bindings) == "list<*>"
+    assert runtime_type_atoms("tuple<list<*>,INT,list<list<*>>>") == ("INT",)
+    schema = NodeSchema(node_type="test.mixed", outputs=(OutputSpec("out", expression),))
+    assert schema_from_wire(schema_to_wire(schema)) == schema
 
 
 def test_tuple_values_preserve_position_types_and_nested_containers() -> None:
@@ -300,6 +354,109 @@ class BadListOutput(Node):
 
 
 LIST_NODES: tuple[type[Node], ...] = (MakeRange, SumList, BadListOutput)
+
+
+class CollectIndependentValues(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="test.collect-independent",
+            inputs=(
+                InputSpec("left", TypeExpr.wildcard()),
+                InputSpec("right", TypeExpr.wildcard()),
+            ),
+            outputs=(OutputSpec("values", TypeExpr.list_of(TypeExpr.wildcard())),),
+            input_values=True,
+        )
+
+    @classmethod
+    def execute(
+        cls, *, left: object, right: object, input_values: Mapping[str, Value]
+    ) -> Mapping[str, object]:
+        return cls.outputs(values=[input_values["left"], input_values["right"]])
+
+
+class PickIndependentValue(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="test.pick-independent",
+            inputs=(InputSpec("values", TypeExpr.list_of(TypeExpr.wildcard())),),
+            outputs=(OutputSpec("item", TypeExpr.wildcard()),),
+            input_values=True,
+        )
+
+    @classmethod
+    def execute(
+        cls, *, values: list[object], input_values: Mapping[str, Value]
+    ) -> Mapping[str, object]:
+        children = list_children(input_values["values"])
+        assert children is not None
+        return cls.outputs(item=children[-1])
+
+
+HETEROGENEOUS_NODES = (
+    CollectIndependentValues,
+    PickIndependentValue,
+    IntPrimitive,
+    StringPrimitive,
+)
+
+
+@pytest.mark.parametrize("in_process", [False, True])
+def test_heterogeneous_lists_cross_ordinary_hosts_and_persistent_cache(
+    tmp_path: Path, in_process: bool
+) -> None:
+    from dinkster.compose import PackSpec, compose_serving
+
+    async def scenario() -> None:
+        manifest = tmp_path / "dinkster-pack.toml"
+        module = f"mixed_list_fixture_{in_process}"
+        (tmp_path / f"{module}.py").write_text("from tests.test_lists import HETEROGENEOUS_NODES\n")
+        manifest.write_text(
+            '[pack]\nname="mixed-list-test"\npublisher="dinkster"\n'
+            'namespaces=["test","dinkster"]\n[pack.entry]\n'
+            f'nodes="{module}:HETEROGENEOUS_NODES"\n'
+        )
+        composition = await compose_serving(
+            [PackSpec(manifest, in_process=in_process, trust_reserved=True)],
+            include_default_packs=False,
+            cache_mode="layered",
+            cache_dir=tmp_path / "cache",
+        )
+        try:
+            graph = Graph(
+                nodes={
+                    "number": GraphNode("dinkster.int", {"value": 29}),
+                    "text": GraphNode("dinkster.string", {"value": "seven"}),
+                    "mixed": GraphNode(
+                        "test.collect-independent",
+                        {"left": Link("text", "value"), "right": Link("number", "value")},
+                    ),
+                    "reverse": GraphNode(
+                        "test.collect-independent",
+                        {"left": Link("number", "value"), "right": Link("text", "value")},
+                    ),
+                    "selected": GraphNode(
+                        "test.pick-independent", {"values": Link("mixed", "values")}
+                    ),
+                }
+            )
+            for run in range(2):
+                engine = composition.make_engine(lambda _event: None)
+                result = await engine.run(graph, ["mixed", "reverse", "selected"])
+                assert result.outputs["mixed"]["values"].type_id == "list<*>"
+                assert result.outputs["mixed"]["values"].resolve() == ["seven", 29]
+                assert result.outputs["reverse"]["values"].resolve() == [29, "seven"]
+                assert result.outputs["selected"]["item"].type_id == "INT"
+                assert result.outputs["selected"]["item"].resolve() == 29
+                if run:
+                    assert result.executed == ()
+                    assert set(result.cached) == set(graph.nodes)
+        finally:
+            await composition.close()
+
+    asyncio.run(scenario())
 
 
 def make_engine() -> Engine:
@@ -692,6 +849,35 @@ def test_codec_roundtrips_lists_with_child_envelopes() -> None:
     children = list_children(decoded2)
     assert children is not None
     assert children[0].meta.get("resources") == {"gpu": "cuda:1"}
+
+
+def test_heterogeneous_transport_keeps_child_conversion_and_resources() -> None:
+    import numpy as np
+    from dinkster_api.v1 import image_input
+
+    registry = make_registry()
+    registry.register("IMAGE", input_convert=image_input)
+    register_resource_handle_type(registry)
+    image = registry.wrap("IMAGE", np.array([0, 255, 64], dtype=np.uint8).reshape(1, 1, 1, 3))
+    stub = _handle_value(registry, "model-mixed", device="cuda:1")
+    value = registry.wrap("list<*>", [registry.wrap("STRING", "image"), image, stub])
+    sender = ValueCodec(registry, use_shm=False, accept_shm=False)
+    receiver = ValueCodec(registry, use_shm=False, accept_shm=False)
+    blobs: list[bytes] = []
+    wire, _ = sender.encode(value, blobs, [])
+    decoded, _ = receiver.decode(wire, blobs, [])
+    children = list_children(decoded)
+    assert children is not None
+    assert [child.type_id for child in children] == ["STRING", "IMAGE", RESOURCE_HANDLE_TYPE]
+    assert children[1].fingerprint == image.fingerprint
+    assert value_resource_ids(decoded) == ("model-mixed",)
+    converted = cast(list[Any], registry.input_object(decoded.type_id, decoded))
+    assert converted[0] == "image"
+    np.testing.assert_array_equal(
+        converted[1], np.array([0, 1, 64 / 255], dtype=np.float32).reshape(1, 1, 1, 3)
+    )
+    assert cast(Any, image.resolve()).dtype == np.uint8
+    assert encode_entry({"mixed": decoded}, registry) is None
 
 
 def test_device_map_rewrites_list_children() -> None:

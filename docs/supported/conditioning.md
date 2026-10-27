@@ -6,6 +6,26 @@
   Flux resolution table. Flux 3 layout prompts append ordered bounding-box rows.
 - Native Flux text conditioning keeps independent CLIP-L and T5 prompts,
   guidance embedding overrides or disabling, and the selected multi-reference method.
+- Ideogram JSON prompts retain selected photographic or art style, palettes and
+  bounding-box elements. MOSS layout prompts place enclosing boxes in centered
+  pixel coordinates; MOSS edit conditioning preserves the selected reference
+  layout and optional vision-token prompts. MOSS color/depth control aligns
+  maps, scales their latent contribution and limits it to the selected sampling range.
+- Text generation supports image, video-frame and audio context, optional
+  sampling controls and separate completed or truncated reasoning output.
+  LTX2 prompt enhancement uses the Gemma 3 or Gemma 4 text/image chat format,
+  with model-specific system prompts and original-prompt fallback.
+- Qwen Image, Ming, MageFlow, JoyImage, Boogu and Fibo 2 image conditioning
+  retain model-specific reference sizing, prompt templates and prior latent
+  references. Qwen Image 2.1 also supports precomputed reference caches.
+- Z-Image Omni conditioning combines up to three vision/image references,
+  optional image resizing and VAE latents with its image prompt template.
+- PhotoMaker loads identity checkpoints from admitted assets and fuses identity
+  features into the selected prompt token while retaining pooled conditioning.
+- Bernini conditioning encodes source video, reference video, and ordered reference images.
+- HiDream-O1 reference conditioning appends images in numeric socket order to
+  both prompt branches, retaining prior references and marking the negative prompt type.
+- Lotus conditioning supplies its frozen null-prompt embedding without loading an encoder.
 - `CLIPTextEncodeSDXL` encodes separate global and local prompts with size,
   crop and target-size conditioning. Unequal token streams are padded with
   empty-prompt tokens. `CLIPTextEncodeSDXLRefiner` adds aesthetic-score and
@@ -32,6 +52,7 @@
   optional outputs, per-input absence policies, and skip propagation.
 - Native ControlNet application supports both legacy and scheduled positive/negative
   conditioning, prior-control chaining, union type selection, and AliMama masked hints.
+- `ControlNetApplySD3` accepts the VAE-required ControlNet workflow input layout.
 - Native `InstructPixToPixConditioning` crops and encodes the input image,
   attaches image conditioning to both prompt streams, and returns a zero latent.
 - `SD_4XUpscale_Conditioning` resizes image conditioning for Stable Diffusion

@@ -10,6 +10,23 @@
 - Native image file schemas expose bound assets and adjacent output mounts;
   PNG output truncates channel values and preview outputs retain source images.
   File operations reject oversized image batches and encoded outputs.
+- The native pack declares bound-file checkpoint, diffusion-model, text
+  encoder, vision-encoder, ControlNet, style-model and GLIGEN loader schemas.
+  Model construction uses the pinned inference package; file inputs grant
+  access only to the selected asset.
+- Native LoRA file loaders apply model and text-encoder strengths separately,
+  retain weight metadata, and support ordered stacks and bypass application.
+  Disabled stack entries and zero strengths do not resolve their file inputs.
+- Native Anima LLLite applies image and optional mask guidance to cloned models
+  through scheduled input, self-attention, cross-attention and MLP patches.
+- Native SUPIR applies scheduled control strength and optional restoration
+  guidance, using checkpoint denoise-encoder weights when present.
+- Native KSampler and KSamplerAdvanced use the inference sampling engine with
+  seeded batch noise, masks, denoise strength and advanced step boundaries.
+- Native Wan Uni3C applies render-video guidance with temporal padding, spatial
+  alignment, scheduled residuals and shared conditional-batch computation.
+- Native Qwen DiffSynth and Z-Image Fun ControlNet apply scheduled image and
+  inpaint guidance; USO prepends projected vision features to text tokens.
 - Native LoRA hook loaders use bound model/lora assets, preserve prior hooks
   and apply separate model and CLIP strengths while retaining loaded weights.
 - Native WanDancer keyframe padding places reference frames and masks into
@@ -65,6 +82,8 @@
   patchers and install their native frame-wise CFG callbacks under exact core IDs.
 - Native Context Windows nodes clone model patchers and configure manual, Wan,
   and LTXV context-window sampling under exact core IDs.
+- Video latent frame replacement preserves the core destination/source/index
+  input order, including the optional source input.
 - MiniMax H3 sigma shifts clone model patchers, preserve noise scale, and set
   independent video/audio flow shifts without modifying the source model.
 - MiniMax H3 image-to-video conditioning encodes optional first and last
@@ -75,6 +94,8 @@
   zero, and set area or timestep metadata under their exact ComfyUI interfaces.
 - Native hook conditioning preserves paired ordering, default records, mask and
   timestep metadata, and CLIP hook clone scheduling under exact core interfaces.
+- Hook keyframes from floats preserve the forced FLOATS socket and its numeric
+  default, minimum, and step under the exact core interface.
 - Native VAE inpainting encoding and model conditioning preserve crop, mask,
   latent, and conditioning metadata behavior under exact ComfyUI interfaces.
 - Fifteen native mask and composite nodes convert, create, invert, crop, combine,
@@ -93,6 +114,28 @@
 - Eight native video latent nodes create Hunyuan Video, Hunyuan Video 1.5, LTXV,
   Cosmos, and autoregressive video samples, trim video frames, freeze LTXV video
   or audio samples, and normalize video latent starts under their exact ComfyUI IDs.
+- Native Wan image and first/last-frame conditioning encodes image starts and
+  ends, applies temporal masks and optional CLIP vision states, and supports
+  reference padding and inpaint conditioning.
+- Native Wan 2.2 image-to-video latents encode image starts, mask encoded temporal
+  tokens, and normalize only the unfilled tokens before repeating image batches.
+- Native Wan control conditioning builds Fun Control and Wan 2.2 control latents,
+  VACE masked control streams and reference frames, and separate Phantom subject
+  image/text guidance.
+- Native Wan SCAIL conditioning combines per-identity reference masks, timed pose
+  conditioning, and continuation frames with their latent noise masks.
+- Native Wan track conditioning applies JSON point trajectories to image-start
+  latents, preserving visible-point weights and per-batch image conditioning.
+- Native Wan Animate conditioning combines reference, pose, face and continuation
+  inputs. Animate 2 supports timed pose guidance and cleanup-scoped pose caching.
+- Native Wan camera trajectories and image-start conditioning preserve camera
+  embeddings and optional vision states. Wan Move generates and combines visible
+  trajectories, conditions image starts, and renders colored tracks.
+- Native Wan Sound, HuMo and InfiniteTalk conditioning use audio-encoder layers
+  with image starts, continuation motion and single- or two-speaker controls.
+- Native SCAIL-2 colored masks render packed SAM3 tracks with identity selection,
+  appearance/area ordering, palette controls and background masks. Source
+  experimental presentation badges are not preserved.
 - Native LTXV preprocessing applies the model's optional per-frame H.264 image
   compression before encoding video starts.
 - Native LTXV image-to-video and frame-rate conditioning nodes encode image starts,
@@ -129,3 +172,6 @@
   current support claim.
 - Pack HTTP routes, web assets, and executor hooks are diagnosed rather than
   emulated.
+- Reference file-input metadata includes manually enumerated file choices whose
+  declared execution method directly resolves the input as an annotated path.
+  Empty file lists retain this classification; unrelated empty combos do not.

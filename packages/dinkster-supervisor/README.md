@@ -54,8 +54,9 @@ The ingress route matrix is explicit:
   Member requests run concurrently under a five-second per-member deadline.
 - `/api/health` and `/supervisor/*` are ingress-owned. The latter reports
   `role: "ingress"` and never reaches an engine.
-- Catalog reads, compat prompt, queue mutations, assets, library, mounts,
-  settings, memory, and cache routes go to the primary in slice 2a.
+- Catalog reads, queue mutations, assets, library, mounts, settings, memory,
+  and cache routes go to the primary. Compatibility prompt routes are not
+  exposed by the ingress.
 - `/api/events` merges one reconnecting upstream WebSocket per member through
   a 64-frame/eight-MiB queue and one heartbeat-enabled downstream writer.
   Upstream frames are bounded at four MiB; oversize closes the downstream
