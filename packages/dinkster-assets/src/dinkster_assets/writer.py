@@ -30,6 +30,7 @@ import importlib
 import json
 import os
 import re
+import stat
 import threading
 import time
 import uuid
@@ -396,7 +397,7 @@ class AssetWriter:
     @contextmanager
     def _directory_claim(self, folder: Path) -> Generator[None]:
         lock_path = folder / ".dinkster-asset-writer.lock"
-        with self._path_lock(lock_path), lock_path.open("a+b") as handle:
+        with self._path_lock(lock_path), self._open_lock_file(lock_path) as handle:
             if handle.seek(0, os.SEEK_END) == 0:
                 handle.write(b"\0")
                 handle.flush()
@@ -429,8 +430,98 @@ class AssetWriter:
                     fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
     @staticmethod
+    def _open_lock_file(lock_path: Path) -> BinaryIO:
+        if os.name == "nt":  # pragma: no cover - exercised on Windows CI
+            return AssetWriter._open_windows_lock_file(lock_path)
+        nofollow = getattr(os, "O_NOFOLLOW", None)
+        if nofollow is None:
+            raise AssetError("safe writer lock opening is unavailable on this platform")
+        try:
+            descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT | nofollow, 0o600)
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                raise AssetError(f"unsafe writer lock path: {lock_path}") from None
+            raise
+        file_stat = os.fstat(descriptor)
+        if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_nlink != 1:
+            os.close(descriptor)
+            raise AssetError(f"unsafe writer lock path: {lock_path}")
+        return os.fdopen(descriptor, "r+b")
+
+    @staticmethod
+    def _open_windows_lock_file(lock_path: Path) -> BinaryIO:
+        ctypes = importlib.import_module("ctypes")
+        wintypes = importlib.import_module("ctypes.wintypes")
+        msvcrt = importlib.import_module("msvcrt")
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        create_file = kernel32.CreateFileW
+        create_file.argtypes = [
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.HANDLE,
+        ]
+        create_file.restype = wintypes.HANDLE
+        get_file_information = kernel32.GetFileInformationByHandle
+        get_file_information.argtypes = [wintypes.HANDLE, wintypes.LPVOID]
+        get_file_information.restype = wintypes.BOOL
+        close_handle = kernel32.CloseHandle
+        close_handle.argtypes = [wintypes.HANDLE]
+        close_handle.restype = wintypes.BOOL
+
+        class FileInformation(ctypes.Structure):
+            _fields_ = [
+                ("attributes", wintypes.DWORD),
+                ("creation_time", wintypes.FILETIME),
+                ("last_access_time", wintypes.FILETIME),
+                ("last_write_time", wintypes.FILETIME),
+                ("volume_serial_number", wintypes.DWORD),
+                ("file_size_high", wintypes.DWORD),
+                ("file_size_low", wintypes.DWORD),
+                ("number_of_links", wintypes.DWORD),
+                ("file_index_high", wintypes.DWORD),
+                ("file_index_low", wintypes.DWORD),
+            ]
+
+        generic_read_write = 0xC0000000
+        share_all = 0x00000007
+        open_always = 4
+        file_attribute_normal = 0x00000080
+        file_flag_open_reparse_point = 0x00200000
+        file_attribute_reparse_point = 0x00000400
+        invalid_handle_value = wintypes.HANDLE(-1).value
+        handle = create_file(
+            str(lock_path),
+            generic_read_write,
+            share_all,
+            None,
+            open_always,
+            file_attribute_normal | file_flag_open_reparse_point,
+            None,
+        )
+        if handle == invalid_handle_value:
+            raise OSError(ctypes.get_last_error(), f"cannot open writer lock {lock_path}")
+        information = FileInformation()
+        try:
+            if not get_file_information(handle, ctypes.byref(information)):
+                raise OSError(ctypes.get_last_error(), f"cannot inspect writer lock {lock_path}")
+            if (
+                information.attributes & file_attribute_reparse_point
+                or information.number_of_links != 1
+            ):
+                raise AssetError(f"unsafe writer lock path: {lock_path}")
+            descriptor = msvcrt.open_osfhandle(handle, os.O_RDWR)
+        except BaseException:
+            close_handle(handle)
+            raise
+        return os.fdopen(descriptor, "r+b")
+
+    @staticmethod
     def _path_lock(path: Path) -> threading.RLock:
-        key = str(path.resolve())
+        key = str(path.absolute())
         with _WRITER_PATH_LOCKS_GUARD:
             return _WRITER_PATH_LOCKS.setdefault(key, threading.RLock())
 

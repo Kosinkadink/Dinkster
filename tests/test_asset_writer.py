@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import time
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -327,6 +328,31 @@ def test_save_bytes_rejects_symlink_escape(tmp_path: Path) -> None:
     with pytest.raises(AssetError, match="escapes its mount"):
         writer.save_bytes({"mount": "out", "prefix": "leak/file"}, b"x", suffix=".bin")
     assert list(outside.iterdir()) == []
+
+
+def test_save_bytes_rejects_symlinked_writer_lock(tmp_path: Path) -> None:
+    writer, root = make_writer(tmp_path)
+    outside = tmp_path / "outside-lock"
+    outside.write_bytes(b"")
+    lock_path = root / ".dinkster-asset-writer.lock"
+    symlink_or_skip(lock_path, outside)
+    with pytest.raises(AssetError, match="unsafe writer lock path"):
+        writer.save_bytes({"mount": "out", "prefix": "probe"}, b"payload", suffix=".bin")
+    assert outside.read_bytes() == b""
+    assert lock_path.is_symlink()
+    assert not (root / "probe_00001.bin").exists()
+
+
+def test_save_bytes_rejects_hardlinked_writer_lock(tmp_path: Path) -> None:
+    writer, root = make_writer(tmp_path)
+    outside = tmp_path / "outside-lock"
+    outside.write_bytes(b"")
+    lock_path = root / ".dinkster-asset-writer.lock"
+    os.link(outside, lock_path)
+    with pytest.raises(AssetError, match="unsafe writer lock path"):
+        writer.save_bytes({"mount": "out", "prefix": "probe"}, b"payload", suffix=".bin")
+    assert outside.read_bytes() == b""
+    assert not (root / "probe_00001.bin").exists()
 
 
 def test_save_bytes_no_temp_litter(tmp_path: Path) -> None:
