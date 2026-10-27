@@ -30,6 +30,10 @@ from dinkster_values import register_core_types
 from dinkster_workers import InProcessWorker
 
 GOLDEN_V1_SURFACE = (
+    "TriangleMeshBatch",
+    "Voxel",
+    "materialize_mesh",
+    "materialize_voxel",
     "obtain_resident",
     "LatentStream",
     "MultiStreamLatent",
@@ -452,6 +456,11 @@ class BlockRuntime(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0, BlockRuntime())
 import dinkster_api.v1 as api
 assert {'LatentStream', 'MultiStreamLatent'} <= set(dir(api))
+assert {'TriangleMeshBatch', 'Voxel', 'materialize_mesh', 'materialize_voxel'} <= set(dir(api))
+from dinkster_api.v1 import TriangleMeshBatch, Voxel
+from dinkster_inference_wire import sparse
+assert TriangleMeshBatch is sparse.TriangleMeshBatch
+assert Voxel is sparse.Voxel
 from dinkster_api.v1 import LatentStream, MultiStreamLatent
 from dinkster_inference_wire.latents import LatentStream as InternalStream
 from dinkster_inference_wire.latents import MultiStreamLatent as InternalMulti
@@ -568,6 +577,7 @@ def test_reexports_are_the_internal_objects() -> None:
     import dinkster_assets
     import dinkster_inference_wire.latents as latent_values
     import dinkster_inference_wire.process as inference_process
+    import dinkster_inference_wire.sparse as geometry_values
     import dinkster_inference_wire.types as inference_types
     import dinkster_memory
     import dinkster_protocol
@@ -578,6 +588,7 @@ def test_reexports_are_the_internal_objects() -> None:
     sources = (
         latent_values,
         inference_process,
+        geometry_values,
         inference_types,
         dinkster_schema,
         dinkster_values,

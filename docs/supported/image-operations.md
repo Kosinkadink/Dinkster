@@ -1,5 +1,10 @@
 ## Image operations
 
+- Native `RotateMesh` rotates mesh vertices, normals and tangents using Euler
+  angles or a normalized quaternion while retaining material attributes.
+  `GetMeshInfo` reports padded-batch counts and available mesh attributes.
+- Portable mesh values retain all fifteen geometry and material fields; voxel
+  values retain dense or sparse data, optional colors and resolution.
 - Color strings, ordered color palettes, and optional resolution-preview
   metadata pass between node packs without rewriting their values.
 - Native `PrimitiveBoundingBox` constructs pixel bounding boxes; `ImageCropV2`

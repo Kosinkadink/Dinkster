@@ -2,6 +2,8 @@
 name = "dinkster-nodes-comfy"
 publisher = "dinkster"
 namespaces = [
+    "RotateMesh",
+    "GetMeshInfo",
     "AudioEncoderLoader",
     "AudioEncoderEncode",
     "SheetSage2AudioToABC",

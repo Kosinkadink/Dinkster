@@ -102,6 +102,7 @@ from .marigold import MarigoldV2PostProcess
 from .mask import MASK_NODES
 from .mask_preview import MaskPreview
 from .math import ComfyMathExpression
+from .mesh import MESH_NODES
 from .ming_image_encoders import TextEncodeMingImageEdit
 from .minimax_h3_latent import EmptyMiniMaxH3LatentAV, MiniMaxH3AddGuide, MiniMaxH3ImageToVideo
 from .minimax_h3_sampling import MiniMaxH3SigmaShift
@@ -183,6 +184,7 @@ from .wandancer_keyframes import WANDANCER_KEYFRAME_NODES
 from .zimage_encoders import TextEncodeZImageOmni
 
 COMFY_NODES = (
+    *MESH_NODES,
     *AUDIO_ENCODER_NODES,
     *TEXT_NODES,
     *DATASET_TEXT_NODES,

@@ -19,6 +19,7 @@ from dinkster_values import (
     HOOKS_TYPE,
     INFERENCE_LATENT_OPERATION_TYPE,
     LATENT_UPSCALE_MODEL_TYPE,
+    MESH_TYPE,
     MODEL_PATCH_TYPE,
     MODEL_TYPE,
     NOISE_TYPE,
@@ -31,6 +32,7 @@ from dinkster_values import (
     TIMESTEPS_RANGE_TYPE,
     TRACKS_TYPE,
     VAE_TYPE,
+    VOXEL_TYPE,
     WAN_CAMERA_EMBEDDING_TYPE,
     TypeRegistry,
     TypeSpec,
@@ -38,6 +40,7 @@ from dinkster_values import (
 )
 
 from .conditioning_wire import CONDITIONING_TYPE_ID, register_conditioning_type
+from .geometry_wire import materialize_mesh, materialize_voxel, register_geometry_type
 from .hook_values import (
     normalize_clip_hook_owners,
     normalize_hook_owners,
@@ -149,6 +152,12 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
         registered.append(
             registry.spec(type_id) if type_id in registry else register_wan_type(registry, type_id)
         )
+    for type_id in (MESH_TYPE, VOXEL_TYPE):
+        registered.append(
+            registry.spec(type_id)
+            if type_id in registry
+            else register_geometry_type(registry, type_id)
+        )
     registered.extend(register_media_types(registry))
     return tuple(registered)
 
@@ -166,5 +175,7 @@ __all__ = [
     "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
+    "materialize_mesh",
+    "materialize_voxel",
     "register_inference_types",
 ]

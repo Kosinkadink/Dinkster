@@ -335,6 +335,16 @@ class TriangleMeshBatch(Generic[T]):
             raise ValueError("mesh batch vertex and face counts must be provided together")
 
 
+@dataclass(eq=False, slots=True)
+class Voxel(Generic[T]):
+    """Dense fields or sparse voxel coordinates with optional colors and resolution."""
+
+    data: T
+    voxel_colors: T | None = None
+    resolution: object | None = None
+    __hash__: ClassVar[None] = None  # pyright: ignore[reportIncompatibleMethodOverride]
+
+
 @dataclass(frozen=True, eq=False, slots=True)
 class TexturedMesh(Generic[T]):
     """One indexed triangle mesh with a sparse PBR voxel field."""
@@ -369,4 +379,5 @@ __all__ = [
     "TexturedMesh",
     "TriangleMesh",
     "TriangleMeshBatch",
+    "Voxel",
 ]

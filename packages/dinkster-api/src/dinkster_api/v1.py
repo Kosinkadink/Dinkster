@@ -401,11 +401,17 @@ def __getattr__(name: str) -> object:
         from dinkster_inference_wire import latents
 
         value = getattr(latents, name)
+    elif name in {"TriangleMeshBatch", "Voxel"}:
+        from dinkster_inference_wire import sparse
+
+        value = getattr(sparse, name)
     elif name in {
         "register_inference_types",
         "materialize_audio",
         "materialize_image",
         "materialize_latent",
+        "materialize_mesh",
+        "materialize_voxel",
         "materialize_clip_vision_output",
     }:
         from dinkster_inference_wire import types
@@ -428,10 +434,14 @@ def __dir__() -> list[str]:
         | {
             "LatentStream",
             "MultiStreamLatent",
+            "TriangleMeshBatch",
+            "Voxel",
             "register_inference_types",
             "materialize_audio",
             "materialize_image",
             "materialize_latent",
+            "materialize_mesh",
+            "materialize_voxel",
             "materialize_clip_vision_output",
             "initialize_inference_process",
         }
@@ -441,11 +451,14 @@ def __dir__() -> list[str]:
 if TYPE_CHECKING:
     from dinkster_inference_wire.latents import LatentStream, MultiStreamLatent
     from dinkster_inference_wire.process import initialize_inference_process
+    from dinkster_inference_wire.sparse import TriangleMeshBatch, Voxel
     from dinkster_inference_wire.types import (
         materialize_audio,
         materialize_clip_vision_output,
         materialize_image,
         materialize_latent,
+        materialize_mesh,
+        materialize_voxel,
         register_inference_types,
     )
     from dinkster_video import document as timeline_document
@@ -453,6 +466,10 @@ if TYPE_CHECKING:
     from dinkster_video import timeline as timeline_render
 
 __all__ = [
+    "TriangleMeshBatch",
+    "Voxel",
+    "materialize_mesh",
+    "materialize_voxel",
     "RunExecutionContext",
     "obtain_resident",
     "Expansion",
