@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import av
 import numpy as np
 import pytest
+from av.error import ArgumentError
 from dinkster_api.v1 import ImageComponents, decode_image_components
 from dinkster_assets import AssetRef, digest_file
 from PIL import Image
@@ -31,6 +32,35 @@ def _asset(path: Path) -> AssetRef:
 def _first_frame(path: Path) -> Any:
     with av.open(path) as container:
         return next(container.decode(video=0))
+
+
+def _reference_nonbyte_pixels(path: Path) -> np.ndarray:
+    with av.open(path) as container:
+        stream = container.streams.video[0]
+        frame = next(container.decode(stream))
+        if frame.width % 32 == 0:
+            return frame.to_ndarray(format="gbrpf32le")
+        width = ((frame.width + 31) // 32) * 32
+        height = ((frame.height + 31) // 32) * 32
+        graph = cast(Any, av).filter.Graph()
+        source = graph.add_buffer(
+            width=frame.width,
+            height=frame.height,
+            format=frame.format.name,
+            time_base=stream.time_base,
+        )
+        pad = graph.add("pad", f"{width}:{height}:0:0")
+        fill = graph.add(
+            "fillborders",
+            f"left=0:right={width - frame.width}:top=0:bottom={height - frame.height}:mode=smear",
+        )
+        sink = graph.add("buffersink")
+        source.link_to(pad)
+        pad.link_to(fill)
+        fill.link_to(sink)
+        graph.configure()
+        source.push(frame)
+        return sink.pull().to_ndarray(format="gbrpf32le")[: frame.height, : frame.width]
 
 
 def test_decode_image_components_preserves_rgb_rgba_and_odd_width(tmp_path: Path) -> None:
@@ -73,6 +103,31 @@ def test_decode_image_components_preserves_sixteen_bit_grayscale(tmp_path: Path)
         np.repeat(grayscale[..., None], 3, axis=-1).astype(np.float32) / 65535,
     )
     assert decoded.alpha is None
+
+
+def test_decode_image_components_matches_reference_nonbyte_odd_width(tmp_path: Path) -> None:
+    grayscale = np.linspace(0, 65535, 17 * 17, dtype=np.uint16).reshape(17, 17)
+    path = tmp_path / "sixteen-bit-17x17.png"
+    Image.fromarray(grayscale).save(path)
+
+    expected = _reference_nonbyte_pixels(path)
+    decoded = decode_image_components(_asset(path))
+
+    np.testing.assert_array_equal(decoded.pixels, expected[..., :3])
+    assert decoded.alpha is None
+
+
+@pytest.mark.parametrize(("height", "width"), ((3, 17), (9, 33), (3, 65)))
+def test_decode_image_components_matches_reference_small_nonbyte_failure(
+    tmp_path: Path, height: int, width: int
+) -> None:
+    path = tmp_path / f"sixteen-bit-{width}x{height}.png"
+    Image.fromarray(np.zeros((height, width), dtype=np.uint16)).save(path)
+
+    with pytest.raises(ArgumentError, match="Invalid argument returned 22"):
+        _reference_nonbyte_pixels(path)
+    with pytest.raises(ArgumentError, match="Invalid argument returned 22"):
+        decode_image_components(_asset(path))
 
 
 @pytest.mark.parametrize(

@@ -17,6 +17,13 @@ file. Its small-GIF regression is in `tests/test_image_io.py`. Upstream could
 route Pillow-supported animations through the image decoder rather than the
 video alignment filter. No upstream report or source change was made.
 
+The immutable ComfyUI `bc5f880dbdd43e426077f42ccec53bb577ffee9f` path has
+the same constraint for non-byte still images: 16-bit grayscale PNGs at 17x7,
+33x9, and 65x3 raise the same error at `g.configure()`. It succeeds for 17x17,
+33x31, and 17x16, showing the alignment graph's small-height interaction is
+material rather than width alone. This is covered by Dinkster's public
+component decoder regression without changing the shared conversion path.
+
 The pinned PyAV path also changes samples in an otherwise valid 32x2 GIF:
 RGB differs from exact Pillow palette values by up to 0.00387579 and an
 opaque alpha mask contains values up to 0.000045776367. A two-page TIFF
