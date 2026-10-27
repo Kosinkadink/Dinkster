@@ -3,6 +3,7 @@
 from dinkster_api.v1 import (
     ASSET_TYPE,
     AUDIO_TYPE,
+    BOUNDING_BOX_TYPE,
     TypeRegistry,
     register_asset_type,
     register_audio_value_type,
@@ -23,6 +24,8 @@ from .audio_latent import AUDIO_LATENT_NODES, GetAudioLatentSize
 from .audio_music_conditioning import AUDIO_MUSIC_CONDITIONING_NODES
 from .audio_transform import AUDIO_TRANSFORM_NODES
 from .audio_vae import AUDIO_VAE_NODES
+from .bernini_conditioning import BERNINI_CONDITIONING_NODES
+from .boogu_encoders import TextEncodeBooguEdit
 from .cache import CACHE_NODES
 from .cfg_guidance import CFG_GUIDANCE_NODES
 from .cfg_guiders import CFG_GUIDER_NODES
@@ -44,6 +47,7 @@ from .dataset_groups import DATASET_GROUP_NODES
 from .dataset_images import DATASET_IMAGE_NODES
 from .dataset_text import DATASET_TEXT_NODES
 from .device_routing import DEVICE_ROUTING_NODES
+from .fibo2_encoders import TextEncodeFibo2
 from .flux_conditioning import FLUX_CONDITIONING_NODES
 from .flux_image_layout import FLUX_IMAGE_LAYOUT_NODES
 from .freeu import FREEU_NODES
@@ -60,10 +64,13 @@ from .hypernetwork import HypernetworkLoader
 from .image_color_conversion import IMAGE_COLOR_CONVERSION_NODES
 from .image_control_patches import IMAGE_CONTROL_PATCH_NODES
 from .image_core import IMAGE_CORE_NODES
+from .image_crop import ImageCropV2, PrimitiveBoundingBox
 from .image_dimensions import IMAGE_DIMENSION_NODES
 from .image_filters import IMAGE_FILTER_NODES
 from .image_transform import IMAGE_TRANSFORM_NODES
 from .inpaint import INPAINT_NODES
+from .joyimage_encoders import TextEncodeJoyImageEdit
+from .json_prompt import BuildJsonPromptIdeogram
 from .kandinsky_video import Kandinsky5ImageToVideo
 from .latent import LATENT_NODES
 from .latent_advanced import LATENT_ADVANCED_NODES
@@ -79,9 +86,11 @@ from .ltx_duration import LTXVDurationPredictor
 from .ltx_sampling import LTX_SAMPLING_NODES
 from .ltx_video_conditioning import LTX_VIDEO_CONDITIONING_NODES
 from .ltx_video_preprocess import LTX_VIDEO_PREPROCESS_NODES
+from .mage_image_encoders import TextEncodeMageFlowEdit
 from .marigold import MarigoldV2PostProcess
 from .mask import MASK_NODES
 from .math import ComfyMathExpression
+from .ming_image_encoders import TextEncodeMingImageEdit
 from .minimax_h3_latent import EmptyMiniMaxH3LatentAV, MiniMaxH3AddGuide, MiniMaxH3ImageToVideo
 from .minimax_h3_sampling import MiniMaxH3SigmaShift
 from .mochi import EmptyMochiLatentVideo
@@ -91,9 +100,11 @@ from .model_merging_specific import MODEL_SPECIFIC_MERGE_NODES
 from .model_patch_loader import MODEL_PATCH_LOADER_NODES
 from .model_specific_schedulers import MODEL_SPECIFIC_SCHEDULER_NODES
 from .morphology import MORPHOLOGY_NODES
+from .moss_image import MOSSImageControl, MOSSImageLayoutPrompt, TextEncodeMOSSImageEdit
 from .noise import NOISE_NODES
 from .noise_guidance import NOISE_GUIDANCE_NODES
 from .perpneg import PERPNEG_NODES
+from .photomaker import PhotoMakerEncode, PhotoMakerLoader
 from .pid_conditioning import PiDConditioning
 from .post_processing import POST_PROCESSING_NODES
 from .primitive import (
@@ -102,6 +113,12 @@ from .primitive import (
     PrimitiveInt,
     PrimitiveString,
     PrimitiveStringMultiline,
+)
+from .qwen_image_encoders import (
+    QwenImage21Cache,
+    TextEncodeQwenImage21,
+    TextEncodeQwenImageEdit,
+    TextEncodeQwenImageEditPlus,
 )
 from .rebatch import REBATCH_NODES
 from .reference_conditioning import REFERENCE_CONDITIONING_NODES
@@ -125,14 +142,22 @@ from .style_model import STYLE_MODEL_NODES
 from .supir import SUPIRApply
 from .switch import ComfySwitchNode
 from .text import TEXT_NODES
+from .text_generation import TextGenerate, TextGenerateLTX2Prompt
 from .utilities import ComfyNumberConvert, SeedNode
 from .vae import VAE_NODES
 from .video_conditioning import VIDEO_CONDITIONING_NODES
 from .video_guidance import VIDEO_GUIDANCE_NODES
 from .video_latent import VIDEO_LATENT_NODES
 from .video_latent_ops import VIDEO_LATENT_OPERATION_NODES
+from .wan22_latent import Wan22ImageToVideoLatent
+from .wan_animate import WAN_ANIMATE_NODES
+from .wan_control_conditioning import WAN_CONTROL_CONDITIONING_NODES
+from .wan_image_conditioning import WanFirstLastFrameToVideo, WanFunInpaintToVideo, WanImageToVideo
+from .wan_scail_conditioning import WanSCAILToVideo
+from .wan_track_conditioning import WanTrackToVideo
 from .wan_uni3c import WanUni3CControlnetApply
 from .wandancer_keyframes import WANDANCER_KEYFRAME_NODES
+from .zimage_encoders import TextEncodeZImageOmni
 
 COMFY_NODES = (
     *TEXT_NODES,
@@ -195,6 +220,7 @@ COMFY_NODES = (
     *MODEL_TEXT_ENCODER_NODES,
     *FLUX_CONDITIONING_NODES,
     *FLUX_IMAGE_LAYOUT_NODES,
+    *BERNINI_CONDITIONING_NODES,
     *VAE_NODES,
     *CONDITIONING_NODES,
     PiDConditioning,
@@ -260,7 +286,35 @@ COMFY_NODES = (
     *WANDANCER_KEYFRAME_NODES,
     LTXVDurationPredictor,
     MiniMaxH3AddGuide,
+    WanImageToVideo,
+    WanFirstLastFrameToVideo,
+    WanFunInpaintToVideo,
+    *WAN_CONTROL_CONDITIONING_NODES,
+    Wan22ImageToVideoLatent,
+    WanSCAILToVideo,
+    WanTrackToVideo,
+    *WAN_ANIMATE_NODES,
     *COLOR_RESOLUTION_NODES,
+    BuildJsonPromptIdeogram,
+    MOSSImageLayoutPrompt,
+    TextEncodeMOSSImageEdit,
+    TextGenerate,
+    MOSSImageControl,
+    TextEncodeQwenImageEdit,
+    TextEncodeQwenImageEditPlus,
+    TextEncodeQwenImage21,
+    QwenImage21Cache,
+    TextEncodeMingImageEdit,
+    TextEncodeMageFlowEdit,
+    TextEncodeJoyImageEdit,
+    TextEncodeBooguEdit,
+    TextEncodeFibo2,
+    TextGenerateLTX2Prompt,
+    TextEncodeZImageOmni,
+    PhotoMakerLoader,
+    PhotoMakerEncode,
+    ImageCropV2,
+    PrimitiveBoundingBox,
 )
 
 
@@ -269,6 +323,8 @@ def register_inference_types(registry: TypeRegistry) -> None:
         register_asset_type(registry, resolver_from_env())
     if AUDIO_TYPE not in registry:
         register_audio_value_type(registry, AUDIO_TYPE, resolver_from_env())
+    if BOUNDING_BOX_TYPE not in registry:
+        registry.register(BOUNDING_BOX_TYPE)
     _register_inference_types(registry)
 
 

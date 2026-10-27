@@ -2,6 +2,8 @@
 
 - Color strings, ordered color palettes, and optional resolution-preview
   metadata pass between node packs without rewriting their values.
+- Native `PrimitiveBoundingBox` constructs pixel bounding boxes; `ImageCropV2`
+  crops each image in a batch to that box and reports a PNG preview.
 - Native `ColorToRGBInt` preserves RGB letter casing and separates optional alpha;
   `ResolutionSelector` rounds aspect-ratio and megapixel dimensions to a chosen multiple.
 - Marigold V2 decoded predictions convert to per-image normalized depth,

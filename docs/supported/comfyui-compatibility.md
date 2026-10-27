@@ -97,6 +97,20 @@
 - Eight native video latent nodes create Hunyuan Video, Hunyuan Video 1.5, LTXV,
   Cosmos, and autoregressive video samples, trim video frames, freeze LTXV video
   or audio samples, and normalize video latent starts under their exact ComfyUI IDs.
+- Native Wan image and first/last-frame conditioning encodes image starts and
+  ends, applies temporal masks and optional CLIP vision states, and supports
+  reference padding and inpaint conditioning.
+- Native Wan 2.2 image-to-video latents encode image starts, mask encoded temporal
+  tokens, and normalize only the unfilled tokens before repeating image batches.
+- Native Wan control conditioning builds Fun Control and Wan 2.2 control latents,
+  VACE masked control streams and reference frames, and separate Phantom subject
+  image/text guidance.
+- Native Wan SCAIL conditioning combines per-identity reference masks, timed pose
+  conditioning, and continuation frames with their latent noise masks.
+- Native Wan track conditioning applies JSON point trajectories to image-start
+  latents, preserving visible-point weights and per-batch image conditioning.
+- Native Wan Animate conditioning combines reference, pose, face and continuation
+  inputs. Animate 2 supports timed pose guidance and cleanup-scoped pose caching.
 - Native LTXV preprocessing applies the model's optional per-frame H.264 image
   compression before encoding video starts.
 - Native LTXV image-to-video and frame-rate conditioning nodes encode image starts,
