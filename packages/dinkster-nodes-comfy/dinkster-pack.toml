@@ -511,6 +511,7 @@ namespaces = [
     "LoraLoaderBypass",
     "LoraLoaderBypassModelOnly",
     "CropByBBoxes",
+    "MakeTrainingDataset",
 ]
 
 [pack.sandbox]
