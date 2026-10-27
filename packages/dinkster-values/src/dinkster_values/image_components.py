@@ -19,62 +19,77 @@ class ImageComponents:
     alpha: np.ndarray | None
 
 
-def _alpha_pixels(frame: Any) -> np.ndarray:
+def _rotation_quadrant(frame: Any) -> int:
+    return int(round(frame.rotation // 90)) % 4 if frame.rotation else 0
+
+
+def _float_pixels(frame: Any) -> np.ndarray:
     import numpy as np
 
-    component = next(component for component in frame.format.components if component.is_alpha)
-    if frame.format.is_planar:
+    byte_order = ">" if frame.format.is_big_endian else "<"
+    dtype = np.dtype(f"{byte_order}f{frame.format.components[0].bits // 8}")
+    planes: list[Any] = []
+    for component in frame.format.components:
         plane = frame.planes[component.plane]
-        dtype = (
-            "<f4"
-            if "f32" in frame.format.name
-            else "<f2"
-            if "f16" in frame.format.name
-            else "u1"
-            if component.bits <= 8
-            else ">u2"
-            if frame.format.name.endswith("be")
-            else "<u2"
+        planes.append(
+            np.ndarray(
+                (frame.height, frame.width),
+                dtype=dtype,
+                buffer=plane,
+                strides=(plane.line_size, dtype.itemsize),
+            )
         )
-        array = np.frombuffer(plane, dtype=dtype).reshape(plane.height, -1)[:, : frame.width]
-        return array.astype(np.float32) / (1 if "f" in dtype else 2**component.bits - 1)
-    array = cast(np.ndarray, frame.to_ndarray())
-    return array[..., -1].astype(np.float32) / (2**component.bits - 1)
+    return np.stack(planes * 3 if len(planes) == 1 else planes, axis=-1, dtype=np.float32)
 
 
-def _rotation(source: ReadableImageSource) -> int:
-    try:
-        from PIL import Image
-
-        with source.open() as handle, Image.open(handle) as image:
-            orientation = image.getexif().get(274, 1)
-    except ImportError:
-        return 1
-    return int(orientation)
-
-
-def _orient(array: np.ndarray, orientation: int) -> np.ndarray:
+def _convert(frame: Any, image_format: str, time_base: object) -> np.ndarray:
+    import av
     import numpy as np
 
-    if orientation == 2:
-        return array[:, ::-1]
-    if orientation == 3:
-        return array[::-1, ::-1]
-    if orientation == 4:
-        return array[::-1]
-    if orientation == 5:
-        return array.transpose(1, 0, *range(2, array.ndim))
-    if orientation == 6:
-        return np.rot90(array, -1)
-    if orientation == 7:
-        return np.rot90(array.transpose(1, 0, *range(2, array.ndim)), 2)
-    if orientation == 8:
-        return np.rot90(array)
-    return array
+    if frame.format.name in {
+        "gbrpf16le",
+        "gbrpf16be",
+        "gbrapf16le",
+        "gbrapf16be",
+        "grayf16le",
+        "grayf16be",
+        "gbrpf32le",
+        "gbrpf32be",
+        "gbrapf32le",
+        "gbrapf32be",
+        "grayf32le",
+        "grayf32be",
+    }:
+        return _float_pixels(frame)
+    if image_format not in {"gbrpf32le", "gbrapf32le"} or frame.width % 32 == 0:
+        return cast(np.ndarray, frame.to_ndarray(format=image_format))
+    width = ((frame.width + 31) // 32) * 32
+    height = ((frame.height + 31) // 32) * 32
+    graph = cast(Any, av).filter.Graph()
+    source = graph.add_buffer(
+        width=frame.width,
+        height=frame.height,
+        format=frame.format.name,
+        time_base=time_base,
+    )
+    pad = graph.add("pad", f"{width}:{height}:0:0")
+    fill = graph.add(
+        "fillborders",
+        f"left=0:right={width - frame.width}:top=0:bottom={height - frame.height}:mode=smear",
+    )
+    sink = graph.add("buffersink")
+    source.link_to(pad)
+    pad.link_to(fill)
+    fill.link_to(sink)
+    graph.configure()
+    source.push(frame)
+    return np.ascontiguousarray(
+        sink.pull().to_ndarray(format=image_format)[: frame.height, : frame.width]
+    )
 
 
 def decode_image_components(source: ReadableImageSource) -> ImageComponents:
-    """Decode an openable asset without admitting it as a VIDEO value."""
+    """Decode an openable asset with ComfyUI's first-frame component policy."""
     import av
     import numpy as np
 
@@ -91,30 +106,31 @@ def decode_image_components(source: ReadableImageSource) -> ImageComponents:
         frame = cast(Any, next(container.decode(stream), None))
         if frame is None:
             raise ValueError("image source contains no decodable frame")
-    depth = max(component.bits for component in frame.format.components if not component.is_alpha)
-    alpha = any(component.is_alpha for component in frame.format.components)
-    byte_output = depth <= 8 and (frame.format.is_rgb or frame.color_range == 2)
-    format = "rgb24" if byte_output else "gbrpf32le"
-    converted = (
-        frame
-        if frame.format.name == format
-        else frame.reformat(
-            format=format,
-            src_colorspace=frame.colorspace if frame.colorspace not in (0, 2) else 5,
-            dst_colorspace=0,
-            src_color_range=2 if frame.format.is_rgb else frame.color_range or 1,
-            dst_color_range=2,
+        alpha = (
+            any(component.is_alpha for component in frame.format.components)
+            or frame.format.name == "pal8"
         )
-    )
-    pixels = cast(np.ndarray, converted.to_ndarray())
-    if not byte_output:
-        maximum = 255 if depth <= 8 else 65535
-        pixels = np.rint(np.clip(pixels, 0, 1) * maximum).astype(
-            np.uint8 if depth <= 8 else np.uint16
+        byte_format = frame.format.name in {
+            "yuvj420p",
+            "yuvj422p",
+            "yuvj444p",
+            "rgb24",
+            "rgba",
+            "pal8",
+        }
+        image_format = (
+            "rgba"
+            if alpha and byte_format
+            else "rgb24"
+            if byte_format
+            else "gbrapf32le"
+            if alpha
+            else "gbrpf32le"
         )
-    components_alpha = _alpha_pixels(frame) if alpha else None
-    orientation = _rotation(source)
-    return ImageComponents(
-        _orient(pixels, orientation),
-        _orient(components_alpha, orientation) if components_alpha is not None else None,
-    )
+        image = _convert(frame, image_format, stream.time_base)
+        if byte_format:
+            image = image.astype(np.float32) / 255.0
+        quadrant = _rotation_quadrant(frame)
+        if quadrant:
+            image = np.rot90(image, k=quadrant, axes=(0, 1)).copy()
+    return ImageComponents(image[..., :3], image[..., -1:] if alpha else None)
