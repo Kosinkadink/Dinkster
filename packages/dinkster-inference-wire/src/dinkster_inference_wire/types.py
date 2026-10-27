@@ -8,6 +8,7 @@ from dinkster_memory.resident import default_pool
 from dinkster_values import (
     AUDIO_ENCODER_OUTPUT_TYPE,
     AUDIO_ENCODER_TYPE,
+    BOUNDING_BOX_TYPE,
     CLIP_TYPE,
     CLIP_VISION_OUTPUT_TYPE,
     CLIP_VISION_TYPE,
@@ -19,6 +20,7 @@ from dinkster_values import (
     GUIDER_TYPE,
     HOOK_KEYFRAMES_TYPE,
     HOOKS_TYPE,
+    IC_LORA_PARAMETERS_TYPE,
     INFERENCE_LATENT_OPERATION_TYPE,
     LATENT_UPSCALE_MODEL_TYPE,
     LOAD3D_CAMERA_TYPE,
@@ -34,6 +36,7 @@ from dinkster_values import (
     STYLE_MODEL_TYPE,
     TIMESTEPS_RANGE_TYPE,
     TRACKS_TYPE,
+    UPSCALE_MODEL_TYPE,
     VAE_TYPE,
     WAN_CAMERA_EMBEDDING_TYPE,
     TypeRegistry,
@@ -52,6 +55,8 @@ from .hook_values import (
     normalize_hook_owners,
     register_hook_structural_type,
 )
+from .ic_lora_parameters import register_ic_lora_parameters_type
+from .loss_map import register_loss_map_type
 from .media_wire import (
     materialize_audio,
     materialize_image,
@@ -92,6 +97,7 @@ _RESIDENT_TYPE_IDS = (
     PHOTOMAKER_TYPE,
     INFERENCE_LATENT_OPERATION_TYPE,
     LATENT_UPSCALE_MODEL_TYPE,
+    UPSCALE_MODEL_TYPE,
     HOOKS_TYPE,
     HOOK_KEYFRAMES_TYPE,
 )
@@ -130,7 +136,7 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
             if type_id in registry
             else register_sampling_type(registry, type_id)
         )
-    for type_id in (COLOR_TYPE, COLORS_TYPE, RESOLUTION_PREVIEW_TYPE):
+    for type_id in (BOUNDING_BOX_TYPE, COLOR_TYPE, COLORS_TYPE, RESOLUTION_PREVIEW_TYPE):
         registered.append(
             registry.spec(type_id) if type_id in registry else registry.register(type_id)
         )
@@ -140,6 +146,11 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
             if type_id in registry
             else register_hook_structural_type(registry, type_id)
         )
+    registered.append(
+        registry.spec(IC_LORA_PARAMETERS_TYPE)
+        if IC_LORA_PARAMETERS_TYPE in registry
+        else register_ic_lora_parameters_type(registry)
+    )
     if CLIP_VISION_OUTPUT_TYPE not in registry:
         registry.register(
             CLIP_VISION_OUTPUT_TYPE,
@@ -177,6 +188,7 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
             registry.spec(type_id) if type_id in registry else register_wan_type(registry, type_id)
         )
     registered.extend(register_media_types(registry))
+    registered.append(register_loss_map_type(registry))
     return tuple(registered)
 
 

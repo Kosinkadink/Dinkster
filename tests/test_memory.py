@@ -306,19 +306,25 @@ def test_parallel_workflows_cannot_both_believe_memory_is_free() -> None:
     async def scenario() -> None:
         governor = MemoryGovernor({VRAM0: 100})
         order: list[str] = []
+        first_entered = asyncio.Event()
+        second_requested = asyncio.Event()
 
         async def first() -> None:
             async with governor.reserve(VRAM0, 80):
                 order.append("first-in")
-                await asyncio.sleep(0.05)
+                first_entered.set()
+                await second_requested.wait()
+                assert order == ["first-in"]
+                assert governor.reserved(VRAM0) == 80
             order.append("first-out")
 
         async def second() -> None:
-            await asyncio.sleep(0.01)  # let first win the device
+            await first_entered.wait()
+            second_requested.set()
             async with governor.reserve(VRAM0, 80):
                 order.append("second-in")
 
-        await asyncio.gather(first(), second())
+        await asyncio.wait_for(asyncio.gather(first(), second()), 2)
         assert order == ["first-in", "first-out", "second-in"]
 
     asyncio.run(scenario())

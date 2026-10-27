@@ -23,6 +23,7 @@ from dinkster_protocol import (
     derive_attention_route_token,
     is_extension_snapshot_digest,
     resolve_attention_runtime_status,
+    use_export_snapshot,
     validate_preview_animation,
     validate_preview_mode,
 )
@@ -137,6 +138,7 @@ def current_execution_context() -> ExecutionContext | None:
 def use_execution_context(context: ExecutionContext) -> Generator[None]:
     token = _execution_context.set(context)
     try:
-        yield
+        with use_export_snapshot(context.export_snapshot):
+            yield
     finally:
         _execution_context.reset(token)

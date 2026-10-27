@@ -787,12 +787,12 @@ def test_onset_curve_tracks_impulses_and_silent_audio() -> None:
     assert all(point[1] == 0 for point in silent.points)
 
 
-def test_long_onsets_respect_curve_point_budget() -> None:
+def test_long_onsets_retain_all_curve_points() -> None:
     waveform = np.zeros((1, 1, 5000), dtype=np.float32)
-    with pytest.warns(UserWarning, match="peak-aggregated"):
-        value = AudioOnsets.execute(audio={"waveform": waveform, "sample_rate": 1})["curve"]
+    value = AudioOnsets.execute(audio={"waveform": waveform, "sample_rate": 1})["curve"]
     assert isinstance(value, Curve)
-    assert len(value.points) == 2500
+    # Hand-derived: a one-sample hop keeps every timestamp, even beyond preview limits.
+    assert value.points == tuple((float(index), 0.0) for index in range(5000))
 
 
 def test_flac_seek_windows_are_sample_exact_and_decoder_bounded(

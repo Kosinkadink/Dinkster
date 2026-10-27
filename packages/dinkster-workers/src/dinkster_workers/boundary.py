@@ -830,14 +830,12 @@ def encode_invocation(
     if invocation.connected_undemanded_inputs:
         header["connectedUndemandedInputs"] = list(invocation.connected_undemanded_inputs)
     if invocation.export_snapshot is not None:
-        header["exportSnapshot"] = {
-            "prompt": dict(invocation.export_snapshot.prompt),
-            "extraPnginfo": (
-                None
-                if invocation.export_snapshot.extra_pnginfo is None
-                else dict(invocation.export_snapshot.extra_pnginfo)
-            ),
-        }
+        snapshot_wire: dict[str, object] = {}
+        if invocation.export_snapshot.prompt is not None:
+            snapshot_wire["prompt"] = dict(invocation.export_snapshot.prompt)
+        if invocation.export_snapshot.extra_pnginfo is not None:
+            snapshot_wire["extraPnginfo"] = dict(invocation.export_snapshot.extra_pnginfo)
+        header["exportSnapshot"] = snapshot_wire
     header["fp8Matmul"] = invocation.fp8_matmul
     if invocation.diffusion_dtype is not None:
         header["componentDtypes"] = {
@@ -940,18 +938,20 @@ def decode_invocation(
     export_snapshot = None
     if "exportSnapshot" in header:
         if not isinstance(export_snapshot_raw, Mapping):
-            raise BoundaryError("invocation exportSnapshot must contain prompt and extraPnginfo")
+            raise BoundaryError("invocation exportSnapshot must be an object")
         export_snapshot_wire = cast("Mapping[str, Any]", export_snapshot_raw)
-        if set(export_snapshot_wire) != {
-            "prompt",
-            "extraPnginfo",
-        }:
-            raise BoundaryError("invocation exportSnapshot must contain prompt and extraPnginfo")
+        if set(export_snapshot_wire) - {"prompt", "extraPnginfo"}:
+            raise BoundaryError("invocation exportSnapshot has unknown fields")
+        for field_name in ("prompt", "extraPnginfo"):
+            if field_name in export_snapshot_wire and not isinstance(
+                export_snapshot_wire[field_name], Mapping
+            ):
+                raise BoundaryError(f"invocation exportSnapshot {field_name} must be an object")
         try:
             export_snapshot = ExportSnapshot(
-                prompt=cast("Mapping[str, object]", export_snapshot_wire["prompt"]),
+                prompt=cast("Mapping[str, object] | None", export_snapshot_wire.get("prompt")),
                 extra_pnginfo=cast(
-                    "Mapping[str, object] | None", export_snapshot_wire["extraPnginfo"]
+                    "Mapping[str, object] | None", export_snapshot_wire.get("extraPnginfo")
                 ),
             )
         except ValueError as exc:

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from dinkster_api.v1 import current_export_snapshot
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EngineEvent
 from dinkster_graph import Graph, GraphNode
@@ -114,6 +116,12 @@ class ExecutionContextProbe(Node):
     def execute(cls) -> Mapping[str, object]:
         context = current_execution_context()
         assert context is not None
+        snapshot = current_export_snapshot()
+        assert snapshot == context.export_snapshot
+        if snapshot is not None:
+            assert context.export_snapshot is not None
+            assert snapshot is not context.export_snapshot
+            assert snapshot.prompt is not context.export_snapshot.prompt
         return cls.outputs(
             value="|".join(
                 (
@@ -121,11 +129,7 @@ class ExecutionContextProbe(Node):
                     context.arm or "",
                     context.expected_execution_identity or "",
                     context.extension_snapshot_digest or "",
-                    (
-                        "none"
-                        if context.export_snapshot is None
-                        else str(context.export_snapshot.prompt)
-                    ),
+                    ("none" if snapshot is None else str(snapshot.prompt)),
                     str(context.fp8_matmul),
                     str(context.cancelled()),
                 )
@@ -133,8 +137,21 @@ class ExecutionContextProbe(Node):
         )
 
 
-def test_sync_node_does_not_block_loop_and_reports_from_thread() -> None:
+def test_sync_node_does_not_block_loop_and_reports_from_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     async def scenario() -> None:
+        loop = asyncio.get_running_loop()
+        entered = asyncio.Event()
+        release = threading.Event()
+        original_execute = SlowSyncNode.execute
+
+        def pause_execution(_cls: type[SlowSyncNode]) -> Mapping[str, object]:
+            loop.call_soon_threadsafe(entered.set)
+            assert release.wait(2)
+            return original_execute()
+
+        monkeypatch.setattr(SlowSyncNode, "execute", classmethod(pause_execution))
         events: list[EngineEvent] = []
         registry = TypeRegistry()
         register_core_types(registry)
@@ -148,9 +165,12 @@ def test_sync_node_does_not_block_loop_and_reports_from_thread() -> None:
         run = asyncio.create_task(
             engine.run(Graph(nodes={"slow": GraphNode("review.slow", {})}), ["slow"])
         )
-        await asyncio.sleep(0.02)
-        assert not run.done()
-        await run
+        try:
+            await asyncio.wait_for(entered.wait(), 2)
+            assert not run.done()
+        finally:
+            release.set()
+            await run
         assert any(
             event.kind == "node_event" and event.detail["name"] == "review.thread"
             for event in events
@@ -160,6 +180,8 @@ def test_sync_node_does_not_block_loop_and_reports_from_thread() -> None:
 
 
 def test_in_process_worker_supplies_invocation_execution_context() -> None:
+    assert current_export_snapshot() is None
+
     async def scenario() -> None:
         registry = TypeRegistry()
         register_core_types(registry)
@@ -192,6 +214,7 @@ def test_in_process_worker_supplies_invocation_execution_context() -> None:
         )
 
     asyncio.run(scenario())
+    assert current_export_snapshot() is None
 
 
 def test_worker_requires_exact_optional_startup_attention_evidence() -> None:
