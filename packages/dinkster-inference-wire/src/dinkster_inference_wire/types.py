@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from functools import partial
+
 from dinkster_memory.resident import default_pool
 from dinkster_values import (
     AUDIO_ENCODER_OUTPUT_TYPE,
@@ -19,6 +21,8 @@ from dinkster_values import (
     HOOKS_TYPE,
     INFERENCE_LATENT_OPERATION_TYPE,
     LATENT_UPSCALE_MODEL_TYPE,
+    LOAD3D_CAMERA_TYPE,
+    LORA_MODEL_TYPE,
     MODEL_PATCH_TYPE,
     MODEL_TYPE,
     NOISE_TYPE,
@@ -34,9 +38,14 @@ from dinkster_values import (
     WAN_CAMERA_EMBEDDING_TYPE,
     TypeRegistry,
     TypeSpec,
+    decode_latent,
+    encode_latent,
+    latent_fingerprint,
     register_resident_type,
+    validate_latent_encoded,
 )
 
+from .camera_wire import register_load3d_camera_type
 from .conditioning_wire import CONDITIONING_TYPE_ID, register_conditioning_type
 from .hook_values import (
     normalize_clip_hook_owners,
@@ -145,6 +154,24 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
         if SAM3_TRACK_DATA_TYPE in registry
         else register_sam3_track_type(registry)
     )
+    registered.append(
+        registry.spec(LOAD3D_CAMERA_TYPE)
+        if LOAD3D_CAMERA_TYPE in registry
+        else register_load3d_camera_type(registry)
+    )
+    if LORA_MODEL_TYPE not in registry:
+        registry.register(
+            LORA_MODEL_TYPE,
+            encode=partial(encode_latent, preserve_mapping_order=True),
+            decode=partial(decode_latent, require_samples=False, preserve_mapping_order=True),
+            fingerprint=latent_fingerprint(LORA_MODEL_TYPE, preserve_mapping_order=True),
+            validate_encoded=partial(
+                validate_latent_encoded,
+                require_samples=False,
+                preserve_mapping_order=True,
+            ),
+        )
+    registered.append(registry.spec(LORA_MODEL_TYPE))
     for type_id in (WAN_CAMERA_EMBEDDING_TYPE, TRACKS_TYPE, AUDIO_ENCODER_OUTPUT_TYPE):
         registered.append(
             registry.spec(type_id) if type_id in registry else register_wan_type(registry, type_id)
