@@ -2195,6 +2195,7 @@ def test_media_ingest_interruption_and_store_failure_are_atomic(tmp_path: Path) 
 
 def test_media_ingest_cancellation_retains_publication_serialization(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class Content:
         async def iter_chunked(self, _size: int) -> AsyncIterator[bytes]:
@@ -2219,6 +2220,15 @@ def test_media_ingest_cancellation_retains_publication_serialization(
             vault=AssetVault(tmp_path / "vault"),
             store=LibraryStore(tmp_path / "library.sqlite"),
         )
+        waiting = asyncio.Event()
+        original_acquire = library.media_ingest_lock.acquire
+
+        async def acquire() -> bool:
+            if library.media_ingest_lock.locked():
+                waiting.set()
+            return await original_acquire()
+
+        monkeypatch.setattr(library.media_ingest_lock, "acquire", acquire)
         entered = threading.Event()
         release = threading.Event()
         original = library.store.grant_media_result
@@ -2241,7 +2251,7 @@ def test_media_ingest_cancellation_retains_publication_serialization(
         second = asyncio.create_task(
             handle_media_upload(cast(web.Request, Request(library, "second.png")))
         )
-        await asyncio.sleep(0.05)
+        await asyncio.wait_for(waiting.wait(), 5)
         assert not second.done()
         release.set()
         with pytest.raises(asyncio.CancelledError):

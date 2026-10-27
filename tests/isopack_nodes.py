@@ -9,6 +9,7 @@ import os
 import sys
 import time
 from collections.abc import Mapping
+from pathlib import Path
 
 from dinkster_memory import InvocationView, ReservationRequest
 from dinkster_protocol import (
@@ -246,6 +247,8 @@ class LazyProbe(Node):
             raise RuntimeError("lazy cancellation probe is already active")
         cls._cancel_active = True
         try:
+            if entered := os.environ.get("ISOPACK_LAZY_CANCEL_ENTERED"):
+                Path(entered).touch()
             await asyncio.sleep(30)
         finally:
             cls._cancel_active = False
