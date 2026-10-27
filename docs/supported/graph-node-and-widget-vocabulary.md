@@ -24,7 +24,9 @@
 - Required closed dynamic slots can bind their selected variant type to shared
   input and output variables, including list and asset element types
 - Widgets: asset, save-target, combo and multi-combo with optional labels,
-  per-option info, and folder paths; combo options derived from dynamic input
+  per-option info, and folder paths; static combo choices preserve strings,
+  booleans and finite numbers without conversion. Multi-combo choices remain
+  strings. Combo options derived from dynamic input
   family members with stable stored IDs and separately editable labels;
   boolean; number (number/slider/knob/gradientslider displays), string, color,
   curve editor and graph-native image compositor,

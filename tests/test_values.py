@@ -299,12 +299,32 @@ class ComboStringSubclass(str):
     pass
 
 
-@pytest.mark.parametrize(
-    "invalid", [True, 1, 1.5, None, {}, [], ["euler"], ComboStringSubclass("euler")]
-)
-def test_core_combo_rejects_non_string_values(invalid: object) -> None:
+@pytest.mark.parametrize("selected", [False, True, 0, 1, 8, 10, 1.5, -2.75, "8"])
+def test_core_combo_preserves_scalar_type_and_identity(selected: object) -> None:
     registry = make_registry()
-    with pytest.raises(TypeError, match="COMBO expects a string"):
+    value = registry.wrap(CORE_COMBO, selected)
+    spec = registry.spec(CORE_COMBO)
+    decoded = spec.decode(spec.encode(value.resolve()))
+    assert type(decoded) is type(selected)
+    assert decoded == selected
+    assert type(registry.inline_of(value)) is type(selected)
+    assert registry.inline_of(value) == selected
+    assert spec.validate_encoded is not None
+    spec.validate_encoded(spec.encode(selected), {})
+    assert (
+        value.fingerprint != registry.wrap(CORE_COMBO, str(selected)).fingerprint
+        or type(selected) is str
+    )
+    if type(selected) is bool:
+        assert value.fingerprint != registry.wrap(CORE_COMBO, int(selected)).fingerprint
+
+
+@pytest.mark.parametrize(
+    "invalid", [None, {}, [], ["euler"], ComboStringSubclass("euler"), float("nan"), float("inf")]
+)
+def test_core_combo_rejects_non_scalar_values(invalid: object) -> None:
+    registry = make_registry()
+    with pytest.raises((TypeError, ValueError), match="COMBO expects"):
         registry.wrap(CORE_COMBO, invalid)
 
 
@@ -314,9 +334,9 @@ def test_core_combo_rejects_non_string_values(invalid: object) -> None:
         b"",
         b"json:",
         b"json:null",
-        b"json:true",
-        b"json:1",
-        b"json:1.5",
+        b"json:NaN",
+        b"json:Infinity",
+        b"json:-Infinity",
         b"json:{}",
         b"json:[]",
         b'json:["euler"]',
@@ -324,7 +344,7 @@ def test_core_combo_rejects_non_string_values(invalid: object) -> None:
         b'pickle:"euler"',
     ],
 )
-def test_core_combo_rejects_noncanonical_or_non_string_encoded_values(
+def test_core_combo_rejects_noncanonical_or_non_scalar_encoded_values(
     data: bytes,
 ) -> None:
     validator = make_registry().spec(CORE_COMBO).validate_encoded

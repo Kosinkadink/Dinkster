@@ -1,6 +1,6 @@
 """Morphology and color conversion preserve ComfyUI's ordered interfaces."""
 
-from dinkster_api.v1 import ComboWidget
+from dinkster_api.v1 import ComboOption, ComboWidget
 from dinkster_nodes_comfy.morphology import MORPHOLOGY_NODES
 
 
@@ -32,7 +32,7 @@ def test_morphology_nodes_preserve_image_ports_and_operation_choices() -> None:
     widget = schema.inputs[1].widget
     assert isinstance(widget, ComboWidget)
     assert tuple(
-        option if isinstance(option, str) else option.value for option in widget.options
+        option.value if isinstance(option, ComboOption) else option for option in widget.options
     ) == (
         "erode",
         "dilate",

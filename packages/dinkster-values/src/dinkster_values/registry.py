@@ -11,6 +11,7 @@ fingerprint is an optimization, never a prerequisite.
 from __future__ import annotations
 
 import json
+import math
 import pickle
 from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
@@ -1008,10 +1009,12 @@ class TypeRegistry:
         return Value(type_id=type_id, fingerprint=fp, meta=meta, payload=PyObjPayload(obj))
 
 
-def _coerce_combo(obj: object) -> str:
-    if type(obj) is not str:
-        raise TypeError(f"COMBO expects a string, got {type(obj).__name__}")
-    return obj
+def _coerce_combo(obj: object) -> str | bool | int | float:
+    if type(obj) not in (str, bool, int, float):
+        raise TypeError(f"COMBO expects a JSON scalar, got {type(obj).__name__}")
+    if type(obj) is float and not math.isfinite(obj):
+        raise ValueError("COMBO expects a finite number")
+    return cast("str | bool | int | float", obj)
 
 
 def _validate_combo_encoded(data: bytes, _metadata: Mapping[str, object]) -> None:
