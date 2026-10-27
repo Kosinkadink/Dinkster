@@ -22,6 +22,7 @@ from dinkster_values import (
     TypeRegistry,
     decode_video,
     edit_video,
+    effective_video_facts,
     encode_video,
     video_fingerprint,
     video_from_source,
@@ -191,6 +192,96 @@ def test_non_packet_aligned_trim_transcodes_without_snapping() -> None:
     assert decoded["frame_count"] == 4
     images = cast(np.ndarray, image_input(decoded["images"]))
     assert np.max(np.abs(images[:, 0, 0, 0] - np.arange(2, 6) * 10 / 255)) < 0.02
+
+
+@pytest.mark.parametrize("first", [0, 4])
+@pytest.mark.parametrize("origin", [0, 2])
+def test_fractional_encoded_trim_uses_half_open_stream_ticks(first: int, origin: int) -> None:
+    from dinkster_video import iter_video_pixels
+
+    rate = Fraction(30000, 1001)
+    pixels = (np.arange(7 * 4 * 32 * 3).reshape(7, 4, 32, 3) % 251).astype(np.uint8)
+    encoded = io.BytesIO()
+    save_video_stream(assemble_video(pixels, fps=rate), encoded, codec="ffv1", container="mkv")
+    if origin:
+        shifted = io.BytesIO()
+        with (
+            av.open(io.BytesIO(encoded.getvalue()), "r") as source,
+            av.open(shifted, "w", format="matroska") as destination,
+        ):
+            target = cast(Any, destination).add_stream_from_template(source.streams.video[0])
+            for packet in source.demux(video=0):
+                if packet.dts is not None:
+                    assert packet.pts is not None
+                    shift = int(Fraction(origin) / packet.time_base)
+                    packet.pts += shift
+                    packet.dts += shift
+                    packet.stream = target
+                    destination.mux(packet)
+        encoded = shifted
+    value = video_from_source(encoded.getvalue())
+    assert cast(dict[str, Any], value["probe"])["start_time"] == origin
+    assert cast(dict[str, Any], value["probe"])["time_base"] == Fraction(1, 1000)
+    assert cast(dict[str, Any], value["probe"])["duration"] == origin + Fraction(233, 1000)
+    start, duration = first / rate, 3 / rate
+    selected_duration = min(duration, origin + Fraction(233, 1000) - start)
+    trimmed = edit_video(value, {"trim": {"start_time": start, "duration": duration}})
+    # Fixed F truncates these bounds to ticks: head [0,100), tail [133,233).
+    expected = pixels[first : first + 3].astype(np.float32) / 255
+    frames = list(iter_video_pixels(trimmed))
+    np.testing.assert_array_equal(np.stack([array for _, array in frames]), expected)
+    source_ticks = [0, 33, 67] if first == 0 else [133, 167, 200]
+    assert [time for time, _ in frames] == [Fraction(tick, 1000) - start for tick in source_ticks]
+    decoded = disassemble_video(trimmed)
+    np.testing.assert_array_equal(image_input(decoded["images"]), expected)
+    assert decoded["duration"] == float(selected_duration)
+    assert decoded["fps"] == float(rate)
+    assert effective_video_facts(trimmed)["duration"] == selected_duration
+    chained = edit_video(
+        edit_video(value, {"trim": {"start_time": 0, "duration": 7 / rate}}),
+        {"trim": {"start_time": start, "duration": duration}},
+    )
+    np.testing.assert_array_equal(disassemble_video(chained)["images"], decoded["images"])
+    saved = io.BytesIO()
+    save_video_stream(trimmed, saved, codec="ffv1", container="mkv")
+    np.testing.assert_array_equal(
+        image_input(disassemble_video(video_from_source(saved.getvalue()))["images"]), expected
+    )
+    assert value["edits"] == []
+
+
+@pytest.mark.parametrize("encoded", [False, True])
+def test_fractional_trim_keeps_rational_timeline_and_audio_samples(encoded: bool) -> None:
+    from dinkster_video import iter_video_pixels
+    from dinkster_video.runtime import iter_video_audio
+
+    rate = Fraction(30000, 1001)
+    pixels = (np.arange(7 * 4 * 32 * 3).reshape(7, 4, 32, 3) % 251).astype(np.uint8)
+    pcm = np.arange(2 * 12000, dtype=np.float32).reshape(1, 2, 12000) / 32768
+    value = assemble_video(pixels, fps=rate, audio={"waveform": pcm, "sample_rate": 48000})
+    if encoded:
+        output = io.BytesIO()
+        save_video_stream(value, output, codec="ffv1", container="mkv")
+        value = video_from_source(output.getvalue())
+    start, duration = 4 / rate, 3 / rate
+    trimmed = edit_video(value, {"trim": {"start_time": start, "duration": duration}})
+    frames = list(iter_video_pixels(trimmed))
+    expected_times = (
+        [Fraction(tick, 1000) - start for tick in (133, 167, 200)]
+        if encoded
+        else [0, 1 / rate, 2 / rate]
+    )
+    assert [time for time, _ in frames] == expected_times
+    np.testing.assert_array_equal(
+        np.stack([array for _, array in frames]), pixels[4:].astype(np.float32) / 255
+    )
+    audio = list(iter_video_audio(trimmed))
+    assert audio[0][0] == Fraction(6407, 48000) - start
+    np.testing.assert_array_equal(
+        np.concatenate([frame.to_ndarray() for _, frame in audio], axis=1), pcm[0, :, 6407:11212]
+    )
+    assert effective_video_facts(trimmed)["duration"] == duration
+    assert value["edits"] == []
 
 
 def test_mkv_unchanged_is_exact_source_copy(monkeypatch: pytest.MonkeyPatch) -> None:
