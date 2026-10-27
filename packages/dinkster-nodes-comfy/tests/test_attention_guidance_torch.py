@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,7 @@ from dinkster_nodes_comfy.attention_guidance import (
     SelfAttentionGuidance,
     SkipLayerGuidanceDiT,
     SkipLayerGuidanceDiTSimple,
+    SkipLayerGuidanceSD3,
 )
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -213,6 +215,26 @@ def test_sag_stored_callback_handles_a_one_by_one_attention_grid(
     torch.testing.assert_close(actual, expected)
 
 
+def test_sd3_skip_layer_guidance_preserves_window_and_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, _, samplers = _runtime()
+    monkeypatch.setattr(samplers, "calc_cond_batch", _controlled_calc)
+    source = Patcher()
+    value = _asymmetric((1, 1, 5, 8), -4.0)
+    patched = SkipLayerGuidanceSD3.execute(
+        model=source, layers="2, 7", scale=1.75, start_percent=0.2, end_percent=0.8
+    )["MODEL"]
+    for sigma in (2.0, 5.0, 8.0):
+        args = _post_args(value, sigma)
+        expected = value + (args["cond_denoised"] - (args["input"] * 0.5 + 4.0)) * 1.75
+        torch.testing.assert_close(patched.post[0](args), expected, rtol=0, atol=0)
+    for sigma in (1.9, 8.1):
+        assert patched.post[0](_post_args(value, sigma)) is value
+    assert patched is not source
+    assert source.post == []
+
+
 def test_skip_layer_callbacks_cover_windows_rescaling_and_missing_uncond(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -323,6 +345,13 @@ class ModelConsumer(Node):
         slg_guided = value + (slg_args["cond_denoised"] - skipped) * 1.25
         slg_expected = slg_guided * (0.4 * slg_args["cond_denoised"].std() / slg_guided.std() + 0.6)
         torch.testing.assert_close(slg, slg_expected)
+        assert len(model.post) == 4
+        for sigma in (2.0, 5.0, 8.0):
+            args = _post_args(value, sigma)
+            expected = value + (args["cond_denoised"] - (args["input"] * 0.5 + 4.0)) * 1.75
+            torch.testing.assert_close(model.post[3](args), expected, rtol=0, atol=0)
+        for sigma in (1.9, 8.1):
+            assert model.post[3](_post_args(value, sigma)) is value
         simple_args = {
             "model": "runtime-model",
             "conds": ["cond", "uncond"],
@@ -348,7 +377,12 @@ def test_ordinary_manifest_executes_active_attention_guidance_callbacks_twice(
 
     async def scenario() -> None:
         composer = ServingComposer(
-            worker_env={"PYTHONPATH": str(Path(__file__).parent), "DINKSTER_ACCELERATOR": "cpu"}
+            worker_env={
+                "PYTHONPATH": os.pathsep.join(
+                    (str(Path(__file__).parent), os.environ.get("PYTHONPATH", ""))
+                ),
+                "DINKSTER_ACCELERATOR": "cpu",
+            }
         )
         try:
             manifest = Path(__file__).parents[1] / "dinkster-pack.toml"
@@ -358,23 +392,28 @@ def test_ordinary_manifest_executes_active_attention_guidance_callbacks_twice(
                 "initialize_inference_process()\n"
                 "from dinkster_inference import samplers\n"
                 "from test_attention_guidance_torch import FIXTURE_NODES, _controlled_calc\n"
-                "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_inference_wire import register_inference_types\n"
                 "samplers.calc_cond_batch = _controlled_calc\n"
-                "NODES = (*COMFY_NODES, *FIXTURE_NODES)\n",
+                "NODES = FIXTURE_NODES\n",
                 encoding="ascii",
             )
             fixture_manifest = tmp_path / "dinkster-pack.toml"
             fixture_manifest.write_text(
-                manifest.read_text(encoding="ascii")
-                .replace("namespaces = [", 'namespaces = ["attention-guidance-fixture",')
-                .replace("dinkster_nodes_comfy:COMFY_NODES", f"{module}:NODES")
-                .replace(
-                    "dinkster_nodes_comfy:register_inference_types",
-                    f"{module}:register_inference_types",
-                ),
+                '[pack]\nname = "attention-guidance-fixture"\npublisher = "dinkster"\n'
+                'namespaces = ["attention-guidance-fixture"]\n[pack.entry]\n'
+                f'nodes = "{module}:NODES"\ntypes = "{module}:register_inference_types"\n',
                 encoding="ascii",
             )
-            await composer.add_pack(PackSpec(manifest=fixture_manifest, in_process=in_process))
+            for pack_manifest in (manifest, fixture_manifest):
+                await composer.add_pack(
+                    PackSpec(manifest=pack_manifest, in_process=True)
+                    if in_process
+                    else PackSpec(
+                        manifest=pack_manifest,
+                        worker_group="attention-guidance-fixture",
+                        group_manifests=(manifest, fixture_manifest),
+                    )
+                )
             graph = Graph(
                 nodes={
                     "source": GraphNode("attention-guidance-fixture.source"),
@@ -398,10 +437,20 @@ def test_ordinary_manifest_executes_active_attention_guidance_callbacks_twice(
                             "rescaling_scale": 0.4,
                         },
                     ),
+                    "sd3": GraphNode(
+                        "SkipLayerGuidanceSD3",
+                        {
+                            "model": Link("slg", "MODEL"),
+                            "layers": "2, 7",
+                            "scale": 1.75,
+                            "start_percent": 0.2,
+                            "end_percent": 0.8,
+                        },
+                    ),
                     "simple": GraphNode(
                         "SkipLayerGuidanceDiTSimple",
                         {
-                            "model": Link("slg", "MODEL"),
+                            "model": Link("sd3", "MODEL"),
                             "double_layers": "1",
                             "single_layers": "3",
                             "start_percent": 0.0,

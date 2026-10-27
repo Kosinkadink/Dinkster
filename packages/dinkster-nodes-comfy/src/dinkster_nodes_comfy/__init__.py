@@ -22,6 +22,7 @@ from .attention_guidance import ATTENTION_GUIDANCE_NODES
 from .attention_multiply import ATTENTION_MULTIPLY_NODES
 from .audio_combine import AUDIO_COMBINE_NODES
 from .audio_effects import AUDIO_EFFECT_NODES
+from .audio_encoder import AUDIO_ENCODER_NODES
 from .audio_generators import AUDIO_GENERATOR_NODES
 from .audio_latent import AUDIO_LATENT_NODES, GetAudioLatentSize
 from .audio_music_conditioning import AUDIO_MUSIC_CONDITIONING_NODES
@@ -34,6 +35,7 @@ from .cfg_guidance import CFG_GUIDANCE_NODES
 from .cfg_guiders import CFG_GUIDER_NODES
 from .chroma_options import ChromaRadianceOptions
 from .clip import CLIP_NODES
+from .clip_loaders import QuadrupleCLIPLoader, TripleCLIPLoader
 from .clip_model_specific import MODEL_TEXT_ENCODER_NODES
 from .clip_sd3 import CLIPTextEncodeSD3
 from .clip_sdxl import CLIP_SDXL_NODES
@@ -49,12 +51,14 @@ from .dataset_collections import DATASET_COLLECTION_NODES
 from .dataset_groups import DATASET_GROUP_NODES
 from .dataset_images import DATASET_IMAGE_NODES
 from .dataset_text import DATASET_TEXT_NODES
+from .dataset_video import DATASET_VIDEO_NODES
 from .device_routing import DEVICE_ROUTING_NODES
 from .fibo2_encoders import TextEncodeFibo2
 from .flux_conditioning import FLUX_CONDITIONING_NODES
 from .flux_image_layout import FLUX_IMAGE_LAYOUT_NODES
 from .freeu import FREEU_NODES
 from .gligen_conditioning import GLIGENTextBoxApply
+from .hidream_patches import HiDreamO1PatchSeamSmoothing, HiDreamO1ReferenceImages
 from .hook_checkpoint import HOOK_CHECKPOINT_NODES
 from .hook_conditioning import HOOK_CONDITIONING_NODES
 from .hook_lora import HOOK_LORA_NODES
@@ -70,6 +74,7 @@ from .image_core import IMAGE_CORE_NODES
 from .image_crop import ImageCropV2, PrimitiveBoundingBox
 from .image_dimensions import IMAGE_DIMENSION_NODES
 from .image_filters import IMAGE_FILTER_NODES
+from .image_tiles import ImageMergeTileList, SplitImageToTileList
 from .image_transform import IMAGE_TRANSFORM_NODES
 from .inpaint import INPAINT_NODES
 from .joyimage_encoders import TextEncodeJoyImageEdit
@@ -81,8 +86,10 @@ from .latent_model_specific import MODEL_LATENT_NODES
 from .latent_operations import LATENT_OPERATION_NODES
 from .latent_upscale import LATENT_UPSCALE_NODES
 from .latent_upscale_loader import LATENT_UPSCALE_LOADER_NODES
+from .list_utilities import LIST_UTILITY_NODES
 from .logic import LOGIC_NODES
 from .loops import LOOP_NODES
+from .lotus import LotusConditioning
 from .ltx_audio import LTX_AUDIO_NODES
 from .ltx_av_latent import LTX_AV_LATENT_NODES
 from .ltx_duration import LTXVDurationPredictor
@@ -92,6 +99,7 @@ from .ltx_video_preprocess import LTX_VIDEO_PREPROCESS_NODES
 from .mage_image_encoders import TextEncodeMageFlowEdit
 from .marigold import MarigoldV2PostProcess
 from .mask import MASK_NODES
+from .mask_preview import MaskPreview
 from .math import ComfyMathExpression
 from .ming_image_encoders import TextEncodeMingImageEdit
 from .minimax_h3_latent import EmptyMiniMaxH3LatentAV, MiniMaxH3AddGuide, MiniMaxH3ImageToVideo
@@ -126,8 +134,10 @@ from .qwen_image_encoders import (
 from .rebatch import REBATCH_NODES
 from .reference_conditioning import REFERENCE_CONDITIONING_NODES
 from .rope_and_mask import ROPE_AND_MASK_NODES
+from .rtdetr import RTDETR_NODES
 from .sampler_factories import SAMPLER_FACTORY_NODES
 from .save_text import SaveText
+from .scail_masks import SCAIL2ColoredMask
 from .sd_upscale_conditioning import SD_UPSCALE_CONDITIONING_NODES
 from .seedvr_conditioning import SeedVR2Conditioning
 from .seedvr_postprocess import SeedVR2PostProcessing
@@ -146,23 +156,32 @@ from .supir import SUPIRApply
 from .switch import ComfySwitchNode
 from .text import TEXT_NODES
 from .text_generation import TextGenerate, TextGenerateLTX2Prompt
-from .utilities import ComfyNumberConvert, SeedNode
+from .utilities import ComfyNumberConvert, PreviewAny, SeedNode
 from .vae import VAE_NODES
 from .video_conditioning import VIDEO_CONDITIONING_NODES
+from .video_frame_sample import VideoFrameSample
 from .video_guidance import VIDEO_GUIDANCE_NODES
 from .video_latent import VIDEO_LATENT_NODES
 from .video_latent_ops import VIDEO_LATENT_OPERATION_NODES
 from .wan22_latent import Wan22ImageToVideoLatent
 from .wan_animate import WAN_ANIMATE_NODES
+from .wan_camera import WanCameraEmbedding
+from .wan_camera_conditioning import WanCameraImageToVideo
 from .wan_control_conditioning import WAN_CONTROL_CONDITIONING_NODES
 from .wan_image_conditioning import WanFirstLastFrameToVideo, WanFunInpaintToVideo, WanImageToVideo
+from .wan_infinite_talk import WanInfiniteTalkToVideo
+from .wan_move_conditioning import WanMoveTrackToVideo
+from .wan_move_tracks import GenerateTracks, WanMoveConcatTrack, WanMoveTracksFromCoords
+from .wan_move_visualize import WanMoveVisualizeTracks
 from .wan_scail_conditioning import WanSCAILToVideo
+from .wan_sound import WanHuMoImageToVideo, WanSoundImageToVideo, WanSoundImageToVideoExtend
 from .wan_track_conditioning import WanTrackToVideo
 from .wan_uni3c import WanUni3CControlnetApply
 from .wandancer_keyframes import WANDANCER_KEYFRAME_NODES
 from .zimage_encoders import TextEncodeZImageOmni
 
 COMFY_NODES = (
+    *AUDIO_ENCODER_NODES,
     *TEXT_NODES,
     *DATASET_TEXT_NODES,
     SaveText,
@@ -181,6 +200,11 @@ COMFY_NODES = (
     *ATTENTION_MULTIPLY_NODES,
     *ATTENTION_GUIDANCE_NODES,
     *CACHE_NODES,
+    HiDreamO1PatchSeamSmoothing,
+    HiDreamO1ReferenceImages,
+    TripleCLIPLoader,
+    QuadrupleCLIPLoader,
+    LotusConditioning,
     *MODEL_MERGE_NODES,
     *MODEL_SPECIFIC_MERGE_NODES,
     *MODEL_ADVANCED_NODES,
@@ -289,6 +313,12 @@ COMFY_NODES = (
     *WANDANCER_KEYFRAME_NODES,
     LTXVDurationPredictor,
     MiniMaxH3AddGuide,
+    *DATASET_VIDEO_NODES,
+    *LIST_UTILITY_NODES,
+    SplitImageToTileList,
+    ImageMergeTileList,
+    MaskPreview,
+    PreviewAny,
     WanImageToVideo,
     WanFirstLastFrameToVideo,
     WanFunInpaintToVideo,
@@ -297,6 +327,18 @@ COMFY_NODES = (
     WanSCAILToVideo,
     WanTrackToVideo,
     *WAN_ANIMATE_NODES,
+    WanCameraEmbedding,
+    WanCameraImageToVideo,
+    WanMoveTracksFromCoords,
+    GenerateTracks,
+    WanMoveConcatTrack,
+    WanMoveTrackToVideo,
+    WanMoveVisualizeTracks,
+    WanSoundImageToVideo,
+    WanSoundImageToVideoExtend,
+    WanHuMoImageToVideo,
+    WanInfiniteTalkToVideo,
+    SCAIL2ColoredMask,
     *COLOR_RESOLUTION_NODES,
     BuildJsonPromptIdeogram,
     MOSSImageLayoutPrompt,
@@ -318,6 +360,8 @@ COMFY_NODES = (
     PhotoMakerEncode,
     ImageCropV2,
     PrimitiveBoundingBox,
+    *RTDETR_NODES,
+    VideoFrameSample,
 )
 
 

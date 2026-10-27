@@ -33,6 +33,7 @@ def test_attention_guidance_schemas_are_registered_with_fixed_core_interfaces() 
                 "rescaling_scale",
             ),
         ),
+        ("SkipLayerGuidanceSD3", ("model", "layers", "scale", "start_percent", "end_percent")),
         (
             "SkipLayerGuidanceDiTSimple",
             ("model", "double_layers", "single_layers", "start_percent", "end_percent"),
@@ -68,7 +69,7 @@ def test_attention_guidance_schema_registration_does_not_import_torch_or_inferen
             "schemas = [node.define_schema() for node in ATTENTION_GUIDANCE_NODES]\n"
             "assert [schema.node_type for schema in schemas] == [\n"
             "    'SelfAttentionGuidance', 'PerturbedAttentionGuidance',\n"
-            "    'SkipLayerGuidanceDiT', 'SkipLayerGuidanceDiTSimple'\n"
+            "    'SkipLayerGuidanceDiT', 'SkipLayerGuidanceSD3', 'SkipLayerGuidanceDiTSimple'\n"
             "]\n",
         ],
         check=True,
