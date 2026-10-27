@@ -43,8 +43,9 @@
   LoRA model metadata, including sparse spatial reference downscaling.
 - LTXV reference-audio, spatio-temporal and modality guidance preserve the source
   model and apply guidance within the requested sampling window. The dual-CFG
-  guider exposes separate video/audio scales; native multi-stream AV sampling
-  compatibility is not established.
+  guider applies separate video/audio scales to native multi-stream latents.
+  Controlled CPU predictions cover nonempty Euler sampling, masks, seeded noise
+  and denoised output restoration; real-model AV sampling is not validated.
 - MiniMax H3 reference conditioning pairs image, video and soundtrack inputs;
   Fun ControlNet applies scheduled control while preserving the source model. CPU tests
   use controlled encoders and predictions, not real-model or GPU execution.
