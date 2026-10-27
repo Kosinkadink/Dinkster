@@ -92,6 +92,104 @@ def _save_frames(
     return {"video": result["asset"]}
 
 
+@pytest.mark.parametrize("published", (False, True))
+def test_public_video_admission_respects_bound_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, published: bool
+) -> None:
+    from dinkster_api.v1 import admit_video_source
+    from dinkster_assets import LocalAssetRef, MountDef, MountTable
+    from dinkster_assets import value as asset_value
+    from dinkster_values import video_source
+    from dinkster_video import save_video_stream
+
+    root = tmp_path / "input"
+    root.mkdir()
+    path = root / "clip.mp4"
+    with path.open("w+b") as output:
+        save_video_stream(assemble_video(_frames(), fps=7), output)
+    data = path.read_bytes()
+    table = MountTable(tmp_path / "mounts.json")
+    table.add(MountDef(id="input", path=root), kind="media/video")
+    bound = table.bind_name(path.name, "media/video")
+    assert isinstance(bound, LocalAssetRef)
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "vault"))
+    monkeypatch.setattr(asset_value, "VIDEO_INLINE_LIMIT", 0 if published else len(data))
+    admitted = admit_video_source(bound)
+    source = video_source(admitted)
+    if published:
+        assert isinstance(source, AssetRef)
+        assert source.digest == digest_bytes(data)
+        assert source.read_bytes() == data
+        assert video_source(admit_video_source(source)) is source
+    else:
+        assert source == data
+    assert bound.read_bytes() == data
+
+
+@pytest.mark.parametrize("source_kind", ("bytes", "path", "local", "asset"))
+def test_video_admission_enforces_size_before_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_kind: str
+) -> None:
+    from dinkster_api.v1 import admit_video_source
+    from dinkster_assets import AssetError, LocalAssetRef, MountDef, MountTable
+    from dinkster_assets import value as asset_value
+
+    data = b"too large to admit"
+    path = tmp_path / "clip.mp4"
+    path.write_bytes(data)
+    if source_kind == "local":
+        table = MountTable()
+        table.add(MountDef(id="input", path=tmp_path), kind="media/video")
+        source = table.bind_name(path.name, "media/video")
+        assert isinstance(source, LocalAssetRef)
+    elif source_kind == "asset":
+        vault = AssetVault(tmp_path / "vault")
+        digest = digest_bytes(data)
+        with vault.writer(digest) as writer:
+            writer.write(data)
+            writer.commit()
+        source = AssetRef(digest, path.name, len(data), resolver=vault)
+    else:
+        source = data if source_kind == "bytes" else path
+    monkeypatch.setattr(asset_value, "GIBIBYTE", len(data) - 1)
+    with pytest.raises(AssetError, match="exceeds 1 GiB"):
+        admit_video_source(source)
+
+
+@pytest.mark.parametrize("change", ("replace", "revoke", "regrant"))
+def test_video_admission_rejects_changed_binding_before_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    from dinkster_api.v1 import admit_video_source
+    from dinkster_assets import AssetError, LocalAssetRef, MountDef, MountTable
+    from dinkster_assets import value as asset_value
+
+    root = tmp_path / "input"
+    root.mkdir()
+    path = root / "clip.mp4"
+    path.write_bytes(b"not decoded")
+    table = MountTable(tmp_path / "mounts.json")
+    mount = MountDef(id="input", path=root)
+    table.add(mount, kind="media/video")
+    bound = table.bind_name(path.name, "media/video")
+    assert isinstance(bound, LocalAssetRef)
+    if change == "replace":
+        path.unlink()
+        path.write_bytes(b"replacement")
+    else:
+        table.remove("input")
+        if change == "regrant":
+            table.add(mount, kind="media/video")
+
+    def unexpected_probe(*args: object, **kwargs: object) -> object:
+        pytest.fail("revoked or changed source reached video probe")
+
+    monkeypatch.setattr(asset_value, "video_from_source", unexpected_probe)
+    monkeypatch.setattr(asset_value, "probe_video", unexpected_probe)
+    with pytest.raises(AssetError, match="unavailable"):
+        admit_video_source(bound)
+
+
 @pytest.mark.parametrize(
     ("format_name", "container_name", "codec_name", "media_type"),
     [

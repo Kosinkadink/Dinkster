@@ -376,8 +376,10 @@ def _video_frames(segments: list[_Segment]) -> Generator[tuple[Fraction, Any]]:
                 container = cast(Any, opened)
                 stream = container.streams.video[0]
                 origin = cast(Fraction, probe["start_time"])
+                start_pts = int((origin + segment.start) / stream.time_base)
+                end_pts = int((origin + end) / stream.time_base) if end is not None else None
                 if segment.start:
-                    container.seek(int((origin + segment.start) / stream.time_base), stream=stream)
+                    container.seek(start_pts, stream=stream)
                 for frame in _decoded_video(container, stream):
                     # VP8 cannot signal a matrix; the container outranks its decoder default.
                     if stream.codec_context.codec.canonical_name == "vp8" and probe[
@@ -390,11 +392,12 @@ def _video_frames(segments: list[_Segment]) -> Generator[tuple[Fraction, Any]]:
                         frame.color_range = probe["range"]
                     if frame.pts is None:
                         raise ValueError("video frame has no timestamp")
-                    t = Fraction(frame.pts) * frame.time_base - origin
-                    if t < segment.start:
+                    # Frame selection uses truncated stream ticks, not rounded timeline bounds.
+                    if frame.pts < start_pts:
                         continue
-                    if end is not None and t >= end:
+                    if end_pts is not None and frame.pts >= end_pts:
                         break
+                    t = Fraction(frame.pts) * frame.time_base - origin
                     if segment.spatial or probe["rotation"]:
                         array = _pixels(frame, depth, bool(probe["alpha"]))
                         yield offset + t - segment.start, _transform(array, segment, depth)

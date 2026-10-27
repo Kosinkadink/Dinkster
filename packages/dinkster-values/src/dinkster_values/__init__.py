@@ -284,7 +284,7 @@ from .video_codec import (
     video_rendition_mime,
     video_source,
 )
-from .video_edits import effective_video_facts
+from .video_edits import effective_video_facts, register_video_edit_type
 from .video_probe import open_video_source
 
 __all__ = [
@@ -554,6 +554,7 @@ __all__ = [
     "MediaStream",
     "Curve",
     "register_curve_type",
+    "register_video_edit_type",
     "curve",
     "timeline_video",
     "video_document",
