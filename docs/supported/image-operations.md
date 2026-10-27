@@ -6,6 +6,14 @@
   metadata pass between node packs without rewriting their values.
 - Native `PrimitiveBoundingBox` constructs pixel bounding boxes; `ImageCropV2`
   crops each image in a batch to that box and reports a PNG preview.
+- Native `PadImageNode` adds per-side, multiplier, or divisible-size padding
+  with repeated mirrored edges or a solid color and optional edge feathering.
+- Native `ImageCropToMask` centers a mask-derived crop with aspect-ratio padding,
+  mask growth/shrink and polarity correction, composites RGB over a background,
+  and resizes with Lanczos to the requested width and height.
+- Native `TextOverlay` wraps and fits text using Pillow's bundled default font,
+  positions it at the top or bottom with left/center/right alignment, and
+  composites color and optional outline across RGB or straight-alpha RGBA batches.
 - Native `CropByBBoxes` crops each frame to its bounding-box union and resizes
   with stretching or aspect-preserving black padding.
 - Native `RTDETR_detect` returns per-frame pixel bounding boxes filtered by

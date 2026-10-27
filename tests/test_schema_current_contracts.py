@@ -1729,3 +1729,25 @@ def test_asset_selection_schema_roundtrip_is_strict_and_retains_one_combo(kind: 
                 node_type="mixed",
                 inputs=(InputSpec("choice", union, widget=AssetWidget(kind=kind, selection=True)),),
             )
+
+
+def test_native_image_editor_color_inputs_preserve_public_color_type() -> None:
+    from dinkster_nodes_comfy.image_crop import ImageCropToMask
+    from dinkster_nodes_comfy.image_transform import PadImageNode
+    from dinkster_nodes_comfy.text_overlay import TextOverlay
+
+    # ComfyUI F bc5f880d declares COLOR for these sockets; schema-only, no image inputs.
+    schemas = (
+        (ImageCropToMask.define_schema(), "background"),
+        (TextOverlay.define_schema(), "color"),
+    )
+    for schema, name in schemas:
+        spec = next(item for item in schema.inputs if item.id == name)
+        assert spec.type == TypeExpr.concrete(COLOR_TYPE)
+        assert isinstance(spec.widget, ColorWidget)
+    padding = PadImageNode.define_schema()
+    style = next(item for item in padding.combos if item.id == "padding_style")
+    color = next(option for option in style.options if option.key == "color").inputs[0]
+    assert isinstance(color, InputSpec)
+    assert color.type == TypeExpr.concrete(COLOR_TYPE)
+    assert isinstance(color.widget, ColorWidget)

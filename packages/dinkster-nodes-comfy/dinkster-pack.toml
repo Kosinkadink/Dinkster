@@ -314,6 +314,7 @@ namespaces = [
     "ImageRotate",
     "ImageFlip",
     "ImageScaleToMaxDimension",
+    "PadImageNode",
     "Morphology",
     "ImageRGBToYUV",
     "ImageYUVToRGB",
@@ -488,6 +489,7 @@ namespaces = [
     "PhotoMakerEncode",
     "ImageCropV2",
     "PrimitiveBoundingBox",
+    "ImageCropToMask",
     "RTDETR_detect",
     "DrawBBoxes",
     "VAELoader",
@@ -515,6 +517,7 @@ namespaces = [
     "CropByBBoxes",
     "MakeTrainingDataset",
     "TripoSplatPreprocessImage",
+    "TextOverlay",
 ]
 
 [pack.sandbox]
