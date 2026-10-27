@@ -478,6 +478,7 @@ namespaces = [
     "PrimitiveBoundingBox",
     "RTDETR_detect",
     "DrawBBoxes",
+    "VideoFrameSample",
 ]
 
 [pack.sandbox]

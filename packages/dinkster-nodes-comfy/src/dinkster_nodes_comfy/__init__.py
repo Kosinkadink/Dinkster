@@ -158,6 +158,7 @@ from .text_generation import TextGenerate, TextGenerateLTX2Prompt
 from .utilities import ComfyNumberConvert, PreviewAny, SeedNode
 from .vae import VAE_NODES
 from .video_conditioning import VIDEO_CONDITIONING_NODES
+from .video_frame_sample import VideoFrameSample
 from .video_guidance import VIDEO_GUIDANCE_NODES
 from .video_latent import VIDEO_LATENT_NODES
 from .video_latent_ops import VIDEO_LATENT_OPERATION_NODES
@@ -340,6 +341,7 @@ COMFY_NODES = (
     ImageCropV2,
     PrimitiveBoundingBox,
     *RTDETR_NODES,
+    VideoFrameSample,
 )
 
 
