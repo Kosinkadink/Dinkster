@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import subprocess
@@ -14,8 +15,22 @@ os.environ["CUDA_VISIBLE_DEVICES"] = ""
 os.environ["DINKSTER_ACCELERATOR"] = "cpu"
 
 import dinkster_nodes_comfy.lora_extract_save as lora
+import pytest
 import torch
+from dinkster_api.v1 import (
+    CLIP_TYPE,
+    MODEL_TYPE,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+    initialize_inference_process,
+)
+from dinkster_assets import MountDef, MountTable
+from dinkster_graph import Graph, GraphNode, Link
 from safetensors import safe_open
+
+from dinkster.compose import PackSpec, ServingComposer
 
 
 class _Patcher:
@@ -190,3 +205,144 @@ def test_execute_writes_safetensors_to_selected_mount_and_cleans_temporary_file(
             "diffusion_model.scalar.diff",
         )
     assert created and all(not path.exists() for path in created)
+
+
+class LoraDifferenceSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="lora-save-host-fixture.source",
+            outputs=(
+                OutputSpec("model", TypeExpr.concrete(MODEL_TYPE)),
+                OutputSpec("clip", TypeExpr.concrete(CLIP_TYPE)),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        initialize_inference_process()
+        from dinkster_inference.model_patcher import ModelPatcher
+        from dinkster_inference.sd import CLIP
+
+        model = torch.nn.Module()
+        model.diffusion_model = torch.nn.Module()
+        model.diffusion_model.linear = torch.nn.Linear(2, 2)
+        model.diffusion_model.linear.weight.data.copy_(torch.tensor([[3.0, -1.0], [2.0, 4.0]]))
+        model.diffusion_model.linear.bias.data.copy_(torch.tensor([0.25, -0.5]))
+        encoder = torch.nn.Module()
+        encoder.linear = torch.nn.Linear(2, 1)
+        encoder.linear.weight.data.copy_(torch.tensor([[-7.0, 1.5]]))
+        encoder.linear.bias.data.copy_(torch.tensor([0.75]))
+        clip = CLIP(no_init=True)
+        clip.patcher = ModelPatcher(encoder, torch.device("cpu"), torch.device("cpu"))
+        clip.cond_stage_model = encoder
+        clip.tokenizer = object()
+        clip.layer_idx = None
+        clip.tokenizer_options = {}
+        clip.use_clip_schedule = True
+        clip.apply_hooks_to_conds = None
+        return cls.outputs(
+            model=ModelPatcher(model, torch.device("cpu"), torch.device("cpu")), clip=clip
+        )
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("explicit_mount", (False, True))
+def test_lora_save_preserves_both_differences_through_native_hosts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, explicit_mount: bool
+) -> None:
+    output, alternate = tmp_path / "output", tmp_path / "alternate"
+    output.mkdir()
+    alternate.mkdir()
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot, index_root=tmp_path / "index")
+    for name, directory in (("output", output), ("alternate", alternate)):
+        table.add(MountDef(name, directory, mode="readwrite"))
+        table.scan(name)
+    table.select_output_mount("output")
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+
+    async def scenario() -> None:
+        package = Path(__file__).resolve().parents[1]
+        checkout = package.parents[1]
+        module = f"lora_save_host_fixture_{tmp_path.name.replace('-', '_')}"
+        (tmp_path / f"{module}.py").write_text(
+            "from test_lora_extract_save_torch import LoraDifferenceSource\n"
+            "from dinkster_nodes_comfy import register_inference_types\n"
+            "NODES = (LoraDifferenceSource,)\n",
+            encoding="ascii",
+        )
+        fixture = tmp_path / "dinkster-pack.toml"
+        fixture.write_text(
+            '[pack]\nname="lora-save-host-fixture"\npublisher="dinkster"\n'
+            'namespaces=["lora-save-host-fixture"]\n[pack.entry]\n'
+            f'nodes="{module}:NODES"\ntypes="{module}:register_inference_types"\n',
+            encoding="ascii",
+        )
+        manifests = (package / "dinkster-pack.toml", fixture)
+        composer = ServingComposer(
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
+                "PYTHONPATH": os.pathsep.join(
+                    (
+                        str(tmp_path),
+                        str(Path(__file__).parent),
+                        str(checkout / "src"),
+                        *(str(path) for path in sorted(checkout.glob("packages/*/src"))),
+                    )
+                ),
+            }
+        )
+        try:
+            for manifest in manifests:
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=manifest,
+                        in_process=in_process,
+                        worker_group=None if in_process else "lora-save-host-fixture",
+                        group_manifests=() if in_process else manifests,
+                    )
+                )
+            inputs: dict[str, Any] = {
+                "filename_prefix": "loras/asymmetric",
+                "rank": 1,
+                "lora_type": "full_diff",
+                "bias_diff": True,
+                "model_diff": Link("source", "model"),
+                "text_encoder_diff": Link("source", "clip"),
+            }
+            if explicit_mount:
+                inputs["mount"] = "alternate"
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("lora-save-host-fixture.source"),
+                    "save": GraphNode("LoraSave", inputs),
+                }
+            )
+            engine = composer.composition.make_engine(lambda _event: None)
+            for attempt in range(2):
+                result = await engine.run(graph, ["save"])
+                if attempt:
+                    assert "source" in result.cached and "save" not in result.cached
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+    selected, other = (alternate, output) if explicit_mount else (output, alternate)
+    files = sorted(selected.glob("loras/asymmetric_*.safetensors"))
+    assert len(files) == 2 and not list(other.rglob("*.safetensors"))
+    expected = {
+        "diffusion_model.linear.diff": torch.tensor([[3.0, -1.0], [2.0, 4.0]]),
+        "diffusion_model.linear.diff_b": torch.tensor([0.25, -0.5]),
+        "text_encoders.linear.diff": torch.tensor([[-7.0, 1.5]]),
+        "text_encoders.linear.diff_b": torch.tensor([0.75]),
+    }
+    for path in files:
+        with safe_open(path, framework="pt", device="cpu") as handle:
+            assert set(handle.keys()) == set(expected) and handle.metadata() is None
+            for key, tensor in expected.items():
+                actual = handle.get_tensor(key)
+                assert actual.dtype == torch.float16
+                torch.testing.assert_close(actual, tensor.half(), rtol=0, atol=0)
