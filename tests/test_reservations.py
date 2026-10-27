@@ -430,8 +430,9 @@ def test_result_waits_for_lease_cleanup_when_peer_dies(
                 "requests": [{"residency": "ram", "nbytes": 60}],
             }
         )
-        while governor.reserved("ram") != 60:
-            await asyncio.sleep(0)
+        async with asyncio.timeout(5):
+            while governor.reserved("ram") != 60:
+                await asyncio.sleep(0)
 
         _feed_frame(
             reader,
@@ -565,9 +566,10 @@ def test_isolated_leases_serialize_over_a_constrained_budget(tmp_path: Path) -> 
                 for n in (1, 2)
             ]
             # Two 60-byte hogs on a 100-byte budget can never both hold.
-            while not all(t.done() for t in tasks):
-                assert governor.reserved("ram") <= 100
-                await asyncio.sleep(0.005)
+            async with asyncio.timeout(5):
+                while not all(t.done() for t in tasks):
+                    assert governor.reserved("ram") <= 100
+                    await asyncio.sleep(0.005)
             results = [t.result() for t in tasks]
             assert all(r.error is None for r in results)
             assert governor.reserved("ram") == 0
