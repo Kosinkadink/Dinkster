@@ -169,19 +169,27 @@ def test_indexed_video_over_one_gib_is_admitted_without_copy(
     assert isinstance(selected, AssetRef)
     assert selected.size == GIBIBYTE + 1
     value = admit_video_source(selected)
-    assert video_source(value).local_path() == path
-    assert video_source(admit_video_source(path)).digest == selected.digest
+    source = video_source(value)
+    assert isinstance(source, AssetRef)
+    assert source.local_path() == path
+    path_source = video_source(admit_video_source(path))
+    assert isinstance(path_source, AssetRef)
+    assert path_source.digest == selected.digest
     loaded = LoadVideoValue.execute(video=selected)["video"]
-    assert video_source(loaded).digest == selected.digest
+    loaded_source = video_source(loaded)
+    assert isinstance(loaded_source, AssetRef)
+    assert loaded_source.digest == selected.digest
     received = bind_video_value(
         decode_video(encode_video(value)), ChainResolver(MountSnapshotResolver(snapshot))
     )
-    assert video_source(received).local_path() == path
+    received_source = video_source(received)
+    assert isinstance(received_source, AssetRef)
+    assert received_source.local_path() == path
     assert not (tmp_path / "vault").exists()
     assert not (tmp_path / "scratch").exists()
     table.remove("input")
     with pytest.raises(AssetError):
-        video_source(received).open()
+        received_source.open()
 
 
 def test_ungranted_video_source_over_copy_limit_is_rejected(tmp_path: Path) -> None:
