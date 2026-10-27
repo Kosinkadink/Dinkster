@@ -2,6 +2,12 @@
 
 - Input types: concrete, union, wildcard, variable, list, asset;
   scalar/list cardinality; required/advanced/hidden/lazy input flags
+- Backend `list<*>` values retain independently typed child envelopes through
+  ordinary worker and persistent-cache boundaries. Outputs collect existing
+  typed values rather than guessing types from Python objects. Nested lists,
+  child input conversion and resident-resource discovery retain each child's
+  concrete identity; concrete `list<T>` remains homogeneous. This does not
+  claim native CreateList or frontend editor/importer support.
 - Backend schemas describe fixed positional tuples, derive tuple outputs from
   independently typed input families in document order, and select a position's
   type using a stored integer index. Tuple declarations round-trip through the
@@ -35,6 +41,10 @@
 - Backend color widgets accept scalar COLOR or STRING sockets, retaining the
   declared type and stored color text. Palettes, lists, and unions are rejected.
   This does not claim frontend COLOR editor support.
+- Inputs can declare socketless presentation while retaining their type,
+  widget, default and interface order, including nested combos and families.
+  The flag defaults to false, conflicts with forced socket presentation, and
+  does not change execution signatures. Frontend pin rendering is not claimed.
 - Backend mount widgets present one scalar STRING mount id. Input adjacency
   hints name a sibling input without changing interface order or execution
   identity. This does not claim frontend rendering or native save-node support.

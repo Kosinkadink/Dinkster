@@ -84,6 +84,8 @@
   zero, and set area or timestep metadata under their exact ComfyUI interfaces.
 - Native hook conditioning preserves paired ordering, default records, mask and
   timestep metadata, and CLIP hook clone scheduling under exact core interfaces.
+- Hook keyframes from floats preserve the forced FLOATS socket and its numeric
+  default, minimum, and step under the exact core interface.
 - Native VAE inpainting encoding and model conditioning preserve crop, mask,
   latent, and conditioning metadata behavior under exact ComfyUI interfaces.
 - Fifteen native mask and composite nodes convert, create, invert, crop, combine,
@@ -102,6 +104,20 @@
 - Eight native video latent nodes create Hunyuan Video, Hunyuan Video 1.5, LTXV,
   Cosmos, and autoregressive video samples, trim video frames, freeze LTXV video
   or audio samples, and normalize video latent starts under their exact ComfyUI IDs.
+- Native Wan image and first/last-frame conditioning encodes image starts and
+  ends, applies temporal masks and optional CLIP vision states, and supports
+  reference padding and inpaint conditioning.
+- Native Wan 2.2 image-to-video latents encode image starts, mask encoded temporal
+  tokens, and normalize only the unfilled tokens before repeating image batches.
+- Native Wan control conditioning builds Fun Control and Wan 2.2 control latents,
+  VACE masked control streams and reference frames, and separate Phantom subject
+  image/text guidance.
+- Native Wan SCAIL conditioning combines per-identity reference masks, timed pose
+  conditioning, and continuation frames with their latent noise masks.
+- Native Wan track conditioning applies JSON point trajectories to image-start
+  latents, preserving visible-point weights and per-batch image conditioning.
+- Native Wan Animate conditioning combines reference, pose, face and continuation
+  inputs. Animate 2 supports timed pose guidance and cleanup-scoped pose caching.
 - Native LTXV preprocessing applies the model's optional per-frame H.264 image
   compression before encoding video starts.
 - Native LTXV image-to-video and frame-rate conditioning nodes encode image starts,

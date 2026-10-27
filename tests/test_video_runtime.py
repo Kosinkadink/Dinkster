@@ -8,7 +8,7 @@ import json
 import struct
 from fractions import Fraction
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, BinaryIO, cast
 
 import av
 import numpy as np
@@ -22,6 +22,7 @@ from dinkster_values import (
     TypeRegistry,
     decode_video,
     edit_video,
+    effective_video_facts,
     encode_video,
     video_fingerprint,
     video_from_source,
@@ -64,6 +65,62 @@ def _packets(data: bytes) -> list[bytes]:
     with av.open(io.BytesIO(data), mode="r") as source:
         packets = [bytes(p) for p in source.demux(video=0) if p.size]
     return packets
+
+
+@pytest.mark.parametrize("encoded", (False, True))
+def test_public_pixel_iterator_applies_edits_to_components_and_encoded_video(encoded: bool) -> None:
+    from dinkster_api.v1 import iter_video_pixels
+
+    pixels = np.arange(4 * 4 * 6 * 3, dtype=np.uint16).reshape(4, 4, 6, 3).astype(np.uint8)
+    video = assemble_video(pixels, fps=Fraction(5))
+    if encoded:
+        output = io.BytesIO()
+        save_video_stream(video, output, codec="ffv1", container="mkv")
+        video = video_from_source(output.getvalue())
+    video = edit_video(video, {"trim": {"start_time": Fraction(1, 5), "duration": Fraction(2, 5)}})
+    video = edit_video(video, {"crop": {"x": 2, "y": 2, "width": 4, "height": 2}})
+    frames = iter_video_pixels(video)
+    try:
+        actual = list(frames)
+    finally:
+        frames.close()
+    assert [time for time, _pixels in actual] == [Fraction(0), Fraction(1, 5)]
+    expected = pixels[1:3, 2:4, 2:6].astype(np.float32) / 255
+    for (_time, frame), wanted in zip(actual, expected, strict=True):
+        assert frame.dtype == np.float32
+        np.testing.assert_array_equal(frame, wanted)
+
+
+def test_public_pixel_iterator_early_close_releases_encoded_asset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_api.v1 import iter_video_pixels
+
+    data = _source()
+    vault = AssetVault(tmp_path)
+    digest = digest_bytes(data)
+    with vault.writer(digest) as writer:
+        writer.write(data)
+        writer.commit()
+    video = video_from_source(AssetRef(digest, "source.mp4", len(data), resolver=vault))
+    opened: list[BinaryIO] = []
+    original = AssetRef.open
+
+    def track_open(ref: AssetRef) -> BinaryIO:
+        handle = original(ref)
+        opened.append(handle)
+        return handle
+
+    monkeypatch.setattr(AssetRef, "open", track_open)
+    frames = iter_video_pixels(video)
+    try:
+        timestamp, pixels = next(frames)
+        assert timestamp == 0
+        assert pixels.shape == (32, 64, 3)
+        assert opened and any(not handle.closed for handle in opened)
+    finally:
+        frames.close()
+    assert all(handle.closed for handle in opened)
 
 
 def test_inline_v2_roundtrip_and_v1_migration() -> None:
@@ -135,6 +192,96 @@ def test_non_packet_aligned_trim_transcodes_without_snapping() -> None:
     assert decoded["frame_count"] == 4
     images = cast(np.ndarray, image_input(decoded["images"]))
     assert np.max(np.abs(images[:, 0, 0, 0] - np.arange(2, 6) * 10 / 255)) < 0.02
+
+
+@pytest.mark.parametrize("first", [0, 4])
+@pytest.mark.parametrize("origin", [0, 2])
+def test_fractional_encoded_trim_uses_half_open_stream_ticks(first: int, origin: int) -> None:
+    from dinkster_video import iter_video_pixels
+
+    rate = Fraction(30000, 1001)
+    pixels = (np.arange(7 * 4 * 32 * 3).reshape(7, 4, 32, 3) % 251).astype(np.uint8)
+    encoded = io.BytesIO()
+    save_video_stream(assemble_video(pixels, fps=rate), encoded, codec="ffv1", container="mkv")
+    if origin:
+        shifted = io.BytesIO()
+        with (
+            av.open(io.BytesIO(encoded.getvalue()), "r") as source,
+            av.open(shifted, "w", format="matroska") as destination,
+        ):
+            target = cast(Any, destination).add_stream_from_template(source.streams.video[0])
+            for packet in source.demux(video=0):
+                if packet.dts is not None:
+                    assert packet.pts is not None
+                    shift = int(Fraction(origin) / packet.time_base)
+                    packet.pts += shift
+                    packet.dts += shift
+                    packet.stream = target
+                    destination.mux(packet)
+        encoded = shifted
+    value = video_from_source(encoded.getvalue())
+    assert cast(dict[str, Any], value["probe"])["start_time"] == origin
+    assert cast(dict[str, Any], value["probe"])["time_base"] == Fraction(1, 1000)
+    assert cast(dict[str, Any], value["probe"])["duration"] == origin + Fraction(233, 1000)
+    start, duration = first / rate, 3 / rate
+    selected_duration = min(duration, origin + Fraction(233, 1000) - start)
+    trimmed = edit_video(value, {"trim": {"start_time": start, "duration": duration}})
+    # Fixed F truncates these bounds to ticks: head [0,100), tail [133,233).
+    expected = pixels[first : first + 3].astype(np.float32) / 255
+    frames = list(iter_video_pixels(trimmed))
+    np.testing.assert_array_equal(np.stack([array for _, array in frames]), expected)
+    source_ticks = [0, 33, 67] if first == 0 else [133, 167, 200]
+    assert [time for time, _ in frames] == [Fraction(tick, 1000) - start for tick in source_ticks]
+    decoded = disassemble_video(trimmed)
+    np.testing.assert_array_equal(image_input(decoded["images"]), expected)
+    assert decoded["duration"] == float(selected_duration)
+    assert decoded["fps"] == float(rate)
+    assert effective_video_facts(trimmed)["duration"] == selected_duration
+    chained = edit_video(
+        edit_video(value, {"trim": {"start_time": 0, "duration": 7 / rate}}),
+        {"trim": {"start_time": start, "duration": duration}},
+    )
+    np.testing.assert_array_equal(disassemble_video(chained)["images"], decoded["images"])
+    saved = io.BytesIO()
+    save_video_stream(trimmed, saved, codec="ffv1", container="mkv")
+    np.testing.assert_array_equal(
+        image_input(disassemble_video(video_from_source(saved.getvalue()))["images"]), expected
+    )
+    assert value["edits"] == []
+
+
+@pytest.mark.parametrize("encoded", [False, True])
+def test_fractional_trim_keeps_rational_timeline_and_audio_samples(encoded: bool) -> None:
+    from dinkster_video import iter_video_pixels
+    from dinkster_video.runtime import iter_video_audio
+
+    rate = Fraction(30000, 1001)
+    pixels = (np.arange(7 * 4 * 32 * 3).reshape(7, 4, 32, 3) % 251).astype(np.uint8)
+    pcm = np.arange(2 * 12000, dtype=np.float32).reshape(1, 2, 12000) / 32768
+    value = assemble_video(pixels, fps=rate, audio={"waveform": pcm, "sample_rate": 48000})
+    if encoded:
+        output = io.BytesIO()
+        save_video_stream(value, output, codec="ffv1", container="mkv")
+        value = video_from_source(output.getvalue())
+    start, duration = 4 / rate, 3 / rate
+    trimmed = edit_video(value, {"trim": {"start_time": start, "duration": duration}})
+    frames = list(iter_video_pixels(trimmed))
+    expected_times = (
+        [Fraction(tick, 1000) - start for tick in (133, 167, 200)]
+        if encoded
+        else [0, 1 / rate, 2 / rate]
+    )
+    assert [time for time, _ in frames] == expected_times
+    np.testing.assert_array_equal(
+        np.stack([array for _, array in frames]), pixels[4:].astype(np.float32) / 255
+    )
+    audio = list(iter_video_audio(trimmed))
+    assert audio[0][0] == Fraction(6407, 48000) - start
+    np.testing.assert_array_equal(
+        np.concatenate([frame.to_ndarray() for _, frame in audio], axis=1), pcm[0, :, 6407:11212]
+    )
+    assert effective_video_facts(trimmed)["duration"] == duration
+    assert value["edits"] == []
 
 
 def test_mkv_unchanged_is_exact_source_copy(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -393,6 +540,100 @@ def test_native_video_chain_matches_across_worker_shared_memory() -> None:
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("in_process", (True, False))
+def test_native_video_values_cross_ordinary_hosts_twice_with_layered_cache(
+    tmp_path: Path, in_process: bool
+) -> None:
+    from dinkster_graph import Graph, GraphNode, Link
+    from dinkster_nodes_comfy import register_inference_types
+    from dinkster_values import VIDEO_EDIT_TYPE, effective_video_facts, video_source
+
+    from dinkster.compose import PackSpec, ServingComposer
+
+    edit = {"trim": {"duration": 1.0, "start_time": 0.5}, "unused": {"preserved": True}}
+    trim_edit = {"trim": edit["trim"]}
+    source = video_from_source(_source(depth=10))
+    expected = edit_video(source, trim_edit)
+    expected_facts = effective_video_facts(expected)
+    expected_fingerprint = video_fingerprint(VIDEO_TYPE)(expected)
+
+    registry = TypeRegistry()
+    register_inference_types(registry)
+    video_spec = registry.spec(VIDEO_TYPE)
+    edit_spec = registry.spec(VIDEO_EDIT_TYPE)
+    register_inference_types(registry)
+    assert registry.spec(VIDEO_TYPE) is video_spec
+    assert registry.spec(VIDEO_EDIT_TYPE) is edit_spec
+    encoded_edit = edit_spec.encode(edit)
+    assert (
+        encoded_edit
+        == b'{"trim": {"duration": 1.0, "start_time": 0.5}, "unused": {"preserved": true}}'
+    )
+    assert edit_spec.decode(encoded_edit) == edit
+
+    async def scenario() -> None:
+        root = Path(__file__).resolve().parents[1]
+        native_manifest = root / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+        fixture_manifest = Path(__file__).with_name("video-native-value-fixture.toml")
+        manifests = (native_manifest, fixture_manifest)
+        composer = ServingComposer(
+            cache_mode="layered",
+            cache_dir=tmp_path / "cache",
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "PYTHONPATH": str(Path(__file__).parent),
+            },
+        )
+        try:
+            for manifest in manifests:
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=manifest,
+                        host_types=register_inference_types
+                        if manifest == native_manifest
+                        else None,
+                        in_process=in_process,
+                        worker_group=None if in_process else "video-native-value-fixture",
+                        group_manifests=() if in_process else manifests,
+                    )
+                )
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("video-native-value-fixture.source", {}),
+                    "consumer": GraphNode(
+                        "video-native-value-fixture.consumer",
+                        {
+                            "video": Link("source", "video"),
+                            "video_edit": Link("source", "video_edit"),
+                        },
+                    ),
+                }
+            )
+            engine = composer.composition.make_engine(lambda _event: None)
+            for repeat in range(2):
+                result = await engine.run(graph, ["consumer"])
+                assert result.outputs["consumer"]["video_edit"].resolve() == edit
+                assert result.outputs["consumer"]["facts"].resolve() == json.dumps(
+                    expected_facts, default=str, sort_keys=True
+                )
+                assert result.outputs["consumer"]["fingerprint"].resolve() == expected_fingerprint
+                assert video_source(result.outputs["consumer"]["source"].resolve()) == _source(
+                    depth=10
+                )
+                assert encode_video(result.outputs["consumer"]["edited"].resolve()) == encode_video(
+                    expected
+                )
+                if repeat:
+                    assert set(result.cached) == {"source", "consumer"}
+                else:
+                    assert set(result.executed) == {"source", "consumer"}
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
 def test_concat_trim_to_second_source_never_exports_first_source() -> None:
     first, second = _source(), _source(offset=60)
     joined = edit_video(video_from_source(first), {"concat": [video_from_source(second)]})
@@ -424,6 +665,64 @@ def test_rgb_encode_uses_declared_yuv_matrix(color: str, depth: int, kr: float) 
         y = y.reshape(plane.height, plane.line_size // (1 if depth == 8 else 2))[:, :64]
         expected = round((16 + 219 * kr) * 2 ** (depth - 8))
         assert np.max(np.abs(y.astype(int) - expected)) <= 1
+
+
+def test_fractional_crf_reaches_h264_encoder_without_rounding() -> None:
+    pixels = np.random.default_rng(174).integers(0, 256, (3, 32, 64, 3), dtype=np.uint8)
+    value = assemble_video(pixels, fps=3)
+    encoded: dict[float, bytes] = {}
+    for crf in (18, 18.5, 19):
+        output = io.BytesIO()
+        save_video_stream(value, output, codec="h264", crf=crf)
+        encoded[crf] = output.getvalue()
+        # libx264 records its effective rate-control settings in the encoded SEI.
+        assert f"crf={crf:.1f}".encode() in b"".join(_packets(encoded[crf]))
+        with av.open(io.BytesIO(encoded[crf]), mode="r") as container:
+            assert len(list(container.decode(video=0))) == 3
+    assert _packets(encoded[18.5]) != _packets(encoded[18])
+    assert _packets(encoded[18.5]) != _packets(encoded[19])
+
+
+@pytest.mark.parametrize("codec,limit", [("h264", 51), ("vp9", 63)])
+@pytest.mark.parametrize(
+    "crf", [True, False, float("nan"), float("inf"), float("-inf"), -0.01, 10**1000]
+)
+def test_video_crf_rejects_nonfinite_boolean_and_out_of_range(
+    codec: str, limit: int, crf: float
+) -> None:
+    value = assemble_video(np.zeros((1, 32, 64, 3), np.uint8))
+    output = io.BytesIO()
+    with pytest.raises(ValueError, match=f"crf must be a finite number in 0..{limit}"):
+        save_video_stream(value, output, codec=codec, crf=crf)
+    assert output.getvalue() == b""
+
+
+@pytest.mark.parametrize("codec,limit", [("h264", 51), ("vp9", 63)])
+def test_video_crf_accepts_integer_and_float_codec_bounds(codec: str, limit: int) -> None:
+    value = assemble_video(np.zeros((1, 32, 64, 3), np.uint8))
+    for crf in (0, 0.0, limit, float(limit)):
+        output = io.BytesIO()
+        save_video_stream(value, output, codec=codec, crf=crf)
+        with av.open(io.BytesIO(output.getvalue()), mode="r") as container:
+            assert len(list(container.decode(video=0))) == 1
+    with pytest.raises(ValueError, match=f"crf must be a finite number in 0..{limit}"):
+        save_video_stream(value, io.BytesIO(), codec=codec, crf=limit + 0.01)
+
+
+def test_video_crf_unsupported_codec_policy_is_unchanged() -> None:
+    value = assemble_video(np.zeros((1, 32, 64, 3), np.uint8))
+    output = io.BytesIO()
+    diagnostics: list[object] = []
+    save_video_stream(value, output, codec="ffv1", crf=18.5, on_diagnostic=diagnostics.append)
+    assert any(
+        item["requested"] == {"crf": 18.5} and item["effective"] == {"crf": None, "codec": "ffv1"}
+        for report in cast(list[dict[str, object]], diagnostics)
+        for item in cast(list[dict[str, object]], report["substitutions"])
+    )
+    assert (
+        cast(dict[str, object], video_from_source(output.getvalue())["probe"])["video_codec"]
+        == "ffv1"
+    )
 
 
 @pytest.mark.parametrize("depth", [8, 10])

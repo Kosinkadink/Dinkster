@@ -212,6 +212,74 @@ def test_unexpected_alpha_loss_is_nonblocking_and_replayed_on_cache_hits() -> No
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("nested", [False, True])
+def test_heterogeneous_list_alpha_loss_is_reported_and_cached(nested: bool) -> None:
+    registry = TypeRegistry()
+    registry.register("STRING")
+    registry.register(
+        "IMAGE", encode=encode_image_array, decode=decode_image_array, meta=image_array_meta
+    )
+    mixed_type = TypeExpr.list_of(TypeExpr.wildcard())
+    input_type = TypeExpr.list_of(mixed_type) if nested else mixed_type
+    pixels = np.array([0.1, 0.4, 0.9], dtype=np.float32).reshape(1, 1, 1, 3)
+
+    class MixedSource(Node):
+        @classmethod
+        def define_schema(cls):
+            return NodeSchema(
+                node_type="test.mixed-alpha-source", outputs=(OutputSpec("image", input_type),)
+            )
+
+        @classmethod
+        def execute(cls):
+            members = [registry.wrap("STRING", "label"), registry.wrap("IMAGE", pixels)]
+            return cls.outputs(image=[members] if nested else members)
+
+    class MixedDrop(Node):
+        @classmethod
+        def define_schema(cls):
+            return NodeSchema(
+                node_type="test.mixed-alpha-drop",
+                inputs=(InputSpec("image", input_type, alpha_policy="create_if_missing"),),
+                outputs=(OutputSpec("image", IMAGE),),
+            )
+
+        @classmethod
+        def execute(cls, image):
+            members = image[0] if nested else image
+            assert members[0] == "label"
+            np.testing.assert_array_equal(members[1][..., :3], pixels)
+            np.testing.assert_array_equal(members[1][..., 3], 1)
+            return cls.outputs(image=np.asarray(members[1])[..., :3])
+
+    async def scenario():
+        nodes = (MixedSource, MixedDrop)
+        engine = Engine(
+            schemas=build_schemas(nodes),
+            registry=registry,
+            worker=InProcessWorker(build_node_types(nodes), registry),
+            cache=MemoryLRUCache(),
+        )
+        graph = Graph(
+            nodes={
+                "source": GraphNode("test.mixed-alpha-source"),
+                "drop": GraphNode("test.mixed-alpha-drop", {"image": Link("source", "image")}),
+            }
+        )
+        for cached in (False, True):
+            result = await engine.run(graph, ["source", "drop"])
+            assert ("drop" in result.cached) == cached
+            output = result.outputs["drop"]["image"]
+            np.testing.assert_array_equal(output.resolve(), pixels)
+            assert output.meta.get("valueDiagnostics") == [
+                {"code": "alpha_dropped", "outputId": "image", "inputIds": ["image"]}
+            ]
+            original = cast(Any, result.outputs["source"]["image"].resolve())
+            assert (original[0] if nested else original)[1].shape[-1] == 3
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("mask", [False, True])
 def test_semantic_codec_and_shared_memory_roundtrip(mask: bool, monkeypatch) -> None:
     from multiprocessing.shared_memory import SharedMemory

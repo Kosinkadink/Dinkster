@@ -30,7 +30,7 @@ from .builtin_types import (
     CORE_STRING,
     DICT_TYPE,
 )
-from .lists import make_list_value, parse_list_type_id
+from .lists import make_list_value, parse_list_type_id, value_children
 from .model import (
     EncodedPayload,
     PyObjPayload,
@@ -913,6 +913,14 @@ class TypeRegistry:
         Asset references stay references until worker-side decoding supplies
         the target type. Unknown types keep the default pass-through behavior.
         """
+        if isinstance(obj, Value):
+            if obj.type_id != type_id:
+                raise TypeError(f"{type_id} rejects envelope of type {obj.type_id}")
+            children = value_children(obj)
+            if children is not None:
+                converted = [self.input_object(child.type_id, child) for child in children]
+                return tuple(converted) if parse_tuple_type_id(type_id) is not None else converted
+            obj = obj.resolve()
         positions = parse_tuple_type_id(type_id)
         if positions is not None:
             return tuple(
@@ -981,6 +989,10 @@ class TypeRegistry:
                 raise TypeError(
                     f"{type_id} expects a sequence of elements, got {type(obj).__name__}"
                 )
+            if element_type == "*":
+                if any(not isinstance(item, Value) for item in cast("Sequence[object]", obj)):
+                    raise TypeError("list<*> requires typed child envelopes")
+                return make_list_value(element_type, cast("Sequence[Value]", obj))
             children = tuple(
                 self.wrap(element_type, item) for item in cast("Sequence[object]", obj)
             )

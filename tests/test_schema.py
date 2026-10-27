@@ -185,6 +185,69 @@ def test_forced_floats_numeric_presentation_preserves_socket(representations: bo
             InputSpec("value", wrong_type, force_input=forced, widget=presentation)
 
 
+@pytest.mark.parametrize("scope", ["direct", "combo", "family"])
+def test_socketless_color_preserves_nested_literals_and_execution_identity(scope: str) -> None:
+    def declaration(socketless: bool) -> NodeSchema:
+        color = InputSpec(
+            "color",
+            TypeExpr.concrete("COLOR"),
+            default="#123456",
+            widget=ColorWidget(),
+            socketless=socketless,
+        )
+        if scope == "combo":
+            return NodeSchema(
+                "ColorExample",
+                combos=(
+                    DynamicComboSpec(
+                        "padding_style",
+                        (DynamicComboOption("color", (color,)),),
+                        default="color",
+                    ),
+                ),
+            )
+        if scope == "family":
+            return NodeSchema("ColorExample", input_families=(InputFamilySpec("colors", (color,)),))
+        return NodeSchema("ColorExample", inputs=(color,))
+
+    schema = declaration(True)
+    assert schema_from_wire(schema_to_wire(schema)) == schema
+    assert schema_signature(schema) == schema_signature(declaration(False))
+    stored = {"colors.first.color": "#abcdef"} if scope == "family" else {}
+    choices = {"padding_style": "color"} if scope == "combo" else None
+    effective = elaborate(schema, stored, slot_variants=choices)
+    color = next(spec for spec in effective.inputs if spec.widget == ColorWidget())
+    assert color.type == TypeExpr.concrete("COLOR")
+    assert color.default == "#123456"
+    assert color.socketless is True
+    wire = schema_to_wire(effective)
+    entries = cast("list[dict[str, Any]]", wire["interface"])
+    entry = next(item for item in entries if item["id"] == color.id)
+    assert entry["socketless"] is True
+    assert entry["widget"] == {"type": "COLOR"}
+    assert "forceInput" not in entry
+    assert schema_from_wire(wire) == effective
+
+
+def test_socketless_input_defaults_and_invalid_declarations() -> None:
+    color = InputSpec("color", TypeExpr.concrete("COLOR"), widget=ColorWidget())
+    wire = schema_to_wire(NodeSchema("ColorExample", inputs=(color,)))
+    entry = cast("list[dict[str, Any]]", wire["interface"])[0]
+    assert color.socketless is False
+    assert "socketless" not in entry
+    assert schema_from_wire(wire).inputs[0].socketless is False
+    for bad in (None, 0, 1, "true"):
+        with pytest.raises(ValueError, match="socketless"):
+            dataclasses.replace(color, socketless=bad)
+        entry["socketless"] = bad
+        with pytest.raises(ValueError, match="socketless"):
+            schema_from_wire(wire)
+    entry["socketless"] = True
+    entry["forceInput"] = True
+    with pytest.raises(ValueError, match="socketless.*force_input"):
+        schema_from_wire(wire)
+
+
 def test_save_mount_adjacency_preserves_wire_order_and_execution_identity() -> None:
     from dinkster_api.v1 import MountWidget as PublicMountWidget
 
