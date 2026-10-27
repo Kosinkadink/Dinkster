@@ -33,6 +33,7 @@ from .audio_lazy import channel_layout as audio_channel_layout
 from .builtin_types import (
     ARRAY_TYPE,
     ASSET_TYPE,
+    AUDIO_ENCODER_OUTPUT_TYPE,
     AUDIO_TYPE,
     BACKGROUND_REMOVAL_TYPE,
     BOUNDING_BOX_TYPE,
@@ -76,10 +77,12 @@ from .builtin_types import (
     MOGE_GEOMETRY_TYPE,
     MOGE_MODEL_TYPE,
     NOISE_TYPE,
+    PHOTOMAKER_TYPE,
     POSE_TYPE,
     REGION_TYPE,
     RESOLUTION_PREVIEW_TYPE,
     RESOURCE_HANDLE_TYPE,
+    SAM3_TRACK_DATA_TYPE,
     SAMPLER_TYPE,
     SAVE_TARGET_TYPE,
     SEGMENTATION_TYPE,
@@ -88,12 +91,14 @@ from .builtin_types import (
     SPLAT_TYPE,
     STYLE_MODEL_TYPE,
     TIMESTEPS_RANGE_TYPE,
+    TRACKS_TYPE,
     VAE_TYPE,
     VECTOR_TYPE,
     VIDEO_DOCUMENT_TYPE,
     VIDEO_EDIT_TYPE,
     VIDEO_TYPE,
     VOXEL_TYPE,
+    WAN_CAMERA_EMBEDDING_TYPE,
 )
 from .curve import MAX_CURVE_POINTS, Curve, register_curve_type
 from .detection_codec import (
@@ -279,7 +284,7 @@ from .video_codec import (
     video_rendition_mime,
     video_source,
 )
-from .video_edits import effective_video_facts
+from .video_edits import effective_video_facts, register_video_edit_type
 from .video_probe import open_video_source
 
 __all__ = [
@@ -290,6 +295,7 @@ __all__ = [
     "AIMDO_VBAR_PAGE_BYTES",
     "ASSET_BASE_TYPE",
     "ASSET_TYPE",
+    "AUDIO_ENCODER_OUTPUT_TYPE",
     "AUDIO_TYPE",
     "BufferEncoding",
     "CLIP_TYPE",
@@ -327,6 +333,7 @@ __all__ = [
     "Fingerprint",
     "GIBIBYTE",
     "GLIGEN_TYPE",
+    "PHOTOMAKER_TYPE",
     "GUIDER_TYPE",
     "HOOK_KEYFRAMES_TYPE",
     "HOOKS_TYPE",
@@ -375,6 +382,7 @@ __all__ = [
     "RESOURCE_PRODUCER_ARM_META_KEY",
     "RESOURCE_REFS_META_KEY",
     "SAMPLER_TYPE",
+    "SAM3_TRACK_DATA_TYPE",
     "SAVE_TARGET_TYPE",
     "SEGMENTATION_TYPE",
     "SIGMAS_TYPE",
@@ -415,6 +423,8 @@ __all__ = [
     "TIMELINE_ACTIVE_FRAME_LIMIT_BYTES",
     "TIMELINE_AUDIO_WINDOW_LIMIT_BYTES",
     "TIMESTEPS_RANGE_TYPE",
+    "TRACKS_TYPE",
+    "WAN_CAMERA_EMBEDDING_TYPE",
     "TRELLIS2_SPARSE_DECODE_ALIGNMENT_BYTES",
     "TRELLIS2_SPARSE_DECODE_FIXED_BYTES",
     "TypeSpec",
@@ -544,6 +554,7 @@ __all__ = [
     "MediaStream",
     "Curve",
     "register_curve_type",
+    "register_video_edit_type",
     "curve",
     "timeline_video",
     "video_document",

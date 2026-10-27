@@ -2,13 +2,17 @@
 
 - Color strings, ordered color palettes, and optional resolution-preview
   metadata pass between node packs without rewriting their values.
+- Native `PrimitiveBoundingBox` constructs pixel bounding boxes; `ImageCropV2`
+  crops each image in a batch to that box and reports a PNG preview.
+- Native `ColorToRGBInt` preserves RGB letter casing and separates optional alpha;
+  `ResolutionSelector` rounds aspect-ratio and megapixel dimensions to a chosen multiple.
 - Marigold V2 decoded predictions convert to per-image normalized depth,
   unit surface normals, or sRGB albedo.
 - Native video dataset transforms lazily crop continuous frame ranges and
   shuffle video lists or video-text pairs with seeded ordering.
-- Native list construction preserves member order and nested values when all
-  inputs share an element type; indexed selection supports positive and negative
-  indices. Mixed-element-type lists are not supported.
+- Native list construction preserves member order and nested values across
+  independently typed elements; indexed selection supports positive and negative
+  indices and retains the selected element's type.
 - Native image tile lists split batches with overlap and merge tiles using
   feathered weights; mask previews retain their mask output, and arbitrary
   values can be inspected as text.

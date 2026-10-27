@@ -24,6 +24,7 @@ from dinkster_api.v1 import (
     TypeExpr,
     assemble_video,
     effective_video_facts,
+    list_children,
     materialize_image,
 )
 from dinkster_graph import Graph, GraphNode, Link
@@ -32,7 +33,7 @@ from dinkster_nodes_comfy.mask_preview import MaskPreview
 from dinkster_nodes_comfy.utilities import PreviewAny
 from dinkster_schema import use_reporter
 
-from dinkster.compose import PackSpec, ServingComposer
+from dinkster.compose import PackSpec, ServingComposer, compose_serving
 
 
 def test_split_and_merge_asymmetric_tiles_preserve_dtype_device_and_pixels() -> None:
@@ -304,5 +305,106 @@ def test_registered_image_dataset_and_list_tools_execute_twice_in_ordinary_hosts
                 assert result.outputs["observe"]["valid"].resolve() is True
         finally:
             await composer.close()
+
+    asyncio.run(scenario())
+
+
+class MixedListSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "mixed-list-fixture.source",
+            outputs=(
+                OutputSpec("texts", _STRINGS),
+                OutputSpec("numbers", TypeExpr.list_of(TypeExpr.concrete("INT"))),
+                OutputSpec("nested", TypeExpr.list_of(TypeExpr.list_of(TypeExpr.concrete("INT")))),
+                OutputSpec("empty", _STRINGS),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> Any:
+        return cls.outputs(texts=["seven", "eleven"], numbers=[29], nested=[[3, 17]], empty=[])
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_native_mixed_lists_cross_hosts_and_persistent_cache(
+    tmp_path: Path, in_process: bool
+) -> None:
+    async def scenario() -> None:
+        manifest = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+        (tmp_path / "mixed_list_entry.py").write_text(
+            "from test_image_tiles_torch import MixedListSource\nNODES = (MixedListSource,)\n",
+            encoding="ascii",
+        )
+        fixture = tmp_path / "dinkster-pack.toml"
+        fixture.write_text(
+            '[pack]\nname="mixed-list-fixture"\npublisher="dinkster"\n'
+            'namespaces=["mixed-list-fixture"]\n[pack.entry]\n'
+            'nodes="mixed_list_entry:NODES"\n',
+            encoding="ascii",
+        )
+        packs = [
+            PackSpec(manifest, in_process=in_process, trust_reserved=True),
+            PackSpec(fixture, in_process=in_process),
+        ]
+        graph = Graph(
+            nodes={
+                "source": GraphNode("mixed-list-fixture.source"),
+                "mixed": GraphNode(
+                    "CreateList",
+                    {
+                        "inputs.input2": Link("source", "texts"),
+                        "inputs.input0": Link("source", "empty"),
+                        "inputs.input3": Link("source", "nested"),
+                        "inputs.input1": Link("source", "numbers"),
+                    },
+                ),
+                "number": GraphNode(
+                    "GetItemFromList", {"list": Link("mixed", "list"), "index": -1}
+                ),
+                "nested": GraphNode("GetItemFromList", {"list": Link("mixed", "list"), "index": 2}),
+            }
+        )
+        fingerprints: dict[str, str] = {}
+        for run in range(2):
+            composition = await compose_serving(
+                packs,
+                include_default_packs=False,
+                worker_env={
+                    "PYTHONPATH": os.pathsep.join(
+                        (str(Path(__file__).parent), str(Path.cwd() / "src"))
+                    )
+                },
+                cache_mode="layered",
+                cache_dir=tmp_path / "cache",
+            )
+            try:
+                engine = composition.make_engine(lambda _event: None)
+                result = await engine.run(graph, ["mixed", "number", "nested"])
+                mixed = result.outputs["mixed"]["list"]
+                assert mixed.type_id == "list<*>"
+                assert mixed.resolve() == ["seven", "eleven", [3, 17], 29]
+                children = list_children(mixed)
+                assert children is not None
+                assert [child.type_id for child in children] == [
+                    "STRING",
+                    "STRING",
+                    "list<INT>",
+                    "INT",
+                ]
+                expected = {"number": ("INT", 29), "nested": ("list<INT>", [3, 17])}
+                for name, (type_id, payload) in expected.items():
+                    selected = result.outputs[name]["item"]
+                    assert selected.type_id == type_id
+                    assert selected.resolve() == payload
+                    if run:
+                        assert selected.fingerprint == fingerprints[name]
+                    fingerprints[name] = selected.fingerprint
+                if run:
+                    assert result.executed == ()
+                    assert set(result.cached) == set(graph.nodes)
+            finally:
+                await composition.close()
 
     asyncio.run(scenario())

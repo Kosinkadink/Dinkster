@@ -12,9 +12,11 @@ from dinkster_api.v1 import (
     NodeSchema,
     OutputSpec,
     TypeExpr,
+    Value,
+    list_children,
 )
 
-_ITEM = TypeExpr.variable("T")
+_ITEM = TypeExpr.wildcard()
 _ITEMS = TypeExpr.list_of(_ITEM)
 
 
@@ -36,11 +38,19 @@ class CreateList(Node):
             ),
             outputs=(OutputSpec("list", _ITEMS),),
             search_terms=("Image Iterator", "Text Iterator", "Iterator"),
+            input_values=True,
         )
 
     @classmethod
-    def execute(cls, *, inputs: Mapping[str, list[object]]) -> Mapping[str, object]:
-        return cls.outputs(list=[item for values in inputs.values() for item in values])
+    def execute(
+        cls, *, inputs: Mapping[str, list[object]], input_values: Mapping[str, Value]
+    ) -> Mapping[str, object]:
+        items: list[Value] = []
+        for name in inputs:
+            children = list_children(input_values[f"inputs.{name}"])
+            assert children is not None
+            items.extend(children)
+        return cls.outputs(list=items)
 
 
 class GetItemFromList(Node):
@@ -59,11 +69,16 @@ class GetItemFromList(Node):
                 ),
             ),
             outputs=(OutputSpec("item", _ITEM, display_name="*"),),
+            input_values=True,
         )
 
     @classmethod
-    def execute(cls, *, list: list[object], index: int) -> Mapping[str, object]:
-        return cls.outputs(item=list[index])
+    def execute(
+        cls, *, list: list[object], index: int, input_values: Mapping[str, Value]
+    ) -> Mapping[str, object]:
+        children = list_children(input_values["list"])
+        assert children is not None
+        return cls.outputs(item=children[index])
 
 
 LIST_UTILITY_NODES = (CreateList, GetItemFromList)

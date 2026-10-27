@@ -24,6 +24,7 @@ dependencies = [
     "dinkster-compat-comfy",
     "dinkster-nodes-std",
     "dinkster-nodes-remote",
+    "dinkster-nodes-comfy",
     "dinkster-nodes-generation",
     "dinkster-nodes-image",
     "dinkster-nodes-dev",
@@ -93,6 +94,7 @@ dinkster-native = { workspace = true }
 dinkster-compat-comfy = { workspace = true }
 dinkster-nodes-std = { workspace = true }
 dinkster-nodes-remote = { workspace = true }
+dinkster-nodes-comfy = { workspace = true }
 dinkster-nodes-generation = { workspace = true }
 dinkster-nodes-image = { workspace = true }
 dinkster-nodes-dev = { workspace = true }

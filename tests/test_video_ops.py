@@ -20,6 +20,48 @@ from dinkster_values import video_from_source
 from dinkster_video import save_video_stream
 
 
+def test_native_video_registration_is_torch_free_and_preserves_first_authority() -> None:
+    import subprocess
+    import sys
+
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; from dinkster_api.v1 import TypeRegistry, VIDEO_TYPE, VIDEO_EDIT_TYPE; "
+            "from dinkster_nodes_comfy import register_inference_types; "
+            "r=TypeRegistry(); register_inference_types(r); "
+            "assert VIDEO_TYPE in r and VIDEO_EDIT_TYPE in r; assert 'torch' not in sys.modules",
+        ],
+        check=True,
+    )
+    from dinkster_api.v1 import TypeRegistry, register_video_edit_type
+    from dinkster_nodes_comfy import register_inference_types
+    from dinkster_nodes_media_io import register_media_types
+
+    for first, second in (
+        (register_inference_types, register_media_types),
+        (register_media_types, register_inference_types),
+    ):
+        registry = TypeRegistry()
+        first(registry)
+        video_spec = registry.spec(VIDEO_TYPE)
+        edit_spec = registry.spec(VIDEO_EDIT_TYPE)
+        second(registry)
+        register_video_edit_type(registry)
+        assert registry.spec(VIDEO_TYPE) is video_spec
+        assert registry.spec(VIDEO_EDIT_TYPE) is edit_spec
+
+    registry = TypeRegistry()
+    registry.register(VIDEO_TYPE, encode=lambda _: b"video", decode=lambda _: "video")
+    registry.register(VIDEO_EDIT_TYPE, encode=lambda _: b"edit", decode=lambda _: "edit")
+    video_spec = registry.spec(VIDEO_TYPE)
+    edit_spec = registry.spec(VIDEO_EDIT_TYPE)
+    register_inference_types(registry)
+    assert registry.spec(VIDEO_TYPE) is video_spec
+    assert registry.spec(VIDEO_EDIT_TYPE) is edit_spec
+
+
 def _frames(count: int = 10, *, alpha: bool = False) -> np.ndarray:
     channels = 4 if alpha else 3
     result = np.zeros((count, 64, 64, channels), dtype=np.float32)

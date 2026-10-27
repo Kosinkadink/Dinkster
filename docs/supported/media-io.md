@@ -1,5 +1,11 @@
 ## Media I/O
 
+- Portable SAM3 track values preserve packed uint8 masks, empty object axes or
+  absent masks, original dimensions, frame counts, optional scores, and structural
+  metadata across worker boundaries
+- Portable camera embeddings, motion tracks with optional visibility, and complete
+  audio-encoder outputs preserve tensor dtype, shape and bytes, ordered layer
+  sequences, sample counts and structural metadata across execution hosts and caches
 - Typed PNG, JPEG, and WebP image loading with EXIF orientation, ICC-to-sRGB
   conversion, alpha masks, bounded metadata inspection, and input- or
   output-category asset selection. Media outputs retain compact pixel or PCM
@@ -55,6 +61,11 @@
   resampling matching native video loading; deferred assembly with optional
   audio, 8/10-bit precision, sRGB, HLG, and HDR PQ; disassembly to frames,
   optional audio, fps, duration, bit depth, and color space
+- Public `iter_video_pixels` yields edited, display-oriented float32 pixels
+  with rational timestamps without accumulating the complete frame batch.
+  Consumers that stop early close the iterator to release the decoder and
+  source handle, and copy any selected arrays they retain. Iteration is forward
+  decoding, not random access; it yields pixels only, not audio.
 - VIDEO values retain an encoded source or deferred components, rational
   source probe facts, and ordered lazy trim, crop, scale, and restricted
   identical-codec concat edits. Info and lazy edits do not decode frames.
@@ -70,6 +81,11 @@
   audio mixing, CURVE parameters, and deterministic CPU text effects
 - Streamed media uploads and video encoding with explicit upload, decoded
   frame, decoded audio, and encoded output limits
+- Native Comfy packs exchange portable VIDEO and VIDEO_EDIT values without
+  requiring the media I/O pack. Video admission accepts verified assets and
+  granted local files, rejecting revoked or changed local bindings before
+  probing or publishing; admitted local bytes use bounded inline or published
+  asset storage without decoding video frames.
 - Bounded frame-record export to GIF (Pillow or FFmpeg dithering), animated
   WebP, 8/16-bit APNG with alpha, and ZIP PNG sequences; variable frame
   durations, animation loops, workflow metadata, and declared-count checks

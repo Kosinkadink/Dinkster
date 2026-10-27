@@ -103,6 +103,8 @@ def resolved_type_expr(expr: TypeExpr, bindings: Mapping[str, str]) -> TypeExpr 
         return None if inner is None else TypeExpr.stream_of(inner)
     if expr.kind == "list":
         assert expr.element is not None  # post_init invariant
+        if expr.element.kind == "wildcard":
+            return expr
         inner = resolved_type_expr(expr.element, bindings)
         return None if inner is None else TypeExpr.list_of(inner)
     if expr.kind == "asset":
@@ -118,7 +120,9 @@ def _type_expr_from_runtime_id(type_id: str) -> TypeExpr:
     if (inner := parse_stream_type_id(type_id)) is not None:
         return TypeExpr.stream_of(_type_expr_from_runtime_id(inner))
     if (inner := parse_list_type_id(type_id)) is not None:
-        return TypeExpr.list_of(_type_expr_from_runtime_id(inner))
+        return TypeExpr.list_of(
+            TypeExpr.wildcard() if inner == "*" else _type_expr_from_runtime_id(inner)
+        )
     if (inner := parse_asset_type_id(type_id)) is not None:
         return TypeExpr.asset_of(_type_expr_from_runtime_id(inner))
     return TypeExpr.concrete(type_id)

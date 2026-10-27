@@ -141,7 +141,7 @@ router-generated 404 and 405 responses remain available after authentication.
 
 | Capability | Routes |
 | --- | --- |
-| `jobs:submit` | `POST /api/jobs`; `POST /api/compat/comfy/prompt` |
+| `jobs:submit` | `POST /api/jobs` |
 | `jobs:read` | job list/status/event replay, `/api/values`, and `/api/events` |
 | `jobs:cancel` | job `DELETE` routes, keyed or by `jobRef` |
 | `history:read` | all `/api/history` routes, including delete; v1 has no separate history mutation verb |
