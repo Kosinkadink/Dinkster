@@ -15,6 +15,11 @@
   storage with actual host-RAM byte accounting; ordinary typed consumers
   receive normalized float32 values at invocation, while inputs that declare
   compact-storage support receive the retained dtype unchanged
+- Public bound-image component decoding returns first-frame RGB float32 pixels
+  and optional straight alpha through the existing openable asset capability,
+  using the same PyAV precision, channel, alignment, and display-orientation
+  handling as the ComfyUI reference without admitting still images as VIDEO;
+  PyAV's non-byte alignment graph rejects some small asymmetric inputs
 - Ordered animated and multipage image loading; pages with different dimensions
   from the first page are omitted from the batch
 - Ordered mounted image saving to PNG, JPEG, or WebP; Save Image defaults to a
@@ -53,7 +58,8 @@
   AAC audio for MP4, Opus for WebM, PCM for ProRes, and FLAC for FFV1.
   Save Video accepts VIDEO with container, codec, ProRes profile, declared
   audio-layout preservation or explicit mono/stereo downmix, trim-to-audio
-  or silence padding, optional CRF, and JSON metadata controls. It outputs the unchanged VIDEO
+  or silence padding, optional finite integer or fractional CRF within the
+  codec's range without rounding, and JSON metadata controls. It outputs the unchanged VIDEO
   plus the saved asset. Persisted frame-input savers migrate through deferred
   assembly while preserving codec settings and saved-asset output links.
   Component audio without proven sample coverage preserves finite VIDEO length
@@ -64,6 +70,8 @@
   resampling matching native video loading; deferred assembly with optional
   audio, 8/10-bit precision, sRGB, HLG, and HDR PQ; disassembly to frames,
   optional audio, fps, duration, bit depth, and color space
+- Native Sample Video Frame selects head or tail windows with audio retained,
+  or ordered uniform/random frames at the source frame rate without audio
 - Public `iter_video_pixels` yields edited, display-oriented float32 pixels
   with rational timestamps without accumulating the complete frame batch.
   Consumers that stop early close the iterator to release the decoder and

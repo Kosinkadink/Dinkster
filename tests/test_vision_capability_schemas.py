@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import sys
 from importlib import import_module
 from pathlib import Path
@@ -38,6 +39,69 @@ CAPABILITIES = (
     (ImageMatte, "dinkster.image.matte", MATTE_PROVIDER_CHOICE),
     (TrackObjects, "dinkster.detection.track", TRACK_PROVIDER_CHOICE),
 )
+
+
+def test_bbox_crop_schema_registers_without_torch_or_inference() -> None:
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys\n"
+            "sys.modules['torch'] = None\n"
+            "sys.modules['dinkster_inference'] = None\n"
+            "from dinkster_nodes_comfy import COMFY_NODES\n"
+            "from dinkster_nodes_comfy.bbox_crop import CropByBBoxes\n"
+            "from dinkster_workers import load_manifest\n"
+            "manifest = load_manifest('packages/dinkster-nodes-comfy/dinkster-pack.toml')\n"
+            "schema = CropByBBoxes.define_schema()\n"
+            "assert CropByBBoxes in COMFY_NODES and schema.node_type in manifest.namespaces\n"
+            "assert [port.id for port in schema.inputs] == "
+            "['image', 'bboxes', 'output_width', 'output_height', 'padding', 'keep_aspect']\n"
+            "assert schema.inputs[1].force_input\n"
+            "assert schema.inputs[1].default == {'x': 0, 'y': 0, 'width': 512, 'height': 512}\n"
+            "assert [option.value for option in schema.inputs[-1].widget.options] == "
+            "['stretch', 'pad']\n",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_native_rtdetr_schemas_register_without_torch_or_inference() -> None:
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys\n"
+            "sys.modules['torch'] = None\n"
+            "sys.modules['dinkster_inference'] = None\n"
+            "from dinkster_api.v1 import BOUNDING_BOX_TYPE, IMAGE_TYPE, TypeExpr\n"
+            "from dinkster_nodes_comfy import COMFY_NODES\n"
+            "from dinkster_nodes_comfy.rtdetr import RTDETR_detect, DrawBBoxes\n"
+            "from dinkster_nodes_comfy.sam3 import SAM3_TRACKING_NODES\n"
+            "from dinkster_workers import load_manifest\n"
+            "manifest = load_manifest('packages/dinkster-nodes-comfy/dinkster-pack.toml')\n"
+            "for node in (RTDETR_detect, DrawBBoxes, *SAM3_TRACKING_NODES):\n"
+            "    schema = node.define_schema()\n"
+            "    assert node in COMFY_NODES and schema.node_type in manifest.namespaces\n"
+            "    assert schema.category == 'image/detection'\n"
+            "detect = RTDETR_detect.define_schema()\n"
+            "assert [p.id for p in detect.inputs] == "
+            "['model', 'image', 'threshold', 'class_name', 'max_detections']\n"
+            "assert detect.outputs[0].type == TypeExpr.concrete(BOUNDING_BOX_TYPE)\n"
+            "options = detect.inputs[3].widget.options\n"
+            "assert len(options) == 81 and options[0].value == 'all'\n"
+            "assert options[-1].value == 'toothbrush'\n"
+            "draw = DrawBBoxes.define_schema()\n"
+            "assert [p.id for p in draw.inputs] == ['image', 'bboxes']\n"
+            "assert not draw.inputs[0].required and draw.inputs[1].required\n"
+            "assert draw.outputs[0].type == TypeExpr.concrete(IMAGE_TYPE)\n",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 
 @pytest.mark.parametrize(("node", "node_type", "choice"), CAPABILITIES)

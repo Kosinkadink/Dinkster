@@ -266,7 +266,10 @@ GOLDEN_V1_SURFACE = (
     # same way dev.image and the compat surface do.
     "IMAGE_BATCH_MERGER_ID",
     "PNG_CONTAINER_VERSION",
+    "ImageComponents",
+    "ReadableImageSource",
     "decode_image_array",
+    "decode_image_components",
     "encode_image_array",
     "image_array_fingerprint",
     "image_array_meta",

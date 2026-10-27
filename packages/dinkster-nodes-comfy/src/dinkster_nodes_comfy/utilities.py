@@ -1,7 +1,9 @@
-"""Numeric conversion and seed nodes with ComfyUI's value semantics."""
+"""Numeric conversion, seed, and value inspection nodes."""
 
 from __future__ import annotations
 
+import importlib
+import json
 import math
 import sys
 from collections.abc import Mapping
@@ -17,6 +19,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
+    report_progress,
 )
 
 
@@ -93,3 +96,47 @@ class SeedNode(Node):
     @classmethod
     def execute(cls, *, seed: int) -> Mapping[str, object]:
         return cls.outputs(seed=seed)
+
+
+class PreviewAny(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="PreviewAny",
+            display_name="Preview as Text",
+            category="utilities",
+            description="Preview any input value as text.",
+            inputs=(InputSpec("source", TypeExpr.wildcard()),),
+            outputs=(OutputSpec("STRING", TypeExpr.concrete(CORE_STRING), preview=True),),
+            output_node=True,
+            search_terms=(
+                "preview",
+                "preview text",
+                "show output",
+                "inspect",
+                "debug",
+                "print value",
+                "show text",
+            ),
+        )
+
+    @classmethod
+    def execute(cls, *, source: object = None) -> Mapping[str, object]:
+        torch = importlib.import_module("torch")
+        torch.set_printoptions(edgeitems=6)
+        value = "None"
+        if isinstance(source, str):
+            value = source
+        elif isinstance(source, (int, float, bool)):
+            value = str(source)
+        elif source is not None:
+            try:
+                value = json.dumps(source, indent=4, ensure_ascii=False)
+            except Exception:
+                try:
+                    value = str(source)
+                except Exception:
+                    value = "source exists, but could not be serialized."
+        torch.set_printoptions()
+        report_progress(1, 1, text=value)
+        return cls.outputs(STRING=value)

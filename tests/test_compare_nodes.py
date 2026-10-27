@@ -12,6 +12,94 @@ from types import SimpleNamespace
 import pytest
 
 
+@pytest.mark.parametrize(
+    "name", ["SaveExample", "CLIPSave", "VAESave", "CheckpointSave", "ModelSave"]
+)
+@pytest.mark.parametrize(
+    "output_node,prefix_type", [(True, "STRING"), (False, "STRING"), (True, "INT")]
+)
+@pytest.mark.parametrize("input_is_list", [False, True])
+def test_save_mount_admission_uses_source_output_contract(
+    name: str, output_node: bool, prefix_type: str, input_is_list: bool
+) -> None:
+    from dinkster_schema import InputSpec, MountWidget, NodeSchema, TypeExpr, schema_to_wire
+
+    from tools.compare_nodes import compare_registry
+
+    reference = {
+        "nodes": [
+            {
+                "class_name": name,
+                "output_node": output_node,
+                "input_is_list": input_is_list,
+                "input_types": {"required": {"filename_prefix": [prefix_type]}},
+                "return_types": [],
+            }
+        ]
+    }
+    native = schema_to_wire(
+        NodeSchema(
+            node_type=name,
+            output_node=output_node,
+            inputs=(
+                InputSpec(
+                    "filename_prefix",
+                    TypeExpr.list_of(TypeExpr.concrete(prefix_type))
+                    if input_is_list
+                    else TypeExpr.concrete(prefix_type),
+                ),
+                InputSpec(
+                    "mount",
+                    TypeExpr.concrete("STRING"),
+                    required=False,
+                    default=None,
+                    widget=MountWidget(),
+                    adjacent_to="filename_prefix",
+                ),
+            ),
+        )
+    )
+    result = compare_registry(reference, {"nodes": {name: native}})
+    assert result["passed"] is (output_node and prefix_type == "STRING" and not input_is_list)
+    if not result["passed"]:
+        assert "inputs" in result["rows"][0]["differences"]
+
+
+def test_reference_file_arguments_follow_declared_execution_source(tmp_path: Path) -> None:
+    import importlib.util
+
+    from tools.dump_comfy_nodes import annotated_file_arguments
+
+    source = tmp_path / "source_nodes.py"
+    source.write_text("""
+class LoadExample:
+    FUNCTION = "load"
+
+    def load(self, latent, mode):
+        path = folder_paths.get_annotated_filepath(latent)
+        other = different_owner.get_annotated_filepath(mode)
+        fixed = folder_paths.get_annotated_filepath("constant.latent")
+        local = "local.latent"
+        ignored = folder_paths.get_annotated_filepath(local)
+        return path, other, fixed, ignored
+
+    def validate(self, mode):
+        return folder_paths.get_annotated_filepath(mode)
+
+class NonFile:
+    FUNCTION = "run"
+
+    def run(self, mode):
+        return mode
+""")
+    spec = importlib.util.spec_from_file_location("source_nodes", source)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert annotated_file_arguments(module.LoadExample) == {"latent"}
+    assert annotated_file_arguments(module.NonFile) == set()
+
+
 def test_comparison_cli(tmp_path: Path) -> None:
     from dinkster_schema import InputSpec, NodeSchema, StringWidget, TypeExpr, schema_to_wire
 
@@ -187,6 +275,7 @@ def test_save_mount_is_not_an_arbitrary_extra_input(field: str, value: object) -
         "nodes": [
             {
                 "class_name": "SaveExample",
+                "output_node": True,
                 "input_types": {"required": {"filename_prefix": ["STRING"]}},
                 "return_types": [],
             }
@@ -196,6 +285,7 @@ def test_save_mount_is_not_an_arbitrary_extra_input(field: str, value: object) -
         "nodes": {
             "SaveExample": {
                 "nodeType": "SaveExample",
+                "outputNode": True,
                 "interface": [
                     {
                         "role": "input",

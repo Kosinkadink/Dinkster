@@ -4,10 +4,26 @@
   metadata pass between node packs without rewriting their values.
 - Native `PrimitiveBoundingBox` constructs pixel bounding boxes; `ImageCropV2`
   crops each image in a batch to that box and reports a PNG preview.
+- Native `CropByBBoxes` crops each frame to its bounding-box union and resizes
+  with stretching or aspect-preserving black padding.
+- Native `RTDETR_detect` returns per-frame pixel bounding boxes filtered by
+  confidence and COCO class, ordered by score and limited per frame.
+  `DrawBBoxes` overlays boxes and labels on images or a black canvas.
+- Native `SAM3_VideoTrack` tracks initial masks or text-prompted objects across
+  video frames. `SAM3_TrackToMask` selects tracked objects and resizes their union
+  to the original frame dimensions using the portable packed-track value.
 - Native `ColorToRGBInt` preserves RGB letter casing and separates optional alpha;
   `ResolutionSelector` rounds aspect-ratio and megapixel dimensions to a chosen multiple.
 - Marigold V2 decoded predictions convert to per-image normalized depth,
   unit surface normals, or sRGB albedo.
+- Native video dataset transforms lazily crop continuous frame ranges and
+  shuffle video lists or video-text pairs with seeded ordering.
+- Native list construction preserves member order and nested values across
+  independently typed elements; indexed selection supports positive and negative
+  indices and retains the selected element's type.
+- Native image tile lists split batches with overlap and merge tiles using
+  feathered weights; mask previews retain their mask output, and arbitrary
+  values can be inspected as text.
 - Native `Canny` edge detection with low/high hysteresis thresholds and RGB output
 - Native Stable Cascade stage C/B latent creation, stage C VAE encoding,
   stage B prior conditioning, and super-resolution control inputs
