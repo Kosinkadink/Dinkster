@@ -138,6 +138,24 @@ assert sys.modules['torch'] is None
     assert result.returncode == 0, result.stderr
 
 
+def test_ltx_text_encoder_admits_omitted_device_with_default(tmp_path: Path) -> None:
+    from dinkster_graph import Graph, GraphNode
+    from dinkster_graph.validate import validate
+
+    path = tmp_path / "fixture.safetensors"
+    path.write_bytes(b"fixture")
+    asset = _asset(path).to_wire()
+    schema = model_file_loaders.LTXAVTextEncoderLoader.schema()
+    graph = Graph(
+        nodes={
+            "loader": GraphNode(
+                "LTXAVTextEncoderLoader", {"text_encoder": asset, "ckpt_name": asset}
+            )
+        }
+    )
+    assert validate(graph, {schema.node_type: schema}, ["loader"]) == []
+
+
 def test_model_file_loader_execution_adapts_bound_assets_to_pinned_loader_calls(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

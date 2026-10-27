@@ -514,6 +514,14 @@ namespaces = [
     "LoraLoaderBypass",
     "LoraLoaderBypassModelOnly",
     "CropByBBoxes",
+    "LoadAudio",
+    "PreviewAudio",
+    "SaveAudio",
+    "SaveAudioMP3",
+    "SaveAudioOpus",
+    "SaveAudioAdvanced",
+    "YuE2GenerateABC",
+    "YuE2GenerateMusic",
 ]
 
 [pack.sandbox]

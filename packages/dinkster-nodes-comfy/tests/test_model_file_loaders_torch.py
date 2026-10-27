@@ -540,9 +540,9 @@ def test_ltx_audio_vae_loader_filters_checkpoint_and_validates(
     assert vae.state["vocoder.weight"].tolist() == [11.0]
 
 
-@pytest.mark.parametrize("device", ("default", "cpu", "other"))
+@pytest.mark.parametrize("device", (None, "default", "cpu", "other"))
 def test_ltx_text_encoder_loader_preserves_file_order_and_device(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, device: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, device: str | None
 ) -> None:
     from dinkster_nodes_comfy import model_file_loaders as loaders
 
@@ -570,6 +570,6 @@ def test_ltx_text_encoder_loader_preserves_file_order_and_device(
     result = loaders.LTXAVTextEncoderLoader.execute(
         text_encoder=table.bind_name(encoder.name, "model/text-encoder"),
         ckpt_name=table.bind_name(checkpoint.name, "model/checkpoint"),
-        device=device,
+        **({"device": device} if device is not None else {}),
     )
     assert result == {"CLIP": (3.0, -7.0)}
