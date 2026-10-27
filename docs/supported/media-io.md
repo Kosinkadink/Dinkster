@@ -12,6 +12,11 @@
   storage with actual host-RAM byte accounting; ordinary typed consumers
   receive normalized float32 values at invocation, while inputs that declare
   compact-storage support receive the retained dtype unchanged
+- Public bound-image component decoding returns first-frame RGB float32 pixels
+  and optional straight alpha through the existing openable asset capability,
+  using the same PyAV precision, channel, alignment, and display-orientation
+  handling as the ComfyUI reference without admitting still images as VIDEO;
+  PyAV's non-byte alignment graph rejects some small asymmetric inputs
 - Ordered animated and multipage image loading; pages with different dimensions
   from the first page are omitted from the batch
 - Ordered mounted image saving to PNG, JPEG, or WebP; Save Image defaults to a

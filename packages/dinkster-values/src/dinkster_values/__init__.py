@@ -135,6 +135,7 @@ from .image_codec import (
     render_mask_png,
     validate_image_encoded,
 )
+from .image_components import ImageComponents, ReadableImageSource, decode_image_components
 from .latent_codec import (
     LATENT_CODEC_MAGIC,
     LATENT_CODEC_VERSION,
@@ -343,6 +344,7 @@ __all__ = [
     "IMAGE_DOCUMENT_RESOURCE_LIMIT_BYTES",
     "IMAGE_WORKING_SET_LIMIT_BYTES",
     "IMAGE_TYPE",
+    "ImageComponents",
     "IMPACT_BASIC_PIPE_TYPE",
     "INFERENCE_LATENT_OPERATION_TYPE",
     "INLINE_STRING_CAP",
@@ -395,6 +397,7 @@ __all__ = [
     "SPLAT_TYPE",
     "STYLE_MODEL_TYPE",
     "Region",
+    "ReadableImageSource",
     "Rendition",
     "RenditionSpec",
     "RenditionUnavailable",
@@ -465,6 +468,7 @@ __all__ = [
     "decode_region",
     "detection_meta",
     "decode_image_array",
+    "decode_image_components",
     "decode_image_file",
     "decode_model3d",
     "decode_model3d_file",
