@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+import pytest
 import torch
 from dinkster_api.v1 import (
     CORE_BOOLEAN,
@@ -15,6 +16,7 @@ from dinkster_api.v1 import (
     MODEL_TYPE,
     SIGMAS_TYPE,
     InputSpec,
+    MultiStreamLatent,
     Node,
     NodeSchema,
     OutputSpec,
@@ -62,6 +64,24 @@ def test_disable_noise_uses_pinned_cpu_nested_noise_preparation() -> None:
     assert tensor.device.type == "cpu"
     assert tensor.dtype == torch.float64
     assert torch.equal(tensor, torch.zeros_like(tensor))
+
+
+@pytest.mark.parametrize("noise_node", (RandomNoise, DisableNoise))
+def test_public_noise_preserves_asymmetric_av_roles_shapes_and_dtypes(noise_node: type[Any]) -> None:
+    video = torch.zeros((1, 3, 2, 2, 3), dtype=torch.float64)
+    audio = torch.zeros((1, 2, 4), dtype=torch.float32)
+    samples = MultiStreamLatent.from_pairs((("video", video), ("audio", audio)))
+    noise = (
+        noise_node.execute(noise_seed=42)["NOISE"]
+        if noise_node is RandomNoise
+        else noise_node.execute()["NOISE"]
+    ).generate_noise({"samples": samples, "batch_index": [3]})
+    assert type(noise) is MultiStreamLatent
+    assert noise.roles == ("video", "audio")
+    assert noise.by_role("video").shape == video.shape
+    assert noise.by_role("video").dtype == video.dtype
+    assert noise.by_role("audio").shape == audio.shape
+    assert noise.by_role("audio").dtype == audio.dtype
 
 
 class _Sampling:

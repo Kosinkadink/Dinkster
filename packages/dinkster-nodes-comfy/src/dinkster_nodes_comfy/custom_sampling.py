@@ -27,6 +27,8 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 
+from .sampling_boundary import to_public, to_runtime
+
 _BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
 _CONDITIONING = TypeExpr.concrete(CONDITIONING_TYPE)
 _FLOAT = TypeExpr.concrete(CORE_FLOAT)
@@ -54,32 +56,36 @@ def _capture_x0(output: dict[str, object]) -> Any:
 
 def _prepare_latent(
     model: Any, latent_image: object
-) -> tuple[dict[str, object], object, object | None]:
+) -> tuple[dict[str, object], object, object, object | None]:
     materialized = materialize_latent(latent_image)
     if not isinstance(materialized, Mapping):
         raise TypeError("latent_image must be a mapping")
     source = dict(cast(Mapping[str, object], materialized))
-    samples = source.get("samples")
-    if samples is None:
+    public_samples = source.get("samples")
+    if public_samples is None:
         raise ValueError("latent_image is missing samples")
     sample = _runtime()
     samples = sample.fix_empty_latent_channels(
         model,
-        samples,
+        to_runtime(public_samples),
         source.get("downscale_ratio_spacial"),
         source.get("downscale_ratio_temporal"),
     )
     source["samples"] = samples
-    return source, samples, source.get("noise_mask")
+    return source, public_samples, samples, to_runtime(source.get("noise_mask"))
 
 
 def _outputs(
-    model: Any, latent: dict[str, object], samples: object, x0_output: Mapping[str, object]
+    model: Any,
+    latent: dict[str, object],
+    public_samples: object,
+    samples: object,
+    x0_output: Mapping[str, object],
 ) -> Mapping[str, object]:
     output = dict(latent)
     output.pop("downscale_ratio_spacial", None)
     output.pop("downscale_ratio_temporal", None)
-    output["samples"] = samples
+    output["samples"] = to_public(samples, public_samples)
     if "x0" not in x0_output:
         return {"output": output, "denoised_output": output}
     denoised = dict(latent)
@@ -91,7 +97,7 @@ def _outputs(
         x0 = nested_tensor.NestedTensor(
             utils.unpack_latents(x0, [sample.shape for sample in nested_samples.unbind()])
         )
-    denoised["samples"] = model.model.process_latent_out(x0.cpu())
+    denoised["samples"] = to_public(model.model.process_latent_out(x0.cpu()), public_samples)
     return {"output": output, "denoised_output": denoised}
 
 
@@ -147,7 +153,7 @@ class SamplerCustom(Node):
         latent_image: object,
     ) -> Mapping[str, object]:
         sample = _runtime()
-        latent, samples, noise_mask = _prepare_latent(model, latent_image)
+        latent, public_samples, samples, noise_mask = _prepare_latent(model, latent_image)
         noise = (
             sample.prepare_noise(samples, noise_seed, latent.get("batch_index"))
             if add_noise
@@ -169,7 +175,7 @@ class SamplerCustom(Node):
             disable_pbar=True,
             seed=noise_seed,
         )
-        return cls.outputs(**_outputs(model, latent, sampled, x0_output))
+        return cls.outputs(**_outputs(model, latent, public_samples, sampled, x0_output))
 
 
 class SamplerCustomAdvanced(Node):
@@ -191,11 +197,11 @@ class SamplerCustomAdvanced(Node):
         cls, *, noise: Any, guider: Any, sampler: Any, sigmas: Any, latent_image: object
     ) -> Mapping[str, object]:
         initialize_inference_process()
-        latent, samples, noise_mask = _prepare_latent(guider.model_patcher, latent_image)
+        latent, public_samples, samples, noise_mask = _prepare_latent(guider.model_patcher, latent_image)
         x0_output: dict[str, object] = {}
         callback = _capture_x0(x0_output)
         sampled = guider.sample(
-            noise.generate_noise(latent),
+            to_runtime(noise.generate_noise(latent)),
             samples,
             sampler,
             materialize_latent(sigmas),
@@ -206,7 +212,9 @@ class SamplerCustomAdvanced(Node):
         )
         management = importlib.import_module("dinkster_inference.model_management")
         sampled = sampled.to(management.intermediate_device())
-        return cls.outputs(**_outputs(guider.model_patcher, latent, sampled, x0_output))
+        return cls.outputs(
+            **_outputs(guider.model_patcher, latent, public_samples, sampled, x0_output)
+        )
 
 
 CUSTOM_SAMPLING_NODES = (SamplerCustom, SamplerCustomAdvanced)

@@ -9,7 +9,8 @@ from typing import Any
 
 import pytest
 import torch
-from dinkster_api.v1 import initialize_inference_process
+from dinkster_api.v1 import MultiStreamLatent, initialize_inference_process
+from dinkster_nodes_comfy import standard_sampling
 from dinkster_nodes_comfy.standard_sampling import KSampler, KSamplerAdvanced
 
 
@@ -217,6 +218,54 @@ def test_ksampler_advanced_uses_noise_and_step_boundaries() -> None:
         original * 0.25 * source["noise_mask"] + original * (1.0 - source["noise_mask"]),
     )
     assert torch.equal(source["samples"], original)
+
+
+def test_standard_sampler_restores_asymmetric_av_streams_after_pinned_sampling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Sampling:
+        def fix_empty_latent_channels(self, _model: object, samples: object, *_ratios: object) -> object:
+            assert getattr(samples, "is_nested", False)
+            return samples
+
+        def prepare_empty_noise(self, samples: object) -> object:
+            return samples * 0
+
+        def sample(self, _model: object, _noise: object, *_args: object, **kwargs: object) -> object:
+            assert getattr(kwargs["noise_mask"], "is_nested", False)
+            return _args[6]
+
+    import_module = standard_sampling.importlib.import_module
+    monkeypatch.setattr(
+        standard_sampling.importlib,
+        "import_module",
+        lambda name: Sampling() if name == "dinkster_inference.sample" else import_module(name),
+    )
+    video = torch.arange(12, dtype=torch.float64).reshape(1, 3, 2, 2, 1)
+    audio = torch.arange(8, dtype=torch.float32).reshape(1, 2, 4)
+    samples = MultiStreamLatent.from_pairs((("video", video), ("audio", audio)))
+    masks = MultiStreamLatent.from_pairs(
+        (("video", torch.ones_like(video)), ("audio", torch.zeros_like(audio)))
+    )
+    result = KSamplerAdvanced.execute(
+        model=object(),
+        add_noise="disable",
+        noise_seed=19,
+        steps=1,
+        cfg=1.0,
+        sampler_name="euler",
+        scheduler="normal",
+        positive=[],
+        negative=[],
+        latent_image={"samples": samples, "noise_mask": masks, "batch_index": [3]},
+        start_at_step=0,
+        end_at_step=1,
+        return_with_leftover_noise="disable",
+    )["LATENT"]
+    assert type(result["samples"]) is MultiStreamLatent
+    assert result["samples"].roles == ("video", "audio")
+    assert result["samples"].by_role("video").dtype == video.dtype
+    assert result["samples"].by_role("audio").shape == audio.shape
 
 
 @pytest.mark.parametrize("in_process", (True, False))

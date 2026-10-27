@@ -10,7 +10,9 @@ from typing import Any
 
 import pytest
 import torch
+from dinkster_api.v1 import MultiStreamLatent
 from dinkster_nodes_comfy import custom_sampling
+from dinkster_nodes_comfy.noise import DisableNoise, RandomNoise
 
 
 class _Sample:
@@ -225,6 +227,55 @@ def test_advanced_sampler_uses_the_guider_and_preserves_batch_metadata(monkeypat
     torch.testing.assert_close(
         output["denoised_output"]["samples"], torch.tensor([[[[-10.0, 80.0]]], [[[50.0, -90.0]]]])
     )
+
+
+@pytest.mark.parametrize("noise_node", (RandomNoise, DisableNoise))
+def test_advanced_sampler_restores_asymmetric_av_streams_after_pinned_sampling(
+    monkeypatch: Any, noise_node: type[Any]
+) -> None:
+    class Sample:
+        def fix_empty_latent_channels(self, _model: object, samples: object, *_ratios: object) -> object:
+            assert getattr(samples, "is_nested", False)
+            return samples
+
+    monkeypatch.setattr(custom_sampling, "_runtime", lambda: Sample())
+    video = torch.arange(12, dtype=torch.float64).reshape(1, 3, 2, 2, 1)
+    audio = torch.arange(8, dtype=torch.float32).reshape(1, 2, 4)
+    samples = MultiStreamLatent.from_pairs((("video", video), ("audio", audio)))
+    masks = MultiStreamLatent.from_pairs(
+        (("video", torch.ones_like(video)), ("audio", torch.zeros_like(audio)))
+    )
+
+    class Guider:
+        model_patcher = _Model()
+
+        def sample(self, noise: object, latent: object, *_args: object, **kwargs: object) -> object:
+            assert getattr(noise, "is_nested", False)
+            assert getattr(latent, "is_nested", False)
+            assert getattr(kwargs["denoise_mask"], "is_nested", False)
+            kwargs["callback"](0, latent, latent, 1)
+            return latent
+
+    noise = (
+        noise_node.execute(noise_seed=19)["NOISE"]
+        if noise_node is RandomNoise
+        else noise_node.execute()["NOISE"]
+    )
+    output = custom_sampling.SamplerCustomAdvanced.execute(
+        noise=noise,
+        guider=Guider(),
+        sampler=object(),
+        sigmas=torch.tensor([1.0, 0.0]),
+        latent_image={"samples": samples, "noise_mask": masks, "batch_index": [3]},
+    )
+    for name in ("output", "denoised_output"):
+        result = output[name]["samples"]
+        assert type(result) is MultiStreamLatent
+        assert result.roles == ("video", "audio")
+        assert result.by_role("video").shape == video.shape
+        assert result.by_role("video").dtype == video.dtype
+        assert result.by_role("audio").shape == audio.shape
+        assert result.by_role("audio").dtype == audio.dtype
 
 
 @pytest.mark.parametrize("in_process", (True, False))
