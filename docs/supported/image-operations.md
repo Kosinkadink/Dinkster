@@ -1,5 +1,7 @@
 ## Image operations
 
+- Native `Trellis2Conditioning` encodes per-image vision tokens at 512 and 1024
+  resolution, with independent zero negative conditioning at both sizes.
 - Native `CameraAngle` produces an orbit-camera dictionary and shot description
   from horizontal angle, elevation, and zoom.
 - Native `TripoSplatPreprocessImage` erodes alpha, crops foreground to a padded

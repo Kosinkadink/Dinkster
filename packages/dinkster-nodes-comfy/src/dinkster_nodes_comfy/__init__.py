@@ -175,6 +175,7 @@ from .supir import SUPIRApply
 from .switch import ComfySwitchNode
 from .text import TEXT_NODES
 from .text_generation import TextGenerate, TextGenerateLTX2Prompt
+from .trellis_conditioning import Trellis2Conditioning
 from .triposplat import TripoSplatConditioning, TripoSplatPreprocessImage
 from .utilities import ComfyNumberConvert, PreviewAny, SeedNode
 from .vae import VAE_NODES
@@ -413,6 +414,7 @@ COMFY_NODES = (
     SaveAudioOpus,
     SaveAudioAdvanced,
     *YUE2_CONDITIONING_NODES,
+    Trellis2Conditioning,
 )
 
 
