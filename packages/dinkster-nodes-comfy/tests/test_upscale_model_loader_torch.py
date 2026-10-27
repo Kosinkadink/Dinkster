@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import spandrel
 import torch
 from dinkster_api.v1 import (
     CORE_BOOLEAN,
@@ -30,12 +31,14 @@ from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.upscale_model_loader import UpscaleModelLoader
 from safetensors.torch import save_file
 from spandrel import (
+    ArchRegistry,
+    ArchSupport,
     ImageModelDescriptor,
     MaskedImageModelDescriptor,
     ModelLoader,
     UnsupportedModelError,
 )
-from spandrel.architectures.Compact import Compact
+from spandrel.architectures.Compact import Compact, CompactArch
 from spandrel.architectures.LaMa import LaMaArch
 from spandrel.architectures.SwinIR import SwinIR
 
@@ -187,6 +190,27 @@ def test_optional_architecture_failures_are_distinguished(
             f"Optional upscale architecture {message} failed" in record.message and record.exc_info
             for record in caplog.records
         )
+
+
+def test_optional_architectures_support_repeated_successful_loads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    _table, asset = seed(tmp_path, verified=False)
+    registry = ArchRegistry()
+    extra = SimpleNamespace(EXTRA_REGISTRY=(ArchSupport.from_architecture(CompactArch()),))
+    original = importlib.import_module
+
+    def import_module(name: str, package: str | None = None) -> Any:
+        return extra if name == "spandrel_extra_arches" else original(name, package)
+
+    monkeypatch.setattr(importlib, "import_module", import_module)
+    monkeypatch.setattr(spandrel, "MAIN_REGISTRY", registry)
+    monkeypatch.setattr(spandrel, "ModelLoader", lambda: ModelLoader(registry=registry))
+    with caplog.at_level(logging.WARNING):
+        for _ in range(2):
+            check_model(UpscaleModelLoader.execute(model_name=asset)["UPSCALE_MODEL"])
+    assert len(registry) == 1
+    assert not caplog.records
 
 
 class UpscaleLoaderConsumer(Node):

@@ -47,7 +47,7 @@ class UpscaleModelLoader(Node):
         spandrel = importlib.import_module("spandrel")
         try:
             extra = importlib.import_module("spandrel_extra_arches")
-            spandrel.MAIN_REGISTRY.add(*extra.EXTRA_REGISTRY)
+            spandrel.MAIN_REGISTRY.add(*extra.EXTRA_REGISTRY, ignore_duplicates=True)
             logging.info("Imported optional non-commercial upscale architectures.")
         except ModuleNotFoundError as error:
             if error.name != "spandrel_extra_arches":
