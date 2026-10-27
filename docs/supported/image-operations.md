@@ -1,5 +1,7 @@
 ## Image operations
 
+- Native `CurveEditor` passes canonical curves through the curve editor and
+  displays an optional histogram without restricting its bin count.
 - Native `CameraAngle` produces an orbit-camera dictionary and shot description
   from horizontal angle, elevation, and zoom.
 - Native `TripoSplatPreprocessImage` erodes alpha, crops foreground to a padded
