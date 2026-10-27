@@ -23,6 +23,8 @@ from dinkster_api.v1 import (
     materialize_latent,
 )
 
+from .sampling_boundary import to_public, to_runtime
+
 _INT = TypeExpr.concrete(CORE_INT)
 _MODEL = TypeExpr.concrete(MODEL_TYPE)
 _LATENT = TypeExpr.concrete(LATENT_TYPE)
@@ -46,7 +48,9 @@ class _RandomNoise:
             raise ValueError("latent is missing samples")
         initialize_inference_process()
         sample = importlib.import_module("dinkster_inference.sample")
-        return sample.prepare_noise(samples, self.seed, source.get("batch_index"))
+        return to_public(
+            sample.prepare_noise(to_runtime(samples), self.seed, source.get("batch_index")), samples
+        )
 
 
 @dataclass(frozen=True)
@@ -63,7 +67,7 @@ class _EmptyNoise:
             raise ValueError("latent is missing samples")
         initialize_inference_process()
         sample = importlib.import_module("dinkster_inference.sample")
-        return sample.prepare_empty_noise(samples)
+        return to_public(sample.prepare_empty_noise(to_runtime(samples)), samples)
 
 
 class RandomNoise(Node):
@@ -136,7 +140,9 @@ class AddNoise(Node):
         initialize_inference_process()
         torch = importlib.import_module("torch")
         with torch.inference_mode():
-            noisy = noise.generate_noise(source)
+            public_samples = samples
+            samples = to_runtime(public_samples)
+            noisy = to_runtime(noise.generate_noise(source))
             model_sampling = model.get_model_object("model_sampling")
             process_latent_out = model.get_model_object("process_latent_out")
             process_latent_in = model.get_model_object("process_latent_in")
@@ -145,13 +151,22 @@ class AddNoise(Node):
                 if len(materialized_sigmas) > 1
                 else materialized_sigmas[0]
             )
-            input_samples = samples
-            if torch.count_nonzero(input_samples) > 0:
+            input_samples: Any = samples
+            nested = getattr(input_samples, "is_nested", False)
+            tensors = input_samples.unbind() if nested else (input_samples,)
+            if any(torch.count_nonzero(tensor) > 0 for tensor in tensors):
                 input_samples = process_latent_in(input_samples)
             noisy = model_sampling.noise_scaling(scale, noisy, input_samples)
-            noisy = torch.nan_to_num(process_latent_out(noisy), nan=0.0, posinf=0.0, neginf=0.0)
+            noisy = process_latent_out(noisy)
+            if nested:
+                noisy = type(noisy)(
+                    torch.nan_to_num(tensor, nan=0.0, posinf=0.0, neginf=0.0)
+                    for tensor in noisy.unbind()
+                )
+            else:
+                noisy = torch.nan_to_num(noisy, nan=0.0, posinf=0.0, neginf=0.0)
         output = dict[str, object](source)
-        output["samples"] = noisy
+        output["samples"] = to_public(noisy, public_samples)
         return cls.outputs(LATENT=output)
 
 
