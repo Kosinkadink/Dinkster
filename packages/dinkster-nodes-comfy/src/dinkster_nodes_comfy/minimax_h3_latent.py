@@ -34,7 +34,7 @@ from dinkster_api.v1 import (
 from .conditioning import conditioning_set_values
 
 
-def _empty_av_latent(width: int, height: int, length: int) -> tuple[dict[str, object], int]:
+def empty_av_latent(width: int, height: int, length: int) -> tuple[dict[str, object], int]:
     initialize_inference_process()
     torch = importlib.import_module("torch")
     management = importlib.import_module("dinkster_inference.model_management")
@@ -91,7 +91,7 @@ class EmptyMiniMaxH3LatentAV(Node):
 
     @classmethod
     def execute(cls, *, width: int, height: int, length: int) -> Mapping[str, object]:
-        latent, _ = _empty_av_latent(width, height, length)
+        latent, _ = empty_av_latent(width, height, length)
         return cls.outputs(LATENT=latent)
 
 
@@ -135,7 +135,7 @@ class MiniMaxH3ImageToVideo(Node):
     ) -> Mapping[str, object]:
         initialize_inference_process()
         utils = importlib.import_module("dinkster_inference.utils")
-        latent, frame_count = _empty_av_latent(width, height, length)
+        latent, frame_count = empty_av_latent(width, height, length)
         images: list[Any] = []
         keyframes: list[dict[str, Any]] = []
         for image, index, crop in (
