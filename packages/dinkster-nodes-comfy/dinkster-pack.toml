@@ -489,6 +489,7 @@ namespaces = [
     "PhotoMakerEncode",
     "ImageCropV2",
     "PrimitiveBoundingBox",
+    "ImageCropToMask",
     "RTDETR_detect",
     "DrawBBoxes",
     "VideoFrameSample",

@@ -6,6 +6,9 @@
   crops each image in a batch to that box and reports a PNG preview.
 - Native `PadImageNode` adds per-side, multiplier, or divisible-size padding
   with repeated mirrored edges or a solid color and optional edge feathering.
+- Native `ImageCropToMask` centers a mask-derived crop with aspect-ratio padding,
+  mask growth/shrink and polarity correction, composites RGB over a background,
+  and resizes with Lanczos to the requested width and height.
 - Native `RTDETR_detect` returns per-frame pixel bounding boxes filtered by
   confidence and COCO class, ordered by score and limited per frame.
   `DrawBBoxes` overlays boxes and labels on images or a black canvas.
