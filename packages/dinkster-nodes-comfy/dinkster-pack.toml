@@ -546,6 +546,7 @@ namespaces = [
     "LoadImageTextDataSetFromFolder",
     "Pixal3DConditioning",
     "Pixal3DMultiViewConditioning",
+    "UpscaleModelLoader",
 ]
 
 [pack.sandbox]

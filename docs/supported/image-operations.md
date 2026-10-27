@@ -1,5 +1,7 @@
 ## Image operations
 
+- Native `UpscaleModelLoader` loads granted single-image upscale checkpoints
+  into the shared `UPSCALE_MODEL` value.
 - Native `CameraAngle` produces an orbit-camera dictionary and shot description
   from horizontal angle, elevation, and zoom.
 - Native `Pixal3DConditioning` and `Pixal3DMultiViewConditioning` combine DINO
