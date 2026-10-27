@@ -3302,14 +3302,11 @@ async def handle_submit(request: web.Request) -> web.Response:
             raise _bad_request("'exportSnapshot' has unknown fields")
         prompt = snapshot_fields.get("prompt")
         extra_pnginfo = snapshot_fields.get("extraPnginfo")
-        if not isinstance(prompt, dict) or (
-            extra_pnginfo is not None and not isinstance(extra_pnginfo, dict)
-        ):
-            raise _bad_request(
-                "'exportSnapshot' requires object 'prompt' and optional object 'extraPnginfo'"
-            )
+        for field_name in ("prompt", "extraPnginfo"):
+            if field_name in snapshot_fields and not isinstance(snapshot_fields[field_name], dict):
+                raise _bad_request(f"'exportSnapshot.{field_name}' must be an object")
         export_snapshot = ExportSnapshot(
-            prompt=cast("dict[str, object]", prompt),
+            prompt=cast("dict[str, object] | None", prompt),
             extra_pnginfo=cast("dict[str, object] | None", extra_pnginfo),
         )
     try:
