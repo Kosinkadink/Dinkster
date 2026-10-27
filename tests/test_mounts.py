@@ -112,7 +112,7 @@ def test_mount_priority_validation_and_config_round_trip() -> None:
             mode="readwrite",
             priority=-4,
         ),
-        MountDef(id="models-main", path=Path("C:\\Users\\me\\models")),
+        MountDef(id="models-main", path=Path("C:\\Users\\me\\models"), kind="model/vae"),
     )
     text = dump_mounts(mounts)
     assert parse_mounts(text) == tuple(sorted(mounts, key=lambda m: m.id))
@@ -121,6 +121,7 @@ def test_mount_priority_validation_and_config_round_trip() -> None:
     assert text.count("mode =") == 1
     assert "priority = -4" in text
     assert text.count("priority =") == 1
+    assert 'kind = "model/vae"' in text
     assert parse_mounts('[mounts.default]\npath = "/data"') == (
         MountDef(id="default", path=Path("/data"), priority=0),
     )
@@ -152,6 +153,9 @@ def test_parse_is_strict() -> None:
         parse_mounts('[settings]\noutput-mount = "missing"')
     with pytest.raises(MountsError, match="must be readwrite"):
         parse_mounts('[settings]\noutput-mount = "readonly"\n[mounts.readonly]\npath = "/data"')
+    for kind in ("true", "42", '"../models"', '"model/*"'):
+        with pytest.raises(MountsError, match="kind"):
+            parse_mounts(f'[mounts.invalid]\npath = "/data"\nkind = {kind}')
 
 
 def test_load_missing_file_is_empty_table(tmp_path: Path) -> None:
@@ -832,6 +836,42 @@ async def make_client(service: MountService) -> TestClient:
     return client
 
 
+def test_selection_options_api_uses_live_grants_without_exposing_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshot = tmp_path / "snapshot.json"
+    root = tmp_path / "private-model-directory"
+    seed(root, {"vendor/model/model_index.json": b"{}"})
+    table = MountTable(snapshot)
+    (mount,) = parse_mounts(
+        dump_mounts((MountDef(id="diffusers", path=root, kind="model/diffusers"),))
+    )
+    table.add(mount)
+    table.scan("diffusers")
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+
+    async def scenario() -> None:
+        client = await make_client(MountService(table))
+        try:
+            response = await client.get("/api/assets/selections?kind=model/diffusers")
+            assert response.status == 200
+            assert await response.json() == {
+                "kind": "model/diffusers",
+                "options": [{"name": "vendor/model", "shape": "directory"}],
+            }
+            table.remove("diffusers")
+            response = await client.get("/api/assets/selections?kind=model/diffusers")
+            assert await response.json() == {"kind": "model/diffusers", "options": []}
+            for kind in ("", "../private-model-directory", "model/checkpoint"):
+                response = await client.get("/api/assets/selections", params={"kind": kind})
+                assert response.status == 400
+                assert await response.json() == {"error": "unsupported-selection-kind"}
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
 async def wait_for_state(
     client: TestClient, mount_id: str, state: str, timeout: float = 5.0
 ) -> None:
@@ -1325,11 +1365,12 @@ def test_mount_entries_scoped_limit_bounds_are_unchanged(tmp_path: Path) -> None
     asyncio.run(scenario())
 
 
-def test_mount_grant_and_revoke_at_runtime(tmp_path: Path) -> None:
+def test_mount_grant_and_revoke_at_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     config = tmp_path / "mounts.toml"
     snapshot = tmp_path / "snap.json"
     granted = tmp_path / "granted"
-    seed(granted, {"render.png": b"pixels"})
+    seed(granted, {"nested/render.png": b"pixels"})
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
     table = MountTable(snapshot)
     table.add(MountDef(id="comfy-input", path=tmp_path), source="derived")
     service = MountService(table, config, allow_changes=True)
@@ -1348,17 +1389,21 @@ def test_mount_grant_and_revoke_at_runtime(tmp_path: Path) -> None:
                 "path": str(granted),
                 "mode": "readwrite",
                 "priority": -4,
+                "kind": "directory/input",
             },
         )
         assert resp.status == 201
         created = await resp.json()
         assert (created["id"], created["source"]) == ("renders", "config")
         assert created["priority"] == -4
+        assert created["kind"] == "directory/input"
 
         # The grant is durable immediately (mounts.toml), scanned behind
         # the response, and announced on the event stream.
         assert load_mounts(config) == (
-            MountDef(id="renders", path=granted, mode="readwrite", priority=-4),
+            MountDef(
+                id="renders", path=granted, mode="readwrite", priority=-4, kind="directory/input"
+            ),
         )
         await wait_for_state(client, "renders", "ready")
         async with asyncio.timeout(5):
@@ -1370,6 +1415,8 @@ def test_mount_grant_and_revoke_at_runtime(tmp_path: Path) -> None:
         snap = json.loads(snapshot.read_text("utf-8"))
         assert [m["id"] for m in snap["mounts"]] == ["renders"]
         assert [m["priority"] for m in snap["mounts"]] == [-4]
+        options = await (await client.get("/api/assets/selections?kind=directory/input")).json()
+        assert options["options"] == [{"name": "nested", "shape": "directory"}]
 
         # Refusals: duplicate id, malformed id/mode, missing directory.
         resp = await client.post("/api/mounts", json={"id": "renders", "path": str(granted)})
@@ -1389,6 +1436,11 @@ def test_mount_grant_and_revoke_at_runtime(tmp_path: Path) -> None:
             )
             assert resp.status == 400
             assert "priority must be an integer" in (await resp.json())["error"]
+        for kind in (True, 42, "model/*", "../input"):
+            resp = await client.post(
+                "/api/mounts", json={"id": "invalid-kind", "path": str(granted), "kind": kind}
+            )
+            assert resp.status == 400
 
         # Derived mounts are not deletable here; config mounts are.
         resp = await client.delete("/api/mounts/comfy-input")
@@ -1396,6 +1448,8 @@ def test_mount_grant_and_revoke_at_runtime(tmp_path: Path) -> None:
         resp = await client.delete("/api/mounts/renders")
         assert resp.status == 200
         assert load_mounts(config) == ()
+        options = await (await client.get("/api/assets/selections?kind=directory/input")).json()
+        assert options["options"] == []
         resp = await client.delete("/api/mounts/renders")
         assert resp.status == 404
         await ws.close()

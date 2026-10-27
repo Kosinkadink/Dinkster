@@ -8,12 +8,22 @@
   sequences, sample counts and structural metadata across execution hosts and caches
 - Portable IC-LoRA parameter mappings preserve source fields, ordering, and
   structural extras across execution hosts and caches
+- Portable `LORA_MODEL` values preserve ordered state-dictionary keys and tensor
+  dtype, shape, and bytes across execution hosts and caches
+- Portable LOAD3D_CAMERA values preserve perspective and orthographic camera
+  dictionaries, including position, target, zoom, camera type, optional camera
+  controls, and structural extensions across execution hosts and caches
 - Typed PNG, JPEG, and WebP image loading with EXIF orientation, ICC-to-sRGB
   conversion, alpha masks, bounded metadata inspection, and input- or
   output-category asset selection. Media outputs retain compact pixel or PCM
   storage with actual host-RAM byte accounting; ordinary typed consumers
   receive normalized float32 values at invocation, while inputs that declare
   compact-storage support receive the retained dtype unchanged
+- Public bound-image component decoding returns first-frame RGB float32 pixels
+  and optional straight alpha through the existing openable asset capability,
+  using the same PyAV precision, channel, alignment, and display-orientation
+  handling as the ComfyUI reference without admitting still images as VIDEO;
+  PyAV's non-byte alignment graph rejects some small asymmetric inputs
 - Ordered animated and multipage image loading; pages with different dimensions
   from the first page are omitted from the batch
 - Ordered mounted image saving to PNG, JPEG, or WebP; Save Image defaults to a
