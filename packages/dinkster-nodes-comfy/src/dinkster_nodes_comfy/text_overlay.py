@@ -57,10 +57,15 @@ class TextOverlay(Node):
                     "font_size",
                     TypeExpr.concrete(CORE_FLOAT),
                     default=5.0,
+                    doc="Font size as a percentage of the image height.",
                     widget=NumberWidget(min=0.5, max=50.0, step=0.5),
                 ),
                 InputSpec(
-                    "color", TypeExpr.concrete(COLOR_TYPE), default="#ffffff", widget=ColorWidget()
+                    "color",
+                    TypeExpr.concrete(COLOR_TYPE),
+                    default="#ffffff",
+                    doc="Color of the text.",
+                    widget=ColorWidget(),
                 ),
                 InputSpec(
                     "position",
@@ -76,7 +81,12 @@ class TextOverlay(Node):
                         tuple(ComboOption(value) for value in ("left", "center", "right"))
                     ),
                 ),
-                InputSpec("outline", TypeExpr.concrete(CORE_BOOLEAN), default=True),
+                InputSpec(
+                    "outline",
+                    TypeExpr.concrete(CORE_BOOLEAN),
+                    default=True,
+                    doc="Draw a black outline around the text.",
+                ),
             ),
             outputs=(OutputSpec("images", TypeExpr.concrete(IMAGE_TYPE)),),
         )

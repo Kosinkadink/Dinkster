@@ -19,11 +19,37 @@ from dinkster_api.v1 import (
     OutputSpec,
     TypeExpr,
     materialize_image,
+    schema_to_wire,
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.text_overlay import TextOverlay
 
 from dinkster.compose import PackSpec, ServingComposer
+
+
+def test_text_overlay_public_schema_preserves_required_inputs_and_tooltips() -> None:
+    wire = schema_to_wire(TextOverlay.define_schema())
+    inputs = [entry for entry in wire["interface"] if entry["role"] == "input"]
+    assert [entry["id"] for entry in inputs] == [
+        "images",
+        "text",
+        "font_size",
+        "color",
+        "position",
+        "align",
+        "outline",
+    ]
+    assert all(entry["required"] is True for entry in inputs)
+    docs = {entry["id"]: entry.get("doc", "") for entry in inputs}
+    assert docs == {
+        "images": "",
+        "text": "",
+        "font_size": "Font size as a percentage of the image height.",
+        "color": "Color of the text.",
+        "position": "",
+        "align": "",
+        "outline": "Draw a black outline around the text.",
+    }
 
 
 def _image(channels: int = 4) -> Any:
