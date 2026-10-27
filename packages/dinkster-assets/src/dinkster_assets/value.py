@@ -43,7 +43,7 @@ from dinkster_values.video_codec import VIDEO_INLINE_LIMIT, coerce_video, video_
 from dinkster_values.video_probe import probe_video
 
 from .audio import bind_audio_value
-from .declared import MOUNTS_ENV, produced_asset_vault
+from .declared import MOUNTS_ENV, produced_output_scratch
 from .identity import AssetError, digest_bytes, digest_file
 from .model import (
     AssetRef,
@@ -138,7 +138,7 @@ def _publish_video_source(source: bytes | Path) -> AssetRef:
     size = len(source) if isinstance(source, bytes) else source.stat().st_size
     if size > GIBIBYTE:
         raise AssetError("VIDEO source exceeds 1 GiB")
-    vault = produced_asset_vault()
+    vault = produced_output_scratch()
     if vault is None:
         raise AssetError(
             "publishing VIDEO sources requires DINKSTER_PACK_SCRATCH or DINKSTER_ASSET_VAULT"
