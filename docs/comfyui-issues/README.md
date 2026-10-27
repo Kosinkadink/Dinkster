@@ -19,6 +19,7 @@ behavior, then keep the file for provenance.
 
 | Issue | Area | Status |
 | --- | --- | --- |
+| [surface-net-small-grid-progress-divisor.md](surface-net-small-grid-progress-divisor.md) | VoxelToMesh surface-net extraction | reproduced at bc5f880d; native progress reporting avoids zero divisor |
 | [wan-infinite-talk-missing-initial-image.md](wan-infinite-talk-missing-initial-image.md) | WanInfiniteTalkToVideo optional image inputs | reproduced at bc5f880d; native preserves reference failure |
 | [rebatch-latent-mask-resize-discarded.md](rebatch-latent-mask-resize-discarded.md) | LatentRebatch noise mask size | reproduced at bc5f880d; native preserves reference behavior |
 | [dataset-text-output-wrapping.md](dataset-text-output-wrapping.md) | Dataset text output types | reproduced at bc5f880d; native preserves reference behavior |

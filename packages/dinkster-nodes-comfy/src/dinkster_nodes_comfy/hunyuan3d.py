@@ -4,17 +4,25 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from dinkster_api.v1 import (
     CLIP_VISION_OUTPUT_TYPE,
     CONDITIONING_TYPE,
+    CORE_INT,
+    LATENT_TYPE,
+    VAE_TYPE,
+    VOXEL_TYPE,
     InputSpec,
     Node,
     NodeSchema,
+    NumberWidget,
     OutputSpec,
     TypeExpr,
+    Voxel,
+    initialize_inference_process,
     materialize_clip_vision_output,
+    materialize_latent,
 )
 
 
@@ -81,4 +89,54 @@ class Hunyuan3Dv2ConditioningMultiView(Node):
         return cls.outputs(positive=positive, negative=negative)
 
 
-HUNYUAN3D_CONDITIONING_NODES = (Hunyuan3Dv2Conditioning, Hunyuan3Dv2ConditioningMultiView)
+class VAEDecodeHunyuan3D(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="VAEDecodeHunyuan3D",
+            display_name="Hunyuan 3D VAE Decode",
+            category="model/latent/hunyuan 3d",
+            inputs=(
+                InputSpec("samples", TypeExpr.concrete(LATENT_TYPE)),
+                InputSpec("vae", TypeExpr.concrete(VAE_TYPE)),
+                InputSpec(
+                    "num_chunks",
+                    TypeExpr.concrete(CORE_INT),
+                    default=8000,
+                    widget=NumberWidget(min=1000, max=500000),
+                    advanced=True,
+                ),
+                InputSpec(
+                    "octree_resolution",
+                    TypeExpr.concrete(CORE_INT),
+                    default=256,
+                    widget=NumberWidget(min=16, max=512),
+                    advanced=True,
+                ),
+            ),
+            outputs=(OutputSpec("VOXEL", TypeExpr.concrete(VOXEL_TYPE)),),
+        )
+
+    @classmethod
+    def execute(
+        cls, *, samples: object, vae: Any, num_chunks: int, octree_resolution: int
+    ) -> Mapping[str, object]:
+        initialize_inference_process()
+        samples = cast("Mapping[str, Any]", materialize_latent(samples))
+        return cls.outputs(
+            VOXEL=Voxel(
+                vae.decode(
+                    samples["samples"],
+                    vae_options={
+                        "num_chunks": num_chunks,
+                        "octree_resolution": octree_resolution,
+                    },
+                )
+            )
+        )
+
+
+HUNYUAN3D_CONDITIONING_NODES = (
+    Hunyuan3Dv2Conditioning,
+    Hunyuan3Dv2ConditioningMultiView,
+)

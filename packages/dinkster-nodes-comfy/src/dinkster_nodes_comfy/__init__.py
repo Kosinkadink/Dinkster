@@ -63,7 +63,7 @@ from .hook_checkpoint import HOOK_CHECKPOINT_NODES
 from .hook_conditioning import HOOK_CONDITIONING_NODES
 from .hook_lora import HOOK_LORA_NODES
 from .hook_scheduling import HOOK_SCHEDULING_NODES
-from .hunyuan3d import HUNYUAN3D_CONDITIONING_NODES
+from .hunyuan3d import HUNYUAN3D_CONDITIONING_NODES, VAEDecodeHunyuan3D
 from .hunyuan_latent import HUNYUAN_LATENT_NODES
 from .hunyuan_text import HUNYUAN_TEXT_NODES
 from .hunyuan_video_image import HUNYUAN_VIDEO_IMAGE_NODES
@@ -166,6 +166,7 @@ from .video_frame_sample import VideoFrameSample
 from .video_guidance import VIDEO_GUIDANCE_NODES
 from .video_latent import VIDEO_LATENT_NODES
 from .video_latent_ops import VIDEO_LATENT_OPERATION_NODES
+from .voxel_mesh import VOXEL_MESH_NODES
 from .wan22_latent import Wan22ImageToVideoLatent
 from .wan_animate import WAN_ANIMATE_NODES
 from .wan_camera import WanCameraEmbedding
@@ -185,6 +186,8 @@ from .zimage_encoders import TextEncodeZImageOmni
 
 COMFY_NODES = (
     *MESH_NODES,
+    *VOXEL_MESH_NODES,
+    VAEDecodeHunyuan3D,
     *AUDIO_ENCODER_NODES,
     *TEXT_NODES,
     *DATASET_TEXT_NODES,

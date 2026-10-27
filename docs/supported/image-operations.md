@@ -5,6 +5,9 @@
   `GetMeshInfo` reports padded-batch counts and available mesh attributes.
 - Portable mesh values retain all fifteen geometry and material fields; voxel
   values retain dense or sparse data, optional colors and resolution.
+- Native `VAEDecodeHunyuan3D` decodes latents to voxel grids; `VoxelToMesh`
+  extracts basic or surface-net meshes, retaining variable per-item lengths
+  in padded batches. The deprecated `VoxelToMeshBasic` remains available.
 - Color strings, ordered color palettes, and optional resolution-preview
   metadata pass between node packs without rewriting their values.
 - Native `PrimitiveBoundingBox` constructs pixel bounding boxes; `ImageCropV2`

@@ -94,6 +94,15 @@ sys.modules['dinkster_inference'] = None
 from dinkster_api.v1 import MESH_TYPE, VOXEL_TYPE, TypeRegistry, register_inference_types
 from dinkster_values import EncodedLatentTensor
 from dinkster_api.v1 import TriangleMeshBatch, Voxel
+from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_workers import load_manifest
+runtimes = {node.schema().node_type: node.schema() for node in COMFY_NODES}
+names = {'RotateMesh', 'GetMeshInfo', 'VAEDecodeHunyuan3D', 'VoxelToMeshBasic', 'VoxelToMesh'}
+assert names <= runtimes.keys()
+manifest = load_manifest('packages/dinkster-nodes-comfy/dinkster-pack.toml')
+assert names <= set(manifest.namespaces)
+assert runtimes['VoxelToMeshBasic'].deprecation is not None
+assert runtimes['VoxelToMeshBasic'].search_visibility == 'deprecated'
 r = TypeRegistry()
 register_inference_types(r)
 m = TriangleMeshBatch(EncodedLatentTensor('float32', (1, 0, 3), b''),

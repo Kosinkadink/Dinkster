@@ -4,6 +4,9 @@ publisher = "dinkster"
 namespaces = [
     "RotateMesh",
     "GetMeshInfo",
+    "VoxelToMeshBasic",
+    "VoxelToMesh",
+    "VAEDecodeHunyuan3D",
     "AudioEncoderLoader",
     "AudioEncoderEncode",
     "SheetSage2AudioToABC",
