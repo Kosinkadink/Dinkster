@@ -18,6 +18,7 @@ import aiohttp
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from dinkster_api.v1 import current_export_snapshot
 from dinkster_caches import MemoryLRUCache
 from dinkster_collab import SessionService, add_session_routes
 from dinkster_engine import (
@@ -3662,6 +3663,123 @@ def test_diagnostics_surfaces_sorted_core_and_legacy_compat_skips() -> None:
     asyncio.run(scenario())
 
 
+def test_native_export_snapshot_admission_and_idempotency() -> None:
+    async def scenario() -> None:
+        client = await make_client()
+        try:
+            assert (await client.post("/api/queue/pause")).status == 200
+            snapshot = {
+                "prompt": {"17": {"class_type": "SaveImage", "inputs": {"filename_prefix": "x"}}},
+                "extraPnginfo": {"workflow": {"nodes": [17, 3]}, "custom": ["b", "a"]},
+            }
+            body = submit_body(echo_graph(), ["s"], exportSnapshot=snapshot)
+            first = await client.post("/api/jobs", json=body)
+            assert first.status == 202
+            accepted = await first.json()
+            job = client.app[STATE_KEY].queue.jobs()[0]
+            assert job.export_snapshot == ExportSnapshot(
+                prompt=snapshot["prompt"], extra_pnginfo=snapshot["extraPnginfo"]
+            )
+            duplicate = await client.post("/api/jobs", json=body)
+            assert duplicate.status == 202
+            assert (await duplicate.json())["jobRef"] == accepted["jobRef"]
+            for changed in (
+                {"prompt": {}},
+                {"prompt": snapshot["prompt"], "extraPnginfo": {"custom": ["a", "b"]}},
+            ):
+                conflict = await client.post(
+                    "/api/jobs", json=submit_body(echo_graph(), ["s"], exportSnapshot=changed)
+                )
+                assert conflict.status == 409
+            for invalid in (
+                None,
+                [],
+                {},
+                {"prompt": []},
+                {"prompt": {}, "extraPnginfo": []},
+                {"prompt": {}, "unknown": True},
+            ):
+                response = await client.post(
+                    "/api/jobs",
+                    json=submit_body(echo_graph(), ["s"], jobId="bad", exportSnapshot=invalid),
+                )
+                assert response.status == 400
+                assert "exportSnapshot" in (await response.json())["error"]
+            minimal = await client.post(
+                "/api/jobs",
+                json=submit_body(
+                    echo_graph(), ["s"], jobId="minimal", exportSnapshot={"prompt": {}}
+                ),
+            )
+            assert minimal.status == 202
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_native_http_output_reads_detached_export_metadata() -> None:
+    class MetadataOutput(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(node_type="test.metadata_output", output_node=True, idempotent=False)
+
+        @classmethod
+        def execute(cls) -> Mapping[str, object]:
+            snapshot = current_export_snapshot()
+            if snapshot is None:
+                observed.append(None)
+            else:
+                observed.append(current_export_snapshot())
+                assert isinstance(snapshot.prompt["nested"], dict)
+                snapshot.prompt["nested"]["value"] = "mutated"
+                assert current_export_snapshot() != snapshot
+            return cls.outputs()
+
+    observed: list[object] = []
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        schemas = build_schemas([MetadataOutput])
+
+        def factory(on_event: EventListener | None = None) -> Engine:
+            return Engine(
+                schemas=schemas,
+                registry=registry,
+                worker=InProcessWorker(build_node_types([MetadataOutput]), registry),
+                cache=MemoryLRUCache(),
+                on_event=on_event,
+            )
+
+        client = TestClient(TestServer(create_app(factory, schemas)))
+        await client.start_server()
+        try:
+            graph = Graph({"save": GraphNode("test.metadata_output", {})})
+            metadata = {
+                "prompt": {"nested": {"value": "original"}},
+                "extraPnginfo": {"workflow": {"nodes": [3, 17]}},
+            }
+            for job_id, fields in (("with", {"exportSnapshot": metadata}), ("without", {})):
+                response = await client.post(
+                    "/api/jobs", json=submit_body(graph, ["save"], jobId=job_id, **fields)
+                )
+                assert response.status == 202
+                await wait_for_http_state(client, "c1", job_id, "completed")
+            assert observed == [
+                ExportSnapshot(
+                    prompt={"nested": {"value": "original"}},
+                    extra_pnginfo=metadata["extraPnginfo"],
+                ),
+                None,
+            ]
+            assert current_export_snapshot() is None
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
 def test_source_document_passthrough() -> None:
     """sourceDocument (frontend contract 2026-07) is an execution-OPAQUE
     provenance reference: a canonical asset digest ("blake3:<hex>") of the
@@ -6003,7 +6121,7 @@ def test_values_endpoint_curve_points_rendition_is_authoritative_and_bounded() -
                 False,
                 "rendition_unavailable",
             )
-            assert "between 1 and 4096" in refusal["error"]
+            assert "preview exceeds 4096" in refusal["error"]
         finally:
             await client.close()
 
