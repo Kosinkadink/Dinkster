@@ -26,6 +26,7 @@ from .audio_music_conditioning import AUDIO_MUSIC_CONDITIONING_NODES
 from .audio_transform import AUDIO_TRANSFORM_NODES
 from .audio_vae import AUDIO_VAE_NODES
 from .bernini_conditioning import BERNINI_CONDITIONING_NODES
+from .boogu_encoders import TextEncodeBooguEdit
 from .cache import CACHE_NODES
 from .cfg_guidance import CFG_GUIDANCE_NODES
 from .cfg_guiders import CFG_GUIDER_NODES
@@ -47,6 +48,7 @@ from .dataset_groups import DATASET_GROUP_NODES
 from .dataset_images import DATASET_IMAGE_NODES
 from .dataset_text import DATASET_TEXT_NODES
 from .device_routing import DEVICE_ROUTING_NODES
+from .fibo2_encoders import TextEncodeFibo2
 from .flux_conditioning import FLUX_CONDITIONING_NODES
 from .flux_image_layout import FLUX_IMAGE_LAYOUT_NODES
 from .freeu import FREEU_NODES
@@ -68,6 +70,8 @@ from .image_dimensions import IMAGE_DIMENSION_NODES
 from .image_filters import IMAGE_FILTER_NODES
 from .image_transform import IMAGE_TRANSFORM_NODES
 from .inpaint import INPAINT_NODES
+from .joyimage_encoders import TextEncodeJoyImageEdit
+from .json_prompt import BuildJsonPromptIdeogram
 from .kandinsky_video import Kandinsky5ImageToVideo
 from .latent import LATENT_NODES
 from .latent_advanced import LATENT_ADVANCED_NODES
@@ -83,9 +87,11 @@ from .ltx_duration import LTXVDurationPredictor
 from .ltx_sampling import LTX_SAMPLING_NODES
 from .ltx_video_conditioning import LTX_VIDEO_CONDITIONING_NODES
 from .ltx_video_preprocess import LTX_VIDEO_PREPROCESS_NODES
+from .mage_image_encoders import TextEncodeMageFlowEdit
 from .marigold import MarigoldV2PostProcess
 from .mask import MASK_NODES
 from .math import ComfyMathExpression
+from .ming_image_encoders import TextEncodeMingImageEdit
 from .minimax_h3_latent import EmptyMiniMaxH3LatentAV, MiniMaxH3AddGuide, MiniMaxH3ImageToVideo
 from .minimax_h3_sampling import MiniMaxH3SigmaShift
 from .mochi import EmptyMochiLatentVideo
@@ -95,9 +101,11 @@ from .model_merging_specific import MODEL_SPECIFIC_MERGE_NODES
 from .model_patch_loader import MODEL_PATCH_LOADER_NODES
 from .model_specific_schedulers import MODEL_SPECIFIC_SCHEDULER_NODES
 from .morphology import MORPHOLOGY_NODES
+from .moss_image import MOSSImageControl, MOSSImageLayoutPrompt, TextEncodeMOSSImageEdit
 from .noise import NOISE_NODES
 from .noise_guidance import NOISE_GUIDANCE_NODES
 from .perpneg import PERPNEG_NODES
+from .photomaker import PhotoMakerEncode, PhotoMakerLoader
 from .pid_conditioning import PiDConditioning
 from .post_processing import POST_PROCESSING_NODES
 from .primitive import (
@@ -106,6 +114,12 @@ from .primitive import (
     PrimitiveInt,
     PrimitiveString,
     PrimitiveStringMultiline,
+)
+from .qwen_image_encoders import (
+    QwenImage21Cache,
+    TextEncodeQwenImage21,
+    TextEncodeQwenImageEdit,
+    TextEncodeQwenImageEditPlus,
 )
 from .rebatch import REBATCH_NODES
 from .reference_conditioning import REFERENCE_CONDITIONING_NODES
@@ -129,6 +143,7 @@ from .style_model import STYLE_MODEL_NODES
 from .supir import SUPIRApply
 from .switch import ComfySwitchNode
 from .text import TEXT_NODES
+from .text_generation import TextGenerate, TextGenerateLTX2Prompt
 from .utilities import ComfyNumberConvert, SeedNode
 from .vae import VAE_NODES
 from .video_conditioning import VIDEO_CONDITIONING_NODES
@@ -143,6 +158,7 @@ from .wan_scail_conditioning import WanSCAILToVideo
 from .wan_track_conditioning import WanTrackToVideo
 from .wan_uni3c import WanUni3CControlnetApply
 from .wandancer_keyframes import WANDANCER_KEYFRAME_NODES
+from .zimage_encoders import TextEncodeZImageOmni
 
 COMFY_NODES = (
     *AUDIO_ENCODER_NODES,
@@ -281,6 +297,24 @@ COMFY_NODES = (
     WanTrackToVideo,
     *WAN_ANIMATE_NODES,
     *COLOR_RESOLUTION_NODES,
+    BuildJsonPromptIdeogram,
+    MOSSImageLayoutPrompt,
+    TextEncodeMOSSImageEdit,
+    TextGenerate,
+    MOSSImageControl,
+    TextEncodeQwenImageEdit,
+    TextEncodeQwenImageEditPlus,
+    TextEncodeQwenImage21,
+    QwenImage21Cache,
+    TextEncodeMingImageEdit,
+    TextEncodeMageFlowEdit,
+    TextEncodeJoyImageEdit,
+    TextEncodeBooguEdit,
+    TextEncodeFibo2,
+    TextGenerateLTX2Prompt,
+    TextEncodeZImageOmni,
+    PhotoMakerLoader,
+    PhotoMakerEncode,
     ImageCropV2,
     PrimitiveBoundingBox,
 )
