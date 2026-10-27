@@ -54,7 +54,9 @@ library, vault or ungranted directory for a selection name.
 itself as `.`. `directory/input` lists recursive non-root directories without
 following directory links. `directory/dataset` lists non-root directories
 containing `metadata.json` or a `.safetensors` file and stops descending below
-matches. Selected subtrees reject escaping links, cycles and non-file members.
+matches. Dataset lookup selects the first ranked existing same-named directory,
+even when only a later root supplied the discovery marker. Selected subtrees
+reject escaping links, cycles and non-file members.
 The returned paths and pair references are invocation-scoped, not graph values.
 `asset_selection_options` exposes only option names and shapes for pickers.
 

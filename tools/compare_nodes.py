@@ -3,8 +3,9 @@
 Derived from the node-interface comparison in comfy-vibe-station issue 504.
 Only exact class ids match. Aliases, labels and namespace rewrites never match
 an id or a value. The only additional input is an appended optional save mount.
-Source-marked file combos may use an ASSET socket and asset picker; ordinary
-combo types, options and defaults remain exact.
+Source-marked file combos may use an ASSET socket and asset picker. Marked
+directory, pair and literal choices require their exact selection kind;
+ordinary combo types, options and defaults remain exact.
 V3 inputs follow the recorded declaration sequence, including optional inputs
 between required inputs. V1 inputs retain required-then-optional group order.
 Hidden inputs are outside the workflow contract on both sides. Output names
@@ -122,6 +123,8 @@ def _reference_inputs(groups: dict[str, Any], list_inputs: bool = False) -> list
                 entry.pop("multiselect")
             if options.get("file_input"):
                 entry["file_input"] = True
+            if "asset_selection_kind" in options:
+                entry["asset_selection_kind"] = options["asset_selection_kind"]
             if "options" in entry and entry["type"] == "COMBO" and entry["options"]:
                 entry.setdefault("default", entry["options"][0])
             if entry["type"] == "inputFamily" and not entry["template"]:
@@ -145,6 +148,8 @@ def _native_inputs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if role == "input":
             entry["type"] = _type(item["type"])
             widget = item.get("widget") or {}
+            if widget.get("type") == "ASSET" and widget.get("selection") is True:
+                entry["selection_picker"] = widget.get("kind")
             for key in VALUE_OPTIONS:
                 wire_key = "controlAfterGenerate" if key == "control_after_generate" else key
                 if wire_key in widget:
@@ -222,7 +227,32 @@ def _differences(expected: Any, actual: Any, path: str) -> list[str]:
         ):
             actual["type"] = native_type["list"]
         file_input = expected.pop("file_input", False)
-        if actual.pop("file_picker", False):
+        selection_kind = expected.pop("asset_selection_kind", None)
+        selection_picker = actual.pop("selection_picker", None)
+        file_picker = actual.pop("file_picker", False)
+        if selection_kind is not None or selection_picker is not None:
+            if (
+                not isinstance(selection_kind, str)
+                or selection_kind
+                not in {"model/vae", "model/diffusers", "directory/input", "directory/dataset"}
+                or selection_picker != selection_kind
+                or expected.get("type") != "COMBO"
+            ):
+                return [f"{path}: asset selection requires matching source-marked purpose kinds"]
+            native_type = actual.get("type")
+            if native_type == "COMBO" or (
+                selection_kind == "model/vae"
+                and isinstance(native_type, str)
+                and set(native_type.split(",")) == {"COMBO", "ASSET"}
+                and len(native_type.split(",")) == 2
+            ):
+                actual["type"] = "COMBO"
+            else:
+                return [f"{path}: asset selection has an unsupported socket type"]
+            expected.pop("options", None)
+            expected.pop("default", None)
+            actual.pop("default", None)
+        elif file_picker:
             if not file_input or expected.get("type") not in ("COMBO", {"list": "COMBO"}):
                 return [f"{path}: asset picker on a non-file input"]
             # Mount contents vary, but the widget still consumes the original file slot.

@@ -215,6 +215,16 @@ def resolve_asset_selection(
             return None
         if choice.shape == "directory":
             path = choice.paths[0]
+            if kind == "directory/dataset":
+                # Source discovery uses markers, but lookup takes the first
+                # existing same-named directory, even without its own marker.
+                for root in mount_roots_for_kind(kind, env=env):
+                    candidate = root.resolve() / name
+                    if not candidate.resolve().is_relative_to(root.resolve()):
+                        raise AssetError("selected dataset directory escapes its grant")
+                    if candidate.is_dir():
+                        path = candidate
+                        break
             _check_subtree(path)
             return path
         if choice.shape == "pair":

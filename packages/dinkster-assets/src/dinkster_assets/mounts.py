@@ -78,7 +78,7 @@ MOUNT_MODES = ("read", "readwrite")
 
 MOUNT_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 """The mount id grammar - shared with save targets, which name mounts."""
-_ENTRY_KEYS = frozenset({"path", "mode", "priority"})
+_ENTRY_KEYS = frozenset({"path", "mode", "priority", "kind"})
 _SETTINGS_KEYS = frozenset({"output-mount"})
 
 
@@ -269,6 +269,7 @@ class MountDef:
     path: Path
     mode: str = "read"
     priority: int = 0
+    kind: str = ""
 
     def __post_init__(self) -> None:
         if not MOUNT_ID_PATTERN.match(self.id):
@@ -283,6 +284,14 @@ class MountDef:
         priority = cast("object", self.priority)
         if isinstance(priority, bool) or not isinstance(priority, int):
             raise MountsError(f"mount {self.id!r}: priority must be an integer, got {priority!r}")
+        kind = cast("object", self.kind)
+        if not isinstance(kind, str):
+            raise MountsError(f"mount {self.id!r}: kind must be a string")
+        if kind:
+            try:
+                require_asset_kind(kind)
+            except AssetError as exc:
+                raise MountsError(f"mount {self.id!r}: {exc}") from exc
 
 
 @dataclass(frozen=True)
@@ -351,6 +360,7 @@ def _parse_mount_config(text: str, source: str) -> tuple[tuple[MountDef, ...], s
                     path=Path(path),
                     mode=mode,
                     priority=cast("int", priority),
+                    kind=cast("str", entry.get("kind", "")),
                 )
             )
         except MountsError as exc:
@@ -410,6 +420,8 @@ def dump_mounts(mounts: Sequence[MountDef], *, output_mount: str | None = None) 
             lines.append(f"mode = {_toml_string(mount.mode)}")
         if mount.priority != 0:
             lines.append(f"priority = {mount.priority}")
+        if mount.kind:
+            lines.append(f"kind = {_toml_string(mount.kind)}")
         chunks.append("\n".join(lines))
     return "\n\n".join(chunks) + ("\n" if chunks else "")
 
@@ -478,6 +490,9 @@ class MountTable:
         A missing directory is not an add-time error - a config mount whose
         drive is unplugged should surface as a failed row, not take the
         whole server down - but a duplicate id is always a refusal."""
+        if kind and mount.kind and kind != mount.kind:
+            raise MountsError(f"mount {mount.id!r}: conflicting purpose kinds")
+        kind = kind or mount.kind
         if kind:
             try:
                 require_asset_kind(kind)

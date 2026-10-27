@@ -66,6 +66,10 @@ def test_directory_modes_preserve_source_discovery_and_ranked_resolution(tmp_pat
     assert resolve_asset_selection("model/diffusers", ".", env=env) == first
     env = grants(tmp_path, ("directory/dataset", first), ("directory/dataset", second))
     assert asset_selection_names("directory/dataset", env=env) == ("dataset", "shards")
+    seed(first, "shards/shard_0.pkl")
+    assert resolve_asset_selection("directory/dataset", "shards", env=env) == first / "shards"
+    (first / "shards/shard_0.pkl").unlink()
+    (first / "shards").rmdir()
     env = grants(tmp_path, ("directory/input", first))
     assert asset_selection_names("directory/input", env=env) == (
         "dataset",

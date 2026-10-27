@@ -54,6 +54,8 @@
   input subdirectories and saved datasets. It resolves literals, same-root
   file pairs and contained directory subtrees without filesystem or library
   fallback. The options API returns names and shapes, not host paths.
+  Explicit mount purposes persist in config and runtime grants; omitted kinds
+  remain untyped and do not authorize source selections.
   This does not claim frontend picker support.
 - FLOAT number descriptors, including one-level FLOAT lists, accept `round: false`
   for explicit no-round presentation, or a positive finite numeric precision.
