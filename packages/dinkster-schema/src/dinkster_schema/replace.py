@@ -849,16 +849,17 @@ def input_family_mapping_from_wire(wire: Any) -> InputFamilyMapping:
         template = wire["sourceTemplate"]
         if kind != "copy" or not isinstance(template, Mapping):
             raise ValueError("sourceTemplate requires a copy mapping and an object")
+        template = cast("Mapping[str, Any]", template)
         if set(template) - {"inputs", "memberPort"} or "inputs" not in template:
             raise ValueError("sourceTemplate requires inputs and optional memberPort")
         raw_inputs = template["inputs"]
         if (
             not isinstance(raw_inputs, list)
             or not raw_inputs
-            or not all(isinstance(input_id, str) for input_id in raw_inputs)
+            or not all(isinstance(input_id, str) for input_id in cast("list[object]", raw_inputs))
         ):
             raise ValueError("sourceTemplate inputs must be a nonempty string array")
-        source_template = tuple(raw_inputs)
+        source_template = tuple(cast("list[str]", raw_inputs))
         if "memberPort" in template:
             source_member_port = template["memberPort"]
             if not isinstance(source_member_port, str) or not source_member_port:
