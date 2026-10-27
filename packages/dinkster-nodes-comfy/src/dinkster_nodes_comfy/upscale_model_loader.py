@@ -49,8 +49,11 @@ class UpscaleModelLoader(Node):
             extra = importlib.import_module("spandrel_extra_arches")
             spandrel.MAIN_REGISTRY.add(*extra.EXTRA_REGISTRY)
             logging.info("Imported optional non-commercial upscale architectures.")
+        except ModuleNotFoundError as error:
+            if error.name != "spandrel_extra_arches":
+                logging.warning("Optional upscale architecture import failed.", exc_info=True)
         except Exception:
-            pass
+            logging.warning("Optional upscale architecture registration failed.", exc_info=True)
         utils = importlib.import_module("dinkster_inference.utils")
         management = importlib.import_module("dinkster_inference.model_management")
         storage = importlib.import_module("dinkster_inference.storage")

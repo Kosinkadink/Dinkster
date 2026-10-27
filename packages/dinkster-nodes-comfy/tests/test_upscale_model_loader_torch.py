@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import importlib
+import logging
 import os
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -26,8 +29,15 @@ from dinkster_assets import MountDef, MountTable
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.upscale_model_loader import UpscaleModelLoader
 from safetensors.torch import save_file
-from spandrel import ImageModelDescriptor, UnsupportedModelError
+from spandrel import (
+    ImageModelDescriptor,
+    MaskedImageModelDescriptor,
+    ModelLoader,
+    UnsupportedModelError,
+)
 from spandrel.architectures.Compact import Compact
+from spandrel.architectures.LaMa import LaMaArch
+from spandrel.architectures.SwinIR import SwinIR
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -94,6 +104,89 @@ def test_loader_rejects_raw_paths_changed_grants_and_unknown_weights(tmp_path: P
     assert isinstance(changed, LocalAssetRef)
     with pytest.raises(UnsupportedModelError):
         UpscaleModelLoader.execute(model_name=changed)
+
+
+def test_loader_normalizes_module_prefixed_swinir_checkpoint(tmp_path: Path) -> None:
+    table, _asset = seed(tmp_path, verified=False)
+    model = SwinIR(
+        img_size=8,
+        embed_dim=12,
+        depths=[1],
+        num_heads=[3],
+        window_size=4,
+        upscale=2,
+        upsampler="pixelshuffledirect",
+    )
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.zero_()
+    # Fixed F nodes_upscale_model.py uses this SwinIR marker to strip module.
+    state = model.state_dict()
+    prefixed = {"module." + key: value for key, value in state.items()}
+    assert "module.layers.0.residual_group.blocks.0.norm1.weight" in prefixed
+    path = tmp_path / "prefixed.safetensors"
+    save_file(prefixed, str(path))
+    before = hashlib.sha256(path.read_bytes()).hexdigest()
+    asset = table.bind_name(path.name, "model/upscaler")
+    loaded = UpscaleModelLoader.execute(model_name=asset)["UPSCALE_MODEL"]
+    assert isinstance(loaded, ImageModelDescriptor)
+    assert loaded.scale == 2
+    assert set(loaded.model.state_dict()) == set(state)
+    for key, value in loaded.model.state_dict().items():
+        torch.testing.assert_close(value, state[key], rtol=0, atol=0)
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == before
+
+
+def test_loader_rejects_supported_masked_image_descriptor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _table, asset = seed(tmp_path, verified=False)
+    model = torch.nn.Conv2d(4, 3, 1)
+    descriptor = MaskedImageModelDescriptor(
+        model,
+        model.state_dict(),
+        architecture=LaMaArch(),
+        purpose="Inpainting",
+        tags=[],
+        supports_half=False,
+        supports_bfloat16=True,
+        input_channels=3,
+        output_channels=3,
+    )
+    # Substitute discovery, not the public descriptor: a tiny fixture avoids
+    # allocating a full LaMa checkpoint to check the single-image boundary.
+    monkeypatch.setattr(ModelLoader, "load_from_state_dict", lambda _self, _state: descriptor)
+    with pytest.raises(ValueError, match="Upscale model must be a single-image model"):
+        UpscaleModelLoader.execute(model_name=asset)
+
+
+@pytest.mark.parametrize("failure", ("absent", "dependency", "registration"))
+def test_optional_architecture_failures_are_distinguished(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, failure: str
+) -> None:
+    _table, asset = seed(tmp_path, verified=False)
+    original = importlib.import_module
+
+    def import_module(name: str, package: str | None = None) -> Any:
+        if name != "spandrel_extra_arches":
+            return original(name, package)
+        if failure == "registration":
+            return SimpleNamespace(EXTRA_REGISTRY=(object(),))
+        missing = "spandrel_extra_arches" if failure == "absent" else "missing_extra_dependency"
+        raise ModuleNotFoundError(name=missing)
+
+    monkeypatch.setattr(importlib, "import_module", import_module)
+    with caplog.at_level(logging.WARNING):
+        loaded = UpscaleModelLoader.execute(model_name=asset)["UPSCALE_MODEL"]
+    assert isinstance(loaded, ImageModelDescriptor)
+    if failure == "absent":
+        assert not caplog.records
+    else:
+        message = "import" if failure == "dependency" else "registration"
+        assert any(
+            f"Optional upscale architecture {message} failed" in record.message and record.exc_info
+            for record in caplog.records
+        )
 
 
 class UpscaleLoaderConsumer(Node):
