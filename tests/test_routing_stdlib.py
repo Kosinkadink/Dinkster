@@ -175,7 +175,7 @@ def test_named_route_graph_wire_persists_only_stable_member_ids() -> None:
 
     registry = TypeRegistry()
     register_core_types(registry)
-    with pytest.raises(TypeError, match="COMBO expects a string"):
+    with pytest.raises(TypeError, match="COMBO expects a JSON scalar"):
         registry.wrap(
             "COMBO",
             {"value": "stable_right", "label": "Right branch"},

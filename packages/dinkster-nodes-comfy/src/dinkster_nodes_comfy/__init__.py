@@ -28,6 +28,7 @@ from .audio_latent import AUDIO_LATENT_NODES, GetAudioLatentSize
 from .audio_music_conditioning import AUDIO_MUSIC_CONDITIONING_NODES
 from .audio_transform import AUDIO_TRANSFORM_NODES
 from .audio_vae import AUDIO_VAE_NODES
+from .bbox_crop import CropByBBoxes
 from .bernini_conditioning import BERNINI_CONDITIONING_NODES
 from .boogu_encoders import TextEncodeBooguEdit
 from .cache import CACHE_NODES
@@ -48,7 +49,7 @@ from .controlnet import CONTROLNET_NODES
 from .cosmos_conditioning import COSMOS_CONDITIONING_NODES
 from .custom_sampling import CUSTOM_SAMPLING_NODES
 from .dataset_collections import DATASET_COLLECTION_NODES
-from .dataset_groups import DATASET_GROUP_NODES
+from .dataset_groups import DATASET_GROUP_NODES, MakeTrainingDataset
 from .dataset_images import DATASET_IMAGE_NODES
 from .dataset_text import DATASET_TEXT_NODES
 from .dataset_video import DATASET_VIDEO_NODES
@@ -89,13 +90,14 @@ from .latent_upscale_loader import LATENT_UPSCALE_LOADER_NODES
 from .list_utilities import LIST_UTILITY_NODES
 from .logic import LOGIC_NODES
 from .loops import LOOP_NODES
+from .lora_file_loaders import LORA_FILE_LOADER_NODES
 from .lotus import LotusConditioning
 from .ltx_audio import LTX_AUDIO_NODES
 from .ltx_av_latent import LTX_AV_LATENT_NODES
 from .ltx_dual_cfg import LTXVDualCFGGuider
 from .ltx_duration import LTXVDurationPredictor
 from .ltx_guidance import LTXVModalityGuidance, LTXVReferenceAudio, LTXVSpatioTemporalGuidance
-from .ltx_guides import LTXVAddLatentGuide
+from .ltx_guides import GetICLoRAParameters, LTXVAddGuide, LTXVAddLatentGuide
 from .ltx_keyframe_guides import (
     LTXVAddGeneratedKeyframes,
     LTXVGeneratedKeyframesToGuides,
@@ -116,9 +118,11 @@ from .minimax_h3_reference import MiniMaxH3ReferenceToVideo
 from .minimax_h3_sampling import MiniMaxH3SigmaShift
 from .mochi import EmptyMochiLatentVideo
 from .model_advanced import MODEL_ADVANCED_NODES
+from .model_file_loaders import MODEL_FILE_LOADER_NODES
 from .model_merging import MODEL_MERGE_NODES
 from .model_merging_specific import MODEL_SPECIFIC_MERGE_NODES
 from .model_patch_loader import MODEL_PATCH_LOADER_NODES
+from .model_selections import MODEL_SELECTION_NODES
 from .model_specific_schedulers import MODEL_SPECIFIC_SCHEDULER_NODES
 from .morphology import MORPHOLOGY_NODES
 from .moss_image import MOSSImageControl, MOSSImageLayoutPrompt, TextEncodeMOSSImageEdit
@@ -144,8 +148,11 @@ from .qwen_image_encoders import (
 from .rebatch import REBATCH_NODES
 from .reference_conditioning import REFERENCE_CONDITIONING_NODES
 from .rope_and_mask import ROPE_AND_MASK_NODES
+from .rtdetr import RTDETR_NODES
+from .sam3 import SAM3_TRACKING_NODES
 from .sampler_factories import SAMPLER_FACTORY_NODES
 from .save_text import SaveText
+from .scail_masks import SCAIL2ColoredMask
 from .sd_upscale_conditioning import SD_UPSCALE_CONDITIONING_NODES
 from .seedvr_conditioning import SeedVR2Conditioning
 from .seedvr_postprocess import SeedVR2PostProcessing
@@ -167,14 +174,22 @@ from .text_generation import TextGenerate, TextGenerateLTX2Prompt
 from .utilities import ComfyNumberConvert, PreviewAny, SeedNode
 from .vae import VAE_NODES
 from .video_conditioning import VIDEO_CONDITIONING_NODES
+from .video_frame_sample import VideoFrameSample
 from .video_guidance import VIDEO_GUIDANCE_NODES
 from .video_latent import VIDEO_LATENT_NODES
 from .video_latent_ops import VIDEO_LATENT_OPERATION_NODES
 from .wan22_latent import Wan22ImageToVideoLatent
 from .wan_animate import WAN_ANIMATE_NODES
+from .wan_camera import WanCameraEmbedding
+from .wan_camera_conditioning import WanCameraImageToVideo
 from .wan_control_conditioning import WAN_CONTROL_CONDITIONING_NODES
 from .wan_image_conditioning import WanFirstLastFrameToVideo, WanFunInpaintToVideo, WanImageToVideo
+from .wan_infinite_talk import WanInfiniteTalkToVideo
+from .wan_move_conditioning import WanMoveTrackToVideo
+from .wan_move_tracks import GenerateTracks, WanMoveConcatTrack, WanMoveTracksFromCoords
+from .wan_move_visualize import WanMoveVisualizeTracks
 from .wan_scail_conditioning import WanSCAILToVideo
+from .wan_sound import WanHuMoImageToVideo, WanSoundImageToVideo, WanSoundImageToVideoExtend
 from .wan_track_conditioning import WanTrackToVideo
 from .wan_uni3c import WanUni3CControlnetApply
 from .wandancer_keyframes import WANDANCER_KEYFRAME_NODES
@@ -312,6 +327,8 @@ COMFY_NODES = (
     SeedVR2PostProcessing,
     *WANDANCER_KEYFRAME_NODES,
     LTXVDurationPredictor,
+    GetICLoRAParameters,
+    LTXVAddGuide,
     LTXVAddLatentGuide,
     LTXVAddGeneratedKeyframes,
     LTXVSeparateGeneratedKeyframes,
@@ -337,6 +354,18 @@ COMFY_NODES = (
     WanSCAILToVideo,
     WanTrackToVideo,
     *WAN_ANIMATE_NODES,
+    WanCameraEmbedding,
+    WanCameraImageToVideo,
+    WanMoveTracksFromCoords,
+    GenerateTracks,
+    WanMoveConcatTrack,
+    WanMoveTrackToVideo,
+    WanMoveVisualizeTracks,
+    WanSoundImageToVideo,
+    WanSoundImageToVideoExtend,
+    WanHuMoImageToVideo,
+    WanInfiniteTalkToVideo,
+    SCAIL2ColoredMask,
     *COLOR_RESOLUTION_NODES,
     BuildJsonPromptIdeogram,
     MOSSImageLayoutPrompt,
@@ -358,6 +387,14 @@ COMFY_NODES = (
     PhotoMakerEncode,
     ImageCropV2,
     PrimitiveBoundingBox,
+    *RTDETR_NODES,
+    *MODEL_SELECTION_NODES,
+    *SAM3_TRACKING_NODES,
+    VideoFrameSample,
+    *MODEL_FILE_LOADER_NODES,
+    *LORA_FILE_LOADER_NODES,
+    CropByBBoxes,
+    MakeTrainingDataset,
 )
 
 

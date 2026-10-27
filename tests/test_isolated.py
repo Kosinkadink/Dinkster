@@ -2704,6 +2704,10 @@ def test_pack_runs_in_its_own_provisioned_venv(tmp_path: Path) -> None:
             "dinkster-api",
             "dinkster-memory",
             "dinkster-assets",
+            "dinkster-caches",
+            "dinkster-inference-wire",
+            "dinkster-video",
+            "dinkster-image-document",
         )
     ]
     python = ensure_pack_venv(manifest, venv_root=tmp_path / "venvs", workspace_packages=workspace)

@@ -10,8 +10,11 @@ from dinkster_api.v1 import (
     CONDITIONING_TYPE,
     CORE_FLOAT,
     CORE_INT,
+    IC_LORA_PARAMETERS_TYPE,
+    IMAGE_TYPE,
     LATENT_TYPE,
     MASK_TYPE,
+    MODEL_TYPE,
     VAE_TYPE,
     InputSpec,
     Node,
@@ -243,6 +246,119 @@ def add_image_guide(
         attention_mask=materialize_image(attention_mask) if attention_mask is not None else None,
     )
     return positive, negative, {"samples": samples, "noise_mask": mask}
+
+
+class GetICLoRAParameters(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="GetICLoRAParameters",
+            display_name="Get IC-LoRA Parameters",
+            description=(
+                "Extracts IC-LoRA parameters from the safetensors metadata of a LoRA-loaded "
+                "model and outputs them for LTXVAddGuide (eg. reference_downscale_factor)."
+            ),
+            category="model/conditioning/ltxv",
+            search_terms=(
+                "ic-lora",
+                "ic lora",
+                "iclora",
+                "downscale factor",
+                "reference downscale",
+            ),
+            inputs=(InputSpec("iclora_model", TypeExpr.concrete(MODEL_TYPE)),),
+            outputs=(OutputSpec("iclora_parameters", TypeExpr.concrete(IC_LORA_PARAMETERS_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls, *, iclora_model: Any) -> Mapping[str, object]:
+        metadata = iclora_model.get_attachment("lora_metadata")
+        factor = 1
+        if metadata:
+            try:
+                factor = max(
+                    1,
+                    round(
+                        float(
+                            next(
+                                value
+                                for key, value in metadata.items()
+                                if key.endswith("reference_downscale_factor")
+                            )
+                        )
+                    ),
+                )
+            except (StopIteration, TypeError, ValueError):
+                factor = 1
+        return cls.outputs(iclora_parameters={"reference_downscale_factor": factor})
+
+
+class LTXVAddGuide(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        conditioning = TypeExpr.concrete(CONDITIONING_TYPE)
+        latent = TypeExpr.concrete(LATENT_TYPE)
+        return NodeSchema(
+            node_type="LTXVAddGuide",
+            category="model/conditioning/ltxv",
+            inputs=(
+                InputSpec("positive", conditioning),
+                InputSpec("negative", conditioning),
+                InputSpec("vae", TypeExpr.concrete(VAE_TYPE)),
+                InputSpec("latent", latent),
+                InputSpec("image", TypeExpr.concrete(IMAGE_TYPE)),
+                InputSpec(
+                    "frame_idx",
+                    TypeExpr.concrete(CORE_INT),
+                    default=0,
+                    widget=NumberWidget(min=-9999, max=9999),
+                ),
+                InputSpec(
+                    "strength",
+                    TypeExpr.concrete(CORE_FLOAT),
+                    default=1.0,
+                    widget=NumberWidget(min=0.0, max=10.0, step=0.01),
+                ),
+                InputSpec("attention_mask", TypeExpr.concrete(MASK_TYPE), required=False),
+                InputSpec(
+                    "iclora_parameters",
+                    TypeExpr.concrete(IC_LORA_PARAMETERS_TYPE),
+                    required=False,
+                ),
+            ),
+            outputs=(
+                OutputSpec("positive", conditioning, display_name="positive"),
+                OutputSpec("negative", conditioning, display_name="negative"),
+                OutputSpec("latent", latent, display_name="latent"),
+            ),
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        positive: Any,
+        negative: Any,
+        vae: Any,
+        latent: object,
+        image: object,
+        frame_idx: int,
+        strength: float,
+        attention_mask: object = None,
+        iclora_parameters: Mapping[str, Any] | None = None,
+    ) -> Mapping[str, object]:
+        positive, negative, result = add_image_guide(
+            positive,
+            negative,
+            vae,
+            latent,
+            image,
+            frame_idx,
+            strength,
+            attention_mask,
+            iclora_parameters,
+        )
+        return cls.outputs(positive=positive, negative=negative, latent=result)
 
 
 class LTXVAddLatentGuide(Node):

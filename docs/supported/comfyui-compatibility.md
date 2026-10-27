@@ -1,17 +1,34 @@
 ## ComfyUI compatibility
 
+- Core schema comparison permits the optional output mount for output nodes
+  with a scalar STRING filename prefix, including CLIPSave, VAESave,
+  CheckpointSave, and ModelSave, without relying on their class-name spelling.
+- The native pack declares bound-file checkpoint, diffusion-model, text
+  encoder, vision-encoder, ControlNet, style-model and GLIGEN loader schemas.
+  Model construction uses the pinned inference package; file inputs grant
+  access only to the selected asset.
+- Native LoRA file loaders apply model and text-encoder strengths separately,
+  retain weight metadata, and support ordered stacks and bypass application.
+  Disabled stack entries and zero strengths do not resolve their file inputs.
 - Native Anima LLLite applies image and optional mask guidance to cloned models
   through scheduled input, self-attention, cross-attention and MLP patches.
 - Native SUPIR applies scheduled control strength and optional restoration
   guidance, using checkpoint denoise-encoder weights when present.
 - Native KSampler and KSamplerAdvanced use the inference sampling engine with
   seeded batch noise, masks, denoise strength and advanced step boundaries.
+- Native standard and custom samplers retain ordered audio/video stream roles
+  and masks through sampling and denoised outputs. AddNoise retains those roles
+  through empty-latent handling and replaces nonfinite output values with zero.
 - Native Wan Uni3C applies render-video guidance with temporal padding, spatial
   alignment, scheduled residuals and shared conditional-batch computation.
 - Native Qwen DiffSynth and Z-Image Fun ControlNet apply scheduled image and
   inpaint guidance; USO prepends projected vision features to text tokens.
 - Native LoRA hook loaders use bound model/lora assets, preserve prior hooks
   and apply separate model and CLIP strengths while retaining loaded weights.
+- Native VAELoader accepts granted VAE files, video approximation files, six
+  same-root image TAESD encoder/decoder pairs and the file-free pixel_space
+  option on one input. Native DiffusersLoader accepts a granted model subtree.
+  Selection names are rechecked on each execution, not reused from result caches.
 - Native WanDancer keyframe padding places reference frames and masks into
   video segments, with matching audio slices and scalar or list outputs.
 - Native LTXV duration prediction uses caption connectors and the duration head,
@@ -22,6 +39,8 @@
   metadata while preserving the remaining video latent and noise mask.
 - Native LTXV latent-guide and generated-keyframe nodes attach, separate and
   convert guide frames while preserving conditioning histories and source tensors.
+- Native LTXV image guides accept canonical IC-LoRA parameters extracted from
+  LoRA model metadata, including sparse spatial reference downscaling.
 - LTXV reference-audio, spatio-temporal and modality guidance preserve the source
   model and apply guidance within the requested sampling window. The dual-CFG
   guider exposes separate video/audio scales; native multi-stream AV sampling
@@ -120,6 +139,14 @@
   latents, preserving visible-point weights and per-batch image conditioning.
 - Native Wan Animate conditioning combines reference, pose, face and continuation
   inputs. Animate 2 supports timed pose guidance and cleanup-scoped pose caching.
+- Native Wan camera trajectories and image-start conditioning preserve camera
+  embeddings and optional vision states. Wan Move generates and combines visible
+  trajectories, conditions image starts, and renders colored tracks.
+- Native Wan Sound, HuMo and InfiniteTalk conditioning use audio-encoder layers
+  with image starts, continuation motion and single- or two-speaker controls.
+- Native SCAIL-2 colored masks render packed SAM3 tracks with identity selection,
+  appearance/area ordering, palette controls and background masks. Source
+  experimental presentation badges are not preserved.
 - Native LTXV preprocessing applies the model's optional per-frame H.264 image
   compression before encoding video starts.
 - Native LTXV image-to-video and frame-rate conditioning nodes encode image starts,
@@ -156,3 +183,6 @@
   current support claim.
 - Pack HTTP routes, web assets, and executor hooks are diagnosed rather than
   emulated.
+- Reference file-input metadata includes manually enumerated file choices whose
+  declared execution method directly resolves the input as an annotated path.
+  Empty file lists retain this classification; unrelated empty combos do not.
