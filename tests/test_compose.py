@@ -3617,11 +3617,15 @@ def test_serving_composer_full_free_releases_live_worker_without_startup_guard(
                 }
             )
             await engine.run(graph, ["load"])
-            await asyncio.sleep(0.05)
 
-            results = await composer.full_free("maintenance-composed")
+            async with asyncio.timeout(5):
+                while True:
+                    results = await composer.full_free("maintenance-composed")
+                    worker = next(row for row in results[1:] if row["worker"] == "memorypack")
+                    if worker["status"] != "busy":
+                        break
+                    await asyncio.sleep(0)
             local = results[0]
-            worker = next(row for row in results[1:] if row["worker"] == "memorypack")
             assert local["status"] == "complete"
             assert worker["worker"] == "memorypack"
             assert worker["status"] == "complete"

@@ -2388,7 +2388,12 @@ def test_isolated_admission_rejects_before_execution_and_recovers() -> None:
     asyncio.run(scenario())
 
 
-def test_isolated_lazy_hook_protocol_and_attribution(tmp_path: Path) -> None:
+def test_isolated_lazy_hook_protocol_and_attribution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entered = tmp_path / "lazy-cancel-entered"
+    monkeypatch.setenv("ISOPACK_LAZY_CANCEL_ENTERED", str(entered))
+
     async def scenario() -> None:
         registry = core_registry()
         worker = iso_worker(tmp_path, registry)
@@ -2475,7 +2480,9 @@ def test_isolated_lazy_hook_protocol_and_attribution(tmp_path: Path) -> None:
             cancelling = asyncio.create_task(
                 worker.check_lazy_status(lazy_invocation("lazy-cancel", "awaitable-cancel"))
             )
-            await asyncio.sleep(0.1)
+            async with asyncio.timeout(5):
+                while not entered.exists():
+                    await asyncio.sleep(0.005)
             cancelling.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await cancelling
@@ -2487,11 +2494,12 @@ def test_isolated_lazy_hook_protocol_and_attribution(tmp_path: Path) -> None:
             slow = lazy_graph("request", seconds=30.0)
             events.clear()
             task = asyncio.create_task(engine.run(slow, ["lazy"]))
-            while not any(
-                event.kind == "node_event" and event.detail.get("name") == "lazy_demand"
-                for event in events
-            ):
-                await asyncio.sleep(0.01)
+            async with asyncio.timeout(5):
+                while not any(
+                    event.kind == "node_event" and event.detail.get("name") == "lazy_demand"
+                    for event in events
+                ):
+                    await asyncio.sleep(0.01)
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
