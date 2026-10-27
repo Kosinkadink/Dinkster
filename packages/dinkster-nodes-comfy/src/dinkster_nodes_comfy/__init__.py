@@ -50,7 +50,7 @@ from .controlnet import CONTROLNET_NODES
 from .cosmos_conditioning import COSMOS_CONDITIONING_NODES
 from .custom_sampling import CUSTOM_SAMPLING_NODES
 from .dataset_collections import DATASET_COLLECTION_NODES
-from .dataset_groups import DATASET_GROUP_NODES
+from .dataset_groups import DATASET_GROUP_NODES, MakeTrainingDataset
 from .dataset_images import DATASET_IMAGE_NODES
 from .dataset_text import DATASET_TEXT_NODES
 from .dataset_video import DATASET_VIDEO_NODES
@@ -374,6 +374,7 @@ COMFY_NODES = (
     *LORA_FILE_LOADER_NODES,
     CropByBBoxes,
     CameraAngle,
+    MakeTrainingDataset,
 )
 
 
