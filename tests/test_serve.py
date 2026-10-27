@@ -3273,8 +3273,29 @@ def test_serve_signal_reaps_unresponsive_children_concurrently(
     expected_children = len(manifests)
     args = [arg for manifest in manifests for arg in ("--pack", str(manifest))]
     port = free_port()
+    bootstrap = f"""
+import asyncio
+import dinkster_workers.isolated as isolated
+from dinkster.serve import main
+
+isolated._CHILD_SHUTDOWN_GRACE = 0.05
+original_close = isolated.IsolatedWorker._close
+closing = set()
+all_closing = asyncio.Event()
+
+async def close_together(worker):
+    if worker._proc is not None:
+        closing.add(worker._proc.pid)
+        if len(closing) == {expected_children}:
+            all_closing.set()
+        await asyncio.wait_for(all_closing.wait(), 8)
+    await original_close(worker)
+
+isolated.IsolatedWorker._close = close_together
+main()
+"""
     process = subprocess.Popen(
-        serve_command(port, *args),
+        [sys.executable, "-c", bootstrap, *serve_command(port, *args)[3:]],
         env={
             **os.environ,
             "PYTHONPATH": os.pathsep.join(str(manifest.parent) for manifest in manifests),
@@ -3295,13 +3316,10 @@ def test_serve_signal_reaps_unresponsive_children_concurrently(
         for pid in children:
             os.kill(pid, _SIGSTOP)
 
-        started = time.monotonic()
         process.send_signal(shutdown_signal)
         process.wait(timeout=8)
-        elapsed = time.monotonic() - started
 
         assert process.returncode == 0
-        assert elapsed < 8
         assert not any(process_exists(pid) for pid in children)
         with socket.socket() as released:
             released.bind(("127.0.0.1", port))
