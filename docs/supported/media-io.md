@@ -84,6 +84,9 @@
 - VIDEO values retain an encoded source or deferred components, rational
   source probe facts, and ordered lazy trim, crop, scale, and restricted
   identical-codec concat edits. Info and lazy edits do not decode frames.
+  Public `concatenate_video` accepts one to 100 ordered VIDEO values, encodes
+  component inputs to MKV, preserves compatible encoded inputs, and supports
+  one optional complete AUDIO soundtrack.
   Decoded source trims select half-open stream-tick windows while retaining
   rational timeline bounds and independent audio sample windows.
   Encoded sources can be MP4, MKV, MOV, WebM, AVI, or GIF. Source-copy saves

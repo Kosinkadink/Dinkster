@@ -29,7 +29,7 @@ from dinkster_values import (
     video_meta,
 )
 from dinkster_values.storage import image_input
-from dinkster_video import assemble_video, disassemble_video, save_video_stream
+from dinkster_video import assemble_video, concatenate_video, disassemble_video, save_video_stream
 
 
 def _source(*, depth: int = 8, b_frames: int = 0, container: str = "mp4", offset: int = 0) -> bytes:
@@ -368,6 +368,86 @@ def test_concat_matches_templates_and_spatial_dimensions() -> None:
     incompatible = edit_video(value, {"concat": [different]})
     with pytest.raises(ValueError, match="identical"):
         save_video_stream(incompatible, io.BytesIO())
+
+
+def test_public_concatenate_video_encodes_components_and_preserves_soundtrack() -> None:
+    first = assemble_video(np.zeros((2, 16, 16, 3), np.uint8), fps=2)
+    second = assemble_video(np.full((2, 16, 16, 3), 255, np.uint8), fps=2)
+    audio = {"waveform": np.ones((1, 1, 48000), np.float32), "sample_rate": 48000}
+    joined = concatenate_video([first, second], complete_audio=audio)
+    assert "components" not in joined
+    assert joined["complete_audio"] != audio
+    result = disassemble_video(joined)
+    assert result["frame_count"] == 4
+    images = cast(np.ndarray, result["images"])
+    np.testing.assert_array_equal(images[0], np.zeros((16, 16, 3), np.uint8))
+    np.testing.assert_allclose(images[-1], 255, atol=1)
+    assert result["audio"] is not None
+    saved = io.BytesIO()
+    save_video_stream(joined, saved, container="mkv", codec="ffv1")
+    assert cast(dict[str, Any], video_from_source(saved.getvalue())["probe"])["audio"]
+
+
+@pytest.mark.parametrize("count", (64, 65, 100))
+def test_public_concatenate_video_limits_direct_inputs_not_unrelated_trees(count: int) -> None:
+    source = video_from_source(_source())
+    joined = decode_video(encode_video(concatenate_video([source] * count)))
+    # Hand-derived: the local source fixture has 20 frames per clip.
+    assert effective_video_facts(joined)["frame_count"] == 20 * count
+    with pytest.raises(ValueError, match="1 and 100"):
+        concatenate_video([source] * 101)
+
+
+def test_public_concatenate_video_preserves_nonflattened_first_clip_edits() -> None:
+    source = video_from_source(_source())
+    trimmed = edit_video(source, {"trim": {"start_time": 0.5, "duration": 0.5}})
+    single = concatenate_video([trimmed])
+    multiple = concatenate_video([trimmed, source])
+    assert effective_video_facts(single)["frame_count"] == 5
+    assert effective_video_facts(multiple)["frame_count"] == 25
+    assert cast(np.ndarray, disassemble_video(multiple)["images"]).shape[0] == 25
+
+
+@pytest.mark.parametrize("codec", ("h264", "ffv1"))
+def test_concatenate_replaces_audio_without_changing_video_packets(
+    codec: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # VideoFromList in comfy_api/latest/_input_impl/video_types.py at ComfyUI
+    # bc5f880dbdd43e426077f42ccec53bb577ffee9f preserves compatible packets and
+    # uses explicit complete_audio instead of carried tracks. Exact inputs:
+    # two local 20-frame, 10-FPS fixtures (offsets 0 and 70), stereo 48kHz
+    # constant +/-0.25 soundtrack. Expected 40 frames/192000 samples is hand-derived.
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path))
+    data = [_source(offset=offset) for offset in (0, 70)]
+    if codec == "ffv1":
+        encoded = []
+        for source in data:
+            output = io.BytesIO()
+            save_video_stream(video_from_source(source), output, container="mkv", codec=codec)
+            encoded.append(output.getvalue())
+        data = encoded
+    waveform = np.full((1, 2, 240000), 0.25, np.float32)
+    waveform[:, 1] *= -1
+    value = concatenate_video(
+        [video_from_source(source) for source in data],
+        complete_audio={"waveform": waveform, "sample_rate": 48000},
+    )
+    output = io.BytesIO()
+    save_video_stream(value, output, container="mkv")
+    assert _packets(output.getvalue()) == [packet for source in data for packet in _packets(source)]
+    from dinkster_assets.value import bind_video_value
+    from dinkster_values.audio_codec import audio_window
+
+    reloaded = bind_video_value(video_from_source(output.getvalue()), for_audio_extraction=True)
+    result = disassemble_video(reloaded)
+    assert result["frame_count"] == 40
+    actual = audio_window(result["audio"], 0, 192000)["waveform"]
+    assert actual.shape == (1, 2, 192000)
+    if codec == "ffv1":
+        np.testing.assert_array_equal(actual, waveform[..., :192000])
+    else:
+        assert actual[0, 0, 10000:180000].mean() > 0.2
+        assert actual[0, 1, 10000:180000].mean() < -0.2
 
 
 def test_saved_hdr_samples_do_not_quantize_to_eight_bits() -> None:

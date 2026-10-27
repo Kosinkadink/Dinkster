@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import io
+import json
+import struct
 from fractions import Fraction
 from pathlib import Path
 from typing import Any, cast
@@ -23,7 +25,13 @@ from dinkster_values import (
     video_from_source,
 )
 from dinkster_values.storage import BFLOAT16_FIELD, image_input
-from dinkster_video import assemble_video, disassemble_video, runtime, save_video_stream
+from dinkster_video import (
+    assemble_video,
+    concatenate_video,
+    disassemble_video,
+    runtime,
+    save_video_stream,
+)
 
 
 class _Source:
@@ -32,6 +40,60 @@ class _Source:
 
     def open(self) -> io.BytesIO:
         return io.BytesIO(self.data)
+
+
+def test_nested_complete_soundtrack_precedence_roundtrip_and_fingerprint() -> None:
+    from dinkster_api.v1 import VIDEO_TYPE, video_fingerprint
+    from dinkster_values.audio_codec import audio_window
+
+    # VideoFromList in comfy_api/latest/_input_impl/video_types.py at immutable
+    # ComfyUI bc5f880dbdd43e426077f42ccec53bb577ffee9f uses the last non-None
+    # nested soundtrack unless explicitly overridden. Exact local inputs below:
+    # one-frame/2-FPS clips and 8kHz constants 0.125/0.375/-0.25; expected sample
+    # counts and values are hand-derived, not recorded reference outputs.
+    source = assemble_video(np.zeros((1, 16, 16, 3), np.uint8), fps=2)
+    tracks = [
+        {"waveform": np.full((1, 1, 40000), level, np.float32), "sample_rate": 8000}
+        for level in (0.125, 0.375, -0.25)
+    ]
+    first = concatenate_video([source, source], complete_audio=tracks[0])
+    second = concatenate_video([first, source], complete_audio=tracks[1])
+    inherited = concatenate_video([first, second, source])
+    explicit = concatenate_video([first, second, source], complete_audio=tracks[2])
+    original = encode_video(second)
+    # The outer second soundtrack must beat the older first descendant's value.
+    for value, level, frames in ((second, 0.375, 3), (inherited, 0.375, 6), (explicit, -0.25, 6)):
+        rebound = decode_video(encode_video(value))
+        result = disassemble_video(rebound)
+        assert result["frame_count"] == frames
+        count = frames * 4000
+        actual = audio_window(result["audio"], 0, 40000)["waveform"]
+        np.testing.assert_array_equal(actual, np.full((1, 1, count), level, np.float32))
+    assert encode_video(second) == original
+    fingerprint = video_fingerprint(VIDEO_TYPE)
+    assert fingerprint(inherited) == fingerprint(decode_video(encode_video(inherited)))
+    assert fingerprint(inherited) != fingerprint(explicit)
+
+
+def test_complete_audio_wire_rejects_forged_metadata() -> None:
+    from dinkster_values import video_meta
+    from dinkster_values.video_codec import validate_video_encoded
+
+    source = assemble_video(np.zeros((1, 16, 16, 3), np.uint8), fps=2)
+    value = concatenate_video(
+        [source],
+        complete_audio={"waveform": np.ones((1, 1, 8000), np.float32), "sample_rate": 8000},
+    )
+    data = encode_video(value)
+    start = len(b"DINKSTER-VIDEO\x02")
+    length = struct.unpack_from("<Q", data, start)[0]
+    offset = start + 8
+    header = json.loads(data[offset : offset + length])
+    header["video"]["complete_audio"]["meta"]["sample_rate"] = 16000
+    changed = json.dumps(header, separators=(",", ":")).encode()
+    corrupted = data[:start] + struct.pack("<Q", len(changed)) + changed + data[offset + length :]
+    with pytest.raises(ValueError, match="metadata does not match payload"):
+        validate_video_encoded(corrupted, video_meta(value))
 
 
 def _gray_source(depth: int, transfer: int = 16) -> bytes:

@@ -205,6 +205,8 @@ def bind_video_value(
             if components["audio"] is not None:
                 components["audio"] = bind_audio_value(components["audio"], resolver)
             clip["components"] = components
+        if "complete_audio" in clip:
+            clip["complete_audio"] = bind_audio_value(clip["complete_audio"], resolver)
         for edit in cast("list[dict[str, object]]", clip["edits"]):
             for child in cast("list[dict[str, object]]", edit.get("concat", [])):
                 publish(child)

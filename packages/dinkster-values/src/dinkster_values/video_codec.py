@@ -28,7 +28,7 @@ from .limits import MEBIBYTE, VIDEO_AUDIO_COMPONENT_LIMIT_BYTES, VIDEO_VALUE_LIM
 from .model import stable_hash
 from .resources import COST_META_KEY
 from .storage import BFLOAT16_FIELD, array_storage_meta, storage_dtype
-from .video_edits import effective_video_facts, integer, mapping, seconds
+from .video_edits import VIDEO_TREE_CLIP_LIMIT, effective_video_facts, integer, mapping, seconds
 from .video_probe import VideoSource, color_space_label, open_video_source, probe_video
 
 VIDEO_CONTAINERS = frozenset({"mp4", "mkv", "mov", "webm", "avi", "gif"})
@@ -313,7 +313,7 @@ def coerce_video(obj: object) -> dict[str, object]:
         return result
     if ("source" in value) == ("components" in value):
         raise ValueError("VIDEO requires exactly one of source and components")
-    if set(value) - {"source", "components", "probe", "edits"}:
+    if set(value) - {"source", "components", "probe", "edits", "complete_audio"}:
         raise ValueError("VIDEO contains unknown fields")
     result = dict(value)
     if "source" in value:
@@ -335,6 +335,11 @@ def coerce_video(obj: object) -> dict[str, object]:
         result["probe"] = _probe(value.get("probe", expected), components=True)
         if result["probe"] != expected:
             raise ValueError("component VIDEO probe does not match its components")
+    if "complete_audio" in value:
+        audio = coerce_audio(value["complete_audio"])
+        if effective_audio_facts(audio)["batch"] != 1:
+            raise ValueError("VIDEO audio requires a single batch")
+        result["complete_audio"] = audio
     effective_video_facts(result)
     edits: list[object] = []
     for raw in cast("list[object]", value["edits"]):
@@ -384,6 +389,8 @@ def bind_video_sources(
         if components["audio"] is not None:
             components["audio"] = bind_audio_sources(components["audio"], factory)
         value["components"] = components
+    if "complete_audio" in value:
+        value["complete_audio"] = bind_audio_sources(value["complete_audio"], factory)
     edits: list[object] = []
     for raw in cast("list[object]", value["edits"]):
         edit = dict(mapping(raw, "VIDEO edit"))
@@ -417,7 +424,7 @@ def _pack_video(
     edits = cast("list[object]", value["edits"])
     budget[0] += len(edits)
     budget[1] += 1
-    if depth > 16 or budget[0] > 256 or budget[1] > 64:
+    if depth > 16 or budget[0] > 256 or budget[1] > VIDEO_TREE_CLIP_LIMIT:
         raise ValueError("VIDEO edit tree exceeds its operation, clip, or nesting limit")
     wire: dict[str, object] = {"probe": value["probe"]}
     if "source" in value:
@@ -459,6 +466,20 @@ def _pack_video(
                 chunks.append(data)
             components[key] = descriptor
         wire["components"] = components
+    if "complete_audio" in value:
+        audio = value["complete_audio"]
+        data = encode_audio(audio)
+        if len(data) > VIDEO_AUDIO_COMPONENT_LIMIT_BYTES:
+            raise ValueError("VIDEO complete_audio exceeds its encoded size limit")
+        metadata = dict(audio_meta(audio))
+        metadata.pop(COST_META_KEY, None)
+        descriptor: dict[str, object] = {"codec": "audio", "meta": metadata}
+        if identity:
+            descriptor["digest"] = _digest(data)
+        else:
+            descriptor["chunk"] = len(chunks)
+            chunks.append(data)
+        wire["complete_audio"] = descriptor
     packed_edits: list[object] = []
     for raw in edits:
         edit = dict(mapping(raw, "VIDEO edit"))
@@ -556,10 +577,11 @@ def _unpack_video(
         "components",
         "probe",
         "edits",
+        "complete_audio",
     }:
         raise ValueError("invalid VIDEO header value fields")
     budget[1] += 1
-    if depth > 16 or budget[1] > 64:
+    if depth > 16 or budget[1] > VIDEO_TREE_CLIP_LIMIT:
         raise ValueError("VIDEO edit tree exceeds its clip or nesting limit")
     probe = dict(mapping(wire.get("probe"), "VIDEO probe"))
     for key in _RATIONAL_FIELDS:
@@ -613,6 +635,15 @@ def _unpack_video(
                 raise ValueError("component VIDEO probe does not match its components")
             components[key] = data
         wire["components"] = components
+    if "complete_audio" in wire:
+        descriptor = mapping(wire["complete_audio"], "VIDEO complete_audio descriptor")
+        if set(descriptor) != {"codec", "meta", "chunk"} or descriptor.get("codec") != "audio":
+            raise ValueError("invalid VIDEO complete_audio descriptor")
+        data = take(descriptor)
+        if len(data) > VIDEO_AUDIO_COMPONENT_LIMIT_BYTES:
+            raise ValueError("VIDEO complete_audio exceeds its size limit")
+        _validate_array_chunk(data, descriptor["meta"], audio=True)
+        wire["complete_audio"] = data
     edits = wire.get("edits")
     if not isinstance(edits, list):
         raise ValueError("VIDEO edits must be a list")
@@ -650,6 +681,8 @@ def _materialize_video(wire: dict[str, object]) -> dict[str, object]:
         for key, decoder in (("images", decode_image_array), ("audio", decode_audio)):
             if components[key] is not None:
                 components[key] = decoder(bytes(cast(memoryview, components[key])))
+    if "complete_audio" in wire:
+        wire["complete_audio"] = decode_audio(bytes(cast(memoryview, wire["complete_audio"])))
     for edit in cast("list[dict[str, object]]", wire["edits"]):
         if "concat" in edit:
             edit["concat"] = [
@@ -745,6 +778,14 @@ def video_meta(obj: object) -> Mapping[str, object]:
                     ref = dict(mapping(raw, "audio asset reference"))
                     refs[str(ref["digest"])] = ref
                     byte_size += cast("int", ref["size"])
+        if "complete_audio" in video:
+            audio = audio_meta(video["complete_audio"])
+            for residency, size in mapping(audio["cost"], "complete audio cost").items():
+                resident[residency] = resident.get(residency, 0) + cast(int, size)
+            for raw in cast("list[object]", audio["asset_refs"]):
+                ref = dict(mapping(raw, "complete audio asset reference"))
+                refs[str(ref["digest"])] = ref
+                byte_size += cast("int", ref["size"])
         for raw in cast("list[object]", video["edits"]):
             edit = mapping(raw, "edit")
             for child in cast("list[object]", edit.get("concat", [])):
