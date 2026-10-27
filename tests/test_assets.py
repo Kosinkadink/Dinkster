@@ -21,8 +21,10 @@ from dinkster_assets import (
     AssetError,
     AssetRef,
     AssetResolver,
+    AssetVault,
     ChainResolver,
     IndexedAssetResolver,
+    LibraryStore,
     LocalAssetLibrary,
     LocalAssetRef,
     MountDef,
@@ -37,6 +39,7 @@ from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode
 from dinkster_schema import (
+    AssetWidget,
     InputSpec,
     Node,
     NodeSchema,
@@ -535,6 +538,107 @@ def test_unverified_local_binding_crosses_worker_codec_and_reconciles_after_scan
     assert reconciled.fingerprint == verified.digest
     assert reconciled.meta.get("digest") == verified.digest
     assert isinstance(worker_registry.wrap(ASSET_TYPE, worker_ref).resolve(), AssetRef)
+
+
+@pytest.mark.parametrize("verified", (False, True))
+def test_text_encoder_relative_preflight_preserves_ranked_file_authority(
+    tmp_path: Path, verified: bool
+) -> None:
+    from dinkster_server.library import ServerLibrary
+    from dinkster_server.preflight import bind_model_names
+
+    snapshot = tmp_path / "snapshot.json"
+    table = MountTable(snapshot, index_root=tmp_path / "indexes")
+    for mount_id, kind, priority in (
+        ("wrong", "model/checkpoint", -10),
+        ("preferred", "model/text-encoder", 0),
+        ("fallback", "model/text-encoder", 10),
+    ):
+        root = tmp_path / mount_id
+        for subdir in ("vendor", "other"):
+            path = root / subdir / "encoder.bin"
+            path.parent.mkdir(parents=True)
+            path.write_bytes(f"{mount_id}/{subdir}".encode())
+        table.add(MountDef(mount_id, root, priority=priority, kind=kind))
+        if verified:
+            table.scan(mount_id)
+    assert table.bind_name("encoder.bin", "model/text-encoder") is None
+    schema = NodeSchema(
+        "encoder.load",
+        inputs=(
+            InputSpec(
+                "file", TypeExpr.concrete(ASSET_TYPE), widget=AssetWidget(kind="model/text-encoder")
+            ),
+        ),
+    )
+    graph = Graph({"load": GraphNode("encoder.load", {"file": "vendor/encoder.bin"})})
+    library = ServerLibrary(
+        AssetVault(tmp_path / "vault"), LibraryStore(tmp_path / "library.sqlite"), resolver=table
+    )
+    bound, missing = bind_model_names(graph, {schema.node_type: schema}, library)
+    assert not missing
+    wire = bound.nodes["load"].inputs["file"]
+    ref = asset_registry(MountSnapshotResolver(snapshot)).wrap(ASSET_TYPE, wire).resolve()
+    assert isinstance(ref, AssetRef if verified else LocalAssetRef)
+    assert ref.read_bytes() == b"preferred/vendor"
+    assert str(tmp_path) not in json.dumps(wire)
+    table.remove("preferred")
+    next_ref = table.bind_name("vendor/encoder.bin", "model/text-encoder")
+    assert next_ref is not None and next_ref.read_bytes() == b"fallback/vendor"
+    assert table.bind_name("vendor/encoder.bin", "model/checkpoint") is None
+
+
+@pytest.mark.parametrize("change", ("replace", "revoke", "escape"))
+def test_text_encoder_relative_binding_rechecks_host_and_worker_authority(
+    tmp_path: Path, change: str
+) -> None:
+    root = tmp_path / "models"
+    path = root / "vendor" / "encoder.bin"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"original")
+    snapshot = tmp_path / "snapshot.json"
+    table = MountTable(snapshot)
+    table.add(MountDef("encoders", root, kind="model/text-encoder"))
+    ref = table.bind_name("vendor/encoder.bin", "model/text-encoder")
+    assert isinstance(ref, LocalAssetRef)
+    worker_ref = LocalAssetRef.from_wire(ref.to_wire(), MountSnapshotResolver(snapshot))
+    assert worker_ref.read_bytes() == b"original"
+    if change == "revoke":
+        table.remove("encoders")
+    else:
+        path.unlink()
+        if change == "replace":
+            path.write_bytes(b"changed")
+        else:
+            outside = tmp_path / "outside.bin"
+            outside.write_bytes(b"secret")
+            path.symlink_to(outside)
+            assert table.bind_name("vendor/encoder.bin", "model/text-encoder") is None
+    for current in (ref, worker_ref):
+        with pytest.raises(AssetError, match="unavailable"):
+            current.read_bytes()
+
+
+@pytest.mark.parametrize(
+    "name",
+    (
+        "../outside.bin",
+        "/outside.bin",
+        "C:/outside.bin",
+        "C:outside.bin",
+        "vendor/../outside.bin",
+        "vendor/./encoder.bin",
+        "vendor//encoder.bin",
+        "vendor\\encoder.bin",
+        "vendor/encoder.bin/",
+        "vendor/\x00encoder.bin",
+        "vendor/\nencoder.bin",
+    ),
+)
+def test_text_encoder_relative_binding_rejects_unsafe_source_names(tmp_path: Path, name: str):
+    table = MountTable()
+    table.add(MountDef("encoders", tmp_path, kind="model/text-encoder"))
+    assert table.bind_name(name, "model/text-encoder") is None
 
 
 @pytest.mark.parametrize("change", ["replace", "revoke", "regrant"])
