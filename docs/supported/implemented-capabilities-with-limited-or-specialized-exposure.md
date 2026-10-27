@@ -8,8 +8,9 @@
 - The public mount-scoped asset writer publishes bounded, ordered stream batches
   with source-compatible counters and can give an encoder its selected filename
   stem and counter before it produces a bounded output stream.
-- Native job submission accepts optional `exportSnapshot` metadata with an object
-  `prompt` and optional object `extraPnginfo`. Output nodes can read a detached
+- Native job submission accepts optional `exportSnapshot` metadata with independently
+  optional object `prompt` and `extraPnginfo` members. Unavailable metadata remains
+  absent, distinct from an explicitly empty object. Output nodes can read a detached
   copy through public v1 `current_export_snapshot`; the server does not reconstruct
   an original workflow or prompt from the submitted execution graph.
 - MiniMax H3 independently loaded components and attention/residency behavior

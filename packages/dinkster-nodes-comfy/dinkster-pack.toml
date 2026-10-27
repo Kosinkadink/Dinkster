@@ -507,6 +507,9 @@ namespaces = [
     "CLIPVisionLoader",
     "StyleModelLoader",
     "GLIGENLoader",
+    "ImageOnlyCheckpointLoader",
+    "LTXVAudioVAELoader",
+    "LTXAVTextEncoderLoader",
     "LoraLoader",
     "LoraLoaderModelOnly",
     "LoadLoraModel",
@@ -516,6 +519,15 @@ namespaces = [
     "CropByBBoxes",
     "MakeTrainingDataset",
     "TripoSplatPreprocessImage",
+    "LoadTrainingDataset",
+    "LoadAudio",
+    "PreviewAudio",
+    "SaveAudio",
+    "SaveAudioMP3",
+    "SaveAudioOpus",
+    "SaveAudioAdvanced",
+    "YuE2GenerateABC",
+    "YuE2GenerateMusic",
 ]
 
 [pack.sandbox]

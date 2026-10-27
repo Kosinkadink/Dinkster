@@ -343,16 +343,17 @@ class ExportSnapshot:
     Validation is deliberately shallow because submitted JSON remains opaque.
     """
 
-    prompt: Mapping[str, object]
+    prompt: Mapping[str, object] | None = None
     extra_pnginfo: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
         prompt = cast("object", self.prompt)
-        if not isinstance(prompt, Mapping):
-            raise ValueError("ExportSnapshot.prompt must be a JSON-object mapping")
-        prompt_mapping = cast("Mapping[object, object]", prompt)
-        if not all(isinstance(key, str) for key in prompt_mapping):
-            raise ValueError("ExportSnapshot.prompt must be a JSON-object mapping")
+        if prompt is not None:
+            if not isinstance(prompt, Mapping):
+                raise ValueError("ExportSnapshot.prompt must be a JSON-object mapping or None")
+            prompt_mapping = cast("Mapping[object, object]", prompt)
+            if not all(isinstance(key, str) for key in prompt_mapping):
+                raise ValueError("ExportSnapshot.prompt must be a JSON-object mapping or None")
         extra_pnginfo = cast("object", self.extra_pnginfo)
         if extra_pnginfo is not None:
             if not isinstance(extra_pnginfo, Mapping):

@@ -23,8 +23,10 @@ from .audio_combine import AUDIO_COMBINE_NODES
 from .audio_effects import AUDIO_EFFECT_NODES
 from .audio_encoder import AUDIO_ENCODER_NODES
 from .audio_generators import AUDIO_GENERATOR_NODES
+from .audio_io import LoadAudio, PreviewAudio
 from .audio_latent import AUDIO_LATENT_NODES, GetAudioLatentSize
 from .audio_music_conditioning import AUDIO_MUSIC_CONDITIONING_NODES
+from .audio_save import SaveAudio, SaveAudioAdvanced, SaveAudioMP3, SaveAudioOpus
 from .audio_transform import AUDIO_TRANSFORM_NODES
 from .audio_vae import AUDIO_VAE_NODES
 from .bbox_crop import CropByBBoxes
@@ -50,6 +52,7 @@ from .custom_sampling import CUSTOM_SAMPLING_NODES
 from .dataset_collections import DATASET_COLLECTION_NODES
 from .dataset_groups import DATASET_GROUP_NODES, MakeTrainingDataset
 from .dataset_images import DATASET_IMAGE_NODES
+from .dataset_shards import LoadTrainingDataset
 from .dataset_text import DATASET_TEXT_NODES
 from .dataset_video import DATASET_VIDEO_NODES
 from .device_routing import DEVICE_ROUTING_NODES
@@ -184,6 +187,7 @@ from .wan_sound import WanHuMoImageToVideo, WanSoundImageToVideo, WanSoundImageT
 from .wan_track_conditioning import WanTrackToVideo
 from .wan_uni3c import WanUni3CControlnetApply
 from .wandancer_keyframes import WANDANCER_KEYFRAME_NODES
+from .yue2_conditioning import YUE2_CONDITIONING_NODES
 from .zimage_encoders import TextEncodeZImageOmni
 
 COMFY_NODES = (
@@ -376,6 +380,14 @@ COMFY_NODES = (
     CropByBBoxes,
     MakeTrainingDataset,
     TripoSplatPreprocessImage,
+    LoadTrainingDataset,
+    LoadAudio,
+    PreviewAudio,
+    SaveAudio,
+    SaveAudioMP3,
+    SaveAudioOpus,
+    SaveAudioAdvanced,
+    *YUE2_CONDITIONING_NODES,
 )
 
 
