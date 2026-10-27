@@ -27,7 +27,7 @@ from dinkster_server import STATE_KEY, create_app
 
 import dinkster.installer as installer_module
 from dinkster.activation import add_activation_routes, compute_plan
-from dinkster.compose import ServingComposer, default_pack_specs
+from dinkster.compose import ServingComposer, default_pack_spec
 from dinkster.installer import Installer, lock_local_pack
 
 MODULE_TEMPLATE = '''\
@@ -314,8 +314,7 @@ def test_activation_reuses_unchanged_in_process_default_packs(tmp_path: Path) ->
         composer = ServingComposer(worker_env={"PYTHONPATH": str(alpha)})
         client: TestClient | None = None
         try:
-            for standard in default_pack_specs():
-                await composer.add_pack(standard)
+            await composer.add_pack(default_pack_spec("dinkster-nodes-foundation"))
             composition = composer.composition
             app = create_app(
                 composition.make_engine,
