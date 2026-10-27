@@ -8,7 +8,7 @@ import json
 import struct
 from fractions import Fraction
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, BinaryIO, cast
 
 import av
 import numpy as np
@@ -64,6 +64,62 @@ def _packets(data: bytes) -> list[bytes]:
     with av.open(io.BytesIO(data), mode="r") as source:
         packets = [bytes(p) for p in source.demux(video=0) if p.size]
     return packets
+
+
+@pytest.mark.parametrize("encoded", (False, True))
+def test_public_pixel_iterator_applies_edits_to_components_and_encoded_video(encoded: bool) -> None:
+    from dinkster_api.v1 import iter_video_pixels
+
+    pixels = np.arange(4 * 4 * 6 * 3, dtype=np.uint16).reshape(4, 4, 6, 3).astype(np.uint8)
+    video = assemble_video(pixels, fps=Fraction(5))
+    if encoded:
+        output = io.BytesIO()
+        save_video_stream(video, output, codec="ffv1", container="mkv")
+        video = video_from_source(output.getvalue())
+    video = edit_video(video, {"trim": {"start_time": Fraction(1, 5), "duration": Fraction(2, 5)}})
+    video = edit_video(video, {"crop": {"x": 2, "y": 2, "width": 4, "height": 2}})
+    frames = iter_video_pixels(video)
+    try:
+        actual = list(frames)
+    finally:
+        frames.close()
+    assert [time for time, _pixels in actual] == [Fraction(0), Fraction(1, 5)]
+    expected = pixels[1:3, 2:4, 2:6].astype(np.float32) / 255
+    for (_time, frame), wanted in zip(actual, expected, strict=True):
+        assert frame.dtype == np.float32
+        np.testing.assert_array_equal(frame, wanted)
+
+
+def test_public_pixel_iterator_early_close_releases_encoded_asset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_api.v1 import iter_video_pixels
+
+    data = _source()
+    vault = AssetVault(tmp_path)
+    digest = digest_bytes(data)
+    with vault.writer(digest) as writer:
+        writer.write(data)
+        writer.commit()
+    video = video_from_source(AssetRef(digest, "source.mp4", len(data), resolver=vault))
+    opened: list[BinaryIO] = []
+    original = AssetRef.open
+
+    def track_open(ref: AssetRef) -> BinaryIO:
+        handle = original(ref)
+        opened.append(handle)
+        return handle
+
+    monkeypatch.setattr(AssetRef, "open", track_open)
+    frames = iter_video_pixels(video)
+    try:
+        timestamp, pixels = next(frames)
+        assert timestamp == 0
+        assert pixels.shape == (32, 64, 3)
+        assert opened and any(not handle.closed for handle in opened)
+    finally:
+        frames.close()
+    assert all(handle.closed for handle in opened)
 
 
 def test_inline_v2_roundtrip_and_v1_migration() -> None:
@@ -389,6 +445,100 @@ def test_native_video_chain_matches_across_worker_shared_memory() -> None:
             ] == ["shm", "shm"]
         finally:
             await worker.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_native_video_values_cross_ordinary_hosts_twice_with_layered_cache(
+    tmp_path: Path, in_process: bool
+) -> None:
+    from dinkster_graph import Graph, GraphNode, Link
+    from dinkster_nodes_comfy import register_inference_types
+    from dinkster_values import VIDEO_EDIT_TYPE, effective_video_facts, video_source
+
+    from dinkster.compose import PackSpec, ServingComposer
+
+    edit = {"trim": {"duration": 1.0, "start_time": 0.5}, "unused": {"preserved": True}}
+    trim_edit = {"trim": edit["trim"]}
+    source = video_from_source(_source(depth=10))
+    expected = edit_video(source, trim_edit)
+    expected_facts = effective_video_facts(expected)
+    expected_fingerprint = video_fingerprint(VIDEO_TYPE)(expected)
+
+    registry = TypeRegistry()
+    register_inference_types(registry)
+    video_spec = registry.spec(VIDEO_TYPE)
+    edit_spec = registry.spec(VIDEO_EDIT_TYPE)
+    register_inference_types(registry)
+    assert registry.spec(VIDEO_TYPE) is video_spec
+    assert registry.spec(VIDEO_EDIT_TYPE) is edit_spec
+    encoded_edit = edit_spec.encode(edit)
+    assert (
+        encoded_edit
+        == b'{"trim": {"duration": 1.0, "start_time": 0.5}, "unused": {"preserved": true}}'
+    )
+    assert edit_spec.decode(encoded_edit) == edit
+
+    async def scenario() -> None:
+        root = Path(__file__).resolve().parents[1]
+        native_manifest = root / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+        fixture_manifest = Path(__file__).with_name("video-native-value-fixture.toml")
+        manifests = (native_manifest, fixture_manifest)
+        composer = ServingComposer(
+            cache_mode="layered",
+            cache_dir=tmp_path / "cache",
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "PYTHONPATH": str(Path(__file__).parent),
+            },
+        )
+        try:
+            for manifest in manifests:
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=manifest,
+                        host_types=register_inference_types
+                        if manifest == native_manifest
+                        else None,
+                        in_process=in_process,
+                        worker_group=None if in_process else "video-native-value-fixture",
+                        group_manifests=() if in_process else manifests,
+                    )
+                )
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("video-native-value-fixture.source", {}),
+                    "consumer": GraphNode(
+                        "video-native-value-fixture.consumer",
+                        {
+                            "video": Link("source", "video"),
+                            "video_edit": Link("source", "video_edit"),
+                        },
+                    ),
+                }
+            )
+            engine = composer.composition.make_engine(lambda _event: None)
+            for repeat in range(2):
+                result = await engine.run(graph, ["consumer"])
+                assert result.outputs["consumer"]["video_edit"].resolve() == edit
+                assert result.outputs["consumer"]["facts"].resolve() == json.dumps(
+                    expected_facts, default=str, sort_keys=True
+                )
+                assert result.outputs["consumer"]["fingerprint"].resolve() == expected_fingerprint
+                assert video_source(result.outputs["consumer"]["source"].resolve()) == _source(
+                    depth=10
+                )
+                assert encode_video(result.outputs["consumer"]["edited"].resolve()) == encode_video(
+                    expected
+                )
+                if repeat:
+                    assert set(result.cached) == {"source", "consumer"}
+                else:
+                    assert set(result.executed) == {"source", "consumer"}
+        finally:
+            await composer.close()
 
     asyncio.run(scenario())
 

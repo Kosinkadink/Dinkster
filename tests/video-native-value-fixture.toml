@@ -1,0 +1,8 @@
+[pack]
+name = "video-native-value-fixture"
+publisher = "dinkster"
+namespaces = ["video-native-value-fixture"]
+
+[pack.entry]
+nodes = "video_native_value_nodes:NODES"
+types = "video_native_value_nodes:register_public_types"
