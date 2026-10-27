@@ -21,6 +21,7 @@ from dinkster_api.v1 import (
     register_asset_type,
     register_audio_value_type,
     register_curve_type,
+    register_inference_types,
     register_model3d_type,
     register_save_target_type,
     register_video_edit_type,
@@ -32,9 +33,6 @@ from dinkster_api.v1 import (
     validate_image_encoded,
 )
 from dinkster_api.v1 import video_document as document_codec
-from dinkster_inference_wire.media_wire import (
-    register_media_types as register_inference_media_types,
-)
 
 from .audio import (
     AUDIO_IO_NODES,
@@ -206,7 +204,7 @@ def register_media_types(registry: TypeRegistry) -> None:
     if VIDEO_TYPE not in registry:
         register_video_value_type(registry, VIDEO_TYPE, resolver_from_env())
     register_model3d_type(registry, MODEL3D_TYPE)
-    register_inference_media_types(registry)
+    register_inference_types(registry)
     if not any(item.kind == "ply" for item in registry.renditions_of(SPLAT_TYPE)):
         registry.register_rendition(
             SPLAT_TYPE,
