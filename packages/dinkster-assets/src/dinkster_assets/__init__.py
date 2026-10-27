@@ -162,12 +162,19 @@ from .transport import (
     ValidateTransportResult,
     rank_transport_candidates,
 )
-from .value import ASSET_TYPE, bind_video_value, register_asset_type, register_video_value_type
+from .value import (
+    ASSET_TYPE,
+    admit_video_source,
+    bind_video_value,
+    register_asset_type,
+    register_video_value_type,
+)
 from .vault import AssetVault, VaultError, VaultWriter
 from .writer import AssetWriter, MountSnapshotWriter, MountWriteAuthority
 
 __all__ = [
     "ASSET_TYPE",
+    "admit_video_source",
     "AssetScanProgress",
     "DEFAULT_SCOPE",
     "DEFAULT_TRANSFER_STALL_TIMEOUT",

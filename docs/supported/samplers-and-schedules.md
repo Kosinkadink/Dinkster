@@ -12,6 +12,7 @@ latents while preserving source samples, masks and metadata.
 
 Align Your Steps, GITS, Optimal Steps, and Ideogram 4 scheduler nodes produce
 native SIGMAS tensors for model-specific schedule selection.
+Flux2Scheduler uses image token count and sampling steps to shift its sigma schedule.
 
 Basic, CFG, dual-CFG, and dual-model CFG guiders produce native GUIDER values
 for custom sampling. CFG Override patches CFG over an inclusive sampling
@@ -22,6 +23,8 @@ from a model sampling percentage through the native ComfyUI sigma nodes.
 
 CFGZeroStar, CFGNorm, APG, TCFG, Mahiro, and NAGuidance patch a model's CFG or
 attention callbacks for the native Comfy guidance interfaces.
+RenormCFG truncates CFG by timestep and bounds guided prediction norms while
+preserving additional output channels.
 
 Perp-Neg Guider combines positive, negative, and empty conditioning with
 perpendicular negative guidance. The deprecated Perp-Neg model patch remains

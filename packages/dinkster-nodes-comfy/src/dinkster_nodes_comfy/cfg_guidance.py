@@ -360,4 +360,58 @@ class NAGuidance(Node):
         return cls.outputs(MODEL=patched)
 
 
-CFG_GUIDANCE_NODES = (CFGZeroStar, CFGNorm, APG, TCFG, Mahiro, NAGuidance)
+class RenormCFG(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="RenormCFG",
+            category="model/patch",
+            inputs=(
+                InputSpec("model", _MODEL),
+                InputSpec(
+                    "cfg_trunc",
+                    _FLOAT,
+                    default=100,
+                    advanced=True,
+                    widget=NumberWidget(min=0.0, max=100.0, step=0.01),
+                ),
+                InputSpec(
+                    "renorm_cfg",
+                    _FLOAT,
+                    default=1.0,
+                    advanced=True,
+                    widget=NumberWidget(min=0.0, max=100.0, step=0.01),
+                ),
+            ),
+            outputs=(OutputSpec("MODEL", _MODEL),),
+        )
+
+    @classmethod
+    def execute(cls, *, model: Any, cfg_trunc: float, renorm_cfg: float) -> Mapping[str, object]:
+        def renorm(args: dict[str, Any]) -> Any:
+            torch = importlib.import_module("torch")
+            positive = args["cond_denoised"]
+            negative = args["uncond_denoised"]
+            channels = model.model.diffusion_model.in_channels
+            positive_eps = positive[:, :channels]
+            if args["timestep"][0] < cfg_trunc:
+                negative_eps = negative[:, :channels]
+                guided = negative_eps + args["cond_scale"] * (positive_eps - negative_eps)
+                if float(renorm_cfg) > 0.0:
+                    dimensions = tuple(range(1, len(positive_eps.shape)))
+                    limit = torch.linalg.vector_norm(
+                        positive_eps, dim=dimensions, keepdim=True
+                    ) * float(renorm_cfg)
+                    norm = torch.linalg.vector_norm(guided, dim=dimensions, keepdim=True)
+                    scale = torch.where(norm >= limit, limit / norm, torch.ones_like(norm))
+                    guided = guided * scale
+            else:
+                guided = positive_eps
+            return args["input"] - torch.cat((guided, positive[:, channels:]), dim=1)
+
+        patched = model.clone()
+        patched.set_model_sampler_cfg_function(renorm)
+        return cls.outputs(MODEL=patched)
+
+
+CFG_GUIDANCE_NODES = (CFGZeroStar, CFGNorm, APG, TCFG, Mahiro, NAGuidance, RenormCFG)

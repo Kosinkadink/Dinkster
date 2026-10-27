@@ -325,6 +325,60 @@ class SkipLayerGuidanceDiT(Node):
         return cls.outputs(MODEL=patched)
 
 
+class SkipLayerGuidanceSD3(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="SkipLayerGuidanceSD3",
+            category="advanced/guidance",
+            description=(
+                "Generic version of SkipLayerGuidance node that can be used on every DiT model."
+            ),
+            inputs=(
+                InputSpec("model", _MODEL),
+                InputSpec(
+                    "layers",
+                    _STRING,
+                    default="7, 8, 9",
+                    advanced=True,
+                    widget=StringWidget(multiline=False),
+                ),
+                InputSpec(
+                    "scale", _FLOAT, default=3.0, widget=NumberWidget(min=0.0, max=10.0, step=0.1)
+                ),
+                InputSpec(
+                    "start_percent",
+                    _FLOAT,
+                    default=0.01,
+                    advanced=True,
+                    widget=NumberWidget(min=0.0, max=1.0, step=0.001),
+                ),
+                InputSpec(
+                    "end_percent",
+                    _FLOAT,
+                    default=0.15,
+                    advanced=True,
+                    widget=NumberWidget(min=0.0, max=1.0, step=0.001),
+                ),
+            ),
+            outputs=(OutputSpec("MODEL", _MODEL),),
+        )
+
+    @classmethod
+    def execute(
+        cls, *, model: Any, layers: str, scale: float, start_percent: float, end_percent: float
+    ) -> Mapping[str, object]:
+        return SkipLayerGuidanceDiT.execute(
+            model=model,
+            double_layers=layers,
+            single_layers="",
+            scale=scale,
+            start_percent=start_percent,
+            end_percent=end_percent,
+            rescaling_scale=0.0,
+        )
+
+
 class SkipLayerGuidanceDiTSimple(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -422,5 +476,6 @@ ATTENTION_GUIDANCE_NODES = (
     SelfAttentionGuidance,
     PerturbedAttentionGuidance,
     SkipLayerGuidanceDiT,
+    SkipLayerGuidanceSD3,
     SkipLayerGuidanceDiTSimple,
 )
