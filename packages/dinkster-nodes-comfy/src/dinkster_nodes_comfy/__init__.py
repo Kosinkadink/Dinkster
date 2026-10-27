@@ -89,6 +89,7 @@ from .latent_upscale_loader import LATENT_UPSCALE_LOADER_NODES
 from .list_utilities import LIST_UTILITY_NODES
 from .logic import LOGIC_NODES
 from .loops import LOOP_NODES
+from .lora_file_loaders import LORA_FILE_LOADER_NODES
 from .lotus import LotusConditioning
 from .ltx_audio import LTX_AUDIO_NODES
 from .ltx_av_latent import LTX_AV_LATENT_NODES
@@ -106,6 +107,7 @@ from .minimax_h3_latent import EmptyMiniMaxH3LatentAV, MiniMaxH3AddGuide, MiniMa
 from .minimax_h3_sampling import MiniMaxH3SigmaShift
 from .mochi import EmptyMochiLatentVideo
 from .model_advanced import MODEL_ADVANCED_NODES
+from .model_file_loaders import MODEL_FILE_LOADER_NODES
 from .model_merging import MODEL_MERGE_NODES
 from .model_merging_specific import MODEL_SPECIFIC_MERGE_NODES
 from .model_patch_loader import MODEL_PATCH_LOADER_NODES
@@ -362,6 +364,8 @@ COMFY_NODES = (
     PrimitiveBoundingBox,
     *RTDETR_NODES,
     VideoFrameSample,
+    *MODEL_FILE_LOADER_NODES,
+    *LORA_FILE_LOADER_NODES,
 )
 
 

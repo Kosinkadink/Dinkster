@@ -1,5 +1,12 @@
 ## ComfyUI compatibility
 
+- The native pack declares bound-file checkpoint, diffusion-model, text
+  encoder, vision-encoder, ControlNet, style-model and GLIGEN loader schemas.
+  Model construction uses the pinned inference package; file inputs grant
+  access only to the selected asset.
+- Native LoRA file loaders apply model and text-encoder strengths separately,
+  retain weight metadata, and support ordered stacks and bypass application.
+  Disabled stack entries and zero strengths do not resolve their file inputs.
 - Native Anima LLLite applies image and optional mask guidance to cloned models
   through scheduled input, self-attention, cross-attention and MLP patches.
 - Native SUPIR applies scheduled control strength and optional restoration

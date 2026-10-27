@@ -491,6 +491,23 @@ namespaces = [
     "RTDETR_detect",
     "DrawBBoxes",
     "VideoFrameSample",
+    "CheckpointLoaderSimple",
+    "CheckpointLoader",
+    "unCLIPCheckpointLoader",
+    "ControlNetLoader",
+    "DiffControlNetLoader",
+    "UNETLoader",
+    "CLIPLoader",
+    "DualCLIPLoader",
+    "CLIPVisionLoader",
+    "StyleModelLoader",
+    "GLIGENLoader",
+    "LoraLoader",
+    "LoraLoaderModelOnly",
+    "LoadLoraModel",
+    "LoadLoraTextEncoder",
+    "LoraLoaderBypass",
+    "LoraLoaderBypassModelOnly",
 ]
 
 [pack.sandbox]
