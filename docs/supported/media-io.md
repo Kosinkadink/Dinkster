@@ -69,6 +69,8 @@
 - VIDEO values retain an encoded source or deferred components, rational
   source probe facts, and ordered lazy trim, crop, scale, and restricted
   identical-codec concat edits. Info and lazy edits do not decode frames.
+  Decoded source trims select half-open stream-tick windows while retaining
+  rational timeline bounds and independent audio sample windows.
   Encoded sources can be MP4, MKV, MOV, WebM, AVI, or GIF. Source-copy saves
   preserve original bytes; exact closed packet cuts use stream copy and
   other edits transcode frame-at-a-time. Alpha and source precision are
