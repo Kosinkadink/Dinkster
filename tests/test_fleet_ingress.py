@@ -872,7 +872,9 @@ def test_oversized_upstream_ws_frame_loudly_closes_downstream(tmp_path: Path) ->
     asyncio.run(scenario())
 
 
-def test_immediate_ws_close_uses_growing_reconnect_backoff(tmp_path: Path) -> None:
+def test_immediate_ws_close_uses_growing_reconnect_backoff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     connections: list[float] = []
     app = web.Application()
 
@@ -886,10 +888,23 @@ def test_immediate_ws_close_uses_growing_reconnect_backoff(tmp_path: Path) -> No
     app.router.add_get("/api/events", events)
 
     async def scenario() -> None:
+        delays: list[float] = []
+        observed = asyncio.Event()
+
+        def reconnect_delay(delay: float) -> float:
+            delays.append(delay)
+            if len(delays) == 4:
+                observed.set()
+                # Park further reconnects until the downstream closes.
+                return 3600
+            return 0
+
+        monkeypatch.setattr(ingress_module, "_reconnect_delay", reconnect_delay)
         client, _, servers = await _fleet(tmp_path, {"alpha": app})
         try:
             ws = await client.ws_connect("/api/events")
-            await asyncio.sleep(0.75)
+            await asyncio.wait_for(observed.wait(), 5)
+            assert delays == [0.1, 0.2, 0.4, 0.8]
             assert 2 <= len(connections) <= 4
             await ws.close()
         finally:
