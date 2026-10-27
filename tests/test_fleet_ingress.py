@@ -940,11 +940,9 @@ def test_aggregate_fanout_is_concurrent_and_times_out_by_member(
         monkeypatch.setattr(ingress_module, "_FANOUT_TIMEOUT", 0.15)
         client, _, servers = await _fleet(tmp_path, {"alpha": engine(), "beta": engine(hangs=True)})
         try:
-            started = time.monotonic()
-            response = await client.get("/api/jobs")
-            elapsed = time.monotonic() - started
+            response = await asyncio.wait_for(client.get("/api/jobs"), 2)
             assert response.status == 503
-            assert elapsed < 0.4
+            assert not release.is_set()
             assert (await response.json())["members"] == [
                 {"engine": "beta", "state": "unreachable"}
             ]

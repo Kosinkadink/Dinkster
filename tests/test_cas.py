@@ -443,11 +443,13 @@ def test_cas_adopt_file_rejects_mismatched_bytes(tmp_path: Path) -> None:
 def test_budgeted_cas_evicts_least_recently_used(tmp_path: Path) -> None:
     cas = BudgetedDiskCAS(tmp_path / "cas", max_bytes=1000)
     first = cas.put(b"a" * 400)
-    time.sleep(0.02)
     second = cas.put(b"b" * 400)
-    time.sleep(0.02)
+    first_path = cas.resolve(first)
+    second_path = cas.resolve(second)
+    assert first_path is not None and second_path is not None
+    os.utime(first_path, (10, 10))
+    os.utime(second_path, (20, 20))
     assert cas.has(first)  # a hit refreshes recency
-    time.sleep(0.02)
     third = cas.put(b"c" * 400)  # busts the budget; the LRU blob goes
     assert not cas.has(second)
     assert cas.has(first)
@@ -727,11 +729,14 @@ def test_disk_cache_hit_refreshes_lru_across_store_instances(tmp_path: Path) -> 
         registry.register("test.bulk")
         store = DiskCacheStore(tmp_path, registry, max_bytes=40 * 1024)
         await store.put("key-a", {"out": registry.wrap("test.bulk", os.urandom(16 * 1024))})
-        time.sleep(0.02)
+        first_manifest = next((tmp_path / "entries").glob("*.json"))
         await store.put("key-b", {"out": registry.wrap("test.bulk", os.urandom(16 * 1024))})
-        time.sleep(0.02)
+        second_manifest = next(
+            path for path in (tmp_path / "entries").glob("*.json") if path != first_manifest
+        )
+        os.utime(first_manifest, (10, 10))
+        os.utime(second_manifest, (20, 20))
         assert await DiskCacheStore(tmp_path, registry, max_bytes=40 * 1024).get("key-a")
-        time.sleep(0.02)
         await store.put("key-c", {"out": registry.wrap("test.bulk", os.urandom(16 * 1024))})
 
         reopened = DiskCacheStore(tmp_path, registry, max_bytes=40 * 1024)
