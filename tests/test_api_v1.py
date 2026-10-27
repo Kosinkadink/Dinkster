@@ -71,6 +71,8 @@ GOLDEN_V1_SURFACE = (
     "extension_behavior_hash",
     # -- training session boundary values (dinkster-protocol)
     "TrainingSessionHandle",
+    "ExportSnapshot",
+    "current_export_snapshot",
     "MirrorSpec",
     "MirrorTolerance",
     "SourceFilenameSpec",
@@ -178,10 +180,12 @@ GOLDEN_V1_SURFACE = (
     "DICT_TYPE",
     "FLOATS_TYPE",
     "GLIGEN_TYPE",
+    "HISTOGRAM_TYPE",
     "PHOTOMAKER_TYPE",
     "GUIDER_TYPE",
     "HOOK_KEYFRAMES_TYPE",
     "HOOKS_TYPE",
+    "IC_LORA_PARAMETERS_TYPE",
     "IMAGE_TYPE",
     "IMPACT_BASIC_PIPE_TYPE",
     "INFERENCE_LATENT_OPERATION_TYPE",
@@ -190,6 +194,9 @@ GOLDEN_V1_SURFACE = (
     "LATENT_TYPE",
     "LATENT_UPSCALE_MODEL_TYPE",
     "LAYERS_TYPE",
+    "LOSS_MAP_TYPE",
+    "LOAD3D_CAMERA_TYPE",
+    "LORA_MODEL_TYPE",
     "MASK_TYPE",
     "MESH_TYPE",
     "MODEL3D_TYPE",
@@ -210,6 +217,7 @@ GOLDEN_V1_SURFACE = (
     "STYLE_MODEL_TYPE",
     "TIMESTEPS_RANGE_TYPE",
     "TRACKS_TYPE",
+    "UPSCALE_MODEL_TYPE",
     "WAN_CAMERA_EMBEDDING_TYPE",
     "VAE_TYPE",
     "VECTOR_TYPE",
@@ -265,7 +273,10 @@ GOLDEN_V1_SURFACE = (
     # same way dev.image and the compat surface do.
     "IMAGE_BATCH_MERGER_ID",
     "PNG_CONTAINER_VERSION",
+    "ImageComponents",
+    "ReadableImageSource",
     "decode_image_array",
+    "decode_image_components",
     "encode_image_array",
     "image_array_fingerprint",
     "image_array_meta",
@@ -353,6 +364,9 @@ GOLDEN_V1_SURFACE = (
     "digest_file",
     "is_digest",
     "mount_roots_for_kind",
+    "asset_selection_names",
+    "asset_selection_options",
+    "resolve_asset_selection",
     "register_asset_type",
     "resolver_from_env",
     # -- mounted saves (dinkster-assets + current dinkster-schema widgets)
@@ -506,6 +520,39 @@ assert "torch" not in sys.modules
     assert result.returncode == 0, result.stderr
 
 
+def test_upscale_model_registration_preserves_resident_identity_without_torch() -> None:
+    script = """
+import sys
+from dinkster_api.v1 import UPSCALE_MODEL_TYPE, TypeRegistry, register_inference_types
+from dinkster_memory.resident import default_pool
+from dinkster_values import RESOURCE_ID_META_KEY, ResidentLookupError
+
+assert UPSCALE_MODEL_TYPE == "UPSCALE_MODEL"
+registry = TypeRegistry()
+register_inference_types(registry)
+spec = registry.spec(UPSCALE_MODEL_TYPE)
+register_inference_types(registry)
+assert registry.spec(UPSCALE_MODEL_TYPE) is spec
+descriptor = object()
+encoded = spec.encode(descriptor)
+assert spec.decode(encoded) is descriptor
+assert spec.fingerprint(descriptor) == spec.fingerprint(spec.decode(encoded))
+assert spec.meta(descriptor)[RESOURCE_ID_META_KEY].startswith("resident:")
+assert default_pool().release_resident(descriptor)
+try:
+    spec.decode(encoded)
+except ResidentLookupError:
+    pass
+else:
+    raise AssertionError("released upscale descriptor remained resolvable")
+assert "torch" not in sys.modules
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 0, result.stderr
+
+
 @pytest.mark.parametrize("native_first", (True, False))
 @pytest.mark.parametrize("type_name", ("GLIGEN", "PHOTOMAKER"))
 def test_model_registration_preserves_resident_identity_without_torch(
@@ -545,6 +592,46 @@ except ResidentLookupError:
 else:
     raise AssertionError("released {type_name} remained resolvable")
 assert "torch" not in sys.modules
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_bounding_box_registration_is_shared_cold_and_preserves_first_authority() -> None:
+    script = """
+import sys
+sys.modules['torch'] = None
+sys.modules['dinkster_inference'] = None
+from dinkster_api.v1 import BOUNDING_BOX_TYPE, TypeRegistry, register_inference_types
+from dinkster_nodes_comfy import register_inference_types as register_pack_types
+
+# Hand-derived plain JSON values: an optional default, one frame, and
+# multiple frames including an empty frame must retain structure and order.
+values = (
+    {'x': 0, 'y': 0, 'width': 512, 'height': 512},
+    [{'x': 7, 'y': 3, 'width': 11, 'height': 5}],
+    [[], [{'x': 7, 'y': 3, 'width': 11, 'height': 5, 'score': 0.75}]],
+)
+for registrations in (
+    (register_inference_types, register_pack_types),
+    (register_pack_types, register_inference_types),
+):
+    for preexisting in (False, True):
+        registry = TypeRegistry()
+        first = registry.register(BOUNDING_BOX_TYPE) if preexisting else None
+        registrations[0](registry)
+        spec = registry.spec(BOUNDING_BOX_TYPE)
+        assert first is None or spec is first
+        registrations[1](registry)
+        register_inference_types(registry)
+        register_pack_types(registry)
+        assert registry.spec(BOUNDING_BOX_TYPE) is spec
+        for value in values:
+            assert spec.decode(spec.encode(value)) == value
+assert sys.modules['torch'] is None
+assert sys.modules['dinkster_inference'] is None
 """
     result = subprocess.run(
         [sys.executable, "-c", script], capture_output=True, text=True, timeout=30

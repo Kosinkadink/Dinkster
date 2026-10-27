@@ -225,6 +225,7 @@ from dinkster_assets import (
     AssetError,
     AssetIntegrityError,
     DeclaredAsset,
+    asset_selection_options,
     is_digest,
 )
 from dinkster_assets.acquisition_plan import AcquisitionSource
@@ -262,6 +263,7 @@ from dinkster_protocol import (
     AttentionPolicy,
     AttentionPolicyConfig,
     CompatGateDiagnostic,
+    ExportSnapshot,
     PackSettingsSchema,
     PreviewPolicy,
     attention_policy_config_from_wire,
@@ -3291,6 +3293,23 @@ async def handle_submit(request: web.Request) -> web.Response:
     source_document = body.get("sourceDocument", "")
     if not isinstance(source_document, str) or (source_document and not is_digest(source_document)):
         raise _bad_request("'sourceDocument' must be a canonical asset digest ('blake3:<64 hex>')")
+    export_snapshot = None
+    if "exportSnapshot" in body:
+        raw_snapshot = body["exportSnapshot"]
+        if not isinstance(raw_snapshot, dict):
+            raise _bad_request("'exportSnapshot' must be an object")
+        snapshot_fields = cast("dict[str, object]", raw_snapshot)
+        if set(snapshot_fields) - {"prompt", "extraPnginfo"}:
+            raise _bad_request("'exportSnapshot' has unknown fields")
+        prompt = snapshot_fields.get("prompt")
+        extra_pnginfo = snapshot_fields.get("extraPnginfo")
+        for field_name in ("prompt", "extraPnginfo"):
+            if field_name in snapshot_fields and not isinstance(snapshot_fields[field_name], dict):
+                raise _bad_request(f"'exportSnapshot.{field_name}' must be an object")
+        export_snapshot = ExportSnapshot(
+            prompt=cast("dict[str, object] | None", prompt),
+            extra_pnginfo=cast("dict[str, object] | None", extra_pnginfo),
+        )
     try:
         graph = graph_from_wire(body.get("graph"))
     except GraphWireError as exc:
@@ -3328,6 +3347,11 @@ async def handle_submit(request: web.Request) -> web.Response:
         "scope": scope,
         "sourceDocument": source_document,
     }
+    if export_snapshot is not None:
+        fingerprint_payload["exportSnapshot"] = {
+            "prompt": export_snapshot.prompt,
+            "extraPnginfo": export_snapshot.extra_pnginfo,
+        }
     if placement:
         # Placement is opaque to graph/document and node cache identity, but
         # it is content of the active job idempotency request. Reusing one
@@ -3549,6 +3573,7 @@ async def handle_submit(request: web.Request) -> web.Response:
                 principal_id=principal.principal_id,
                 principal_kind=principal.kind,
                 source_document=source_document,
+                export_snapshot=export_snapshot,
                 fingerprint=fingerprint,
                 execution=execution,
                 compiled_graph=compiled_graph,
@@ -4426,6 +4451,15 @@ async def handle_assets_list(request: web.Request) -> web.Response:
     return web.json_response({"digests": sorted(digests)})
 
 
+async def handle_asset_selections(request: web.Request) -> web.Response:
+    kind = request.query.get("kind", "")
+    try:
+        options = await asyncio.to_thread(asset_selection_options, kind)
+    except AssetError:
+        return web.json_response({"error": "unsupported-selection-kind"}, status=400)
+    return web.json_response({"kind": kind, "options": list(options)})
+
+
 async def handle_asset_bytes(request: web.Request) -> web.StreamResponse:
     digest = request.match_info["digest"]
     if not is_digest(digest):
@@ -4636,6 +4670,7 @@ def create_app(
         app[ASSET_EXPORT_KEY] = asset_export
         app.router.add_get("/assets", handle_assets_list)
         app.router.add_get("/assets/{digest}", handle_asset_bytes)
+    app.router.add_get("/api/assets/selections", handle_asset_selections)
     if library is not None:
         add_library_routes(app, library)
     if history is not None:
