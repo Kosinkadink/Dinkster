@@ -158,6 +158,7 @@ from .supir import SUPIRApply
 from .switch import ComfySwitchNode
 from .text import TEXT_NODES
 from .text_generation import TextGenerate, TextGenerateLTX2Prompt
+from .text_overlay import TextOverlay
 from .utilities import ComfyNumberConvert, PreviewAny, SeedNode
 from .vae import VAE_NODES
 from .video_conditioning import VIDEO_CONDITIONING_NODES
@@ -367,6 +368,7 @@ COMFY_NODES = (
     VideoFrameSample,
     *MODEL_FILE_LOADER_NODES,
     *LORA_FILE_LOADER_NODES,
+    TextOverlay,
 )
 
 

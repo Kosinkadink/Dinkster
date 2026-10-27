@@ -510,6 +510,7 @@ namespaces = [
     "LoadLoraTextEncoder",
     "LoraLoaderBypass",
     "LoraLoaderBypassModelOnly",
+    "TextOverlay",
 ]
 
 [pack.sandbox]

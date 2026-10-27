@@ -9,6 +9,9 @@
 - Native `ImageCropToMask` centers a mask-derived crop with aspect-ratio padding,
   mask growth/shrink and polarity correction, composites RGB over a background,
   and resizes with Lanczos to the requested width and height.
+- Native `TextOverlay` wraps and fits text using Pillow's bundled default font,
+  positions it at the top or bottom with left/center/right alignment, and
+  composites color and optional outline across RGB or straight-alpha RGBA batches.
 - Native `RTDETR_detect` returns per-frame pixel bounding boxes filtered by
   confidence and COCO class, ordered by score and limited per frame.
   `DrawBBoxes` overlays boxes and labels on images or a black canvas.
