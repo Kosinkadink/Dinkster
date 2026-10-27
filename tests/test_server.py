@@ -6003,7 +6003,7 @@ def test_values_endpoint_curve_points_rendition_is_authoritative_and_bounded() -
                 False,
                 "rendition_unavailable",
             )
-            assert "between 1 and 4096" in refusal["error"]
+            assert "preview exceeds 4096" in refusal["error"]
         finally:
             await client.close()
 

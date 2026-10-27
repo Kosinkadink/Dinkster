@@ -407,7 +407,7 @@ def test_envelope_passes_empty_audio_through() -> None:
     assert _envelope_curve(result) == Curve(((0.0, 0.0),), "linear")
 
 
-def test_envelope_curve_reduces_to_bounded_time_aligned_peaks() -> None:
+def test_envelope_curve_retains_all_time_aligned_values() -> None:
     sample_rate = 48_000
     fps = 240
     frame_samples = sample_rate // fps
@@ -426,10 +426,10 @@ def test_envelope_curve_reduces_to_bounded_time_aligned_peaks() -> None:
     )
     envelope = _envelope(result)
     curve = _envelope_curve(result)
-    expected_indexes = (0, *range(3, frame_count, 2))
-    assert len(curve.points) == 2_050
+    # Hand-derived: one control point for every requested audio frame, including quiet frames.
+    assert len(curve.points) == frame_count
     assert curve.points == tuple(
-        (index * frame_samples / sample_rate, envelope[index]) for index in expected_indexes
+        (index * frame_samples / sample_rate, envelope[index]) for index in range(frame_count)
     )
 
 

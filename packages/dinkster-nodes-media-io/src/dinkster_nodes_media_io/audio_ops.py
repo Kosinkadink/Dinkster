@@ -695,13 +695,9 @@ def _frame_bounds(total_samples: int, samples_per_frame: float) -> tuple[int, ..
 def _envelope_curve(values: list[float], edges: tuple[int, ...], sample_rate: int) -> Curve:
     if not values:
         return Curve(((0.0, 0.0),), "linear")
-    group_size = max(1, math.ceil(len(values) / 4096))
-    points: list[tuple[float, float]] = []
-    for start in range(0, len(values), group_size):
-        stop = min(start + group_size, len(values))
-        peak = max(range(start, stop), key=values.__getitem__)
-        points.append((edges[peak] / sample_rate, values[peak]))
-    return Curve(tuple(points), "linear")
+    return Curve(
+        tuple((edges[index] / sample_rate, value) for index, value in enumerate(values)), "linear"
+    )
 
 
 class ExtractAudioEnvelope(Node):
@@ -926,10 +922,6 @@ class AudioOnsets(Node):
         if facts["frames"] is None:
             raise ValueError("onset detection requires a trim duration")
         hop = max(1, round(facts["sample_rate"] / fps))
-        # Retain the strongest onset per group within the curve preview budget.
-        group_size = max(1, math.ceil(math.ceil(facts["frames"] / hop) / 4096))
-        if group_size > 1:
-            warnings.warn("onsets are peak-aggregated to the 4096-point CURVE budget", stacklevel=2)
         previous: np.ndarray | None = None
         values: list[float] = []
         times: list[float] = []
@@ -945,12 +937,8 @@ class AudioOnsets(Node):
                     if previous is not None
                     else float(spectrum.sum())
                 )
-                if (start // hop) % group_size == 0:
-                    values.append(flux)
-                    times.append(start / facts["sample_rate"])
-                elif flux > values[-1]:
-                    values[-1] = flux
-                    times[-1] = start / facts["sample_rate"]
+                values.append(flux)
+                times.append(start / facts["sample_rate"])
                 previous = spectrum
         peak = max(values, default=0.0)
         if peak:
