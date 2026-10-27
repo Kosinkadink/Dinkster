@@ -445,11 +445,11 @@ def test_full_release_after_invocation_report_does_not_wait_for_report_drain(
                 await drain.wait()
 
         async def release_drain_on_query(reader):
-            header, blobs = await read_frame(reader)
-            if header.get("type") == "memoryFreeQuery":
+            frame = await read_frame(reader)
+            if frame is not None and frame[0].get("type") == "memoryFreeQuery":
                 # Let the query task observe activity before the report resumes.
                 asyncio.get_running_loop().call_soon(drain.set)
-            return header, blobs
+            return frame
 
         monkeypatch.setattr("dinkster_workers.host.write_frame", delayed_report)
         monkeypatch.setattr("dinkster_workers.host.read_frame", release_drain_on_query)
