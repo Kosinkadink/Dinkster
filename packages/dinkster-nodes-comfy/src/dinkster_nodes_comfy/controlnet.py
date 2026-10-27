@@ -16,6 +16,7 @@ from dinkster_api.v1 import (
     VAE_TYPE,
     ComboOption,
     ComboWidget,
+    Deprecation,
     InputSpec,
     Node,
     NodeSchema,
@@ -175,6 +176,8 @@ class ControlNetApplySD3(Node):
             node_type="ControlNetApplySD3",
             display_name="Apply Controlnet with VAE",
             category=_CATEGORY,
+            deprecation=Deprecation(message="Use ControlNetApplyAdvanced with a VAE instead."),
+            search_visibility="deprecated",
             inputs=(
                 InputSpec("positive", _CONDITIONING),
                 InputSpec("negative", _CONDITIONING),

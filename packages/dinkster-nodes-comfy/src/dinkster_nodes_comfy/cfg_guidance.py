@@ -403,8 +403,8 @@ class RenormCFG(Node):
                         positive_eps, dim=dimensions, keepdim=True
                     ) * float(renorm_cfg)
                     norm = torch.linalg.vector_norm(guided, dim=dimensions, keepdim=True)
-                    if norm >= limit:
-                        guided = guided * (limit / norm)
+                    scale = torch.where(norm >= limit, limit / norm, torch.ones_like(norm))
+                    guided = guided * scale
             else:
                 guided = positive_eps
             return args["input"] - torch.cat((guided, positive[:, channels:]), dim=1)

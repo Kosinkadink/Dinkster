@@ -165,20 +165,27 @@ class RenormConsumer(Node):
     @classmethod
     def execute(cls, *, model: Patcher) -> Mapping[str, object]:
         for timestep, expected in (
-            (49.0, [12.5 / math.sqrt(61), 15.0 / math.sqrt(61), 7.0, -9.0]),
-            (50.0, [3.0, 4.0, 7.0, -9.0]),
+            (
+                [49.0, 51.0],
+                [12.5 / math.sqrt(61), 15.0 / math.sqrt(61), 7.0, -9.0, 1.0, 1.0, -3.0, 2.0],
+            ),
+            ([50.0, 49.0], [3.0, 4.0, 7.0, -9.0, 6.0, 8.0, -3.0, 2.0]),
         ):
             actual = model.pre(
                 {
-                    "cond_denoised": torch.tensor([3.0, 4.0, 7.0, -9.0]).reshape(1, 2, 1, 2),
-                    "uncond_denoised": torch.tensor([1.0, 2.0, -5.0, 8.0]).reshape(1, 2, 1, 2),
+                    "cond_denoised": torch.tensor(
+                        [3.0, 4.0, 7.0, -9.0, 6.0, 8.0, -3.0, 2.0]
+                    ).reshape(2, 2, 1, 2),
+                    "uncond_denoised": torch.tensor(
+                        [1.0, 2.0, -5.0, 8.0, 11.0, 15.0, 4.0, -1.0]
+                    ).reshape(2, 2, 1, 2),
                     "cond_scale": 2.0,
-                    "timestep": torch.tensor([timestep]),
-                    "input": torch.zeros((1, 2, 1, 2)),
+                    "timestep": torch.tensor(timestep),
+                    "input": torch.zeros((2, 2, 1, 2)),
                 }
             )
             torch.testing.assert_close(
-                actual, -torch.tensor(expected).reshape(1, 2, 1, 2), rtol=1e-6, atol=0
+                actual, -torch.tensor(expected).reshape(2, 2, 1, 2), rtol=1e-6, atol=0
             )
         return cls.outputs(value=2.0)
 
@@ -248,6 +255,7 @@ def test_ordinary_manifest_links_cfg_guidance_producer_and_consumer_twice(
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("sample_count", (1, 2))
 @pytest.mark.parametrize(
     ("timestep", "renorm_cfg", "eps"),
     [
@@ -258,20 +266,26 @@ def test_ordinary_manifest_links_cfg_guidance_producer_and_consumer_twice(
     ],
 )
 def test_renorm_limits_guided_channels_before_truncation_only(
-    timestep: float, renorm_cfg: float, eps: tuple[float, float]
+    timestep: float, renorm_cfg: float, eps: tuple[float, float], sample_count: int
 ) -> None:
     source = Patcher()
     patched = RenormCFG.execute(model=source, cfg_trunc=50, renorm_cfg=renorm_cfg)["MODEL"]
+    positive = torch.tensor([3.0, 4.0, 7.0, -9.0, 6.0, 8.0, -3.0, 2.0]).reshape(2, 2, 1, 2)
+    negative = torch.tensor([1.0, 2.0, -5.0, 8.0, 11.0, 15.0, 4.0, -1.0]).reshape(2, 2, 1, 2)
+    expected = [*eps, 7.0, -9.0]
+    expected.extend([1.0, 1.0, -3.0, 2.0] if timestep < 50 else [6.0, 8.0, -3.0, 2.0])
     value = patched.pre(
         {
-            "cond_denoised": torch.tensor([3.0, 4.0, 7.0, -9.0]).reshape(1, 2, 1, 2),
-            "uncond_denoised": torch.tensor([1.0, 2.0, -5.0, 8.0]).reshape(1, 2, 1, 2),
+            "cond_denoised": positive[:sample_count],
+            "uncond_denoised": negative[:sample_count],
             "cond_scale": 2.0,
-            "timestep": torch.tensor([timestep]),
-            "input": torch.zeros((1, 2, 1, 2)),
+            "timestep": torch.tensor([timestep, 100 - timestep])[:sample_count],
+            "input": torch.zeros((sample_count, 2, 1, 2)),
         }
     )
     torch.testing.assert_close(
-        value, -torch.tensor([*eps, 7.0, -9.0]).reshape(1, 2, 1, 2), rtol=1e-6, atol=0
+        value, -torch.tensor(expected).reshape(2, 2, 1, 2)[:sample_count], rtol=1e-6, atol=0
     )
+    assert positive.flatten().tolist() == [3.0, 4.0, 7.0, -9.0, 6.0, 8.0, -3.0, 2.0]
+    assert negative.flatten().tolist() == [1.0, 2.0, -5.0, 8.0, 11.0, 15.0, 4.0, -1.0]
     assert patched is not source and source.pre is None

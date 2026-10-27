@@ -49,5 +49,7 @@ sigmas can differ.
 
 ## Dinkster handling
 
-Dinkster delegates RenormCFG execution to `dinkster_inference`, whose current
-behavior matches the upstream behavior described above.
+The native RenormCFG node clips each sample's guided norm independently, so
+batches larger than one do not enter a Python tensor-bool branch. The truncation
+gate retains the reference's global `timestep[0]` decision, including when a
+caller supplies mixed timesteps. Sampling still uses the pinned inference engine.
