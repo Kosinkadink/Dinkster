@@ -1,5 +1,7 @@
 ## Image operations
 
+- Native `ImageUpscaleWithModel` upscales image batches with a resident model,
+  overlapping tiles and out-of-memory retries, preserving separately resized alpha.
 - Native `TripoSplatPreprocessImage` erodes alpha, crops foreground to a padded
   square, resizes with Lanczos, and composites the image over black.
 - Color strings, ordered color palettes, and optional resolution-preview

@@ -78,6 +78,7 @@ from .image_core import IMAGE_CORE_NODES
 from .image_crop import ImageCropV2, PrimitiveBoundingBox
 from .image_dimensions import IMAGE_DIMENSION_NODES
 from .image_filters import IMAGE_FILTER_NODES
+from .image_model_upscale import ImageUpscaleWithModel
 from .image_tiles import ImageMergeTileList, SplitImageToTileList
 from .image_transform import IMAGE_TRANSFORM_NODES
 from .inpaint import INPAINT_NODES
@@ -387,6 +388,7 @@ COMFY_NODES = (
     SaveAudioOpus,
     SaveAudioAdvanced,
     *YUE2_CONDITIONING_NODES,
+    ImageUpscaleWithModel,
 )
 
 
