@@ -6,6 +6,7 @@ from dinkster_memory.resident import default_pool
 from dinkster_values import (
     AUDIO_ENCODER_OUTPUT_TYPE,
     AUDIO_ENCODER_TYPE,
+    BOUNDING_BOX_TYPE,
     CLIP_TYPE,
     CLIP_VISION_OUTPUT_TYPE,
     CLIP_VISION_TYPE,
@@ -121,7 +122,7 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
             if type_id in registry
             else register_sampling_type(registry, type_id)
         )
-    for type_id in (COLOR_TYPE, COLORS_TYPE, RESOLUTION_PREVIEW_TYPE):
+    for type_id in (BOUNDING_BOX_TYPE, COLOR_TYPE, COLORS_TYPE, RESOLUTION_PREVIEW_TYPE):
         registered.append(
             registry.spec(type_id) if type_id in registry else registry.register(type_id)
         )

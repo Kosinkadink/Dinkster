@@ -1,7 +1,7 @@
 ## Image operations
 
-- Color strings, ordered color palettes, and optional resolution-preview
-  metadata pass between node packs without rewriting their values.
+- Color strings, ordered color palettes, bounding boxes, and optional
+  resolution-preview metadata pass between node packs without rewriting their values.
 - Native `PrimitiveBoundingBox` constructs pixel bounding boxes; `ImageCropV2`
   crops each image in a batch to that box and reports a PNG preview.
 - Native `CropByBBoxes` crops each frame to its bounding-box union and resizes
