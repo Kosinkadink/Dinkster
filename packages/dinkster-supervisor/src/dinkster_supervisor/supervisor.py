@@ -346,7 +346,7 @@ class EngineProcess:
                 probe_timeout = (
                     timeout
                     if self.link.state == "ready"
-                    else aiohttp.ClientTimeout(total=min(5, remaining))
+                    else aiohttp.ClientTimeout(total=min(5, remaining), ceil_threshold=float("inf"))
                 )
                 try:
                     async with session.get(probe_url, timeout=probe_timeout) as resp:
