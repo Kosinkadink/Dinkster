@@ -328,7 +328,8 @@ class EngineProcess:
                     )
                     self._mark_dead(process.returncode, label)
                     return
-                if self.link.state != "ready" and time.monotonic() > deadline:
+                remaining = deadline - time.monotonic()
+                if self.link.state != "ready" and remaining <= 0:
                     process.terminate()
                     try:
                         exit_code = await asyncio.wait_for(process.wait(), timeout=10)
@@ -342,8 +343,13 @@ class EngineProcess:
                     return
                 healthy = False
                 progress: dict[str, object] | None = None
+                probe_timeout = (
+                    timeout
+                    if self.link.state == "ready"
+                    else aiohttp.ClientTimeout(total=min(5, remaining))
+                )
                 try:
-                    async with session.get(probe_url) as resp:
+                    async with session.get(probe_url, timeout=probe_timeout) as resp:
                         if resp.status == 200:
                             healthy = True
                             progress = _progress_from_health(await resp.json())
@@ -352,6 +358,8 @@ class EngineProcess:
                     # that is not JSON (foreign engine): the former retries,
                     # the latter is simply an engine with no narration.
                     pass
+                if self.link.state != "ready" and time.monotonic() >= deadline:
+                    continue
                 if healthy:
                     if self.link.state != "ready":
                         self.link.state = "ready"
