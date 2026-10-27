@@ -68,6 +68,8 @@ from dinkster_assets import (
     MountSnapshotWriter,
     SaveTarget,
     admit_video_source,
+    asset_selection_names,
+    asset_selection_options,
     bind_video_value,
     declared_asset,
     digest_bytes,
@@ -78,6 +80,7 @@ from dinkster_assets import (
     register_audio_value_type,
     register_save_target_type,
     register_video_value_type,
+    resolve_asset_selection,
     resolver_from_env,
 )
 from dinkster_memory import (
@@ -794,6 +797,9 @@ __all__ = [
     "digest_file",
     "is_digest",
     "mount_roots_for_kind",
+    "asset_selection_names",
+    "asset_selection_options",
+    "resolve_asset_selection",
     "register_asset_type",
     "register_save_target_type",
     "register_audio_value_type",
