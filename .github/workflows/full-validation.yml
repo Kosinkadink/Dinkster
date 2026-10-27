@@ -16,7 +16,7 @@ permissions:
 
 env:
   # Pin the frontend decoder; decoder changes bump this in a companion Dinkster PR before landing.
-  FRONTEND_REF: 18df8c5aa66c9b929044220850d1913a41a9948e
+  FRONTEND_REF: 847b49ae7ce006e3596b62256aa2a57552f034a5
 
 # Pushes batch behind the active run while scheduled and release validation always finish.
 concurrency:
