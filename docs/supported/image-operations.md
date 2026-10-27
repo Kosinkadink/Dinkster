@@ -4,6 +4,9 @@
   metadata pass between node packs without rewriting their values.
 - Native `PrimitiveBoundingBox` constructs pixel bounding boxes; `ImageCropV2`
   crops each image in a batch to that box and reports a PNG preview.
+- Native `RTDETR_detect` returns per-frame pixel bounding boxes filtered by
+  confidence and COCO class, ordered by score and limited per frame.
+  `DrawBBoxes` overlays boxes and labels on images or a black canvas.
 - Native `ColorToRGBInt` preserves RGB letter casing and separates optional alpha;
   `ResolutionSelector` rounds aspect-ratio and megapixel dimensions to a chosen multiple.
 - Marigold V2 decoded predictions convert to per-image normalized depth,

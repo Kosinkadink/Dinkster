@@ -476,6 +476,8 @@ namespaces = [
     "PhotoMakerEncode",
     "ImageCropV2",
     "PrimitiveBoundingBox",
+    "RTDETR_detect",
+    "DrawBBoxes",
 ]
 
 [pack.sandbox]
