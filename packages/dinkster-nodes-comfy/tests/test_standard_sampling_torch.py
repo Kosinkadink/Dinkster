@@ -240,8 +240,17 @@ def test_av_streams_execute_real_pinned_cpu_sampler_and_callback(advanced: bool)
         guider = samplers.CFGGuider(model)
         guider.set_conds(_conditioning(), _conditioning())
         guider.set_cfg(1.0)
+
+        class NativeNoise:
+            seed = 19
+
+            def generate_noise(self, latent: dict[str, object]) -> object:
+                assert type(latent["samples"]) is MultiStreamLatent
+                assert latent["samples"].roles == ("video", "audio")
+                return DisableNoise.execute()["NOISE"].generate_noise(latent)
+
         result = custom_sampling.SamplerCustomAdvanced.execute(
-            noise=DisableNoise.execute()["NOISE"],
+            noise=NativeNoise(),
             guider=guider,
             sampler=samplers.ksampler("euler"),
             sigmas=torch.tensor([1.0, 0.0]),

@@ -71,7 +71,7 @@ def _prepare_latent(
         source.get("downscale_ratio_spacial"),
         source.get("downscale_ratio_temporal"),
     )
-    source["samples"] = samples
+    source["samples"] = to_public(samples, public_samples)
     return source, public_samples, samples, to_runtime(source.get("noise_mask"))
 
 

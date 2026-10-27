@@ -14,6 +14,9 @@ from dinkster_api.v1 import MultiStreamLatent
 from dinkster_nodes_comfy import custom_sampling
 from dinkster_nodes_comfy.noise import DisableNoise, RandomNoise
 
+# Expected values are hand-derived from the explicit fixture tensors, masks,
+# and linear model/noise transforms below, not recorded ComfyUI outputs.
+
 
 class _Sample:
     def __init__(self) -> None:
@@ -230,7 +233,7 @@ def test_advanced_sampler_uses_the_guider_and_preserves_batch_metadata(monkeypat
 
 
 @pytest.mark.parametrize("noise_node", (RandomNoise, DisableNoise))
-def test_advanced_sampler_restores_asymmetric_av_streams_after_pinned_sampling(
+def test_advanced_sampler_restores_asymmetric_av_streams_with_stub_guider(
     monkeypatch: Any, noise_node: type[Any]
 ) -> None:
     class Sample:
@@ -278,6 +281,9 @@ def test_advanced_sampler_restores_asymmetric_av_streams_after_pinned_sampling(
         assert result.by_role("video").dtype == video.dtype
         assert result.by_role("audio").shape == audio.shape
         assert result.by_role("audio").dtype == audio.dtype
+        scale = 10 if name == "denoised_output" else 1
+        torch.testing.assert_close(result.by_role("video"), video * scale)
+        torch.testing.assert_close(result.by_role("audio"), audio * scale)
 
 
 @pytest.mark.parametrize("in_process", (True, False))
