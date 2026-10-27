@@ -1318,7 +1318,7 @@ def _preflight_value_tree(root: Value, budget: list[int]) -> None:
                 ):
                     raise BoundaryError("result algebra tuple child types do not match positions")
             elif not isinstance(value.payload, ListPayload) or any(
-                child.type_id != element_type for child in children
+                element_type != "*" and child.type_id != element_type for child in children
             ):
                 raise BoundaryError("result algebra list child type does not match its envelope")
             pending.extend((child, depth + 1) for child in children)
@@ -1548,7 +1548,13 @@ def _validate_value_descriptor(
                 used,
                 budget=budget,
                 depth=depth + 1,
-                expected_type=positions[index] if positions is not None else element_type,
+                expected_type=(
+                    positions[index]
+                    if positions is not None
+                    else None
+                    if element_type == "*"
+                    else element_type
+                ),
             )
         return
     if (
