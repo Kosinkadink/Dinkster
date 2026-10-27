@@ -51,6 +51,7 @@ from .custom_sampling import CUSTOM_SAMPLING_NODES
 from .dataset_collections import DATASET_COLLECTION_NODES
 from .dataset_groups import DATASET_GROUP_NODES, MakeTrainingDataset
 from .dataset_images import DATASET_IMAGE_NODES
+from .dataset_shards import LoadTrainingDataset
 from .dataset_text import DATASET_TEXT_NODES
 from .dataset_video import DATASET_VIDEO_NODES
 from .device_routing import DEVICE_ROUTING_NODES
@@ -375,6 +376,7 @@ COMFY_NODES = (
     CropByBBoxes,
     MakeTrainingDataset,
     TripoSplatPreprocessImage,
+    LoadTrainingDataset,
 )
 
 
