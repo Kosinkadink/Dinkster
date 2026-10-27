@@ -170,7 +170,7 @@ class CameraTransportConsumer(Node):
 
 
 @pytest.mark.parametrize("in_process", (True, False))
-def test_load3d_camera_crosses_ordinary_hosts_twice(tmp_path: Path, in_process: bool) -> None:
+def test_load3d_camera_co_located_host_modes_run_twice(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
         package = Path(__file__).resolve().parents[1] / "packages" / "dinkster-nodes-comfy"
         (tmp_path / "load3d_camera_fixture.py").write_text(
