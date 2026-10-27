@@ -1382,7 +1382,12 @@ def test_full_release_timeout_waits_for_terminal_acknowledgement(
         monkeypatch.setattr(MemoryRelay, "_wait_until_done", staticmethod(wait_after_timeout))
 
         async def finish_commit(header: dict[str, object]) -> None:
-            await asyncio.wait_for(timeout_reached.wait(), 8)
+            try:
+                await asyncio.wait_for(timeout_reached.wait(), 4)
+            except TimeoutError:
+                # A broken timeout path must still receive a terminal reply:
+                # cancellation-resistant cleanup would otherwise wait forever.
+                pass
             relay.on_release_reply(
                 {
                     **header,
@@ -1413,6 +1418,7 @@ def test_full_release_timeout_waits_for_terminal_acknowledgement(
             result = await relay.full_release("operation", "worker-instance")
         assert commit_started.is_set()
         assert commit_finished.is_set()
+        assert timeout_reached.is_set()
         assert result is not None
         assert result.status == "error"
         assert result.error == "worker full release timed out"
