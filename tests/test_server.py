@@ -528,6 +528,7 @@ def test_queue_export_snapshot_changes_default_fingerprint_and_resubmission() ->
         assert first.fingerprint != without_snapshot.fingerprint
         first_prompt["save"]["inputs"]["seed"] = 99
         assert first.export_snapshot is not None
+        assert first.export_snapshot.prompt is not None
         assert first.export_snapshot.prompt["save"] == {"inputs": {"seed": 1}}
         with pytest.raises(ValueError, match="different content"):
             queue.submit("c", "snapshot", graph, targets, export_snapshot=second_snapshot)
@@ -3694,8 +3695,9 @@ def test_native_export_snapshot_admission_and_idempotency() -> None:
             for invalid in (
                 None,
                 [],
-                {},
+                {"prompt": None},
                 {"prompt": []},
+                {"extraPnginfo": None},
                 {"prompt": {}, "extraPnginfo": []},
                 {"prompt": {}, "unknown": True},
             ):
@@ -3712,6 +3714,22 @@ def test_native_export_snapshot_admission_and_idempotency() -> None:
                 ),
             )
             assert minimal.status == 202
+            workflow_only = {"extraPnginfo": snapshot["extraPnginfo"]}
+            admitted = await client.post(
+                "/api/jobs",
+                json=submit_body(
+                    echo_graph(), ["s"], jobId="workflow", exportSnapshot=workflow_only
+                ),
+            )
+            assert admitted.status == 202
+            for fields in (
+                {"exportSnapshot": {**workflow_only, "prompt": {}}},
+                {},
+            ):
+                conflict = await client.post(
+                    "/api/jobs", json=submit_body(echo_graph(), ["s"], jobId="workflow", **fields)
+                )
+                assert conflict.status == 409
         finally:
             await client.close()
 
@@ -3731,9 +3749,14 @@ def test_native_http_output_reads_detached_export_metadata() -> None:
                 observed.append(None)
             else:
                 observed.append(current_export_snapshot())
-                assert isinstance(snapshot.prompt["nested"], dict)
-                snapshot.prompt["nested"]["value"] = "mutated"
-                assert current_export_snapshot() != snapshot
+                if snapshot.prompt:
+                    assert isinstance(snapshot.prompt["nested"], dict)
+                    snapshot.prompt["nested"]["value"] = "mutated"
+                    assert current_export_snapshot() != snapshot
+                if snapshot.extra_pnginfo:
+                    assert isinstance(snapshot.extra_pnginfo["workflow"], dict)
+                    snapshot.extra_pnginfo["workflow"]["nodes"] = [99]
+                    assert current_export_snapshot() != snapshot
             return cls.outputs()
 
     observed: list[object] = []
@@ -3760,7 +3783,12 @@ def test_native_http_output_reads_detached_export_metadata() -> None:
                 "prompt": {"nested": {"value": "original"}},
                 "extraPnginfo": {"workflow": {"nodes": [3, 17]}},
             }
-            for job_id, fields in (("with", {"exportSnapshot": metadata}), ("without", {})):
+            for job_id, fields in (
+                ("with", {"exportSnapshot": metadata}),
+                ("workflow", {"exportSnapshot": {"extraPnginfo": metadata["extraPnginfo"]}}),
+                ("empty", {"exportSnapshot": {"prompt": {}}}),
+                ("without", {}),
+            ):
                 response = await client.post(
                     "/api/jobs", json=submit_body(graph, ["save"], jobId=job_id, **fields)
                 )
@@ -3771,6 +3799,8 @@ def test_native_http_output_reads_detached_export_metadata() -> None:
                     prompt={"nested": {"value": "original"}},
                     extra_pnginfo=metadata["extraPnginfo"],
                 ),
+                ExportSnapshot(extra_pnginfo=metadata["extraPnginfo"]),
+                ExportSnapshot(prompt={}),
                 None,
             ]
             assert current_export_snapshot() is None
