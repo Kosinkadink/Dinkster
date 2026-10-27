@@ -6,6 +6,7 @@ import pytest
 import torch
 from dinkster_nodes_comfy.ltx_guides import add_image_guide
 from dinkster_nodes_comfy.ltx_keyframe_guides import (
+    LTXVAddGeneratedKeyframes,
     LTXVGeneratedKeyframesToGuides,
     LTXVSeparateGeneratedKeyframes,
 )
@@ -292,3 +293,167 @@ def test_separate_invalid_record_rejects(field, value, message) -> None:
     args["positive"][0][1]["generated_keyframes"][field] = value
     with pytest.raises(ValueError, match=message):
         LTXVSeparateGeneratedKeyframes.execute(**args)
+
+
+def generation_inputs(batch: int = 1) -> dict[str, Any]:
+    return dict(
+        positive=[[torch.ones(1), {"keep": "p"}]],
+        negative=[[torch.zeros(1), {"keep": "n"}]],
+        vae=Vae(),
+        latent={"samples": torch.zeros(batch, 128, 7, 2, 3), "extra": 17},
+    )
+
+
+@pytest.mark.parametrize("use_mask", [False, True])
+def test_generated_auto_placement_occupancy_and_terminal_frame(use_mask: bool) -> None:
+    args = generation_inputs()
+    args["latent"]["samples"][:, :, 2] = 7
+    if use_mask:
+        mask = torch.ones(1, 1, 7, 1, 1)
+        mask[:, :, 2] = 0.9998
+        mask[:, :, 4] = 0.99995
+        args["latent"]["noise_mask"] = mask
+    before = args["latent"]["samples"].clone()
+    result = LTXVAddGeneratedKeyframes.execute(**args, interval_frames=16)
+    metadata = result["positive"][0][1]
+    assert metadata["generated_keyframes"] == dict(
+        first_latent_frame=7,
+        num_keyframes=2,
+        frame_indices=[32, 48],
+        num_pixel_frames=49,
+        guide_entry_index=0,
+        tokens_per_frame=6,
+    )
+    assert metadata["keyframe_idxs"][0, 0, ::6].tolist() == [[32, 33], [48, 49]]
+    assert torch.count_nonzero(result["latent"]["samples"][:, :, 7:]) == 0
+    assert torch.equal(result["latent"]["noise_mask"][:, :, -2:], torch.ones(1, 1, 2, 1, 1))
+    assert metadata["guide_attention_entries"][0]["pre_filter_count"] == 12
+    assert metadata["guide_attention_entries"][0]["latent_shape"] == [2, 2, 3]
+    assert result["latent"]["extra"] == 17
+    result["latent"]["samples"].zero_()
+    assert torch.equal(args["latent"]["samples"], before)
+    assert args["positive"][0][1] == {"keep": "p"}
+
+
+@pytest.mark.parametrize("recorded", [False, True])
+def test_generated_nearest_video_ties_or_ordered_keyframe_padding(recorded: bool) -> None:
+    args = generation_inputs()
+    source_frames = torch.arange(7.0).reshape(1, 1, 7, 1, 1).repeat(1, 128, 1, 2, 3)
+    if recorded:
+        source_frames = source_frames[:, :, :1].clone() + 11
+    keyframes = {"samples": source_frames}
+    if recorded:
+        keyframes["generated_keyframe_indices"] = [99]
+    result = LTXVAddGeneratedKeyframes.execute(
+        **args, keyframes=keyframes, frame_indices="20,12,48"
+    )
+    assert result["latent"]["samples"][0, 0, 7:, 0, 0].tolist() == (
+        [11, 0, 0] if recorded else [2, 2, 6]
+    )
+    assert result["positive"][0][1]["generated_keyframes"]["frame_indices"] == [20, 12, 48]
+    assert result["positive"][0][1]["keyframe_idxs"][0, 0, ::6, 0].tolist() == [20, 12, 48]
+    assert source_frames.shape[2] == (1 if recorded else 7)
+
+
+def test_generated_batched_singles_and_separation_round_trip() -> None:
+    args = generation_inputs(batch=2)
+    frames = torch.arange(4.0).reshape(4, 1, 1, 1, 1).repeat(1, 128, 1, 2, 3) + 11
+    result = LTXVAddGeneratedKeyframes.execute(
+        **args, keyframes={"samples": frames}, frame_indices="32,48"
+    )
+    assert result["latent"]["samples"][:, 0, 7:, 0, 0].tolist() == [[11, 12], [13, 14]]
+    peeled = LTXVSeparateGeneratedKeyframes.execute(
+        positive=result["positive"],
+        negative=result["negative"],
+        latent=result["latent"],
+        keyframes_to_batch=True,
+    )
+    assert torch.equal(peeled["keyframes"]["samples"], frames)
+    assert torch.equal(peeled["latent"]["samples"], args["latent"]["samples"])
+    assert peeled["positive"][0][1]["keyframe_idxs"] is None
+
+
+@pytest.mark.parametrize("leading_null_history", [False, True])
+def test_generated_extension_grows_independent_attention_histories(
+    leading_null_history: bool,
+) -> None:
+    args = generation_inputs()
+    first = LTXVAddGeneratedKeyframes.execute(**args, frame_indices="8")
+    old_record = first["positive"][0][1]["generated_keyframes"].copy()
+    negative_entry = first["negative"][0][1]["guide_attention_entries"][0].copy()
+    negative_entry["strength"] = 0.375
+    first["negative"][0][1]["guide_attention_entries"] = [negative_entry]
+    if leading_null_history:
+        first["negative"].insert(0, [torch.zeros(1), {"guide_attention_entries": None}])
+    result = LTXVAddGeneratedKeyframes.execute(
+        positive=first["positive"],
+        negative=first["negative"],
+        latent=first["latent"],
+        vae=Vae(),
+        frame_indices="16,48",
+    )
+    for name, strength in (("positive", 1.0), ("negative", 0.375)):
+        metadata = result[name][0][1]
+        assert metadata["generated_keyframes"]["first_latent_frame"] == 7
+        assert metadata["generated_keyframes"]["frame_indices"] == [8, 16, 48]
+        assert metadata["generated_keyframes"]["num_keyframes"] == 3
+        assert metadata["guide_attention_entries"][0]["latent_shape"] == [3, 2, 3]
+        assert metadata["guide_attention_entries"][0]["pre_filter_count"] == 18
+        assert metadata["guide_attention_entries"][0]["strength"] == strength
+    assert first["positive"][0][1]["generated_keyframes"] == old_record
+    assert negative_entry["latent_shape"] == [1, 2, 3]
+    if leading_null_history:
+        assert first["negative"][0][1]["guide_attention_entries"] is None
+        assert result["negative"][1][1]["guide_attention_entries"][0]["strength"] == 0.375
+
+
+@pytest.mark.parametrize(
+    "positions,message",
+    [
+        ("0", "between 1 and 48"),
+        ("3,3", "same pixel"),
+        ("one", "could not parse"),
+        ("49", "between 1 and 48"),
+    ],
+)
+def test_generated_bad_positions_reject(positions, message) -> None:
+    with pytest.raises(ValueError, match=message):
+        LTXVAddGeneratedKeyframes.execute(**generation_inputs(), frame_indices=positions)
+
+
+def test_generated_guide_start_occupied_but_exclusive_end_is_free() -> None:
+    args = generation_inputs()
+    coordinates = torch.zeros(1, 3, 6, 2)
+    coordinates[:, 0, :, 0], coordinates[:, 0, :, 1] = 16, 17
+    args["positive"][0][1]["keyframe_idxs"] = coordinates
+    # One appended guide is not part of the video canvas.
+    args["latent"]["samples"] = torch.zeros(1, 128, 8, 2, 3)
+    with pytest.raises(ValueError, match="already hold"):
+        LTXVAddGeneratedKeyframes.execute(**args, frame_indices="16")
+    result = LTXVAddGeneratedKeyframes.execute(**args, frame_indices="17")
+    assert result["positive"][0][1]["generated_keyframes"]["num_pixel_frames"] == 49
+    assert torch.equal(result["positive"][0][1]["keyframe_idxs"][:, :, :6], coordinates)
+
+
+@pytest.mark.parametrize(
+    "broken,message",
+    [("area", "rescaled"), ("continuity", "not be contiguous"), ("entry", "rebuilt")],
+)
+def test_generated_extension_rejects_inconsistent_metadata(broken, message) -> None:
+    first = LTXVAddGeneratedKeyframes.execute(**generation_inputs(), frame_indices="8")
+    if broken == "area":
+        first["positive"][0][1]["generated_keyframes"]["tokens_per_frame"] = 12
+    elif broken == "continuity":
+        first["latent"]["samples"] = torch.cat(
+            (first["latent"]["samples"], torch.zeros(1, 128, 1, 2, 3)), dim=2
+        )
+    else:
+        first["negative"][0][1]["guide_attention_entries"] = []
+    with pytest.raises(ValueError, match=message):
+        LTXVAddGeneratedKeyframes.execute(
+            positive=first["positive"],
+            negative=first["negative"],
+            latent=first["latent"],
+            vae=Vae(),
+            frame_indices="16",
+        )
