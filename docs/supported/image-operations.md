@@ -1,5 +1,7 @@
 ## Image operations
 
+- Native `Trellis2TextureStage` prepares texture-stage conditioning and sparse
+  noise targets from shape latents, preserving batch layout and projection features.
 - Native `CameraAngle` produces an orbit-camera dictionary and shot description
   from horizontal angle, elevation, and zoom.
 - Native `TripoSplatPreprocessImage` erodes alpha, crops foreground to a padded

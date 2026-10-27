@@ -541,6 +541,7 @@ namespaces = [
     "SaveAudioAdvanced",
     "YuE2GenerateABC",
     "YuE2GenerateMusic",
+    "Trellis2TextureStage",
 ]
 
 [pack.sandbox]
