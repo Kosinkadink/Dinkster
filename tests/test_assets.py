@@ -37,7 +37,7 @@ from dinkster_assets import (
 )
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
-from dinkster_graph import Graph, GraphNode
+from dinkster_graph import Graph, GraphNode, TypedLiteral
 from dinkster_schema import (
     AssetWidget,
     InputSpec,
@@ -788,7 +788,6 @@ def test_unresolvable_ref_still_flows_but_fails_to_materialize() -> None:
 # --- end to end: a node consumes an asset input via the engine ---------------
 
 ASSET = TypeExpr.concrete(ASSET_TYPE)
-AUDIO_RECORD = TypeExpr.concrete(AUDIO_RECORD_TYPE)
 INT = TypeExpr.concrete(CORE_INT)
 STRING = TypeExpr.concrete(CORE_STRING)
 
@@ -810,18 +809,6 @@ class AssetStat(Node):
     @classmethod
     def execute(cls, *, asset: AssetRef) -> Mapping[str, object]:
         return cls.outputs(bytes=len(asset.read_bytes()), name=asset.name)
-
-
-class AudioRecordStat(AssetStat):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="test.audio.record.stat",
-            display_name="Audio Record Stat",
-            category="test",
-            inputs=(InputSpec("asset", AUDIO_RECORD),),
-            outputs=(OutputSpec("bytes", INT), OutputSpec("name", STRING)),
-        )
 
 
 def test_engine_run_with_asset_literal(tmp_path: Path) -> None:
@@ -859,12 +846,26 @@ def test_engine_run_with_asset_literal(tmp_path: Path) -> None:
 
 
 def test_engine_cache_separates_asset_and_audio_record_type(tmp_path: Path) -> None:
+    class Identity(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            generic = TypeExpr.variable("T")
+            return NodeSchema(
+                node_type="test.asset.identity",
+                inputs=(InputSpec("asset", generic),),
+                outputs=(OutputSpec("asset", generic),),
+            )
+
+        @classmethod
+        def execute(cls, *, asset: AssetRef) -> Mapping[str, object]:
+            return cls.outputs(asset=asset)
+
     async def scenario() -> None:
         root = make_models_dir(tmp_path)
         library = LocalAssetLibrary(root)
         library.scan()
         registry = asset_registry(library)
-        nodes: list[type[Node]] = [AssetStat, AudioRecordStat]
+        nodes: list[type[Node]] = [Identity]
         engine = Engine(
             schemas=build_schemas(nodes),
             registry=registry,
@@ -873,14 +874,28 @@ def test_engine_cache_separates_asset_and_audio_record_type(tmp_path: Path) -> N
         )
         literal = library.ref("models/checkpoints/tiny.safetensors").to_wire()
 
-        asset_result = await engine.run(
-            Graph(nodes={"s": GraphNode("test.asset.stat", {"asset": literal})}), ["s"]
-        )
-        record_result = await engine.run(
-            Graph(nodes={"s": GraphNode("test.audio.record.stat", {"asset": literal})}), ["s"]
-        )
+        def graph(type_id: str) -> Graph:
+            return Graph(
+                nodes={
+                    "s": GraphNode("test.asset.identity", {"asset": TypedLiteral(type_id, literal)})
+                }
+            )
 
+        asset_result = await engine.run(graph(ASSET_TYPE), ["s"])
+        record_result = await engine.run(graph(AUDIO_RECORD_TYPE), ["s"])
         assert asset_result.executed == ("s",)
         assert record_result.executed == ("s",)
+        assert asset_result.outputs["s"]["asset"].type_id == ASSET_TYPE
+        assert record_result.outputs["s"]["asset"].type_id == AUDIO_RECORD_TYPE
+        assert (
+            asset_result.outputs["s"]["asset"].fingerprint
+            == record_result.outputs["s"]["asset"].fingerprint
+        )
+        record = record_result.outputs["s"]["asset"].resolve()
+        assert isinstance(record, AssetRef)
+        assert record.read_bytes() == b"tiny checkpoint bytes"
+        again = await engine.run(graph(ASSET_TYPE), ["s"])
+        assert again.cached == ("s",)
+        assert again.outputs["s"]["asset"].type_id == ASSET_TYPE
 
     asyncio.run(scenario())

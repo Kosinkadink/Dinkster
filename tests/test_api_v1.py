@@ -679,10 +679,7 @@ def test_reexports_are_the_internal_objects() -> None:
         owners = [m for m in sources if name in m.__all__]
         assert owners, f"{name} is not exported by any internal package"
         expected_owners = (
-            2
-            if name
-            in {"CustomWidgetDescriptor", "ASSET_TYPE", "AUDIO_RECORD_TYPE", "SAVE_TARGET_TYPE"}
-            else 1
+            2 if name in {"CustomWidgetDescriptor", "ASSET_TYPE", "SAVE_TARGET_TYPE"} else 1
         )
         assert len(owners) == expected_owners, f"{name} exported by unexpected internal packages"
         assert all(getattr(owner, name) is exported for owner in owners), (
