@@ -176,6 +176,7 @@ from .supir import SUPIRApply
 from .switch import ComfySwitchNode
 from .text import TEXT_NODES
 from .text_generation import TextGenerate, TextGenerateLTX2Prompt
+from .text_overlay import TextOverlay
 from .triposplat import TripoSplatConditioning, TripoSplatPreprocessImage
 from .utilities import ComfyNumberConvert, PreviewAny, SeedNode
 from .vae import VAE_NODES
@@ -415,6 +416,7 @@ COMFY_NODES = (
     SaveAudioAdvanced,
     *YUE2_CONDITIONING_NODES,
     *FOLDER_DATASET_NODES,
+    TextOverlay,
 )
 
 
