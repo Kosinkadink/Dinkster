@@ -82,7 +82,9 @@ def test_gallery_widget_wire_coverage() -> None:
     carry no widget at all."""
 
     async def scenario() -> None:
-        composition = await compose_serving([PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)])
+        composition = await compose_serving(
+            [PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)], include_default_packs=False
+        )
         try:
             wire = schema_to_wire(composition.schemas["dev.gallery.widgets"])
             assert wire["schemaVersion"] == SCHEMA_WIRE_VERSION == 1
@@ -185,7 +187,9 @@ def test_gallery_socket_wire_coverage() -> None:
     optional, of-union, nested), match variables, and optional outputs."""
 
     async def scenario() -> None:
-        composition = await compose_serving([PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)])
+        composition = await compose_serving(
+            [PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)], include_default_packs=False
+        )
         try:
             sockets = schema_to_wire(composition.schemas["dev.gallery.sockets"])
             union2 = _entry(sockets, "union2")["type"]
@@ -238,7 +242,9 @@ def test_gallery_explicit_pack_surface() -> None:
     """The explicit pack serves gallery nodes, choices, and its template."""
 
     async def scenario() -> None:
-        dev = await compose_serving([PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)])
+        dev = await compose_serving(
+            [PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)], include_default_packs=False
+        )
         try:
             assert "dev.gallery.widgets" in dev.schemas
             assert dev.choices[SAMPLERS_CHOICE_ID] == SAMPLERS
@@ -296,7 +302,9 @@ def test_gallery_choice_and_template_endpoints() -> None:
     async def scenario() -> None:
         from test_settings import settings
 
-        composition = await compose_serving([PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)])
+        composition = await compose_serving(
+            [PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)], include_default_packs=False
+        )
         client = None
         try:
             app = create_app(
@@ -343,7 +351,9 @@ def test_gallery_template_references_real_ports() -> None:
     it does not have to)."""
 
     async def scenario() -> None:
-        composition = await compose_serving([PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)])
+        composition = await compose_serving(
+            [PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)], include_default_packs=False
+        )
         try:
             document = json.loads(gallery_template_bytes())
             assert document["format"] == "dinkster-workflow"
@@ -406,7 +416,9 @@ def test_gallery_nodes_execute() -> None:
     list through."""
 
     async def scenario() -> None:
-        composition = await compose_serving([PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)])
+        composition = await compose_serving(
+            [PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)], include_default_packs=False
+        )
         try:
             engine = composition.make_engine(lambda event: None)
             graph = Graph(

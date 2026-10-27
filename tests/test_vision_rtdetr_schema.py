@@ -16,7 +16,7 @@ from dinkster_nodes_vision.rtdetr import DetectObjects as RTDETRDetectObjects
 from dinkster_schema import ComboWidget, schema_signature, schema_to_wire
 from dinkster_workers import load_manifest
 
-from dinkster.compose import compose_serving
+from dinkster.compose import compose_serving, default_pack_spec
 
 ROOT = Path(__file__).parent.parent
 PACKAGE = ROOT / "packages" / "dinkster-nodes-vision"
@@ -87,7 +87,15 @@ def test_wheel_contains_pack_runtime_and_manifest() -> None:
 
 def test_provider_populates_owner_choice_and_scopes_model() -> None:
     async def scenario() -> None:
-        composition = await compose_serving()
+        composition = await compose_serving(
+            [
+                default_pack_spec("dinkster-nodes-image"),
+                default_pack_spec("dinkster-vision-detr"),
+                default_pack_spec("dinkster-vision-rtdetr"),
+                default_pack_spec("dinkster-vision-sam31"),
+            ],
+            include_default_packs=False,
+        )
         try:
             assert composition.choices[DETECT_PROVIDER_CHOICE] == (
                 "dinkster-vision-detr",
@@ -110,7 +118,15 @@ def test_provider_populates_owner_choice_and_scopes_model() -> None:
 
 def test_detection_model_choice_resolves_rtdetr_provider_without_mutating_graph() -> None:
     async def scenario() -> None:
-        composition = await compose_serving()
+        composition = await compose_serving(
+            [
+                default_pack_spec("dinkster-nodes-image"),
+                default_pack_spec("dinkster-vision-detr"),
+                default_pack_spec("dinkster-vision-rtdetr"),
+                default_pack_spec("dinkster-vision-sam31"),
+            ],
+            include_default_packs=False,
+        )
         try:
             resolver = (
                 composition.make_engine(lambda _event: None).pin_execution().resolve_providers

@@ -11,7 +11,7 @@ from dinkster_nodes_vision.birefnet import ImageMatte as BiRefNetImageMatte
 from dinkster_schema import ComboWidget, schema_signature, schema_to_wire
 from dinkster_workers import load_manifest
 
-from dinkster.compose import compose_serving
+from dinkster.compose import compose_serving, default_pack_spec
 
 ROOT = Path(__file__).parent.parent
 PACKAGE = ROOT / "packages" / "dinkster-nodes-vision"
@@ -82,7 +82,13 @@ def test_birefnet_wheel_contains_pack_runtime_and_manifest() -> None:
 
 def test_birefnet_provider_populates_owner_choice_and_scopes_model() -> None:
     async def scenario() -> None:
-        composition = await compose_serving()
+        composition = await compose_serving(
+            [
+                default_pack_spec("dinkster-nodes-image"),
+                default_pack_spec("dinkster-vision-birefnet"),
+            ],
+            include_default_packs=False,
+        )
         try:
             assert composition.choices[MATTE_PROVIDER_CHOICE] == ("dinkster-vision-birefnet",)
             needs = composition.asset_catalog.needs_for_nodes(
