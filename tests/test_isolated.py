@@ -2195,10 +2195,20 @@ def test_group_isolated_close_is_idempotent(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "prompt", [{"save": {"class_type": "Save", "inputs": {"seed": 4}}}, {}, None]
+    ("prompt", "extra_pnginfo"),
+    [
+        (
+            {"save": {"class_type": "Save", "inputs": {"seed": 4}}},
+            {"workflow": {"nodes": [4, 2]}},
+        ),
+        ({}, None),
+        (None, {"workflow": {"nodes": [4, 2]}}),
+    ],
 )
 def test_isolated_host_supplies_export_snapshot(
-    tmp_path: Path, prompt: Mapping[str, object] | None
+    tmp_path: Path,
+    prompt: Mapping[str, object] | None,
+    extra_pnginfo: Mapping[str, object] | None,
 ) -> None:
     async def scenario() -> None:
         registry = core_registry()
@@ -2214,7 +2224,7 @@ def test_isolated_host_supplies_export_snapshot(
             graph = Graph(nodes={"submitted-node-29": GraphNode("iso.execution_context", {})})
             snapshot = ExportSnapshot(
                 prompt=prompt,
-                extra_pnginfo={"workflow": {"nodes": [4, 2]}},
+                extra_pnginfo=extra_pnginfo,
             )
             result = await engine.run(graph, ["submitted-node-29"], export_snapshot=snapshot)
             assert result.outputs["submitted-node-29"]["snapshot"].resolve() == (
