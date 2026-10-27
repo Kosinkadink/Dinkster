@@ -533,6 +533,7 @@ namespaces = [
     "MakeTrainingDataset",
     "TripoSplatPreprocessImage",
     "TripoSplatConditioning",
+    "Trellis2ShapeStage",
     "LoadTrainingDataset",
     "LoadAudio",
     "PreviewAudio",
