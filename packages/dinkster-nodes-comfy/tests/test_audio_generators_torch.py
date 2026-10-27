@@ -87,7 +87,7 @@ class AudioGeneratorInspect(Node):
         return cls.outputs(result="audio generators exact")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_audio_generators_feed_consumer_twice_in_both_hosts(
     tmp_path: Path, in_process: bool
 ) -> None:

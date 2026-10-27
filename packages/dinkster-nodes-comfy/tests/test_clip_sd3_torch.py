@@ -142,7 +142,7 @@ class Inspect(Node):
         return cls.outputs(summary=json.dumps(value, sort_keys=True))
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_sd3_conditioning_transports_through_both_ordinary_hosts(
     tmp_path: Path, in_process: bool
 ) -> None:

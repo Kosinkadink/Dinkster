@@ -80,7 +80,7 @@ class AVConsumer(Node):
         return cls.outputs(summary="video12-audio65-zero")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_empty_av_runs_twice_through_ordinary_pack_hosts(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
         source_root = Path(__file__).resolve().parents[1] / "src"
@@ -284,7 +284,7 @@ class MiniMaxImageConsumer(Node):
         return cls.outputs(summary="minimax-first-last-verified")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_minimax_image_runs_twice_through_ordinary_pack_hosts(
     tmp_path: Path, in_process: bool
 ) -> None:

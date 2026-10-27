@@ -344,9 +344,15 @@ def test_native_mixed_lists_cross_hosts_and_persistent_cache(
             'nodes="mixed_list_entry:NODES"\n',
             encoding="ascii",
         )
+        manifests = (manifest, fixture)
+        group_options = (
+            {}
+            if in_process
+            else {"worker_group": "mixed-list-fixture", "group_manifests": manifests}
+        )
         packs = [
-            PackSpec(manifest, in_process=in_process, trust_reserved=True),
-            PackSpec(fixture, in_process=in_process),
+            PackSpec(manifest, in_process=in_process, trust_reserved=True, **group_options),
+            PackSpec(fixture, in_process=in_process, **group_options),
         ]
         graph = Graph(
             nodes={

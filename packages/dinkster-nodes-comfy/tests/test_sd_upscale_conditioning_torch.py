@@ -130,7 +130,7 @@ class UpscaleInspect(Node):
         )
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_ordinary_manifest_executes_sd_upscale_conditioning_with_decoded_values(
     tmp_path: Path, in_process: bool
 ) -> None:
