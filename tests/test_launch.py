@@ -15,6 +15,19 @@ from dinkster.cli import main as cli_main
 from dinkster.frontend import install_frontend
 
 
+def test_frontend_discovery_finds_a_sibling_development_build(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(frontend, "__file__", str(tmp_path / "Dinkster/src/dinkster/frontend.py"))
+
+    def missing_package(_name: str) -> None:
+        raise ModuleNotFoundError("dinkster_frontend")
+
+    monkeypatch.setattr(frontend.importlib.resources, "files", missing_package)
+    bundle = tmp_path / "Dinkster-Frontend/packages/app/dist"
+    bundle.mkdir(parents=True)
+    (bundle / "index.html").write_text("<main>development</main>")
+    assert frontend.discover_frontend_bundle() == bundle
+
+
 def test_setup_creates_the_default_launch_roots(tmp_path: Path, monkeypatch, capsys) -> None:
     monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "state"))
 
