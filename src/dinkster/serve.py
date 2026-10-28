@@ -163,6 +163,7 @@ from .remotes import RemotesError, RemoteSpec, load_remotes
 from .resolver_api import add_resolver_index_routes
 from .storelock import hold_lock
 from .watch import PackWatcher
+from .workflow_requirements_api import add_workflow_requirement_routes
 
 _PERMISSIVE_COMPUTE_DTYPES = frozenset({"float16", "bfloat16", "float32"})
 _SERVING_PYTHON_ENV = "DINKSTER_SERVING_PYTHON"
@@ -2109,6 +2110,12 @@ def main(argv: list[str] | None = None) -> None:
             # GET routes serve everyone; the mutation half answers 403
             # mount-changes-disabled unless --allow-mount-changes opted in.
             add_mount_routes(app, mount_service)
+        add_workflow_requirement_routes(
+            app,
+            manifests=lambda: {
+                name: load_manifest(spec.manifest) for name, spec in composer.pack_specs().items()
+            },
+        )
         if installer is not None:
             # Live install activation: reconcile the served surface with
             # the install root's current generation without a restart.

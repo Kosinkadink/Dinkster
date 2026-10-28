@@ -24,3 +24,13 @@
   then serves the browser application and engine API from one loopback origin.
 - Health reports composed and failed counts and is not ready when composition
   is empty or any pack failed.
+- Local operators can print a read-only requirement plan with
+  `dinkster workflow workflow.json --variant linux-cpu` (optional `--server`
+  and `--project`). Multiple files produce their union without rewriting them.
+  `/api/workflows/plan` accepts `workflows`, `variant`, optional `project`, and
+  optional digest-keyed `assetSources` URL lists. Saved attribution/version and
+  semantic asset digests determine the missing items; unknown versions and
+  unavailable saved-version manifests are explicit diagnostics. Presence checks
+  verify vault bytes or selected project mounts without fetching. Resolver leads
+  are advisory, global host metadata, not scoped grants. Remote scoped callers
+  are refused; the route installs and downloads nothing.

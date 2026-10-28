@@ -6,7 +6,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import cast
 
-from dinkster_assets import AssetRef
+from dinkster_assets import AssetRef, AssetSource, PackagedSource, RemoteSource
 from dinkster_workers import PackManifest
 
 
@@ -200,7 +200,7 @@ def plan_workflow_requirements(
     *,
     installed_packs: Mapping[str, str | None],
     asset_available: Callable[[AssetRef], bool],
-    sources_for: Callable[[str], Sequence[str]],
+    sources_for: Callable[[str], Sequence[AssetSource]],
     pack_unavailable: Callable[[PackRequirement], str | None],
 ) -> WorkflowPlan:
     """Read-only missing-item plan. Callbacks are host facts, never workflow authority.
@@ -224,7 +224,58 @@ def plan_workflow_requirements(
             packs.append(requirement)
     for asset in requirements.assets:
         if not asset_available(asset):
-            assets.append(
-                {**asset.to_wire(), "sources": list(dict.fromkeys(sources_for(asset.digest)))}
+            sources = sources_for(asset.digest)
+            entry: dict[str, object] = {
+                **asset.to_wire(),
+                "sources": list(
+                    dict.fromkeys(
+                        source.url for source in sources if isinstance(source, RemoteSource)
+                    )
+                ),
+            }
+            packaged = sorted(
+                {source.pack for source in sources if isinstance(source, PackagedSource)}
             )
+            if packaged:
+                entry["packagedFrom"] = packaged
+            assets.append(entry)
     return WorkflowPlan(tuple(packs), tuple(assets), tuple(errors))
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Print a server's read-only plan for one or more saved documents."""
+    import argparse
+    import json
+    import sys
+    import urllib.error
+    import urllib.request
+    from pathlib import Path
+
+    parser = argparse.ArgumentParser(description="Print workflow requirements without installing")
+    parser.add_argument("workflows", nargs="+", type=Path)
+    parser.add_argument("--server", default="http://127.0.0.1:3639")
+    parser.add_argument("--variant", required=True)
+    parser.add_argument("--project")
+    args = parser.parse_args(argv)
+    try:
+        documents = [json.loads(path.read_text("utf-8")) for path in args.workflows]
+        body = {"workflows": documents, "variant": args.variant}
+        if args.project is not None:
+            body["project"] = args.project
+        request = urllib.request.Request(
+            args.server.rstrip("/") + "/api/workflows/plan",
+            data=json.dumps(body).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=60) as response:
+            result = json.load(response)
+        print(json.dumps(result, indent=2))
+        return int(bool(result["errors"]))
+    except (OSError, ValueError, urllib.error.URLError) as exc:
+        print(f"workflow plan failed: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

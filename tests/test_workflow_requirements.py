@@ -2,15 +2,33 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from dinkster_assets import AssetRef, digest_bytes
-from dinkster_workers import PackSandboxNeeds, VisionProvider, load_manifest
+from aiohttp.test_utils import TestClient, TestServer
+from dinkster_assets import (
+    AssetRef,
+    AssetVault,
+    LibraryStore,
+    MountDef,
+    MountTable,
+    PackagedSource,
+    ProvenanceRecord,
+    ProvenanceStore,
+    RemoteSource,
+    digest_bytes,
+)
+from dinkster_caches import MemoryLRUCache
+from dinkster_engine import Engine
+from dinkster_server import PackInfo, ServerLibrary, create_app
+from dinkster_values import TypeRegistry
+from dinkster_workers import InProcessWorker, PackSandboxNeeds, VisionProvider, load_manifest
 
+from dinkster.mounts_api import MountService, add_mount_routes
 from dinkster.workflow_requirements import (
     PackRequirement,
     RequirementError,
@@ -20,6 +38,7 @@ from dinkster.workflow_requirements import (
     plan_workflow_requirements,
     project_requirements,
 )
+from dinkster.workflow_requirements_api import add_workflow_requirement_routes
 
 
 def workflow() -> dict[str, object]:
@@ -117,7 +136,11 @@ def test_missing_plan_and_verified_present_control() -> None:
         requirements,
         installed_packs={"unused": "9.9.9", "tools-b": "0.1.0"},
         asset_available=lambda asset: False,
-        sources_for=lambda digest: [source, source] if digest == digest_bytes(b"first") else [],
+        sources_for=lambda digest: (
+            [RemoteSource(source), RemoteSource(source), PackagedSource("starter", "first.bin")]
+            if digest == digest_bytes(b"first")
+            else []
+        ),
         pack_unavailable=lambda pack: None,
     )
     assert plan.to_wire() == {
@@ -129,6 +152,7 @@ def test_missing_plan_and_verified_present_control() -> None:
             {
                 **asset.to_wire(),
                 "sources": [source] if asset.digest == digest_bytes(b"first") else [],
+                **({"packagedFrom": ["starter"]} if asset.digest == digest_bytes(b"first") else {}),
             }
             for asset in requirements.assets
         ],
@@ -193,3 +217,121 @@ def test_variant_plan_uses_only_manifest_declarations_and_preserves_documents() 
         "pack tools-a: node a.load declares devices cuda; cpu is not supported"
     ]
     assert json.dumps(document) == before
+
+
+def test_public_plan_is_read_only_project_filtered_and_verified(tmp_path: Path) -> None:
+    store = LibraryStore(tmp_path / "library.sqlite")
+    vault = AssetVault(tmp_path / "vault")
+    provenance = ProvenanceStore(tmp_path / "provenance.json")
+    first_digest = digest_bytes(b"first")
+    second_digest = digest_bytes(b"second")
+    url = "https://models.example.test/first.bin"
+    provenance.add(ProvenanceRecord(first_digest, (url,)))
+    mounted = tmp_path / "mounted"
+    mounted.mkdir()
+    first_path = mounted / "first.bin"
+    first_path.write_bytes(b"first")
+    (mounted / "second.bin").write_bytes(b"second")
+    table = MountTable(tmp_path / "snapshot.json")
+    table.add(MountDef("models", mounted))
+    table.scan("models")
+    mounts = MountService(table)
+    mounts.projects.update("excluded", [], available=("models",), output=None)
+
+    class ForbiddenFetchingResolver:
+        def resolve(self, digest: str) -> Path | None:
+            pytest.fail("read-only plans must not call a potentially fetching resolver")
+
+    library = ServerLibrary(
+        vault, store, resolver=ForbiddenFetchingResolver(), provenance=provenance
+    )
+    manifest = load_manifest(Path("packages/dinkster-nodes-image/dinkster-pack.toml"))
+    snapshot = (tmp_path / "snapshot.json").read_bytes()
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        app = create_app(
+            lambda listener: Engine(
+                schemas={},
+                registry=registry,
+                worker=InProcessWorker({}, registry),
+                cache=MemoryLRUCache(),
+                on_event=listener,
+            ),
+            {},
+            library=library,
+            packs={
+                "tools-a": PackInfo("A", version="1.2.3"),
+                "tools-b": PackInfo("B", version="4.5.6"),
+            },
+        )
+        add_mount_routes(app, mounts)
+        add_workflow_requirement_routes(
+            app, manifests=lambda: {"tools-a": manifest, "tools-b": manifest}
+        )
+        async with TestClient(TestServer(app)) as client:
+            body = {"workflows": [workflow()], "variant": "linux-cpu", "project": "excluded"}
+            response = await client.post("/api/workflows/plan", json=body)
+            assert response.status == 200
+            assert response.headers["Cache-Control"] == "no-store"
+            excluded = await response.json()
+            assert excluded["packs"] == []
+            assert excluded["errors"] == []
+            assert {asset["digest"] for asset in excluded["assets"]} == {
+                first_digest,
+                second_digest,
+            }
+            assert next(asset for asset in excluded["assets"] if asset["digest"] == first_digest)[
+                "sources"
+            ] == [url]
+            response = await client.post(
+                "/api/workflows/plan", json={**body, "project": "included"}
+            )
+            assert await response.json() == {"packs": [], "assets": [], "errors": []}
+            first_path.write_bytes(b"wrong")
+            response = await client.post(
+                "/api/workflows/plan", json={**body, "project": "included"}
+            )
+            corrupt = await response.json()
+            assert [asset["digest"] for asset in corrupt["assets"]] == [first_digest]
+            assert not vault.digests()
+            outside = tmp_path / "outside.bin"
+            outside.write_bytes(b"first")
+            first_path.unlink()
+            first_path.symlink_to(outside)
+            response = await client.post(
+                "/api/workflows/plan", json={**body, "project": "included"}
+            )
+            assert [asset["digest"] for asset in (await response.json())["assets"]] == [
+                first_digest
+            ]
+            with vault.writer(first_digest) as writer:
+                writer.write(b"first")
+                vault_path = writer.commit()
+            response = await client.post(
+                "/api/workflows/plan", json={**body, "project": "included"}
+            )
+            assert await response.json() == {"packs": [], "assets": [], "errors": []}
+            vault_path.write_bytes(b"wrong")
+            response = await client.post(
+                "/api/workflows/plan", json={**body, "project": "included"}
+            )
+            assert [asset["digest"] for asset in (await response.json())["assets"]] == [
+                first_digest
+            ]
+            response = await client.post(
+                "/api/workflows/plan", json={**body, "acquireAssets": [first_digest]}
+            )
+            assert response.status == 400
+            response = await client.post(
+                "/api/workflows/plan", json=body, headers={"X-Dinkster-Actor-Kind": "agent"}
+            )
+            assert response.status == 403
+            assert (await response.json())["error"] == "local-operator-required"
+
+    try:
+        asyncio.run(scenario())
+        assert (tmp_path / "snapshot.json").read_bytes() == snapshot
+        assert provenance.sources(first_digest) == (url,)
+    finally:
+        store.close()
