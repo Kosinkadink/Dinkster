@@ -47,6 +47,10 @@ def _reference_state(kind: str) -> dict[str, torch.Tensor]:
 
 def _reference_film(state: dict[str, torch.Tensor]) -> Any:
     metadata = json.loads((_FIXTURES / "reference.json").read_text())
+    # Keep the archived numerical fixture intact even though FILM now uses a runtime oracle.
+    assert hashlib.sha256((_FIXTURES / "outputs.npz").read_bytes()).hexdigest() == (
+        "776e1d72ebff058a994eb8682a6242809bdd6030c472bd4028eadec8bd370e52"
+    )
     path = _FIXTURES / "film_net.py.txt"
     source = path.read_bytes()
     assert hashlib.sha256(source).hexdigest() == metadata["models"]["film"]["source_sha256"]
