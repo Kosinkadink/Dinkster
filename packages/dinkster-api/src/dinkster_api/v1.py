@@ -6,9 +6,9 @@ asset system, re-exported from the internal packages in one place.
 
 The compat promise (DESIGN 3.6, enforced by tests/test_api_v1.py):
 
-- Within v1 this surface only ever GROWS. Nothing here is renamed,
-  removed, or changed incompatibly; breaking changes mean a ``v2``
-  module next to this one, never edits to this one.
+- Within v1 supported extension contracts grow compatibly; breaking changes
+  require a ``v2`` module next to this one. Training-origin nodes and their
+  exclusive value identifiers are excluded from this supported surface.
 - Every name below is the internal object itself, not a wrapper - zero
   overhead, and ``isinstance``/identity checks agree across the door.
 - Internal modules stay reachable (this is Python) but carry no promise:
