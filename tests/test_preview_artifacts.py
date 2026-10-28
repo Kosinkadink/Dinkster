@@ -4,6 +4,7 @@ import asyncio
 import base64
 import io
 import os
+import shutil
 import sqlite3
 import threading
 from collections.abc import Sequence
@@ -25,7 +26,8 @@ from dinkster_assets import (
     digest_bytes,
 )
 from dinkster_assets.vault import VaultWriter
-from dinkster_engine import ExecutionError, RunResult
+from dinkster_caches import MemoryLRUCache
+from dinkster_engine import Engine, EventListener, ExecutionError, RunResult
 from dinkster_graph import Graph, GraphNode, graph_to_wire
 from dinkster_protocol import AssetFolderContext
 from dinkster_schema.reporting import EncodedPreviewArtifact, capture_preview_artifacts
@@ -67,8 +69,10 @@ def _write_preview_pack(tmp_path: Path, data: bytes) -> Path:
     (tmp_path / f"{module}.py").write_text(
         "from __future__ import annotations\n"
         "import base64\n"
+        "import os\n"
         "from collections.abc import Mapping\n"
-        "from dinkster_api.v1 import (CORE_STRING, InputSpec, Node, NodeSchema, "
+        "from pathlib import Path\n"
+        "from dinkster_api.v1 import (CORE_STRING, ExpansionBuilder, InputSpec, Node, NodeSchema, "
         "OutputSpec, TypeExpr, publish_preview_artifact)\n"
         f"DATA = base64.b64decode({payload!r})\n"
         f"FAILED_DATA = base64.b64decode({failed_payload!r})\n"
@@ -81,10 +85,25 @@ def _write_preview_pack(tmp_path: Path, data: bytes) -> Path:
         " @classmethod\n"
         " def execute(cls, *, mode: str) -> Mapping[str, object]:\n"
         "  data = FAILED_DATA if mode == 'fail' else DATA\n"
-        "  publish_preview_artifact(data, name='preview.mp4', media_type='video/mp4')\n"
+        "  staged = Path(os.environ['DINKSTER_PACK_SCRATCH']) / ('encoded-' + mode + '.mp4')\n"
+        "  staged.write_bytes(data)\n"
+        "  publish_preview_artifact(staged.read_bytes(), "
+        "name='preview.mp4', media_type='video/mp4')\n"
         "  if mode == 'fail': raise RuntimeError('fixture failure')\n"
         "  return cls.outputs(out='ok')\n"
-        "NODES = (Preview,)\n"
+        "class Expand(Preview):\n"
+        " @classmethod\n"
+        " def define_schema(cls):\n"
+        "  return NodeSchema(node_type='preview-fixture.expand', inputs=(InputSpec('mode', "
+        "TypeExpr.concrete(CORE_STRING)),), outputs=(OutputSpec('out', "
+        "TypeExpr.concrete(CORE_STRING)),), may_expand_graph=True)\n"
+        " @classmethod\n"
+        " def execute(cls, *, mode: str):\n"
+        "  graph = ExpansionBuilder()\n"
+        "  child = graph.node('preview-fixture.expand' if mode == 'nested' else "
+        "'preview-fixture.emit', 'inner' if mode == 'nested' else 'emit', mode='ok')\n"
+        "  return graph.finalize(out=child.out('out'))\n"
+        "NODES = (Preview, Expand)\n"
         "def register_types(registry): pass\n",
         encoding="ascii",
     )
@@ -104,12 +123,22 @@ def _write_preview_pack(tmp_path: Path, data: bytes) -> Path:
 
 @pytest.mark.parametrize("in_process", (True, False))
 @pytest.mark.parametrize("retained", (True, False))
+@pytest.mark.parametrize("nested", (False, True))
 def test_composed_hosts_publish_encoded_preview_to_result_and_asset_route(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, retained: bool, mp4: bytes
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    in_process: bool,
+    retained: bool,
+    nested: bool,
+    mp4: bytes,
 ) -> None:
     manifest = _write_preview_pack(tmp_path, mp4)
     vault = AssetVault(tmp_path / "vault")
     monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(vault.root))
+    scratch_root = tmp_path / "scratch"
+    scratch = scratch_root / "packs" / "preview-fixture"
+    scratch.mkdir(parents=True)
+    monkeypatch.setenv("DINKSTER_PACK_SCRATCH", str(scratch))
     worker_env = {"PYTHONPATH": os.pathsep.join((str(tmp_path), str(Path.cwd())))}
     output = tmp_path / "selected-output"
     output.mkdir()
@@ -131,11 +160,18 @@ def test_composed_hosts_publish_encoded_preview_to_result_and_asset_route(
     )
 
     async def scenario() -> None:
-        composer = ServingComposer(worker_env=worker_env)
+        composer = ServingComposer(worker_env=worker_env, pack_scratch_root=scratch_root)
+        engines: list[Engine] = []
+
+        def make_engine(on_event: EventListener) -> Engine:
+            engine = composer.composition.make_engine(on_event)
+            engines.append(engine)
+            return engine
+
         try:
             await composer.add_pack(PackSpec(manifest, in_process=in_process, env=worker_env))
             app = create_app(
-                lambda on_event: composer.composition.make_engine(on_event),
+                make_engine,
                 composer.composition.schemas,
                 asset_export=vault,
                 library=library,
@@ -143,7 +179,14 @@ def test_composed_hosts_publish_encoded_preview_to_result_and_asset_route(
             client = TestClient(TestServer(app))
             await client.start_server()
             try:
-                graph = Graph(nodes={"preview": GraphNode("preview-fixture.emit", {"mode": "ok"})})
+                graph = Graph(
+                    nodes={
+                        "preview": GraphNode(
+                            "preview-fixture.expand" if nested else "preview-fixture.emit",
+                            {"mode": "nested" if nested else "ok"},
+                        )
+                    }
+                )
                 response = await client.post(
                     "/api/jobs",
                     json={
@@ -165,7 +208,8 @@ def test_composed_hosts_publish_encoded_preview_to_result_and_asset_route(
                         await asyncio.sleep(0)
                 assert status["state"] == "completed"
                 artifact = status["artifacts"][0]
-                assert artifact["nodeId"] == "preview"
+                producing_node = "preview.0.0.inner.0.0.emit" if nested else "preview"
+                assert artifact["nodeId"] == producing_node
                 assert artifact["digest"] == digest_bytes(mp4)
                 assert artifact["name"] == ("preview_00001.mp4" if retained else "preview.mp4")
                 assert artifact["mediaType"] == "video/mp4"
@@ -186,7 +230,7 @@ def test_composed_hosts_publish_encoded_preview_to_result_and_asset_route(
                         "",
                         "mounts/renders/preview_00001.mp4",
                     }
-                    assert all(record.origin["node"] == "preview" for record in observations)
+                    assert all(record.origin["node"] == producing_node for record in observations)
                     assert library.store.query_assets("local", project="another") == []
                 asset = await client.get(f"/assets/{artifact['digest']}")
                 assert asset.status == 200
@@ -201,10 +245,64 @@ def test_composed_hosts_publish_encoded_preview_to_result_and_asset_route(
                         ["failed"],
                     )
                 assert vault.digests() == [digest_bytes(mp4)]
+                assert (scratch / "encoded-ok.mp4").read_bytes() == mp4
+                assert engines
+                for completed_engine in engines:
+                    assert isinstance(completed_engine.cache, MemoryLRUCache)
+                    assert completed_engine.cache.clear() > 0
+                    assert len(completed_engine.cache) == 0
             finally:
                 await client.close()
         finally:
             await composer.close()
+
+        shutil.rmtree(scratch_root)
+        assert not scratch.exists()
+        if retained:
+            assert library is not None
+            library.store.close()
+            reopened_mounts = MountTable()
+            reopened_mounts.add(MountDef("renders", output, "readwrite"))
+            reopened_mounts.scan("renders")
+            reopened = ServerLibrary(
+                vault=AssetVault(vault.root),
+                store=LibraryStore(tmp_path / "library.sqlite"),
+                resolver=reopened_mounts,
+                local_resolver=reopened_mounts,
+                upload_writer=AssetWriter(reopened_mounts),
+                project_folders_for=lambda _project: AssetFolderContext(("renders",), "renders"),
+            )
+            restarted = ServingComposer(worker_env=worker_env)
+            try:
+                await restarted.add_pack(PackSpec(manifest, in_process=in_process, env=worker_env))
+                restarted_client = TestClient(
+                    TestServer(
+                        create_app(
+                            restarted.composition.make_engine,
+                            restarted.composition.schemas,
+                            library=reopened,
+                            asset_export=reopened.vault,
+                        )
+                    )
+                )
+                await restarted_client.start_server()
+                try:
+                    catalog = await (
+                        await restarted_client.get(
+                            "/api/assets/catalog?scope=local&project=film&kind=media/video"
+                        )
+                    ).json()
+                    assert len(catalog["assets"]) == 1
+                    assert (output / "preview_00001.mp4").read_bytes() == mp4
+                    asset = await restarted_client.get(f"/assets/{digest_bytes(mp4)}")
+                    assert asset.status == 200
+                    assert await asset.read() == mp4
+                    assert reopened.store.query_assets("local", project="another") == []
+                finally:
+                    await restarted_client.close()
+            finally:
+                await restarted.close()
+                reopened.store.close()
 
     asyncio.run(scenario())
 
