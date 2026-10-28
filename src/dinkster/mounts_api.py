@@ -55,6 +55,7 @@ from dinkster_assets import (
     is_asset_kind,
 )
 from dinkster_assets.identity import require_digest
+from dinkster_assets.integrity import verified_local_path
 from dinkster_assets.model import AssetRef
 from dinkster_assets.resolution import MountMaterialization, ResolutionStore
 from dinkster_protocol import AssetFolderContext
@@ -369,28 +370,37 @@ async def handle_mount_locations(request: web.Request) -> web.Response:
                 pass
             else:
                 locations.append({"storage": "vault", "path": str(path)})
-            for observation in groups[0]:
-                parts = observation.asset.virtual_path.split("/", 2)
+            for virtual_path in dict.fromkeys(item.asset.virtual_path for item in groups[0]):
+                parts = virtual_path.split("/", 2)
                 if len(parts) != 3 or parts[0] != "mounts" or parts[1] not in context.mounts:
                     continue
                 try:
-                    ref = await asyncio.to_thread(service.table.ref, observation.asset.virtual_path)
+                    ref = await asyncio.to_thread(service.table.ref, virtual_path)
                     if ref.digest != asset.digest:
                         continue
-                    path = await asyncio.to_thread(ref.local_path)
                     mount = service.table.get(parts[1])
-                    if mount is None or path.resolve() != (mount.path / parts[2]).resolve():
+                    if mount is None:
+                        continue
+                    root = mount.path.resolve()
+                    path = (root / parts[2]).resolve()
+                    if not path.is_relative_to(root):
+                        continue
+                    path = await asyncio.to_thread(verified_local_path, path, asset.digest)
+                    if (
+                        service.table.get(parts[1]) != mount
+                        or parts[1] not in service.project_context(project).mounts
+                        or not path.resolve().is_relative_to(root)
+                    ):
                         continue
                 except (AssetError, OSError):
                     continue
                 location: dict[str, object] = {
                     "storage": "mount",
                     "mount": parts[1],
-                    "virtualPath": observation.asset.virtual_path,
+                    "virtualPath": virtual_path,
                     "path": str(path),
                 }
-                if location not in locations:
-                    locations.append(location)
+                locations.append(location)
         body["locations"] = locations
     table = service.settings_table
     rows = service.settings_descriptors()

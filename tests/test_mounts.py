@@ -2059,6 +2059,40 @@ def test_operator_asset_locations_verify_scoped_project_content(tmp_path: Path) 
                     "path": str(tmp_path / "imports" / "first.bin"),
                 },
             ]
+            seed(tmp_path / "imports", {"alias.bin": b"first"})
+            table.scan("imports")
+            alias = table.ref("mounts/imports/alias.bin")
+            store.record_asset(
+                "local",
+                alias,
+                original_name=alias.name,
+                kind="asset/file",
+                origin={"kind": "upload"},
+            )
+            alias_location = {
+                "storage": "mount",
+                "mount": "imports",
+                "virtualPath": alias.virtual_path,
+                "path": str(tmp_path / "imports" / "alias.bin"),
+            }
+            body = await locations(digest=first.digest)
+            assert body["locations"] == [
+                {"storage": "vault", "path": str(vault.resolve(first.digest))},
+                {
+                    "storage": "mount",
+                    "mount": "imports",
+                    "virtualPath": first.virtual_path,
+                    "path": str(tmp_path / "imports" / "first.bin"),
+                },
+                alias_location,
+            ]
+            service.projects.update("default", [], available=("imports",), output=None)
+            assert (await locations(digest=first.digest))["locations"] == [
+                {"storage": "vault", "path": str(vault.resolve(first.digest))}
+            ]
+            service.projects.update("default", ["imports"], available=("imports",), output=None)
+            (tmp_path / "imports" / "alias.bin").unlink()
+            table.scan("imports")
             assert (await locations(scope="elsewhere", digest=first.digest))["locations"] == []
             assert (await locations(project="other", digest=first.digest))["locations"] == []
             ordinary = await client.get("/api/assets/catalog", params={"scope": "local"})

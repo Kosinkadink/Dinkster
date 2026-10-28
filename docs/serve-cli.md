@@ -887,6 +887,8 @@ identity in the selected scope and project; this also requires `assets:read`.
 Only verified vault copies and observed files in live project folders are
 returned, with their actual `path` and `storage` type. Missing, changed,
 excluded and revoked copies are omitted. Responses use `Cache-Control: no-store`.
+Each observed filename is verified separately, so identical content at multiple
+names remains revealable without substituting the resolver's preferred alias.
 This endpoint only reports locations; it neither downloads nor opens files in
 the desktop shell.
 
