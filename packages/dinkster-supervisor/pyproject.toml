@@ -5,6 +5,7 @@ description = "Dinkster supervisor: layer-0 process that owns the public port, s
 requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.10",
+    "packaging>=24",
     "py7zr>=1.0",
 ]
 

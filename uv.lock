@@ -1310,12 +1310,14 @@ version = "0.0.1"
 source = { editable = "packages/dinkster-supervisor" }
 dependencies = [
     { name = "aiohttp" },
+    { name = "packaging" },
     { name = "py7zr" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.10" },
+    { name = "packaging", specifier = ">=24" },
     { name = "py7zr", specifier = ">=1.0" },
 ]
 

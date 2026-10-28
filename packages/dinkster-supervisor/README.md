@@ -170,6 +170,16 @@ the expected size and digest. Signed query redirects are allowed without
 logging their URLs; external non-TLS redirects and credential-bearing mirror
 URLs are rejected. Calls have a bounded per-socket network timeout.
 
+`environment_constraints.effective_constraints(engine_text, base_manifest)`
+uses the verified base manifest's `replaces` set, not package-name prefixes.
+It removes every named engine requirement, including remove-only CUDA
+transitives, and appends the selected `wheels` versions and hashes. Unrelated
+requirements retain their markers and hashes. Selected versions must match
+engine pins and `lockedVersion`; torch/torchvision backend suffixes may refine
+the same locked public version. Invalid membership, non-exact requirements,
+missing hashes and wheel filename/version mismatches fail without resolution.
+The resulting constraints are retained beside the generation record.
+
 `environment_generations.build_generation` constructs a complete target from
 an already verified base under `bases/<hex>/python/` and effective hashed
 requirements. It runs uv offline with no indexes and binary wheels only,
