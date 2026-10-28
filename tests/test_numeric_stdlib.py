@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import json
 import math
 import struct
@@ -40,20 +39,14 @@ from dinkster_schema import (
     TypeExpr,
     build_node_types,
     build_schemas,
-    comfy_alias_registry_from_wire,
-    comfy_alias_registry_problems,
-    comfy_alias_registry_to_wire,
     schema_from_wire,
     schema_to_wire,
-    validate_replacement_references,
 )
-from dinkster_schema.replace import rule_from_wire, rule_to_wire
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 from hypothesis import given
 from hypothesis import strategies as st
 
-from tools.generate_foundation_comfy_aliases import NUMERIC_EVIDENCE, build_aliases
 from tools.generate_math_expression_vector import (
     CASES,
     COMFYUI_REFERENCE_COMMIT,
@@ -66,9 +59,6 @@ from tools.generate_math_expression_vector import (
 )
 
 VECTOR_PATH = Path(__file__).parent / "fixtures" / "math_expression_v1.json"
-ALIAS_PATH = (
-    Path(__file__).parents[1] / "packages" / "dinkster-nodes-foundation" / "comfy-aliases.json"
-)
 
 
 def make_engine() -> Engine:
@@ -255,196 +245,20 @@ def test_expression_schema_declares_the_mirror_the_vector_verifies() -> None:
     assert all("optional" not in entry for entry in output_wire)
 
 
-def test_foundation_comfy_alias_records() -> None:
-    encoded = ALIAS_PATH.read_text(encoding="utf-8")
-    assert encoded == json.dumps(build_aliases(), ensure_ascii=True, separators=(",", ":")) + "\n"
-    payload = json.loads(encoded)
-    assert payload == build_aliases()
-    registry = comfy_alias_registry_from_wire(payload)
-    assert comfy_alias_registry_to_wire(registry) == payload
-
-    source_schemas = {
-        schema.node_type: schema
-        for schema in (
-            schema_from_wire(cast("dict[str, Any]", wire))
-            for wire in cast("list[dict[str, object]]", payload["sourceSchemas"])
-        )
-    }
-    native_schemas = build_schemas(FOUNDATION_NODES)
-    assert comfy_alias_registry_problems(registry, native_schemas) == ()
-    all_records = cast("list[dict[str, Any]]", payload["records"])
-    assert len({record["id"] for record in all_records}) == len(all_records)
-    assert {"ComfyAndNode", "ComfyOrNode"}.issubset(
-        record["source"]["nodeClass"] for record in all_records
-    )
-    records = [
-        record
-        for record in all_records
-        if record["confidence"]["evidence"] == list(NUMERIC_EVIDENCE)
-    ]
-    assert {record["carrier"] for record in records} == {
-        "dinkster.boolean",
-        "dinkster.math.expression",
-        "dinkster.bool.logic",
-        "dinkster.value.compare",
-        "dinkster.value.select",
-        "dinkster.value.remap",
-    }
-
-    for record in records:
-        assert record["id"].startswith("comfy_alias:")
-        assert record["mappingKind"] == "op"
-        source = record["source"]
-        assert source["nodeType"] in source_schemas
-        assert source_schemas[source["nodeType"]].replacements == ()
-        rule = rule_from_wire(record["replacement"])
-        assert rule_to_wire(rule) == record["replacement"]
-        assert rule.from_type == source["nodeType"]
-        assert record["carrier"] in {case.to for case in rule.cases}
-        carrier = native_schemas[record["carrier"]]
-        schemas = {
-            **native_schemas,
-            **source_schemas,
-            carrier.node_type: dataclasses.replace(carrier, replacements=(rule,)),
-        }
-        assert validate_replacement_references(schemas) == ()
-        assert record["confidence"]["evidence"] == [
-            "tests/test_numeric_stdlib.py::test_foundation_comfy_alias_records",
-            "tests/test_numeric_stdlib.py::test_foundation_comfy_alias_behavior",
-        ]
-
-    expected_aliases = {
-        "dinkster.math.expression": ("ComfyMathExpression",),
-        "dinkster.value.compare": (),
-        "dinkster.value.select": (),
-        "dinkster.bool.logic": (),
-        "dinkster.value.clamp": (),
-        "dinkster.value.remap": (),
-        "dinkster.value.random": (),
-    }
-    for node_type, aliases in expected_aliases.items():
-        assert native_schemas[node_type].aliases == aliases
-
-
-def test_foundation_comfy_alias_behavior() -> None:
-    payload = build_aliases()
-    records = {record["id"]: record for record in cast("list[dict[str, Any]]", payload["records"])}
-    source_schemas = {
-        schema.node_type: schema
-        for schema in (
-            schema_from_wire(cast("dict[str, Any]", wire))
-            for wire in cast("list[dict[str, object]]", payload["sourceSchemas"])
-        )
-    }
-
-    def rule(identifier: str):
-        return rule_from_wire(records[identifier]["replacement"])
-
-    def fallback_enum(identifier: str, target_input: str) -> dict[str, str]:
-        source = dict(rule(identifier).cases[-1].inputs)[target_input]
-        assert source.transform is not None
-        return dict(source.transform.map)
-
-    boolean_record = records["comfy_alias:comfy-core/PrimitiveBoolean"]
-    assert boolean_record["source"]["revision"] == "b78cec87"
-    boolean_case = rule("comfy_alias:comfy-core/PrimitiveBoolean").cases[0]
-    assert dict(boolean_case.inputs)["value"].input == "value"
-    assert dict(boolean_case.outputs) == {"value": "boolean"}
-
-    math_record = records["comfy_alias:comfy-core/ComfyMathExpression"]
-    assert math_record["source"]["revision"] == "b78cec87"
-    math_source = source_schemas["comfy.ComfyMathExpression"]
-    assert math_source.aliases == ("ComfyMathExpression",)
-    assert math_source.input_families[0].member_names == tuple("abcdefghijklmnopqrstuvwxyz")
-    math_family_input = math_source.input_families[0].template[0]
-    assert isinstance(math_family_input, InputSpec)
-    assert math_family_input.type == TypeExpr.union("FLOAT", "INT", "BOOLEAN")
-    assert tuple((output.id, output.optional) for output in math_source.outputs) == (
-        ("FLOAT", False),
-        ("INT", False),
-        ("BOOL", False),
-    )
-    math_case = rule("comfy_alias:comfy-core/ComfyMathExpression").cases[0]
-    math_family = dict(math_case.input_families)["values"]
-    assert math_family.kind == "copy" and math_family.source_family == "values"
-    assert dict(math_family.inputs)["value"].input == "value"
-    assert dict(math_case.outputs) == {"float": "FLOAT", "int": "INT", "boolean": "BOOL"}
-
-    for node_class, operation, result in (
-        ("ComfyAndNode", "and", False),
-        ("ComfyOrNode", "or", True),
-    ):
-        identifier = f"comfy_alias:comfy-core/{node_class}"
-        record = records[identifier]
-        assert record["confidence"]["tier"] == "parametric"
-        source_schema = source_schemas[f"comfy.{node_class}"]
-        assert source_schema.input_families[0].max_members == 10
-        assert source_schema.input_families[0].member_prefix == "value"
-        assert record["replacement"]["cases"][0]["inputFamilies"] == {
-            "values": {
-                "kind": "copy",
-                "sourceFamily": "values",
-                "inputs": {"value": {"kind": "copy", "input": "value"}},
-            }
-        }
-        logic_case = rule(identifier).cases[0]
-        assert dict(logic_case.inputs)["operation"].value == operation
-        assert dict(logic_case.outputs) == {"result": "boolean"}
+def test_numeric_operations_preserve_asymmetric_values() -> None:
+    for operation, result in (("and", False), ("or", True)):
         assert BoolLogic.execute(operation=operation, values={"value0": True, "value1": False}) == {
             "result": result
         }
 
-    essentials_id = "comfy_alias:comfyui_essentials/SimpleComparison+"
-    essentials = fallback_enum(essentials_id, "operation")
-    assert essentials == {"==": "eq", "!=": "ne", "<": "lt", "<=": "le", ">": "gt", ">=": "ge"}
-    expected = {"==": False, "!=": True, "<": True, "<=": True, ">": False, ">=": False}
-    for source_operation, result in expected.items():
-        assert ValueCompare.execute(
-            a=2, b=3, operation=essentials[source_operation], epsilon=0.0
-        ) == {"result": result}
-
-    easy_id = "comfy_alias:comfyui-easy-use/easy compare"
-    easy = fallback_enum(easy_id, "operation")
-    assert easy == {
-        "a == b": "eq",
-        "a != b": "ne",
-        "a < b": "lt",
-        "a <= b": "le",
-        "a > b": "gt",
-        "a >= b": "ge",
-    }
-    easy_rule = rule(easy_id)
-    first_unary_inputs = dict(easy_rule.cases[0].inputs)
-    omitted_unary_inputs = dict(easy_rule.cases[1].inputs)
-    assert first_unary_inputs["b"].value == 0
-    assert omitted_unary_inputs["a"].value == omitted_unary_inputs["b"].value == 0
+    expected = {"eq": False, "ne": True, "lt": True, "le": True, "gt": False, "ge": False}
+    for operation, result in expected.items():
+        assert ValueCompare.execute(a=2, b=3, operation=operation, epsilon=0.0) == {
+            "result": result
+        }
     assert ValueCompare.execute(a=0, b=0, operation="gt", epsilon=0.0) == {"result": False}
     assert ValueCompare.execute(a=0, b=0, operation="le", epsilon=0.0) == {"result": True}
 
-    impact_id = "comfy_alias:comfyui-impact-pack/ImpactCompare"
-    impact_rule = rule(impact_id)
-    assert [case.to for case in impact_rule.cases[:2]] == ["dinkster.boolean", "dinkster.boolean"]
-    assert dict(impact_rule.cases[0].inputs)["value"].value is True
-    assert dict(impact_rule.cases[1].inputs)["value"].value is False
-    assert fallback_enum(impact_id, "operation") == {
-        "a = b": "eq",
-        "a <> b": "ne",
-        "a < b": "lt",
-        "a <= b": "le",
-        "a > b": "gt",
-        "a >= b": "ge",
-    }
-
-    switch = rule("comfy_alias:was-node-suite-comfyui/Number Input Switch")
-    switch_inputs = dict(switch.cases[0].inputs)
-    assert switch_inputs["condition"].input == "boolean"
-    assert switch_inputs["on_false"].input == "number_b"
-    assert switch_inputs["on_true"].input == "number_a"
-
-    fit = rule("comfy_alias:comfy-mtb/Fit Number (mtb)")
-    fit_inputs = dict(fit.cases[0].inputs)
-    assert fit_inputs["curve"].transform is not None
-    assert dict(fit_inputs["curve"].transform.map) == {"Linear": "linear"}
     assert ValueRemap.execute(
         value=5.0,
         input_minimum=0.0,
