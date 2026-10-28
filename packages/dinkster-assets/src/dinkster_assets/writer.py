@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import BinaryIO, Protocol, cast
 
 from dinkster_values import MEBIBYTE
+from dinkster_values.asset_folders import current_asset_folders
 
 from .identity import DIGEST_PREFIX, AssetError, new_hasher
 from .integrity import verification_record_for_publication
@@ -123,6 +124,11 @@ class MountSnapshotWriter:
         )
 
     def output_mount(self) -> str:
+        context = current_asset_folders()
+        if context is not None:
+            if context.output_mount is None:
+                raise AssetError("no default output mount is configured for this project")
+            return context.output_mount
         try:
             loaded: object = json.loads(self._path.read_text("utf-8"))
         except (OSError, ValueError):
@@ -214,6 +220,72 @@ class AssetWriter:
             )
         return ref
 
+    def save_named_stream(
+        self,
+        target: object,
+        source: BinaryIO,
+        *,
+        media_type: str = "application/octet-stream",
+        limit: int,
+        before_publish: Callable[[AssetRef], None] | None = None,
+    ) -> AssetRef:
+        """Import bytes under the target's full filename, numbering collisions only."""
+        if type(limit) is not int or limit < 0:
+            raise AssetError("limit must be a non-negative integer")
+        parsed = coerce_save_target(target)
+        reserved = {"con", "prn", "aux", "nul"} | {
+            f"{prefix}{index}" for prefix in ("com", "lpt") for index in range(1, 10)
+        }
+        for segment in parsed.prefix.split("/"):
+            if (
+                len(segment) > 255
+                or segment.endswith((".", " "))
+                or segment.casefold().startswith(".dinkster-")
+                or segment.split(".", 1)[0].casefold() in reserved
+                or any(ord(character) < 32 or character in '<>:"|?*\x7f' for character in segment)
+            ):
+                raise AssetError("import target must use portable folder and file names")
+        suffix = Path(parsed.stem).suffix
+        named = SaveTarget(
+            parsed.mount, parsed.prefix.removesuffix(suffix) if suffix else parsed.prefix
+        )
+        root, folder = self._writable_folder(named)
+        with self._directory_claim(folder):
+            ref, _ = self._write_stream(
+                named,
+                source,
+                suffix=suffix,
+                media_type=media_type,
+                limit=limit,
+                expected_root=root,
+                prefer_exact_name=True,
+                before_publish=before_publish,
+            )
+        return ref
+
+    def recover_named_asset(self, ref: AssetRef) -> Path | None:
+        """Verify a journaled publication under current authority without creating bytes."""
+        namespace, mount, relative = ref.virtual_path.split("/", 2)
+        if namespace != MOUNT_NAMESPACE:
+            raise AssetError("recovery requires a mounted asset")
+        target = SaveTarget(mount, relative)
+        root = self._authority.writable_root(mount)
+        path = root / relative
+        self._require_contained(root, path, target)
+        if not path.is_file():
+            return None
+        from .integrity import open_verified
+
+        with open_verified(path, ref.digest) as handle:
+            observed = os.fstat(handle.fileno())
+            if observed.st_size != ref.size:
+                raise AssetError("journaled asset size changed")
+        if self._authority.writable_root(mount).resolve() != root.resolve():
+            raise AssetError("journaled mount changed its root")
+        self._require_contained(root, path, target)
+        append_write_record(root, relative, ref.digest, ref.size, observed.st_mtime_ns)
+        return path
+
     def save_encoded(
         self,
         target: object,
@@ -297,9 +369,13 @@ class AssetWriter:
 
     def _writable_folder(self, parsed: SaveTarget) -> tuple[Path, Path]:
         root = self._authority.writable_root(parsed.mount)
-        folder = root / parsed.subfolder if parsed.subfolder else root
-        folder.mkdir(parents=True, exist_ok=True)
-        self._require_contained(root, folder, parsed)
+        if not root.is_dir():
+            raise AssetError(f"output mount {parsed.mount!r} is unavailable at {root}")
+        folder = root
+        for part in Path(parsed.subfolder).parts:
+            folder = folder / part
+            self._require_contained(root, folder, parsed)
+            folder.mkdir(exist_ok=True)
         return root, folder
 
     def _write_stream(
@@ -314,6 +390,8 @@ class AssetWriter:
         stem: str | None = None,
         expected_root: Path | None = None,
         strict_counter: bool = False,
+        prefer_exact_name: bool = False,
+        before_publish: Callable[[AssetRef], None] | None = None,
     ) -> tuple[AssetRef, int]:
         root, folder = self._writable_folder(parsed)
         if expected_root is not None and root.resolve() != expected_root.resolve():
@@ -350,8 +428,35 @@ class AssetWriter:
                 if any(getattr(before, field) != getattr(after, field) for field in fields):
                     raise AssetError("save source changed while it was copied")
             digest = DIGEST_PREFIX + hasher.hexdigest()
+            if prefer_exact_name:
+                current_root, _ = self._writable_folder(parsed)
+                if current_root.resolve() != root.resolve():
+                    raise AssetError(f"mount {parsed.mount!r} changed its root during import")
+
+            def prepare(final: Path) -> None:
+                if before_publish is not None:
+                    before_publish(
+                        AssetRef(
+                            digest,
+                            final.name,
+                            size,
+                            media_type,
+                            f"{MOUNT_NAMESPACE}/{parsed.mount}/{final.relative_to(root).as_posix()}",
+                        )
+                    )
+                    if self._authority.writable_root(parsed.mount).resolve() != root.resolve():
+                        raise AssetError("import mount changed its root before publication")
+                    self._require_contained(root, final, parsed)
+
             final, used_counter = self._claim_and_land(
-                folder, stem, suffix, tmp, counter, strict_counter=strict_counter
+                folder,
+                stem,
+                suffix,
+                tmp,
+                counter,
+                strict_counter=strict_counter,
+                prefer_exact_name=prefer_exact_name,
+                before_publish=prepare if before_publish is not None else None,
             )
         finally:
             tmp.unlink(missing_ok=True)
@@ -567,6 +672,8 @@ class AssetWriter:
         counter: int | None = None,
         *,
         strict_counter: bool = False,
+        prefer_exact_name: bool = False,
+        before_publish: Callable[[Path], None] | None = None,
     ) -> tuple[Path, int]:
         """Publish the temp file under the next free counter name.
 
@@ -574,10 +681,22 @@ class AssetWriter:
         atomic no-replace semantics. Concurrent savers therefore get distinct
         names, without exposing an empty placeholder to readers.
         """
+        if prefer_exact_name:
+            final = folder / f"{stem}{suffix}"
+            if before_publish is not None:
+                before_publish(final)
+            try:
+                os.link(tmp, final)
+            except FileExistsError:
+                pass
+            else:
+                return final, 0
         if counter is None:
             counter = AssetWriter._next_counter_for_suffix(folder, stem, suffix)
         while True:
             final = folder / f"{stem}_{counter:05d}{suffix}"
+            if before_publish is not None:
+                before_publish(final)
             try:
                 os.link(tmp, final)
             except FileExistsError:
