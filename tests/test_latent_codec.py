@@ -241,3 +241,68 @@ def test_latent_codec_validator_rejects_old_and_corrupt_frames() -> None:
     malformed = {"$": "map", "items": {}, "extra": True}
     with pytest.raises(ValueError, match="mapping"):
         validate_latent_encoded(prefix + json.dumps(malformed).encode(), {})
+
+
+@pytest.mark.parametrize("perspective,normals", ((False, False), (True, False), (True, True)))
+def test_registered_moge_geometry_preserves_optional_tensors_and_identity(
+    perspective: bool, normals: bool
+) -> None:
+    from dinkster_api.v1 import MOGE_GEOMETRY_TYPE, TypeRegistry, register_inference_types
+
+    registry = TypeRegistry()
+    register_inference_types(registry)
+    spec = registry.spec(MOGE_GEOMETRY_TYPE)
+    geometry = {
+        "points": _tensor(fill=3, shape=(2, 3, 5, 3)),
+        "depth": EncodedLatentTensor("float64", (2, 3, 5), bytes(range(240))),
+        "image": _tensor(fill=7, shape=(2, 3, 5, 3)),
+        "mask": EncodedLatentTensor("bool", (2, 3, 5), bytes((0, 1, 1)) * 10),
+        "metadata": {"name": "camera", "labels": ("left", "right"), "scale": 2.5},
+    }
+    if perspective:
+        geometry["intrinsics"] = _tensor(fill=11, shape=(2, 3, 3))
+    if normals:
+        geometry["normal"] = EncodedLatentTensor("float16", (2, 3, 5, 3), b"\x00\x3c" * 90)
+    encoded = spec.encode(geometry)
+    restored = spec.decode(encoded)
+    assert restored == geometry
+    assert isinstance(restored, dict) and restored.keys() == geometry.keys()
+    assert "samples" not in restored
+    assert spec.validate_encoded is not None
+    spec.validate_encoded(encoded, {})
+    assert spec.encode(restored) == encoded
+    assert spec.fingerprint is not None
+    reordered = dict(reversed(tuple(geometry.items())))
+    assert spec.encode(reordered) == encoded
+    assert spec.fingerprint(reordered) == spec.fingerprint(geometry)
+    latent = registry.spec(LATENT_TYPE)
+    assert latent.fingerprint is not None
+    assert spec.fingerprint(geometry) != latent.fingerprint(geometry)
+    assert spec.fingerprint(geometry) != spec.fingerprint(
+        {**geometry, "points": _tensor(fill=4, shape=(2, 3, 5, 3))}
+    )
+
+
+@pytest.mark.parametrize("corruption", ("buffer", "shape", "dtype"))
+def test_registered_moge_geometry_rejects_malformed_tensor_records(corruption: str) -> None:
+    from dinkster_api.v1 import MOGE_GEOMETRY_TYPE, TypeRegistry, register_inference_types
+
+    registry = TypeRegistry()
+    register_inference_types(registry)
+    spec = registry.spec(MOGE_GEOMETRY_TYPE)
+    encoded = spec.encode({"depth": _tensor(fill=1, shape=(1, 2, 3))})
+    prefix = LATENT_CODEC_MAGIC + b"\x01"
+    tree = json.loads(encoded[len(prefix) :])
+    record = tree["items"]["depth"]
+    if corruption == "buffer":
+        record["data"] = "AA=="
+    elif corruption == "shape":
+        record["shape"] = [1, -2, 3]
+    else:
+        record["dtype"] = "float99"
+    malformed = prefix + json.dumps(tree).encode()
+    assert spec.validate_encoded is not None
+    with pytest.raises(ValueError, match="tensor"):
+        spec.validate_encoded(malformed, {})
+    with pytest.raises(ValueError, match="tensor"):
+        spec.decode(malformed)

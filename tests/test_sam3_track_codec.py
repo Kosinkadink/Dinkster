@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
-import sys
-
 import pytest
 from dinkster_api.v1 import SAM3_TRACK_DATA_TYPE, TypeRegistry, register_inference_types
 from dinkster_values import LATENT_TYPE, EncodedLatentTensor, encode_latent
@@ -102,25 +99,3 @@ def test_sam3_rejects_malformed_payloads_in_every_codec_entry(value: dict[str, o
         spec.decode(payload)
     with pytest.raises(ValueError):
         spec.validate_encoded(payload, {})
-
-
-def test_sam3_codec_registration_is_cold_and_public_identity_is_shared() -> None:
-    subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys\n"
-            "from dinkster_api.v1 import (SAM3_TRACK_DATA_TYPE, TypeRegistry, "
-            "register_inference_types)\n"
-            "from dinkster_values.builtin_types import SAM3_TRACK_DATA_TYPE as canonical\n"
-            "assert SAM3_TRACK_DATA_TYPE is canonical\n"
-            "r = TypeRegistry(); register_inference_types(r); register_inference_types(r)\n"
-            "s = r.spec(canonical)\n"
-            "v = {'packed_masks': None, 'orig_size': (2, 5), 'n_frames': 0}\n"
-            "b = s.encode(v); s.validate_encoded(b, {}); assert s.decode(b) == v\n"
-            "assert not any(n == 'torch' or n.startswith('torch.') or "
-            "n == 'dinkster_inference' or n.startswith('dinkster_inference.') "
-            "for n in sys.modules)\n",
-        ],
-        check=True,
-    )

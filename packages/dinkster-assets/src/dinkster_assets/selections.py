@@ -168,7 +168,9 @@ def _check_subtree(path: Path) -> None:
     visit(root, frozenset())
 
 
-def _file_ref(choice: _Choice, path: Path, env: Mapping[str, str] | None) -> LocalAssetRef:
+def _file_ref(
+    choice: _Choice, path: Path, env: Mapping[str, str] | None
+) -> AssetRef | LocalAssetRef:
     environment = os.environ if env is None else env
     snapshot = environment.get(MOUNTS_ENV)
     if not snapshot:
@@ -180,12 +182,18 @@ def _file_ref(choice: _Choice, path: Path, env: Mapping[str, str] | None) -> Loc
 
 def resolve_asset_selection(
     kind: str, name: str | AssetRef | LocalAssetRef, *, env: Mapping[str, str] | None = None
-) -> AssetRef | LocalAssetRef | tuple[LocalAssetRef, LocalAssetRef] | Path | None:
+) -> (
+    AssetRef
+    | LocalAssetRef
+    | tuple[AssetRef | LocalAssetRef, AssetRef | LocalAssetRef]
+    | Path
+    | None
+):
     """Resolve one current source option, rejecting stale or ungranted choices.
 
     Existing file refs retain their verification policy but must resolve to
     an admitted file inside the current exact-kind grants. Returns that ref,
-    two local file refs (encoder, decoder), a checked directory subtree, or
+    two file refs (encoder, decoder), a checked directory subtree, or
     None for pixel_space. Directory paths are invocation-scoped read authority,
     never values to store in a graph.
     """

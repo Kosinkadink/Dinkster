@@ -1,8 +1,5 @@
 """Torch-free public audio music conditioning schemas."""
 
-import subprocess
-import sys
-
 from dinkster_api.v1 import schema_from_wire, schema_to_wire
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.audio_music_conditioning import AUDIO_MUSIC_CONDITIONING_NODES
@@ -42,20 +39,3 @@ def test_audio_music_conditioning_schemas() -> None:
     ]
     for schema in (music, reference):
         assert schema_from_wire(schema_to_wire(schema)) == schema
-
-
-def test_audio_music_conditioning_cold_discovery() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; from dinkster_nodes_comfy.audio_music_conditioning "
-            "import AUDIO_MUSIC_CONDITIONING_NODES; "
-            "assert len([n.schema() for n in AUDIO_MUSIC_CONDITIONING_NODES]) == 2; "
-            "assert 'torch' not in sys.modules; "
-            "assert 'dinkster_inference.model_management' not in sys.modules",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr

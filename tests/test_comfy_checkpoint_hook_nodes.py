@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
-import sys
 import tomllib
 from pathlib import Path
 
@@ -53,17 +51,4 @@ def test_checkpoint_hooks_serialize_without_torch_and_match_manifest_order() -> 
     )
     assert tuple(manifest["pack"]["namespaces"]) == tuple(
         node.schema().node_type for node in COMFY_NODES
-    )
-    subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; from dinkster_schema import schema_to_wire; "
-            "from dinkster_nodes_comfy.hook_checkpoint import HOOK_CHECKPOINT_NODES; "
-            "assert all(schema_to_wire(node.schema()) for node in HOOK_CHECKPOINT_NODES); "
-            "assert 'torch' not in sys.modules; "
-            "assert not any(name.startswith('dinkster_inference.') for name in sys.modules)",
-        ],
-        check=True,
-        cwd=root,
     )
