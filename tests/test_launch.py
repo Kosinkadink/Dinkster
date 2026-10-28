@@ -2,17 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import builtins
+import json
 import urllib.error
 from pathlib import Path
 from unittest.mock import Mock
 
+import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
-from dinkster_assets import MountDef, dump_mounts, load_mounts, load_output_mount
+from dinkster_assets import MountDef, MountTable, dump_mounts, load_mounts, load_output_mount
 
 from dinkster import frontend, launch, serve, setup
 from dinkster.cli import main as cli_main
 from dinkster.frontend import install_frontend
+from dinkster.mounts_api import MountService
+from dinkster.project_folders import ProjectFolders
 
 
 def test_frontend_discovery_finds_a_sibling_development_build(tmp_path: Path, monkeypatch) -> None:
@@ -36,12 +40,20 @@ def test_setup_creates_the_default_launch_roots(tmp_path: Path, monkeypatch, cap
     library, packs = setup.default_roots()
     assert library.is_dir()
     assert (library / "output").is_dir()
+    assert (library / "imports").is_dir()
     assert load_mounts(library / "mounts.toml") == (
+        MountDef(id="imports", path=library / "imports", mode="readwrite"),
         MountDef(id="output", path=library / "output", mode="readwrite"),
     )
     assert load_output_mount(library / "mounts.toml") == "output"
     assert (packs / "generations").is_dir()
     assert "Run `dinkster`" in capsys.readouterr().out
+    table = MountTable(output_mount="output")
+    for mount in load_mounts(library / "mounts.toml"):
+        table.add(mount)
+    table.add(MountDef("derived", tmp_path / "derived"), source="derived")
+    service = MountService(table, library / "mounts.toml")
+    assert set(service.project_context("default").mounts) == {"derived", "imports", "output"}
 
 
 def test_setup_preserves_a_selected_alternate_output_mount(tmp_path: Path, monkeypatch) -> None:
@@ -71,8 +83,114 @@ def test_setup_reuses_an_existing_mount_for_the_default_output_path(
 
     assert load_mounts(library / "mounts.toml") == (
         MountDef("existing-output", library / "output", "readwrite"),
+        MountDef("imports", library / "imports", "readwrite"),
     )
     assert load_output_mount(library / "mounts.toml") == "existing-output"
+
+
+@pytest.mark.parametrize("custom_id", [False, True])
+def test_setup_preserves_existing_import_grants(
+    tmp_path: Path, monkeypatch, custom_id: bool
+) -> None:
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "state"))
+    library, _ = setup.default_roots()
+    library.mkdir(parents=True)
+    root = library / "imports" if custom_id else tmp_path / "offline-network-imports"
+    existing = MountDef("plates" if custom_id else "imports", root, "read", priority=7)
+    config = library / "mounts.toml"
+    config.write_text(dump_mounts((existing,)), "utf-8")
+    project_path = library / "project-folders.json"
+    projects = ProjectFolders(project_path)
+    projects.initialize((existing.id,))
+    projects.register(existing.id, project="film", shared=False)
+    projects.update("other", [], available=(existing.id,), output=None)
+    preferences = project_path.read_bytes()
+
+    setup.main([])
+    saved = config.read_bytes()
+    setup.main([])
+
+    assert config.read_bytes() == saved
+    assert existing in load_mounts(config)
+    assert len(load_mounts(config)) == 2
+    assert not root.exists()
+    assert not (library / "imports").exists()
+    assert load_output_mount(config) == "output"
+    assert project_path.read_bytes() == preferences
+
+
+def test_setup_does_not_restore_a_removed_import_grant(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "state"))
+    setup.main([])
+    library, _ = setup.default_roots()
+    config = library / "mounts.toml"
+    remaining = tuple(mount for mount in load_mounts(config) if mount.id != "imports")
+    config.write_text(dump_mounts(remaining, output_mount="output"), "utf-8")
+    (library / "imports").rmdir()
+
+    setup.main([])
+
+    assert load_mounts(config) == remaining
+    assert not (library / "imports").exists()
+
+
+@pytest.mark.parametrize("interrupt_settings_write", (False, True))
+def test_setup_adds_imports_to_existing_projects_without_resetting_preferences(
+    tmp_path: Path, monkeypatch, interrupt_settings_write: bool
+) -> None:
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "state"))
+    library, _ = setup.default_roots()
+    library.mkdir(parents=True)
+    config = library / "mounts.toml"
+    mounts = (
+        MountDef("output", library / "output", "readwrite"),
+        MountDef("models", tmp_path / "models"),
+    )
+    config.write_text(dump_mounts(mounts, output_mount="output"), "utf-8")
+    project_path = library / "project-folders.json"
+    projects = ProjectFolders(project_path)
+    projects.initialize(("output", "models"))
+    projects.update("film", ["models"], available=("output", "models"), output=None)
+    projects.update("music", ["output", "models"], available=("output", "models"), output="output")
+    before = json.loads(project_path.read_text("utf-8"))
+
+    if interrupt_settings_write:
+        replace = setup.os.replace
+
+        def interrupt(source: str | Path, destination: str | Path) -> None:
+            if Path(destination) == project_path:
+                raise OSError("project settings could not be published")
+            replace(source, destination)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(setup.os, "replace", interrupt)
+            with pytest.raises(OSError, match="project settings could not be published"):
+                setup.main([])
+        assert any(mount.id == "imports" for mount in load_mounts(config))
+        assert json.loads(project_path.read_text("utf-8")) == before
+        assert not (library / ".imports-initialized").exists()
+
+    setup.main([])
+
+    after = json.loads(project_path.read_text("utf-8"))
+    assert after == {**before, "shared": ["output", "models", "imports"]}
+    table = MountTable(output_mount="output")
+    for mount in load_mounts(config):
+        table.add(mount)
+    service = MountService(table, config)
+    assert service.project_context("film").mounts == ("models", "imports")
+    assert service.project_context("film").output_mount is None
+    assert service.project_context("music").mounts == ("output", "models", "imports")
+    assert service.project_context("music").output_mount == "output"
+    service.projects.update("film", ["models"], available=service.mount_ids(), output=None)
+    saved = project_path.read_bytes()
+
+    setup.main([])
+
+    assert project_path.read_bytes() == saved
+    restarted = MountService(table, config)
+    assert restarted.project_context("film").mounts == ("models",)
+    assert restarted.project_context("music").mounts == ("output", "models", "imports")
 
 
 def test_bare_cli_launches_one_origin_and_opens_browser(
