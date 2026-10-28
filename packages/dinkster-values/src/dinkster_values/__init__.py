@@ -143,7 +143,12 @@ from .image_codec import (
     render_mask_png,
     validate_image_encoded,
 )
-from .image_components import ImageComponents, ReadableImageSource, decode_image_components
+from .image_components import (
+    ImageComponents,
+    ReadableImageSource,
+    decode_image_components,
+    open_image_components,
+)
 from .latent_codec import (
     LATENT_CODEC_MAGIC,
     LATENT_CODEC_VERSION,
@@ -485,6 +490,7 @@ __all__ = [
     "detection_meta",
     "decode_image_array",
     "decode_image_components",
+    "open_image_components",
     "decode_image_file",
     "decode_model3d",
     "decode_model3d_file",
