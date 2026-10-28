@@ -112,10 +112,20 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
         )
 
         def prepare_packs(target: Path) -> None:
-            if reject_packs:
-                raise EnvironmentError("pack refused before activation")
             site = next(target.rglob("stable_fixture.py")).parent
-            (site / "in_process_fixture.py").write_text("VALUE = 11\n")
+            value = 97 if reject_packs else 11
+            (site / "in_process_fixture.py").write_text(f"VALUE = {value}\n")
+            if reject_packs:
+                staged = subprocess.check_output(
+                    [
+                        str(interpreter(target)),
+                        "-B",
+                        "-c",
+                        "import in_process_fixture; print(in_process_fixture.VALUE)",
+                    ]
+                )
+                assert staged.strip() == b"97"
+                raise EnvironmentError("later pack refused after interpreter staging")
 
         return build_generation(
             root=root,
@@ -162,11 +172,14 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
         build(3, "3.0", "f" * 64)
     assert read_current(root) == 1
     assert not (root / "generations" / "3").exists()
-    with pytest.raises(EnvironmentError, match="pack refused"):
+    with pytest.raises(EnvironmentError, match="later pack refused after interpreter staging"):
         build(4, "2.0", second_hash, reject_packs=True)
     assert read_current(root) == 1
     assert not (root / "generations" / "4").exists()
     assert first.drift(first_dir) == ()
+    assert (
+        subprocess.check_output([str(interpreter(first_dir)), "-B", "-c", script]).strip() == b"53"
+    )
     shutil.rmtree(base.parent)
     shutil.rmtree(second_dir)
     assert (
