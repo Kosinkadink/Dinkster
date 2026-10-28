@@ -85,6 +85,7 @@ from .image_filters import IMAGE_FILTER_NODES
 from .image_tiles import ImageMergeTileList, SplitImageToTileList
 from .image_transform import IMAGE_TRANSFORM_NODES
 from .inpaint import INPAINT_NODES
+from .interpolation_loader import FrameInterpolationModelLoader
 from .joyimage_encoders import TextEncodeJoyImageEdit
 from .json_prompt import BuildJsonPromptIdeogram
 from .kandinsky_video import Kandinsky5ImageToVideo
@@ -270,6 +271,7 @@ COMFY_NODES = (
     *LATENT_UPSCALE_NODES,
     *LATENT_UPSCALE_LOADER_NODES,
     OpticalFlowLoader,
+    FrameInterpolationModelLoader,
     *MODEL_LATENT_NODES,
     *CLIP_NODES,
     *STYLE_MODEL_NODES,
