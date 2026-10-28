@@ -29,6 +29,7 @@ from dinkster_assets import (
     AssetError,
     AssetScanProgress,
     AssetVault,
+    AssetWriter,
     LibraryStore,
     LocalAssetLibrary,
     MountDef,
@@ -2088,7 +2089,13 @@ def test_operator_asset_locations_verify_scoped_project_content(tmp_path: Path) 
         writer.commit()
 
     async def scenario() -> None:
-        library = ServerLibrary(vault=vault, store=store, local_resolver=table)
+        library = ServerLibrary(
+            vault=vault,
+            store=store,
+            local_resolver=table,
+            project_folders_for=service.project_context,
+            upload_writer=AssetWriter(table),
+        )
         app = create_app(make_engine, SCHEMAS, library=library)
         add_mount_routes(app, service)
         client = TestClient(TestServer(app))
@@ -2100,6 +2107,23 @@ def test_operator_asset_locations_verify_scoped_project_content(tmp_path: Path) 
                 assert response.status == 200
                 assert response.headers["Cache-Control"] == "no-store"
                 return await response.json()
+
+            response = await client.post(
+                "/api/assets",
+                params={"scope": "local", "name": "just-uploaded.bin"},
+                data=b"newly published bytes",
+            )
+            assert response.status == 201
+            uploaded = await response.json()
+            body = await locations(scope="local", digest=uploaded["digest"])
+            assert body["locations"] == [
+                {
+                    "storage": "mount",
+                    "mount": "imports",
+                    "virtualPath": "mounts/imports/just-uploaded.bin",
+                    "path": str(tmp_path / "imports" / "just-uploaded.bin"),
+                }
+            ]
 
             body = await locations(scope="local", digest=first.digest)
             assert body["vault"] == str(vault.root)

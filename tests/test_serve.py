@@ -3664,6 +3664,19 @@ def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
             ) as resp:
                 assert resp.status == 201, await resp.text()
                 imported = (await resp.json())["asset"]
+            async with session.get(
+                base + "/api/mounts/locations",
+                params={"scope": "local", "project": "film", "digest": imported["digest"]},
+            ) as resp:
+                assert resp.status == 200
+                assert (await resp.json())["locations"] == [
+                    {
+                        "storage": "mount",
+                        "mount": "imports",
+                        "virtualPath": "mounts/imports/dropped.png",
+                        "path": str(library_root / "imports" / "dropped.png"),
+                    }
+                ]
             assert imported["virtualPath"] == "mounts/imports/dropped.png"
             assert (library_root / "imports" / "dropped.png").read_bytes() == image.getvalue()
             from dinkster_assets import AssetVault
