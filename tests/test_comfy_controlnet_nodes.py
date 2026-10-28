@@ -17,6 +17,7 @@ from dinkster_nodes_comfy.controlnet import (
 
 
 def test_controlnet_schemas_register_the_exact_core_ids() -> None:
+    assert SetUnionControlNetType in COMFY_NODES
     manifest = tomllib.loads(
         (
             Path(__file__).resolve().parents[1] / "packages/dinkster-nodes-comfy/dinkster-pack.toml"

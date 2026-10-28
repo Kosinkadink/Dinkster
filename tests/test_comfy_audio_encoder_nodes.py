@@ -28,6 +28,11 @@ from dinkster_workers import load_manifest
 
 def test_audio_encoder_interfaces_and_native_manifest() -> None:
     loader, encode, abc = (node.schema() for node in AUDIO_ENCODER_NODES)
+    assert (loader.node_type, encode.node_type, abc.node_type) == (
+        "AudioEncoderLoader",
+        "AudioEncoderEncode",
+        "SheetSage2AudioToABC",
+    )
     assert loader.display_name == "Load Audio Encoder"
     assert loader.category == "model/loaders"
     assert [(i.id, i.type) for i in loader.inputs] == [

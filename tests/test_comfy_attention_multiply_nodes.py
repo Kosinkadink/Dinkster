@@ -14,6 +14,7 @@ def test_attention_multiplier_nodes_are_exported_by_the_complete_pack() -> None:
         "UNetTemporalAttentionMultiply",
     )
     assert tuple(node.__name__ for node in ATTENTION_MULTIPLY_NODES) == names
+    assert tuple(node.schema().node_type for node in ATTENTION_MULTIPLY_NODES) == names
     assert set(ATTENTION_MULTIPLY_NODES).issubset(COMFY_NODES)
     assert tuple(input_spec.id for input_spec in CLIPAttentionMultiply.schema().inputs) == (
         "clip",

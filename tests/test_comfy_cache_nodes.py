@@ -9,6 +9,7 @@ def test_cache_nodes_publish_the_fixed_core_interfaces() -> None:
     assert CACHE_NODES == (EasyCache, LazyCache, FluxKVCache)
     assert set(CACHE_NODES).issubset(COMFY_NODES)
     flux = FluxKVCache.define_schema()
+    assert flux.node_type == "FluxKVCache"
     assert flux.category == "experimental"
     assert [(item.id, item.type) for item in flux.inputs] == [
         ("model", TypeExpr.concrete(MODEL_TYPE))

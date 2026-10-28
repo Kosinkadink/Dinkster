@@ -15,6 +15,10 @@ def test_compile_nodes_are_registered_once_with_their_public_schemas() -> None:
 
     assert COMPILE_NODES == (TorchCompileModel, wanBlockSwap)
     assert all(node in COMFY_NODES for node in COMPILE_NODES)
+    assert tuple(node for node in COMFY_NODES if node in COMPILE_NODES) == (
+        TorchCompileModel,
+        wanBlockSwap,
+    )
     assert compile_schema.node_type == "TorchCompileModel"
     assert compile_schema.category == "experimental"
     assert compile_schema.inputs[0].type == TypeExpr.concrete(MODEL_TYPE)

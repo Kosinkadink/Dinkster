@@ -14,6 +14,10 @@ from dinkster_nodes_comfy.wandancer_keyframes import WANDANCER_KEYFRAME_NODES
 
 
 def test_wandancer_keyframe_schemas_and_cold_discovery() -> None:
+    assert tuple(node.schema().node_type for node in WANDANCER_KEYFRAME_NODES) == (
+        "WanDancerPadKeyframes",
+        "WanDancerPadKeyframesList",
+    )
     for node, list_output in zip(WANDANCER_KEYFRAME_NODES, (False, True), strict=True):
         schema = node.schema()
         assert schema.category == "image/video"

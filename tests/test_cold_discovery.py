@@ -44,16 +44,21 @@ import sys
 
 from dinkster_schema import schema_to_wire
 from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_api.v1 import Node
 
 modules = json.loads(sys.argv[1])
 for name in modules:
     module = importlib.import_module(name)
-    for node in COMFY_NODES:
-        if node.__module__ == name:
+    for attr, node in vars(module).items():
+        if (not attr.startswith('_') and isinstance(node, type)
+                and issubclass(node, Node) and node.__module__ == name):
             assert schema_to_wire(node.schema()), (name, node)
     forbidden = [name for name in sys.modules if name == 'torch' or name.startswith('torch.')
                  or name == 'dinkster_inference' or name.startswith('dinkster_inference.')]
     assert not forbidden, (module.__name__, forbidden)
+
+public_names = {node.schema().node_type for node in COMFY_NODES}
+assert {'LTXVDurationPredictor', 'SetUnionControlNetType'} <= public_names
 
 from dinkster_api.v1 import (
     AUDIO_ENCODER_TYPE, CLIP_TYPE, CLIP_VISION_OUTPUT_TYPE, FLOATS_TYPE,

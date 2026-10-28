@@ -15,6 +15,7 @@ from dinkster_workers import load_manifest
 
 
 def test_duration_predictor_schema_and_complete_manifest() -> None:
+    assert LTXVDurationPredictor in COMFY_NODES
     schema = LTXVDurationPredictor.schema()
     assert schema.node_type == "LTXVDurationPredictor"
     assert schema.display_name == "LTXV Duration Predictor"
