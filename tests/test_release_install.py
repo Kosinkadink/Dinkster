@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from test_frontend_artifact import artifact
 
 from scripts.build_release import (
     build_frontend_wheel,
@@ -23,19 +24,15 @@ from scripts.build_release import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_built_frontend_wheel_is_discovered_without_a_checkout(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_built_frontend_wheel_is_discovered_without_a_checkout(tmp_path: Path) -> None:
     source = tmp_path / "frontend-source"
     source.mkdir()
-    (source / "package.json").write_text('{"version": "0.0.1"}')
-    bundle = source / "packages/app/dist"
-    bundle.mkdir(parents=True)
-    (bundle / "index.html").write_text('<!doctype html><div id="root"></div>')
-    monkeypatch.setattr("scripts.build_release.git_head", lambda _: "frontend-commit")
+    payload, pin = artifact()
+    published = source / "frontend.zip"
+    published.write_bytes(payload)
     uv = shutil.which("uv")
     assert uv is not None, "release packaging requires uv"
-    wheel = build_frontend_wheel(source, bundle, "0.0.1", "frontend-commit", tmp_path, uv)
+    wheel = build_frontend_wheel(published, "0.0.1", pin, tmp_path, uv)
     installed = tmp_path / "site-packages"
     with zipfile.ZipFile(wheel) as archive:
         archive.extractall(installed)
@@ -88,22 +85,25 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
 def test_release_workflow_builds_all_wheels_and_checks_tag_metadata() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
     build = workflow["jobs"]["build"]
+    assert build["permissions"] == {"actions": "read", "contents": "read"}
     commands = "\n".join(step.get("run", "") for step in build["steps"])
-    assert "scripts/build_release.py" in commands
+    assert "-m scripts.build_release" in commands
     assert '--tag "$RELEASE_TAG"' in commands
     assert "--identity-root" not in commands
     assert "uvx twine check dist/*.whl" in commands
-    assert "pnpm --filter @dinkster/app build" in commands
-    frontend_checkout = next(
-        step
+    assert "scripts/download_frontend.py" in commands
+    assert "--frontend-artifact .release/frontend.zip" in commands
+    assert "pnpm" not in commands
+    assert "node" not in commands
+    assert all(
+        step.get("uses") not in {"pnpm/action-setup@v4", "actions/setup-node@v4"}
+        and step.get("with", {}).get("repository") != "Kosinkadink/Dinkster-Frontend"
         for step in build["steps"]
-        if step.get("uses") == "actions/checkout@v4"
-        and step.get("with", {}).get("repository") == "Kosinkadink/Dinkster-Frontend"
     )
-    assert frontend_checkout["with"]["ref"] == "${{ steps.frontend.outputs.ref }}"
-    assert frontend_checkout["with"]["persist-credentials"] is False
-    assert "token" not in frontend_checkout["with"]
-    assert "ssh-key" not in frontend_checkout["with"]
+    frontend_download = next(
+        step for step in build["steps"] if step.get("name") == "Download the pinned frontend bundle"
+    )
+    assert frontend_download["env"] == {"GH_TOKEN": "${{ github.token }}"}
     assert all(
         step.get("with", {}).get("repository") != "Kosinkadink/Dinkster-Frontend"
         for step in build["steps"]
@@ -328,7 +328,8 @@ def test_repository_versions_match_first_release_tag() -> None:
     frontend = json.loads((ROOT / "scripts/release_sources.json").read_text(encoding="utf-8"))
     assert frontend["repository"] == "Kosinkadink/Dinkster-Frontend"
     assert len(frontend["commit"]) == 40
-    assert set(frontend) == {"repository", "commit"}
+    assert len(frontend["sha256"]) == 64
+    assert set(frontend) == {"repository", "commit", "sha256"}
 
 
 def test_maintainer_source_archive_excludes_non_release_material(tmp_path: Path) -> None:

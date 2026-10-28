@@ -6,8 +6,9 @@ rescale classifier-free guidance; select compute dtype; and select a supported
 dense attention backend. They use the pinned `dinkster_inference` sampler and
 model patcher.
 
-`ModelAttentionBackend` offers PyTorch and Comfy Kitchen attention on every host.
-An unavailable backend falls back to PyTorch attention with a warning.
+Attention backend availability is checked only when the node executes, without
+loading the tensor runtime during schema discovery. An unavailable backend falls
+back to PyTorch attention with a warning.
 
 `ChromaRadianceOptions` applies Chroma Radiance transformer options over an
 inclusive sigma range while optionally retaining an existing model wrapper.

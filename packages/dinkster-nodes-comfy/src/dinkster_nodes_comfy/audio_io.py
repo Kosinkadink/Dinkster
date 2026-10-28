@@ -8,6 +8,7 @@ from typing import Any
 
 from dinkster_api.v1 import (
     ASSET_TYPE,
+    AUDIO_RECORD_TYPE,
     AUDIO_TYPE,
     AssetRef,
     AssetWidget,
@@ -73,6 +74,19 @@ class LoadAudio(Node):
             elif not np.issubdtype(waveform.dtype, np.floating):
                 raise ValueError(f"Unsupported wav dtype: {waveform.dtype}")
         return cls.outputs(AUDIO={"waveform": waveform[None], "sample_rate": sample_rate})
+
+
+class RecordAudio(LoadAudio):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="RecordAudio",
+            display_name="Record Audio",
+            category="audio",
+            search_terms=("microphone input", "audio capture", "voice input"),
+            inputs=(InputSpec("audio", TypeExpr.concrete(AUDIO_RECORD_TYPE)),),
+            outputs=(OutputSpec("AUDIO", _AUDIO),),
+        )
 
 
 class PreviewAudio(Node):

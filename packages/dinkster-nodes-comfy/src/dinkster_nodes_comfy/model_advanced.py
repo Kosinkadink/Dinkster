@@ -475,7 +475,6 @@ class ModelComputeDtype(Node):
 class ModelAttentionBackend(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        backends = ("pytorch attention", "comfy kitchen attention")
         return NodeSchema(
             node_type="ModelAttentionBackend",
             display_name="Model Attention Backend",
@@ -497,7 +496,7 @@ class ModelAttentionBackend(Node):
                         "The dense attention backend. Comfy Kitchen attention uses quantized INT8 "
                         "attention and is available only on Nvidia and AMD GPUs."
                     ),
-                    widget=ComboWidget(tuple(ComboOption(value) for value in backends)),
+                    widget=ComboWidget(("pytorch attention", "comfy kitchen attention")),
                 ),
             ),
             outputs=(
