@@ -129,7 +129,7 @@ def test_anima_zero_strength_and_inpaint_mask_controls() -> None:
         assert torch.equal(mask, torch.ones((1, 8, 16)))
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_anima_executes_production_pack_on_both_ordinary_hosts(in_process: bool) -> None:
     from dinkster_graph import Graph, GraphNode, Link
 

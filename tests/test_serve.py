@@ -336,7 +336,8 @@ def test_standard_vision_pack_provisions_declared_runtime_before_composition(
     assert TESTS_DIR.parent / "packages" / "dinkster-video" in workspace
     if pack_name == "dinkster-vision-birefnet":
         assert any(
-            requirement.startswith("dinkster-inference @ git+") for requirement in manifest.requires
+            requirement.startswith("dinkster-inference @ https://")
+            for requirement in manifest.requires
         )
     assert str(manifest.root.parent / "src") in prepared.env["PYTHONPATH"].split(os.pathsep)
 
@@ -2460,8 +2461,21 @@ def register_types(registry):
 NODES = [Source]
 """)
     port = free_port()
+    bootstrap = """
+from dinkster import serve
+
+serve.default_pack_ids = lambda: ("dinkster-nodes-media-io",)
+serve.model_pack_specs = lambda: ()
+serve.comfy_compat_specs = lambda *args, **kwargs: ()
+serve.main()
+"""
     process = subprocess.Popen(
-        serve_command(port, "--pack", str(PROOF_ROOT), "--pack", str(source)),
+        [
+            sys.executable,
+            "-c",
+            bootstrap,
+            *serve_command(port, "--pack", str(PROOF_ROOT), "--pack", str(source))[3:],
+        ],
         env={**os.environ, "PYTHONPATH": str(source)},
         cwd=tmp_path,
         stdout=subprocess.DEVNULL,
@@ -2486,6 +2500,9 @@ NODES = [Source]
                     except aiohttp.ClientError:
                         pass
                     await asyncio.sleep(0.05)
+            async with session.get(base + "/api/composition") as response:
+                report = await response.json()
+            assert report["packs"]["dinkster-nodes-media-io"]["state"] == "announced"
             async with session.get(base + PROOF_ROUTE) as response:
                 assert response.status == 200
                 assert await response.json() == {
@@ -3308,7 +3325,12 @@ main()
     stderr_path = tmp_path / "serve.stderr.log"
     with stderr_path.open("wb") as stderr:
         process = subprocess.Popen(
-            [sys.executable, "-c", bootstrap, *serve_command(port, *args)[3:]],
+            [
+                sys.executable,
+                "-c",
+                bootstrap,
+                *serve_command(port, "--no-default-packs", *args)[3:],
+            ],
             env={
                 **os.environ,
                 "PYTHONPATH": os.pathsep.join(str(manifest.parent) for manifest in manifests),
@@ -3351,7 +3373,7 @@ def test_serve_signal_during_progressive_startup_reaps_partial_child(tmp_path: P
     expected_children = 1
     port = free_port()
     process = subprocess.Popen(
-        serve_command(port, "--pack", str(manifest)),
+        serve_command(port, "--no-default-packs", "--pack", str(manifest)),
         env={**os.environ, "PYTHONPATH": str(manifest.parent)},
         cwd=tmp_path,
         stdout=subprocess.DEVNULL,
@@ -3392,7 +3414,7 @@ def test_serve_signal_reaps_already_dead_child(tmp_path: Path) -> None:
     expected_children = 1
     port = free_port()
     process = subprocess.Popen(
-        serve_command(port, "--pack", str(manifest)),
+        serve_command(port, "--no-default-packs", "--pack", str(manifest)),
         env={**os.environ, "PYTHONPATH": str(manifest.parent)},
         cwd=tmp_path,
         stdout=subprocess.DEVNULL,
@@ -3424,13 +3446,21 @@ def test_serve_signal_reaps_already_dead_child(tmp_path: Path) -> None:
 def test_serve_pack_failure_recorded_and_survivors_serve(tmp_path: Path) -> None:
     """A pack that cannot compose (reserved name) does NOT take the process
     down by default: the failure is cached on /api/composition with its
-    error, the default packs keep serving, and composition still completes -
+    error, the foundation pack keeps serving, and composition still completes -
     positively, with the failure on the record instead of a dead server
     (the anti-ComfyUI: broken extensions were just silently absent)."""
     manifest = write_iso_manifest(tmp_path / "pack", name="core")
     port = free_port()
+    bootstrap = """
+from dinkster import serve
+
+serve.default_pack_ids = lambda: ("dinkster-nodes-foundation",)
+serve.model_pack_specs = lambda: ()
+serve.comfy_compat_specs = lambda *args, **kwargs: ()
+serve.main()
+"""
     process = subprocess.Popen(
-        serve_command(port, "--pack", str(manifest)),
+        [sys.executable, "-c", bootstrap, *serve_command(port, "--pack", str(manifest))[3:]],
         cwd=tmp_path,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -3455,7 +3485,7 @@ def test_serve_pack_failure_recorded_and_survivors_serve(tmp_path: Path) -> None
             entry = report["packs"]["core"]
             assert entry["state"] == "failed"
             assert "reserved" in entry["error"]
-            # The survivors (here: the default packs) serve, and the table says
+            # The survivor serves, and the table says
             # complete - the failure is on the record, not on the surface.
             async with session.get(base + "/api/nodes") as resp:
                 data = await resp.json()
@@ -3485,7 +3515,7 @@ def test_serve_retracts_schema_owner_without_execution_provider(tmp_path: Path) 
     )
     port = free_port()
     process = subprocess.Popen(
-        serve_command(port, "--pack", str(manifest)),
+        serve_command(port, "--no-default-packs", "--pack", str(manifest)),
         env={**os.environ, "PYTHONPATH": str(manifest.parent)},
         cwd=tmp_path,
         stdout=subprocess.DEVNULL,
@@ -3528,7 +3558,7 @@ def test_serve_strict_packs_failure_exits_nonzero(tmp_path: Path) -> None:
     manifest = write_iso_manifest(tmp_path / "pack", name="core")
     port = free_port()
     process = subprocess.Popen(
-        serve_command(port, "--pack", str(manifest), "--strict-packs"),
+        serve_command(port, "--no-default-packs", "--pack", str(manifest), "--strict-packs"),
         cwd=tmp_path,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
@@ -3696,11 +3726,19 @@ def test_serve_mounted_save_end_to_end(tmp_path: Path) -> None:
         "NODES = [Gradient, Save]\n"
     )
     port = free_port()
+    bootstrap = """
+from dinkster import serve
+
+serve.default_pack_ids = lambda: ("dinkster-nodes-media-io",)
+serve.model_pack_specs = lambda: ()
+serve.comfy_compat_specs = lambda *args, **kwargs: ()
+serve.main()
+"""
     process, log = start_logged_serve(
         [
             sys.executable,
-            "-m",
-            "dinkster.serve",
+            "-c",
+            bootstrap,
             "--host",
             "127.0.0.1",
             "--port",

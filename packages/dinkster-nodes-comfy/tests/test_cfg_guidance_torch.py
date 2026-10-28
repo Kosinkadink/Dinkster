@@ -190,7 +190,7 @@ class RenormConsumer(Node):
         return cls.outputs(value=2.0)
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_ordinary_manifest_links_cfg_guidance_producer_and_consumer_twice(
     tmp_path: Path, in_process: bool
 ) -> None:

@@ -1722,11 +1722,13 @@ async def serve_connection(
                 # on every exit path, including cancellation mid-grant.
                 with contextlib.suppress(Exception):
                     await send({"type": "memoryRelease", "requestId": invocation_id})
+            cancellation_events.pop(invocation_id, None)
+            resource_tasks.discard(cast("asyncio.Task[None]", asyncio.current_task()))
             # Invocations are what change consumer state (a loader admitted a
-            # resident): refresh the parent's snapshot at every one.
+            # resident): refresh the parent's snapshot after cleanup. A report
+            # drain may suspend while the parent requests full release.
             await send_report()
             tasks.pop(invocation_id, None)
-            cancellation_events.pop(invocation_id, None)
             if resume is not None and cancellation.is_set():
                 finish_resumable_cancellation(invocation_id)
 

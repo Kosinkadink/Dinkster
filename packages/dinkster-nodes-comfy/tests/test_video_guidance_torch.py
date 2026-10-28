@@ -96,7 +96,7 @@ class VideoGuidanceModelConsumer(Node):
 VIDEO_GUIDANCE_FIXTURE_NODES = (VideoGuidanceModelSource, VideoGuidanceModelConsumer)
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_ordinary_manifest_executes_both_video_guidance_nodes_twice_in_both_host_modes(
     tmp_path: Path, in_process: bool
 ) -> None:

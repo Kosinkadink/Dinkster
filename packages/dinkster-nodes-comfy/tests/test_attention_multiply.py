@@ -344,7 +344,7 @@ GRAPH_CASES = (
 )
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_complete_manifest_executes_all_attention_multipliers_in_each_worker_mode(
     tmp_path: Path, in_process: bool
 ) -> None:

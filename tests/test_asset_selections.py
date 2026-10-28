@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -42,6 +43,35 @@ def seed(root: Path, name: str, data: bytes = b"fixture") -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
     return path
+
+
+@pytest.mark.parametrize("change", ("replace", "revoke"))
+def test_indexed_selection_uses_existing_identity_and_live_authority(
+    tmp_path: Path, change: str
+) -> None:
+    from dinkster_assets import MountDef, MountTable
+
+    root = tmp_path / "vae"
+    path = seed(root, "nested/tiny.safetensors", b"first-value")
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot)
+    table.add(MountDef(id="vae", path=root), kind="model/vae")
+    table.scan("vae")
+    env = {"DINKSTER_MOUNTS_SNAPSHOT": str(snapshot)}
+    selected = resolve_asset_selection("model/vae", "nested/tiny.safetensors", env=env)
+    assert isinstance(selected, AssetRef)
+    assert selected.digest == digest_bytes(b"first-value")
+    assert selected.virtual_path == "mounts/vae/nested/tiny.safetensors"
+    assert selected.read_bytes() == b"first-value"
+    if change == "replace":
+        stat = path.stat()
+        path.unlink()
+        path.write_bytes(b"other-value")
+        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    else:
+        table.remove("vae")
+    with pytest.raises(AssetError):
+        selected.read_bytes()
 
 
 def test_directory_modes_preserve_source_discovery_and_ranked_resolution(tmp_path: Path) -> None:

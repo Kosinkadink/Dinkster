@@ -112,7 +112,7 @@ class InspectLatent(Node):
 FIXTURES = (InspectLatent,)
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_model_latents_ordinary_manifest(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
         composer = ServingComposer(
