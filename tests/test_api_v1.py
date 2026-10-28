@@ -901,6 +901,7 @@ def test_remote_client_reads_host_cancellation_through_v1() -> None:
     context = ExecutionContext(None, None, cancelled=lambda: cancelled)
     with use_execution_context(context):
         active = api.current_execution_context()
+        assert active is not None
         assert active is context
         assert not active.cancelled()
         cancelled = True
