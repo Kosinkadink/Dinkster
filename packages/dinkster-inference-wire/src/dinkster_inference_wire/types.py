@@ -42,6 +42,7 @@ from dinkster_values import (
     TRACKS_TYPE,
     UPSCALE_MODEL_TYPE,
     VAE_TYPE,
+    VIDEO_EDIT_TYPE,
     WAN_CAMERA_EMBEDDING_TYPE,
     TypeRegistry,
     TypeSpec,
@@ -49,6 +50,7 @@ from dinkster_values import (
     encode_latent,
     latent_fingerprint,
     register_resident_type,
+    register_video_edit_type,
     validate_latent_encoded,
 )
 
@@ -198,6 +200,8 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
         )
     registered.extend(register_media_types(registry))
     registered.append(register_voxel_type(registry))
+    register_video_edit_type(registry)
+    registered.append(registry.spec(VIDEO_EDIT_TYPE))
     return tuple(registered)
 
 
