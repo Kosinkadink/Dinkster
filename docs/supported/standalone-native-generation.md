@@ -1,5 +1,8 @@
 ## Standalone native generation
 
+- Native nodes can publish encoded preview artifacts into the host asset vault
+  without an output mount. Successful job results expose digest-backed artifacts
+  through the existing verified asset-serving route.
 - Source checkouts can prepare and launch the browser UI without Desktop using
   `run.sh` on Linux/macOS or `run.ps1` on Windows. The scripts select the native
   execution environment and preserve local model mounts and outputs on reruns.

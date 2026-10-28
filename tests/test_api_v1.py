@@ -151,6 +151,7 @@ GOLDEN_V1_SURFACE = (
     "PREVIEW_EVENT",
     "PROGRESS_EVENT",
     "pack_logger",
+    "publish_preview_artifact",
     "report_event",
     "report_log",
     "report_preview",
