@@ -19,6 +19,7 @@ from scripts.build_release import (
     build_frontend_wheel,
     build_source_archive,
     development_version,
+    download_external_wheels,
     release_version,
     stage_external_wheels,
     versioned_sources,
@@ -170,6 +171,7 @@ def test_release_workflow_builds_all_wheels_and_checks_tag_metadata() -> None:
     build = workflow["jobs"]["build"]
     commands = "\n".join(step.get("run", "") for step in build["steps"])
     assert "scripts/build_release.py" in commands
+    assert "--download-external-wheels" in commands
     assert '--tag "$RELEASE_TAG"' in commands
     assert "sha256sum -c SHA256SUMS" in commands
     assert "--identity-root" not in commands
@@ -461,6 +463,89 @@ def test_engine_constraints_include_the_locked_base_but_not_the_dev_tools(tmp_pa
     assert "pytest==" not in constraints
     assert "pyright==" not in constraints
     assert "--index-url" not in constraints
+
+
+def test_external_downloads_select_target_wheels_and_enforce_exported_hashes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    records: dict[str, list[dict[str, object]]] = {}
+
+    def wheel(package: str, tag: str) -> Path:
+        path = source / f"{package}-1.0-{tag}.whl"
+        path.write_bytes(path.name.encode())
+        records.setdefault(package, []).append(
+            {
+                "url": path.as_uri(),
+                "size": path.stat().st_size,
+                "hash": "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+        )
+        return path
+
+    shared = wheel("shared", "py3-none-any")
+    win = wheel("native", "cp314-cp314-win_amd64")
+    linux = wheel("native", "cp314-cp314-manylinux_2_28_x86_64")
+    wheel("native", "cp313-cp313-win_amd64")
+    wheel("native", "cp314-cp314-macosx_11_0_arm64")
+    wheel("native", "cp312-abi3-win_amd64")
+    win_only = wheel("windows_only", "py3-none-any")
+    lock = ""
+    requirements = []
+    for package, wheels in records.items():
+        lock += f'[[package]]\nname = "{package}"\nversion = "1.0"\nwheels = [\n'
+        for row in wheels:
+            lock += (
+                "{"
+                + ", ".join(f"{key} = {json.dumps(value)}" for key, value in row.items())
+                + "},\n"
+            )
+        lock += "]\n"
+        marker = (
+            ' ; sys_platform == "win32" and python_full_version >= "3.14.10"'
+            if package == "windows_only"
+            else ""
+        )
+        requirements.append(
+            f"{package}==1.0{marker} " + " ".join(f"--hash={row['hash']}" for row in wheels)
+        )
+    (tmp_path / "uv.lock").write_text(lock)
+
+    def export(root: Path, output: Path, wheels: list[Path], uv: str) -> Path:
+        path = output / "constraints.txt"
+        path.write_text("\n".join(requirements) + "\n")
+        return path
+
+    monkeypatch.setattr("scripts.build_release.write_constraints", export)
+    output = tmp_path / "downloads"
+    result = download_external_wheels(tmp_path, output, "uv")
+    assert {path.name for path in result} == {shared.name, win.name, linux.name, win_only.name}
+    assert all(path.read_bytes() == (source / path.name).read_bytes() for path in result)
+    original = requirements[0]
+    requirements[0] = "shared==1.0 --hash=sha256:" + "0" * 64
+    with pytest.raises(ValueError, match="no locked cp314 wheel for shared"):
+        download_external_wheels(tmp_path, tmp_path / "unauthorized", "uv")
+    requirements[0] = original
+    linux.unlink()
+    with pytest.raises(OSError):
+        download_external_wheels(tmp_path, tmp_path / "unavailable", "uv")
+    assert not (tmp_path / "unavailable" / linux.name).exists()
+    linux.write_bytes(linux.name.encode())
+    shared.write_bytes(b"x" * shared.stat().st_size)
+    with pytest.raises(ValueError, match="does not match lock"):
+        download_external_wheels(tmp_path, tmp_path / "corrupt", "uv")
+    assert not (tmp_path / "corrupt" / shared.name).exists()
+    (tmp_path / "uv.lock").write_text(
+        lock.replace(
+            linux.as_uri(), linux.as_uri().replace("cp314-cp314-manylinux", "cp313-cp313-manylinux")
+        )
+    )
+    with pytest.raises(ValueError, match="no locked cp314 wheel for native on manylinux"):
+        download_external_wheels(tmp_path, tmp_path / "missing-target", "uv")
+    requirements[:] = ["shared @ https://example.invalid/shared.whl"]
+    with pytest.raises(ValueError, match="exact registry pin"):
+        download_external_wheels(tmp_path, tmp_path / "url-requirement", "uv")
 
 
 def test_external_payload_omits_only_exact_members_shared_by_all_target_bases(

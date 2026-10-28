@@ -71,8 +71,9 @@ jobs:
         run: |
           arguments=()
           if [ -n "$RELEASE_TAG" ]; then arguments+=(--tag "$RELEASE_TAG"); fi
-          uv run --no-project --python 3.12 scripts/build_release.py \
+          uv run --no-project --python 3.12 --with packaging==26.2 scripts/build_release.py \
             "${arguments[@]}" \
+            --download-external-wheels \
             --frontend-root .release/frontend \
             --frontend-dist .release/frontend/packages/app/dist
           uvx twine check dist/*.whl

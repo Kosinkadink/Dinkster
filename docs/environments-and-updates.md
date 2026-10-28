@@ -388,6 +388,12 @@ against the channel id before trusting its artifact hashes.
 The builder accepts repeated `--external-wheel PATH` candidates and checks
 each filename, size and SHA-256 against `uv.lock` before staging it. External
 wheels are release payloads, not entries in `workspaceWheels` for PyPI upload.
+The workflow uses `--download-external-wheels` to select the locked compatible
+Windows/Linux x86_64 CPython 3.14.10 wheels, evaluating target requirement
+markers and preferring native interpreter tags over older stable ABI tags.
+Every download must match the lock size and SHA-256 and an exported requirement
+hash. Missing compatible wheels, URL requirements and corrupted downloads fail
+the build; acquisition never resolves dependencies or falls back to source.
 Repeated `--base-manifest PATH` inputs use the existing `dinkster.base/1`
 manifest, including its canonical id, and `--target-variant NAME` identifies
 the selected targets. Only an exact filename/size/SHA-256 member present in
@@ -398,9 +404,9 @@ union of package names or a list of closure seeds.
 
 The non-default `engine-base` dependency group carries torch 2.14.1,
 torchvision 0.29.1, numpy 2.5.1 and contrib-headless OpenCV 5.0.0.93 in
-`uv.lock`. Ordinary `uv sync --locked --all-packages` does not install
-torch; the release export explicitly includes the group. These requirements
-do not embed an index URL. A torch/torchvision bump must have cp314 wheels
+`uv.lock`. The release export explicitly includes the group; mandatory
+inference dependencies can also bring torch into ordinary workspace sync.
+These requirements do not embed an index URL. A torch/torchvision bump must have cp314 wheels
 for both Windows and Linux on every supported torch index before the lock
 moves, not just a PyPI release.
 

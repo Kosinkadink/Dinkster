@@ -17,8 +17,10 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
+from urllib.request import urlopen
 
 TAG_PATTERN = re.compile(r"v(?P<version>[0-9]+\.[0-9]+\.[0-9]+)")
+TARGET_PYTHON = "3.14.10"
 
 
 def project_metadata(path: Path) -> tuple[str, str]:
@@ -214,6 +216,97 @@ def write_constraints(root: Path, output: Path, wheels: list[Path], uv: str) -> 
     return constraints
 
 
+def download_external_wheels(root: Path, output: Path, uv: str) -> list[Path]:
+    """Fetch the locked CPython 3.14 Windows/Linux closure without resolving."""
+    from packaging.requirements import Requirement
+    from packaging.tags import compatible_tags, cpython_tags
+    from packaging.utils import canonicalize_name, parse_wheel_filename
+
+    lock = tomllib.loads((root / "uv.lock").read_text(encoding="utf-8"))
+    output.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="dinkster-wheel-export-") as directory:
+        requirements = write_constraints(root, Path(directory), [], uv).read_text()
+    selected: dict[str, tuple[str, int, str]] = {}
+    for windows in (True, False):
+        platforms = (
+            ["win_amd64"]
+            if windows
+            else [f"manylinux_2_{n}_x86_64" for n in range(28, 16, -1)]
+            + ["manylinux2014_x86_64", "linux_x86_64"]
+        )
+        tags = list(cpython_tags((3, 14), platforms=platforms)) + list(
+            compatible_tags((3, 14), interpreter="cp314", platforms=platforms)
+        )
+        priority = {}
+        for index, tag in enumerate(tags):
+            priority.setdefault(tag, index)
+        environment = {
+            "implementation_name": "cpython",
+            "implementation_version": TARGET_PYTHON,
+            "os_name": "nt" if windows else "posix",
+            "platform_machine": "AMD64" if windows else "x86_64",
+            "platform_release": "",
+            "platform_system": "Windows" if windows else "Linux",
+            "platform_version": "",
+            "python_full_version": TARGET_PYTHON,
+            "platform_python_implementation": "CPython",
+            "python_version": "3.14",
+            "sys_platform": "win32" if windows else "linux",
+            "extra": "",
+        }
+        for line in requirements.replace("\\\n", "").splitlines():
+            if not line.strip():
+                continue
+            requirement = Requirement(line.split(" --hash=", 1)[0].strip())
+            if requirement.url is not None or not re.fullmatch(
+                r"==[^*,]+", str(requirement.specifier)
+            ):
+                raise ValueError(
+                    f"external requirement must be an exact registry pin: {requirement.name}"
+                )
+            if requirement.marker is not None and not requirement.marker.evaluate(environment):
+                continue
+            hashes = set(re.findall(r"--hash=sha256:([0-9a-f]{64})", line))
+            candidates = []
+            for package in lock["package"]:
+                if canonicalize_name(package["name"]) != canonicalize_name(
+                    requirement.name
+                ) or not requirement.specifier.contains(package["version"], prereleases=True):
+                    continue
+                for wheel in package.get("wheels", []):
+                    name = unquote(urlsplit(wheel["url"]).path).rsplit("/", 1)[-1]
+                    wheel_name, wheel_version, _, wheel_tags = parse_wheel_filename(name)
+                    if wheel_name != canonicalize_name(
+                        requirement.name
+                    ) or not requirement.specifier.contains(wheel_version, prereleases=True):
+                        raise ValueError(f"wheel identity disagrees with locked package: {name}")
+                    ranks = [priority[tag] for tag in wheel_tags if tag in priority]
+                    if ranks and wheel.get("hash", "").removeprefix("sha256:") in hashes:
+                        candidates.append((min(ranks), name, wheel))
+            if not candidates:
+                raise ValueError(f"no locked cp314 wheel for {requirement.name} on {platforms[0]}")
+            _, name, wheel = min(candidates, key=lambda item: (item[0], item[1]))
+            identity = (wheel["url"], wheel["size"], wheel["hash"].removeprefix("sha256:"))
+            if name in selected and selected[name][1:] != identity[1:]:
+                raise ValueError(f"conflicting locked artifact: {name}")
+            selected[name] = identity
+    paths = []
+    for name, (url, size, digest) in sorted(selected.items()):
+        target = output / name
+        if target.exists():
+            raise ValueError(f"external download output already exists: {name}")
+        try:
+            with urlopen(url, timeout=60) as response, target.open("wb") as handle:
+                shutil.copyfileobj(response, handle)
+            if target.stat().st_size != size or sha256(target) != digest:
+                raise ValueError(f"downloaded wheel does not match lock: {name}")
+        except BaseException:
+            target.unlink(missing_ok=True)
+            raise
+        paths.append(target)
+    return paths
+
+
 def stage_external_wheels(
     root: Path,
     output: Path,
@@ -293,6 +386,7 @@ def build(
     base_manifests: list[Path] | None = None,
     target_variants: set[str] | None = None,
     payload_artifacts: list[Path] | None = None,
+    download_external: bool = False,
 ) -> dict[str, object]:
     version = release_version(root, tag) if tag else development_version(root)
     sources = json.loads((root / "scripts/release_sources.json").read_text(encoding="utf-8"))
@@ -314,9 +408,13 @@ def build(
         extra = sorted(actual - expected)
         raise ValueError(f"wheel set mismatch: missing={missing}, extra={extra}")
     constraints = write_constraints(root, output, wheels, uv)
-    external = stage_external_wheels(
-        root, output, external_wheels or [], base_manifests or [], target_variants or set()
-    )
+    with tempfile.TemporaryDirectory(prefix="dinkster-external-wheels-") as directory:
+        candidates = list(external_wheels or [])
+        if download_external:
+            candidates.extend(download_external_wheels(root, Path(directory), uv))
+        external = stage_external_wheels(
+            root, output, candidates, base_manifests or [], target_variants or set()
+        )
     source = build_source_archive(root, version, output)
     artifacts = sorted([*wheels, *external, constraints, source], key=lambda path: path.name)
     reserved = {path.name.casefold() for path in artifacts} | {
@@ -373,6 +471,7 @@ if __name__ == "__main__":
     parser.add_argument("--base-manifest", type=Path, action="append", default=[])
     parser.add_argument("--target-variant", action="append", default=[])
     parser.add_argument("--artifact", type=Path, action="append", default=[])
+    parser.add_argument("--download-external-wheels", action="store_true")
     args = parser.parse_args()
     build(
         Path(__file__).resolve().parent.parent,
@@ -385,4 +484,5 @@ if __name__ == "__main__":
         base_manifests=args.base_manifest,
         target_variants=set(args.target_variant),
         payload_artifacts=args.artifact,
+        download_external=args.download_external_wheels,
     )
