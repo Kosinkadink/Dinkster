@@ -109,6 +109,14 @@ publishes bounded seekable sources atomically without buffering the complete
 file. `parse_latent_asset` strictly validates native and ComfyUI latent
 safetensors headers before tensor data is materialized.
 
+`AssetWriter.save_named_stream(target, source, limit=...)` treats the target's
+prefix as the complete relative filename for an explicit import. It preserves
+that name when unused and adds a numbered suffix before the extension on a
+collision, never overwriting an existing file. It uses the same live writable
+mount, containment, bounded streaming and digest-index publication as output
+saves. Portable filename rules also reject reserved writer/index names. Existing
+`save_stream` output naming is unchanged.
+
 `AssetWriter.output_target(filename_prefix, mount=None)` combines separate save
 inputs into the writer's target. Omitting `mount` uses the snapshot's configured
 output mount; an explicit mount selects that grant instead. Both forms retain

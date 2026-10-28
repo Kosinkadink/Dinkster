@@ -220,6 +220,47 @@ class AssetWriter:
             )
         return ref
 
+    def save_named_stream(
+        self,
+        target: object,
+        source: BinaryIO,
+        *,
+        media_type: str = "application/octet-stream",
+        limit: int,
+    ) -> AssetRef:
+        """Import bytes under the target's full filename, numbering collisions only."""
+        if type(limit) is not int or limit < 0:
+            raise AssetError("limit must be a non-negative integer")
+        parsed = coerce_save_target(target)
+        reserved = {"con", "prn", "aux", "nul"} | {
+            f"{prefix}{index}" for prefix in ("com", "lpt") for index in range(1, 10)
+        }
+        for segment in parsed.prefix.split("/"):
+            if (
+                len(segment) > 255
+                or segment.endswith((".", " "))
+                or segment.casefold().startswith(".dinkster-")
+                or segment.split(".", 1)[0].casefold() in reserved
+                or any(ord(character) < 32 or character in '<>:"|?*\x7f' for character in segment)
+            ):
+                raise AssetError("import target must use portable folder and file names")
+        suffix = Path(parsed.stem).suffix
+        named = SaveTarget(
+            parsed.mount, parsed.prefix.removesuffix(suffix) if suffix else parsed.prefix
+        )
+        root, folder = self._writable_folder(named)
+        with self._directory_claim(folder):
+            ref, _ = self._write_stream(
+                named,
+                source,
+                suffix=suffix,
+                media_type=media_type,
+                limit=limit,
+                expected_root=root,
+                prefer_exact_name=True,
+            )
+        return ref
+
     def save_encoded(
         self,
         target: object,
@@ -324,6 +365,7 @@ class AssetWriter:
         stem: str | None = None,
         expected_root: Path | None = None,
         strict_counter: bool = False,
+        prefer_exact_name: bool = False,
     ) -> tuple[AssetRef, int]:
         root, folder = self._writable_folder(parsed)
         if expected_root is not None and root.resolve() != expected_root.resolve():
@@ -360,8 +402,18 @@ class AssetWriter:
                 if any(getattr(before, field) != getattr(after, field) for field in fields):
                     raise AssetError("save source changed while it was copied")
             digest = DIGEST_PREFIX + hasher.hexdigest()
+            if prefer_exact_name:
+                current_root, _ = self._writable_folder(parsed)
+                if current_root.resolve() != root.resolve():
+                    raise AssetError(f"mount {parsed.mount!r} changed its root during import")
             final, used_counter = self._claim_and_land(
-                folder, stem, suffix, tmp, counter, strict_counter=strict_counter
+                folder,
+                stem,
+                suffix,
+                tmp,
+                counter,
+                strict_counter=strict_counter,
+                prefer_exact_name=prefer_exact_name,
             )
         finally:
             tmp.unlink(missing_ok=True)
@@ -577,6 +629,7 @@ class AssetWriter:
         counter: int | None = None,
         *,
         strict_counter: bool = False,
+        prefer_exact_name: bool = False,
     ) -> tuple[Path, int]:
         """Publish the temp file under the next free counter name.
 
@@ -584,6 +637,14 @@ class AssetWriter:
         atomic no-replace semantics. Concurrent savers therefore get distinct
         names, without exposing an empty placeholder to readers.
         """
+        if prefer_exact_name:
+            final = folder / f"{stem}{suffix}"
+            try:
+                os.link(tmp, final)
+            except FileExistsError:
+                pass
+            else:
+                return final, 0
         if counter is None:
             counter = AssetWriter._next_counter_for_suffix(folder, stem, suffix)
         while True:
