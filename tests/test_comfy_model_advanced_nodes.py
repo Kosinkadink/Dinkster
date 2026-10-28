@@ -1,12 +1,19 @@
 """Public interfaces for native model-sampling and model patches."""
 
+import subprocess
+import sys
+from types import SimpleNamespace
+
+import pytest
 from dinkster_api.v1 import MODEL_TYPE, NumberWidget, TypeExpr
-from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy import COMFY_NODES, model_advanced
 from dinkster_nodes_comfy.device_routing import DEVICE_ROUTING_NODES
 from dinkster_nodes_comfy.model_advanced import MODEL_ADVANCED_NODES
 
 
 def test_advanced_model_patch_interfaces() -> None:
+    # Named classes below, F bc5f880d, define_schema() without inputs.
+    # MODEL uses the canonical native public identity.
     expected = {
         "ModelSamplingDiscrete": ("model", "sampling", "zsnr"),
         "ModelSamplingContinuousEDM": ("model", "sampling", "sigma_max", "sigma_min"),
@@ -39,6 +46,7 @@ def test_advanced_model_patch_interfaces() -> None:
 
 
 def test_device_routing_required_inputs_and_cold_discovery() -> None:
+    # Named device-routing classes below, F bc5f880d, define_schema() without inputs.
     expected = {
         "MultiGPU_WorkUnits": ("model", "max_gpus"),
         "SelectModelDevice": ("model", "device"),
@@ -53,3 +61,73 @@ def test_device_routing_required_inputs_and_cold_discovery() -> None:
         assert all(item.required for item in schema.inputs)
         assert len(schema.outputs) == 1
         assert schema.inputs[0].type == schema.outputs[0].type
+
+
+def test_attention_schema_discovery_never_requests_torch_or_inference() -> None:
+    result = subprocess.run(
+        [sys.executable, "-c", _COLD_ATTENTION],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("available", (False, True))
+def test_attention_backend_resolves_availability_only_when_executing(
+    monkeypatch: pytest.MonkeyPatch, available: bool
+) -> None:
+    state = SimpleNamespace(initialized=False)
+    pytorch, kitchen = object(), object()
+    runtime = SimpleNamespace(
+        get_attention_function=lambda name, default=None: (
+            pytorch if name == "pytorch" else kitchen if available else default
+        )
+    )
+
+    def initialize() -> None:
+        state.initialized = True
+
+    def load(name: str) -> object:
+        assert name == "dinkster_inference.ldm.modules.attention"
+        assert state.initialized
+        return runtime
+
+    monkeypatch.setattr(model_advanced, "importlib", SimpleNamespace(import_module=load))
+    monkeypatch.setattr(model_advanced, "initialize_inference_process", initialize)
+    clone = SimpleNamespace(attention=None)
+    clone.set_model_optimized_attention = lambda callback: setattr(clone, "attention", callback)
+    original = SimpleNamespace(attention=None, clone=lambda: clone)
+    model_advanced.ModelAttentionBackend.schema()
+    assert not state.initialized
+    result = model_advanced.ModelAttentionBackend.execute(
+        model=original, attention="comfy kitchen attention"
+    )["MODEL"]
+    # Hand-derived callback identity: available kernel wins; otherwise fallback.
+    assert result is clone
+    assert clone.attention is (kitchen if available else pytorch)
+    assert original.attention is None
+
+
+_COLD_ATTENTION = """
+import importlib.abc
+import sys
+
+class NoTensorRuntime(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split('.')[0] in {'torch', 'dinkster_inference'}:
+            raise AssertionError('cold discovery requested ' + fullname)
+
+sys.meta_path.insert(0, NoTensorRuntime())
+from dinkster_nodes_comfy.model_advanced import ModelAttentionBackend
+from dinkster_schema import schema_to_wire
+
+schema = schema_to_wire(ModelAttentionBackend.schema())
+assert schema
+widget = ModelAttentionBackend.schema().inputs[1].widget
+# ModelAttentionBackend, F bc5f880d: union of define_schema() choices with
+# and without the supported GPU/kernel. Availability is deferred to execute.
+assert widget.options == ('pytorch attention', 'comfy kitchen attention')
+assert not widget.remote_route
+assert not any(name.split('.')[0] in {'torch', 'dinkster_inference'} for name in sys.modules)
+"""

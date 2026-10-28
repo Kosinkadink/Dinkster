@@ -161,6 +161,9 @@
   trajectories, conditions image starts, and renders colored tracks.
 - Native Wan Sound, HuMo and InfiniteTalk conditioning use audio-encoder layers
   with image starts, continuation motion and single- or two-speaker controls.
+- Native WanDancer audio encoding extracts onset, MFCC, chroma, peak and beat
+  features with frame-rate metadata and matching prompt text. This CPU feature
+  extraction does not establish full-model generation quality.
 - Native SCAIL-2 colored masks render packed SAM3 tracks with identity selection,
   appearance/area ordering, palette controls and background masks. Source
   experimental presentation badges are not preserved.
