@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 from dinkster_assets import AssetRef, AssetVault, digest_bytes
-from dinkster_assets.declared import produced_asset_vault
+from dinkster_assets.declared import produced_output_scratch
 from dinkster_caches import BudgetedDiskCAS, MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link
@@ -29,7 +29,7 @@ class SourcePublisher(Publisher):
 
     @classmethod
     async def execute(cls, value: int, execution_context: RunExecutionContext) -> dict[str, object]:
-        vault = produced_asset_vault()
+        vault = produced_output_scratch()
         assert vault is not None
         data = f"published-source-{value}".encode("ascii")
         digest = digest_bytes(data)

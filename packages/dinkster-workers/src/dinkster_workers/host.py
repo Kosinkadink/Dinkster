@@ -1535,6 +1535,7 @@ async def serve_connection(
                     ),
                     node_id=invocation.node_id,
                     export_snapshot=invocation.export_snapshot,
+                    asset_folders=invocation.asset_folders,
                     materialize_source=(materialize_source if source_staging is not None else None),
                 )
             ):
@@ -1721,11 +1722,13 @@ async def serve_connection(
                 # on every exit path, including cancellation mid-grant.
                 with contextlib.suppress(Exception):
                     await send({"type": "memoryRelease", "requestId": invocation_id})
+            cancellation_events.pop(invocation_id, None)
+            resource_tasks.discard(cast("asyncio.Task[None]", asyncio.current_task()))
             # Invocations are what change consumer state (a loader admitted a
-            # resident): refresh the parent's snapshot at every one.
+            # resident): refresh the parent's snapshot after cleanup. A report
+            # drain may suspend while the parent requests full release.
             await send_report()
             tasks.pop(invocation_id, None)
-            cancellation_events.pop(invocation_id, None)
             if resume is not None and cancellation.is_set():
                 finish_resumable_cancellation(invocation_id)
 
@@ -1814,6 +1817,7 @@ async def serve_connection(
                 attention_policy=ordinary.attention_policy,
                 attention_route_token=ordinary.attention_route_token,
                 extension_snapshot_digest=ordinary.extension_snapshot_digest,
+                asset_folders=ordinary.asset_folders,
             )
             if invocation.arm is not None:
                 raise ValueError("lazy-dispatch-unsupported: alternate body arm")

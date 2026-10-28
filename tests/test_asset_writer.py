@@ -12,9 +12,13 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import time
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from multiprocessing import get_context
 from pathlib import Path
+from typing import BinaryIO, Protocol
 
 import pytest
 from dinkster_assets import (
@@ -31,7 +35,9 @@ from dinkster_assets import (
     load_write_records,
     register_save_target_type,
 )
+from dinkster_protocol import AssetFolderContext
 from dinkster_values import TypeRegistry
+from dinkster_values.asset_folders import use_asset_folders
 
 from tests.platform_support import symlink_or_skip
 
@@ -154,6 +160,47 @@ def test_snapshot_writer_sees_live_grant_and_revoke(tmp_path: Path) -> None:
     assert again.name == "a_00002.bin"
 
 
+def test_project_output_overrides_default_without_granting_writes(tmp_path: Path) -> None:
+    snapshot = tmp_path / "snapshot.json"
+    table = MountTable(snapshot)
+    for name in ("global", "project"):
+        root = tmp_path / name
+        root.mkdir()
+        table.add(MountDef(name, root, mode="readwrite"))
+        table.scan(name)
+    table.select_output_mount("global")
+    writer = AssetWriter(MountSnapshotWriter(snapshot))
+    context = AssetFolderContext(("project",), "project")
+    with use_asset_folders(context):
+        ref = writer.save_bytes(writer.output_target("render"), b"project result", suffix=".bin")
+        assert ref.virtual_path == "mounts/project/render_00001.bin"
+        assert (tmp_path / "project" / ref.name).read_bytes() == b"project result"
+        assert writer.output_target("render", "global")["mount"] == "global"
+        detached = tmp_path / "detached-project"
+        (tmp_path / "project").rename(detached)
+        with pytest.raises(AssetError, match="unavailable"):
+            writer.save_bytes(
+                writer.output_target("nested/frames/render"), b"offline", suffix=".bin"
+            )
+        assert not (tmp_path / "project").exists()
+        assert not (detached / "nested").exists()
+        detached.rename(tmp_path / "project")
+        restored = writer.save_bytes(
+            writer.output_target("nested/frames/render"), b"restored", suffix=".bin"
+        )
+        assert (
+            tmp_path / "project" / "nested" / "frames" / restored.name
+        ).read_bytes() == b"restored"
+        table.remove("project")
+        with pytest.raises(AssetError, match="no ready mount"):
+            writer.save_bytes(writer.output_target("render"), b"revoked", suffix=".bin")
+    with use_asset_folders(AssetFolderContext(("global",))):
+        with pytest.raises(AssetError, match="for this project"):
+            writer.output_target("render")
+    assert writer.output_target("render")["mount"] == "global"
+    assert list((tmp_path / "global").glob("render*")) == []
+
+
 def test_mount_table_writable_root(tmp_path: Path) -> None:
     ready = tmp_path / "ready"
     ready.mkdir()
@@ -187,6 +234,33 @@ def make_writer(tmp_path: Path) -> tuple[AssetWriter, Path]:
     root.mkdir()
     snapshot = one_mount_snapshot(tmp_path, root)
     return AssetWriter(MountSnapshotWriter(snapshot)), root
+
+
+class StringQueue(Protocol):
+    def put(self, item: str) -> None: ...
+
+
+def _save_batch_process(snapshot: str, queue: StringQueue) -> None:
+    ref = AssetWriter(MountSnapshotWriter(snapshot)).save_stream_batch(
+        {"mount": "out", "prefix": "burst-%batch_num%"},
+        [io.BytesIO(b"process")],
+        suffix="_.bin",
+        limit=7,
+    )
+    queue.put(ref[0].name)
+
+
+def _save_encoded_process(snapshot: str, queue: StringQueue) -> None:
+    def encoder(stem: str, counter: int) -> BinaryIO:
+        return io.BytesIO(f"{stem} {counter}".encode())
+
+    ref = AssetWriter(MountSnapshotWriter(snapshot)).save_encoded(
+        {"mount": "out", "prefix": "checkpoint"},
+        encoder,
+        suffix=".safetensors",
+        limit=32,
+    )
+    queue.put(ref.name)
 
 
 def test_separate_prefix_and_mount_write_to_selected_grant(tmp_path: Path) -> None:
@@ -299,6 +373,31 @@ def test_save_bytes_rejects_symlink_escape(tmp_path: Path) -> None:
     assert list(outside.iterdir()) == []
 
 
+def test_save_bytes_rejects_symlinked_writer_lock(tmp_path: Path) -> None:
+    writer, root = make_writer(tmp_path)
+    outside = tmp_path / "outside-lock"
+    outside.write_bytes(b"")
+    lock_path = root / ".dinkster-asset-writer.lock"
+    symlink_or_skip(lock_path, outside)
+    with pytest.raises(AssetError, match="unsafe writer lock path"):
+        writer.save_bytes({"mount": "out", "prefix": "probe"}, b"payload", suffix=".bin")
+    assert outside.read_bytes() == b""
+    assert lock_path.is_symlink()
+    assert not (root / "probe_00001.bin").exists()
+
+
+def test_save_bytes_rejects_hardlinked_writer_lock(tmp_path: Path) -> None:
+    writer, root = make_writer(tmp_path)
+    outside = tmp_path / "outside-lock"
+    outside.write_bytes(b"")
+    lock_path = root / ".dinkster-asset-writer.lock"
+    os.link(outside, lock_path)
+    with pytest.raises(AssetError, match="unsafe writer lock path"):
+        writer.save_bytes({"mount": "out", "prefix": "probe"}, b"payload", suffix=".bin")
+    assert outside.read_bytes() == b""
+    assert not (root / "probe_00001.bin").exists()
+
+
 def test_save_bytes_no_temp_litter(tmp_path: Path) -> None:
     writer, root = make_writer(tmp_path)
     writer.save_bytes({"mount": "out", "prefix": "a"}, b"x", suffix=".bin")
@@ -331,7 +430,7 @@ def test_save_stream_bound_failure_leaves_nothing(tmp_path: Path) -> None:
             suffix=".latent",
             limit=3,
         )
-    assert list(root.iterdir()) == []
+    assert {path.name for path in root.iterdir()} == {".dinkster-asset-writer.lock"}
 
 
 def test_concurrent_saves_get_distinct_names(tmp_path: Path) -> None:
@@ -351,6 +450,234 @@ def test_concurrent_saves_get_distinct_names(tmp_path: Path) -> None:
     assert len(names) == 16  # no collisions, no overwrites
     for ref in refs:
         assert (root / ref.name).exists()
+
+
+def test_save_stream_batch_uses_one_counter_for_expanded_stems(tmp_path: Path) -> None:
+    writer, root = make_writer(tmp_path)
+    (root / "render-%batch_num%_00004_.webp").write_bytes(b"previous")
+    (root / "render-1_00099_.png").write_bytes(b"other stem")
+    LocalAssetLibrary(root, namespace="mounts/out").scan()
+
+    refs = writer.save_stream_batch(
+        {"mount": "out", "prefix": "render-%batch_num%"},
+        (io.BytesIO(data) for data in (b"zero", b"one", b"two")),
+        suffix="_.png",
+        media_type="image/png",
+        limit=4,
+    )
+
+    assert [ref.name for ref in refs] == [
+        "render-0_00005_.png",
+        "render-1_00006_.png",
+        "render-2_00007_.png",
+    ]
+    assert [ref.virtual_path for ref in refs] == [f"mounts/out/{ref.name}" for ref in refs]
+    resolver = IndexedAssetResolver(root)
+    assert [resolver.resolve(ref.digest) for ref in refs] == [root / ref.name for ref in refs]
+    assert (root / "render-1_00099_.png").read_bytes() == b"other stem"
+
+
+def test_save_stream_batch_repeats_with_next_source_counter(tmp_path: Path) -> None:
+    writer, _ = make_writer(tmp_path)
+    first = writer.save_stream_batch(
+        {"mount": "out", "prefix": "render-%batch_num%"},
+        [io.BytesIO(b"first"), io.BytesIO(b"second")],
+        suffix="_.png",
+        limit=6,
+    )
+    second = writer.save_stream_batch(
+        {"mount": "out", "prefix": "render-%batch_num%"},
+        [io.BytesIO(b"third")],
+        suffix="_.png",
+        limit=5,
+    )
+    assert [ref.name for ref in first + second] == [
+        "render-0_00001_.png",
+        "render-1_00002_.png",
+        "render-0_00002_.png",
+    ]
+
+
+def test_save_stream_batch_rejects_later_oversize_source_without_temp_files(tmp_path: Path) -> None:
+    writer, root = make_writer(tmp_path)
+    with pytest.raises(AssetError, match="exceeds limit"):
+        writer.save_stream_batch(
+            {"mount": "out", "prefix": "render-%batch_num%"},
+            [io.BytesIO(b"ok"), io.BytesIO(b"too large")],
+            suffix="_.png",
+            limit=2,
+        )
+    assert (root / "render-0_00001_.png").read_bytes() == b"ok"
+    assert list(root.glob(".dinkster-save-*")) == []
+
+
+def test_save_stream_batch_rechecks_revocation_and_containment(tmp_path: Path) -> None:
+    writer, root = make_writer(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    symlink_or_skip(root / "leak", outside, target_is_directory=True)
+    with pytest.raises(AssetError, match="escapes its mount"):
+        writer.save_stream_batch(
+            {"mount": "out", "prefix": "leak/render-%batch_num%"},
+            [io.BytesIO(b"x")],
+            suffix="_.png",
+            limit=1,
+        )
+    assert list(outside.iterdir()) == []
+
+    snapshot = tmp_path / "mounts.json"
+
+    def revoked_sources() -> Iterator[BinaryIO]:
+        yield io.BytesIO(b"first")
+        snapshot.write_text(json.dumps({"mounts": []}), "utf-8")
+        yield io.BytesIO(b"second")
+
+    with pytest.raises(AssetError, match="no ready mount"):
+        writer.save_stream_batch(
+            {"mount": "out", "prefix": "render-%batch_num%"},
+            revoked_sources(),
+            suffix="_.png",
+            limit=6,
+        )
+    assert (root / "render-0_00001_.png").read_bytes() == b"first"
+
+
+def test_concurrent_process_batches_never_collide(tmp_path: Path) -> None:
+    _, root = make_writer(tmp_path)
+    snapshot = tmp_path / "mounts.json"
+    context = get_context("spawn")
+    queue = context.Queue()
+    processes = [
+        context.Process(target=_save_batch_process, args=(str(snapshot), queue)) for _ in range(4)
+    ]
+    for process in processes:
+        process.start()
+    names = [queue.get(timeout=10) for _ in processes]
+    for process in processes:
+        process.join(timeout=10)
+        assert process.exitcode == 0
+    assert len(set(names)) == 4
+    assert all((root / name).read_bytes() == b"process" for name in names)
+
+
+def test_save_encoded_reserves_source_title_before_encoding(tmp_path: Path) -> None:
+    writer, root = make_writer(tmp_path)
+    (root / "checkpoint_00004.safetensors").write_bytes(b"existing")
+    seen: list[tuple[str, int]] = []
+
+    def encoder(stem: str, counter: int) -> BinaryIO:
+        seen.append((stem, counter))
+        return io.BytesIO(f"modelspec.title={stem} {counter}".encode())
+
+    ref = writer.save_encoded(
+        {"mount": "out", "prefix": "checkpoint"},
+        encoder,
+        suffix=".safetensors",
+        limit=64,
+    )
+    assert seen == [("checkpoint", 5)]
+    assert ref.name == "checkpoint_00005.safetensors"
+    assert (root / ref.name).read_bytes() == b"modelspec.title=checkpoint 5"
+
+
+def test_save_encoded_refuses_late_collision_without_renaming_metadata(tmp_path: Path) -> None:
+    writer, root = make_writer(tmp_path)
+
+    def encoder(stem: str, counter: int) -> BinaryIO:
+        (root / f"{stem}_{counter:05d}.safetensors").write_bytes(b"external")
+        return io.BytesIO(b"encoded")
+
+    with pytest.raises(AssetError, match="selected save name"):
+        writer.save_encoded(
+            {"mount": "out", "prefix": "checkpoint"},
+            encoder,
+            suffix=".safetensors",
+            limit=16,
+        )
+    assert (root / "checkpoint_00001.safetensors").read_bytes() == b"external"
+    assert list(root.glob(".dinkster-save-*")) == []
+
+
+def test_save_encoded_encoder_failure_releases_its_claim(tmp_path: Path) -> None:
+    writer, root = make_writer(tmp_path)
+
+    def failing_encoder(stem: str, counter: int) -> BinaryIO:
+        del stem, counter
+        raise RuntimeError("encoding failed")
+
+    with pytest.raises(RuntimeError, match="encoding failed"):
+        writer.save_encoded(
+            {"mount": "out", "prefix": "checkpoint"},
+            failing_encoder,
+            suffix=".safetensors",
+            limit=16,
+        )
+    ref = writer.save_bytes({"mount": "out", "prefix": "after-failure"}, b"ok", suffix=".bin")
+    assert (root / ref.name).read_bytes() == b"ok"
+
+
+def test_save_encoded_rechecks_revocation_after_encoder_returns(tmp_path: Path) -> None:
+    writer, root = make_writer(tmp_path)
+    snapshot = tmp_path / "mounts.json"
+
+    def encoder(stem: str, counter: int) -> BinaryIO:
+        del stem, counter
+        snapshot.write_text(json.dumps({"mounts": []}), "utf-8")
+        return io.BytesIO(b"encoded")
+
+    with pytest.raises(AssetError, match="no ready mount"):
+        writer.save_encoded(
+            {"mount": "out", "prefix": "checkpoint"},
+            encoder,
+            suffix=".safetensors",
+            limit=16,
+        )
+    assert {path.name for path in root.iterdir()} == {".dinkster-asset-writer.lock"}
+
+
+def test_save_encoded_rejects_mount_remap_after_encoder_returns(tmp_path: Path) -> None:
+    writer, root = make_writer(tmp_path)
+    remapped = tmp_path / "remapped"
+    remapped.mkdir()
+    snapshot = tmp_path / "mounts.json"
+
+    def encoder(stem: str, counter: int) -> BinaryIO:
+        del stem, counter
+        snapshot.write_text(
+            json.dumps({"mounts": [{"id": "out", "root": str(remapped), "mode": "readwrite"}]}),
+            "utf-8",
+        )
+        return io.BytesIO(b"encoded")
+
+    with pytest.raises(AssetError, match="changed its root"):
+        writer.save_encoded(
+            {"mount": "out", "prefix": "checkpoint"},
+            encoder,
+            suffix=".safetensors",
+            limit=16,
+        )
+    assert {path.name for path in root.iterdir()} == {".dinkster-asset-writer.lock"}
+    assert list(remapped.iterdir()) == []
+
+
+def test_concurrent_process_encoders_receive_distinct_selected_counters(tmp_path: Path) -> None:
+    _, root = make_writer(tmp_path)
+    snapshot = tmp_path / "mounts.json"
+    context = get_context("spawn")
+    queue = context.Queue()
+    processes = [
+        context.Process(target=_save_encoded_process, args=(str(snapshot), queue)) for _ in range(4)
+    ]
+    for process in processes:
+        process.start()
+    names = [queue.get(timeout=10) for _ in processes]
+    for process in processes:
+        process.join(timeout=10)
+        assert process.exitcode == 0
+    assert sorted(names) == [f"checkpoint_{counter:05d}.safetensors" for counter in range(1, 5)]
+    assert {path.read_bytes() for path in root.iterdir() if path.suffix == ".safetensors"} == {
+        f"checkpoint {counter}".encode() for counter in range(1, 5)
+    }
 
 
 # ---------------------------------------------------------------------------

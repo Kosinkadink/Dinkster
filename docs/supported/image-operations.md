@@ -1,12 +1,32 @@
 ## Image operations
 
-- Color strings, ordered color palettes, and optional resolution-preview
-  metadata pass between node packs without rewriting their values.
+- Native `LossGraphNode` previews training loss as a line chart without saving an output file.
+- Native `UpscaleModelLoader` loads granted single-image upscale checkpoints
+  into the shared `UPSCALE_MODEL` value.
+- Native `CurveEditor` passes canonical curves through the curve editor and
+  displays an optional histogram without restricting its bin count.
+- Native `CameraAngle` produces an orbit-camera dictionary and shot description
+  from horizontal angle, elevation, and zoom.
+- Native `TripoSplatPreprocessImage` erodes alpha, crops foreground to a padded
+  square, resizes with Lanczos, and composites the image over black.
+- Native `TripoSplatConditioning` combines normalized vision tokens and VAE
+  reference latents with zero negative conditioning and fixed shape/camera noise targets.
+- Native `Trellis2UpsampleStage` cascades sparse shape latents through a VAE
+  and prepares second-pass conditioning, projection features, and padded sparse latents.
+- Color strings, ordered color palettes, bounding boxes, and optional
+  resolution-preview metadata pass between node packs without rewriting their values.
 - Native `PrimitiveBoundingBox` constructs pixel bounding boxes; `ImageCropV2`
   crops each image in a batch to that box and reports a PNG preview.
+- Native `CropByBBoxes` crops each frame to its bounding-box union and resizes
+  with stretching or aspect-preserving black padding.
 - Native `RTDETR_detect` returns per-frame pixel bounding boxes filtered by
   confidence and COCO class, ordered by score and limited per frame.
   `DrawBBoxes` overlays boxes and labels on images or a black canvas.
+- Native `SAM3_VideoTrack` tracks initial masks or text-prompted objects across
+  video frames. `SAM3_TrackToMask` selects tracked objects and resizes their union
+  to the original frame dimensions using the portable packed-track value.
+- Native `SAM3_Detect` segments text, box or point prompts with optional mask
+  refinement, returning per-object or union masks and scored text detections.
 - Native `ColorToRGBInt` preserves RGB letter casing and separates optional alpha;
   `ResolutionSelector` rounds aspect-ratio and megapixel dimensions to a chosen multiple.
 - Marigold V2 decoded predictions convert to per-image normalized depth,
@@ -91,6 +111,13 @@
   conversion and rebatching
 - Dataset image and image-text pair shuffling, perceptual-hash deduplication,
   row-major image grids, and deprecated text-list merging
+- Training dataset preparation with RGB VAE encoding and scheduled CLIP
+  conditioning, preserving image-list order and supporting omitted, shared,
+  or per-image captions
+- Encoded training datasets loaded from granted dataset folders, preserving
+  sorted shard order, latent tensors and conditioning metadata
+- Image and image-caption datasets loaded from granted input folders, with
+  per-file RGB images, optional sidecar captions and one-level repeated folders
 - Row-major image grid composition and decomposition; image stitching; split
   and merge with overlapping tiles
 - Image transitions between inputs, within a batch, or while joining batches,

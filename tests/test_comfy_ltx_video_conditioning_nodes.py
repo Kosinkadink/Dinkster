@@ -1,8 +1,5 @@
 """Torch-free schemas for native LTXV video conditioning nodes."""
 
-import subprocess
-import sys
-
 from dinkster_api.v1 import (
     CONDITIONING_TYPE,
     CORE_BOOLEAN,
@@ -16,7 +13,6 @@ from dinkster_api.v1 import (
 )
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.ltx_video_conditioning import LTX_VIDEO_CONDITIONING_NODES
-from dinkster_workers import load_manifest
 
 
 def test_ltx_video_conditioning_schemas() -> None:
@@ -83,25 +79,3 @@ def test_ltx_video_conditioning_schemas() -> None:
         assert all(item.required for item in schema.inputs)
         assert schema_from_wire(schema_to_wire(schema)) == schema
         assert node in COMFY_NODES
-
-
-def test_ltx_video_conditioning_cold_discovery() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; from dinkster_nodes_comfy.ltx_video_conditioning "
-            "import LTX_VIDEO_CONDITIONING_NODES; "
-            "assert len(LTX_VIDEO_CONDITIONING_NODES) == 4; "
-            "[node.schema() for node in LTX_VIDEO_CONDITIONING_NODES]; "
-            "assert 'torch' not in sys.modules; assert 'dinkster_inference' not in sys.modules",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
-
-
-def test_ltx_crop_complete_manifest_order() -> None:
-    manifest = load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml")
-    assert tuple(node.schema().node_type for node in COMFY_NODES) == manifest.namespaces

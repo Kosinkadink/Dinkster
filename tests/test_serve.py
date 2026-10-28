@@ -336,7 +336,8 @@ def test_standard_vision_pack_provisions_declared_runtime_before_composition(
     assert TESTS_DIR.parent / "packages" / "dinkster-video" in workspace
     if pack_name == "dinkster-vision-birefnet":
         assert any(
-            requirement.startswith("dinkster-inference @ git+") for requirement in manifest.requires
+            requirement.startswith("dinkster-inference @ https://")
+            for requirement in manifest.requires
         )
     assert str(manifest.root.parent / "src") in prepared.env["PYTHONPATH"].split(os.pathsep)
 
@@ -967,13 +968,26 @@ def test_openai_generation_environment_fails_with_argparse_diagnostic(
     assert message in capsys.readouterr().err
 
 
-def test_sandbox_refuses_live_mount_mutation(
+def test_sandbox_mount_edits_require_restart(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
     from dinkster import serve
+    from dinkster.mounts_api import MOUNTS_KEY
 
+    def fake_run_app(awaitable: object, **_kwargs: object) -> None:
+        async def inspect() -> None:
+            app = await awaitable  # type: ignore[misc]
+            service = app[MOUNTS_KEY]
+            assert service.allow_changes
+            assert service.restart_for_changes
+            assert service.settings_table is not service.table
+            app.freeze()
+            await app.cleanup()
+
+        asyncio.run(inspect())
+
+    monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -985,9 +999,7 @@ def test_sandbox_refuses_live_mount_mutation(
             "--allow-mount-changes",
         ],
     )
-    with pytest.raises(SystemExit, match="2"):
-        serve.main()
-    assert "cannot be combined with --sandbox-packs" in capsys.readouterr().err
+    serve.main()
 
 
 def test_sandbox_host_grants_require_the_flag(
@@ -2449,8 +2461,21 @@ def register_types(registry):
 NODES = [Source]
 """)
     port = free_port()
+    bootstrap = """
+from dinkster import serve
+
+serve.default_pack_ids = lambda: ("dinkster-nodes-media-io",)
+serve.model_pack_specs = lambda: ()
+serve.comfy_compat_specs = lambda *args, **kwargs: ()
+serve.main()
+"""
     process = subprocess.Popen(
-        serve_command(port, "--pack", str(PROOF_ROOT), "--pack", str(source)),
+        [
+            sys.executable,
+            "-c",
+            bootstrap,
+            *serve_command(port, "--pack", str(PROOF_ROOT), "--pack", str(source))[3:],
+        ],
         env={**os.environ, "PYTHONPATH": str(source)},
         cwd=tmp_path,
         stdout=subprocess.DEVNULL,
@@ -2475,6 +2500,9 @@ NODES = [Source]
                     except aiohttp.ClientError:
                         pass
                     await asyncio.sleep(0.05)
+            async with session.get(base + "/api/composition") as response:
+                report = await response.json()
+            assert report["packs"]["dinkster-nodes-media-io"]["state"] == "announced"
             async with session.get(base + PROOF_ROUTE) as response:
                 assert response.status == 200
                 assert await response.json() == {
@@ -3273,16 +3301,44 @@ def test_serve_signal_reaps_unresponsive_children_concurrently(
     expected_children = len(manifests)
     args = [arg for manifest in manifests for arg in ("--pack", str(manifest))]
     port = free_port()
-    process = subprocess.Popen(
-        serve_command(port, *args),
-        env={
-            **os.environ,
-            "PYTHONPATH": os.pathsep.join(str(manifest.parent) for manifest in manifests),
-        },
-        cwd=tmp_path,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    bootstrap = f"""
+import asyncio
+import dinkster_workers.isolated as isolated
+from dinkster.serve import main
+
+isolated._CHILD_SHUTDOWN_GRACE = 0.05
+original_close = isolated.IsolatedWorker._close
+closing = set()
+all_closing = asyncio.Event()
+
+async def close_together(worker):
+    if worker._proc is not None:
+        closing.add(worker._proc.pid)
+        if len(closing) == {expected_children}:
+            all_closing.set()
+        await asyncio.wait_for(all_closing.wait(), 8)
+    await original_close(worker)
+
+isolated.IsolatedWorker._close = close_together
+main()
+"""
+    stderr_path = tmp_path / "serve.stderr.log"
+    with stderr_path.open("wb") as stderr:
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                bootstrap,
+                *serve_command(port, "--no-default-packs", *args)[3:],
+            ],
+            env={
+                **os.environ,
+                "PYTHONPATH": os.pathsep.join(str(manifest.parent) for manifest in manifests),
+            },
+            cwd=tmp_path,
+            stdout=subprocess.DEVNULL,
+            stderr=stderr,
+        )
     children: tuple[int, ...] = ()
 
     try:
@@ -3295,13 +3351,10 @@ def test_serve_signal_reaps_unresponsive_children_concurrently(
         for pid in children:
             os.kill(pid, _SIGSTOP)
 
-        started = time.monotonic()
         process.send_signal(shutdown_signal)
         process.wait(timeout=8)
-        elapsed = time.monotonic() - started
 
         assert process.returncode == 0
-        assert elapsed < 8
         assert not any(process_exists(pid) for pid in children)
         with socket.socket() as released:
             released.bind(("127.0.0.1", port))
@@ -3320,7 +3373,7 @@ def test_serve_signal_during_progressive_startup_reaps_partial_child(tmp_path: P
     expected_children = 1
     port = free_port()
     process = subprocess.Popen(
-        serve_command(port, "--pack", str(manifest)),
+        serve_command(port, "--no-default-packs", "--pack", str(manifest)),
         env={**os.environ, "PYTHONPATH": str(manifest.parent)},
         cwd=tmp_path,
         stdout=subprocess.DEVNULL,
@@ -3361,7 +3414,7 @@ def test_serve_signal_reaps_already_dead_child(tmp_path: Path) -> None:
     expected_children = 1
     port = free_port()
     process = subprocess.Popen(
-        serve_command(port, "--pack", str(manifest)),
+        serve_command(port, "--no-default-packs", "--pack", str(manifest)),
         env={**os.environ, "PYTHONPATH": str(manifest.parent)},
         cwd=tmp_path,
         stdout=subprocess.DEVNULL,
@@ -3393,13 +3446,21 @@ def test_serve_signal_reaps_already_dead_child(tmp_path: Path) -> None:
 def test_serve_pack_failure_recorded_and_survivors_serve(tmp_path: Path) -> None:
     """A pack that cannot compose (reserved name) does NOT take the process
     down by default: the failure is cached on /api/composition with its
-    error, the default packs keep serving, and composition still completes -
+    error, the foundation pack keeps serving, and composition still completes -
     positively, with the failure on the record instead of a dead server
     (the anti-ComfyUI: broken extensions were just silently absent)."""
     manifest = write_iso_manifest(tmp_path / "pack", name="core")
     port = free_port()
+    bootstrap = """
+from dinkster import serve
+
+serve.default_pack_ids = lambda: ("dinkster-nodes-foundation",)
+serve.model_pack_specs = lambda: ()
+serve.comfy_compat_specs = lambda *args, **kwargs: ()
+serve.main()
+"""
     process = subprocess.Popen(
-        serve_command(port, "--pack", str(manifest)),
+        [sys.executable, "-c", bootstrap, *serve_command(port, "--pack", str(manifest))[3:]],
         cwd=tmp_path,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -3424,7 +3485,7 @@ def test_serve_pack_failure_recorded_and_survivors_serve(tmp_path: Path) -> None
             entry = report["packs"]["core"]
             assert entry["state"] == "failed"
             assert "reserved" in entry["error"]
-            # The survivors (here: the default packs) serve, and the table says
+            # The survivor serves, and the table says
             # complete - the failure is on the record, not on the surface.
             async with session.get(base + "/api/nodes") as resp:
                 data = await resp.json()
@@ -3454,7 +3515,7 @@ def test_serve_retracts_schema_owner_without_execution_provider(tmp_path: Path) 
     )
     port = free_port()
     process = subprocess.Popen(
-        serve_command(port, "--pack", str(manifest)),
+        serve_command(port, "--no-default-packs", "--pack", str(manifest)),
         env={**os.environ, "PYTHONPATH": str(manifest.parent)},
         cwd=tmp_path,
         stdout=subprocess.DEVNULL,
@@ -3497,7 +3558,7 @@ def test_serve_strict_packs_failure_exits_nonzero(tmp_path: Path) -> None:
     manifest = write_iso_manifest(tmp_path / "pack", name="core")
     port = free_port()
     process = subprocess.Popen(
-        serve_command(port, "--pack", str(manifest), "--strict-packs"),
+        serve_command(port, "--no-default-packs", "--pack", str(manifest), "--strict-packs"),
         cwd=tmp_path,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
@@ -3665,11 +3726,19 @@ def test_serve_mounted_save_end_to_end(tmp_path: Path) -> None:
         "NODES = [Gradient, Save]\n"
     )
     port = free_port()
+    bootstrap = """
+from dinkster import serve
+
+serve.default_pack_ids = lambda: ("dinkster-nodes-media-io",)
+serve.model_pack_specs = lambda: ()
+serve.comfy_compat_specs = lambda *args, **kwargs: ()
+serve.main()
+"""
     process, log = start_logged_serve(
         [
             sys.executable,
-            "-m",
-            "dinkster.serve",
+            "-c",
+            bootstrap,
             "--host",
             "127.0.0.1",
             "--port",
@@ -3798,6 +3867,7 @@ def test_serve_mounted_save_end_to_end(tmp_path: Path) -> None:
             assert status["state"] == "failed"
             assert "renders" in str(status["error"])
             assert sorted(p.name for p in (outdir / "shots").iterdir()) == [
+                ".dinkster-asset-writer.lock",
                 "frame_00001.pgm",
                 "frame_00002.pgm",
             ]

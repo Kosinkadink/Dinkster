@@ -25,6 +25,33 @@ def test_public_ci_runs_the_fast_checks_without_private_inputs() -> None:
     assert all("prepare-validation-inputs" not in step.get("uses", "") for step in fast["steps"])
 
 
+def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
+    import yaml
+
+    workflow = yaml.safe_load(
+        (evidence_paths.DINKSTER_ROOT / ".github/workflows/full-validation.yml").read_text()
+    )
+    jobs = workflow["jobs"]
+    assert "coverage" not in jobs
+    root = jobs["test"]
+    linux = [row for row in root["strategy"]["matrix"]["include"] if row["os"] == "linux"]
+    assert [(row["shard"], row["pytest_args"]) for row in linux] == [
+        (index, f"-p tools.pytest_file_shard --file-shard {index}/4") for index in range(1, 5)
+    ]
+    run = next(step for step in root["steps"] if "--cov-branch" in step.get("run", ""))
+    assert run["if"] == "runner.os == 'Linux'"
+    assert "${{ matrix.pytest_args }}" in run["run"]
+    assert run["env"]["COVERAGE_FILE"] == ".coverage.${{ matrix.shard }}"
+    upload = next(
+        step for step in root["steps"] if step.get("uses") == "actions/upload-artifact@v4"
+    )
+    assert upload["if"] == "runner.os == 'Linux'"
+    assert upload["with"]["path"] == run["env"]["COVERAGE_FILE"]
+    assert upload["with"]["if-no-files-found"] == "error"
+    assert set(jobs["coverage-gate"]["needs"]) == {"validation-plan", "test"}
+    assert jobs["model-tests"]["env"]["PYTEST_ADDOPTS"] == "--durations=10"
+
+
 def resolved_evidence_root(environment: dict[str, str]) -> Path:
     result = subprocess.run(
         [

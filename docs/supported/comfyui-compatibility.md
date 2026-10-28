@@ -1,5 +1,11 @@
 ## ComfyUI compatibility
 
+- The `--comfy-root` and `--execution-python` composition supports an installed
+  inference package alongside source-only ComfyUI modules from the checkout,
+  while sharing one inference module state and leaving source files unchanged.
+- Core schema comparison permits the optional output mount for output nodes
+  with a scalar STRING filename prefix, including CLIPSave, VAESave,
+  CheckpointSave, and ModelSave, without relying on their class-name spelling.
 - Native animated PNG and WebP outputs retain frame order, alpha, timing,
   compression controls and source images while writing to the selected mount.
 - Native CLIP and VAE exports preserve tensor keys and dtypes in safetensors
@@ -9,11 +15,23 @@
   writes contiguous samples and the format marker to the selected output mount.
 - Native image file schemas expose bound assets and adjacent output mounts;
   PNG output truncates channel values and preview outputs retain source images.
+  PNG batches retain source counter progression and the trailing filename underscore.
   File operations reject oversized image batches and encoded outputs.
 - The native pack declares bound-file checkpoint, diffusion-model, text
   encoder, vision-encoder, ControlNet, style-model and GLIGEN loader schemas.
   Model construction uses the pinned inference package; file inputs grant
   access only to the selected asset.
+- Image-only checkpoint loading returns separate model, vision encoder and VAE
+  outputs. LTXV audio VAE loading retains audio and vocoder weights and checkpoint
+  metadata; LTXAV text encoding loads its text encoder before its checkpoint.
+  Loader CPU checks use tiny files and controlled model constructors, not full models.
+- Native Load Audio decodes bound audio files with preserved channel order and PCM
+  scaling. Preview Audio returns the audio without writing a preview file.
+- Native audio saves write FLAC, MP3 and Opus through the selected output mount,
+  preserving audio outputs and batch-specific filename prefixes.
+- Native YuE2 ABC and music conditioning preserve generation controls, automatic
+  off mode for empty scores, guidance defaults and generated duration. CPU checks
+  use controlled encoders, not full-model music generation.
 - Native LoRA file loaders apply model and text-encoder strengths separately,
   retain weight metadata, and support ordered stacks and bypass application.
   Disabled stack entries and zero strengths do not resolve their file inputs.
@@ -23,12 +41,19 @@
   guidance, using checkpoint denoise-encoder weights when present.
 - Native KSampler and KSamplerAdvanced use the inference sampling engine with
   seeded batch noise, masks, denoise strength and advanced step boundaries.
+- Native standard and custom samplers retain ordered audio/video stream roles
+  and masks through sampling and denoised outputs. AddNoise retains those roles
+  through empty-latent handling and replaces nonfinite output values with zero.
 - Native Wan Uni3C applies render-video guidance with temporal padding, spatial
   alignment, scheduled residuals and shared conditional-batch computation.
 - Native Qwen DiffSynth and Z-Image Fun ControlNet apply scheduled image and
   inpaint guidance; USO prepends projected vision features to text tokens.
 - Native LoRA hook loaders use bound model/lora assets, preserve prior hooks
   and apply separate model and CLIP strengths while retaining loaded weights.
+- Native VAELoader accepts granted VAE files, video approximation files, six
+  same-root image TAESD encoder/decoder pairs and the file-free pixel_space
+  option on one input. Native DiffusersLoader accepts a granted model subtree.
+  Selection names are rechecked on each execution, not reused from result caches.
 - Native WanDancer keyframe padding places reference frames and masks into
   video segments, with matching audio slices and scalar or list outputs.
 - Native LTXV duration prediction uses caption connectors and the duration head,
@@ -37,6 +62,18 @@
   and work across isolated pack processes without a companion media pack.
 - Native LTXVCropGuides removes appended guide frames and their conditioning
   metadata while preserving the remaining video latent and noise mask.
+- Native LTXV latent-guide and generated-keyframe nodes attach, separate and
+  convert guide frames while preserving conditioning histories and source tensors.
+- Native LTXV image guides accept canonical IC-LoRA parameters extracted from
+  LoRA model metadata, including sparse spatial reference downscaling.
+- LTXV reference-audio, spatio-temporal and modality guidance preserve the source
+  model and apply guidance within the requested sampling window. The dual-CFG
+  guider applies separate video/audio scales to native multi-stream latents.
+  Controlled CPU predictions cover nonempty Euler sampling, masks, seeded noise
+  and denoised output restoration; real-model AV sampling is not validated.
+- MiniMax H3 reference conditioning pairs image, video and soundtrack inputs;
+  Fun ControlNet applies scheduled control while preserving the source model. CPU tests
+  use controlled encoders and predictions, not real-model or GPU execution.
 - Native SeedVR2 output post-processing aligns video frames, restores alpha
   and applies LAB, wavelet or AdaIN color matching with bounded chunks.
 - Native ARVideoI2V encodes the first start-image frame into a cloned model's
@@ -70,6 +107,10 @@
   loading Torch during registration.
 - LATENT_UPSCALE_MODEL preserves resident identity, ownership, and cache lifetime
   across ordinary native pack hosts without loading Torch during registration.
+- UPSCALE_MODEL preserves the live image-upscale descriptor and its patcher as a
+  resident value across ordinary pack hosts; model contents are not serialized.
+- LOSS_MAP transports ordered training loss values and structural extras through
+  the shared latent framing without changing the recorded numeric values.
 - Hunyuan Video 1.5 and LTXV latent upscale consumers preserve core resize,
   normalization, dtype, device, and latent metadata behavior.
 - Nine native advanced latent nodes add, subtract, multiply, interpolate,

@@ -187,6 +187,30 @@ def _mount(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
     return default, alternate
 
 
+@pytest.mark.parametrize("prefix", ("item", "item-%batch_num%"))
+def test_save_image_preserves_batch_counter_and_filename_tail(tmp_path: Path, monkeypatch, prefix):
+    default, _ = _mount(tmp_path, monkeypatch)
+    folder = default / "batch"
+    folder.mkdir()
+    existing = folder / f"{prefix}_00007_.png"
+    existing.write_bytes(b"existing")
+    images = torch.tensor([[[[0.1, 0.5, 0.9]]], [[[0.8, 0.3, 0.2]]]])
+    before = images.clone()
+
+    assert SaveImage.execute(images=images, filename_prefix=f"batch/{prefix}")["images"] is images
+    assert SaveImage.execute(images=images, filename_prefix=f"batch/{prefix}")["images"] is images
+
+    counters = (8, 9, 10, 11) if prefix == "item" else (8, 9, 9, 10)
+    for position, counter in enumerate(counters):
+        index = position % 2
+        stem = prefix.replace("%batch_num%", str(index))
+        with Image.open(folder / f"{stem}_{counter:05d}_.png") as saved:
+            assert list(saved.getdata()) == [[(25, 127, 229)], [(204, 76, 51)]][index]
+    assert existing.read_bytes() == b"existing"
+    assert len(list(folder.glob("*.png"))) == 5
+    assert torch.equal(images, before)
+
+
 def test_save_image_writes_each_cpu_batch_item_and_preserves_source(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -201,13 +225,13 @@ def test_save_image_writes_each_cpu_batch_item_and_preserves_source(
 
     default_result = SaveImage.execute(images=images, filename_prefix="default/%width%x%height%")
     assert default_result["images"] is images
-    assert (default / "default" / "2x1_00001.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
-    assert (default / "default" / "2x1_00002.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    assert (default / "default" / "2x1_00001_.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    assert (default / "default" / "2x1_00002_.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
 
     chosen = images[:1]
     chosen_result = SaveImage.execute(images=chosen, filename_prefix="chosen", mount="alternate")
     assert chosen_result["images"] is chosen
-    assert (alternate / "chosen_00001.png").is_file()
+    assert (alternate / "chosen_00001_.png").is_file()
     assert torch.equal(images[0, 0, 0], torch.tensor([0.0, 0.5, 1.0]))
 
 
@@ -225,9 +249,9 @@ def test_save_image_uses_comfyui_truncation_and_batch_number_prefix(
 
     SaveImage.execute(images=images, filename_prefix="batch/item-%batch_num%")
 
-    with Image.open(default / "batch" / "item-0_00001.png") as saved:
+    with Image.open(default / "batch" / "item-0_00001_.png") as saved:
         assert list(saved.getdata()) == [(0, 127, 255), (127, 254, 0)]
-    assert (default / "batch" / "item-1_00001.png").is_file()
+    assert (default / "batch" / "item-1_00002_.png").is_file()
 
 
 def test_preview_image_preserves_cpu_source() -> None:

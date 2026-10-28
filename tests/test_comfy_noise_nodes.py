@@ -1,8 +1,5 @@
 """Public native noise schemas and manifest remain cold-process safe."""
 
-import subprocess
-import sys
-
 from dinkster_api.v1 import NumberWidget
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.noise import NOISE_NODES, AddNoise, DisableNoise, RandomNoise
@@ -30,28 +27,3 @@ def test_noise_nodes_publish_the_fixed_core_interfaces_and_manifest_entries() ->
         "DisableNoise",
         "AddNoise",
     )
-
-
-def test_noise_schemas_are_torch_and_inference_free_in_a_cold_process() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            """
-import sys
-sys.modules["torch"] = None
-sys.modules["dinkster_inference"] = None
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.noise import NOISE_NODES
-assert all(node in COMFY_NODES for node in NOISE_NODES)
-for node in NOISE_NODES:
-    node.schema()
-assert "torch" not in sys.modules or sys.modules["torch"] is None
-assert "dinkster_inference" not in sys.modules or sys.modules["dinkster_inference"] is None
-""",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr

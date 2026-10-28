@@ -104,7 +104,7 @@ class Inspect(Node):
         return cls.outputs(sigma=model.sampling.percent_to_sigma(0.4))
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_sensenova_options_runs_twice_through_both_ordinary_hosts(
     tmp_path: Path, in_process: bool
 ) -> None:

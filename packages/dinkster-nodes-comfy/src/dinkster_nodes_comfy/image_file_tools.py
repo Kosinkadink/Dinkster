@@ -5,7 +5,8 @@ from __future__ import annotations
 import importlib
 import os
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from io import BytesIO
 from typing import Any, Literal
 
 from dinkster_api.v1 import (
@@ -220,23 +221,29 @@ class SaveImage(Node):
         batch = _image_batch(images)
         writer = _writer()
         torch = importlib.import_module("torch")
-        for index in range(batch.shape[0]):
-            target = writer.output_target(
-                filename_prefix.replace("%batch_num%", str(index)),
-                mount=mount,
-                image_width=int(batch.shape[2]),
-                image_height=int(batch.shape[1]),
-            )
-            image = torch.floor(torch.clamp(batch[index : index + 1], 0, 1) * 255.0) / 255.0
-            encoded = render_image_png(image)
-            if len(encoded) > ENCODED_MEDIA_LIMIT_BYTES:
-                raise ValueError("encoded image exceeds the output byte limit")
-            writer.save_bytes(
-                target,
-                encoded,
-                suffix=".png",
-                media_type="image/png",
-            )
+        target = writer.output_target(
+            filename_prefix,
+            mount=mount,
+            image_width=int(batch.shape[2]),
+            image_height=int(batch.shape[1]),
+        )
+
+        def sources() -> Iterator[BytesIO]:
+            for index in range(batch.shape[0]):
+                image = torch.floor(torch.clamp(batch[index : index + 1], 0, 1) * 255.0) / 255.0
+                encoded = render_image_png(image)
+                if len(encoded) > ENCODED_MEDIA_LIMIT_BYTES:
+                    raise ValueError("encoded image exceeds the output byte limit")
+                with BytesIO(encoded) as stream:
+                    yield stream
+
+        writer.save_stream_batch(
+            target,
+            sources(),
+            suffix="_.png",
+            media_type="image/png",
+            limit=ENCODED_MEDIA_LIMIT_BYTES,
+        )
         return cls.outputs(images=images)
 
 

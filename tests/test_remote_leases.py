@@ -20,7 +20,6 @@ from test_relay import eventually
 from test_remote import TOKEN, make_engine, remote_worker, start_service, stop_service
 
 _SIGSTOP = getattr(signal, "SIGSTOP", signal.SIGTERM)
-_SIGCONT = getattr(signal, "SIGCONT", signal.SIGTERM)
 
 
 def test_lease_ttl_below_the_heartbeat_floor_is_refused() -> None:
@@ -118,20 +117,38 @@ def test_engine_identity_alone_cannot_supersede_a_live_transport(tmp_path: Path)
     asyncio.run(scenario())
 
 
-def test_refusal_names_the_holder_and_heartbeats_keep_an_idle_lease(tmp_path: Path) -> None:
+def test_refusal_names_the_holder_and_heartbeats_keep_an_idle_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A second engine's refusal names WHO holds the slot, and an idle
     holder far past the TTL keeps its lease because its heartbeats renew
     it - idleness is not staleness."""
 
     async def scenario() -> None:
+        from dinkster_workers import session
+
+        heartbeats = 0
+        renewed = asyncio.Event()
+
+        async def observed_read(reader: asyncio.StreamReader):
+            nonlocal heartbeats
+            frame = await read_frame(reader)
+            if frame is not None and frame[0].get("type") == "heartbeatAck":
+                heartbeats += 1
+                if heartbeats == 4:
+                    renewed.set()
+            return frame
+
+        monkeypatch.setattr(session, "read_frame", observed_read)
         proc, host, port = await start_service(DEV_MANIFEST, tmp_path, "--lease-ttl", "3")
         try:
             registry = core_registry()
             first = remote_worker(host, port, registry)
             await first.start()
             try:
-                # Well past the TTL with no traffic but heartbeats.
-                await asyncio.sleep(7.0)
+                # Four idle renewal cycles with no traffic but heartbeats.
+                await asyncio.wait_for(renewed.wait(), 10)
+                assert heartbeats >= 4
                 second = remote_worker(host, port, core_registry())
                 with pytest.raises(RuntimeError, match="busy.*leased to engine box1@"):
                     await second.start()
@@ -210,7 +227,8 @@ def test_engine_treats_a_silent_daemon_as_dead(tmp_path: Path) -> None:
                 try:
                     assert await eventually(lambda: not worker.alive, timeout=15.0)
                 finally:
-                    os.kill(proc.pid, _SIGCONT)
+                    proc.kill()
+                    await proc.wait()
             finally:
                 await worker.close()
         finally:

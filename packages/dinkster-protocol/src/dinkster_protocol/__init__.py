@@ -14,13 +14,17 @@ belong below this layer; anything more is a layering regression.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
+from copy import deepcopy
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Literal, Protocol, cast
 
 from dinkster_schema import NodeSchema, RunExecutionContext
 from dinkster_values import Value
+from dinkster_values.asset_folders import AssetFolderContext
 
 from .attention import (
     ATTENTION_CAPABILITY_EVIDENCE_VERSION,
@@ -334,27 +338,51 @@ class CompatGateDiagnostic:
 
 @dataclass(frozen=True)
 class ExportSnapshot:
-    """Opaque compat export payload for save-node synthesis.
+    """Opaque submitted metadata made available to output nodes.
 
-    The engine and workers carry this payload without interpreting it. Only
-    compat save-node wrappers interpret it when synthesizing hidden inputs.
+    The engine and workers carry this payload without interpreting it.
     Validation is deliberately shallow because submitted JSON remains opaque.
     """
 
-    prompt: Mapping[str, object]
+    prompt: Mapping[str, object] | None = None
     extra_pnginfo: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
         prompt = cast("object", self.prompt)
-        if not isinstance(prompt, Mapping):
-            raise ValueError("ExportSnapshot.prompt must be a JSON-object mapping")
-        prompt_mapping = cast("Mapping[object, object]", prompt)
-        if not all(isinstance(key, str) for key in prompt_mapping):
-            raise ValueError("ExportSnapshot.prompt must be a JSON-object mapping")
+        if prompt is not None:
+            if not isinstance(prompt, Mapping):
+                raise ValueError("ExportSnapshot.prompt must be a JSON-object mapping or None")
+            prompt_mapping = cast("Mapping[object, object]", prompt)
+            if not all(isinstance(key, str) for key in prompt_mapping):
+                raise ValueError("ExportSnapshot.prompt must be a JSON-object mapping or None")
         extra_pnginfo = cast("object", self.extra_pnginfo)
         if extra_pnginfo is not None:
             if not isinstance(extra_pnginfo, Mapping):
                 raise ValueError("ExportSnapshot.extra_pnginfo must be a mapping or None")
+
+
+_export_snapshot: ContextVar[ExportSnapshot | None] = ContextVar(
+    "dinkster_export_snapshot", default=None
+)
+
+
+def current_export_snapshot() -> ExportSnapshot | None:
+    """Return a detached copy of this output invocation's submitted metadata.
+
+    Returns None outside execution or for non-output nodes. Mutating the
+    returned mappings does not change metadata seen by another invocation.
+    """
+    return deepcopy(_export_snapshot.get())
+
+
+@contextmanager
+def use_export_snapshot(snapshot: ExportSnapshot | None) -> Generator[None]:
+    """Scope the host-supplied metadata for one worker invocation."""
+    token = _export_snapshot.set(snapshot)
+    try:
+        yield
+    finally:
+        _export_snapshot.reset(token)
 
 
 @dataclass(frozen=True)
@@ -417,6 +445,8 @@ class Invocation:
     immutable snapshot itself remains on the catalog transport."""
     export_snapshot: ExportSnapshot | None = None
     """Opaque compat export payload, present only for output-node invocations."""
+    asset_folders: AssetFolderContext | None = None
+    """Pinned job folder preference; workers still check their live mount grants."""
     media_sources: tuple[MediaSourceAuthority, ...] = ()
     """Exact current-run media authorities. They are execution data only and
     deliberately do not participate in graph, schema, or cache identity."""
@@ -605,6 +635,7 @@ class LazyStatusInvocation:
     attention_policy: AttentionPolicy = "auto"
     attention_route_token: AttentionRouteToken | None = None
     extension_snapshot_digest: str | None = None
+    asset_folders: AssetFolderContext | None = None
 
     def __post_init__(self) -> None:
         if self.extension_snapshot_digest is not None and not is_extension_snapshot_digest(
@@ -753,6 +784,10 @@ from .result_algebra import (  # noqa: E402 - NodeError is the algebra's leaf er
 )
 
 __all__ = [
+    "AssetFolderContext",
+    "ExportSnapshot",
+    "current_export_snapshot",
+    "use_export_snapshot",
     "FrontendContribution",
     "FrontendModule",
     "JsonField",

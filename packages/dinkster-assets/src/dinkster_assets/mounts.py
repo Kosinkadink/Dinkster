@@ -42,9 +42,11 @@ import time
 import tomllib
 import uuid
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast
+
+from dinkster_values.asset_folders import current_asset_folders
 
 from .catalog import AssetEntry, FolderListing
 from .identity import AssetError, require_digest
@@ -78,7 +80,7 @@ MOUNT_MODES = ("read", "readwrite")
 
 MOUNT_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 """The mount id grammar - shared with save targets, which name mounts."""
-_ENTRY_KEYS = frozenset({"path", "mode", "priority"})
+_ENTRY_KEYS = frozenset({"path", "mode", "priority", "kind"})
 _SETTINGS_KEYS = frozenset({"output-mount"})
 
 
@@ -269,6 +271,7 @@ class MountDef:
     path: Path
     mode: str = "read"
     priority: int = 0
+    kind: str = ""
 
     def __post_init__(self) -> None:
         if not MOUNT_ID_PATTERN.match(self.id):
@@ -283,6 +286,14 @@ class MountDef:
         priority = cast("object", self.priority)
         if isinstance(priority, bool) or not isinstance(priority, int):
             raise MountsError(f"mount {self.id!r}: priority must be an integer, got {priority!r}")
+        kind = cast("object", self.kind)
+        if not isinstance(kind, str):
+            raise MountsError(f"mount {self.id!r}: kind must be a string")
+        if kind:
+            try:
+                require_asset_kind(kind)
+            except AssetError as exc:
+                raise MountsError(f"mount {self.id!r}: {exc}") from exc
 
 
 @dataclass(frozen=True)
@@ -351,6 +362,7 @@ def _parse_mount_config(text: str, source: str) -> tuple[tuple[MountDef, ...], s
                     path=Path(path),
                     mode=mode,
                     priority=cast("int", priority),
+                    kind=cast("str", entry.get("kind", "")),
                 )
             )
         except MountsError as exc:
@@ -410,6 +422,8 @@ def dump_mounts(mounts: Sequence[MountDef], *, output_mount: str | None = None) 
             lines.append(f"mode = {_toml_string(mount.mode)}")
         if mount.priority != 0:
             lines.append(f"priority = {mount.priority}")
+        if mount.kind:
+            lines.append(f"kind = {_toml_string(mount.kind)}")
         chunks.append("\n".join(lines))
     return "\n\n".join(chunks) + ("\n" if chunks else "")
 
@@ -478,6 +492,9 @@ class MountTable:
         A missing directory is not an add-time error - a config mount whose
         drive is unplugged should surface as a failed row, not take the
         whole server down - but a duplicate id is always a refusal."""
+        if kind and mount.kind and kind != mount.kind:
+            raise MountsError(f"mount {mount.id!r}: conflicting purpose kinds")
+        kind = kind or mount.kind
         if kind:
             try:
                 require_asset_kind(kind)
@@ -626,6 +643,8 @@ class MountTable:
             row.progress = None
             row.scan_started = time.monotonic()
         try:
+            if not row.mount.path.is_dir():
+                raise AssetError(f"asset library root is not a directory: {row.mount.path}")
             library = row.library
             if library is None:
                 index_path = (
@@ -773,22 +792,37 @@ class MountTable:
         return None
 
     def bind_name(self, name: str, kind: str) -> AssetRef | LocalAssetRef | None:
-        """Bind an exact basename in ranked category roots, without reading bytes."""
+        """Bind a basename or text-encoder relative file in ranked exact-kind roots."""
         require_asset_kind(kind)
-        if not name or name in {".", ".."} or any(c in name for c in "/\\\0"):
+        relative_name = "/" in name
+        if (
+            not name
+            or "\\" in name
+            or re.match(r"^[A-Za-z]:", name)
+            or any(ord(char) < 32 or ord(char) == 127 for char in name)
+            or any(part in {"", ".", ".."} for part in name.split("/"))
+            or (relative_name and kind != "model/text-encoder")
+        ):
             return None
         with self._lock:
             rows = sorted(
                 (row for row in self._rows.values() if row.kind == kind),
                 key=lambda row: (row.mount.priority, row.mount.id),
             )
+            context = current_asset_folders()
+            if context is not None:
+                by_id = {row.mount.id: row for row in rows}
+                rows = [by_id[mount_id] for mount_id in context.mounts if mount_id in by_id]
         for row in rows:
             try:
                 root = row.mount.path.resolve()
+                candidates = (root / name,) if relative_name else root.rglob(glob.escape(name))
                 paths = [
                     path
-                    for path in root.rglob(glob.escape(name))
-                    if path.name == name and path.is_file() and path.resolve().is_relative_to(root)
+                    for path in candidates
+                    if (relative_name or path.name == name)
+                    and path.is_file()
+                    and path.resolve().is_relative_to(root)
                 ]
                 if not paths:
                     continue
@@ -797,7 +831,7 @@ class MountTable:
                 path = paths[0]
                 signature = local_file_signature(path.stat())
                 relative = path.relative_to(root).as_posix()
-            except OSError:
+            except (OSError, RuntimeError):
                 continue
             with self._lock:
                 if self._rows.get(row.mount.id) is not row:
@@ -978,9 +1012,10 @@ class MountSnapshotResolver:
         self._path = Path(snapshot_path)
         self._lock = threading.Lock()
         self._stamp: tuple[int, int] | None = None
-        self._resolvers: list[tuple[str, IndexedAssetResolver]] = []
-        self._roots: tuple[tuple[str, Path], ...] = ()
+        self._resolvers: list[tuple[str, str, Path, IndexedAssetResolver]] = []
+        self._roots: tuple[tuple[str, str, Path], ...] = ()
         self._local_bindings: dict[str, object] = {}
+        self._selected_files: dict[str, tuple[str, Path, str, LocalFileSignature]] = {}
 
     def roots_for_kind(self, kind: str) -> tuple[Path, ...]:
         """Authorized directory roots in priority then mount-id order.
@@ -991,17 +1026,51 @@ class MountSnapshotResolver:
         require_asset_kind(kind)
         with self._lock:
             self._refresh_locked()
-            return tuple(root for row_kind, root in self._roots if row_kind == kind)
+            roots = [
+                (mount_id, root) for mount_id, row_kind, root in self._roots if row_kind == kind
+            ]
+            context = current_asset_folders()
+            if context is None:
+                return tuple(root for _, root in roots)
+            by_id = dict(roots)
+            return tuple(by_id[mount_id] for mount_id in context.mounts if mount_id in by_id)
+
+    def bind_relative_file(self, kind: str, root: Path, relative: str) -> AssetRef | LocalAssetRef:
+        """Bind a selected indexed file, or an invocation-local unindexed member.
+
+        Only engine-indexed content has a portable identity. Unindexed local
+        bindings remain invocation-scoped and do not publish a host binding.
+        """
+        if (
+            not relative
+            or "\\" in relative
+            or re.match(r"^[A-Za-z]:", relative)
+            or any(part in {"", ".", ".."} for part in relative.split("/"))
+            or any(ord(char) < 32 or ord(char) == 127 for char in relative)
+        ):
+            raise AssetError("selected file requires a safe relative name")
+        root = root.resolve()
+        if not any(granted.resolve() == root for granted in self.roots_for_kind(kind)):
+            raise AssetError("selected file root is not granted for this kind")
+        path = root / relative
+        if not path.resolve(strict=True).is_relative_to(root) or not path.is_file():
+            raise AssetError("selected file is outside its grant or unavailable")
+        signature = local_file_signature(path.stat())
+        binding = uuid.uuid4().hex
+        with self._lock:
+            self._selected_files[binding] = (kind, root, relative, signature)
+        ref = LocalAssetRef(binding, path.name, signature[0], relative, resolver=self)
+        return ref.verified() or ref
 
     def resolve(self, digest: str) -> Path | None:
-        for _kind, resolver in self._refresh():
+        for _mount_id, _kind, _root, resolver in self._refresh():
             path = resolver.resolve(digest)
             if path is not None:
                 return path
         return None
 
     def resolve_asset(self, digest: str) -> AssetResolution | None:
-        for _kind, resolver in self._refresh():
+        for _mount_id, _kind, _root, resolver in self._refresh():
             resolution = resolver.resolve_asset(digest)
             if resolution is not None:
                 return resolution
@@ -1010,7 +1079,22 @@ class MountSnapshotResolver:
     def resolve_local(self, binding: str) -> tuple[Path, LocalFileSignature] | None:
         self._refresh()
         with self._lock:
+            selected = self._selected_files.get(binding)
             raw = self._local_bindings.get(binding)
+        if selected is not None:
+            kind, root, relative, signature = selected
+            if not any(granted.resolve() == root for granted in self.roots_for_kind(kind)):
+                return None
+            path = root / relative
+            try:
+                if (
+                    path.resolve(strict=True).is_relative_to(root)
+                    and local_file_signature(path.stat()) == signature
+                ):
+                    return path, signature
+            except (OSError, RuntimeError):
+                pass
+            return None
         if not isinstance(raw, dict):
             return None
         entry = cast("dict[str, object]", raw)
@@ -1037,10 +1121,24 @@ class MountSnapshotResolver:
         return None
 
     def reconcile_local(self, binding: str) -> AssetRef | None:
-        if self.resolve_local(binding) is None:
+        location = self.resolve_local(binding)
+        if location is None:
             return None
         with self._lock:
             raw = self._local_bindings.get(binding)
+            selected = self._selected_files.get(binding)
+        if selected is not None:
+            kind, root, relative, signature = selected
+            for mount_id, row_kind, row_root, resolver in self._refresh():
+                if row_kind != kind or row_root.resolve() != root:
+                    continue
+                try:
+                    ref = resolver.ref(relative)
+                    if local_file_signature(location[0].stat()) != signature:
+                        return None
+                    return replace(ref, virtual_path=f"mounts/{mount_id}/{relative}", resolver=self)
+                except (AssetError, OSError):
+                    return None
         if isinstance(raw, dict):
             verified = cast("dict[str, object]", raw).get("verified")
             if isinstance(verified, dict):
@@ -1056,7 +1154,7 @@ class MountSnapshotResolver:
         snapshot's authoritative priority and mount-id order.
         """
         require_asset_kind(kind)
-        for row_kind, resolver in self._refresh():
+        for _mount_id, row_kind, _root, resolver in self._refresh():
             if row_kind != kind:
                 continue
             path = resolver.resolve(digest)
@@ -1066,7 +1164,7 @@ class MountSnapshotResolver:
 
     def resolve_asset_for_kind(self, digest: str, kind: str) -> AssetResolution | None:
         require_asset_kind(kind)
-        for row_kind, resolver in self._refresh():
+        for _mount_id, row_kind, _root, resolver in self._refresh():
             if row_kind != kind:
                 continue
             resolution = resolver.resolve_asset(digest)
@@ -1074,7 +1172,7 @@ class MountSnapshotResolver:
                 return resolution
         return None
 
-    def _refresh(self) -> tuple[tuple[str, IndexedAssetResolver], ...]:
+    def _refresh(self) -> tuple[tuple[str, str, Path, IndexedAssetResolver], ...]:
         with self._lock:
             self._refresh_locked()
             return tuple(self._resolvers)
@@ -1129,9 +1227,13 @@ class MountSnapshotResolver:
                 kind = ""
             prepared.append((priority, mount_id, kind, root, index))
         ordered = sorted(prepared)
-        self._roots = tuple((kind, Path(root)) for _, _, kind, root, _ in ordered if root)
-        for _priority, _mount_id, kind, root, index in ordered:
+        self._roots = tuple(
+            (mount_id, kind, Path(root)) for _, mount_id, kind, root, _ in ordered if root
+        )
+        for _priority, mount_id, kind, root, index in ordered:
             try:
-                self._resolvers.append((kind, IndexedAssetResolver(root, index_path=index)))
+                self._resolvers.append(
+                    (mount_id, kind, Path(root), IndexedAssetResolver(root, index_path=index))
+                )
             except AssetError:
                 continue  # index gone since the snapshot: that mount is dark

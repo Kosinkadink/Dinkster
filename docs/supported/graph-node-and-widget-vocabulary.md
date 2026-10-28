@@ -2,6 +2,11 @@
 
 - Input types: concrete, union, wildcard, variable, list, asset;
   scalar/list cardinality; required/advanced/hidden/lazy input flags
+- Replacement input-family copies can declare historical template input IDs
+  and a flat member-port path without retaining a predecessor schema. Existing
+  mappings without that metadata retain their wire shape. Historical same-type
+  templates are distinct from the current node interface. This describes the
+  backend declaration contract, not frontend migration support.
 - Backend `list<*>` values retain independently typed child envelopes through
   ordinary worker and persistent-cache boundaries. Outputs collect existing
   typed values rather than guessing types from Python objects. Nested lists,
@@ -51,6 +56,18 @@
 - Backend mount widgets present one scalar STRING mount id. Input adjacency
   hints name a sibling input without changing interface order or execution
   identity. This does not claim frontend rendering or native save-node support.
+- Backend asset-selection widgets retain one source-named COMBO input; VAE
+  selection also permits the existing ASSET carrier for real files. The public
+  asset authority enumerates only exact granted kinds for VAE, Diffusers,
+  input subdirectories and saved datasets. It resolves literals, same-root
+  file pairs and contained directory subtrees without filesystem or library
+  fallback. The options API returns names and shapes, not host paths.
+  Explicit mount purposes persist in config and runtime grants; omitted kinds
+  remain untyped and do not authorize source selections.
+  This does not claim frontend picker support.
+- Ordinary text-encoder ASSET inputs accept contained source-relative filenames
+  through model-name preflight, with exact-kind root priority and existing
+  verified or unverified file references. Traversal and escaping links refuse.
 - FLOAT number descriptors, including one-level FLOAT lists, accept `round: false`
   for explicit no-round presentation, or a positive finite numeric precision.
   Omission leaves precision unspecified; false is distinct from numeric zero.
@@ -67,9 +84,13 @@
   widget descriptors. Clients use these declarations without matching node IDs;
   native video trim and crop declare their exact `VIDEO_EDIT` features.
 - Values: INT, FLOAT, STRING, COMBO, BOOLEAN,
-  core.absent, immutable linear or monotone-cubic `dinkster.curve`, ordered
-  `dinkster.layers`, strict versioned `dinkster.compositor`, parametric `list<T>` and
-  `asset<T>`
+  core.absent, immutable `CURVE` with monotone-cubic default or explicit linear
+  interpolation, stable-sorted points including duplicate positions and empty
+  curves that evaluate to zero; the 4096-point limit applies only to curve
+  preview renditions, not value transport. HISTOGRAM is a plain ordered integer
+  list with no length or positivity restriction through shared structural
+  transport. Ordered `dinkster.layers`, strict versioned `dinkster.compositor`,
+  parametric `list<T>` and `asset<T>`
 - Integer, float, text, and boolean primitive nodes declare their exact output
   values before execution for downstream presentation. Text switches between
   single-line and multiline views; the legacy multiline type remains loadable

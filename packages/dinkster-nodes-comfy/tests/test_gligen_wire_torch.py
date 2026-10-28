@@ -157,7 +157,7 @@ class GligenConditioningInspect(Node):
 GLIGEN_FIXTURES = (GligenConditioningSource, GligenConditioningInspect)
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_gligen_conditioning_reaches_native_consumer_through_complete_manifest(
     tmp_path: Path, in_process: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:

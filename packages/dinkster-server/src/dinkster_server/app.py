@@ -225,6 +225,8 @@ from dinkster_assets import (
     AssetError,
     AssetIntegrityError,
     DeclaredAsset,
+    MountsError,
+    asset_selection_options,
     is_digest,
 )
 from dinkster_assets.acquisition_plan import AcquisitionSource
@@ -259,9 +261,11 @@ from dinkster_memory import (
     ReservationTimeout,
 )
 from dinkster_protocol import (
+    AssetFolderContext,
     AttentionPolicy,
     AttentionPolicyConfig,
     CompatGateDiagnostic,
+    ExportSnapshot,
     PackSettingsSchema,
     PreviewPolicy,
     attention_policy_config_from_wire,
@@ -306,6 +310,7 @@ from dinkster_values import (
     Value,
     list_children,
 )
+from dinkster_values.asset_folders import use_asset_folders
 
 from ._federated_asset_catalog import add_federated_asset_routes
 from .asset_stream import open_verified_sized, stream_verified
@@ -351,6 +356,7 @@ _log = core_logger("server")
 
 SCHEMA_VERSION = 1
 JOB_EVENT_BUFFER = 512
+_EVENT_AUTHORITY_RECHECK_SECONDS = 1.0
 
 PlaceExecution = Callable[
     [ExecutionRuntime, Mapping[str, str]],
@@ -3290,6 +3296,23 @@ async def handle_submit(request: web.Request) -> web.Response:
     source_document = body.get("sourceDocument", "")
     if not isinstance(source_document, str) or (source_document and not is_digest(source_document)):
         raise _bad_request("'sourceDocument' must be a canonical asset digest ('blake3:<64 hex>')")
+    export_snapshot = None
+    if "exportSnapshot" in body:
+        raw_snapshot = body["exportSnapshot"]
+        if not isinstance(raw_snapshot, dict):
+            raise _bad_request("'exportSnapshot' must be an object")
+        snapshot_fields = cast("dict[str, object]", raw_snapshot)
+        if set(snapshot_fields) - {"prompt", "extraPnginfo"}:
+            raise _bad_request("'exportSnapshot' has unknown fields")
+        prompt = snapshot_fields.get("prompt")
+        extra_pnginfo = snapshot_fields.get("extraPnginfo")
+        for field_name in ("prompt", "extraPnginfo"):
+            if field_name in snapshot_fields and not isinstance(snapshot_fields[field_name], dict):
+                raise _bad_request(f"'exportSnapshot.{field_name}' must be an object")
+        export_snapshot = ExportSnapshot(
+            prompt=cast("dict[str, object] | None", prompt),
+            extra_pnginfo=cast("dict[str, object] | None", extra_pnginfo),
+        )
     try:
         graph = graph_from_wire(body.get("graph"))
     except GraphWireError as exc:
@@ -3316,6 +3339,8 @@ async def handle_submit(request: web.Request) -> web.Response:
     if isinstance(previews, str):
         raise _bad_request(previews)
     library = request.app.get(LIBRARY_KEY)
+    project = body.get("project", "default")
+    asset_folders = _project_asset_folders(library, project)
     parsed = parse_asset_consent(body)
     if isinstance(parsed, str):
         raise _bad_request(parsed)
@@ -3327,6 +3352,13 @@ async def handle_submit(request: web.Request) -> web.Response:
         "scope": scope,
         "sourceDocument": source_document,
     }
+    if "project" in body:
+        fingerprint_payload["project"] = project
+    if export_snapshot is not None:
+        fingerprint_payload["exportSnapshot"] = {
+            "prompt": export_snapshot.prompt,
+            "extraPnginfo": export_snapshot.extra_pnginfo,
+        }
     if placement:
         # Placement is opaque to graph/document and node cache identity, but
         # it is content of the active job idempotency request. Reusing one
@@ -3412,14 +3444,17 @@ async def handle_submit(request: web.Request) -> web.Response:
             raise _bad_request(str(exc)) from exc
         graph = lowered.graph
         targets = list(lowered.targets)
-        graph, missing_names = await asyncio.to_thread(
-            bind_model_names, graph, execution.schemas, library
-        )
+        with use_asset_folders(asset_folders):
+            graph, missing_names = await asyncio.to_thread(
+                bind_model_names, graph, execution.schemas, library
+            )
         if missing_names:
             return web.json_response(
                 {"error": "assets-missing", "assets": missing_names}, status=409
             )
         execution = state.place_execution(execution, placement)
+        if asset_folders is not None:
+            execution = replace(execution, asset_folders=asset_folders)
         execution_graph = graph
         if execution.resolve_providers is not None:
             try:
@@ -3548,6 +3583,7 @@ async def handle_submit(request: web.Request) -> web.Response:
                 principal_id=principal.principal_id,
                 principal_kind=principal.kind,
                 source_document=source_document,
+                export_snapshot=export_snapshot,
                 fingerprint=fingerprint,
                 execution=execution,
                 compiled_graph=compiled_graph,
@@ -4013,7 +4049,7 @@ async def handle_events(request: web.Request) -> web.WebSocketResponse:
                 )
                 return
             try:
-                event = await asyncio.wait_for(sub.get(), timeout=1)
+                event = await asyncio.wait_for(sub.get(), timeout=_EVENT_AUTHORITY_RECHECK_SECONDS)
             except TimeoutError:
                 continue
             if event is None:
@@ -4425,6 +4461,32 @@ async def handle_assets_list(request: web.Request) -> web.Response:
     return web.json_response({"digests": sorted(digests)})
 
 
+async def handle_asset_selections(request: web.Request) -> web.Response:
+    kind = request.query.get("kind", "")
+    folders = _project_asset_folders(
+        request.app.get(LIBRARY_KEY), request.query.get("project", "default")
+    )
+    try:
+        with use_asset_folders(folders):
+            options = await asyncio.to_thread(asset_selection_options, kind)
+    except AssetError:
+        return web.json_response({"error": "unsupported-selection-kind"}, status=400)
+    return web.json_response({"kind": kind, "options": list(options)})
+
+
+def _project_asset_folders(
+    library: ServerLibrary | None, project: object
+) -> AssetFolderContext | None:
+    if not isinstance(project, str) or not project:
+        raise _bad_request("project must be a non-empty project id")
+    if library is None or library.project_folders_for is None:
+        return None
+    try:
+        return library.project_folders_for(project)
+    except (ValueError, MountsError) as exc:
+        raise _bad_request(str(exc)) from exc
+
+
 async def handle_asset_bytes(request: web.Request) -> web.StreamResponse:
     digest = request.match_info["digest"]
     if not is_digest(digest):
@@ -4635,6 +4697,7 @@ def create_app(
         app[ASSET_EXPORT_KEY] = asset_export
         app.router.add_get("/assets", handle_assets_list)
         app.router.add_get("/assets/{digest}", handle_asset_bytes)
+    app.router.add_get("/api/assets/selections", handle_asset_selections)
     if library is not None:
         add_library_routes(app, library)
     if history is not None:
