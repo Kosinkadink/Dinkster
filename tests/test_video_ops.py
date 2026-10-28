@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import io
-import json
 import os
 from collections.abc import Mapping
 from pathlib import Path
@@ -13,7 +12,6 @@ from typing import Any, cast
 import numpy as np
 import pytest
 from dinkster_api.v1 import (
-    CORE_STRING,
     VIDEO_EDIT_TYPE,
     VIDEO_TYPE,
     InputSpec,
@@ -101,12 +99,20 @@ def test_shared_video_edit_registration_is_torch_free_and_preserves_first_author
     from dinkster_api.v1 import TypeRegistry, register_video_edit_type
     from dinkster_inference_wire.types import register_inference_types
 
-    value = {"crop": {"x": 5, "y": 3, "width": 11, "height": 7}}
+    value = {
+        "crop": {"x": 5, "y": 3, "width": 11, "height": 7},
+        "trim": {"start_time": 0.25, "duration": 0.25},
+        "vendor": {"tag": "retain", "enabled": False},
+    }
     registry = TypeRegistry()
     first = register_inference_types(registry)
     spec = registry.spec(VIDEO_EDIT_TYPE)
     assert spec.declared_codec
-    assert spec.encode(value) == b'{"crop": {"height": 7, "width": 11, "x": 5, "y": 3}}'
+    assert spec.encode(value) == (
+        b'{"crop": {"height": 7, "width": 11, "x": 5, "y": 3}, '
+        b'"trim": {"duration": 0.25, "start_time": 0.25}, '
+        b'"vendor": {"enabled": false, "tag": "retain"}}'
+    )
     assert spec.decode(spec.encode(value)) == value
     repeated = register_inference_types(registry)
     register_video_edit_type(registry)
@@ -129,16 +135,23 @@ class VideoEditLiteralFixture(Node):
         return NodeSchema(
             node_type="video-edit-public.apply",
             inputs=(InputSpec("edit", TypeExpr.concrete(VIDEO_EDIT_TYPE)),),
-            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+            outputs=(OutputSpec("edit", TypeExpr.concrete(VIDEO_EDIT_TYPE)),),
         )
 
     @classmethod
     def execute(cls, *, edit: object) -> Mapping[str, object]:
-        assert edit == {"crop": {"x": 5, "y": 3, "width": 11, "height": 7}}
+        assert edit == {
+            "crop": {"x": 5, "y": 3, "width": 11, "height": 7},
+            "trim": {"start_time": 0.25, "duration": 0.25},
+            "vendor": {"tag": "retain", "enabled": False},
+        }
+        fields = cast(dict[str, object], edit)
         images = np.arange(2 * 12 * 18 * 3, dtype=np.float32).reshape(2, 12, 18, 3) / 2000
-        result = edit_video(assemble_video(images, fps=4), cast(dict[str, object], edit))
+        result = edit_video(assemble_video(images, fps=4), {"crop": fields["crop"]})
         np.testing.assert_array_equal(disassemble_video(result)["images"], images[:, 2:8, 4:14])
-        return cls.outputs(summary=json.dumps(edit, sort_keys=True))
+        trimmed = edit_video(result, {"trim": fields["trim"]})
+        np.testing.assert_array_equal(disassemble_video(trimmed)["images"], images[1:, 2:8, 4:14])
+        return cls.outputs(edit=edit)
 
 
 @pytest.mark.parametrize("in_process", (True, False))
@@ -187,14 +200,16 @@ def test_video_edit_literal_crosses_ordinary_hosts(tmp_path: Path, in_process: b
                         group_manifests=manifests,
                     )
                 await composer.add_pack(pack)
-            value = {"crop": {"x": 5, "y": 3, "width": 11, "height": 7}}
+            value = {
+                "crop": {"x": 5, "y": 3, "width": 11, "height": 7},
+                "trim": {"start_time": 0.25, "duration": 0.25},
+                "vendor": {"tag": "retain", "enabled": False},
+            }
             graph = Graph(nodes={"apply": GraphNode("video-edit-public.apply", {"edit": value})})
             engine = composer.composition.make_engine(lambda _event: None)
             for attempt in range(2):
                 result = await engine.run(graph, ["apply"])
-                assert result.outputs["apply"]["summary"].resolve() == json.dumps(
-                    value, sort_keys=True
-                )
+                assert result.outputs["apply"]["edit"].resolve() == value
                 assert set(result.cached) == (set() if attempt == 0 else {"apply"})
         finally:
             await composer.close()
