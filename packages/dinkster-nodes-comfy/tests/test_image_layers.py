@@ -154,6 +154,7 @@ class _LayerHostInspect(Node):
                 InputSpec(name, TypeExpr.concrete(LAYERS_TYPE)) for name in ("original", "appended")
             ),
             outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+            idempotent=False,
         )
 
     @classmethod
@@ -267,7 +268,8 @@ def test_add_layer_uses_native_manifest_hosts_and_persistent_cache(
                         "two layers retain media and placement"
                     )
                     if restart or repeat:
-                        assert set(result.cached) == {"source", "append", "inspect"}
+                        assert set(result.cached) == {"source", "append"}
+                        assert set(result.executed) == {"inspect"}
                         assert {
                             event.detail["cacheLayer"]
                             for event in events
