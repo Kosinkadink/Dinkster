@@ -6,9 +6,9 @@ asset system, re-exported from the internal packages in one place.
 
 The compat promise (DESIGN 3.6, enforced by tests/test_api_v1.py):
 
-- Within v1 this surface only ever GROWS. Nothing here is renamed,
-  removed, or changed incompatibly; breaking changes mean a ``v2``
-  module next to this one, never edits to this one.
+- Within v1 supported extension contracts grow compatibly; breaking changes
+  require a ``v2`` module next to this one. Training-origin nodes and their
+  exclusive value identifiers are excluded from this supported surface.
 - Every name below is the internal object itself, not a wrapper - zero
   overhead, and ``isinstance``/identity checks agree across the door.
 - Internal modules stay reachable (this is Python) but carry no promise:
@@ -257,8 +257,6 @@ from dinkster_values import (
     LAYERS_TYPE,
     LENGTH_META_KEY,
     LOAD3D_CAMERA_TYPE,
-    LORA_MODEL_TYPE,
-    LOSS_MAP_TYPE,
     MASK_TYPE,
     MAX_CURVE_POINTS,
     MEBIBYTE,
@@ -357,6 +355,7 @@ from dinkster_values import (
     model3d_fingerprint,
     model3d_format,
     model3d_meta,
+    open_image_components,
     parse_ply_splat,
     prepare_image_array_encoding,
     region_meta,
@@ -656,9 +655,7 @@ __all__ = [
     "LATENT_TYPE",
     "LATENT_UPSCALE_MODEL_TYPE",
     "LAYERS_TYPE",
-    "LOSS_MAP_TYPE",
     "LOAD3D_CAMERA_TYPE",
-    "LORA_MODEL_TYPE",
     "MASK_TYPE",
     "MODEL3D_TYPE",
     "MODEL_PATCH_TYPE",
@@ -738,6 +735,7 @@ __all__ = [
     "decode_detection",
     "decode_image_array",
     "decode_image_components",
+    "open_image_components",
     "decode_model3d",
     "decode_model3d_file",
     "decode_region",

@@ -76,9 +76,6 @@
 - Native EmptyMochiLatentVideo creates video latents with the core interface.
   Empty image and Mochi latents honor CPU-only process policy without requiring
   attention discovery or command-line initialization first.
-- Seven native dataset text nodes lowercase, uppercase, truncate, prefix,
-  suffix, replace, and strip text under exact core IDs, retaining the fixed
-  reference's one-element list payloads on scalar STRING outputs.
 - Save Text preserves its core text, filename prefix, and format inputs while
   writing UTF-8 output through the configured mounted output target. Filename
   variables use 1-by-1 dimensions and local time; unknown variables stay literal.
@@ -98,8 +95,6 @@
   across ordinary native pack hosts without loading Torch during registration.
 - UPSCALE_MODEL preserves the live image-upscale descriptor and its patcher as a
   resident value across ordinary pack hosts; model contents are not serialized.
-- LOSS_MAP transports ordered training loss values and structural extras through
-  the shared latent framing without changing the recorded numeric values.
 - Hunyuan Video 1.5 and LTXV latent upscale consumers preserve core resize,
   normalization, dtype, device, and latent metadata behavior.
 - Nine native advanced latent nodes add, subtract, multiply, interpolate,
@@ -139,8 +134,6 @@
   stitch, resize with padding, rotate, flip, and scale to a maximum dimension.
 - Native morphology applies erosion, dilation, opening, closing, gradients and
   top/bottom hats; RGB/YUV conversion splits and joins three image channels.
-- Native dataset nodes merge image batches into frame lists and bucket training
-  latents with their paired conditioning by resolution in first-seen order.
 - Eight native video latent nodes create Hunyuan Video, Hunyuan Video 1.5, LTXV,
   Cosmos, and autoregressive video samples, trim video frames, freeze LTXV video
   or audio samples, and normalize video latent starts under their exact ComfyUI IDs.

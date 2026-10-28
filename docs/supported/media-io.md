@@ -12,8 +12,6 @@
   sequences, sample counts and structural metadata across execution hosts and caches
 - Portable IC-LoRA parameter mappings preserve source fields, ordering, and
   structural extras across execution hosts and caches
-- Portable `LORA_MODEL` values preserve ordered state-dictionary keys and tensor
-  dtype, shape, and bytes across execution hosts and caches
 - Portable LOAD3D_CAMERA values preserve perspective and orthographic camera
   dictionaries, including position, target, zoom, camera type, optional camera
   controls, and structural extensions across execution hosts and caches
@@ -24,13 +22,14 @@
   receive normalized float32 values at invocation, while inputs that declare
   compact-storage support receive the retained dtype unchanged
 - Public bound-image component decoding returns first-frame RGB float32 pixels
-  and optional straight alpha through the existing openable asset capability,
+  or ordered frames with optional straight alpha under explicit source ownership,
   using the same PyAV precision, channel, alignment, and display-orientation
   handling as the ComfyUI reference without admitting still images as VIDEO;
   source bytes, dimensions and estimated aligned conversion working sets are
   admitted before conversion, with source length checked before opening the
   decoder. FFmpeg probing is not a hard allocation sandbox. PyAV's non-byte
-  alignment graph rejects some small asymmetric inputs
+  alignment graph rejects some small asymmetric inputs. Frame iteration does not
+  accumulate a batch; consumers admit the memory of frames they retain separately
 - Ordered animated and multipage image loading; pages with different dimensions
   from the first page are omitted from the batch
 - Ordered mounted image saving to PNG, JPEG, or WebP; Save Image defaults to a
@@ -81,8 +80,6 @@
   resampling matching native video loading; deferred assembly with optional
   audio, 8/10-bit precision, sRGB, HLG, and HDR PQ; disassembly to frames,
   optional audio, fps, duration, bit depth, and color space
-- Native Sample Video Frame selects head or tail windows with audio retained,
-  or ordered uniform/random frames at the source frame rate without audio
 - Public `iter_video_pixels` yields edited, display-oriented float32 pixels
   with rational timestamps without accumulating the complete frame batch.
   Consumers that stop early close the iterator to release the decoder and
