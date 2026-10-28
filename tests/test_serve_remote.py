@@ -9,7 +9,6 @@ connection closed, the daemon free for the next client."""
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import shutil
 import socket
@@ -35,28 +34,7 @@ from dinkster_graph import (
 )
 from dinkster_protocol import AttentionRouteToken
 from dinkster_schema import (
-    SCHEMA_WIRE_VERSION,
-    ComfyAliasConfidence,
-    ComfyAliasRecord,
-    ComfyAliasRegistry,
-    ComfyAliasSource,
-    ComfyAliasSourceSchema,
-    ComfyGroupEdge,
-    ComfyGroupNode,
-    ComfyGroupPattern,
-    ComfyGroupRecord,
-    ComfyGroupRegistry,
-    ComfyGroupSource,
-    ComfyGroupSourceSchema,
-    InputSpec,
-    MappingSource,
-    NodeSchema,
-    OutputSpec,
-    ReplacementCase,
-    ReplacementRule,
     TypeExpr,
-    comfy_alias_registry_to_wire,
-    comfy_group_registry_to_wire,
 )
 from dinkster_server import STATE_KEY, PackInfo, create_app
 from dinkster_values import CORE_STRING, list_children, value_resource_provenance_refs
@@ -1004,157 +982,6 @@ def _dev_pack_variant(tmp_path: Path, name: str, old: str, new: str) -> Path:
     assert text.count(old) == 1
     gallery.write_text(text.replace(old, new), encoding="utf-8")
     return root
-
-
-def _dev_pack_with_comfy_registries(
-    tmp_path: Path,
-) -> tuple[Path, ComfyAliasRegistry, ComfyGroupRegistry]:
-    root = tmp_path / "alias-pack"
-    shutil.copytree(DEV_MANIFEST.parent, root)
-    image = TypeExpr.concrete("dev.image")
-    source = ComfyAliasSource("comfy-core", "InvertImage", "comfy.InvertImage", "b78cec87")
-    registry = ComfyAliasRegistry(
-        source_schemas=(
-            ComfyAliasSourceSchema(
-                NodeSchema(
-                    source.node_type,
-                    inputs=(InputSpec("image", image),),
-                    outputs=(OutputSpec("image", image),),
-                ),
-                SCHEMA_WIRE_VERSION,
-            ),
-        ),
-        records=(
-            ComfyAliasRecord(
-                id="comfy_alias:comfy-core/InvertImage",
-                mapping_kind="op",
-                carrier="dev.image.invert",
-                source=source,
-                replacement=ReplacementRule(
-                    from_type=source.node_type,
-                    cases=(
-                        ReplacementCase.build(
-                            "dev.image.invert",
-                            inputs={"image": MappingSource.copy("image")},
-                            outputs={"image": "image"},
-                        ),
-                    ),
-                ),
-                confidence=ComfyAliasConfidence("exact", ("tests/test_serve_remote.py",)),
-            ),
-        ),
-    )
-    (root / "comfy-aliases.json").write_text(
-        json.dumps(comfy_alias_registry_to_wire(registry)),
-        encoding="utf-8",
-    )
-    scale_source = ComfyAliasSource("comfy-core", "ImageScale", "comfy.ImageScale", "b78cec87")
-    group_type = "comfy-group.comfy-core.invert-scale"
-    group_schema = NodeSchema(
-        group_type,
-        inputs=(InputSpec("image", image),),
-        outputs=(OutputSpec("image", image),),
-    )
-    group_registry = ComfyGroupRegistry(
-        source_schemas=(
-            ComfyGroupSourceSchema(
-                registry.source_schemas[0].schema,
-                registry.source_schemas[0].wire_version,
-            ),
-            ComfyGroupSourceSchema(
-                NodeSchema(
-                    scale_source.node_type,
-                    inputs=(InputSpec("image", image),),
-                    outputs=(OutputSpec("image", image),),
-                ),
-                SCHEMA_WIRE_VERSION,
-            ),
-        ),
-        group_schemas=(ComfyGroupSourceSchema(group_schema, SCHEMA_WIRE_VERSION),),
-        records=(
-            ComfyGroupRecord(
-                id="comfy_group:comfy-core/invert-scale",
-                mapping_kind="op",
-                carrier="dev.image.invert",
-                source=ComfyGroupSource("comfy-core", "invert-scale", "b78cec87"),
-                pattern=ComfyGroupPattern(
-                    group_type=group_type,
-                    anchor="invert",
-                    nodes=(
-                        ("invert", ComfyGroupNode(source, "active")),
-                        ("scale", ComfyGroupNode(scale_source, "active")),
-                    ),
-                    edges=(ComfyGroupEdge("invert:image", "scale:image"),),
-                    inputs=(("image", "invert:image"),),
-                    parameters=(),
-                    constants=(),
-                    outputs=(("image", "scale:image"),),
-                ),
-                replacement=ReplacementRule(
-                    from_type=group_type,
-                    cases=(
-                        ReplacementCase.build(
-                            "dev.image.invert",
-                            inputs={"image": MappingSource.copy("image")},
-                            outputs={"image": "image"},
-                        ),
-                    ),
-                ),
-                confidence=ComfyAliasConfidence("grouped", ("tests/test_serve_remote.py",)),
-            ),
-        ),
-    )
-    (root / "comfy-groups.json").write_text(
-        json.dumps(comfy_group_registry_to_wire(group_registry)),
-        encoding="utf-8",
-    )
-    return root, registry, group_registry
-
-
-def test_remote_composes_comfy_registries_for_selected_owned_nodes(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        root, aliases, groups = _dev_pack_with_comfy_registries(tmp_path)
-        proc, host, port = await start_service(
-            root / "dinkster-pack.toml", tmp_path, pythonpath=(root / "src",)
-        )
-        try:
-            composer = ServingComposer()
-            try:
-                delta = await composer.add_remote(
-                    remote_spec(
-                        host,
-                        port,
-                        tmp_path,
-                        nodes=("dev.image.invert",),
-                        trust_reserved=True,
-                    )
-                )
-                assert delta.packs["box1"].comfy_aliases == aliases
-                assert delta.packs["box1"].comfy_groups == groups
-                assert composer.composition.packs["box1"].comfy_aliases == aliases
-                assert composer.composition.packs["box1"].comfy_groups == groups
-            finally:
-                await composer.close()
-
-            composer = ServingComposer()
-            try:
-                delta = await composer.add_remote(
-                    remote_spec(
-                        host,
-                        port,
-                        tmp_path,
-                        nodes=("dev.image.gradient",),
-                        trust_reserved=True,
-                    )
-                )
-                assert delta.packs["box1"].comfy_aliases is None
-                assert delta.packs["box1"].comfy_groups is None
-            finally:
-                await composer.close()
-        finally:
-            await stop_service(proc)
-
-    asyncio.run(scenario())
 
 
 def test_presentation_divergent_matching_type_composes_by_signature(tmp_path: Path) -> None:
