@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
+import json
 import os
 import subprocess
 import sys
@@ -23,6 +25,7 @@ from dinkster_api.v1 import (
     TypeExpr,
     assemble_video,
     audio_window,
+    coerce_video,
     disassemble_video,
     effective_audio_facts,
     effective_video_facts,
@@ -153,25 +156,38 @@ def test_encoded_crop_is_lazy_and_composes_on_display_pixels() -> None:
     np.testing.assert_array_equal(disassemble_video(result)["images"], original[:, 4:10, 4:10])
 
 
-def _source_components_encoded(images: np.ndarray) -> bytes:
-    encoded = io.BytesIO()
-    with av.open(encoded, mode="w", format="mp4", options={"movflags": "use_metadata_tags"}) as mux:
-        stream = mux.add_stream("libx264", rate=4)
-        stream.width, stream.height = images.shape[2], images.shape[1]
-        stream.pix_fmt = "yuv420p"
-        stream.options = {"crf": "18"}
-        stream.codec_context.color_primaries = 1
-        stream.codec_context.color_trc = 13
-        stream.codec_context.colorspace = stream.codec_context.color_range = 1
-        for samples in images:
-            frame = av.VideoFrame.from_ndarray(
-                np.clip(samples * 255, 0, 255).astype(np.uint8), format="rgb24"
-            ).reformat(format="yuv420p", dst_colorspace=1)
-            frame.color_primaries, frame.color_trc = 1, 13
-            frame.colorspace = frame.color_range = 1
-            mux.mux(stream.encode(frame))
-        mux.mux(stream.encode())
-    return encoded.getvalue()
+def _assert_component_trim_matches_source(video: object) -> None:
+    oracle = json.loads(
+        (Path(__file__).parent / "fixtures/video_edits/component_trim.json").read_text()
+    )
+    value = coerce_video(video)
+    start, duration = Fraction(oracle["start"]), Fraction(oracle["duration"])
+    assert value["edits"] == [
+        {"trim": {"start_time": start, "duration": duration}, "strict_duration": False}
+    ]
+    source = value["source"]
+    assert isinstance(source, bytes)
+    with av.open(io.BytesIO(source)) as container:
+        selected = [
+            frame
+            for frame in container.decode(video=0)
+            if start <= frame.pts * frame.time_base < start + duration
+        ]
+        assert [str(frame.pts * frame.time_base) for frame in selected] == oracle["timestamps"]
+        assert [
+            hashlib.sha256(frame.to_ndarray(format="rgb24").tobytes()).hexdigest()
+            for frame in selected
+        ] == oracle["rgb24_sha256"]
+    decoded = disassemble_video(video)["images"]
+    assert list(decoded.shape) == oracle["shape"]
+    assert decoded.dtype == np.uint8
+    assert [hashlib.sha256(frame.tobytes()).hexdigest() for frame in decoded] == oracle[
+        "rgb8_via_float32_sha256"
+    ]
+    facts = effective_video_facts(video)
+    assert facts["duration"] == duration
+    assert facts["fps"] == Fraction(oracle["fps"])
+    assert facts["frame_count"] == oracle["shape"][0]
 
 
 def test_component_trim_encodes_before_selection_but_advanced_zero_window_is_noop() -> None:
@@ -184,11 +200,10 @@ def test_component_trim_encodes_before_selection_but_advanced_zero_window_is_noo
     advanced = VideoTrim.execute(video=video, trim={"trim": {"start_time": 0.5, "duration": 0.75}})[
         "video"
     ]
-    decoded = disassemble_video(video_from_source(_source_components_encoded(images)))["images"]
     for result in (sliced, advanced):
         assert "components" not in result
         assert result["probe"]["container"] == "mp4"
-        np.testing.assert_array_equal(disassemble_video(result)["images"], decoded[2:5])
+        _assert_component_trim_matches_source(result)
     assert "source" in VideoSlice.execute(video=video)["video"]
     np.testing.assert_array_equal(images, before)
 
@@ -307,13 +322,7 @@ class TrimConsumer(Node):
 
     @classmethod
     def execute(cls, *, video: object) -> dict[str, object]:
-        original = np.linspace(0, 1, 8 * 16 * 24 * 3, dtype=np.float32).reshape(8, 16, 24, 3)
-        encoded = _source_components_encoded(original)
-        expected = disassemble_video(video_from_source(encoded))["images"][2:5]
-        np.testing.assert_array_equal(disassemble_video(video)["images"], expected)
-        facts = effective_video_facts(video)
-        assert facts["duration"] == Fraction(3, 4)
-        assert facts["frame_count"] == 3
+        _assert_component_trim_matches_source(video)
         return cls.outputs(summary="trim-preserved")
 
 
