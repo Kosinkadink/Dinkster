@@ -708,3 +708,155 @@ def test_advanced_image_grayscale_width_four_converts_every_column(
             frame = next(container.decode(video=0))
             assert frame.format.name == "grayf32le"
             np.testing.assert_allclose(frame.to_ndarray(), expected[index], rtol=1e-6, atol=0)
+
+
+class _AdvancedImageHostSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "advanced-image-fixture.source",
+            outputs=(OutputSpec("images", TypeExpr.concrete(IMAGE_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls):
+        pixels = torch.arange(2 * 17 * 19 * 4, dtype=torch.float32).reshape(2, 17, 19, 4)
+        return cls.outputs(images=(pixels % 31) / 16 - 0.25)
+
+
+class _AdvancedImageHostInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "advanced-image-fixture.inspect",
+            inputs=(
+                InputSpec("png", TypeExpr.concrete(IMAGE_TYPE)),
+                InputSpec("exr", TypeExpr.concrete(IMAGE_TYPE)),
+            ),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, png, exr):
+        expected = (
+            torch.arange(2 * 17 * 19 * 4, dtype=torch.float32).reshape(2, 17, 19, 4) % 31
+        ) / 16 - 0.25
+        for value in (png, exr):
+            torch.testing.assert_close(materialize_image(value), expected, rtol=0, atol=0)
+        return cls.outputs(summary="advanced exports preserve source pixels")
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_advanced_image_exports_use_native_manifest_twice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool
+) -> None:
+    import av
+
+    output, alternate = tmp_path / "output", tmp_path / "alternate"
+    output.mkdir()
+    alternate.mkdir()
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot, index_root=tmp_path / "index")
+    for name, root in (("output", output), ("alternate", alternate)):
+        table.add(MountDef(name, root, mode="readwrite"))
+        table.scan(name)
+    table.select_output_mount("output")
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+
+    async def scenario():
+        native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+        module = f"advanced_image_host_fixture_{tmp_path.name.replace('-', '_')}"
+        (tmp_path / f"{module}.py").write_text(
+            "from test_save_image_torch import _AdvancedImageHostSource, "
+            "_AdvancedImageHostInspect\n"
+            "from dinkster_nodes_comfy import register_inference_types\n"
+            "NODES = (_AdvancedImageHostSource, _AdvancedImageHostInspect)\n",
+            encoding="ascii",
+        )
+        fixture = tmp_path / "dinkster-pack.toml"
+        fixture.write_text(
+            '[pack]\nname="advanced-image-fixture"\npublisher="dinkster"\n'
+            'namespaces=["advanced-image-fixture"]\n[pack.entry]\n'
+            f'nodes="{module}:NODES"\ntypes="{module}:register_inference_types"\n',
+            encoding="ascii",
+        )
+        paths = (str(tmp_path), str(Path(__file__).parent), *(p for p in sys.path if p))
+        composer = ServingComposer(
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
+                "PYTHONPATH": os.pathsep.join(paths),
+            }
+        )
+        try:
+            manifests = (native, fixture)
+            for manifest in manifests:
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=manifest,
+                        in_process=in_process,
+                        worker_group=None if in_process else "advanced-image-fixture",
+                        group_manifests=() if in_process else manifests,
+                    )
+                )
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("advanced-image-fixture.source"),
+                    "png": GraphNode(
+                        "SaveImageAdvanced",
+                        {
+                            "images": Link("source", "images"),
+                            "filename_prefix": "pixels/%width%x%height%",
+                            "format.bit_depth": "16-bit",
+                        },
+                        slot_variants={"format": "png"},
+                    ),
+                    "exr": GraphNode(
+                        "SaveImageAdvanced",
+                        {
+                            "images": Link("source", "images"),
+                            "filename_prefix": "scene",
+                            "format.bit_depth": "32-bit float",
+                            "format.input_color_space": "linear",
+                            "mount": "alternate",
+                        },
+                        slot_variants={"format": "exr"},
+                    ),
+                    "inspect": GraphNode(
+                        "advanced-image-fixture.inspect",
+                        {"png": Link("png", "images"), "exr": Link("exr", "images")},
+                    ),
+                }
+            )
+            engine = composer.composition.make_engine(lambda _event: None)
+            for attempt in range(2):
+                result = await engine.run(graph, ["inspect"])
+                assert result.outputs["inspect"]["summary"].resolve() == (
+                    "advanced exports preserve source pixels"
+                )
+                if attempt:
+                    assert "source" in result.cached
+                    assert not {"png", "exr"} & set(result.cached)
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+    raw = (np.arange(2 * 17 * 19 * 4, dtype=np.float32).reshape(2, 17, 19, 4) % 31) / 16 - 0.25
+    png_files = sorted(output.rglob("*.png"))
+    exr_files = sorted(alternate.glob("*.exr"))
+    assert len(png_files) == len(exr_files) == 4
+    assert not list(output.rglob("*.exr"))
+    assert not list(alternate.rglob("*.png"))
+    for counter, (png, exr) in enumerate(zip(png_files, exr_files, strict=True), 1):
+        index = (counter - 1) % 2
+        assert png.relative_to(output).as_posix() == f"pixels/19x17_{counter:05d}.png"
+        assert exr.name == f"scene_{counter:05d}.exr"
+        with av.open(str(png)) as container:
+            pixels = next(container.decode(video=0)).to_ndarray(format="rgba64le")
+            np.testing.assert_array_equal(
+                pixels, (raw[index] * 65535).clip(0, 65535).astype(np.uint16)
+            )
+        with av.open(str(exr)) as container:
+            pixels = next(container.decode(video=0)).to_ndarray(format="gbrapf32le")
+            np.testing.assert_array_equal(pixels, raw[index])
