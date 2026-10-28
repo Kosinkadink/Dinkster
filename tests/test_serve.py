@@ -2343,7 +2343,6 @@ def test_unprepared_library_catalog_fails_before_api_binding(
             asyncio.run(awaitable)  # type: ignore[arg-type]
 
     monkeypatch.setattr(serve, "default_pack_ids", lambda: ())
-    monkeypatch.setattr(serve, "comfy_compat_specs", lambda *_args, **_kwargs: ())
     monkeypatch.setattr(serve, "_resolve_pack_argument", lambda _path: pack)
     monkeypatch.setattr(serve.web, "run_app", run_app)
     monkeypatch.setattr(
@@ -2470,7 +2469,6 @@ from dinkster import serve
 
 serve.default_pack_ids = lambda: ("dinkster-nodes-media-io",)
 serve.model_pack_specs = lambda: ()
-serve.comfy_compat_specs = lambda *args, **kwargs: ()
 serve.main()
 """
     process = subprocess.Popen(
@@ -3465,7 +3463,6 @@ from dinkster import serve
 
 serve.default_pack_ids = lambda: ("dinkster-nodes-foundation",)
 serve.model_pack_specs = lambda: ()
-serve.comfy_compat_specs = lambda *args, **kwargs: ()
 serve.main()
 """
     process = subprocess.Popen(
@@ -3740,7 +3737,6 @@ from dinkster import serve
 
 serve.default_pack_ids = lambda: ("dinkster-nodes-media-io",)
 serve.model_pack_specs = lambda: ()
-serve.comfy_compat_specs = lambda *args, **kwargs: ()
 serve.main()
 """
     process, log = start_logged_serve(

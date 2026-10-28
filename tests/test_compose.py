@@ -321,6 +321,7 @@ def test_retired_comfyui_python_env_is_refused_with_the_new_name(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dinkster import comfy_compose
+    from dinkster.compose import native_execution_spec
 
     root = tmp_path / "ComfyUI"
     root.mkdir()
@@ -332,7 +333,7 @@ def test_retired_comfyui_python_env_is_refused_with_the_new_name(
         "DINKSTER_COMFYUI_PYTHON is retired; set DINKSTER_EXECUTION_PYTHON instead"
     )
     with pytest.raises(comfy_compose.CompositionError, match="DINKSTER_EXECUTION_PYTHON"):
-        comfy_compose.comfy_compat_specs(None, python="/explicit/python")
+        native_execution_spec(python="/explicit/python")
 
 
 @pytest.mark.parametrize("missing", [None, "einops"])
@@ -1055,15 +1056,15 @@ def test_compose_serving_default_resolution_is_atomic(
     [
         (
             "dinkster-nodes-foundation",
-            "blake3:4a94c9dbbf803b60b726e0e09e50870315457c82dba794ad84ab13a1523b4281",
+            "blake3:7d60e216e9a07b45cb2192d9156ed6817ca7ca229ebe6e121d95305550ca18fa",
         ),
         (
             "dinkster-nodes-media-io",
-            "blake3:44693b7bf18f7adfce77bf77f168537445768178993b53713b56c720bb7d6ac8",
+            "blake3:9c7fc73f4af3bb38fbe39520ac46694cb113af8fc44871c841502c2e5a571a54",
         ),
         (
             "dinkster-nodes-image",
-            "blake3:2939448809f359f767e8575ece6c5b466b990c6a30aaba84a4fd63acbde63191",
+            "blake3:e232d330d936e8ed7d496275295d0f68518c315827493a2ee50fb009a667d2a6",
         ),
         (
             "dinkster-nodes-remote",
@@ -1212,7 +1213,6 @@ def test_default_pack_uses_embedded_wheel_artifact(
     bundled = tmp_path / "site/dinkster_nodes_media_io_pack/dinkster-pack.toml"
     bundled.parent.mkdir(parents=True)
     shutil.copy2(source / "dinkster-pack.toml", bundled)
-    shutil.copy2(source / "comfy-aliases.json", bundled.parent / "comfy-aliases.json")
     shutil.copytree(
         source / "src/dinkster_nodes_media_io", bundled.parent / "dinkster_nodes_media_io"
     )
@@ -1346,7 +1346,9 @@ def test_installed_pack_digest_matches_bundled_artifact(tmp_path: Path) -> None:
     shutil.copy2(source / "dinkster-pack.toml", bundled / "dinkster-pack.toml")
     shutil.copytree(source / "src/dinkster_nodes_image", bundled / "dinkster_nodes_image")
     for filename in compose._PACK_ARTIFACT_SIDECARS:
-        shutil.copy2(source / filename, bundled / filename)
+        sidecar = source / filename
+        if sidecar.is_file():
+            shutil.copy2(sidecar, bundled / filename)
 
     source_digest = compose._installed_pack_digest(
         source / "dinkster-pack.toml", source / "src/dinkster_nodes_image"

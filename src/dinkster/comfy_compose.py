@@ -91,7 +91,6 @@ from .compose import (
     PackSpec,
     cuda_vram_budgets,
     default_pack_spec,
-    native_execution_spec,
 )
 from .packs import blueprint_assets, pack_info_from_presentation, template_assets
 
@@ -564,7 +563,7 @@ def legacy_pack_info(path: Path) -> PackInfo:
 
 
 def comfy_compat_specs(
-    comfy_root: Path | str | None = None,
+    comfy_root: Path | str,
     *,
     python: str | None = None,
     _requirements_checked: bool = False,
@@ -579,34 +578,17 @@ def comfy_compat_specs(
     multi_device_cuda_indices: tuple[int, ...] = (),
     single_job_multi_gpu: SingleJobMultiGpuConfig | None = None,
 ) -> list[PackSpec]:
-    """PackSpecs for native core nodes or an explicit ComfyUI installation.
+    """PackSpecs for an explicit ComfyUI installation.
 
-    Without a root the native core pack owns both schemas and execution.
     The legacy quarantine worker follows when ``legacy_packs``
     names custom pack directories (or single-file packs). ``comfy_nodes``
     optionally filters the v1 translation (DINKSTER_COMFY_NODES) - mostly a
     test/bring-up knob.
     """
     _reject_retired_execution_python_env()
-    root = Path(comfy_root) if comfy_root is not None else None
-    if root is not None and not root.is_dir():
+    root = Path(comfy_root)
+    if not root.is_dir():
         raise CompositionError(f"ComfyUI root not found: {root}")
-    if legacy_packs and root is None:
-        raise CompositionError("legacy packs require --comfy-root")
-    if root is None:
-        return [
-            native_execution_spec(
-                python=python,
-                asset_vault=asset_vault,
-                mounts_snapshot=mounts_snapshot,
-                aimdo=aimdo,
-                memory_budgets=memory_budgets,
-                reserve_vram=reserve_vram,
-                comfy_args=comfy_args,
-                multi_device_cuda_indices=multi_device_cuda_indices,
-                single_job_multi_gpu=single_job_multi_gpu,
-            )
-        ]
     core_manifest = find_compat_manifest()
     generation_spec = default_pack_spec("dinkster-nodes-generation")
     selection = _execution_python_selection(root, python)
