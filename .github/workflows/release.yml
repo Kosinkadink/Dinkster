@@ -25,41 +25,20 @@ jobs:
         with:
           clean: true
           persist-credentials: false
-      - name: Select the pinned frontend source
-        id: frontend
-        run: |
-          echo "ref=$(python3 -c 'import json; print(json.load(open("scripts/release_sources.json"))["commit"])')" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
-        with:
-          clean: true
-          repository: Kosinkadink/Dinkster-Frontend
-          ref: ${{ steps.frontend.outputs.ref }}
-          path: .release/frontend
-          persist-credentials: false
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10.31.0
-          dest: ${{ runner.tool_cache }}/setup-pnpm
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: .release/frontend/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
-        working-directory: .release/frontend
-      - run: pnpm --filter @dinkster/app build
-        working-directory: .release/frontend
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: uv.lock
+      - name: Download the pinned frontend bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run --no-project --python 3.12 scripts/download_frontend.py --output .release/frontend.zip
       - name: Build the complete release contract
         run: |
-          uv run --no-project --python 3.12 scripts/build_release.py \
+          uv run --no-project --python 3.12 -m scripts.build_release \
             --tag "$GITHUB_REF_NAME" \
-            --frontend-root .release/frontend \
-            --frontend-dist .release/frontend/packages/app/dist
+            --frontend-artifact .release/frontend.zip
           uvx twine check dist/*.whl
       - uses: actions/upload-artifact@v4
         with:

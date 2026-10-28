@@ -8,6 +8,7 @@ import io
 import json
 import re
 import subprocess
+import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
 
@@ -45,7 +46,10 @@ def download(sources: dict, output: Path) -> None:
             payload = subprocess.check_output(
                 ["gh", "api", f"repos/{REPOSITORY}/actions/artifacts/{artifact['id']}/zip"]
             )
-            verify_and_extract(payload, sources, output)
+            with tempfile.TemporaryDirectory(prefix="dinkster-frontend-verify-") as directory:
+                verify_and_extract(payload, sources, Path(directory) / "bundle")
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_bytes(payload)
             print(f"Verified {name} for {commit} from run {run['id']}")
             return
         if len(artifacts) < 100:

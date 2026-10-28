@@ -46,21 +46,23 @@ def test_release_workflow_builds_all_wheels_and_checks_tag_metadata() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
     build = workflow["jobs"]["build"]
     commands = "\n".join(step.get("run", "") for step in build["steps"])
-    assert "scripts/build_release.py" in commands
+    assert "-m scripts.build_release" in commands
     assert '--tag "$GITHUB_REF_NAME"' in commands
     assert "--identity-root" not in commands
     assert "uvx twine check dist/*.whl" in commands
-    assert "pnpm --filter @dinkster/app build" in commands
-    frontend_checkout = next(
-        step
+    assert "scripts/download_frontend.py" in commands
+    assert "--frontend-artifact .release/frontend.zip" in commands
+    assert "pnpm" not in commands
+    assert "node" not in commands
+    assert all(
+        step.get("uses") not in {"pnpm/action-setup@v4", "actions/setup-node@v4"}
+        and step.get("with", {}).get("repository") != "Kosinkadink/Dinkster-Frontend"
         for step in build["steps"]
-        if step.get("uses") == "actions/checkout@v4"
-        and step.get("with", {}).get("repository") == "Kosinkadink/Dinkster-Frontend"
     )
-    assert frontend_checkout["with"]["ref"] == "${{ steps.frontend.outputs.ref }}"
-    assert frontend_checkout["with"]["persist-credentials"] is False
-    assert "token" not in frontend_checkout["with"]
-    assert "ssh-key" not in frontend_checkout["with"]
+    frontend_download = next(
+        step for step in build["steps"] if step.get("name") == "Download the pinned frontend bundle"
+    )
+    assert frontend_download["env"] == {"GH_TOKEN": "${{ github.token }}"}
     assert all(
         step.get("with", {}).get("repository") != "Kosinkadink/Dinkster-Frontend"
         for step in build["steps"]

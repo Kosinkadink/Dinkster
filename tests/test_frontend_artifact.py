@@ -5,11 +5,13 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import shutil
 import zipfile
 from pathlib import Path
 
 import pytest
 
+from scripts.build_release import build_frontend_wheel
 from scripts.download_frontend import REPOSITORY, download, verify_and_extract
 
 
@@ -42,6 +44,26 @@ def test_extract_preserves_the_published_files(tmp_path: Path) -> None:
     assert (tmp_path / "bundle/index.html").read_bytes() == b'<div id="app"></div>'
     assert (tmp_path / "bundle/assets/app.js").read_bytes() == b"app();"
     assert json.loads((tmp_path / "manifest.json").read_text())["sha256"] == pin["sha256"]
+
+
+def test_wheel_preserves_the_published_bundle_and_manifest(tmp_path: Path) -> None:
+    payload, pin = artifact()
+    published = tmp_path / "frontend.zip"
+    published.write_bytes(payload)
+    uv = shutil.which("uv")
+    assert uv is not None, "release packaging requires uv"
+    wheel = build_frontend_wheel(published, "0.0.2", pin, tmp_path, uv)
+    with zipfile.ZipFile(wheel) as installed, zipfile.ZipFile(io.BytesIO(payload)) as wrapper:
+        with zipfile.ZipFile(io.BytesIO(wrapper.read("bundle.zip"))) as bundle:
+            assert {
+                name.removeprefix("dinkster_frontend/static/"): installed.read(name)
+                for name in installed.namelist()
+                if name.startswith("dinkster_frontend/static/")
+            } == {name: bundle.read(name) for name in bundle.namelist()}
+        assert json.loads(installed.read("dinkster_frontend/manifest.json")) == json.loads(
+            wrapper.read("manifest.json")
+        )
+    assert wheel.name == "dinkster_frontend-0.0.2-py3-none-any.whl"
 
 
 @pytest.mark.parametrize(

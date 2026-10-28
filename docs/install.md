@@ -123,6 +123,22 @@ pickers such as `Load Checkpoint`.
 
 ## Release maintainers
 
+The frontend pin in `scripts/release_sources.json` names a landed
+`Dinkster-Frontend` commit and the SHA-256 of its published `bundle.zip`.
+The release job downloads the `dinkster-frontend-<sha256>` CI artifact from
+a successful frontend CI run and verifies its commit, hash and size. It
+packages the verified files under `dinkster_frontend/static`, with the
+original manifest alongside them; `bundle_path()` still returns `static`.
+No Node or pnpm toolchain builds the frontend during release packaging.
+The wheel version follows the engine release; the manifest retains the
+independently pinned frontend package version and commit.
+
+To bump the frontend, update the commit and sha256 together. Public CI
+artifacts expire after 90 days. A missing or expired artifact fails the
+release with its required name and commit, never a rebuild fallback. Bump
+the pin to a landed commit with a live artifact, or ask the repository owner
+to re-run frontend CI for the pinned commit before releasing.
+
 The source ZIP is for maintainers and excludes tests, tools, and benchmarks. It
 is not the Desktop installation input. To publish the first release after this
 workflow lands, verify the version in every workspace `pyproject.toml`, then run:
