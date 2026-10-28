@@ -5,9 +5,9 @@ What this proves: the bytes round-trip losslessly through numpy alone (the
 torchless-engine half of the IMAGE story), torch tensors are accepted
 by duck type without this interpreter ever importing torch, fingerprints
 are runtime-form-independent (hazard H4: a tensor fingerprinted in a worker
-keys the same cache entry as its numpy twin here), and the host-side compat
-registration (register_comfy_host_types) declares and serves the PNG
-rendition from encoded payloads - the /api/values path in miniature."""
+keys the same cache entry as its numpy twin here), and the native host
+registration declares and serves the PNG rendition from encoded payloads -
+the /api/values path in miniature."""
 
 from __future__ import annotations
 
@@ -26,7 +26,10 @@ from typing import Any
 import dinkster_values.image_codec as image_codec_module
 import numpy as np
 import pytest
+from dinkster_nodes_comfy import register_inference_types
 from dinkster_values import (
+    IMAGE_TYPE,
+    MASK_TYPE,
     PNG_CONTAINER_VERSION,
     EncodedPayload,
     TypeRegistry,
@@ -44,8 +47,6 @@ from dinkster_values import (
     stable_hash,
 )
 from PIL import Image
-
-from dinkster.comfy_compose import COMFY_IMAGE_TYPE, COMFY_MASK_TYPE, register_comfy_host_types
 
 
 @dataclass
@@ -217,7 +218,7 @@ def test_direct_buffer_preflight_does_not_change_other_thread_warning_policy(
         assert preflight_entered.wait(5)
         try:
             with pytest.raises(UserWarning, match="metadata on a dtype"):
-                codec.encode(registry.wrap(COMFY_IMAGE_TYPE, array), blobs, segments)
+                codec.encode(registry.wrap(IMAGE_TYPE, array), blobs, segments)
         finally:
             release_preflight.set()
             worker.join(5)
@@ -254,7 +255,7 @@ def test_bfloat16_torch_shaped_objects_preserve_storage(monkeypatch: pytest.Monk
 
 def test_fingerprint_is_runtime_form_independent() -> None:
     array = np.ones((2, 2, 3), dtype=np.float32)
-    fingerprint = image_array_fingerprint(COMFY_IMAGE_TYPE)
+    fingerprint = image_array_fingerprint(IMAGE_TYPE)
     assert fingerprint(array) == fingerprint(FakeTensor(array))
     # ... and contiguity-independent: same elements, same identity.
     wide = np.ones((2, 4, 3), dtype=np.float32)[:, ::2, :]
@@ -265,13 +266,13 @@ def test_fingerprint_preserves_raw_byte_identity() -> None:
     array = np.arange(12, dtype=np.float32).reshape(1, 2, 2, 3)
     expected = stable_hash(
         [
-            COMFY_IMAGE_TYPE.encode("utf-8"),
+            IMAGE_TYPE.encode("utf-8"),
             str(array.dtype).encode("utf-8"),
             repr(array.shape).encode("utf-8"),
             array.tobytes(),
         ]
     )
-    assert image_array_fingerprint(COMFY_IMAGE_TYPE)(array) == expected
+    assert image_array_fingerprint(IMAGE_TYPE)(array) == expected
 
 
 def test_fingerprint_hashes_array_through_a_buffer(
@@ -286,7 +287,7 @@ def test_fingerprint_hashes_array_through_a_buffer(
     monkeypatch.setattr(image_codec_module, "stable_hash", capture)
     array = np.arange(12, dtype=np.float32).reshape(1, 2, 2, 3)
 
-    assert image_array_fingerprint(COMFY_IMAGE_TYPE)(array) == "fingerprint"
+    assert image_array_fingerprint(IMAGE_TYPE)(array) == "fingerprint"
     assert isinstance(chunks[-1], memoryview)
     assert bytes(chunks[-1]) == array.tobytes()
 
@@ -398,39 +399,39 @@ def test_render_rejects_unrenderable_shapes() -> None:
 
 def make_host_registry() -> TypeRegistry:
     registry = TypeRegistry()
-    register_comfy_host_types(registry)
+    register_inference_types(registry)
     return registry
 
 
-def test_comfy_host_types_declare_png_rendition() -> None:
+def test_native_host_types_declare_png_rendition() -> None:
     registry = make_host_registry()
-    assert COMFY_IMAGE_TYPE in registry
-    assert registry.spec(COMFY_IMAGE_TYPE).prepare_buffer_encoding is prepare_image_array_encoding
-    specs = registry.renditions_of(COMFY_IMAGE_TYPE)
+    assert IMAGE_TYPE in registry
+    assert registry.spec(IMAGE_TYPE).prepare_buffer_encoding is prepare_image_array_encoding
+    specs = registry.renditions_of(IMAGE_TYPE)
     assert [(s.kind, s.mime, s.default) for s in specs] == [("png", "image/png", True)]
     assert specs[0].version == PNG_CONTAINER_VERSION
 
 
-def test_comfy_host_mask_shares_image_bytes_with_mask_rendition() -> None:
+def test_native_host_mask_shares_image_bytes_with_mask_rendition() -> None:
     """MASK gets IMAGE's byte contract and renders through the mask PNG."""
     registry = make_host_registry()
-    assert COMFY_MASK_TYPE in registry
-    assert registry.spec(COMFY_MASK_TYPE).prepare_buffer_encoding is prepare_image_array_encoding
-    specs = registry.renditions_of(COMFY_MASK_TYPE)
+    assert MASK_TYPE in registry
+    assert registry.spec(MASK_TYPE).prepare_buffer_encoding is prepare_image_array_encoding
+    specs = registry.renditions_of(MASK_TYPE)
     assert [(s.kind, s.mime, s.default) for s in specs] == [("png", "image/png", True)]
     mask = np.arange(24, dtype=np.float32).reshape(2, 3, 4) / 24
-    rendition = registry.render(registry.wrap(COMFY_MASK_TYPE, mask), "png")
+    rendition = registry.render(registry.wrap(MASK_TYPE, mask), "png")
     assert rendition.mime == "image/png"
     assert rendition.data == render_mask_png(mask)
 
 
-def test_comfy_image_direct_shm_matches_npy_bytes() -> None:
+def test_native_image_direct_shm_matches_npy_bytes() -> None:
     from dinkster_workers import ValueCodec
     from dinkster_workers.boundary import release_segment
 
     registry = make_host_registry()
     array = np.arange(60, dtype=np.float32).reshape(1, 4, 5, 3)
-    value = registry.wrap(COMFY_IMAGE_TYPE, array)
+    value = registry.wrap(IMAGE_TYPE, array)
     blobs: list[bytes] = []
     segments = []
     wire, stat = ValueCodec(registry, shm_threshold=1).encode(value, blobs, segments)
@@ -447,7 +448,7 @@ def test_comfy_image_direct_shm_matches_npy_bytes() -> None:
             release_segment(segment)
 
 
-def test_large_comfy_image_shm_does_not_materialize_encoded_bytes(
+def test_large_native_image_shm_does_not_materialize_encoded_bytes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import types
@@ -458,7 +459,7 @@ def test_large_comfy_image_shm_does_not_materialize_encoded_bytes(
 
     registry = make_host_registry()
     array = np.zeros((1, 1280, 1280, 3), dtype=np.float32)
-    value = registry.wrap(COMFY_IMAGE_TYPE, array)
+    value = registry.wrap(IMAGE_TYPE, array)
 
     def forbid_bytes_io(*_args: object, **_kwargs: object) -> object:
         pytest.fail("full npy BytesIO encoding was used")
@@ -485,22 +486,22 @@ def test_large_comfy_image_shm_does_not_materialize_encoded_bytes(
             release_segment(segment)
 
 
-def test_comfy_host_types_registration_is_idempotent() -> None:
+def test_native_host_types_registration_is_idempotent() -> None:
     registry = make_host_registry()
-    register_comfy_host_types(registry)  # second spec / reload: no raise
+    register_inference_types(registry)  # second spec / reload: no raise
     assert "ASSET" in registry
-    assert len(registry.renditions_of(COMFY_IMAGE_TYPE)) == 1
+    assert len(registry.renditions_of(IMAGE_TYPE)) == 1
 
 
-def test_comfy_host_base_asset_registration_is_independent_of_image() -> None:
+def test_native_host_base_asset_registration_is_independent_of_image() -> None:
     registry = TypeRegistry()
-    registry.register(COMFY_IMAGE_TYPE)
-    register_comfy_host_types(registry)
-    register_comfy_host_types(registry)
+    registry.register(IMAGE_TYPE)
+    register_inference_types(registry)
+    register_inference_types(registry)
     assert "ASSET" in registry
 
 
-def test_comfy_host_types_wrap_typed_image_asset_without_manual_base_registration() -> None:
+def test_native_host_types_wrap_typed_image_asset_without_manual_base_registration() -> None:
     from dinkster_assets import AssetRef
 
     registry = make_host_registry()
@@ -513,26 +514,26 @@ def test_comfy_host_types_wrap_typed_image_asset_without_manual_base_registratio
     assert resolved.resolver is None
 
 
-def test_encoded_comfy_image_renders_without_torch() -> None:
+def test_encoded_native_image_renders_without_torch() -> None:
     """The /api/values path in miniature: a worker-encoded IMAGE
     arrives as npy bytes (EncodedPayload, exactly what the boundary builds)
     and the host renders PNG from numpy alone."""
     registry = make_host_registry()
     array = np.zeros((1, 2, 3, 3), dtype=np.float32)
     array[0, 0, 0] = [0.0, 1.0, 0.0]
-    spec = registry.spec(COMFY_IMAGE_TYPE)
+    spec = registry.spec(IMAGE_TYPE)
     value = Value(
-        type_id=COMFY_IMAGE_TYPE,
-        fingerprint=image_array_fingerprint(COMFY_IMAGE_TYPE)(array),
+        type_id=IMAGE_TYPE,
+        fingerprint=image_array_fingerprint(IMAGE_TYPE)(array),
         meta=ValueMeta(dict(image_array_meta(array))),
-        payload=EncodedPayload(COMFY_IMAGE_TYPE, spec.encode(array), spec.decode),
+        payload=EncodedPayload(IMAGE_TYPE, spec.encode(array), spec.decode),
     )
     rendition = registry.render(value, "png")
     assert (rendition.kind, rendition.mime) == ("png", "image/png")
     assert png_header(rendition.data) == (3, 2, 2)
 
 
-def test_comfy_host_types_declare_asset_providers() -> None:
+def test_native_host_types_declare_asset_providers() -> None:
     """Typed assets: the host registers the asset<IMAGE> decoder and
     the IMAGE batch merge under their canonical provider ids."""
     from dinkster_values import (
@@ -541,10 +542,10 @@ def test_comfy_host_types_declare_asset_providers() -> None:
     )
 
     registry = make_host_registry()
-    decoder = registry.asset_decoder_for(COMFY_IMAGE_TYPE)
+    decoder = registry.asset_decoder_for(IMAGE_TYPE)
     assert IMAGE_FILE_DECODER_ID == "dinkster.image-file@3"
     assert decoder is not None and decoder.provider_id == IMAGE_FILE_DECODER_ID
-    merger = registry.batch_merge_for(COMFY_IMAGE_TYPE)
+    merger = registry.batch_merge_for(IMAGE_TYPE)
     assert merger is not None and merger.provider_id == IMAGE_BATCH_MERGER_ID
 
 
@@ -826,14 +827,14 @@ def test_worker_image_type_decodes_to_torch(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
 
     registry = TypeRegistry()
-    register_image_type(registry, COMFY_IMAGE_TYPE)
+    register_image_type(registry, IMAGE_TYPE)
     array = np.linspace(0.0, 1.0, 12, dtype=np.float32).reshape(1, 2, 2, 3)
-    spec = registry.spec(COMFY_IMAGE_TYPE)
+    spec = registry.spec(IMAGE_TYPE)
     decoded = spec.decode(spec.encode(FakeTensor(array)))
     assert isinstance(decoded, FakeTensor)
     assert np.array_equal(captured[0], array)
     assert spec.prepare_buffer_encoding is prepare_image_array_encoding
     # Both halves agree on identity: worker wrap and host fingerprint match.
-    assert registry.wrap(COMFY_IMAGE_TYPE, array).fingerprint == (
-        image_array_fingerprint(COMFY_IMAGE_TYPE)(array)
+    assert registry.wrap(IMAGE_TYPE, array).fingerprint == (
+        image_array_fingerprint(IMAGE_TYPE)(array)
     )
