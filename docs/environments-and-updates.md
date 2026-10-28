@@ -13,7 +13,7 @@ command line. Developers who change Dinkster itself work from a checkout
 
 | Term | Meaning | Where it lives |
 |---|---|---|
-| Engine release | Dinkster at one commit: the pure-Python wheels for every workspace package, the `dinkster-frontend` wheel, any third-party wheel the lock needs that the base does not carry, `constraints.txt`, `SHA256SUMS` | GitHub release of `Kosinkadink/Dinkster`, mirrored to R2 |
+| Engine release | Dinkster at one commit: the pure-Python wheels for every workspace package, the `dinkster-frontend` wheel, any third-party wheel the lock needs that the base does not carry, `constraints.txt`, `release-manifest.json` (whose sha256 is the release id), `SHA256SUMS` | GitHub release of `Kosinkadink/Dinkster`, mirrored to R2 |
 | Lock | Dinkster's `uv.lock` at that commit, the single resolution every version comes from, including the base pins; `constraints.txt` is its export | `Kosinkadink/Dinkster` |
 | Variant | One hardware target: `win-nvidia`, `win-nvidia-cu126`, `win-cpu`, `linux-cpu` | a row in `Dinkster-Environments` |
 | Base bundle | A python-build-standalone interpreter plus the heavy locked wheels for one variant (torch, torchvision, numpy, the parts of the lock that change rarely), archived once and named by content hash, described by a base manifest | built by `Dinkster-Environments`, downloaded to the wheel store |
@@ -46,7 +46,8 @@ updates are cheap.
   store                     path of the <data> directory this project uses
   generations/
     1/                      interpreter + site-packages
-      generation.json       base id, engine release, constraints hash, variant, workerProtocol
+      generation.json       base id, engine id, variant, workerProtocol
+      constraints.txt       effective constraints: base manifest entries over engine constraints
       packs/<pack>/         pack venvs layered over this generation
     2/
   current                   file naming the active generation number
@@ -60,17 +61,27 @@ base. A project on another volume uses a store on that volume, because the
 links that make generations cheap only work within one volume.
 
 Generations are synced with `uv pip sync --offline --no-index --find-links
-<data>/wheels` from the engine release's `constraints.txt`. uv links every
-file from `uv-cache` into the generation (hardlinks on Windows, copy-on-write
-clones on macOS and Linux; "link" below means whichever applies), so a
-generation that differs from the previous one by a few wheels costs a few
-megabytes and builds in well under a second. The interpreter is linked the
-same way from `bases/<id>/`, so every generation holds a complete
-interpreter tree and deleting any other generation cannot break it.
+<data>/wheels --require-hashes` from an effective constraints file the
+assembler writes beside `generation.json`. That file merges two sources:
+for every distribution the selected base manifest owns (torch, torchvision,
+the transitives that differ per variant, and the other heavy pins the base
+carries) the manifest's requirement lines and hashes replace the engine
+lock's entries, because the engine's `constraints.txt` is exported from a
+lock that hashes PyPI wheels and a cu132, cu126 or cpu base carries
+different wheels; for everything else the engine `constraints.txt` stands
+unchanged. The assembler checks that each base-owned distribution has the
+same version in the manifest and in the engine constraints and fails closed
+on a mismatch; it never resolves. uv links every file from `uv-cache` into
+the generation (hardlinks on Windows, copy-on-write clones on macOS and
+Linux; "link" below means whichever applies), so a generation that differs
+from the previous one by a few wheels costs a few megabytes and builds in
+well under a second. The interpreter is linked the same way from
+`bases/<id>/`, so every generation holds a complete interpreter tree and
+deleting any other generation cannot break it.
 
 The engine environment is immutable and hash-checked. `dinkster-env doctor`
-compares the active generation against its constraints and reports drift.
-Repair re-syncs from the wheel store without network access.
+compares the active generation against its effective constraints and
+reports drift. Repair re-syncs from the wheel store without network access.
 
 ## Channels
 
@@ -79,16 +90,38 @@ Repair re-syncs from the wheel store without network access.
 ```json
 {
   "format": "dinkster.channel/1",
-  "engine": { "version": "0.3.1", "release": "sha256:..." },
-  "base": { "win-nvidia": "sha256:...", "win-cpu": "sha256:..." },
+  "engine": {
+    "version": "0.3.1",
+    "id": "sha256:...",
+    "locations": [
+      { "github": { "tag": "v0.3.1", "assets": ["release-manifest.json", "..."] } },
+      { "mirror": "engine/<id hex>/" }
+    ]
+  },
+  "base": {
+    "win-nvidia": {
+      "id": "sha256:...",
+      "locations": [
+        { "github": { "repository": "Kosinkadink/Dinkster-Environments", "tag": "base-win-nvidia-<id hex>" } },
+        { "mirror": "base/win-nvidia/<id hex>/" }
+      ]
+    }
+  },
   "minimumDesktopVersion": "0.2.0",
   "signature": null
 }
 ```
 
-The channel names artifacts by content hash, never by "latest GitHub release".
-A channel update is one small file write, so a release that was built earlier
-and kept unpublished becomes live in seconds.
+The channel names artifacts by content hash, never by "latest GitHub
+release". An engine release's id is the sha256 of its
+`release-manifest.json`, which lists every artifact with its hash and size;
+a base's id is the hash of its base manifest. Each entry carries that id
+plus a list of locations: a GitHub release (immutable tag and asset names)
+and mirror paths. Locations are hints only. The client tries them in its
+configured order and verifies the digest after download; a mismatch is a
+failed fetch, not a warning. There are no per-digest alias tags on GitHub.
+A channel update is one small file write, so a release that was built
+earlier and kept unpublished becomes live in seconds.
 
 `stable` is written when a `vX.Y.Z` tag's release workflow finishes. `main`
 is written when a push to `main` finishes the same workflow without a
@@ -234,7 +267,7 @@ client (dinkster-env or Desktop on behalf of the user):
   fetch channel ............................... 1 KB
   base <id> already in wheels/? yes
   download engine wheels not in wheels/ ....... tens of MB, verified by sha256
-  sync generations/N+1 from constraints.txt ... links for everything unchanged
+  write effective constraints, sync generations/N+1 ... links for everything unchanged
   start supervisor for N+1 on a new port, wait for /api/health
   write current = N+1, stop N's supervisor
   keep N on disk for rollback
@@ -315,7 +348,7 @@ so a naive install into that venv would download a second torch. Provisioning
 therefore runs in two steps:
 
 1. Take the published pack lock for the generation's variant, or resolve
-   the pack's requirements with the generation's `constraints.txt` as
+   the pack's requirements with the generation's effective constraints as
    `--constraints` when there is none (a local directory or git install). A
    pack lock that disagrees with the generation on a shared package, or a
    pack that needs a version the generation cannot satisfy (torch 2.15
@@ -469,6 +502,11 @@ Settled:
   that `uv sync` does not install by default; the lock pins versions, the
   base manifest holds the per-variant wheel hashes from the variant's
   index.
+- A generation's effective constraints take base-owned distributions from
+  the selected base manifest and everything else from the engine
+  `constraints.txt`; versions must agree or the assembler fails closed.
+- Channel entries carry an artifact id plus GitHub and mirror locations;
+  the client verifies the digest after download; no per-digest alias tags.
 - Separate `Dinkster-Environments` repository; variants `win-nvidia`,
   `win-nvidia-cu126`, `win-cpu` and `linux-cpu`; a per-variant extras index
   for wheels compiled against one torch triple.
