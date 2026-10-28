@@ -8,6 +8,8 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from dinkster_values.asset_folders import use_asset_folders
+
 from .declared import MOUNTS_ENV, mount_roots_for_kind
 from .identity import AssetError
 from .model import AssetRef, LocalAssetRef
@@ -168,7 +170,9 @@ def _check_subtree(path: Path) -> None:
     visit(root, frozenset())
 
 
-def _file_ref(choice: _Choice, path: Path, env: Mapping[str, str] | None) -> LocalAssetRef:
+def _file_ref(
+    choice: _Choice, path: Path, env: Mapping[str, str] | None
+) -> AssetRef | LocalAssetRef:
     environment = os.environ if env is None else env
     snapshot = environment.get(MOUNTS_ENV)
     if not snapshot:
@@ -180,31 +184,39 @@ def _file_ref(choice: _Choice, path: Path, env: Mapping[str, str] | None) -> Loc
 
 def resolve_asset_selection(
     kind: str, name: str | AssetRef | LocalAssetRef, *, env: Mapping[str, str] | None = None
-) -> AssetRef | LocalAssetRef | tuple[LocalAssetRef, LocalAssetRef] | Path | None:
+) -> (
+    AssetRef
+    | LocalAssetRef
+    | tuple[AssetRef | LocalAssetRef, AssetRef | LocalAssetRef]
+    | Path
+    | None
+):
     """Resolve one current source option, rejecting stale or ungranted choices.
 
     Existing file refs retain their verification policy but must resolve to
     an admitted file inside the current exact-kind grants. Returns that ref,
-    two local file refs (encoder, decoder), a checked directory subtree, or
+    two file refs (encoder, decoder), a checked directory subtree, or
     None for pixel_space. Directory paths are invocation-scoped read authority,
     never values to store in a graph.
     """
     if kind not in SELECTION_KINDS:
         raise AssetError(f"unsupported asset selection kind: {kind!r}")
     if isinstance(name, (AssetRef, LocalAssetRef)):
-        path = name.local_path().resolve(strict=True)
-        if kind == "model/vae":
-            for file_kind in ("model/vae", "model/vae-approx"):
-                for root in mount_roots_for_kind(file_kind, env=env):
-                    if not path.is_relative_to(root.resolve()):
-                        continue
-                    relative = path.relative_to(root.resolve()).as_posix()
-                    if (
-                        path.is_file()
-                        and path.suffix.lower() in _MODEL_EXTENSIONS
-                        and (file_kind == "model/vae" or relative.startswith(_VIDEO_TAES))
-                    ):
-                        return name
+        # Project organization cannot replace or invalidate an explicit file identity.
+        with use_asset_folders(None):
+            path = name.local_path().resolve(strict=True)
+            if kind == "model/vae":
+                for file_kind in ("model/vae", "model/vae-approx"):
+                    for root in mount_roots_for_kind(file_kind, env=env):
+                        if not path.is_relative_to(root.resolve()):
+                            continue
+                        relative = path.relative_to(root.resolve()).as_posix()
+                        if (
+                            path.is_file()
+                            and path.suffix.lower() in _MODEL_EXTENSIONS
+                            and (file_kind == "model/vae" or relative.startswith(_VIDEO_TAES))
+                        ):
+                            return name
         raise AssetError("file reference is not an admitted selection in the current grants")
     _name(name, root_allowed=kind == "model/diffusers")
     choice = _choices(kind, env).get(name)

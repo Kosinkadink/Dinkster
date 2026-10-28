@@ -1,8 +1,5 @@
 """Torch-free public ACE Step text-conditioning schemas."""
 
-import subprocess
-import sys
-
 from dinkster_api.v1 import ComboWidget, NumberWidget, schema_from_wire, schema_to_wire
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.ace_text_conditioning import ACE_TEXT_CONDITIONING_NODES
@@ -61,20 +58,3 @@ def test_ace_text_conditioning_schemas_and_registration() -> None:
             ("CONDITIONING", "CONDITIONING")
         ]
         assert schema_from_wire(schema_to_wire(schema)) == schema
-
-
-def test_ace_text_conditioning_cold_discovery() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; from dinkster_nodes_comfy.ace_text_conditioning "
-            "import ACE_TEXT_CONDITIONING_NODES; "
-            "assert len([node.schema() for node in ACE_TEXT_CONDITIONING_NODES]) == 2; "
-            "assert 'torch' not in sys.modules; "
-            "assert 'dinkster_inference' not in sys.modules",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr

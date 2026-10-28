@@ -47,7 +47,24 @@ answer = types.wrap(CORE_INT, 42)
 Node authors normally work with plain Python values. Worker shims construct
 the envelopes at the execution boundary.
 
+Core `STRING` values expose a default `text` rendition containing the full UTF-8
+text, including strings too long for inline status descriptors. Use
+`GET /api/values?...&rendition=text` for full execution-scoped text retrieval;
+the 256-character inline preview limit does not truncate that response.
+
 ### Bounded media streams
+
+`decode_image_components(source)` opens a seekable asset once and returns
+first-frame float32 RGB and optional straight alpha. Source length is checked
+before FFmpeg opens it, stream dimensions before explicit decoding, and actual
+frame dimensions and aligned conversion scratch before conversion. Defaults
+are 16,384 pixels per dimension and `IMAGE_WORKING_SET_LIMIT_BYTES` for both
+source bytes and estimated working set. Keyword arguments `max_dimension`,
+`max_source_bytes` and `max_working_set_bytes` allow caller admission policy.
+FFmpeg's own opening/probing is not a hard allocation sandbox. The estimate
+allows 96 bytes per pixel plus 32,768 bytes for a missing-alpha mask; non-byte
+unaligned conversion also charges its padded dimensions. Batch consumers must
+add their retained-frame budget separately.
 
 `MediaStream` exposes replayable half-open frame or sample ranges with a
 declared total and per-read chunk limit. `iter_chunks()` is ordered and

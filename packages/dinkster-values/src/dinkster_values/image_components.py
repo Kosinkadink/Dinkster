@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, BinaryIO, Protocol, cast
 
+from .limits import IMAGE_WORKING_SET_LIMIT_BYTES
+
 if TYPE_CHECKING:
     import numpy as np
 
@@ -88,24 +90,72 @@ def _convert(frame: Any, image_format: str, time_base: object) -> np.ndarray:
     )
 
 
-def decode_image_components(source: ReadableImageSource) -> ImageComponents:
-    """Decode an openable asset with ComfyUI's first-frame component policy."""
-    import av
-    import numpy as np
+def _check_dimensions(
+    width: int, height: int, max_dimension: int, max_working_set_bytes: int
+) -> None:
+    if min(width, height) < 1 or max(width, height) > max_dimension:
+        raise ValueError(f"image dimensions must be between 1 and {max_dimension}")
+    # Decoded planes, conversion/rotation scratch, RGB/mask lists and stacked
+    # outputs may coexist. The fixed allowance covers a missing-alpha 64x64 mask.
+    if width * height * 96 + 32_768 > max_working_set_bytes:
+        raise ValueError("decoded image exceeds the image working-set limit")
 
+
+def decode_image_components(
+    source: ReadableImageSource,
+    *,
+    max_dimension: int = 16_384,
+    max_working_set_bytes: int = IMAGE_WORKING_SET_LIMIT_BYTES,
+    max_source_bytes: int = IMAGE_WORKING_SET_LIMIT_BYTES,
+) -> ImageComponents:
+    """Decode bounded first-frame RGB/alpha components from a seekable asset.
+
+    Source length is checked before FFmpeg opens the asset. Stream dimensions
+    are checked before explicit decoding; frame dimensions and aligned scratch
+    are checked before conversion. FFmpeg probing is not an allocation sandbox.
+    """
+    for name, limit in (
+        ("max_dimension", max_dimension),
+        ("max_working_set_bytes", max_working_set_bytes),
+        ("max_source_bytes", max_source_bytes),
+    ):
+        if type(limit) is not int or limit < 1:
+            raise ValueError(f"{name} must be a positive integer")
     opener = getattr(source, "open", None)
     if not callable(opener):
         raise TypeError(
             f"decode_image_components expects an asset with open(), got {type(source).__name__}"
         )
-    with cast(Any, opener()) as handle, av.open(handle, mode="r") as opened:
+    with cast(Any, opener()) as handle:
+        position = handle.tell()
+        source_size = handle.seek(0, 2)
+        handle.seek(position)
+        if source_size > max_source_bytes:
+            raise ValueError("image asset exceeds the input byte limit")
+        return _decode_components(handle, max_dimension, max_working_set_bytes)
+
+
+def _decode_components(
+    handle: BinaryIO, max_dimension: int, max_working_set_bytes: int
+) -> ImageComponents:
+    import av
+    import numpy as np
+
+    with av.open(handle, mode="r") as opened:
         container = cast(Any, opened)
         stream = next((stream for stream in container.streams if stream.type == "video"), None)
         if stream is None:
             raise ValueError("image source has no decodable video stream")
+        _check_dimensions(
+            stream.codec_context.width,
+            stream.codec_context.height,
+            max_dimension,
+            max_working_set_bytes,
+        )
         frame = cast(Any, next(container.decode(stream), None))
         if frame is None:
             raise ValueError("image source contains no decodable frame")
+        _check_dimensions(frame.width, frame.height, max_dimension, max_working_set_bytes)
         alpha = (
             any(component.is_alpha for component in frame.format.components)
             or frame.format.name == "pal8"
@@ -127,6 +177,12 @@ def decode_image_components(source: ReadableImageSource) -> ImageComponents:
             if alpha
             else "gbrpf32le"
         )
+        if image_format in {"gbrpf32le", "gbrapf32le"} and frame.width % 32:
+            aligned_width = ((frame.width + 31) // 32) * 32
+            aligned_height = ((frame.height + 31) // 32) * 32
+            _check_dimensions(
+                aligned_width, aligned_height, max_dimension + 31, max_working_set_bytes
+            )
         image = _convert(frame, image_format, stream.time_base)
         if byte_format:
             image = image.astype(np.float32) / 255.0

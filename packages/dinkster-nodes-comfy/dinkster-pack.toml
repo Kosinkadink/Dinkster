@@ -198,6 +198,7 @@ namespaces = [
     "HunyuanVideo15LatentUpscaleWithModel",
     "LTXVLatentUpsampler",
     "LatentUpscaleModelLoader",
+    "OpticalFlowLoader",
     "EmptySD3LatentImage",
     "EmptyFlux2LatentImage",
     "EmptyChromaRadianceLatentImage",
@@ -531,6 +532,7 @@ namespaces = [
     "CropByBBoxes",
     "CameraAngle",
     "MakeTrainingDataset",
+    "Trellis2UpsampleStage",
     "TripoSplatPreprocessImage",
     "TripoSplatConditioning",
     "LoadTrainingDataset",
@@ -540,6 +542,7 @@ namespaces = [
     "SaveAudioMP3",
     "SaveAudioOpus",
     "SaveAudioAdvanced",
+    "SaveWEBM",
     "YuE2GenerateABC",
     "YuE2GenerateMusic",
     "LoadImageDataSetFromFolder",
@@ -547,6 +550,8 @@ namespaces = [
     "UpscaleModelLoader",
     "ImageOnlyCheckpointSave",
     "VOIDSampler",
+    "LossGraphNode",
+    "CurveEditor",
 ]
 
 [pack.sandbox]

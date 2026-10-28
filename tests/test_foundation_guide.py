@@ -56,7 +56,9 @@ def test_loop_templates_are_discoverable_and_load_byte_exactly() -> None:
     from test_settings import settings
 
     async def scenario() -> None:
-        composition = await compose_serving()
+        composition = await compose_serving(
+            [default_pack_spec("dinkster-nodes-foundation")], include_default_packs=False
+        )
         client = TestClient(
             TestServer(
                 create_app(

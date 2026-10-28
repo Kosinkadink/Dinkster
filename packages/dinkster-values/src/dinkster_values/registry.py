@@ -1059,11 +1059,20 @@ def register_histogram_type(registry: TypeRegistry) -> TypeSpec:
 
 def register_core_types(registry: TypeRegistry) -> None:
     """Primitives are envelope types like everything else (hazard H2)."""
+    # Imported here because curve depends on this module's TypeRegistry.
+    from .curve import register_curve_type
+
     # Core scalars inline as themselves (DESIGN 3.5): peeking an int or a
     # short string never needs a payload round trip. core.absent does NOT
     # inline - absence has its own channel, never a smuggled null.
     for type_id in (CORE_INT, CORE_FLOAT, CORE_STRING):
         registry.register(type_id, inline=lambda obj: obj)
+    registry.register_rendition(
+        CORE_STRING,
+        "text",
+        mime="text/plain",
+        render=lambda obj: cast(str, obj).encode("utf-8"),
+    )
     registry.register(
         CORE_COMBO,
         coerce=_coerce_combo,
@@ -1074,6 +1083,7 @@ def register_core_types(registry: TypeRegistry) -> None:
     registry.register(DICT_TYPE)
     registry.register(ARRAY_TYPE)
     register_histogram_type(registry)
+    register_curve_type(registry)
     # core.absent registers with the default codec (payload is None, which
     # JSON-encodes) so absences cross boundaries and caches like any value.
     registry.register(CORE_ABSENT)
