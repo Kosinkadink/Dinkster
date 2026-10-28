@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import BinaryIO, Protocol, cast
 
 from dinkster_values import MEBIBYTE
+from dinkster_values.asset_folders import current_asset_folders
 
 from .identity import DIGEST_PREFIX, AssetError, new_hasher
 from .integrity import verification_record_for_publication
@@ -67,6 +68,8 @@ class _Msvcrt(Protocol):
     LK_UNLCK: int
 
     def locking(self, fd: int, mode: int, nbytes: int, /) -> None: ...
+
+    def open_osfhandle(self, handle: int, flags: int, /) -> int: ...
 
 
 class MountWriteAuthority(Protocol):
@@ -123,6 +126,11 @@ class MountSnapshotWriter:
         )
 
     def output_mount(self) -> str:
+        context = current_asset_folders()
+        if context is not None:
+            if context.output_mount is None:
+                raise AssetError("no default output mount is configured for this project")
+            return context.output_mount
         try:
             loaded: object = json.loads(self._path.read_text("utf-8"))
         except (OSError, ValueError):
@@ -214,6 +222,72 @@ class AssetWriter:
             )
         return ref
 
+    def save_named_stream(
+        self,
+        target: object,
+        source: BinaryIO,
+        *,
+        media_type: str = "application/octet-stream",
+        limit: int,
+        before_publish: Callable[[AssetRef], None] | None = None,
+    ) -> AssetRef:
+        """Import bytes under the target's full filename, numbering collisions only."""
+        if type(limit) is not int or limit < 0:
+            raise AssetError("limit must be a non-negative integer")
+        parsed = coerce_save_target(target)
+        reserved = {"con", "prn", "aux", "nul"} | {
+            f"{prefix}{index}" for prefix in ("com", "lpt") for index in range(1, 10)
+        }
+        for segment in parsed.prefix.split("/"):
+            if (
+                len(segment) > 255
+                or segment.endswith((".", " "))
+                or segment.casefold().startswith(".dinkster-")
+                or segment.split(".", 1)[0].casefold() in reserved
+                or any(ord(character) < 32 or character in '<>:"|?*\x7f' for character in segment)
+            ):
+                raise AssetError("import target must use portable folder and file names")
+        suffix = Path(parsed.stem).suffix
+        named = SaveTarget(
+            parsed.mount, parsed.prefix.removesuffix(suffix) if suffix else parsed.prefix
+        )
+        root, folder = self._writable_folder(named)
+        with self._directory_claim(folder):
+            ref, _ = self._write_stream(
+                named,
+                source,
+                suffix=suffix,
+                media_type=media_type,
+                limit=limit,
+                expected_root=root,
+                prefer_exact_name=True,
+                before_publish=before_publish,
+            )
+        return ref
+
+    def recover_named_asset(self, ref: AssetRef) -> Path | None:
+        """Verify a journaled publication under current authority without creating bytes."""
+        namespace, mount, relative = ref.virtual_path.split("/", 2)
+        if namespace != MOUNT_NAMESPACE:
+            raise AssetError("recovery requires a mounted asset")
+        target = SaveTarget(mount, relative)
+        root = self._authority.writable_root(mount)
+        path = root / relative
+        self._require_contained(root, path, target)
+        if not path.is_file():
+            return None
+        from .integrity import open_verified
+
+        with open_verified(path, ref.digest) as handle:
+            observed = os.fstat(handle.fileno())
+            if observed.st_size != ref.size:
+                raise AssetError("journaled asset size changed")
+        if self._authority.writable_root(mount).resolve() != root.resolve():
+            raise AssetError("journaled mount changed its root")
+        self._require_contained(root, path, target)
+        append_write_record(root, relative, ref.digest, ref.size, observed.st_mtime_ns)
+        return path
+
     def save_encoded(
         self,
         target: object,
@@ -297,9 +371,13 @@ class AssetWriter:
 
     def _writable_folder(self, parsed: SaveTarget) -> tuple[Path, Path]:
         root = self._authority.writable_root(parsed.mount)
-        folder = root / parsed.subfolder if parsed.subfolder else root
-        folder.mkdir(parents=True, exist_ok=True)
-        self._require_contained(root, folder, parsed)
+        if not root.is_dir():
+            raise AssetError(f"output mount {parsed.mount!r} is unavailable at {root}")
+        folder = root
+        for part in Path(parsed.subfolder).parts:
+            folder = folder / part
+            self._require_contained(root, folder, parsed)
+            folder.mkdir(exist_ok=True)
         return root, folder
 
     def _write_stream(
@@ -314,6 +392,8 @@ class AssetWriter:
         stem: str | None = None,
         expected_root: Path | None = None,
         strict_counter: bool = False,
+        prefer_exact_name: bool = False,
+        before_publish: Callable[[AssetRef], None] | None = None,
     ) -> tuple[AssetRef, int]:
         root, folder = self._writable_folder(parsed)
         if expected_root is not None and root.resolve() != expected_root.resolve():
@@ -350,8 +430,35 @@ class AssetWriter:
                 if any(getattr(before, field) != getattr(after, field) for field in fields):
                     raise AssetError("save source changed while it was copied")
             digest = DIGEST_PREFIX + hasher.hexdigest()
+            if prefer_exact_name:
+                current_root, _ = self._writable_folder(parsed)
+                if current_root.resolve() != root.resolve():
+                    raise AssetError(f"mount {parsed.mount!r} changed its root during import")
+
+            def prepare(final: Path) -> None:
+                if before_publish is not None:
+                    before_publish(
+                        AssetRef(
+                            digest,
+                            final.name,
+                            size,
+                            media_type,
+                            f"{MOUNT_NAMESPACE}/{parsed.mount}/{final.relative_to(root).as_posix()}",
+                        )
+                    )
+                    if self._authority.writable_root(parsed.mount).resolve() != root.resolve():
+                        raise AssetError("import mount changed its root before publication")
+                    self._require_contained(root, final, parsed)
+
             final, used_counter = self._claim_and_land(
-                folder, stem, suffix, tmp, counter, strict_counter=strict_counter
+                folder,
+                stem,
+                suffix,
+                tmp,
+                counter,
+                strict_counter=strict_counter,
+                prefer_exact_name=prefer_exact_name,
+                before_publish=prepare if before_publish is not None else None,
             )
         finally:
             tmp.unlink(missing_ok=True)
@@ -398,9 +505,6 @@ class AssetWriter:
     def _directory_claim(self, folder: Path) -> Generator[None]:
         lock_path = folder / ".dinkster-asset-writer.lock"
         with self._path_lock(lock_path), self._open_lock_file(lock_path) as handle:
-            if handle.seek(0, os.SEEK_END) == 0:
-                handle.write(b"\0")
-                handle.flush()
             handle.seek(0)
             if os.name == "nt":  # pragma: no cover - exercised on Windows CI
                 msvcrt = cast("_Msvcrt", importlib.import_module("msvcrt"))
@@ -452,7 +556,7 @@ class AssetWriter:
     def _open_windows_lock_file(lock_path: Path) -> BinaryIO:
         ctypes = importlib.import_module("ctypes")
         wintypes = importlib.import_module("ctypes.wintypes")
-        msvcrt = importlib.import_module("msvcrt")
+        msvcrt = cast("_Msvcrt", importlib.import_module("msvcrt"))
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         create_file = kernel32.CreateFileW
         create_file.argtypes = [
@@ -488,22 +592,44 @@ class AssetWriter:
 
         generic_read_write = 0xC0000000
         share_all = 0x00000007
+        create_new = 1
         open_always = 4
         file_attribute_normal = 0x00000080
         file_flag_open_reparse_point = 0x00200000
         file_attribute_reparse_point = 0x00000400
         invalid_handle_value = wintypes.HANDLE(-1).value
-        handle = create_file(
-            str(lock_path),
-            generic_read_write,
-            share_all,
-            None,
-            open_always,
-            file_attribute_normal | file_flag_open_reparse_point,
-            None,
-        )
-        if handle == invalid_handle_value:
-            raise OSError(ctypes.get_last_error(), f"cannot open writer lock {lock_path}")
+        while True:
+            handle = create_file(
+                str(lock_path),
+                generic_read_write,
+                0,
+                None,
+                create_new,
+                file_attribute_normal | file_flag_open_reparse_point,
+                None,
+            )
+            if handle != invalid_handle_value:
+                with AssetWriter._windows_file_from_handle(handle, msvcrt, close_handle) as created:
+                    created.write(b"\0")
+                    created.flush()
+                continue
+            error = ctypes.get_last_error()
+            if error != 80:
+                raise OSError(error, f"cannot create writer lock {lock_path}")
+            handle = create_file(
+                str(lock_path),
+                generic_read_write,
+                share_all,
+                None,
+                open_always,
+                file_attribute_normal | file_flag_open_reparse_point,
+                None,
+            )
+            if handle != invalid_handle_value:
+                break
+            if ctypes.get_last_error() != 32:
+                raise OSError(ctypes.get_last_error(), f"cannot open writer lock {lock_path}")
+            time.sleep(0.05)
         information = FileInformation()
         try:
             if not get_file_information(handle, ctypes.byref(information)):
@@ -513,11 +639,27 @@ class AssetWriter:
                 or information.number_of_links != 1
             ):
                 raise AssetError(f"unsafe writer lock path: {lock_path}")
+        except BaseException:
+            close_handle(handle)
+            raise
+        return AssetWriter._windows_file_from_handle(handle, msvcrt, close_handle)
+
+    @staticmethod
+    def _windows_file_from_handle(
+        handle: int,
+        msvcrt: _Msvcrt,
+        close_handle: Callable[[int], object],
+    ) -> BinaryIO:
+        try:
             descriptor = msvcrt.open_osfhandle(handle, os.O_RDWR)
         except BaseException:
             close_handle(handle)
             raise
-        return os.fdopen(descriptor, "r+b")
+        try:
+            return os.fdopen(descriptor, "r+b")
+        except BaseException:
+            os.close(descriptor)
+            raise
 
     @staticmethod
     def _path_lock(path: Path) -> threading.RLock:
@@ -567,6 +709,8 @@ class AssetWriter:
         counter: int | None = None,
         *,
         strict_counter: bool = False,
+        prefer_exact_name: bool = False,
+        before_publish: Callable[[Path], None] | None = None,
     ) -> tuple[Path, int]:
         """Publish the temp file under the next free counter name.
 
@@ -574,10 +718,22 @@ class AssetWriter:
         atomic no-replace semantics. Concurrent savers therefore get distinct
         names, without exposing an empty placeholder to readers.
         """
+        if prefer_exact_name:
+            final = folder / f"{stem}{suffix}"
+            if before_publish is not None:
+                before_publish(final)
+            try:
+                os.link(tmp, final)
+            except FileExistsError:
+                pass
+            else:
+                return final, 0
         if counter is None:
             counter = AssetWriter._next_counter_for_suffix(folder, stem, suffix)
         while True:
             final = folder / f"{stem}_{counter:05d}{suffix}"
+            if before_publish is not None:
+                before_publish(final)
             try:
                 os.link(tmp, final)
             except FileExistsError:

@@ -89,6 +89,7 @@ from dinkster_values import (
 
 from .blobs import BlobTransfer, attribute_moved, await_file_operation
 from .boundary import (
+    PROTOCOL_VERSION,
     BoundaryError,
     TransferStat,
     ValueCodec,
@@ -828,6 +829,12 @@ class BoundarySession:
         if frame[0].get("type") != "hello":
             raise RuntimeError(f"{self._role} '{self._pack}' failed to start: no hello handshake")
         header, _ = frame
+        protocol = header.get("protocol")
+        if type(protocol) is not int or protocol != PROTOCOL_VERSION:
+            raise RuntimeError(
+                f"{self._role} '{self._pack}' protocol mismatch: "
+                f"engine speaks {PROTOCOL_VERSION}, worker spoke {protocol!r}"
+            )
         self._pack = str(header.get("pack", self._pack))
         declarations = PackDeclarations(header, role=self._role, pack=self._pack)
         self._schemas = declarations.schemas
@@ -1654,7 +1661,12 @@ class BoundarySession:
             return InvocationResult(
                 error=NodeError(invocation.node_id, invocation.node_type, str(exc))
             )
-        return InvocationResult(outputs=outputs, artifacts=artifacts, expansion=decoded.expansion)
+        return InvocationResult(
+            outputs=outputs,
+            artifacts=artifacts,
+            expansion=decoded.expansion,
+            preview_artifacts=decoded.preview_artifacts,
+        )
 
     async def validate_admission(
         self,
@@ -1743,6 +1755,7 @@ class BoundarySession:
             attention_policy=invocation.attention_policy,
             attention_route_token=invocation.attention_route_token,
             extension_snapshot_digest=invocation.extension_snapshot_digest,
+            asset_folders=invocation.asset_folders,
         )
         future: asyncio.Future[tuple[dict[str, Any], list[bytes]]] = (
             asyncio.get_running_loop().create_future()
