@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import cast
 
 from dinkster_assets import AssetRef
+from dinkster_workers import PackManifest
 
 
 class RequirementError(ValueError):
@@ -23,6 +24,7 @@ def _object(value: object, label: str) -> Mapping[str, object]:
 class PackRequirement:
     pack: str
     version: str | None
+    node_types: tuple[str, ...] = ()
 
     def to_wire(self) -> dict[str, object]:
         return {"pack": self.pack, "version": self.version}
@@ -101,7 +103,12 @@ def derive_workflow_requirements(document: object) -> WorkflowRequirements:
         version = provenance.get("version")
         if version is not None and (not isinstance(version, str) or not version):
             raise RequirementError(f"saved version for {pack} must be a non-empty string")
-        packs[pack] = PackRequirement(pack, cast("str | None", version))
+        previous = packs.get(pack)
+        packs[pack] = PackRequirement(
+            pack,
+            cast("str | None", version),
+            (*previous.node_types, node_type) if previous is not None else (node_type,),
+        )
     return WorkflowRequirements(
         tuple(packs[key] for key in sorted(packs)),
         tuple(assets[key] for key in sorted(assets)),
@@ -131,7 +138,11 @@ def project_requirements(
                     f"conflicting saved versions for {pack.pack}: "
                     f"{previous.version!r} and {pack.version!r}"
                 )
-            packs[pack.pack] = pack
+            packs[pack.pack] = PackRequirement(
+                pack.pack,
+                pack.version,
+                tuple(sorted(set(pack.node_types) | set(previous.node_types if previous else ()))),
+            )
         for asset in requirements.assets:
             assets.setdefault(asset.digest, asset)
         unattributed.update(requirements.unattributed_nodes)
@@ -140,3 +151,80 @@ def project_requirements(
         tuple(assets[key] for key in sorted(assets)),
         tuple(sorted(unattributed)),
     )
+
+
+@dataclass(frozen=True)
+class WorkflowPlan:
+    packs: tuple[PackRequirement, ...]
+    assets: tuple[dict[str, object], ...]
+    errors: tuple[str, ...]
+
+    @property
+    def empty(self) -> bool:
+        return not (self.packs or self.assets or self.errors)
+
+    def to_wire(self) -> dict[str, object]:
+        return {
+            "packs": [pack.to_wire() for pack in self.packs],
+            "assets": list(self.assets),
+            "errors": list(self.errors),
+        }
+
+
+def manifest_unavailability(
+    requirement: PackRequirement, manifest: PackManifest, variant: str
+) -> str | None:
+    """Only manifest-declared resource needs can make portable packs hardware-specific."""
+    devices = {
+        "linux-cpu": "cpu",
+        "win-cpu": "cpu",
+        "win-nvidia": "cuda",
+        "win-nvidia-cu126": "cuda",
+    }
+    if variant not in devices:
+        raise RequirementError(f"unknown engine variant: {variant}")
+    device = devices[variant]
+    if manifest.sandbox.gpu and device == "cpu":
+        return "pack.sandbox.gpu requires a GPU"
+    for provider in manifest.vision_providers:
+        if provider.node in requirement.node_types and device not in provider.devices:
+            return (
+                f"node {provider.node} declares devices {', '.join(provider.devices)}; "
+                f"{device} is not supported"
+            )
+    return None
+
+
+def plan_workflow_requirements(
+    requirements: WorkflowRequirements,
+    *,
+    installed_packs: Mapping[str, str | None],
+    asset_available: Callable[[AssetRef], bool],
+    sources_for: Callable[[str], Sequence[str]],
+    pack_unavailable: Callable[[PackRequirement], str | None],
+) -> WorkflowPlan:
+    """Read-only missing-item plan. Callbacks are host facts, never workflow authority.
+
+    The availability callback must only inspect local, authorized bytes; it must
+    not invoke a fetching resolver. Source leads are returned without fetching.
+    Pack provisioning owns dependency-lock compatibility and executes only after
+    the caller confirms this plan.
+    """
+    packs: list[PackRequirement] = []
+    assets: list[dict[str, object]] = []
+    errors = [f"node {node}: no saved pack attribution" for node in requirements.unattributed_nodes]
+    for requirement in requirements.packs:
+        if requirement.version is None:
+            errors.append(f"pack {requirement.pack}: no saved version")
+        reason = pack_unavailable(requirement)
+        if reason is not None:
+            errors.append(f"pack {requirement.pack}: {reason}")
+        installed = requirement.pack in installed_packs
+        if not installed or installed_packs[requirement.pack] != requirement.version:
+            packs.append(requirement)
+    for asset in requirements.assets:
+        if not asset_available(asset):
+            assets.append(
+                {**asset.to_wire(), "sources": list(dict.fromkeys(sources_for(asset.digest)))}
+            )
+    return WorkflowPlan(tuple(packs), tuple(assets), tuple(errors))
