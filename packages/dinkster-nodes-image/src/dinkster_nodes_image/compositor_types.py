@@ -12,6 +12,7 @@ from typing import cast
 
 import numpy as np
 from dinkster_api.v1 import (
+    BLEND_MODES,
     COMPOSITOR_TYPE,
     COST_META_KEY,
     LAYERS_TYPE,
@@ -19,7 +20,6 @@ from dinkster_api.v1 import (
     decode_image_array,
     encode_image_array,
 )
-from dinkster_image_document.format import BLEND_MODES
 
 from .support import check_output_size
 

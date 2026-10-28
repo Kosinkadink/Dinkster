@@ -489,6 +489,7 @@ namespaces = [
     "Video Slice",
     "VideoTrim",
     "VideoCrop",
+    "SaveVideo",
     "CheckpointLoaderSimple",
     "CheckpointLoader",
     "unCLIPCheckpointLoader",
@@ -529,6 +530,9 @@ namespaces = [
     "GetVideoComponents",
     "ConditioningLoader",
     "SaveConditioning",
+    "SDPoseFaceBBoxes",
+    "SDPoseDrawKeypoints",
+    "SDPoseKeypointExtractor",
 ]
 
 [pack.sandbox]

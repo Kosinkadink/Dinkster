@@ -27,6 +27,7 @@ from dinkster_api.v1 import (
     NodeSchema,
     TypeExpr,
     TypeRegistry,
+    current_execution_context,
     digest_bytes,
     pack_logger,
     register_asset_type,
@@ -34,7 +35,6 @@ from dinkster_api.v1 import (
     report_progress,
     resolver_from_env,
 )
-from dinkster_workers import current_execution_context
 
 from .catalog import CatalogClient, RemoteSchema, cache_path_from_env
 
