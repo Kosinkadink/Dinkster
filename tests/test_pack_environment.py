@@ -333,6 +333,14 @@ def test_generation_adapter_preflights_rebuilds_and_reports_drift(
     assert result["packs"] == [
         {"pack": "example", "conflicts": [], "downloadBytes": 0, "ownEnvironmentBytes": 9000}
     ]
+    pack_python = venv_python(target / "packs/example")
+    unavailable = pack_python.with_name("unavailable")
+    pack_python.rename(unavailable)
+    assert main(["doctor", *args]) == 1
+    assert json.loads(capsys.readouterr().out)["changes"] == [
+        "example: interpreter unavailable; rebuild from pack-lock.json"
+    ]
+    unavailable.rename(pack_python)
     assert main(["terminal", *args, "--pack", "example"]) == 0
     terminal = json.loads(capsys.readouterr().out)["changes"][0]
     assert Path(terminal) == venv_python(target / "packs/example")
@@ -394,3 +402,164 @@ def test_generation_preflight_never_silently_omits_packs(tmp_path: Path) -> None
     assert not preflight_generation(context, source_generation=source, locks=[replacement])[
         0
     ].conflicts
+
+
+def test_in_process_packs_stage_in_fresh_generation_and_terminals_use_scratch(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    extra = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "value = 73\n")
+    target = tmp_path / "generations/2"
+    python = _generation(target / "python", [])
+    constraints = target / "constraints.txt"
+    constraints.write_text("")
+    lock = PackLock(
+        "in-process",
+        "linux-cpu",
+        ">=3.12",
+        ("fixture-extra==1.2",),
+        (),
+        (LockedDistribution("fixture-extra", "1.2", (extra,)),),
+    )
+    paths = []
+    for name in ("in-process", "shared", "isolated"):
+        path = tmp_path / f"{name}.json"
+        replace(lock, pack=name).write(path)
+        paths.append(path)
+    context = GenerationContext(
+        target,
+        python,
+        constraints,
+        "linux-cpu",
+        PROTOCOL_VERSION,
+        tmp_path / "wheels",
+        tmp_path / "cache",
+        1000,
+        in_process_packs=("in-process", "shared"),
+    )
+    plans = preflight_generation(context, locks=paths)
+    assert [plan.lock.pack for plan in plans] == ["in-process", "shared", "isolated"]
+    assert [plan.wheels for plan in plans] == [(extra,), (), ()]
+    assert not context.wheel_store.exists()
+    assert not (target / "packs").exists()
+    seal = target / "generation.json"
+    seal.write_text("{}")
+    with pytest.raises(ProvisionError, match="fresh, inactive target"):
+        rebuild_generation(context, plans)
+    assert not context.wheel_store.exists()
+    seal.unlink()
+    rebuild_generation(context, plans)
+    for name in context.in_process_packs:
+        assert list((target / "packs" / name).iterdir()) == [
+            target / "packs" / name / "pack-lock.json"
+        ]
+    isolated = venv_python(target / "packs/isolated")
+    result = subprocess.check_output(
+        [str(isolated), "-c", "import fixture_extra; print(fixture_extra.value)"], text=True
+    )
+    assert result.strip() == "73"
+    assert doctor_generation(context) == ()
+    args = [
+        "--generation",
+        str(target),
+        "--generation-python",
+        str(python),
+        "--constraints",
+        str(constraints),
+        "--variant",
+        "linux-cpu",
+        "--worker-protocol",
+        str(PROTOCOL_VERSION),
+        "--wheel-store",
+        str(context.wheel_store),
+        "--uv-cache",
+        str(context.uv_cache),
+        "--own-environment-size",
+        "1000",
+        "--in-process-pack",
+        "in-process",
+        "--in-process-pack",
+        "shared",
+    ]
+    assert main(["terminal", *args, "--pack", "in-process"]) == 0
+    scratch = Path(json.loads(capsys.readouterr().out)["changes"][0])
+    assert scratch == venv_python(tmp_path / "scratch/2")
+    assert scratch != python
+    metadata = next((target / "python").rglob("fixture_extra-1.2.dist-info")) / "METADATA"
+    metadata.write_text("Name: fixture-extra\nVersion: 9.0\n")
+    assert main(["doctor", *args]) == 1
+    drift = json.loads(capsys.readouterr().out)["changes"]
+    assert any("in-process: fixture-extra: expected 1.2, found 9.0" in item for item in drift)
+
+
+def test_in_process_dependencies_conflict_before_downloads(tmp_path: Path) -> None:
+    target = tmp_path / "generations/2"
+    python = _generation(target / "python", [])
+    constraints = target / "constraints.txt"
+    constraints.write_text("")
+    first = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "value = 1\n")
+    second = _wheel(tmp_path, "fixture-extra", "2.0", "fixture_extra", "value = 2\n")
+    paths = []
+    for name, version, wheel in (("shared", "1.2", first), ("isolated", "2.0", second)):
+        path = tmp_path / f"{name}.json"
+        PackLock(
+            name,
+            "linux-cpu",
+            ">=3.12",
+            (f"fixture-extra=={version}",),
+            (),
+            (LockedDistribution("fixture-extra", version, (wheel,)),),
+        ).write(path)
+        paths.append(path)
+    context = GenerationContext(
+        target,
+        python,
+        constraints,
+        "linux-cpu",
+        PROTOCOL_VERSION,
+        tmp_path / "wheels",
+        tmp_path / "cache",
+        1000,
+        in_process_packs=("shared",),
+    )
+    plans = preflight_generation(context, locks=paths)
+    assert plans[1].lock.pack == "isolated"
+    assert plans[1].conflicts == ("fixture-extra: generation has 1.2, lock needs 2.0",)
+    with pytest.raises(ProvisionError, match="fixture-extra.*1.2.*2.0"):
+        rebuild_generation(context, plans)
+    assert not context.wheel_store.exists()
+    assert not (target / "packs").exists()
+
+
+def test_doctor_rejects_unavailable_generation_even_without_packs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    constraints = tmp_path / "constraints.txt"
+    constraints.write_text("")
+    assert (
+        main(
+            [
+                "doctor",
+                "--generation",
+                str(tmp_path),
+                "--generation-python",
+                str(tmp_path / "missing-python"),
+                "--constraints",
+                str(constraints),
+                "--variant",
+                "linux-cpu",
+                "--worker-protocol",
+                str(PROTOCOL_VERSION),
+                "--wheel-store",
+                str(tmp_path / "wheels"),
+                "--uv-cache",
+                str(tmp_path / "cache"),
+                "--own-environment-size",
+                "1000",
+            ]
+        )
+        == 1
+    )
+    output = capsys.readouterr()
+    result = json.loads(output.out)
+    assert result["packs"] == []
+    assert "missing-python" in result["changes"][0]

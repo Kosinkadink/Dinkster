@@ -104,6 +104,17 @@ mandatory; a supplied replacement may replace one pack's lock, but missing or
 incompatible packs are never silently omitted. A variant switch without a matching
 lock fails rather than resolving again. Setup may omit the source generation.
 
+All operations also accept repeatable `--in-process-pack <id>` from the generation
+manager's `inProcessPacks` field. Those packs retain their dependency lock under
+`packs/<id>/` but have no venv. Preflight plans their shared dependencies first,
+so conflicting versions across packs fail before downloads. Rebuild stages their
+extra wheels into the target's own `python/` interpreter before isolated venvs.
+The target must be inactive and have no final `generation.json` yet; the manager
+writes that record and its immutable inventory after staging. On staging failure
+the manager discards the whole target, including partially installed dependencies.
+Doctor compares in-process dependencies against that interpreter, and terminal
+selection for an in-process pack returns a scratch venv instead.
+
 Stdout is exactly one JSON object, including on operational failures:
 
 ```json
@@ -125,7 +136,8 @@ project's generation, so the manager's same-volume `pyvenv.cfg` home rewrite
 does not leave an interpreter link pointing to the old project path.
 
 Python callers use `GenerationContext(generation, generation_python, constraints,
-variant, worker_protocol, wheel_store, uv_cache, own_environment_size, uv="uv")`,
+variant, worker_protocol, wheel_store, uv_cache, own_environment_size, uv="uv",
+in_process_packs=())`,
 `preflight_generation(context, *, source_generation=None, locks=())`,
 `rebuild_generation(context, plans)` and `doctor_generation(context)`.
 

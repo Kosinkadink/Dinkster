@@ -5,6 +5,8 @@
 - Pack dependency provisioning can consume per-variant hashed locks, reject
   shared-package conflicts and layer only extra wheels over an engine
   interpreter without copying torch or opencv into the pack venv.
+- In-process pack dependencies stage only into a fresh, inactive generation;
+  their terminals use scratch venvs and doctor reports dependency drift.
 - Packs may own exact node IDs with case, spaces and dots, without renaming
   them. Namespace and exact-node ownership reject overlapping owners through
   install, composition and reload. Pack and publisher identities remain

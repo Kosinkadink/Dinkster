@@ -1,4 +1,4 @@
-"""Install reviewed dependency locks without resolving or mutating a generation."""
+"""Install reviewed dependency locks into pack venvs or a fresh generation."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import sys
 import tempfile
 import urllib.request
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from packaging.utils import canonicalize_name
@@ -95,8 +95,9 @@ def provision_pack(
     uv_cache: Path,
     variant: str,
     uv: str = "uv",
+    in_process: bool = False,
 ) -> Path:
-    """Recheck the reviewed plan, then create packs/<pack> from hashed wheels only."""
+    """Recheck the plan and stage hashed wheels before recording the pack lock."""
     plan.require_layering()
     current_plan = plan_pack(
         plan.lock,
@@ -110,9 +111,22 @@ def provision_pack(
     destination = packs / plan.lock.pack
     if destination.exists():
         raise ProvisionError(f"pack venv already exists: {destination}; rebuild from its lock")
+    if in_process:
+        generation = packs.parent
+        current = generation.parent.parent / "current"
+        if (
+            not generation_python.resolve().is_relative_to((generation / "python").resolve())
+            or (generation / "generation.json").exists()
+            or (current.is_file() and current.read_text().strip() == generation.name)
+        ):
+            raise ProvisionError("in-process packs require a fresh, inactive target generation")
     wheels = [fetch_wheel(wheel, wheel_store) for wheel in plan.wheels]
     try:
-        python = _create_layered_venv(generation_python, destination, uv_cache, uv)
+        if in_process:
+            destination.mkdir(parents=True)
+            python = generation_python
+        else:
+            python = _create_layered_venv(generation_python, destination, uv_cache, uv)
         if wheels:
             # Direct wheel paths with --no-deps cannot pull a second torch or consult an index.
             _run(
@@ -125,6 +139,7 @@ def provision_pack(
                     "--offline",
                     "--no-index",
                     "--no-deps",
+                    *(["--break-system-packages"] if in_process else []),
                     *(str(path) for path in wheels),
                 ],
                 uv_cache,
@@ -143,7 +158,10 @@ import importlib.metadata as m, json, sysconfig
 print(json.dumps({d.metadata['Name']: d.version for d in m.distributions(
     path=[sysconfig.get_path('purelib'), sysconfig.get_path('platlib')]) if d.metadata['Name']}))
 """
-    result = subprocess.run([str(python), "-c", script], capture_output=True, text=True)
+    try:
+        result = subprocess.run([str(python), "-c", script], capture_output=True, text=True)
+    except OSError:
+        return (f"{lock.pack}: interpreter unavailable; rebuild from pack-lock.json",)
     if result.returncode:
         return (f"{lock.pack}: interpreter unavailable; rebuild from pack-lock.json",)
     actual: dict[str, str] = {canonicalize_name(k): v for k, v in json.loads(result.stdout).items()}
@@ -180,6 +198,7 @@ class GenerationContext:
     uv_cache: Path
     own_environment_size: int
     uv: str = "uv"
+    in_process_packs: tuple[str, ...] = ()
 
     def validate(self) -> None:
         if self.worker_protocol != PROTOCOL_VERSION:
@@ -235,15 +254,29 @@ def preflight_generation(
     """Plan all recorded packs without fetching wheels or changing either generation."""
     context.validate()
     recorded = _generation_locks(source_generation, locks)
+    missing = set(context.in_process_packs) - {lock.pack for lock in recorded}
+    if missing:
+        raise ProvisionError(
+            f"in-process packs have no dependency lock: {', '.join(sorted(missing))}"
+        )
     if not recorded:
         return ()
     facts = GenerationPackages.inspect(context.generation_python)
-    return tuple(
-        plan_pack(
+    plans: list[PackPlan] = []
+    for lock in sorted(recorded, key=lambda lock: lock.pack not in context.in_process_packs):
+        plan = plan_pack(
             lock, facts, variant=context.variant, own_environment_size=context.own_environment_size
         )
-        for lock in recorded
-    )
+        plans.append(plan)
+        if lock.pack in context.in_process_packs and not plan.conflicts:
+            facts = replace(
+                facts,
+                versions={
+                    **facts.versions,
+                    **{package.name: package.version for package in lock.packages},
+                },
+            )
+    return tuple(plans)
 
 
 def rebuild_generation(context: GenerationContext, plans: Sequence[PackPlan]) -> tuple[str, ...]:
@@ -265,6 +298,7 @@ def rebuild_generation(context: GenerationContext, plans: Sequence[PackPlan]) ->
                 uv_cache=context.uv_cache,
                 variant=context.variant,
                 uv=context.uv,
+                in_process=plan.lock.pack in context.in_process_packs,
             )
             created.append(packs / plan.lock.pack)
     except BaseException:
@@ -277,11 +311,18 @@ def rebuild_generation(context: GenerationContext, plans: Sequence[PackPlan]) ->
 def doctor_generation(context: GenerationContext) -> tuple[str, ...]:
     """Read-only inspection; repair is an explicitly confirmed generation rebuild."""
     plans = preflight_generation(context, source_generation=context.generation)
-    facts = GenerationPackages.inspect(context.generation_python) if plans else None
+    facts = GenerationPackages.inspect(context.generation_python)
     changes: list[str] = []
     for plan in plans:
         changes.extend(f"{plan.lock.pack}: {message}" for message in plan.conflicts)
-        assert facts is not None
+        if plan.lock.pack in context.in_process_packs:
+            changes.extend(
+                f"{plan.lock.pack}: {package.name}: expected {package.version}, "
+                f"found {facts.versions.get(package.name, 'absent')}; rebuild from pack-lock.json"
+                for package in plan.lock.packages
+                if facts.versions.get(package.name) != package.version
+            )
+            continue
         changes.extend(
             pack_drift(
                 venv_python(context.generation / "packs" / plan.lock.pack),
@@ -306,6 +347,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--uv", default="uv")
     parser.add_argument("--source-generation", type=Path)
     parser.add_argument("--lock", type=Path, action="append", default=[])
+    parser.add_argument("--in-process-pack", action="append", default=[])
     parser.add_argument("--pack")
     args = parser.parse_args(argv)
     context = GenerationContext(
@@ -318,6 +360,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.uv_cache,
         args.own_environment_size,
         args.uv,
+        tuple(args.in_process_pack),
     )
     plans: tuple[PackPlan, ...] = ()
     changes: tuple[str, ...] = ()
@@ -333,6 +376,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 available = _generation_locks(context.generation, ())
                 if args.pack not in {lock.pack for lock in available}:
                     raise ProvisionError(f"pack {args.pack}: no installed dependency lock")
+            if args.pack and args.pack not in context.in_process_packs:
                 python = venv_python(context.generation / "packs" / args.pack)
                 if not python.is_file():
                     raise ProvisionError(f"pack {args.pack}: venv missing; rebuild from lock")
