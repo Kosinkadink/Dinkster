@@ -532,6 +532,7 @@ namespaces = [
     "CameraAngle",
     "MakeTrainingDataset",
     "Trellis2UpsampleStage",
+    "MoGePointMapToMesh",
     "TripoSplatPreprocessImage",
     "TripoSplatConditioning",
     "LoadTrainingDataset",

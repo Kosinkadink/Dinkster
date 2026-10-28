@@ -11,6 +11,8 @@
   reference latents with zero negative conditioning and fixed shape/camera noise targets.
 - Native `Trellis2UpsampleStage` cascades sparse shape latents through a VAE
   and prepares second-pass conditioning, projection features, and padded sparse latents.
+- Native `MoGePointMapToMesh` triangulates one geometry sample with UVs and
+  optional source-image texture, converting perspective or spherical axes for mesh output.
 - Color strings, ordered color palettes, bounding boxes, and optional
   resolution-preview metadata pass between node packs without rewriting their values.
 - Native `PrimitiveBoundingBox` constructs pixel bounding boxes; `ImageCropV2`
