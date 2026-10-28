@@ -6,6 +6,14 @@ vaults and acquisition, save targets, and value-type registration. It uses
 values and BLAKE3 for identity, and SQLAlchemy and Alembic for catalog schema
 migrations. Caches, workers, and the server build on it.
 
+Selected indexed files use ordinary `AssetRef` values from the engine-written
+index. The live mounts snapshot remains their resolver, so revoked grants stop
+resolving without a worker restart. Unindexed selections retain invocation-local
+`LocalAssetRef` bindings and cannot be admitted as portable VIDEO until scanned.
+Admission never copies selected input files into the vault or worker scratch.
+`produced_output_scratch` is only the writable publication store for produced
+outputs; uploads, downloads and remote transfers retain their separate vault paths.
+
 ## Setup
 
 This package is a uv workspace member and is not published separately yet.
