@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from test_frontend_artifact import artifact
 
 from scripts.build_release import (
     build,
@@ -30,19 +31,15 @@ from scripts.build_release import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_built_frontend_wheel_is_discovered_without_a_checkout(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_built_frontend_wheel_is_discovered_without_a_checkout(tmp_path: Path) -> None:
     source = tmp_path / "frontend-source"
     source.mkdir()
-    (source / "package.json").write_text('{"version": "0.0.1"}')
-    bundle = source / "packages/app/dist"
-    bundle.mkdir(parents=True)
-    (bundle / "index.html").write_text('<!doctype html><div id="root"></div>')
-    monkeypatch.setattr("scripts.build_release.git_head", lambda _: "frontend-commit")
+    payload, pin = artifact()
+    published = source / "frontend.zip"
+    published.write_bytes(payload)
     uv = shutil.which("uv")
     assert uv is not None, "release packaging requires uv"
-    wheel = build_frontend_wheel(source, bundle, "0.0.1", "frontend-commit", tmp_path, uv)
+    wheel = build_frontend_wheel(published, "0.0.1", pin, tmp_path, uv)
     installed = tmp_path / "site-packages"
     with zipfile.ZipFile(wheel) as archive:
         archive.extractall(installed)
@@ -169,24 +166,27 @@ def test_pypi_bootstrap_gate_skips_missing_projects_and_refuses_other_errors(
 def test_release_workflow_builds_all_wheels_and_checks_tag_metadata() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
     build = workflow["jobs"]["build"]
+    assert build["permissions"] == {"actions": "read", "contents": "read"}
     commands = "\n".join(step.get("run", "") for step in build["steps"])
-    assert "scripts/build_release.py" in commands
+    assert "-m scripts.build_release" in commands
     assert "--download-external-wheels" in commands
     assert '--tag "$RELEASE_TAG"' in commands
     assert "sha256sum -c SHA256SUMS" in commands
     assert "--identity-root" not in commands
     assert "uvx twine check dist/*.whl" in commands
-    assert "pnpm --filter @dinkster/app build" in commands
-    frontend_checkout = next(
-        step
+    assert "scripts/download_frontend.py" in commands
+    assert "--frontend-artifact .release/frontend.zip" in commands
+    assert "pnpm" not in commands
+    assert "node" not in commands
+    assert all(
+        step.get("uses") not in {"pnpm/action-setup@v4", "actions/setup-node@v4"}
+        and step.get("with", {}).get("repository") != "Kosinkadink/Dinkster-Frontend"
         for step in build["steps"]
-        if step.get("uses") == "actions/checkout@v4"
-        and step.get("with", {}).get("repository") == "Kosinkadink/Dinkster-Frontend"
     )
-    assert frontend_checkout["with"]["ref"] == "${{ steps.frontend.outputs.ref }}"
-    assert frontend_checkout["with"]["persist-credentials"] is False
-    assert "token" not in frontend_checkout["with"]
-    assert "ssh-key" not in frontend_checkout["with"]
+    frontend_download = next(
+        step for step in build["steps"] if step.get("name") == "Download the pinned frontend bundle"
+    )
+    assert frontend_download["env"] == {"GH_TOKEN": "${{ github.token }}"}
     assert all(
         step.get("with", {}).get("repository") != "Kosinkadink/Dinkster-Frontend"
         for step in build["steps"]
@@ -417,7 +417,8 @@ def test_repository_versions_match_first_release_tag() -> None:
     frontend = json.loads((ROOT / "scripts/release_sources.json").read_text(encoding="utf-8"))
     assert frontend["repository"] == "Kosinkadink/Dinkster-Frontend"
     assert len(frontend["commit"]) == 40
-    assert set(frontend) == {"repository", "commit"}
+    assert len(frontend["sha256"]) == 64
+    assert set(frontend) == {"repository", "commit", "sha256"}
 
 
 def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock(
@@ -659,13 +660,9 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "source"
-    frontend = tmp_path / "frontend"
-    frontend.mkdir()
-    (frontend / "index.html").write_text('<div id="root"></div>')
-    subprocess.run(["git", "init", "--quiet", str(frontend)], check=True)
-    subprocess.run(["git", "-C", str(frontend), "add", "."], check=True)
-    tree = subprocess.check_output(["git", "-C", str(frontend), "write-tree"], text=True).strip()
-    (frontend / ".git/HEAD").write_text(tree + "\n")
+    frontend = tmp_path / "frontend.zip"
+    frontend_payload, frontend_pin = artifact()
+    frontend.write_bytes(frontend_payload)
     files = {
         "pyproject.toml": (
             '[project]\nname = "dinkster"\nversion = "1.2.3"\n'
@@ -674,7 +671,7 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
         ),
         "src/dinkster/__init__.py": "",
         "packages/dinkster-workers/src/dinkster_workers/boundary.py": "PROTOCOL_VERSION = 1\n",
-        "scripts/release_sources.json": json.dumps({"commit": tree}),
+        "scripts/release_sources.json": json.dumps(frontend_pin),
     }
     for name, value in files.items():
         path = root / name
@@ -690,9 +687,7 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
     bootstrap = tmp_path / ("dinkster-tools-1.2.4.dev123+g" + "a" * 40 + "-linux-x86_64.tar.gz")
     bootstrap.write_bytes(b"finished interpreter and supervisor payload")
     output = tmp_path / "release"
-    built = build(
-        root, output, "v1.2.3", frontend, frontend, payload_artifacts=[payload, bootstrap]
-    )
+    built = build(root, output, "v1.2.3", frontend, payload_artifacts=[payload, bootstrap])
     manifest = json.loads((output / "release-manifest.json").read_text())
     assert built == manifest
     assert set(manifest["workspaceWheels"]) == {
@@ -732,7 +727,6 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
                 root,
                 tmp_path / f"invalid-{index}",
                 "v1.2.3",
-                frontend,
                 frontend,
                 payload_artifacts=[payload, candidate],
             )

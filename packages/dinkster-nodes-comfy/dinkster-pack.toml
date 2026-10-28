@@ -486,6 +486,7 @@ namespaces = [
     "SAM3_TrackToMask",
     "SAM3_Detect",
     "SAM3_TrackPreview",
+    "SaveVideo",
     "CheckpointLoaderSimple",
     "CheckpointLoader",
     "unCLIPCheckpointLoader",
@@ -528,6 +529,7 @@ namespaces = [
     "SaveConditioning",
     "SDPoseFaceBBoxes",
     "SDPoseDrawKeypoints",
+    "SDPoseKeypointExtractor",
 ]
 
 [pack.sandbox]
