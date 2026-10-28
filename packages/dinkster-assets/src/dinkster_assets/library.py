@@ -113,6 +113,8 @@ def append_write_record(
     size: int,
     mtime_ns: int,
     verification: AssetVerificationRecord | None = None,
+    *,
+    published_at_ns: int | None = None,
 ) -> None:
     """Record one just-written file. Appends are one small line each, so
     concurrent writers (multiple worker processes saving into one mount)
@@ -123,6 +125,7 @@ def append_write_record(
             "digest": digest,
             "size": size,
             "mtimeNs": mtime_ns,
+            **({"publishedAtNs": published_at_ns} if published_at_ns is not None else {}),
             **({"verification": verification.to_json()} if verification is not None else {}),
         },
         sort_keys=True,
@@ -170,6 +173,11 @@ def load_write_records(root: Path) -> dict[str, dict[str, object]]:
                 "size": size,
                 "mtimeNs": mtime,
                 "digest": digest,
+                **(
+                    {"publishedAtNs": row["publishedAtNs"]}
+                    if type(row.get("publishedAtNs")) is int
+                    else {}
+                ),
                 **({"verification": verification.to_json()} if verification is not None else {}),
             }
     return rows

@@ -472,6 +472,7 @@ class AssetWriter:
                 size,
                 stat.st_mtime_ns,
                 record,
+                published_at_ns=time.time_ns(),
             )
         except OSError:
             pass  # resolvability degrades to next-scan; the save itself stood

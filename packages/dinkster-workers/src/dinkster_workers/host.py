@@ -1575,6 +1575,7 @@ async def serve_connection(
                     artifact_candidates=result.artifact_candidates,
                     expansion=result.expansion,
                     preview_artifacts=result.preview_artifacts,
+                    saved_artifact_claims=result.saved_artifact_claims,
                 )
             if blob_transfer is not None:
                 await result_transfer_lock.acquire()

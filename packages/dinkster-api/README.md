@@ -182,6 +182,13 @@ registry is involved.
 
 ## Learn more
 
+Save nodes call `attach_saved_artifact(ref.to_wire())` after successful
+`AssetWriter` publication. This required result attachment raises outside an
+active invocation; it is not a droppable event. The host independently checks
+the mounted file and writer publication before returning a `SavedArtifact` in
+the run result. Failed executions return no attachments. Ordinary ASSET outputs
+do not imply a saved-file attachment, and no bytes are copied to a second store.
+
 - [Pack authoring](../../docs/pack-authoring.md) describes manifests, nodes,
   custom value types, and the compatibility contract.
 - [The pack template](../../templates/pack/) is a complete working starting
