@@ -524,10 +524,16 @@ def test_concat_trim_selects_component_audio_without_eager_concat() -> None:
 
 
 @pytest.mark.parametrize("samples", [100, 100_000])
-def test_nested_audio_roundtrip_binds_without_decoding(tmp_path, monkeypatch, samples) -> None:
+@pytest.mark.parametrize("complete", (False, True))
+def test_nested_audio_roundtrip_binds_without_decoding(
+    tmp_path, monkeypatch, samples, complete
+) -> None:
     pcm = np.linspace(-1, 1, samples, dtype=np.float32).reshape(1, 1, -1)
     images = np.ones((2, 4, 4, 4), np.float32)
-    value = assemble_video(images, audio={"waveform": pcm, "sample_rate": 8000}, fps=8)
+    audio_value = {"waveform": pcm, "sample_rate": 8000}
+    value = assemble_video(images, audio=None if complete else audio_value, fps=8)
+    if complete:
+        value["complete_audio"] = audio_value
     monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "producer"))
     producer = TypeRegistry()
     register_video_value_type(producer, VIDEO_TYPE)
@@ -554,7 +560,25 @@ def test_nested_audio_roundtrip_binds_without_decoding(tmp_path, monkeypatch, sa
         rebound = bind_video_value(decode_video(encoded), destination)
         assert encode_video(rebound) == encoded
         assert video_meta(rebound) == wrapped.meta.entries
-    audio = cast(dict[str, Any], rebound["components"])["audio"]
+    from dinkster_caches import MemoryLRUCache
+
+    async def reuse() -> None:
+        cache = MemoryLRUCache()
+        consumer = TypeRegistry()
+        register_video_value_type(consumer, VIDEO_TYPE, destination)
+        transported = consumer.wrap(VIDEO_TYPE, rebound)
+        await cache.put("nested-video-audio", {"video": transported})
+        cached = await cache.get("nested-video-audio")
+        assert cached is not None
+        assert encode_video(cached["video"].resolve()) == encoded
+        assert cached["video"].meta == transported.meta
+
+    asyncio.run(reuse())
+    audio = (
+        rebound["complete_audio"]
+        if complete
+        else cast(dict[str, Any], rebound["components"])["audio"]
+    )
     np.testing.assert_array_equal(audio_window(audio, 13, 50)["waveform"], pcm[..., 13:63])
     assert len(encoded) < 4096
 
