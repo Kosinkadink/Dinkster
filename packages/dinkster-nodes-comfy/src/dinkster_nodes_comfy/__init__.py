@@ -8,6 +8,7 @@ from dinkster_api.v1 import (
     TypeRegistry,
     register_asset_type,
     register_audio_value_type,
+    register_curve_type,
     register_video_edit_type,
     register_video_value_type,
     resolver_from_env,
@@ -50,6 +51,7 @@ from .conditioning import CONDITIONING_NODES
 from .context_windows import CONTEXT_WINDOW_NODES
 from .controlnet import CONTROLNET_NODES
 from .cosmos_conditioning import COSMOS_CONDITIONING_NODES
+from .curve_editor import CurveEditor
 from .custom_sampling import CUSTOM_SAMPLING_NODES
 from .dataset_collections import DATASET_COLLECTION_NODES
 from .dataset_folders import FOLDER_DATASET_NODES
@@ -424,6 +426,7 @@ COMFY_NODES = (
     *FOLDER_DATASET_NODES,
     UpscaleModelLoader,
     LossGraphNode,
+    CurveEditor,
 )
 
 
@@ -437,6 +440,7 @@ def register_inference_types(registry: TypeRegistry) -> None:
     if VIDEO_TYPE not in registry:
         register_video_value_type(registry, VIDEO_TYPE, resolver_from_env())
     register_video_edit_type(registry)
+    register_curve_type(registry)
     _register_inference_types(registry)
 
 
