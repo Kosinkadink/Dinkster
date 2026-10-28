@@ -326,7 +326,7 @@ def build(
     for candidate in payload_artifacts or []:
         name = candidate.name
         if (
-            re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name) is None
+            re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", name) is None
             or name.casefold() in reserved
             or candidate.suffix.casefold() == ".whl"
         ):

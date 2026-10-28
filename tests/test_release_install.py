@@ -602,7 +602,7 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
     (root / ".git/HEAD").write_text(tree + "\n")
     payload = tmp_path / "official-pack-1.2.3.tar.gz"
     payload.write_bytes(b"finished pack archive")
-    bootstrap = tmp_path / "dinkster-tools-linux-x86_64.tar.gz"
+    bootstrap = tmp_path / ("dinkster-tools-1.2.4.dev123+g" + "a" * 40 + "-linux-x86_64.tar.gz")
     bootstrap.write_bytes(b"finished interpreter and supervisor payload")
     output = tmp_path / "release"
     built = build(
@@ -637,6 +637,7 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
             "SHA256SUMS",
             payload.name.upper(),
             "extra.whl",
+            "escaped%2fpack.zip",
         )
     ):
         candidate = tmp_path / name
