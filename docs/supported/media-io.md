@@ -1,15 +1,26 @@
 ## Media I/O
 
+- Explicit mounted Save attachments reach execution results after host validation
+  of the live writable mount, writer publication record, and exact file bytes.
+  Custom targets and non-media files, including empty text files, are supported
+  through both ordinary hosts. Failed invocations do not return kept artifacts;
+  returning an ASSET without attaching it does not advertise a saved file.
 - Indexed video file selections remain references to their granted files,
   without input copying or an encoded-file size cap. Unindexed selections
   must be scanned before VIDEO admission. Decode working-set and produced
   output limits still apply.
+- Shared editor values preserve plural pixel boxes with metadata, image-comparison
+  and compositor state, and nested tensor-layer documents including optional
+  masks, transforms, authored layer order, and canvas dimensions
 - Portable SAM3 track values preserve packed uint8 masks, empty object axes or
   absent masks, original dimensions, frame counts, optional scores, and structural
   metadata across worker boundaries
 - Portable camera embeddings, motion tracks with optional visibility, and complete
   audio-encoder outputs preserve tensor dtype, shape and bytes, ordered layer
   sequences, sample counts and structural metadata across execution hosts and caches
+- Portable `SVG` values retain immutable ordered raw byte streams, including empty
+  and duplicate members, across execution hosts and caches without XML rewriting;
+  consumers can open independent seekable streams without mutating cached bytes
 - Portable IC-LoRA parameter mappings preserve source fields, ordering, and
   structural extras across execution hosts and caches
 - Portable LOAD3D_CAMERA values preserve perspective and orthographic camera
@@ -87,6 +98,18 @@
   resampling matching native video loading; deferred assembly with optional
   audio, 8/10-bit precision, sRGB, HLG, and HDR PQ; disassembly to frames,
   optional audio, fps, duration, bit depth, and color space
+- Native Trim Video and Trim Video (Advanced) select presentation-time
+  windows, including tail-relative starts and strict duration checks.
+  Component inputs encode with source defaults before selection; the
+  advanced editor's zero window keeps its input unchanged.
+  Empty selections fail immediately rather than producing an empty VIDEO;
+  see [video behavior differences](video-deliberate-differences.md).
+- Native Crop Video clamps and even-aligns a pixel rectangle, retaining the
+  full frame for empty or full-frame selections. Component crops copy pixels
+  without changing their precision, frame rate, or complete audio, but reset
+  encoding color space to sRGB as in the fixed source. No-op selections keep
+  their original color space;
+  encoded inputs retain their source with composable lazy crops.
 - Public `iter_video_pixels` yields edited, display-oriented float32 pixels
   with rational timestamps without accumulating the complete frame batch.
   Consumers that stop early close the iterator to release the decoder and
@@ -95,6 +118,13 @@
 - VIDEO values retain an encoded source or deferred components, rational
   source probe facts, and ordered lazy trim, crop, scale, and restricted
   identical-codec concat edits. Info and lazy edits do not decode frames.
+  Public `concatenate_video` accepts one to 100 ordered VIDEO values, encodes
+  component inputs to MKV, preserves compatible encoded inputs, and supports
+  one optional complete AUDIO soundtrack. Later trims select the matching
+  soundtrack window; explicit audio replaces nested inherited soundtracks
+  in both playback and serialized identity.
+  Native Concatenate Video accepts one to 100 ordered VIDEO list family
+  members with an advanced codec choice and optional complete AUDIO soundtrack.
   Decoded source trims select half-open stream-tick windows while retaining
   rational timeline bounds and independent audio sample windows.
   Encoded sources can be MP4, MKV, MOV, WebM, AVI, or GIF. Source-copy saves
@@ -129,7 +159,9 @@
   nonblocking value diagnostics, including isolated-worker execution
 - Asset-backed native audio loading to AUDIO (first audio stream of audio or
   video containers), including audio-only Opus/Vorbis WebM and AAC M4A uploads
-  classified from their track metadata; silent-audio construction with declared
+  classified from their track metadata; Record Audio decodes a canonical recorded
+  file identity to AUDIO through ordinary in-process and isolated hosts;
+  silent-audio construction with declared
   duration, sample rate, and channel count; and typed audio preview. Value discovery
   advertises versioned waveform PNG and bounded WAV window renditions with
   explicit batch selection, normalized selectors in cache identity, and
@@ -181,6 +213,18 @@
   nodes: `dinkster.splat` batches of activated world-space gaussians with
   binary little-endian PLY interchange byte-compatible with ComfyUI's
   splat PLY files
+- Native ImageOnlyCheckpointSave exports model, vision encoder and VAE weights
+  to a selected writable mount, preserving checkpoint metadata and reserved
+  counter names. Controlled CPU weights exercise serialization; real-model
+  loading and GPU parity are not certified.
+- Native VOIDSampler supplies the node-defined alpha-space DDIM sampler for
+  the existing custom-sampling path, without ordinary KSampler noise scaling.
+  Controlled CPU schedules cover the numerical contract, not real-model or
+  GPU output parity.
+- Native VOID quadmask quantization and spatial dilation, inpainting
+  conditioning with even temporal latent lengths, and precomputed warped
+  noise sources. Controlled CPU encoders cover mask/video conditioning and
+  source preservation; real-model and GPU output parity are not certified.
 - Native Create Video assembles IMAGE frames, rational frame rate and optional
   AUDIO as a VIDEO, retaining component storage until explicit encoding.
   Bit depth and sRGB/HLG/PQ color choices are retained; optional immediate
@@ -188,3 +232,10 @@
   rounding only the encoded frame rate to a thousandth. Get Video Components
   extracts bounded frames, audio and presentation facts from component or
   encoded VIDEO values through ordinary in-process and isolated hosts.
+- Native Save Video publishes a mounted MP4, MKV, or WebM asset while
+  returning its input VIDEO unchanged. Nested container, codec and CRF
+  controls select the public writer; component inputs use source encoding
+  defaults. Filename-prefix formatting, output mount selection and submitted
+  workflow metadata use the common mounted-output boundary. Encoded-input
+  re-encoding retains the canonical writer policy, not an export-equivalence
+  guarantee against the source encoder.

@@ -97,13 +97,19 @@ class ProjectFolders:
             mounts.append(mount_id)
         self._persist(state)
 
-    def initialize(self, mount_ids: tuple[str, ...]) -> None:
-        """Existing grants remain shared; newly registered grants have explicit membership."""
+    def initialize(
+        self, mount_ids: tuple[str, ...], *, shared_defaults: tuple[str, ...] = ()
+    ) -> None:
+        """Seed shared grants, adding defaults only where no project decision exists."""
+        state = self._state()
         if not self._initialized:
-            state = self._state()
             self._shared = list(mount_ids)
+        else:
+            known = set(self._shared).union(*self._projects.values(), *self._excluded.values())
+            self._shared.extend(mount_id for mount_id in shared_defaults if mount_id not in known)
+        if not self._initialized or self._state() != state:
             self._persist(state)
-            self._initialized = True
+        self._initialized = True
 
     def update(
         self, project: str, mounts: object, *, available: tuple[str, ...], output: str | None

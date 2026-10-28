@@ -125,6 +125,7 @@ from .aimdo_bootstrap import bootstrap_aimdo
 from .blobs import BlobTransfer, attribute_moved_wire
 from .boundary import (
     DEFAULT_SHM_THRESHOLD,
+    PROTOCOL_VERSION,
     BoundaryError,
     ValueCodec,
     ValueStore,
@@ -1178,6 +1179,7 @@ async def serve_connection(
 
     hello: dict[str, object] = {
         "type": "hello",
+        "protocol": PROTOCOL_VERSION,
         "pack": pack_name,
         "schemas": {t: schema_to_wire(s) for t, s in schemas.items()},
         "registeredTypes": list(worker.registered_types),
@@ -1575,6 +1577,7 @@ async def serve_connection(
                     artifact_candidates=result.artifact_candidates,
                     expansion=result.expansion,
                     preview_artifacts=result.preview_artifacts,
+                    saved_artifact_claims=result.saved_artifact_claims,
                 )
             if blob_transfer is not None:
                 await result_transfer_lock.acquire()

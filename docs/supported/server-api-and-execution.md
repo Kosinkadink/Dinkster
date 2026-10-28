@@ -31,6 +31,60 @@
 - Filesystem mount scans report file, byte, and elapsed progress; publish
   indexed assets before the scan finishes; reuse unchanged-file indexes; and
   keep per-mount indexes under the configured library root
+- Setup and serving with mount changes enabled initialize a writable
+  `<library-root>/imports` folder when no imports grant is configured.
+  Existing import paths and read-only grants are preserved; unavailable
+  configured directories are not recreated or replaced. Removing the import
+  grant remains effective across restarts and repeated setup.
+  New default imports become available to existing projects without resetting
+  folder order, exclusions, project-only grants or output selections.
+- Named file and classified media uploads in the managed server use original
+  filenames in the configured imports folder, with collision-safe numbering and no durable
+  vault duplicate. Requests can select another writable project folder and
+  relative subfolder; the returned asset records the actual virtual path.
+  Read-only, unavailable, revoked, escaping, or other-project destinations
+  fail without silently redirecting the upload.
+  Named model/file uploads stream under the configured upload size limit
+  without buffering the whole file. Anonymous workflow and digest transfers
+  retain deduplicated vault storage; named generic imports do not grant
+  classified media authority.
+- Explicit scoped digest transfers retain their name, receive time and
+  caller-reported source-machine label across restarts, with recoverable
+  catalog publication. The label is advisory, not verified machine identity.
+  Transfers verify the declared digest, use the existing upload limit and
+  streaming vault path, and do not create classified media authority.
+- Named and classified-media uploads retain their original names, observed
+  virtual locations and upload history across server restarts. The scoped
+  asset catalog groups aliases by digest, supports name/kind/origin/date
+  filters and paged queries, and keeps workflow records separate. Catalog
+  locations do not grant filesystem access or expose physical paths.
+  Interrupted publication recovers completed files on restart or the next
+  catalog query, after checking their bytes and current folder authority.
+  Unpublished, changed, unavailable or revoked files are not restored or granted.
+  Existing scoped media grants and workflow records become discoverable after
+  verified vault backfill, with Unknown origin where history was not recorded.
+  Missing historical media names display the digest, not an invented filename.
+  Workflow records remain document-kind entries; existing project observations
+  do not acquire default-project membership, and anonymous bytes do not acquire
+  membership in any user's scope through this backfill.
+  Human operators can separately inventory verified, unrecorded vault blobs
+  by digest. This view excludes bytes recorded in any scope, reports unknown
+  names and history without guessing them, and creates no records or grants.
+  Agents, delegated users and ordinary asset readers cannot access it.
+- Read-only asset availability checks distinguish held vault/granted-folder
+  identities from missing ones without downloading, saving, granting or
+  cataloging bytes. Replaced, missing and revoked files are unavailable;
+  the same digest at a different granted location remains usable. Results
+  are scope-authorized, uncached and do not expose physical paths.
+  Job preflight uses the same verified local presence rule, never a fetching
+  fallback. Corrupted vault content can be replaced only through consented
+  acquisition; a digest-shaped filename is not proof that the bytes are held.
+- Human operators can inspect the vault directory and verified physical
+  locations for a scoped project asset, including identical bytes under
+  different observed filenames. Changed, missing, excluded and revoked
+  copies and vault symlinks escaping the vault root are not offered as reveal
+  targets. Ordinary catalogs remain path-free;
+  location reporting does not download assets or open the desktop shell.
 - Operators can persist project folder membership, independent display order,
   shared folders, and project output selections through the mount API.
   Removing a project association does not delete files or revoke the grant.
@@ -75,6 +129,9 @@
 - Asset acquisition checks the local vault and mounted files before packaged
   assets and HTTP sources. Remote bytes verify against the requested digest
   before publication, and job acquisition requires explicit consent.
+  Newly acquired assets retain a discoverable name and sanitized winning
+  download URL in the submitting scope and project. Interrupted catalog
+  publication recovers verified vault bytes without downloading again.
 - Durable job queue when history is configured: accepted jobs are recorded
   before acknowledgment, and jobs lost to a server crash or restart appear
   in history as "interrupted" (distinguishing never-started from
