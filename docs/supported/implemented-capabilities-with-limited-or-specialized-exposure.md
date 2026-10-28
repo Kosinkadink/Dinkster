@@ -8,6 +8,10 @@
 - The public mount-scoped asset writer publishes bounded, ordered stream batches
   with source-compatible counters and can give an encoder its selected filename
   stem and counter before it produces a bounded output stream.
+- Explicit named imports through the mount writer preserve the requested filename
+  when free and number collisions without overwriting existing files. They retain
+  writable-grant, containment and bounded-stream checks. This writer API alone does
+  not change the destination of browser uploads.
 - Native job submission accepts optional `exportSnapshot` metadata with independently
   optional object `prompt` and `extraPnginfo` members. Unavailable metadata remains
   absent, distinct from an explicitly empty object. Output nodes can read a detached

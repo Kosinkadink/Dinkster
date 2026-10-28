@@ -35,6 +35,15 @@ retain their shapes, dtypes, bytes, and optional-key presence. Supported extra
 metadata also round-trips; mapping insertion order does not affect identity.
 The fingerprint includes the geometry type, and encoded tensor records are
 validated without loading Torch. Existing registration authority is preserved.
+`BOUNDING_BOXES`, `IMAGECOMPARE`, and `COMPOSITOR` retain ordinary structured
+state, including pixel coordinates, metadata, and authored list order. `LAYERS`
+uses the structural tensor codec without requiring `samples`: nested raster
+images and masks, layer order, canvas tuples, optional transforms, and supported
+extra metadata round-trip without geometry conversion or invented defaults.
+`materialize_latent` reconstructs nested tensors at the consuming node; live
+tensors retain their storage, dtype, and device. Registration is runtime-free
+and preserves an existing authority. This tensor-layer document is distinct
+from asset-backed video and image editing documents.
 
 `VOXEL` preserves source-shaped `data`, optional `voxel_colors` and `resolution`,
 and supported extra metadata on the existing structural tensor wire. Dense

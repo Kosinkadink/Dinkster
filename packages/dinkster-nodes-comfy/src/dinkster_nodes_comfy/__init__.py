@@ -159,7 +159,8 @@ from .sampler_factories import SAMPLER_FACTORY_NODES
 from .save_text import SaveText
 from .scail_masks import SCAIL2ColoredMask
 from .sd_upscale_conditioning import SD_UPSCALE_CONDITIONING_NODES
-from .sdpose import SDPoseFaceBBoxes
+from .sdpose import SDPoseDrawKeypoints, SDPoseFaceBBoxes
+from .sdpose_extract import SDPoseKeypointExtractor
 from .seedvr_conditioning import SeedVR2Conditioning
 from .seedvr_postprocess import SeedVR2PostProcessing
 from .seedvr_preprocess import SeedVR2Preprocess
@@ -423,6 +424,8 @@ COMFY_NODES = (
     ConditioningLoader,
     SaveConditioning,
     SDPoseFaceBBoxes,
+    SDPoseDrawKeypoints,
+    SDPoseKeypointExtractor,
 )
 
 
