@@ -6,7 +6,6 @@ requires-python = ">=3.12"
 dependencies = [
     "dinkster-api",
     "dinkster-nodes-media-io==0.0.1",
-    "dinkster-workers",
     "httpx>=0.28,<1",
 ]
 
@@ -24,4 +23,3 @@ packages = ["src/dinkster_nodes_remote"]
 [tool.uv.sources]
 dinkster-api = { workspace = true }
 dinkster-nodes-media-io = { workspace = true }
-dinkster-workers = { workspace = true }

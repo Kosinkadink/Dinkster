@@ -80,6 +80,7 @@ from dinkster_memory import (
     parse_size,
 )
 from dinkster_protocol import AttentionPolicy, validate_attention_policy
+from dinkster_registry import ArtifactError, InstallError
 from dinkster_schema import (
     LOG_LEVEL_ENV,
     LOG_OVERRIDES_ENV,
@@ -115,6 +116,7 @@ from dinkster_server import (
 from dinkster_server.image_document import InvalidDocument, validate_document
 from dinkster_values import MEBIBYTE
 from dinkster_workers import (
+    ManifestError,
     PackManifest,
     SandboxPolicy,
     SingleJobMultiGpuConfig,
@@ -155,6 +157,7 @@ from .compose import (
 )
 from .frontend import install_frontend
 from .generation_api import GenerationModel, GenerationService, add_generation_routes
+from .generation_packs import generation_pack_specs
 from .guess_api import add_guess_routes
 from .installer import Installer
 from .mounts_api import MountService, add_mount_routes
@@ -527,7 +530,7 @@ def _with_remote_config(
         environment[_REMOTE_AUTH_TOKEN_FILE_ENV] = token_file
     return replace(
         spec,
-        env=environment,
+        env={**spec.env, **environment},
         execution_config={"catalog_base": catalog_base, "gateway_base": gateway_base},
     )
 
@@ -877,6 +880,12 @@ def main(argv: list[str] | None = None) -> None:
         help="managed install root (dinkster-pack): serve the packs of its "
         "current generation from the immutable store "
         "(default: $DINKSTER_INSTALL_ROOT)",
+    )
+    parser.add_argument(
+        "--generation",
+        type=Path,
+        metavar="ABS",
+        help="serve only this explicit engine generation's dinkster.lock and pack sources",
     )
     parser.add_argument(
         "--comfy-root",
@@ -1327,6 +1336,18 @@ def main(argv: list[str] | None = None) -> None:
     if RETIRED_EXECUTION_PYTHON_ENV in os.environ:
         parser.error(RETIRED_EXECUTION_PYTHON_ENV_MESSAGE)
     args = parser.parse_args(argv)
+    if args.generation is not None:
+        if not args.generation.is_absolute():
+            parser.error("--generation requires an absolute path")
+        if (
+            args.install_root
+            or args.pack
+            or args.comfy_root
+            or args.legacy_pack
+            or args.watch_packs
+        ):
+            parser.error("--generation cannot be combined with other pack sources or --watch-packs")
+        args.no_default_packs = True
     if (args.official_resolver_url or args.official_resolver_provider_id) and not args.library_root:
         parser.error("official resolver bootstrap requires --library-root")
     openai_values = (args.openai_base_url, args.openai_model, args.openai_api_key)
@@ -1777,6 +1798,27 @@ def main(argv: list[str] | None = None) -> None:
         specs.extend(replace(spec, require_catalog=True) for spec in compat_specs)
     else:
         specs.extend(compat_specs)
+    if args.generation is not None:
+        try:
+            for spec in generation_pack_specs(args.generation):
+                if spec.packs and "dinkster-nodes-remote" in spec.packs:
+                    spec = _with_remote_config(
+                        spec,
+                        catalog_base=args.remote_catalog_base,
+                        gateway_base=args.remote_gateway_base,
+                        poll_interval=args.remote_catalog_poll_interval,
+                        token_file=args.remote_auth_token_file,
+                    )
+                specs.append(spec)
+        except (
+            OSError,
+            ValueError,
+            CompositionError,
+            ArtifactError,
+            InstallError,
+            ManifestError,
+        ) as exc:
+            raise SystemExit(f"invalid generation pack inventory: {exc}") from exc
     resolved_default_pack_count = len(specs)
     installer: Installer | None = None
     if args.install_root:
@@ -1841,6 +1883,8 @@ def main(argv: list[str] | None = None) -> None:
                 protected_roots.append(str(Path(args.library_root)))
             if args.install_root:
                 protected_roots.append(str(Path(args.install_root)))
+            if args.generation is not None:
+                protected_roots.append(str(args.generation))
             secret_paths = (
                 args.auth,
                 args.federated_assets_cursor_key,

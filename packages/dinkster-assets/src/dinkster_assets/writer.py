@@ -44,7 +44,7 @@ from dinkster_values.asset_folders import current_asset_folders
 
 from .identity import DIGEST_PREFIX, AssetError, new_hasher
 from .integrity import verification_record_for_publication
-from .library import append_write_record
+from .library import INDEX_NAME, append_write_record, load_write_records
 from .model import AssetRef
 from .mounts import MOUNT_NAMESPACE
 from .save_target import SaveTarget, coerce_save_target
@@ -69,6 +69,8 @@ class _Msvcrt(Protocol):
 
     def locking(self, fd: int, mode: int, nbytes: int, /) -> None: ...
 
+    def open_osfhandle(self, handle: int, flags: int, /) -> int: ...
+
 
 class MountWriteAuthority(Protocol):
     """Where mount ids become writable roots. Raises AssetError for an
@@ -92,6 +94,26 @@ class MountSnapshotWriter:
         self._path = Path(snapshot_path)
 
     def writable_root(self, mount_id: str) -> Path:
+        return Path(cast("str", self._writable_mount(mount_id)["root"]))
+
+    def publication_record(self, mount_id: str, relative: str) -> dict[str, object] | None:
+        """Find writer evidence before or after its absorption into the mount index."""
+        mount = self._writable_mount(mount_id)
+        root = Path(cast("str", mount["root"]))
+        record = load_write_records(root).get(relative)
+        if record is not None:
+            return record
+        index = mount.get("index", str(root / INDEX_NAME))
+        if not isinstance(index, str):
+            raise AssetError("mount index must be a path")
+        try:
+            loaded: object = json.loads(Path(index).read_text("utf-8"))
+        except (OSError, ValueError):
+            return None
+        row = cast("dict[str, object]", loaded).get(relative) if isinstance(loaded, dict) else None
+        return cast("dict[str, object]", row) if isinstance(row, dict) else None
+
+    def _writable_mount(self, mount_id: str) -> dict[str, object]:
         try:
             loaded: object = json.loads(self._path.read_text("utf-8"))
         except (OSError, ValueError):
@@ -117,7 +139,7 @@ class MountSnapshotWriter:
                 raise AssetError(
                     f"mount {mount_id!r} is granted read-only; saving needs a readwrite mount"
                 )
-            return Path(root)
+            return entry
         raise AssetError(
             f"no ready mount {mount_id!r}: it was never granted, was "
             "revoked, or has not finished scanning"
@@ -472,6 +494,7 @@ class AssetWriter:
                 size,
                 stat.st_mtime_ns,
                 record,
+                published_at_ns=time.time_ns(),
             )
         except OSError:
             pass  # resolvability degrades to next-scan; the save itself stood
@@ -503,9 +526,6 @@ class AssetWriter:
     def _directory_claim(self, folder: Path) -> Generator[None]:
         lock_path = folder / ".dinkster-asset-writer.lock"
         with self._path_lock(lock_path), self._open_lock_file(lock_path) as handle:
-            if handle.seek(0, os.SEEK_END) == 0:
-                handle.write(b"\0")
-                handle.flush()
             handle.seek(0)
             if os.name == "nt":  # pragma: no cover - exercised on Windows CI
                 msvcrt = cast("_Msvcrt", importlib.import_module("msvcrt"))
@@ -557,7 +577,7 @@ class AssetWriter:
     def _open_windows_lock_file(lock_path: Path) -> BinaryIO:
         ctypes = importlib.import_module("ctypes")
         wintypes = importlib.import_module("ctypes.wintypes")
-        msvcrt = importlib.import_module("msvcrt")
+        msvcrt = cast("_Msvcrt", importlib.import_module("msvcrt"))
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         create_file = kernel32.CreateFileW
         create_file.argtypes = [
@@ -593,22 +613,44 @@ class AssetWriter:
 
         generic_read_write = 0xC0000000
         share_all = 0x00000007
+        create_new = 1
         open_always = 4
         file_attribute_normal = 0x00000080
         file_flag_open_reparse_point = 0x00200000
         file_attribute_reparse_point = 0x00000400
         invalid_handle_value = wintypes.HANDLE(-1).value
-        handle = create_file(
-            str(lock_path),
-            generic_read_write,
-            share_all,
-            None,
-            open_always,
-            file_attribute_normal | file_flag_open_reparse_point,
-            None,
-        )
-        if handle == invalid_handle_value:
-            raise OSError(ctypes.get_last_error(), f"cannot open writer lock {lock_path}")
+        while True:
+            handle = create_file(
+                str(lock_path),
+                generic_read_write,
+                0,
+                None,
+                create_new,
+                file_attribute_normal | file_flag_open_reparse_point,
+                None,
+            )
+            if handle != invalid_handle_value:
+                with AssetWriter._windows_file_from_handle(handle, msvcrt, close_handle) as created:
+                    created.write(b"\0")
+                    created.flush()
+                continue
+            error = ctypes.get_last_error()
+            if error != 80:
+                raise OSError(error, f"cannot create writer lock {lock_path}")
+            handle = create_file(
+                str(lock_path),
+                generic_read_write,
+                share_all,
+                None,
+                open_always,
+                file_attribute_normal | file_flag_open_reparse_point,
+                None,
+            )
+            if handle != invalid_handle_value:
+                break
+            if ctypes.get_last_error() != 32:
+                raise OSError(ctypes.get_last_error(), f"cannot open writer lock {lock_path}")
+            time.sleep(0.05)
         information = FileInformation()
         try:
             if not get_file_information(handle, ctypes.byref(information)):
@@ -618,11 +660,27 @@ class AssetWriter:
                 or information.number_of_links != 1
             ):
                 raise AssetError(f"unsafe writer lock path: {lock_path}")
+        except BaseException:
+            close_handle(handle)
+            raise
+        return AssetWriter._windows_file_from_handle(handle, msvcrt, close_handle)
+
+    @staticmethod
+    def _windows_file_from_handle(
+        handle: int,
+        msvcrt: _Msvcrt,
+        close_handle: Callable[[int], object],
+    ) -> BinaryIO:
+        try:
             descriptor = msvcrt.open_osfhandle(handle, os.O_RDWR)
         except BaseException:
             close_handle(handle)
             raise
-        return os.fdopen(descriptor, "r+b")
+        try:
+            return os.fdopen(descriptor, "r+b")
+        except BaseException:
+            os.close(descriptor)
+            raise
 
     @staticmethod
     def _path_lock(path: Path) -> threading.RLock:

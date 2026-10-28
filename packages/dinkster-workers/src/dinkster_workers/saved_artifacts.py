@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 import os
 import stat
-from collections.abc import Callable, Generator, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import BinaryIO
@@ -16,6 +16,7 @@ from dinkster_assets import (
     KIND_MEDIA_VIDEO,
     MOUNT_NAMESPACE,
     AssetError,
+    AssetRef,
     MountSnapshotWriter,
     classify_media_handle,
 )
@@ -23,6 +24,7 @@ from dinkster_assets.identity import new_hasher
 from dinkster_assets.integrity import verification_record
 from dinkster_assets.library import append_write_record
 from dinkster_protocol import SavedArtifact, SavedArtifactCandidate
+from dinkster_schema.reporting import attach_saved_artifact, capture_saved_artifacts
 from dinkster_values import MEBIBYTE, SAVED_ARTIFACT_LIMIT_BYTES
 
 MAX_SAVED_ARTIFACTS = 64
@@ -138,6 +140,54 @@ class SavedArtifactAuthority:
 
     def __init__(self, mounts_snapshot: Path | str) -> None:
         self._snapshot = Path(mounts_snapshot)
+
+    def capture_mounted(
+        self, claims: Sequence[Mapping[str, object]], node_id: str, started_at_ns: int
+    ) -> tuple[SavedArtifact, ...]:
+        """Validate explicit native Save attachments, never ordinary ASSET outputs."""
+        with capture_saved_artifacts() as validated:
+            for claim in claims:
+                attach_saved_artifact(claim)
+        artifacts: dict[str, SavedArtifact] = {}
+        writer = MountSnapshotWriter(self._snapshot)
+        for claim in validated:
+            ref = AssetRef.from_wire(claim)
+            _, mount_id, relative = ref.virtual_path.split("/", 2)
+            parts = tuple(relative.split("/"))
+            root = writer.writable_root(mount_id).resolve(strict=True)
+            record = writer.publication_record(mount_id, relative)
+            if (
+                record is None
+                or record.get("digest") != ref.digest
+                or record.get("size") != ref.size
+            ):
+                raise AssetError("saved artifact has no matching writer publication record")
+            published = record.get("publishedAtNs")
+            if type(published) is not int or published < started_at_ns:
+                raise AssetError("saved artifact has no fresh writer publication")
+            try:
+                with _open_candidate(root, parts[:-1], parts[-1]) as (handle, restat_path):
+                    before = os.fstat(handle.fileno())
+                    if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+                        raise AssetError("saved artifact must be a regular nonlinked file")
+                    if before.st_size != ref.size or before.st_mtime_ns != record.get("mtimeNs"):
+                        raise AssetError("saved artifact differs from writer publication")
+                    if _digest_handle(handle) != ref.digest:
+                        raise AssetError("saved artifact digest does not match file bytes")
+                    after = os.fstat(handle.fileno())
+                    path_stat = restat_path()
+            except OSError as exc:
+                raise AssetError(f"saved artifact could not be opened safely: {exc}") from exc
+            if any(getattr(before, key) != getattr(after, key) for key in _HANDLE_STABLE_FIELDS):
+                raise AssetError("saved artifact changed while it was being validated")
+            if any(getattr(after, key) != getattr(path_stat, key) for key in _PATH_STABLE_FIELDS):
+                raise AssetError("saved artifact path changed while it was being validated")
+            if writer.writable_root(mount_id).resolve(strict=True) != root:
+                raise AssetError("saved artifact mount changed during validation")
+            artifacts[ref.virtual_path] = SavedArtifact(
+                node_id, ref.digest, ref.name, ref.size, ref.media_type, ref.virtual_path
+            )
+        return tuple(artifacts.values())
 
     def capture(
         self,

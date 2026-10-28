@@ -7,9 +7,7 @@ from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any, cast
 
-from dinkster_api.v1 import digest_bytes, is_digest
-from dinkster_image_document.document import ImageDocument, apply_commands
-from dinkster_image_document.format import canonical_json
+from dinkster_api.v1 import ImageDocument, apply_commands, canonical_json, digest_bytes, is_digest
 
 from .compositor_types import (
     CompositorRecipe,
