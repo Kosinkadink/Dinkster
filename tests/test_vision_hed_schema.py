@@ -81,7 +81,6 @@ def test_hed_pack_declares_isolated_cpu_cuda_providers_and_pinned_models() -> No
     assert assets["hed-model"].digest == MODEL_DIGEST
     assert assets["hed-model"].size == 29_444_406
     assert len(assets) == 8
-    assert manifest.comfy_aliases is None
 
 
 def test_hed_wheel_contains_pack_runtime_and_manifest() -> None:

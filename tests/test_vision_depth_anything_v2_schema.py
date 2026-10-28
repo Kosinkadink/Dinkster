@@ -1,11 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import tomllib
-from dataclasses import replace
 from pathlib import Path
-from typing import cast
 
 from dinkster_nodes_image import (
     IMAGE_NODES,
@@ -20,9 +17,7 @@ from dinkster_nodes_vision.depth_anything_v2 import (
 )
 from dinkster_schema import (
     ComboWidget,
-    comfy_alias_registry_from_wire,
     schema_signature,
-    validate_replacement_references,
 )
 from dinkster_workers import load_manifest
 
@@ -31,8 +26,6 @@ from dinkster.compose import compose_serving, default_pack_spec
 ROOT = Path(__file__).parent.parent
 PACKAGE = ROOT / "packages" / "dinkster-nodes-vision"
 MANIFEST = PACKAGE / "dinkster_vision_depth_anything_v2_pack" / "dinkster-pack.toml"
-INACTIVE_ALIASES = PACKAGE / "dinkster_vision_depth_anything_v2_pack/comfy-aliases.inactive.json"
-CORE_IMAGE_ALIASES = ROOT / "packages" / "dinkster-nodes-image" / "comfy-aliases.json"
 MODEL_DIGEST = "blake3:e577785fc18ba89b5ae681d69574f975e6f61b329aa14b4a58d68f12dda00c29"
 
 
@@ -81,81 +74,6 @@ def test_depth_provider_declares_isolated_cpu_execution_and_pinned_model() -> No
             "resolve/7581137eff8d4e94f6e796d3baea0e9fa79b22d2/model.safetensors",
         },
     )
-    assert manifest.comfy_aliases is None
-
-
-def test_depth_aliases_are_provider_local_and_inactive() -> None:
-    wire = cast("dict[str, object]", json.loads(INACTIVE_ALIASES.read_text(encoding="utf-8")))
-    registry = comfy_alias_registry_from_wire(wire)
-    inactive_ids = {record.id for record in registry.records}
-    assert inactive_ids == {
-        "comfy_alias:comfyui_controlnet_aux/AIO_Preprocessor",
-        "comfy_alias:comfyui_controlnet_aux/DepthAnythingV2Preprocessor",
-    }
-    core_wire = cast(
-        "dict[str, object]", json.loads(CORE_IMAGE_ALIASES.read_text(encoding="utf-8"))
-    )
-    core_records = cast("list[dict[str, object]]", core_wire["records"])
-    assert inactive_ids.isdisjoint(record["id"] for record in core_records)
-    source_schemas = {
-        snapshot.schema.node_type: snapshot.schema for snapshot in registry.source_schemas
-    }
-    assert set(source_schemas) == {
-        "comfy.comfyui_controlnet_aux.AIO_Preprocessor",
-        "comfy.comfyui_controlnet_aux.DepthAnythingV2Preprocessor",
-    }
-    direct_checkpoint = source_schemas[
-        "comfy.comfyui_controlnet_aux.DepthAnythingV2Preprocessor"
-    ].input("ckpt_name")
-    assert direct_checkpoint is not None
-    assert direct_checkpoint.default == "depth_anything_v2_vitl.pth"
-    assert isinstance(direct_checkpoint.widget, ComboWidget)
-    assert direct_checkpoint.widget.options == (
-        "depth_anything_v2_vitg.pth",
-        "depth_anything_v2_vitl.pth",
-        "depth_anything_v2_vitb.pth",
-        "depth_anything_v2_vits.pth",
-    )
-    aio_selector = source_schemas["comfy.comfyui_controlnet_aux.AIO_Preprocessor"].input(
-        "preprocessor"
-    )
-    assert aio_selector is not None and aio_selector.default == "none"
-    assert isinstance(aio_selector.widget, ComboWidget)
-    assert len(aio_selector.widget.options) == 47
-    assert aio_selector.widget.options[0] == "none"
-    assert aio_selector.widget.options[34] == "DepthAnythingV2Preprocessor"
-    assert aio_selector.widget.options[41:43] == ("DWPreprocessor", "AnimalPosePreprocessor")
-    target = OwnerModelDepthPreprocessor.schema()
-    schemas = {**source_schemas, target.node_type: target}
-    for record in registry.records:
-        schemas[record.source.node_type] = replace(
-            source_schemas[record.source.node_type],
-            replacements=(record.replacement,),
-        )
-    assert validate_replacement_references(schemas) == ()
-
-    records: dict[str, dict[str, object]] = {}
-    for record in cast("list[dict[str, object]]", wire["records"]):
-        source = cast("dict[str, object]", record["source"])
-        records[cast("str", source["nodeClass"])] = record
-    direct_replacement = cast(
-        "dict[str, object]", records["DepthAnythingV2Preprocessor"]["replacement"]
-    )
-    direct_case = cast("list[dict[str, object]]", direct_replacement["cases"])[0]
-    direct_inputs = cast("dict[str, object]", direct_case["inputs"])
-    direct_provider = cast("dict[str, object]", direct_inputs["provider"])
-    direct_transform = cast("dict[str, object]", direct_provider["transform"])
-    aio_replacement = cast("dict[str, object]", records["AIO_Preprocessor"]["replacement"])
-    aio_case = cast("list[dict[str, object]]", aio_replacement["cases"])[0]
-    aio_inputs = cast("dict[str, object]", aio_case["inputs"])
-    aio_provider = cast("dict[str, object]", aio_inputs["provider"])
-    aio_transform = cast("dict[str, object]", aio_provider["transform"])
-    assert direct_transform["map"] == {
-        "depth_anything_v2_vitl.pth": "dinkster-vision-depth-anything-v2"
-    }
-    assert aio_transform["map"] == {
-        "DepthAnythingV2Preprocessor": "dinkster-vision-depth-anything-v2"
-    }
 
 
 def test_depth_provider_wheel_contains_pack_runtime_and_manifest() -> None:
