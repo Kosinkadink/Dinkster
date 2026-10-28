@@ -102,7 +102,8 @@ This adapter never changes them. `preflight` and `rebuild` also accept
 installs or explicitly selected target-variant locks. Source pack locks are
 mandatory; a supplied replacement may replace one pack's lock, but missing or
 incompatible packs are never silently omitted. A variant switch without a matching
-lock fails rather than resolving again. Setup may omit the source generation.
+lock fails rather than resolving again. Setup may omit the source generation
+only when the project has no `current` record; existing projects must supply it.
 
 All operations also accept repeatable `--in-process-pack <id>` from the generation
 manager's `inProcessPacks` field. Those packs retain their dependency lock under

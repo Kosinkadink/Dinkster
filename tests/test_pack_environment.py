@@ -301,6 +301,8 @@ def test_generation_adapter_preflights_rebuilds_and_reports_drift(
         tmp_path / "cache",
         9000,
     )
+    with pytest.raises(ProvisionError, match="source generation is required"):
+        preflight_generation(context)
     plans = preflight_generation(context, source_generation=old)
     assert plans[0].wheels == (extra,)
     assert not (target / "packs").exists()

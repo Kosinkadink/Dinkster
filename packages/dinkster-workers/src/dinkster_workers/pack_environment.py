@@ -258,6 +258,8 @@ def preflight_generation(
 ) -> tuple[PackPlan, ...]:
     """Plan all recorded packs without fetching wheels or changing either generation."""
     context.validate()
+    if source_generation is None and (context.generation.parent.parent / "current").exists():
+        raise ProvisionError("source generation is required for an existing project")
     recorded = _generation_locks(source_generation, locks)
     missing = set(context.in_process_packs) - {lock.pack for lock in recorded}
     if missing:
