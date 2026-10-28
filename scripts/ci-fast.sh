@@ -18,6 +18,7 @@ uv run --locked python -m pytest -q \
   tests/test_run_scripts.py \
   tests/test_launch.py \
   tests/test_release_install.py \
+  tests/test_frontend_artifact.py \
   tests/test_schema.py \
   tests/test_schema_current_contracts.py \
   tests/test_names.py \
