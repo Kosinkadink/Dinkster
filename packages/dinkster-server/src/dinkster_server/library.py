@@ -269,6 +269,7 @@ class ServerLibrary:
                 artifact.virtual_path,
             )
             for artifact in result.artifacts
+            if not artifact.virtual_path.startswith("previews/")
         }
         for (node_id, _), ref in refs.items():
             journal = self.vault.root / ".upload-observations" / f"{uuid.uuid4().hex}.json"

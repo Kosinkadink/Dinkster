@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import struct
@@ -13,10 +14,21 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from dinkster_assets import AssetError, digest_bytes, load_write_records
+from dinkster_assets import (
+    ASSET_TYPE,
+    AssetError,
+    AssetRef,
+    AssetWriter,
+    MountSnapshotWriter,
+    digest_bytes,
+    load_write_records,
+    register_asset_type,
+)
 from dinkster_compat_comfy.saved_results import capture_saved_results
-from dinkster_protocol import SavedArtifactCandidate
-from dinkster_workers import ExecutionContext
+from dinkster_protocol import Invocation, SavedArtifactCandidate
+from dinkster_schema import Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_values import TypeRegistry, register_core_types
+from dinkster_workers import ExecutionContext, InProcessWorker
 from dinkster_workers.boundary import BoundaryError, decode_result_artifact_candidates
 from dinkster_workers.execution import use_execution_context
 from dinkster_workers.saved_artifacts import (
@@ -139,6 +151,95 @@ def test_host_classifies_hashes_and_indexes_valid_candidate(tmp_path: Path) -> N
     assert artifact.media_type == "image/png"
     assert artifact.virtual_path == "mounts/comfy-output/video/result.png"
     assert load_write_records(root)["video/result.png"]["digest"] == artifact.digest
+
+
+@pytest.mark.parametrize("change", ("bytes", "size", "path", "readonly", "revoked", "symlink"))
+def test_native_saved_ref_requires_exact_bytes_and_current_mount(
+    tmp_path: Path, change: str
+) -> None:
+    authority, root = _authority(tmp_path)
+    snapshot = tmp_path / "mounts.json"
+    ref = AssetWriter(MountSnapshotWriter(snapshot)).save_bytes(
+        {"mount": "comfy-output", "prefix": "notes/result"},
+        b"saved text",
+        suffix=".txt",
+        media_type="text/plain",
+    )
+    wire = ref.to_wire()
+    path = root / "notes" / ref.name
+    if change == "bytes":
+        path.write_bytes(b"other text")
+    elif change == "size":
+        wire["size"] = ref.size + 1
+    elif change == "path":
+        wire["virtualPath"] = "mounts/comfy-output/elsewhere/" + ref.name
+    elif change == "readonly":
+        data = json.loads(snapshot.read_text("utf-8"))
+        data["mounts"][0]["mode"] = "read"
+        snapshot.write_text(json.dumps(data), "utf-8")
+    elif change == "revoked":
+        snapshot.write_text('{"mounts": []}', "utf-8")
+    else:
+        outside = tmp_path / "outside.txt"
+        outside.write_bytes(path.read_bytes())
+        path.unlink()
+        symlink_or_skip(path, outside)
+    candidate = SavedArtifactCandidate("save", ref.name, "notes", "output", wire)
+    with pytest.raises(AssetError):
+        authority.capture((candidate,), "save", 0)
+
+
+@pytest.mark.parametrize("behavior", ("forward", "fail", "revoke"))
+def test_only_successful_authorized_writer_calls_report_saved_files(
+    tmp_path: Path, behavior: str
+) -> None:
+    authority, _ = _authority(tmp_path)
+    snapshot = tmp_path / "mounts.json"
+    writer = AssetWriter(MountSnapshotWriter(snapshot))
+    existing = writer.save_bytes(
+        {"mount": "comfy-output", "prefix": "existing"}, b"input", suffix=".txt"
+    )
+
+    class OutputNode(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                node_type="test.save",
+                outputs=(OutputSpec("asset", TypeExpr.concrete(ASSET_TYPE)),),
+                output_node=True,
+            )
+
+        @classmethod
+        def execute(cls) -> dict[str, AssetRef]:
+            if behavior == "forward":
+                return {"asset": existing}
+            ref = writer.save_bytes(
+                {"mount": "comfy-output", "prefix": "written"}, b"new", suffix=".txt"
+            )
+            if behavior == "fail":
+                raise ValueError("after save")
+            snapshot.write_text('{"mounts": []}', "utf-8")
+            return {"asset": ref}
+
+    registry = TypeRegistry()
+    register_core_types(registry)
+    register_asset_type(registry)
+    worker = InProcessWorker(
+        {"test.save": OutputNode}, registry, artifact_authority=authority.capture
+    )
+    result = asyncio.run(
+        worker.invoke(Invocation("invocation", "save", "test.save", {}, OutputNode.schema()))
+    )
+    assert not result.artifacts
+    assert not result.artifact_candidates
+    if behavior == "forward":
+        assert result.error is None
+        assert result.outputs is not None
+        assert result.outputs["asset"].resolve() == existing
+    else:
+        assert result.outputs is None
+        assert result.error is not None
+        assert ("after save" if behavior == "fail" else "no ready mount") in result.error.message
 
 
 @pytest.mark.parametrize(

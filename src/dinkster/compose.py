@@ -5157,6 +5157,9 @@ class ServingComposer:
         staged_registry = composition._registry.copy()
         worker: Any = None
         if spec.in_process:
+            mounts_snapshot = self._worker_environment(spec, (manifest,)).get(
+                "DINKSTER_MOUNTS_SNAPSHOT"
+            ) or os.environ.get("DINKSTER_MOUNTS_SNAPSHOT")
             pack_tenant_registry = (
                 reused_in_process.tenant_registrations
                 if reused_in_process is not None
@@ -5178,6 +5181,7 @@ class ServingComposer:
                     pack_context=pack_context,
                     import_from_pack_root=True,
                     registry=current_registry,
+                    mounts_snapshot=mounts_snapshot,
                 )
                 loaded.append(loaded_worker)
                 self._validate_body_arms(manifest, loaded_worker)
@@ -5201,6 +5205,7 @@ class ServingComposer:
                         pack_context=pack_context,
                         import_from_pack_root=True,
                         registry=staged_registry,
+                        mounts_snapshot=mounts_snapshot,
                     )
             except BaseException:
                 if tenant_proxy is not None:

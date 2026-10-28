@@ -385,6 +385,14 @@ def test_completed_artifacts_are_cataloged_in_the_submitted_project(
                             ref.media_type,
                             ref.virtual_path,
                         ),
+                        SavedArtifact(
+                            invocation.node_id,
+                            digest_bytes(b"preview"),
+                            "preview.png",
+                            7,
+                            "image/png",
+                            f"previews/{digest_bytes(b'preview')[7:]}/preview.png",
+                        ),
                     ),
                 )
 

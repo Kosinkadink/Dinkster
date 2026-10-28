@@ -36,6 +36,7 @@ import time
 import uuid
 from collections.abc import Callable, Generator, Iterable
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import BinaryIO, Protocol, cast
 
@@ -54,6 +55,33 @@ __all__ = ["AssetWriter", "MountSnapshotWriter", "MountWriteAuthority"]
 _SUFFIX_RE = re.compile(r"^_?\.[A-Za-z0-9][A-Za-z0-9.]*$")
 _WRITER_PATH_LOCKS_GUARD = threading.Lock()
 _WRITER_PATH_LOCKS: dict[str, threading.RLock] = {}
+_saved_asset_sink: ContextVar[Callable[[AssetRef], None] | None] = ContextVar(
+    "dinkster_saved_asset_sink", default=None
+)
+
+
+@contextmanager
+def capture_saved_assets() -> Generator[list[AssetRef]]:
+    """Capture actual writer publications for a single worker invocation."""
+    saved: list[AssetRef] = []
+    lock = threading.Lock()
+    active = True
+
+    def capture(ref: AssetRef) -> None:
+        with lock:
+            if not active:
+                raise AssetError("saved asset invocation is closed")
+            if len(saved) >= 64:
+                raise AssetError("saved asset count exceeds 64")
+            saved.append(ref)
+
+    token = _saved_asset_sink.set(capture)
+    try:
+        yield saved
+    finally:
+        with lock:
+            active = False
+        _saved_asset_sink.reset(token)
 
 
 class _Fcntl(Protocol):
@@ -475,16 +503,17 @@ class AssetWriter:
             )
         except OSError:
             pass  # resolvability degrades to next-scan; the save itself stood
-        return (
-            AssetRef(
-                digest=digest,
-                name=final.name,
-                size=size,
-                media_type=media_type,
-                virtual_path=f"{MOUNT_NAMESPACE}/{parsed.mount}/{relative}",
-            ),
-            used_counter + 1,
+        ref = AssetRef(
+            digest=digest,
+            name=final.name,
+            size=size,
+            media_type=media_type,
+            virtual_path=f"{MOUNT_NAMESPACE}/{parsed.mount}/{relative}",
         )
+        sink = _saved_asset_sink.get()
+        if sink is not None:
+            sink(ref)
+        return ref, used_counter + 1
 
     @staticmethod
     def _require_contained(root: Path, folder: Path, target: SaveTarget) -> None:

@@ -1117,6 +1117,7 @@ def encode_result(
                 "filename": candidate.filename,
                 "subfolder": candidate.subfolder,
                 "type": candidate.folder_type,
+                **({"asset": dict(candidate.asset)} if candidate.asset is not None else {}),
             }
             for candidate in result.artifact_candidates
         ]
@@ -1230,20 +1231,19 @@ def decode_result_artifact_candidates(
         raise BoundaryError(f"result artifactCandidates exceeds {MAX_SAVED_ARTIFACTS} entries")
     candidates: list[SavedArtifactCandidate] = []
     for item in cast("list[object]", raw_candidates):
-        if not isinstance(item, Mapping) or set(item) != {
-            "nodeId",
-            "filename",
-            "subfolder",
-            "type",
-        }:
+        required = {"nodeId", "filename", "subfolder", "type"}
+        if not isinstance(item, Mapping) or set(item) not in (required, required | {"asset"}):
             raise BoundaryError("result artifact candidate has invalid fields")
         wire = cast("Mapping[str, object]", item)
+        if "asset" in wire and not isinstance(wire["asset"], dict):
+            raise BoundaryError("result saved asset must be an object")
         try:
             candidate = SavedArtifactCandidate(
                 node_id=cast("str", wire["nodeId"]),
                 filename=cast("str", wire["filename"]),
                 subfolder=cast("str", wire["subfolder"]),
                 folder_type=cast("str", wire["type"]),
+                asset=cast("Mapping[str, object] | None", wire.get("asset")),
             )
             validate_candidate(candidate)
             candidates.append(candidate)

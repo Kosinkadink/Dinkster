@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 from dinkster_api.v1 import ComboWidget, StringWidget
-from dinkster_assets import AssetError
+from dinkster_assets import AssetError, digest_bytes
 from dinkster_graph import Graph, GraphNode
 from dinkster_nodes_comfy.save_text import SaveText
 
@@ -149,9 +149,29 @@ def test_save_text_executes_through_the_ordinary_manifest(
                 }
             )
             engine = composer.composition.make_engine(lambda _event: None)
-            for _ in range(2):
+            for counter in range(1, 3):
                 result = await engine.run(graph, ["save"])
                 assert result.outputs["save"]["text"].resolve() == "manifest\n"
+                assert len(result.artifacts) == 1
+                artifact = result.artifacts[0]
+                assert artifact.node_id == "save"
+                assert artifact.virtual_path == f"mounts/default/manifest/1x1_{counter:05}.txt"
+                assert artifact.digest == digest_bytes(b"manifest\n")
+                assert artifact.size == len(b"manifest\n")
+                assert artifact.media_type == "text/plain"
+            alternate = Graph(
+                nodes={
+                    "save": GraphNode(
+                        "SaveText",
+                        {"text": "", "filename_prefix": "empty", "mount": "alternate"},
+                    )
+                }
+            )
+            result = await engine.run(alternate, ["save"])
+            assert len(result.artifacts) == 1
+            assert result.artifacts[0].virtual_path == "mounts/alternate/empty_00001.txt"
+            assert result.artifacts[0].digest == digest_bytes(b"")
+            assert result.artifacts[0].size == 0
         finally:
             await composer.close()
 

@@ -355,12 +355,18 @@ def load_pack(
     pack_context: Callable[[], contextlib.AbstractContextManager[None]] | None = None,
     import_from_pack_root: bool = False,
     registry: TypeRegistry | None = None,
+    mounts_snapshot: Path | str | None = None,
 ) -> tuple[
     InProcessWorker,
     TypeRegistry,
     list[type[Node]],
     dict[str, InProcessWorker],
 ]:
+    from .saved_artifacts import SavedArtifactAuthority
+
+    artifact_authority = (
+        SavedArtifactAuthority(mounts_snapshot).capture if mounts_snapshot is not None else None
+    )
     validate_registration_claims(manifest)
     has_native_arm = any(arm == "native" for arm, _node_types in manifest.arms)
     attention_runtime, attention_capabilities, attention_route_token = (
@@ -459,6 +465,7 @@ def load_pack(
             build_node_types(node_classes),
             registry,
             pack_context=worker_context,
+            artifact_authority=artifact_authority,
             attention_capabilities=attention_capabilities,
             attention_route_token=attention_route_token,
             attention_runtime=attention_runtime,
@@ -537,6 +544,7 @@ def load_pack(
                     node_types,
                     registry,
                     pack_context=worker_context,
+                    artifact_authority=artifact_authority,
                     attention_capabilities=attention_capabilities,
                     attention_route_token=attention_route_token,
                     attention_runtime=attention_runtime,

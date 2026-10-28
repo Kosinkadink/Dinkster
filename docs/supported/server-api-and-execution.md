@@ -25,6 +25,11 @@
   or revoked files and catalog failures fail the job rather than report a
   successful save; recoverable catalog writes are retried on restart without
   copying files into the vault.
+  Native writer saves include exact saved-file descriptors in both in-process
+  and isolated execution, including custom mounted destinations and empty
+  text files. The host verifies the current writable mount, safe file location,
+  content digest and byte size before exposing the descriptor. Returning an
+  existing asset without writing it does not report a new saved file.
 - Filesystem mount scans report file, byte, and elapsed progress; publish
   indexed assets before the scan finishes; reuse unchanged-file indexes; and
   keep per-mount indexes under the configured library root

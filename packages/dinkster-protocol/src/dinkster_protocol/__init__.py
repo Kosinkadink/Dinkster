@@ -569,12 +569,17 @@ class SavedArtifact:
 
 @dataclass(frozen=True)
 class SavedArtifactCandidate:
-    """An untrusted worker report naming one ComfyUI saved output."""
+    """An untrusted saved-file report, optionally bound to exact writer bytes."""
 
     node_id: str
     filename: str
     subfolder: str
     folder_type: str
+    asset: Mapping[str, object] | None = None
+
+    def __post_init__(self) -> None:
+        if self.asset is not None:
+            object.__setattr__(self, "asset", MappingProxyType(dict(self.asset)))
 
 
 @dataclass(frozen=True)
