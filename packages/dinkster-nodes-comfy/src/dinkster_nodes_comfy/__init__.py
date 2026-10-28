@@ -2,6 +2,7 @@
 
 from dinkster_api.v1 import (
     ASSET_TYPE,
+    AUDIO_RECORD_TYPE,
     AUDIO_TYPE,
     VIDEO_TYPE,
     TypeRegistry,
@@ -177,6 +178,7 @@ from .switch import ComfySwitchNode
 from .text import TEXT_NODES
 from .text_generation import TextGenerate, TextGenerateLTX2Prompt
 from .text_overlay import TextOverlay
+from .trellis_upsample import Trellis2UpsampleStage
 from .triposplat import TripoSplatConditioning, TripoSplatPreprocessImage
 from .upscale_model_loader import UpscaleModelLoader
 from .utilities import ComfyNumberConvert, PreviewAny, SeedNode
@@ -406,6 +408,7 @@ COMFY_NODES = (
     CropByBBoxes,
     CameraAngle,
     MakeTrainingDataset,
+    Trellis2UpsampleStage,
     TripoSplatPreprocessImage,
     TripoSplatConditioning,
     LoadTrainingDataset,
@@ -425,6 +428,8 @@ COMFY_NODES = (
 def register_inference_types(registry: TypeRegistry) -> None:
     if ASSET_TYPE not in registry:
         register_asset_type(registry, resolver_from_env())
+    if AUDIO_RECORD_TYPE not in registry:
+        register_asset_type(registry, resolver_from_env(), type_id=AUDIO_RECORD_TYPE)
     if AUDIO_TYPE not in registry:
         register_audio_value_type(registry, AUDIO_TYPE, resolver_from_env())
     if VIDEO_TYPE not in registry:
