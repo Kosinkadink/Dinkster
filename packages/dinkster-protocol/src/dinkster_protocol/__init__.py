@@ -23,6 +23,7 @@ from types import MappingProxyType
 from typing import Literal, Protocol, cast
 
 from dinkster_schema import NodeSchema, RunExecutionContext
+from dinkster_schema.reporting import EncodedPreviewArtifact
 from dinkster_values import Value
 from dinkster_values.asset_folders import AssetFolderContext
 
@@ -583,6 +584,7 @@ class InvocationResult:
     artifacts: tuple[SavedArtifact, ...] = ()
     artifact_candidates: tuple[SavedArtifactCandidate, ...] = ()
     expansion: ExpandedReturn | None = None
+    preview_artifacts: tuple[EncodedPreviewArtifact, ...] = ()
 
     def __post_init__(self) -> None:
         if self.expansion is None:

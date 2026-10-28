@@ -40,6 +40,18 @@ the jail changes what a hostile import can do, not what the report means.
 
 ## Use
 
+Nodes can call `dinkster_api.v1.publish_preview_artifact` with encoded bytes,
+a safe basename, and the matching media type. Successful invocations attach
+host-validated digest-backed artifacts to the ordinary job result. The host
+requires an asset vault, not a writable output mount. Bytes are served through
+the existing verified asset route. Failed or cancelled execution before the
+first publication commit leaves no stored content. Each committed digest keeps
+normal vault retention even if a later commit in that batch fails, because an
+independent ingest may already share it. Failed batches return no descriptors;
+uncommitted staging is always cleaned. Calls outside an active
+invocation fail rather than silently dropping required content. This does not
+change transient image/ring previews or persistent mount-based saves.
+
 Run doctor against the pack directory containing `dinkster-pack.toml` before
 publishing it. The human report gives every finding a concrete fix; use the
 JSON form in CI and other tooling.

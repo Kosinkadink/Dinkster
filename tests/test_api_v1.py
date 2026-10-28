@@ -151,6 +151,7 @@ GOLDEN_V1_SURFACE = (
     "PREVIEW_EVENT",
     "PROGRESS_EVENT",
     "pack_logger",
+    "publish_preview_artifact",
     "report_event",
     "report_log",
     "report_preview",
@@ -192,13 +193,12 @@ GOLDEN_V1_SURFACE = (
     "IMPACT_BASIC_PIPE_TYPE",
     "INFERENCE_LATENT_OPERATION_TYPE",
     "INPAINT_CONDITIONING_TYPE",
+    "INTERP_MODEL_TYPE",
     "LATENT_OPERATION_TYPE",
     "LATENT_TYPE",
     "LATENT_UPSCALE_MODEL_TYPE",
     "LAYERS_TYPE",
-    "LOSS_MAP_TYPE",
     "LOAD3D_CAMERA_TYPE",
-    "LORA_MODEL_TYPE",
     "MASK_TYPE",
     "MESH_TYPE",
     "MODEL3D_TYPE",
@@ -208,6 +208,7 @@ GOLDEN_V1_SURFACE = (
     "MOGE_MODEL_TYPE",
     "NOISE_TYPE",
     "OPTICAL_FLOW_TYPE",
+    "POSE_KEYPOINT_TYPE",
     "POSE_TYPE",
     "RESOLUTION_PREVIEW_TYPE",
     "RESOURCE_HANDLE_TYPE",
@@ -280,6 +281,7 @@ GOLDEN_V1_SURFACE = (
     "ReadableImageSource",
     "decode_image_array",
     "decode_image_components",
+    "open_image_components",
     "encode_image_array",
     "image_array_fingerprint",
     "image_array_meta",
@@ -390,6 +392,7 @@ GOLDEN_V1_SURFACE = (
     "read_video_metadata",
     "save_video_frames",
     "assemble_video",
+    "concatenate_video",
     "disassemble_video",
     "iter_video_pixels",
     "save_frame_records",
@@ -602,43 +605,103 @@ assert "torch" not in sys.modules
     assert result.returncode == 0, result.stderr
 
 
-def test_optical_flow_registration_uses_shared_holding_pool_without_torch() -> None:
-    script = """
+@pytest.mark.parametrize("type_name", ("OPTICAL_FLOW", "INTERP_MODEL"))
+@pytest.mark.parametrize("native_first", (True, False))
+def test_model_registration_uses_shared_holding_pool_without_torch(
+    type_name: str, native_first: bool
+) -> None:
+    script = f"""
+import json
+import subprocess
 import sys
 sys.modules['torch'] = None
 sys.modules['dinkster_inference'] = None
-from dinkster_api.v1 import OPTICAL_FLOW_TYPE, TypeRegistry, register_inference_types
-from dinkster_inference_wire import types as wire_types
-from dinkster_memory.resident import ResidentPool
+from dinkster_api.v1 import {type_name}_TYPE as model_type, TypeRegistry, register_inference_types
+from dinkster_memory.resident import ResidentPool, default_pool
 from dinkster_native.native import register_native_types
 from dinkster_values import ResidentLookupError, register_resident_type
-from dinkster_values.builtin_types import OPTICAL_FLOW_TYPE as builtin_type
-from dinkster_values import OPTICAL_FLOW_TYPE as values_type
+from dinkster_values.builtin_types import {type_name}_TYPE as builtin_type, BUILTIN_TYPE_IDS
+from dinkster_values import {type_name}_TYPE as values_type
+from dinkster_workers.boundary import ValueCodec
 
-assert OPTICAL_FLOW_TYPE == values_type == builtin_type == 'OPTICAL_FLOW'
-holding_pool = ResidentPool()
-wire_types.default_pool = lambda: holding_pool
+assert model_type == values_type == builtin_type == {type_name!r}
+assert model_type in BUILTIN_TYPE_IDS
+holding_pool = default_pool()
 registry = TypeRegistry()
-register_native_types(registry)
-spec = registry.spec(OPTICAL_FLOW_TYPE)
-register_inference_types(registry)
-assert registry.spec(OPTICAL_FLOW_TYPE) is spec
+registrations = (register_native_types, register_inference_types)
+if not {native_first!r}:
+    registrations = registrations[::-1]
+registrations[0](registry)
+spec = registry.spec(model_type)
+for registration in (*registrations, *registrations):
+    registration(registry)
+    assert registry.spec(model_type) is spec
 assert holding_pool in registry.resident_tables
+assert 'comfy.' + model_type not in registry
 model_patcher = object()
 encoded = spec.encode(model_patcher)
 assert spec.decode(encoded) is model_patcher
+value = registry.wrap(model_type, model_patcher)
+assert value.resolve() is model_patcher
+assert value.fingerprint == registry.wrap(model_type, model_patcher).fingerprint
+codec = ValueCodec(registry)
+blobs = []
+wire, _ = codec.encode(value, blobs, [])
+foreign_script = '''
+import json
+import sys
+sys.modules['torch'] = None
+sys.modules['dinkster_inference'] = None
+from dinkster_api.v1 import TypeRegistry, register_inference_types
+from dinkster_values import ResidentLookupError
+from dinkster_workers.boundary import ValueCodec
+registry = TypeRegistry()
+register_inference_types(registry)
+wire, blob_hex = json.loads(sys.stdin.read())
+codec = ValueCodec(registry)
+value, _ = codec.decode(wire, [bytes.fromhex(blob) for blob in blob_hex], [])
+try:
+    value.resolve()
+except ResidentLookupError:
+    pass
+else:
+    raise AssertionError('foreign process resolved a holding-pool value')
+blobs = []
+wire, _ = codec.encode(value, blobs, [])
+print(json.dumps([wire, [blob.hex() for blob in blobs]]))
+assert sys.modules['torch'] is None
+assert sys.modules['dinkster_inference'] is None
+'''
+relay = subprocess.run([sys.executable, '-c', foreign_script],
+                       input=json.dumps([wire, [blob.hex() for blob in blobs]]),
+                       capture_output=True, text=True, timeout=15)
+assert relay.returncode == 0, relay.stderr
+wire, blob_hex = json.loads(relay.stdout)
+returned, _ = codec.decode(wire, [bytes.fromhex(blob) for blob in blob_hex], [])
+assert returned.type_id == value.type_id
+assert returned.fingerprint == value.fingerprint
+assert returned.meta == value.meta
+assert returned.resolve() is model_patcher
 
 foreign_pool = ResidentPool()
 foreign = TypeRegistry()
-first_authority = register_resident_type(foreign, OPTICAL_FLOW_TYPE, table=foreign_pool)
-register_inference_types(foreign)
-assert foreign.spec(OPTICAL_FLOW_TYPE) is first_authority
+first_authority = register_resident_type(foreign, model_type, table=foreign_pool)
+for registration in (*registrations, *registrations):
+    registration(foreign)
+    assert foreign.spec(model_type) is first_authority
 try:
     first_authority.decode(encoded)
 except ResidentLookupError:
     pass
 else:
     raise AssertionError('foreign pool resolved a holding-pool value')
+assert holding_pool.release_resident(model_patcher)
+try:
+    spec.decode(encoded)
+except ResidentLookupError:
+    pass
+else:
+    raise AssertionError('released model remained resolvable')
 assert sys.modules['torch'] is None
 assert sys.modules['dinkster_inference'] is None
 """
