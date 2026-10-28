@@ -34,6 +34,9 @@
   artifacts fail startup rather than falling back to installed distributions.
 - Environment-managed engine starts pass the selected generation explicitly,
   including candidate startup before activation and retained rollback starts.
+- Generation construction admits verified pack archives before sealing sources.
+  A rejected source discards the incomplete target without changing the active
+  generation or its running engine.
 - The default local launcher prepares missing or stale catalogs before binding,
   then serves the browser application and engine API from one loopback origin.
 - Released engines discover the installed frontend wheel without a frontend

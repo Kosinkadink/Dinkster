@@ -135,6 +135,52 @@ def pack_operation(
     return document
 
 
+def stage_pack_sources(generation: Path, *, catalog_lock: Path, artifacts: Path) -> None:
+    """Run source admission in the unsealed target, never in the supervisor interpreter."""
+    if not all(path.is_absolute() for path in (generation, catalog_lock, artifacts)):
+        raise EnvironmentError("source staging requires absolute generation, lock and cache paths")
+    result = subprocess.run(
+        [
+            str(interpreter(generation)),
+            "-B",
+            "-m",
+            "dinkster.generation_packs",
+            "--generation",
+            str(generation),
+            "--catalog-lock",
+            str(catalog_lock),
+            "--artifacts",
+            str(artifacts),
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+    )
+    try:
+        raw: object = json.loads(result.stdout)
+        if not isinstance(raw, dict):
+            raise ValueError("expected an object")
+        document = cast("dict[str, object]", raw)
+        packs, errors = document.get("packs"), document.get("errors")
+        if not isinstance(packs, list) or not isinstance(errors, list):
+            raise ValueError("packs and errors must be arrays")
+        names, messages = cast("list[object]", packs), cast("list[object]", errors)
+        if any(not isinstance(name, str) or not name for name in names):
+            raise ValueError("packs must contain nonempty ids")
+        if len(set(cast("list[str]", names))) != len(names):
+            raise ValueError("packs must not repeat an id")
+        if any(not isinstance(message, str) for message in messages):
+            raise ValueError("errors must contain strings")
+    except ValueError as exc:
+        raise EnvironmentError(f"pack source staging: invalid admission result: {exc}") from exc
+    if result.returncode or messages:
+        details = "; ".join(cast("list[str]", messages)) or "admission failed"
+        raise EnvironmentError(f"pack source staging refused: {details}")
+    if not (generation / "dinkster.lock").is_file():
+        raise EnvironmentError("pack source staging did not write the installed source lock")
+
+
 def build_generation(
     *,
     root: Path,
@@ -150,6 +196,8 @@ def build_generation(
     source_generation: Path | None = None,
     pack_locks: tuple[Path, ...] = (),
     own_environment_size: int | None = None,
+    catalog_lock: Path | None = None,
+    artifacts: Path | None = None,
     prepare_packs: Callable[[Path], None] | None = None,
     uv: str = "uv",
 ) -> Generation:
@@ -158,12 +206,15 @@ def build_generation(
     The caller has already verified/extracted the base and fetched the engine
     artifacts, and holds the project/store writer locks. ``constraints`` is
     the effective hashed requirements assembled for the selected base variant.
-    Pack preflight, rebuild and doctor run before inventory. Additional staging
-    may run through ``prepare_packs``; any failure removes the incomplete target.
+    Pack preflight, rebuild and doctor run before source admission and inventory.
+    Additional staging may run through ``prepare_packs``; any failure removes the
+    incomplete target.
     """
     generation_number(number)
     digest(base)
     digest(engine_release)
+    if (catalog_lock is None) != (artifacts is None):
+        raise EnvironmentError("source staging requires both catalog lock and artifact cache")
     source = store / "bases" / base.removeprefix("sha256:") / "python"
     destination = root / "generations" / str(number)
     if destination.exists():
@@ -231,6 +282,8 @@ def build_generation(
                     in_process_packs=in_process_packs,
                     uv=uv,
                 )
+        if catalog_lock is not None and artifacts is not None:
+            stage_pack_sources(destination, catalog_lock=catalog_lock, artifacts=artifacts)
         if prepare_packs is not None:
             prepare_packs(destination)
         files = tuple(

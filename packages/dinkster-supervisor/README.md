@@ -219,6 +219,16 @@ paths explicitly. A nonzero exit, conflicting pack, doctor drift or malformed
 single-object JSON result fails construction and removes the target. Supervisor
 never imports the engine's worker packages to perform these operations.
 
+When supplied together, `catalog_lock` and `artifacts` run the target interpreter
+with `-B -m dinkster.generation_packs --generation ABS --catalog-lock ABS
+--artifacts ABS --json` after dependency doctor and before inventory. Source
+admission owns the existing registry lock and digest-named archives; the caller
+does not parse a second catalog. Success requires a single object containing
+distinct pack ids, an empty errors array, zero exit status and the written
+`dinkster.lock`. An admission error, malformed result or missing inventory removes
+the entire target, including any partial sources or interpreter changes. The
+`prepare_packs` callback may prepare node catalogs afterward, before sealing.
+
 `environment_archives.extract_base(parts, destination)` reconstructs verified
 split 7z parts in order and stages their contents beside the final base path.
 The caller verifies part digests and holds the store writer lock. Extraction

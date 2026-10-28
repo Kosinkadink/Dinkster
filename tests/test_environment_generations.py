@@ -15,7 +15,11 @@ from functools import partial
 from pathlib import Path
 
 import pytest
-from dinkster_supervisor.environment_generations import build_generation, pack_operation
+from dinkster_supervisor.environment_generations import (
+    build_generation,
+    pack_operation,
+    stage_pack_sources,
+)
 from dinkster_supervisor.environment_state import (
     EnvironmentError,
     interpreter,
@@ -105,7 +109,14 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
     monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:1")
     monkeypatch.setenv("UV_INDEX_URL", "http://127.0.0.1:1/unreachable")
 
-    def build(number: int, version: str, sha: str, *, reject_packs: bool = False):
+    def build(
+        number: int,
+        version: str,
+        sha: str,
+        *,
+        reject_packs: bool = False,
+        source_inputs: bool = False,
+    ):
         constraints.write_text(
             f"stable-fixture==1.0 --hash=sha256:{stable_hash}\n"
             f"changed-fixture=={version} --hash=sha256:{sha}\n"
@@ -137,6 +148,8 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
             constraints=constraints,
             variant="win-cpu" if os.name == "nt" else "linux-cpu",
             worker_protocol=1,
+            catalog_lock=tmp_path / "catalog.lock" if source_inputs else None,
+            artifacts=tmp_path / "artifacts" if source_inputs else None,
             prepare_packs=prepare_packs,
         )
 
@@ -176,6 +189,25 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
         build(4, "2.0", second_hash, reject_packs=True)
     assert read_current(root) == 1
     assert not (root / "generations" / "4").exists()
+    run = subprocess.run
+
+    def refused_sources(command, *args, **kwargs):
+        if command[1:4] == ["-B", "-m", "dinkster.generation_packs"]:
+            target = Path(command[command.index("--generation") + 1])
+            sources = target / "pack-sources"
+            sources.mkdir()
+            (sources / "partial-source.py").write_text("partial source admission\n")
+            return subprocess.CompletedProcess(
+                command, 0, '{"packs": [], "errors": ["source hash mismatch"]}', ""
+            )
+        return run(command, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(subprocess, "run", refused_sources)
+        with pytest.raises(EnvironmentError, match="source hash mismatch"):
+            build(5, "2.0", second_hash, source_inputs=True)
+    assert read_current(root) == 1
+    assert not (root / "generations" / "5").exists()
     assert first.drift(first_dir) == ()
     assert (
         subprocess.check_output([str(interpreter(first_dir)), "-B", "-c", script]).strip() == b"53"
@@ -245,6 +277,45 @@ def test_pack_result_must_be_one_valid_object_without_conflicts_or_drift(
     )
     if message is None:
         assert invoke() == {"packs": [], "changes": []}
+    else:
+        with pytest.raises(EnvironmentError, match=message):
+            invoke()
+
+
+@pytest.mark.parametrize(
+    ("output", "code", "message"),
+    [
+        ('{"packs": ["example"], "errors": []}', 0, None),
+        ('{"packs": [], "errors": ["source hash mismatch"]}', 1, "source hash mismatch"),
+        ('{"packs": [], "errors": ["source hash mismatch"]}', 0, "source hash mismatch"),
+        ('{"packs": [], "errors": []}', 1, "admission failed"),
+        ('{"packs": ["example", "example"], "errors": []}', 0, "repeat an id"),
+        ('{"packs": [], "errors": [false]}', 0, "errors must contain strings"),
+        ('{"packs": [], "errors": []}\n{}', 0, "invalid admission result"),
+    ],
+)
+def test_source_admission_requires_a_single_valid_success_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    output: str,
+    code: int,
+    message: str | None,
+) -> None:
+    (tmp_path / "dinkster.lock").write_text("fixture installed source inventory\n")
+    monkeypatch.setattr(
+        subprocess, "run", lambda *args, **kwargs: subprocess.CompletedProcess([], code, output, "")
+    )
+    invoke = partial(
+        stage_pack_sources,
+        tmp_path,
+        catalog_lock=tmp_path / "catalog.lock",
+        artifacts=tmp_path / "artifacts",
+    )
+    if message is None:
+        invoke()
+        (tmp_path / "dinkster.lock").unlink()
+        with pytest.raises(EnvironmentError, match="did not write the installed source lock"):
+            invoke()
     else:
         with pytest.raises(EnvironmentError, match=message):
             invoke()
