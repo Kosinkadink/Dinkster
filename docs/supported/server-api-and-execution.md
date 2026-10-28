@@ -53,6 +53,10 @@
   Job preflight uses the same verified local presence rule, never a fetching
   fallback. Corrupted vault content can be replaced only through consented
   acquisition; a digest-shaped filename is not proof that the bytes are held.
+- Human operators can inspect the vault directory and verified physical
+  locations for a scoped project asset. Changed, missing, excluded and revoked
+  copies are not offered as reveal targets. Ordinary catalogs remain path-free;
+  location reporting does not download assets or open the desktop shell.
 - Operators can persist project folder membership, independent display order,
   shared folders, and project output selections through the mount API.
   Removing a project association does not delete files or revoke the grant.

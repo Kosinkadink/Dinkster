@@ -2016,6 +2016,77 @@ def test_project_folder_paths_and_mutations_require_operator(tmp_path: Path) -> 
     asyncio.run(scenario())
 
 
+def test_operator_asset_locations_verify_scoped_project_content(tmp_path: Path) -> None:
+    table = MountTable()
+    seed(tmp_path / "imports", {"first.bin": b"first", "other.bin": b"other"})
+    table.add(MountDef("imports", tmp_path / "imports", "readwrite"))
+    table.scan("imports")
+    service = MountService(table, allow_changes=True)
+    store = LibraryStore(tmp_path / "catalog.sqlite")
+    vault = AssetVault(tmp_path / "vault")
+    first = table.ref("mounts/imports/first.bin")
+    other = table.ref("mounts/imports/other.bin")
+    for ref in (first, other):
+        store.record_asset(
+            "local", ref, original_name=ref.name, kind="asset/file", origin={"kind": "upload"}
+        )
+    with vault.writer(first.digest) as writer:
+        writer.write(b"first")
+        writer.commit()
+
+    async def scenario() -> None:
+        library = ServerLibrary(vault=vault, store=store, local_resolver=table)
+        app = create_app(make_engine, SCHEMAS, library=library)
+        add_mount_routes(app, service)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+
+            async def locations(**params: str) -> dict[str, object]:
+                response = await client.get("/api/mounts/locations", params=params)
+                assert response.status == 200
+                assert response.headers["Cache-Control"] == "no-store"
+                return await response.json()
+
+            body = await locations(scope="local", digest=first.digest)
+            assert body["vault"] == str(vault.root)
+            assert body["locations"] == [
+                {"storage": "vault", "path": str(vault.resolve(first.digest))},
+                {
+                    "storage": "mount",
+                    "mount": "imports",
+                    "virtualPath": first.virtual_path,
+                    "path": str(tmp_path / "imports" / "first.bin"),
+                },
+            ]
+            assert (await locations(scope="elsewhere", digest=first.digest))["locations"] == []
+            assert (await locations(project="other", digest=first.digest))["locations"] == []
+            ordinary = await client.get("/api/assets/catalog", params={"scope": "local"})
+            assert str(tmp_path) not in await ordinary.text()
+            (tmp_path / "imports" / "first.bin").write_bytes(b"wrong")
+            table.scan("imports")
+            body = await locations(digest=first.digest)
+            assert body["locations"] == [
+                {"storage": "vault", "path": str(vault.resolve(first.digest))}
+            ]
+            path = vault.resolve(first.digest)
+            assert path is not None
+            path.write_bytes(b"wrong")
+            assert (await locations(digest=first.digest))["locations"] == []
+            table.remove("imports")
+            assert (await locations(digest=other.digest))["locations"] == []
+            for params in ({"digest": "bad"}, {"unknown": "field"}):
+                response = await client.get("/api/mounts/locations", params=params)
+                assert response.status == 400
+        finally:
+            await client.close()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        store.close()
+
+
 def test_sandbox_folder_edits_preserve_live_grants_until_restart(tmp_path: Path) -> None:
     config = tmp_path / "mounts.toml"
     snapshot = tmp_path / "snapshot.json"

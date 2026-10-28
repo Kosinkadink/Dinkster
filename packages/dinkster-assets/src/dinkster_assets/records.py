@@ -356,6 +356,7 @@ class LibraryStore:
         scope: str,
         *,
         project: str = "default",
+        digest: str = "",
         text: str = "",
         kind: str = "",
         origin: str = "",
@@ -368,6 +369,9 @@ class LibraryStore:
         scope = _clean_scope(scope)
         clauses = ["scope = ?", "project = ?"]
         parameters: list[object] = [scope, project]
+        if digest:
+            clauses.append("digest = ?")
+            parameters.append(require_digest(digest))
         matching = [
             "matched.scope = asset_observations.scope",
             "matched.project = asset_observations.project",

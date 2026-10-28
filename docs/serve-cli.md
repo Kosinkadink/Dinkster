@@ -881,6 +881,14 @@ listings remain browsable without disclosing host paths or path-bearing errors
 to non-operators. Location listings and mutations require a human operator
 with `settings:write`, not just `assets:write`; delegated agents cannot grant
 filesystem authority.
+The location response includes `vault` when a library is configured. Optional
+`digest`, `scope` and `project` query fields add `locations` for that cataloged
+identity in the selected scope and project; this also requires `assets:read`.
+Only verified vault copies and observed files in live project folders are
+returned, with their actual `path` and `storage` type. Missing, changed,
+excluded and revoked copies are omitted. Responses use `Cache-Control: no-store`.
+This endpoint only reports locations; it neither downloads nor opens files in
+the desktop shell.
 
 ## Logging
 
