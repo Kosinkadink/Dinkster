@@ -423,6 +423,7 @@ def __getattr__(name: str) -> object:
         "materialize_image",
         "materialize_latent",
         "materialize_clip_vision_output",
+        "materialize_voxel",
     }:
         from dinkster_inference_wire import types
 
@@ -449,6 +450,7 @@ def __dir__() -> list[str]:
             "materialize_image",
             "materialize_latent",
             "materialize_clip_vision_output",
+            "materialize_voxel",
             "initialize_inference_process",
         }
     )
@@ -462,6 +464,7 @@ if TYPE_CHECKING:
         materialize_clip_vision_output,
         materialize_image,
         materialize_latent,
+        materialize_voxel,
         register_inference_types,
     )
     from dinkster_video import document as timeline_document
@@ -482,6 +485,7 @@ __all__ = [
     "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
+    "materialize_voxel",
     "register_inference_types",
     "FrontendContribution",
     "FrontendModule",
