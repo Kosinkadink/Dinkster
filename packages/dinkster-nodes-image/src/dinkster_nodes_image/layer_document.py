@@ -14,21 +14,19 @@ from dinkster_api.v1 import (
     LAYERS_TYPE,
     MASK_TYPE,
     REGION_TYPE,
+    ImageDocument,
     InputSpec,
     Node,
     NodeSchema,
     OutputSpec,
     StringWidget,
     TypeExpr,
-)
-from dinkster_image_document.compat import from_comfy_layers
-from dinkster_image_document.document import (
-    ImageDocument,
     apply_commands,
     document_meta,
     flatten,
+    from_comfy_layers,
+    ordered_layer_ids,
 )
-from dinkster_image_document.format import ordered_layer_ids
 
 from .compositor_types import LayerStack, decode_layer_stack, source_layer_fingerprint
 from .types import Region

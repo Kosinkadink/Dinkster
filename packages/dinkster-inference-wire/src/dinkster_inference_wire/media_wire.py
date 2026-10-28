@@ -13,6 +13,7 @@ from dinkster_values import (
     LATENT_TYPE,
     MASK_TYPE,
     PNG_CONTAINER_VERSION,
+    SVG_TYPE,
     EncodedLatentTensor,
     EncodedMultiStreamLatent,
     TypeRegistry,
@@ -21,8 +22,10 @@ from dinkster_values import (
     decode_image_array,
     decode_image_file,
     decode_latent,
+    decode_svg,
     encode_image_array,
     encode_latent,
+    encode_svg,
     image_array_fingerprint,
     image_array_meta,
     image_input,
@@ -32,8 +35,11 @@ from dinkster_values import (
     prepare_image_array_encoding,
     render_image_png,
     render_mask_png,
+    svg_fingerprint,
+    svg_meta,
     validate_image_encoded,
     validate_latent_encoded,
+    validate_svg_encoded,
 )
 from dinkster_values.audio_codec import audio_window, effective_audio_facts
 from dinkster_values.audio_lazy import AUDIO_WINDOW_LIMIT
@@ -146,6 +152,17 @@ def register_media_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
             validate_encoded=validate_latent_encoded,
         )
     registered.append(registry.spec(LATENT_TYPE))
+    if SVG_TYPE not in registry:
+        registry.register(
+            SVG_TYPE,
+            encode=encode_svg,
+            decode=decode_svg,
+            fingerprint=svg_fingerprint(SVG_TYPE),
+            meta=svg_meta,
+            validate_encoded=validate_svg_encoded,
+            validate_encoded_buffer=validate_svg_encoded,
+        )
+    registered.append(registry.spec(SVG_TYPE))
     return tuple(registered)
 
 
