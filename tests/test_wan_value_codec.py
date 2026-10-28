@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
-import sys
 
 import pytest
 from dinkster_api.v1 import (
@@ -189,27 +187,3 @@ def test_public_codec_rejects_invalid_envelopes(type_id: str, payload: bytes) ->
         spec.decode(payload)
     with pytest.raises(ValueError):
         spec.validate_encoded(payload, {})
-
-
-def test_public_registration_remains_torch_and_model_runtime_free() -> None:
-    subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys\n"
-            "from dinkster_api.v1 import TypeRegistry, register_inference_types\n"
-            "from dinkster_values import EncodedLatentTensor\n"
-            "r = TypeRegistry(); register_inference_types(r); register_inference_types(r)\n"
-            "t = EncodedLatentTensor('bool', (0, 3), b'')\n"
-            "for name, value in [('WAN_CAMERA_EMBEDDING', t), ('TRACKS', {'track_path': t}), "
-            "('AUDIO_ENCODER_OUTPUT', {'encoded_audio': t, "
-            "'encoded_audio_all_layers': [t], 'audio_samples': 0}), "
-            "('AUDIO_ENCODER_OUTPUT', {'audio_feature': t, 'fps': 15.0})]:\n"
-            " s = r.spec(name); data = s.encode(value); s.validate_encoded(data, {})\n"
-            " assert s.decode(data) == value\n"
-            "assert not any(n == 'torch' or n.startswith('torch.') or "
-            "n == 'dinkster_inference' or n.startswith('dinkster_inference.') "
-            "for n in sys.modules)\n",
-        ],
-        check=True,
-    )

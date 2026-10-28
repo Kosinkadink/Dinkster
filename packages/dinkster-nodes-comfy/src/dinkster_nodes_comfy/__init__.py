@@ -2,6 +2,7 @@
 
 from dinkster_api.v1 import (
     ASSET_TYPE,
+    AUDIO_RECORD_TYPE,
     AUDIO_TYPE,
     VIDEO_TYPE,
     TypeRegistry,
@@ -51,6 +52,7 @@ from .controlnet import CONTROLNET_NODES
 from .cosmos_conditioning import COSMOS_CONDITIONING_NODES
 from .custom_sampling import CUSTOM_SAMPLING_NODES
 from .dataset_collections import DATASET_COLLECTION_NODES
+from .dataset_folders import FOLDER_DATASET_NODES
 from .dataset_groups import DATASET_GROUP_NODES, MakeTrainingDataset
 from .dataset_images import DATASET_IMAGE_NODES
 from .dataset_shards import LoadTrainingDataset
@@ -94,6 +96,7 @@ from .list_utilities import LIST_UTILITY_NODES
 from .logic import LOGIC_NODES
 from .loops import LOOP_NODES
 from .lora_file_loaders import LORA_FILE_LOADER_NODES
+from .loss_graph import LossGraphNode
 from .lotus import LotusConditioning
 from .ltx_audio import LTX_AUDIO_NODES
 from .ltx_av_latent import LTX_AV_LATENT_NODES
@@ -175,7 +178,9 @@ from .supir import SUPIRApply
 from .switch import ComfySwitchNode
 from .text import TEXT_NODES
 from .text_generation import TextGenerate, TextGenerateLTX2Prompt
+from .trellis_upsample import Trellis2UpsampleStage
 from .triposplat import TripoSplatConditioning, TripoSplatPreprocessImage
+from .upscale_model_loader import UpscaleModelLoader
 from .utilities import ComfyNumberConvert, PreviewAny, SeedNode
 from .vae import VAE_NODES
 from .video_conditioning import VIDEO_CONDITIONING_NODES
@@ -403,6 +408,7 @@ COMFY_NODES = (
     CropByBBoxes,
     CameraAngle,
     MakeTrainingDataset,
+    Trellis2UpsampleStage,
     TripoSplatPreprocessImage,
     TripoSplatConditioning,
     LoadTrainingDataset,
@@ -413,12 +419,17 @@ COMFY_NODES = (
     SaveAudioOpus,
     SaveAudioAdvanced,
     *YUE2_CONDITIONING_NODES,
+    *FOLDER_DATASET_NODES,
+    UpscaleModelLoader,
+    LossGraphNode,
 )
 
 
 def register_inference_types(registry: TypeRegistry) -> None:
     if ASSET_TYPE not in registry:
         register_asset_type(registry, resolver_from_env())
+    if AUDIO_RECORD_TYPE not in registry:
+        register_asset_type(registry, resolver_from_env(), type_id=AUDIO_RECORD_TYPE)
     if AUDIO_TYPE not in registry:
         register_audio_value_type(registry, AUDIO_TYPE, resolver_from_env())
     if VIDEO_TYPE not in registry:

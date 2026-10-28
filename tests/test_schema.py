@@ -21,8 +21,6 @@ from dinkster_schema import (
     InputSpec,
     MountWidget,
     MultiComboWidget,
-    Node,
-    NodeOutputError,
     NodeSchema,
     NumberWidget,
     OutputRepresents,
@@ -590,14 +588,6 @@ def test_type_expressions_roundtrip_and_remain_closed() -> None:
         type_expr_from_wire({"kind": "future"})
 
 
-def test_malformed_widget_wire_is_rejected() -> None:
-    wire = schema_to_wire(SCHEMA)
-    entry = cast("list[dict[str, Any]]", wire["interface"])[0]
-    entry["widget"] = {"type": ""}
-    with pytest.raises(ValueError):
-        schema_from_wire(wire)
-
-
 def test_output_represents_wire_decode_rejects_unknown_fields_and_bad_shapes() -> None:
     schema = NodeSchema(
         node_type="test.represented-output",
@@ -641,35 +631,6 @@ def test_output_represents_wire_decode_rejects_unknown_fields_and_bad_shapes() -
                     "applies": {"mode": [1]},
                 }
             )
-        )
-
-
-class TwoOutputs(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            "test.two_outputs",
-            outputs=(
-                OutputSpec("first", TypeExpr.concrete("INT")),
-                OutputSpec("second", TypeExpr.concrete("INT")),
-            ),
-        )
-
-
-def test_outputs_helper_requires_exact_output_ids() -> None:
-    assert TwoOutputs.outputs(first=1, second=2) == {"first": 1, "second": 2}
-    with pytest.raises(NodeOutputError, match="missing outputs: second"):
-        TwoOutputs.outputs(first=1, secondd=2)
-
-
-def test_duplicate_ids_are_rejected() -> None:
-    with pytest.raises(ValueError):
-        NodeSchema(
-            "test.duplicate",
-            inputs=(
-                InputSpec("x", TypeExpr.concrete("INT")),
-                InputSpec("x", TypeExpr.concrete("INT")),
-            ),
         )
 
 

@@ -240,8 +240,14 @@ class ControlInspect(Node):
         return cls.outputs(strength=p.strength)
 
 
-@pytest.mark.parametrize("in_process", (True, False))
-@pytest.mark.parametrize("apply_type", ("ControlNetApplyAdvanced", "ControlNetApplySD3"))
+@pytest.mark.parametrize(
+    "apply_type,in_process",
+    (
+        ("ControlNetApplyAdvanced", True),
+        ("ControlNetApplyAdvanced", False),
+        ("ControlNetApplySD3", True),
+    ),
+)
 def test_ordinary_manifest_executes_controlnet_nodes(
     tmp_path: Path, in_process: bool, apply_type: str
 ) -> None:

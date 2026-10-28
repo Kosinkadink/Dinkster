@@ -53,8 +53,13 @@ down there so TypeRegistry can resolve ``asset<...>`` ids without importing
 upward); this package keeps its historical name."""
 
 
-def register_asset_type(registry: TypeRegistry, resolver: AssetResolver | None = None) -> None:
-    """Register ``dinkster.asset`` bound to this process's resolver (or none:
+def register_asset_type(
+    registry: TypeRegistry,
+    resolver: AssetResolver | None = None,
+    *,
+    type_id: str = ASSET_TYPE,
+) -> None:
+    """Register a bound asset identity to this process's resolver (or none:
     refs still flow, cache, and interrogate; only local_path() requires a
     resolver where bytes are actually read)."""
 
@@ -92,7 +97,7 @@ def register_asset_type(registry: TypeRegistry, resolver: AssetResolver | None =
 
     def encode(obj: object) -> bytes:
         if not isinstance(obj, AssetRef | LocalAssetRef):
-            raise AssetError(f"cannot encode {type(obj).__name__} as {ASSET_TYPE}")
+            raise AssetError(f"cannot encode {type(obj).__name__} as {type_id}")
         return json.dumps(obj.to_wire(), sort_keys=True, separators=(",", ":")).encode("utf-8")
 
     def decode(data: bytes) -> object:
@@ -117,7 +122,7 @@ def register_asset_type(registry: TypeRegistry, resolver: AssetResolver | None =
         return obj.to_wire()
 
     registry.register(
-        ASSET_TYPE,
+        type_id,
         encode=encode,
         decode=decode,
         fingerprint=fingerprint,
