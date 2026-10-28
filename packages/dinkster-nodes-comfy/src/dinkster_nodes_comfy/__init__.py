@@ -48,6 +48,7 @@ from .color_resolution import COLOR_RESOLUTION_NODES
 from .compile import COMPILE_NODES
 from .compositing import COMPOSITING_NODES
 from .conditioning import CONDITIONING_NODES
+from .conditioning_files import ConditioningLoader, SaveConditioning
 from .context_windows import CONTEXT_WINDOW_NODES
 from .controlnet import CONTROLNET_NODES
 from .cosmos_conditioning import COSMOS_CONDITIONING_NODES
@@ -419,6 +420,8 @@ COMFY_NODES = (
     CurveEditor,
     CreateVideo,
     GetVideoComponents,
+    ConditioningLoader,
+    SaveConditioning,
 )
 
 
