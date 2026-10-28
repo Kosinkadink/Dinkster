@@ -270,6 +270,42 @@ def test_local_resolution_uses_constraints_and_provision_rejects_bad_hash(tmp_pa
     assert not venv_python(tmp_path / "packs/example").exists()
 
 
+def test_dependency_locks_reject_source_only_packages(tmp_path: Path) -> None:
+    archive = tmp_path / "source_only_fixture-1.0.zip"
+    with zipfile.ZipFile(archive, "w") as source:
+        source.writestr(
+            "source_only_fixture-1.0/pyproject.toml",
+            '[build-system]\nrequires=["hatchling"]\nbuild-backend="hatchling.build"\n'
+            '[project]\nname="source-only-fixture"\nversion="1.0"\n',
+        )
+        source.writestr(
+            "source_only_fixture-1.0/PKG-INFO",
+            "Metadata-Version: 2.1\nName: source-only-fixture\nVersion: 1.0\n",
+        )
+        source.writestr("source_only_fixture-1.0/source_only_fixture.py", "VALUE = 1\n")
+    constraints = tmp_path / "constraints.txt"
+    constraints.write_text("")
+    with pytest.raises(ProvisionError, match="source-only-fixture==1.0.*no wheel candidates"):
+        resolve_pack_lock(
+            pack="example",
+            variant="linux-cpu",
+            requirements=[f"source-only-fixture @ {archive.as_uri()}"],
+            python=Path(sys.executable),
+            constraints=constraints,
+            find_links=[tmp_path],
+        )
+
+    empty = PackLock("example", "linux-cpu", ">=3.12", (), (), ())
+    published = tmp_path / "pack-lock.json"
+    empty.write(published)
+    assert PackLock.read(published) == empty
+    document = json.loads(published.read_text())
+    document["packages"] = [{"name": "source-only-fixture", "version": "1.0", "wheels": []}]
+    published.write_text(json.dumps(document))
+    with pytest.raises(ProvisionError, match="source-only-fixture==1.0.*no wheel candidates"):
+        PackLock.read(published)
+
+
 def test_generation_adapter_preflights_rebuilds_and_reports_drift(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -71,6 +71,10 @@ class LockedDistribution:
         }:
             raise ProvisionError(f"noncanonical lock package: {self.name}")
         version = Version(self.version)
+        if not self.wheels:
+            raise ProvisionError(
+                f"{self.name}=={self.version}: no wheel candidates in dependency lock"
+            )
         for wheel in self.wheels:
             wheel_name, wheel_version, _, _ = parse_wheel_filename(wheel.filename)
             if wheel_name != self.name or wheel_version != version:
