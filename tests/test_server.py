@@ -66,6 +66,7 @@ from dinkster_schema import (
     NodeSchema,
     OutputSpec,
     ReplacementCase,
+    ReplacementProblem,
     ReplacementRule,
     SelectorSpec,
     TypeExpr,
@@ -2639,7 +2640,7 @@ def test_prepared_surface_validation_keeps_requests_responsive(
 
     import dinkster_server.app as app_module
 
-    original_validate = app_module._validate_comfy_registry_packs
+    original_validate = app_module.validate_replacement_references
     validation_started = threading.Event()
     release_validation = threading.Event()
     app = create_app(make_engine, SCHEMAS)
@@ -2649,24 +2650,13 @@ def test_prepared_surface_validation_keeps_requests_responsive(
     late = build_schemas([Late])
 
     def pause_validation(
-        packs: Mapping[str, PackInfo],
         schemas: Mapping[str, NodeSchema],
-        node_packs: Mapping[str, str],
-        *,
-        subject: str,
-        defer_unpublished_carriers: bool = False,
-    ) -> None:
+    ) -> tuple[ReplacementProblem, ...]:
         validation_started.set()
         assert release_validation.wait(2)
-        original_validate(
-            packs,
-            schemas,
-            node_packs,
-            subject=subject,
-            defer_unpublished_carriers=defer_unpublished_carriers,
-        )
+        return original_validate(schemas)
 
-    monkeypatch.setattr(app_module, "_validate_comfy_registry_packs", pause_validation)
+    monkeypatch.setattr(app_module, "validate_replacement_references", pause_validation)
 
     async def scenario() -> None:
         client = TestClient(TestServer(app))
