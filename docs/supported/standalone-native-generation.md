@@ -28,3 +28,5 @@
   output locations come from configured mounts, not an inferred ComfyUI tree.
 - Pack authors use the native pack template and public API. The CLI does not
   generate translated schemas or aliased node stubs from legacy packs.
+- Pack composition uses native manifests and configured interpreters. It does
+  not probe or compose an upstream installation or a legacy custom-node pack.

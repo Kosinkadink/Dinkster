@@ -32,9 +32,8 @@ dependencies = [
     "dinkster-collab",
     "dinkster-registry",
     "dinkster-supervisor",
-    # The comfy compat host registration (comfy_compose.register_comfy_host_types)
-    # decodes and renders comfy.IMAGE values with numpy; dinkster-values itself
-    # stays dependency-free (its image codec needs numpy at call time only).
+    # Native media registration decodes and renders IMAGE values with numpy;
+    # dinkster-values needs numpy only when its image codec is called.
     "numpy>=1.26",
     # Image-file asset decoding (typed assets: decode_image_file) opens files
     # with Pillow, imported at call time only - same pattern as numpy above.

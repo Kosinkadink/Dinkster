@@ -1,17 +1,10 @@
-"""The worker half of the comfy.IMAGE byte contract.
+"""Tensor-worker codecs for the shared IMAGE and MASK values.
 
-comfy.IMAGE payloads must be loadable on BOTH sides of the compat
-boundary: v1 nodes consume torch tensors in this worker, while the engine
-process - torchless by design - renders previews from the same value
-(/api/values PNG renditions). The default codec cannot serve that split
-(pickle only unpickles where torch lives), so comfy.IMAGE registers the
-shared image-array codec (dinkster_values.image_codec): npy bytes on the
-wire, decoded HERE back into torch tensors, decoded host-side into numpy.
-The host half - numpy decode plus the PNG rendition - registers through
-the compat PackSpecs' host_types hook (dinkster.comfy_compose).
+Workers decode the shared image-array bytes into Torch tensors. Native
+media host registration decodes the same bytes into NumPy arrays and
+provides PNG renditions without importing Torch.
 
-torch imports lazily inside the decoder: this module stays importable by
-tooling and tests that have numpy but no torch.
+Torch imports lazily inside the decoder so schema tooling stays Torch-free.
 """
 
 from __future__ import annotations
@@ -49,10 +42,7 @@ def _decode_torch(data: bytes) -> object:
 
 
 def register_image_type(registry: TypeRegistry, type_id: str) -> None:
-    """Register ``type_id`` (comfy.IMAGE, comfy.MASK, or a dinkster spelling)
-    with the shared image codec in a compat worker. Callers guard against
-    double registration - translation registers each opaque type exactly
-    once; register_native_types checks ``type_id in registry`` first."""
+    """Register an image type with the tensor decoder; callers guard duplicates."""
     registry.register(
         type_id,
         encode=encode_image_array,
@@ -72,13 +62,8 @@ def _to_torch(array: object) -> object:
 
 
 def register_image_asset_providers(registry: TypeRegistry, type_id: str) -> None:
-    """The typed-asset providers for ``type_id`` (comfy.IMAGE) in a compat
-    worker: asset<comfy.IMAGE> decode and the comfy.IMAGE batch merge.
-
-    Same provider identities as the host's numpy registrations
-    (comfy_compose.register_comfy_host_types) - identity is the decode
-    SEMANTICS the cache key must capture, not the runtime representation -
-    but the results convert to torch, the form v1 node code consumes."""
+    """Decode and merge image assets into tensors using the native host's
+    provider identities. Cache identity follows semantics, not representation."""
 
     def decode(asset: object) -> object:
         return _to_torch(decode_image_file(asset))

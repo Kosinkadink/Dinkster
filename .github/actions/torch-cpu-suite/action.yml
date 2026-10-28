@@ -83,7 +83,6 @@ runs:
           -e . -e packages/dinkster-nodes-comfy
         .venv-torch/bin/python -m pytest -v \
           tests/test_audio_materializer.py \
-          tests/test_cpu_pack_composition.py \
           tests/test_minimax_h3_multigpu_receipt.py \
           tests/test_multigpu_modes.py \
           tests/test_fork_attention.py \
