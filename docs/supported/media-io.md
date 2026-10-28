@@ -181,3 +181,10 @@
   nodes: `dinkster.splat` batches of activated world-space gaussians with
   binary little-endian PLY interchange byte-compatible with ComfyUI's
   splat PLY files
+- Native Create Video assembles IMAGE frames, rational frame rate and optional
+  AUDIO as a VIDEO, retaining component storage until explicit encoding.
+  Bit depth and sRGB/HLG/PQ color choices are retained; optional immediate
+  H.264 or AV1 encoding uses source quantization, color and encoder defaults,
+  rounding only the encoded frame rate to a thousandth. Get Video Components
+  extracts bounded frames, audio and presentation facts from component or
+  encoded VIDEO values through ordinary in-process and isolated hosts.

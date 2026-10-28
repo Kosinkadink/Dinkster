@@ -181,6 +181,7 @@ from .triposplat import TripoSplatConditioning, TripoSplatPreprocessImage
 from .upscale_model_loader import UpscaleModelLoader
 from .utilities import ComfyNumberConvert, PreviewAny, SeedNode
 from .vae import VAE_NODES
+from .video_components import CreateVideo, GetVideoComponents
 from .video_conditioning import VIDEO_CONDITIONING_NODES
 from .video_guidance import VIDEO_GUIDANCE_NODES
 from .video_latent import VIDEO_LATENT_NODES
@@ -416,6 +417,8 @@ COMFY_NODES = (
     *YUE2_CONDITIONING_NODES,
     UpscaleModelLoader,
     CurveEditor,
+    CreateVideo,
+    GetVideoComponents,
 )
 
 
