@@ -135,6 +135,8 @@ def _widget_descriptor_to_wire(
         return asset_wire
     if isinstance(widget, ComboWidget):
         combo_wire: dict[str, object] = {"type": "COMBO"}
+        if widget.editable_options:
+            combo_wire["editableOptions"] = True
         if widget.options:
             combo_wire["options"] = [
                 _combo_option_to_wire(option, wire_version) for option in widget.options
@@ -353,6 +355,7 @@ def _widget_descriptor_from_wire(
             allowed = {"type", "options", "remote"}
             allowed.add("controlAfterGenerate")
             allowed.add("optionSource")
+            allowed.add("editableOptions")
             _reject_unknown_fields(widget_data, frozenset(allowed), "COMBO widget")
         options = widget_data.get("options", [])
         if not isinstance(options, list):
@@ -434,6 +437,9 @@ def _widget_descriptor_from_wire(
         return ComboWidget(
             options=decoded_options,
             option_source=option_source,
+            editable_options=_expect_bool(
+                widget_data.get("editableOptions", False), "COMBO widget editableOptions"
+            ),
             remote_route=remote_route,
             refresh_button=refresh_button,
             control_after_generate=cast("ControlAfterGenerate | None", control),
@@ -999,6 +1005,8 @@ def schema_to_wire(
     }
     if schema.editor_role is not None:
         wire["editorRole"] = schema.editor_role
+    if schema.additional_inputs is not None:
+        wire["additionalInputs"] = type_expr_to_wire(schema.additional_inputs, wire_version)
     if schema.slot_choices:
         wire["slotChoices"] = [[slot_id, key] for slot_id, key in schema.slot_choices]
     if schema.occupies:
@@ -1734,6 +1742,11 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
         description=_expect_str(wire.get("description", ""), "description"),
         editor_role=(
             _expect_str(wire["editorRole"], "editorRole") if "editorRole" in wire else None
+        ),
+        additional_inputs=(
+            type_expr_from_wire(_expect_object(wire["additionalInputs"], "additionalInputs"))
+            if "additionalInputs" in wire
+            else None
         ),
         inputs=tuple(inputs),
         outputs=tuple(outputs),

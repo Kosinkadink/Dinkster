@@ -57,6 +57,19 @@ class Double(Node):
 static output IDs at the return site. Execution still receives and returns
 plain Python values; workers own envelope and transport details.
 
+## Authored combo choices and additional inputs
+
+`ComboWidget(editable_options=True)` permits an empty initial vocabulary for
+occurrence-authored menus. Selection remains an ordinary COMBO value, independent
+of the menu. This cannot be combined with remote or input-family option sources.
+
+Schemas are closed by default. `NodeSchema(additional_inputs=TypeExpr.wildcard())`
+explicitly declares the type of supplied additional names. Elaboration turns
+those names into optional ordinary inputs without changing declared input types
+or reclaiming inactive dynamic namespaces. They remain subject to interface
+budgets and normal value admission: wildcard literals require registered explicit
+type stamps, and linked inputs retain their execution dependencies.
+
 ## Positional tuple declarations
 
 `TypeExpr.tuple_of(...)` describes a fixed ordered sequence of independently
