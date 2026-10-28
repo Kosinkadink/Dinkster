@@ -28,6 +28,7 @@ assert schema.inputs[0].id == 'model_name'
 assert schema.inputs[0].type == TypeExpr.concrete(ASSET_TYPE)
 assert isinstance(schema.inputs[0].widget, AssetWidget)
 assert schema.inputs[0].widget.kind == 'model/geometry-estimation'
+assert schema.inputs[0].widget.accept == ('application/octet-stream',)
 assert schema.outputs[0].id == 'MOGE_MODEL'
 assert schema.outputs[0].type == TypeExpr.concrete(MOGE_MODEL_TYPE)
 """,

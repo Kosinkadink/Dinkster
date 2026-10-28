@@ -31,7 +31,9 @@ class LoadMoGeModel(Node):
                 InputSpec(
                     "model_name",
                     TypeExpr.concrete(ASSET_TYPE),
-                    widget=AssetWidget(kind="model/geometry-estimation"),
+                    widget=AssetWidget(
+                        accept=("application/octet-stream",), kind="model/geometry-estimation"
+                    ),
                 ),
             ),
             outputs=(OutputSpec("MOGE_MODEL", TypeExpr.concrete(MOGE_MODEL_TYPE)),),
