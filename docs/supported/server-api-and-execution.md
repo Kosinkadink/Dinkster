@@ -25,6 +25,8 @@
   Existing import paths and read-only grants are preserved; unavailable
   configured directories are not recreated or replaced. Removing the import
   grant remains effective across restarts and repeated setup.
+  New default imports become available to existing projects without resetting
+  folder order, exclusions, project-only grants or output selections.
 - Classified media uploads in the managed server use original filenames in
   the configured imports folder, with collision-safe numbering and no durable
   vault duplicate. Requests can select another writable project folder and

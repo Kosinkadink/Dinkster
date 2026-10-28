@@ -9,6 +9,7 @@ from pathlib import Path
 from dinkster_assets import MountDef, dump_mounts, load_mounts, load_output_mount
 
 from .installer import Installer
+from .project_folders import ProjectFolders
 
 
 def default_roots() -> tuple[Path, Path]:
@@ -24,7 +25,14 @@ def ensure_import_mount(library_root: Path) -> None:
     mounts_path = library_root / "mounts.toml"
     mounts = load_mounts(mounts_path)
     imports_root = library_root / "imports"
-    if any(mount.id == "imports" or mount.path == imports_root for mount in mounts):
+    existing = next((mount for mount in mounts if mount.id == "imports"), None)
+    if existing is None:
+        existing = next((mount for mount in mounts if mount.path == imports_root), None)
+    project_path = library_root / "project-folders.json"
+    projects = ProjectFolders(project_path) if project_path.exists() else None
+    if existing is not None:
+        if projects is not None:
+            projects.initialize(tuple(mount.id for mount in mounts), shared_defaults=(existing.id,))
         initialized.touch()
         return
     imports_root.mkdir(parents=True, exist_ok=True)
@@ -41,6 +49,10 @@ def ensure_import_mount(library_root: Path) -> None:
         os.replace(temporary, mounts_path)
     finally:
         temporary.unlink(missing_ok=True)
+    if projects is not None:
+        projects.initialize(
+            tuple(mount.id for mount in mounts) + ("imports",), shared_defaults=("imports",)
+        )
     initialized.touch()
 
 

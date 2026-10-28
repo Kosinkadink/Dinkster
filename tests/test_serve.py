@@ -3587,7 +3587,13 @@ def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
     grant a directory over the API, watch it scan to ready, browse its
     catalog, stream a mounted file by digest, and revoke it - the desktop
     folder-picker flow end to end, with mounts.toml as the durable record."""
+    from dinkster.project_folders import ProjectFolders
+
     library_root = tmp_path / "library"
+    library_root.mkdir()
+    projects = ProjectFolders(library_root / "project-folders.json")
+    projects.initialize(())
+    projects.update("film", [], available=(), output=None)
     granted = tmp_path / "granted"
     granted.mkdir(parents=True)
     payload = b"mounted-bytes"
@@ -3630,6 +3636,9 @@ def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
                 assert imports["id"] == "imports"
                 assert imports["path"] == str(library_root / "imports")
                 assert imports["mode"] == "readwrite"
+            async with session.get(base + "/api/mounts", params={"project": "film"}) as resp:
+                (project_imports,) = (await resp.json())["mounts"]
+                assert project_imports["id"] == "imports"
             assert (library_root / "imports").is_dir()
             async with asyncio.timeout(60):
                 while imports["state"] != "ready":
@@ -3644,7 +3653,12 @@ def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
             Image.new("RGB", (2, 1), (17, 42, 93)).save(image, format="PNG")
             async with session.post(
                 base + "/api/assets/media",
-                params={"scope": "local", "kind": "media/image", "name": "dropped.png"},
+                params={
+                    "scope": "local",
+                    "kind": "media/image",
+                    "name": "dropped.png",
+                    "project": "film",
+                },
                 data=image.getvalue(),
                 headers={"Content-Type": "image/png"},
             ) as resp:
