@@ -75,6 +75,13 @@
   Component audio without proven sample coverage preserves finite VIDEO length
   and reports that shortest-audio trimming was not applied exactly.
   NVENC requests are refused until a hardware-encoder policy exists.
+- Opt-in unedited component-video encoding preserves source H.264/AV1
+  quantization, color signaling, CRF defaults, optional H.264 preset, and
+  thousandth-rounded encoded frame rates without changing component values.
+  Explicit codec failures propagate without FFV1 substitution or resizing.
+  Small AV1 inputs may succeed when the encoder supports them. Automatic
+  PyAV conversion threading can produce nondeterministic pixels on small
+  10-bit inputs; this path retains that source behavior.
 - Value-level video operations on IMAGE batches and VIDEO values: frame
   windowing with skip, stride, and cap controls; exact nearest-tick frame-rate
   resampling matching native video loading; deferred assembly with optional
