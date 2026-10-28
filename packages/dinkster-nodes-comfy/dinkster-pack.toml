@@ -508,6 +508,7 @@ namespaces = [
     "SAM3_VideoTrack",
     "SAM3_TrackToMask",
     "SAM3_Detect",
+    "SAM3_TrackPreview",
     "VideoFrameSample",
     "CheckpointLoaderSimple",
     "CheckpointLoader",

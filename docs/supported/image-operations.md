@@ -25,6 +25,8 @@
 - Native `SAM3_VideoTrack` tracks initial masks or text-prompted objects across
   video frames. `SAM3_TrackToMask` selects tracked objects and resizes their union
   to the original frame dimensions using the portable packed-track value.
+- Native `SAM3_TrackPreview` publishes an MP4 preview of packed tracks with
+  colored overlays, object numbers and confidence labels, optionally over images.
 - Native `SAM3_Detect` segments text, box or point prompts with optional mask
   refinement, returning per-object or union masks and scored text detections.
 - Native `ColorToRGBInt` preserves RGB letter casing and separates optional alpha;
