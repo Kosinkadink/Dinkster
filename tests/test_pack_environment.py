@@ -67,7 +67,6 @@ def _generation(root: Path, wheels: list[LockedWheel]) -> Path:
                 shutil.copy2(source, root / source.name)
         shutil.copytree(base / "DLLs", root / "DLLs")
         shutil.copytree(base / "Lib", root / "Lib", ignore=shutil.ignore_patterns("site-packages"))
-        site = root / "Lib/site-packages"
         python = root / "python.exe"
     else:
         (root / "bin").mkdir(parents=True)
@@ -83,9 +82,13 @@ def _generation(root: Path, wheels: list[LockedWheel]) -> Path:
         for source in (base / "lib" / version).iterdir():
             if source.name != "site-packages":
                 (stdlib / source.name).symlink_to(source)
-        site = stdlib / "site-packages"
         python = root / "bin/python"
-    site.mkdir()
+    site = Path(
+        subprocess.check_output(
+            [str(python), "-c", "import site; print(site.getsitepackages()[0])"], text=True
+        ).strip()
+    )
+    site.mkdir(parents=True, exist_ok=True)
     import packaging
 
     shutil.copytree(Path(packaging.__file__).parent, site / "packaging")
@@ -342,6 +345,22 @@ def test_generation_adapter_preflights_rebuilds_and_reports_drift(
     assert main(["doctor", *args]) == 1
     drift = json.loads(capsys.readouterr().out)["changes"]
     assert any("fixture-extra" in message and "found 9.0" in message for message in drift)
+    metadata.write_text("Name: fixture-extra\nVersion: 1.2\n")
+    moved = tmp_path / "relocated-generation"
+    shutil.move(target, moved)
+    config = moved / "packs/example/pyvenv.cfg"
+    config.write_text(config.read_text().replace(str(target), str(moved)))
+    result = subprocess.run(
+        [
+            str(venv_python(moved / "packs/example")),
+            "-c",
+            "import fixture_extra; print(fixture_extra.value)",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout.strip() == "23"
 
 
 def test_generation_preflight_never_silently_omits_packs(tmp_path: Path) -> None:

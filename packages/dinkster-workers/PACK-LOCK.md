@@ -7,6 +7,12 @@ plan time. Resolution is binary-only. Installing a published lock never resolves
 The registry's pack artifact lock remains separate: it identifies pack source,
 whereas this lock identifies the Python dependency closure.
 
+The publisher/local-checkout CLI is `python -m dinkster_workers.pack_lock
+<pack-root> --variant <variant> --generation-python <interpreter> --constraints
+<constraints.txt> --output <lock.json>`. Repeat `--index <URL>` to declare indexes
+or `--find-links <directory>` for an offline wheel source. `--requires-python`
+records the pack's Python constraint; `--accelerator` selects its manifest extras.
+
 `PackLock.write` writes JSON with these fields:
 
 | Field | Value |
@@ -114,6 +120,9 @@ repair builds a fresh generation rather than modifying a running pack venv.
 `terminal --pack <id>` returns the installed pack interpreter as the sole
 `changes` entry. Without `--pack` it creates/returns `<root>/scratch/<n>/`.
 Neither choice returns the generation interpreter.
+Venv launchers are relocatable and Unix interpreter symlinks are relative to the
+project's generation, so the manager's same-volume `pyvenv.cfg` home rewrite
+does not leave an interpreter link pointing to the old project path.
 
 Python callers use `GenerationContext(generation, generation_python, constraints,
 variant, worker_protocol, wheel_store, uv_cache, own_environment_size, uv="uv")`,

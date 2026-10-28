@@ -34,6 +34,26 @@ def _run(command: list[str], cache: Path) -> str:
     return result.stdout
 
 
+def _create_layered_venv(generation_python: Path, directory: Path, uv_cache: Path, uv: str) -> Path:
+    _run(
+        [
+            uv,
+            "venv",
+            "--python",
+            str(generation_python),
+            "--system-site-packages",
+            "--relocatable",
+            str(directory),
+        ],
+        uv_cache,
+    )
+    python = venv_python(directory)
+    if python.is_symlink():
+        python.unlink()
+        python.symlink_to(os.path.relpath(generation_python.absolute(), python.parent.absolute()))
+    return python
+
+
 def _verify(path: Path, wheel: LockedWheel) -> bool:
     if not path.is_file() or path.stat().st_size != wheel.size:
         return False
@@ -92,18 +112,7 @@ def provision_pack(
         raise ProvisionError(f"pack venv already exists: {destination}; rebuild from its lock")
     wheels = [fetch_wheel(wheel, wheel_store) for wheel in plan.wheels]
     try:
-        _run(
-            [
-                uv,
-                "venv",
-                "--python",
-                str(generation_python),
-                "--system-site-packages",
-                str(destination),
-            ],
-            uv_cache,
-        )
-        python = venv_python(destination)
+        python = _create_layered_venv(generation_python, destination, uv_cache, uv)
         if wheels:
             # Direct wheel paths with --no-deps cannot pull a second torch or consult an index.
             _run(
@@ -156,17 +165,7 @@ def scratch_venv(
 ) -> Path:
     """Return a disposable terminal interpreter, never the immutable generation."""
     if not venv_python(directory).is_file():
-        _run(
-            [
-                uv,
-                "venv",
-                "--python",
-                str(generation_python),
-                "--system-site-packages",
-                str(directory),
-            ],
-            uv_cache,
-        )
+        return _create_layered_venv(generation_python, directory, uv_cache, uv)
     return venv_python(directory)
 
 
