@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import BinaryIO, Protocol, cast
 
 from dinkster_values import MEBIBYTE
+from dinkster_values.asset_folders import current_asset_folders
 
 from .identity import DIGEST_PREFIX, AssetError, new_hasher
 from .integrity import verification_record_for_publication
@@ -123,6 +124,11 @@ class MountSnapshotWriter:
         )
 
     def output_mount(self) -> str:
+        context = current_asset_folders()
+        if context is not None:
+            if context.output_mount is None:
+                raise AssetError("no default output mount is configured for this project")
+            return context.output_mount
         try:
             loaded: object = json.loads(self._path.read_text("utf-8"))
         except (OSError, ValueError):
@@ -297,9 +303,13 @@ class AssetWriter:
 
     def _writable_folder(self, parsed: SaveTarget) -> tuple[Path, Path]:
         root = self._authority.writable_root(parsed.mount)
-        folder = root / parsed.subfolder if parsed.subfolder else root
-        folder.mkdir(parents=True, exist_ok=True)
-        self._require_contained(root, folder, parsed)
+        if not root.is_dir():
+            raise AssetError(f"output mount {parsed.mount!r} is unavailable at {root}")
+        folder = root
+        for part in Path(parsed.subfolder).parts:
+            folder = folder / part
+            self._require_contained(root, folder, parsed)
+            folder.mkdir(exist_ok=True)
         return root, folder
 
     def _write_stream(
