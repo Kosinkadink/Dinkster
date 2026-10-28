@@ -5,7 +5,7 @@ package index. A GitHub 404 can mean that your account does not have access.
 
 To run from source without the Desktop app, follow the
 [one-command browser quickstart](quickstart.md). Install Git and Node.js
-22 or newer with npm, clone Dinkster, and run `./run.sh` on Linux/macOS or
+26.12 or newer within 26.x with npm, clone Dinkster, and run `./run.sh` on Linux/macOS or
 `.\run.ps1` on Windows. The scripts install uv user-locally if missing;
 Python 3.12 is obtained by uv when needed. The scripts
 prepare execution environments, build the pinned frontend, and launch the UI
