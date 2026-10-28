@@ -1,5 +1,10 @@
 ## Media I/O
 
+- Explicit mounted Save attachments reach execution results after host validation
+  of the live writable mount, writer publication record, and exact file bytes.
+  Custom targets and non-media files, including empty text files, are supported
+  through both ordinary hosts. Failed invocations do not return kept artifacts;
+  returning an ASSET without attaching it does not advertise a saved file.
 - Indexed video file selections remain references to their granted files,
   without input copying or an encoded-file size cap. Unindexed selections
   must be scanned before VIDEO admission. Decode working-set and produced

@@ -585,6 +585,7 @@ class InvocationResult:
     artifact_candidates: tuple[SavedArtifactCandidate, ...] = ()
     expansion: ExpandedReturn | None = None
     preview_artifacts: tuple[EncodedPreviewArtifact, ...] = ()
+    saved_artifact_claims: tuple[Mapping[str, object], ...] = ()
 
     def __post_init__(self) -> None:
         if self.expansion is None:
