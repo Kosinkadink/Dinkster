@@ -1692,16 +1692,17 @@ def test_serve_without_comfy_mounts_native_provider(
 ) -> None:
     from dinkster import serve
 
-    calls: list[tuple[object, dict[str, object]]] = []
+    calls: list[dict[str, object]] = []
+    native_execution_spec = serve.native_execution_spec
 
-    def native_specs(root: object, **kwargs: object) -> list[object]:
-        calls.append((root, kwargs))
-        return []
+    def native_spec(**kwargs: object) -> serve.PackSpec:
+        calls.append(kwargs)
+        return native_execution_spec(**kwargs)  # type: ignore[arg-type]
 
     def fake_run_app(awaitable: object, **_kwargs: object) -> None:
         awaitable.close()  # type: ignore[attr-defined]
 
-    monkeypatch.setattr(serve, "comfy_compat_specs", native_specs)
+    monkeypatch.setattr(serve, "native_execution_spec", native_spec)
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     argv = ["dinkster-serve", "--library-root", ""]
     if devices:
@@ -1711,8 +1712,7 @@ def test_serve_without_comfy_mounts_native_provider(
 
     serve.main()
     assert len(calls) == 1
-    root, options = calls[0]
-    assert root is None
+    options = calls[0]
     if devices:
         config = options["single_job_multi_gpu"]
         assert isinstance(config, serve.SingleJobMultiGpuConfig)

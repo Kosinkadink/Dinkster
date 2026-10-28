@@ -149,6 +149,7 @@ from .compose import (
     default_pack_ids,
     default_pack_spec,
     model_pack_specs,
+    native_execution_spec,
     order_pack_entries_by_requirements,
     resolve_manifest_path,
 )
@@ -1742,30 +1743,44 @@ def main(argv: list[str] | None = None) -> None:
     if not args.no_default_packs:
         specs.extend(model_pack_specs())
     try:
-        compat_specs = (
-            comfy_compat_specs(
-                args.comfy_root or None,
-                python=args.execution_python or None,
-                _requirements_checked=comfy_requirements_checked,
-                legacy_packs=args.legacy_pack,
-                asset_vault=(Path(args.library_root) / "vault" if args.library_root else None),
-                mounts_snapshot=mounts_snapshot,
-                aimdo=aimdo,
-                memory_budgets=memory_budgets,
-                reserve_vram=reserve_vram,
-                comfy_args=effective_comfy_args,
-                multi_device_cuda_indices=args.multi_gpu_devices,
-                single_job_multi_gpu=single_job_multi_gpu,
+        if args.comfy_root:
+            specs.extend(
+                comfy_compat_specs(
+                    args.comfy_root,
+                    python=args.execution_python or None,
+                    _requirements_checked=comfy_requirements_checked,
+                    legacy_packs=args.legacy_pack,
+                    asset_vault=(Path(args.library_root) / "vault" if args.library_root else None),
+                    mounts_snapshot=mounts_snapshot,
+                    aimdo=aimdo,
+                    memory_budgets=memory_budgets,
+                    reserve_vram=reserve_vram,
+                    comfy_args=effective_comfy_args,
+                    multi_device_cuda_indices=args.multi_gpu_devices,
+                    single_job_multi_gpu=single_job_multi_gpu,
+                )
             )
-            if args.comfy_root or not args.no_default_packs
-            else []
-        )
+        elif not args.no_default_packs:
+            specs.append(
+                replace(
+                    native_execution_spec(
+                        python=args.execution_python or None,
+                        asset_vault=(
+                            Path(args.library_root) / "vault" if args.library_root else None
+                        ),
+                        mounts_snapshot=mounts_snapshot,
+                        aimdo=aimdo,
+                        memory_budgets=memory_budgets,
+                        reserve_vram=reserve_vram,
+                        comfy_args=effective_comfy_args,
+                        multi_device_cuda_indices=args.multi_gpu_devices,
+                        single_job_multi_gpu=single_job_multi_gpu,
+                    ),
+                    require_catalog=True,
+                )
+            )
     except CompositionError as exc:
         raise SystemExit(str(exc)) from exc
-    if not args.comfy_root:
-        specs.extend(replace(spec, require_catalog=True) for spec in compat_specs)
-    else:
-        specs.extend(compat_specs)
     resolved_default_pack_count = len(specs)
     installer: Installer | None = None
     if args.install_root:
