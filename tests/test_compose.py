@@ -1785,15 +1785,14 @@ def test_compose_rejects_namespace_collision(tmp_path: Path) -> None:
 def test_rootless_default_composes_only_native_core_ids(monkeypatch: pytest.MonkeyPatch) -> None:
     from dinkster_nodes_comfy import COMFY_NODES
 
-    from dinkster.comfy_compose import comfy_compat_specs
+    from dinkster.compose import native_execution_spec
 
     monkeypatch.delenv("DINKSTER_EXECUTION_PYTHON", raising=False)
 
     async def scenario() -> None:
         composer = ServingComposer()
         try:
-            for spec in comfy_compat_specs():
-                await composer.add_pack(spec)
+            await composer.add_pack(native_execution_spec())
             assert set(composer.composition.schemas) == {
                 node.schema().node_type for node in COMFY_NODES
             }
@@ -1815,10 +1814,10 @@ def test_rootless_native_runtime_configuration(
 ) -> None:
     from dinkster_workers import SingleJobMultiGpuConfig
 
-    from dinkster.comfy_compose import comfy_compat_specs
+    from dinkster.compose import native_execution_spec
 
     monkeypatch.setenv("DINKSTER_EXECUTION_PYTHON", "/environment/python")
-    specs = comfy_compat_specs(
+    spec = native_execution_spec(
         python="/explicit/python" if explicit else None,
         asset_vault=tmp_path / "vault",
         mounts_snapshot=tmp_path / "mounts.json",
@@ -1827,8 +1826,6 @@ def test_rootless_native_runtime_configuration(
         reserve_vram=789,
         single_job_multi_gpu=SingleJobMultiGpuConfig(cuda_indices=(0, 1), mode="guidance"),
     )
-    assert len(specs) == 1
-    spec = specs[0]
     assert load_manifest(spec.manifest).name == "dinkster-nodes-comfy"
     assert spec.python == ("/explicit/python" if explicit else "/environment/python")
     assert spec.env["DINKSTER_ASSET_VAULT"] == str(tmp_path / "vault")

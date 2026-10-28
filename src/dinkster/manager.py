@@ -1071,12 +1071,11 @@ def _cmd_archive(args: argparse.Namespace) -> None:
 
 
 def _prepared_pack_specs(args: argparse.Namespace) -> Iterator[PackSpec]:
-    from .comfy_compose import comfy_compat_specs
-    from .compose import default_pack_specs
+    from .compose import default_pack_specs, native_execution_spec
     from .serve import _default_pack_venv_root, _prepare_default_pack, _with_remote_config
 
     specs = (
-        (*default_pack_specs(), *comfy_compat_specs())
+        (*default_pack_specs(), native_execution_spec())
         if args.defaults
         else _installer(args).packs_for_serving()
     )

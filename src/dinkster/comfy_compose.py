@@ -86,7 +86,13 @@ from dinkster_workers import (
 )
 from dinkster_workers.interpreter import InterpreterPreflightError, preflight_interpreter
 
-from .compose import CompositionError, PackSpec, cuda_vram_budgets, default_pack_spec
+from .compose import (
+    CompositionError,
+    PackSpec,
+    cuda_vram_budgets,
+    default_pack_spec,
+    native_execution_spec,
+)
 from .packs import blueprint_assets, pack_info_from_presentation, template_assets
 
 __all__ = [
@@ -588,35 +594,17 @@ def comfy_compat_specs(
     if legacy_packs and root is None:
         raise CompositionError("legacy packs require --comfy-root")
     if root is None:
-        spec = default_pack_spec("dinkster-nodes-comfy")
-        environment: dict[str, str] = {}
-        pythonpath = dinkster_pythonpath(Path(spec.manifest))
-        if pythonpath:
-            environment["PYTHONPATH"] = pythonpath
-        if asset_vault:
-            environment["DINKSTER_ASSET_VAULT"] = str(asset_vault)
-        if mounts_snapshot:
-            environment["DINKSTER_MOUNTS_SNAPSHOT"] = str(mounts_snapshot)
         return [
-            replace(
-                spec,
-                in_process=False,
-                trust_reserved=False,
-                python=python or os.environ.get("DINKSTER_EXECUTION_PYTHON") or sys.executable,
-                env=environment,
+            native_execution_spec(
+                python=python,
+                asset_vault=asset_vault,
+                mounts_snapshot=mounts_snapshot,
                 aimdo=aimdo,
-                vram_budgets=cuda_vram_budgets(memory_budgets or {}),
+                memory_budgets=memory_budgets,
                 reserve_vram=reserve_vram,
                 comfy_args=comfy_args,
-                runtime_settings=True,
-                replica_cuda_indices=multi_device_cuda_indices,
-                single_job_cuda_indices=(
-                    () if single_job_multi_gpu is None else single_job_multi_gpu.cuda_indices
-                ),
-                single_job_mode=(
-                    "auto" if single_job_multi_gpu is None else single_job_multi_gpu.mode
-                ),
-                start_timeout=_CORE_START_TIMEOUT,
+                multi_device_cuda_indices=multi_device_cuda_indices,
+                single_job_multi_gpu=single_job_multi_gpu,
             )
         ]
     core_manifest = find_compat_manifest()

@@ -1388,6 +1388,52 @@ def default_pack_spec(pack_id: str) -> PackSpec:
     )
 
 
+def native_execution_spec(
+    *,
+    python: str | None = None,
+    asset_vault: Path | str | None = None,
+    mounts_snapshot: Path | str | None = None,
+    aimdo: str = "off",
+    memory_budgets: Mapping[str, int] | None = None,
+    reserve_vram: int | None = None,
+    comfy_args: tuple[str, ...] = (),
+    multi_device_cuda_indices: tuple[int, ...] = (),
+    single_job_multi_gpu: SingleJobMultiGpuConfig | None = None,
+) -> PackSpec:
+    """Configure the native core execution worker and its runtime resources."""
+    if "DINKSTER_COMFYUI_PYTHON" in os.environ:
+        raise CompositionError(
+            "DINKSTER_COMFYUI_PYTHON is retired; set DINKSTER_EXECUTION_PYTHON instead"
+        )
+    spec = default_pack_spec("dinkster-nodes-comfy")
+    environment: dict[str, str] = {}
+    src_dirs = sorted(str(p) for p in Path(spec.manifest).parents[1].glob("*/src"))
+    if src_dirs:
+        environment["PYTHONPATH"] = os.pathsep.join(src_dirs)
+    if asset_vault:
+        environment["DINKSTER_ASSET_VAULT"] = str(asset_vault)
+    if mounts_snapshot:
+        environment["DINKSTER_MOUNTS_SNAPSHOT"] = str(mounts_snapshot)
+    return replace(
+        spec,
+        in_process=False,
+        trust_reserved=False,
+        python=python or os.environ.get("DINKSTER_EXECUTION_PYTHON") or sys.executable,
+        env=environment,
+        aimdo=aimdo,
+        vram_budgets=cuda_vram_budgets(memory_budgets or {}),
+        reserve_vram=reserve_vram,
+        comfy_args=comfy_args,
+        runtime_settings=True,
+        replica_cuda_indices=multi_device_cuda_indices,
+        single_job_cuda_indices=(
+            () if single_job_multi_gpu is None else single_job_multi_gpu.cuda_indices
+        ),
+        single_job_mode=("auto" if single_job_multi_gpu is None else single_job_multi_gpu.mode),
+        start_timeout=180.0,
+    )
+
+
 @lru_cache(maxsize=1)
 def default_pack_specs() -> tuple[PackSpec, ...]:
     """Resolve the complete installed first-party pack set in dependency order."""

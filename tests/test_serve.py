@@ -43,13 +43,17 @@ def _use_current_python_for_standard_pack_workers(monkeypatch: pytest.MonkeyPatc
 async def _default_pack_names() -> tuple[str, ...]:
     from dinkster_workers import load_manifest
 
-    from dinkster.comfy_compose import comfy_compat_specs
-    from dinkster.compose import ServingComposer, default_pack_specs, model_pack_specs
+    from dinkster.compose import (
+        ServingComposer,
+        default_pack_specs,
+        model_pack_specs,
+        native_execution_spec,
+    )
 
     composer = ServingComposer()
     try:
         specs = composer.order_pack_entries(
-            (*default_pack_specs(), *model_pack_specs(), *comfy_compat_specs())
+            (*default_pack_specs(), *model_pack_specs(), native_execution_spec())
         )
         return tuple(load_manifest(Path(spec.manifest)).name for spec in specs)
     finally:
@@ -3025,8 +3029,13 @@ def test_degraded_default_ordering_retains_native_core_pack(tmp_path: Path) -> N
     from dinkster_workers import load_manifest
 
     import dinkster.serve as serve
-    from dinkster.comfy_compose import comfy_compat_specs
-    from dinkster.compose import PackSpec, ServingComposer, default_pack_specs, model_pack_specs
+    from dinkster.compose import (
+        PackSpec,
+        ServingComposer,
+        default_pack_specs,
+        model_pack_specs,
+        native_execution_spec,
+    )
 
     broken = tmp_path / "ordering-probe"
     broken.mkdir()
@@ -3038,7 +3047,7 @@ def test_degraded_default_ordering_retains_native_core_pack(tmp_path: Path) -> N
         '[pack.entry]\nnodes = "probe_ordering_nodes:NODES"\n',
         encoding="utf-8",
     )
-    defaults = (*default_pack_specs(), *model_pack_specs(), *comfy_compat_specs())
+    defaults = (*default_pack_specs(), *model_pack_specs(), native_execution_spec())
     specs = (*defaults, PackSpec(manifest=broken / "dinkster-pack.toml"))
     composer = ServingComposer()
     try:
