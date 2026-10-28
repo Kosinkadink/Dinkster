@@ -114,3 +114,37 @@ station applies the same version-independent machinery to multiple
 installs from a TOML file. Focused coverage is in
 `tests/test_supervisor.py`, `tests/test_station.py`, and
 `tests/test_installs.py`.
+
+## Environment records
+
+The environment state module owns the project records consumed by environment
+management and Desktop. Full layout: [environments and updates](../../docs/environments-and-updates.md).
+
+- `<root>/current`: positive decimal generation number and newline.
+- `<root>/store`: absolute shared data-directory path and newline.
+- `<root>/generations/<n>/python/`: complete interpreter tree; executable is
+  `python.exe` on Windows, `bin/python3` on Linux.
+- `<root>/generations/<n>/constraints.txt`: the release's hashed requirements.
+- `generation.json`: `format: dinkster.generation/1`, `generation` integer,
+  `base` digest, `engine: {version, release}`, `constraints` digest, `variant`,
+  `workerProtocol` integer, and `files` (relative path -> `sha256:` digest).
+  The inventory covers owned interpreter/package files and constraints, not
+  itself, runtime bytecode or pack venvs. Drift reports name missing, modified
+  and unexpected files, even when installed distribution versions agree.
+- `<root>/journal/<timestamp>.json`: `format: dinkster.journal/1`, `operation`,
+  `previous` integer or null, `target` integer, `stage`, and optional `error`.
+  Operations are setup/update/rollback/move/repair/gc. Stages are planned,
+  building, starting, switching, complete and rolled-back; the last two are
+  terminal. Interrupted records must be recovered before another operation.
+
+All content identifiers are `sha256:` followed by 64 lowercase hexadecimal
+digits. Relative file paths use `/`, never absolute paths or parent traversal.
+Pointer and journal writes flush to disk before atomic replacement. The
+`Generation`, `Journal`, `read_current` and `set_current` APIs read and write
+these records; the latter refuses missing or misnumbered target generations.
+
+The channel format is `dinkster.channel/1`, with `engine: {version, release}`,
+`base: {variant: digest}`, `minimumDesktopVersion`, and `signature`. Both stable
+and main name exact content digests, never a latest-release lookup. A null
+signature is acceptable only for a Dinkster-operated mirror. Engine and base
+artifact layouts are owned by their publishing tools, not this package.

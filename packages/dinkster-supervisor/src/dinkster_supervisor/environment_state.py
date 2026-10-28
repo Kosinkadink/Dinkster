@@ -1,0 +1,248 @@
+"""Durable project pointers and immutable environment generation records."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
+from typing import cast
+
+_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+
+
+class EnvironmentError(ValueError):
+    """An environment cannot be safely read or changed."""
+
+
+def content_digest(path: Path) -> str:
+    with path.open("rb") as handle:
+        return "sha256:" + hashlib.file_digest(handle, "sha256").hexdigest()
+
+
+def digest(value: object) -> str:
+    if not isinstance(value, str) or _DIGEST.fullmatch(value) is None:
+        raise EnvironmentError("expected a sha256: content digest")
+    return value
+
+
+def relative_file(value: object) -> str:
+    if not isinstance(value, str) or not value or "\\" in value or ":" in value:
+        raise EnvironmentError("expected a portable relative file path")
+    path = PurePosixPath(value)
+    if (
+        path.is_absolute()
+        or any(part in {"", ".", ".."} for part in value.split("/"))
+        or any(ord(character) < 32 for character in value)
+    ):
+        raise EnvironmentError("expected a portable relative file path")
+    return value
+
+
+def read_document(path: Path) -> dict[str, object]:
+    try:
+        value: object = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise EnvironmentError(f"cannot read {path.name}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise EnvironmentError(f"{path.name}: expected a JSON object")
+    return cast("dict[str, object]", value)
+
+
+def atomic_write(path: Path, text: str) -> None:
+    """Flush the new contents before publishing a pointer or journal stage."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        if os.name != "nt":
+            directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+def write_document(path: Path, value: dict[str, object]) -> None:
+    atomic_write(path, json.dumps(value, indent=2, sort_keys=True, ensure_ascii=True) + "\n")
+
+
+def generation_number(value: object) -> int:
+    if type(value) is not int or value < 1:
+        raise EnvironmentError("generation must be a positive integer")
+    return value
+
+
+@dataclass(frozen=True)
+class Generation:
+    number: int
+    base: str
+    engine_version: str
+    engine_release: str
+    constraints: str
+    variant: str
+    worker_protocol: int
+    files: tuple[tuple[str, str], ...]
+
+    @classmethod
+    def read(cls, path: Path) -> Generation:
+        value = read_document(path)
+        if value.get("format") != "dinkster.generation/1":
+            raise EnvironmentError("unsupported generation format")
+        engine = value.get("engine")
+        if not isinstance(engine, dict):
+            raise EnvironmentError("generation engine must name version and release")
+        engine = cast("dict[str, object]", engine)
+        version, variant = engine.get("version"), value.get("variant")
+        if not isinstance(version, str) or not version:
+            raise EnvironmentError("generation engine version must be a nonempty string")
+        if (
+            not isinstance(variant, str)
+            or re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", variant) is None
+        ):
+            raise EnvironmentError("generation variant must be a portable variant name")
+        protocol = value.get("workerProtocol")
+        if type(protocol) is not int or protocol < 1:
+            raise EnvironmentError("workerProtocol must be a positive integer")
+        files = value.get("files")
+        if not isinstance(files, dict) or not files:
+            raise EnvironmentError("generation must record its file hashes")
+        hashes = cast("dict[str, object]", files)
+        constraints = digest(value.get("constraints"))
+        if hashes.get("constraints.txt") != constraints:
+            raise EnvironmentError("constraints digest must match its recorded file hash")
+        return cls(
+            generation_number(value.get("generation")),
+            digest(value.get("base")),
+            version,
+            digest(engine.get("release")),
+            constraints,
+            variant,
+            protocol,
+            tuple(sorted((relative_file(name), digest(sha)) for name, sha in hashes.items())),
+        )
+
+    def write(self, path: Path) -> None:
+        write_document(
+            path,
+            {
+                "format": "dinkster.generation/1",
+                "generation": self.number,
+                "base": self.base,
+                "engine": {"version": self.engine_version, "release": self.engine_release},
+                "constraints": self.constraints,
+                "variant": self.variant,
+                "workerProtocol": self.worker_protocol,
+                "files": dict(self.files),
+            },
+        )
+
+    def drift(self, root: Path) -> tuple[str, ...]:
+        """Compare the complete owned tree, not just installed package versions."""
+        expected = dict(self.files)
+        changes: list[str] = []
+        for name, sha in expected.items():
+            path = root / name
+            if not path.is_file():
+                changes.append(f"missing: {name}")
+            elif path.is_symlink() or content_digest(path) != sha:
+                changes.append(f"modified: {name}")
+        for path in sorted(root.rglob("*")):
+            name = path.relative_to(root).as_posix()
+            # Pack venvs have their own locks and doctor; bytecode is runtime output.
+            if name.startswith("packs/") or "__pycache__" in path.relative_to(root).parts:
+                continue
+            if path.is_file() and name != "generation.json" and name not in expected:
+                changes.append(f"unexpected: {name}")
+        return tuple(changes)
+
+
+def read_current(root: Path) -> int | None:
+    path = root / "current"
+    if not path.exists():
+        return None
+    text = path.read_text(encoding="ascii")
+    if re.fullmatch(r"[1-9][0-9]*\n", text) is None:
+        raise EnvironmentError("current must contain an ASCII generation number and newline")
+    return int(text)
+
+
+def set_current(root: Path, number: int) -> None:
+    generation_number(number)
+    path = root / "generations" / str(number) / "generation.json"
+    if Generation.read(path).number != number:
+        raise EnvironmentError("generation directory and recorded number disagree")
+    atomic_write(root / "current", f"{number}\n")
+
+
+def interpreter(generation: Path) -> Path:
+    return generation / "python" / ("python.exe" if os.name == "nt" else "bin/python3")
+
+
+@dataclass(frozen=True)
+class Journal:
+    operation: str
+    previous: int | None
+    target: int
+    stage: str
+    error: str | None = None
+
+    @classmethod
+    def read(cls, path: Path) -> Journal:
+        value = read_document(path)
+        if value.get("format") != "dinkster.journal/1":
+            raise EnvironmentError("unsupported journal format")
+        operation, stage, error = value.get("operation"), value.get("stage"), value.get("error")
+        if not isinstance(operation, str) or operation not in {
+            "setup",
+            "update",
+            "rollback",
+            "move",
+            "repair",
+            "gc",
+        }:
+            raise EnvironmentError("unsupported journal operation")
+        if not isinstance(stage, str) or stage not in {
+            "planned",
+            "building",
+            "starting",
+            "switching",
+            "complete",
+            "rolled-back",
+        }:
+            raise EnvironmentError("unsupported journal stage")
+        if error is not None and not isinstance(error, str):
+            raise EnvironmentError("journal error must be a string")
+        previous = value.get("previous")
+        return cls(
+            operation,
+            None if previous is None else generation_number(previous),
+            generation_number(value.get("target")),
+            stage,
+            error,
+        )
+
+    @property
+    def incomplete(self) -> bool:
+        return self.stage not in {"complete", "rolled-back"}
+
+    def write(self, path: Path) -> None:
+        value: dict[str, object] = {
+            "format": "dinkster.journal/1",
+            "operation": self.operation,
+            "previous": self.previous,
+            "target": self.target,
+            "stage": self.stage,
+        }
+        if self.error is not None:
+            value["error"] = self.error
+        write_document(path, value)
