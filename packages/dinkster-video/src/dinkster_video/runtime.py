@@ -1180,7 +1180,9 @@ def save_video_stream(
         video.pix_fmt = pixel_format
         if not source_components:
             video.codec_context.thread_count = 1
-            video.codec_context.max_b_frames = 0
+            # Source and timeline frames can carry irregular presentation timestamps.
+            if name != "h264" or "components" not in value:
+                video.codec_context.max_b_frames = 0
             video.codec_context.time_base = Fraction(1, 1_000_000)
         for key, attr in zip(
             _COLOR_KEYS, ("color_primaries", "color_trc", "colorspace", "color_range"), strict=True
@@ -1188,7 +1190,9 @@ def save_video_stream(
             setattr(video.codec_context, attr, color[key])
         if pixel.is_rgb:
             video.codec_context.colorspace, video.codec_context.color_range = 0, 2
-        default_crf = (24 if name == "av1" else 18) if source_components else 23
+        default_crf = 23
+        if source_components or name == "h264":
+            default_crf = 24 if name == "av1" else 18
         video.options = (
             {"crf": str(crf if crf is not None else default_crf)} if name in _ENCODERS else {}
         )
@@ -1197,8 +1201,6 @@ def save_video_stream(
                 video.options["preset"] = preset
             if name == "av1" and crf == 0:
                 video.options = {"svtav1-params": "lossless=1"}
-        elif name == "h264":
-            video.options.update({"preset": "fast", "tune": "zerolatency"})
         elif name == "hevc":
             video.codec_context.codec_tag = "hvc1"
             video.options.update(
