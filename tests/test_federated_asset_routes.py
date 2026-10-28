@@ -6,11 +6,13 @@ from pathlib import Path
 from typing import cast
 
 from aiohttp.test_utils import TestClient, TestServer
+from dinkster_assets import AssetVault, LibraryStore, digest_bytes
 from dinkster_assets.acquisition_plan import AcquisitionSource
 from dinkster_assets.model import AssetRef
 from dinkster_assets.resolution import (
     AdvisoryAlias,
     Artifact,
+    DeclaredRequirements,
     LocalMaterialization,
     LogicalModel,
     ModelVariant,
@@ -23,6 +25,7 @@ from dinkster_assets.resolution import (
 from dinkster_server import federated_assets_v1 as dto
 from dinkster_server.app import create_app
 from dinkster_server.auth import Principal
+from dinkster_server.library import ServerLibrary
 from test_server import SCHEMAS, make_engine
 
 DIGEST_A = "blake3:" + "a" * 64
@@ -632,6 +635,133 @@ def test_mount_candidates_page_past_one_hundred_with_global_strict_order(
         finally:
             await client.close()
             store.close()
+
+    asyncio.run(scenario())
+
+
+def test_project_library_and_federated_models_coexist_without_promoting_upload_names(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        data = b"known model content"
+        digest = digest_bytes(data)
+        unknown = b"unclassified content despite its model filename"
+        unknown_digest = digest_bytes(unknown)
+        for attempt in range(2):
+            store = ResolutionStore(tmp_path / "resolution.sqlite")
+            if attempt == 0:
+                store.upsert_logical_model(LogicalModel("known/model", "known", KIND))
+                store.upsert_variant(
+                    ModelVariant(
+                        "known/model",
+                        "bf16",
+                        "bfloat16",
+                        "none",
+                        "safetensors",
+                        "diffusion",
+                        DeclaredRequirements(runtimes=frozenset({"unverified-runtime"})),
+                    )
+                )
+                store.upsert_artifact(Artifact(digest))
+                store.link_variant_artifact(VariantArtifact("known/model", "bf16", digest))
+            library = ServerLibrary(
+                vault=AssetVault(tmp_path / "vault"),
+                store=LibraryStore(tmp_path / "library.sqlite"),
+            )
+            app = create_app(
+                make_engine,
+                SCHEMAS,
+                library=library,
+                authenticator=_Authenticator(
+                    {
+                        "reader": Principal(
+                            "reader", {"workspace-a": frozenset({"assets:read", "assets:write"})}
+                        )
+                    }
+                ),
+                federated_asset_paths={"catalog": CATALOG_PATH, "candidates": CANDIDATES_PATH},
+                federated_asset_store=store,
+                federated_asset_provider_policy={"workspace-a": frozenset()},
+                _federated_asset_cursor_key=b"deterministic-test-cursor-key-32b",
+            )
+            client = TestClient(TestServer(app))
+            await client.start_server()
+            try:
+                if attempt == 0:
+                    for content, identity, name in (
+                        (data, digest, "private-project-name.bin"),
+                        (unknown, unknown_digest, "model-diffusion.safetensors"),
+                    ):
+                        response = await client.post(
+                            "/api/assets/transfers",
+                            params={"scope": "workspace-a", "project": "film", "name": name},
+                            headers={
+                                **_headers(),
+                                "X-Dinkster-Digest": identity,
+                                "X-Dinkster-Source-Machine": "Studio",
+                            },
+                            data=content,
+                        )
+                        assert response.status == 201
+                query = {"scope": "workspace-a", "project": "film"}
+                response = await client.get("/api/assets/catalog", params=query, headers=_headers())
+                assert response.status == 200
+                assets = {
+                    item["asset"]["digest"]: item for item in (await response.json())["assets"]
+                }
+                assert set(assets) == {digest, unknown_digest}
+                assert assets[digest]["aliases"] == ["private-project-name.bin"]
+                assert assets[unknown_digest]["observations"][0]["kind"] == "asset/file"
+                assert (
+                    await (
+                        await client.get(
+                            "/api/assets/catalog",
+                            params={**query, "project": "default"},
+                            headers=_headers(),
+                        )
+                    ).json()
+                )["assets"] == []
+                assert (
+                    await client.get(
+                        "/api/assets/catalog",
+                        params={**query, "scope": "workspace-b"},
+                        headers=_headers(),
+                    )
+                ).status == 403
+                response = await client.post(
+                    CATALOG_PATH,
+                    headers=_headers(),
+                    json={"contractVersion": 1, "scope": "workspace-a", "context": _context()},
+                )
+                assert response.status == 200
+                wire = await response.json()
+                items = dto.decode_catalog_response(wire).items
+                assert len(items) == 1
+                item = items[0]
+                assert (item.digest, item.logical_id, item.asset_kind) == (
+                    digest,
+                    "known/model",
+                    KIND,
+                )
+                assert item.asset_ref is None
+                assert item.availability_status == "unavailable"
+                assert item.compatibility_status == "unknown"
+                assert item.compatibility_reason == "runtime compatibility facts unavailable"
+                assert "private-project-name" not in str(wire)
+                assert "model-diffusion.safetensors" not in str(wire)
+                assert str(tmp_path) not in str(wire)
+                response = await client.get(
+                    "/api/assets/availability",
+                    params={"scope": "workspace-a", "digest": digest},
+                    headers=_headers(),
+                )
+                assert response.status == 200
+                assert await response.json() == {
+                    "assets": [{"digest": digest, "status": "available"}]
+                }
+            finally:
+                await client.close()
+                store.close()
 
     asyncio.run(scenario())
 
