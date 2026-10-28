@@ -99,6 +99,15 @@ The main protocol routes include:
   it requires configured upload folders and does not create media authority.
   Without query fields, `/api/assets` retains anonymous idempotent digest
   storage for workflows and transfers and returns `{digest}`.
+  `POST /api/assets/transfers?scope=&name=&project=` receives an explicit
+  digest transfer into the vault and returns `{digest, asset}`. It requires
+  `X-Dinkster-Digest` and `X-Dinkster-Source-Machine` headers, `assets:write`
+  in the receiving scope, and the existing generic upload size limit.
+  `project` defaults to `default`; mount/folder destinations are rejected.
+  The source-machine label is caller-reported advisory history, not a verified
+  machine identity or filesystem authority. Verified bytes and their scoped
+  transfer observation publish through the same recoverable streaming path
+  as named uploads; generic transfers create no classified media authority.
 - `GET /api/assets/catalog?scope=&project=` lists persistent upload observations,
   grouped by digest, separately from workflow records. `q` searches original
   and stored names and recorded origin details; `kind` and `origin` filter

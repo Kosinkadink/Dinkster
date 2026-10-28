@@ -616,6 +616,142 @@ def test_upload_and_fetch_roundtrip(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
+def test_transferred_asset_retains_scoped_history_after_catalog_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_server.auth import Principal, StaticBearerAuthenticator
+
+    data = b"remote model bytes with no invented classification"
+    digest = digest_bytes(data)
+    vault = AssetVault(tmp_path / "vault")
+    authenticator = StaticBearerAuthenticator(
+        {"sender": Principal("sender", {"alice": frozenset({"assets:read", "assets:write"})})}
+    )
+
+    async def scenario() -> None:
+        source = await make_client(tmp_path / "source")
+        response = await source.post("/api/assets", data=data)
+        assert response.status == 201
+        for attempt in range(2):
+            library = ServerLibrary(vault=vault, store=LibraryStore(tmp_path / "library.sqlite"))
+            client = TestClient(
+                TestServer(
+                    create_app(make_engine, SCHEMAS, library=library, authenticator=authenticator)
+                )
+            )
+            await client.start_server()
+            headers = {
+                "Authorization": "Bearer sender",
+                "Content-Type": "application/octet-stream",
+                "X-Dinkster-Digest": digest,
+                "X-Dinkster-Source-Machine": "Studio workstation",
+            }
+            query = {"scope": "alice", "project": "film", "name": "model.bin"}
+            try:
+                if attempt == 0:
+                    for changed, status in (({"scope": "bob"}, 403), ({"mount": "imports"}, 400)):
+                        response = await client.post(
+                            "/api/assets/transfers",
+                            params={**query, **changed},
+                            data=data,
+                            headers=headers,
+                        )
+                        assert response.status == status
+                    for machine in (None, "", " ", "x" * 256):
+                        test_headers = dict(headers)
+                        if machine is None:
+                            test_headers.pop("X-Dinkster-Source-Machine")
+                        else:
+                            test_headers["X-Dinkster-Source-Machine"] = machine
+                        response = await client.post(
+                            "/api/assets/transfers", params=query, data=data, headers=test_headers
+                        )
+                        assert response.status == 400
+                    response = await client.post(
+                        "/api/assets/transfers",
+                        params=query,
+                        data=data,
+                        headers={**headers, "X-Dinkster-Digest": DIGEST_B},
+                    )
+                    assert response.status == 409
+                    assert vault.digests() == []
+
+                    def unavailable(*_args: object, **_kwargs: object) -> None:
+                        raise sqlite3.OperationalError("catalog unavailable")
+
+                    with monkeypatch.context() as patch:
+                        patch.setattr(library.store, "record_asset", unavailable)
+                        remote = await source.get(f"/api/assets/{digest}")
+                        response = await client.post(
+                            "/api/assets/transfers",
+                            params=query,
+                            data=remote.content.iter_chunked(7),
+                            headers=headers,
+                        )
+                        assert response.status == 503
+                    assert vault.resolve(digest) is not None
+                    journals = list((vault.root / ".upload-observations").glob("*.json"))
+                    assert len(journals) == 1
+                    assert json.loads(journals[0].read_text())["origin"] == {
+                        "kind": "transfer",
+                        "machine": "Studio workstation",
+                    }
+                response = await client.get(
+                    "/api/assets/catalog",
+                    params={"scope": "alice", "project": "film"},
+                    headers=headers,
+                )
+                assert response.status == 200
+                items = (await response.json())["assets"]
+                assert len(items) == 1
+                assert items[0]["asset"] == AssetRef(digest, "model.bin", len(data)).to_wire()
+                assert len(items[0]["observations"]) == 1
+                observation = items[0]["observations"][0]
+                assert observation["origin"] == {
+                    "kind": "transfer",
+                    "machine": "Studio workstation",
+                }
+                assert observation["kind"] == "asset/file"
+                assert list((vault.root / ".upload-observations").glob("*.json")) == []
+                assert library.store.query_assets("alice") == []
+                assert library.store.query_assets("bob", project="film") == []
+                assert library.store.media_grant("alice", digest, "media/image") is None
+                response = await client.get(f"/api/assets/{digest}", headers=headers)
+                assert await response.read() == data
+                assert not list(vault.root.glob(".media-upload-*"))
+                if attempt == 1:
+                    response = await client.post(
+                        "/api/assets/transfers",
+                        params={**query, "name": "renamed.bin"},
+                        data=data,
+                        headers={**headers, "X-Dinkster-Source-Machine": "Second workstation"},
+                    )
+                    assert response.status == 200
+                    assert await response.json() == {
+                        "digest": digest,
+                        "asset": AssetRef(digest, "renamed.bin", len(data)).to_wire(),
+                    }
+                    response = await client.get(
+                        "/api/assets/catalog",
+                        params={"scope": "alice", "project": "film", "origin": "transfer"},
+                        headers=headers,
+                    )
+                    items = (await response.json())["assets"]
+                    assert len(items) == 1
+                    assert items[0]["aliases"] == ["model.bin", "renamed.bin"]
+                    assert [event["origin"] for event in items[0]["observations"]] == [
+                        {"kind": "transfer", "machine": "Studio workstation"},
+                        {"kind": "transfer", "machine": "Second workstation"},
+                    ]
+                    assert vault.digests() == [digest]
+            finally:
+                await client.close()
+                if attempt == 0:
+                    await source.close()
+
+    asyncio.run(scenario())
+
+
 def test_named_model_upload_streams_to_folder_without_redirecting_workflows(tmp_path: Path) -> None:
     header = json.dumps(
         {"weights": {"dtype": "F32", "shape": [300_000], "data_offsets": [0, 1_200_000]}}
@@ -1192,8 +1328,8 @@ def test_asset_get_falls_through_to_resolver(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("named", (False, True))
-def test_upload_declared_digest_and_limits(tmp_path: Path, named: bool) -> None:
+@pytest.mark.parametrize("destination", ("anonymous", "named", "transfer"))
+def test_upload_declared_digest_and_limits(tmp_path: Path, destination: str) -> None:
     async def oversized_chunks():
         yield b"x" * 32
         await asyncio.sleep(0)
@@ -1212,25 +1348,36 @@ def test_upload_declared_digest_and_limits(tmp_path: Path, named: bool) -> None:
             upload_writer=AssetWriter(mounts),
             project_folders_for=lambda _project: AssetFolderContext(("imports",)),
         )
-        path = "/api/assets?scope=local&name=source.bin" if named else "/api/assets"
+        path = {
+            "anonymous": "/api/assets",
+            "named": "/api/assets?scope=local&name=source.bin",
+            "transfer": "/api/assets/transfers?scope=local&name=source.bin",
+        }[destination]
+        headers = {"X-Dinkster-Source-Machine": "Sender"} if destination == "transfer" else {}
         try:
             body = b'{"graphs": {}}'
-            resp = await client.post(path, data=body, headers={"X-Dinkster-Digest": DIGEST_B})
-            assert resp.status == (409 if named else 400)
-            assert (await client.get(f"/api/assets/{digest_bytes(body)}")).status == 404
             resp = await client.post(
-                path, data=body, headers={"X-Dinkster-Digest": digest_bytes(body)}
+                path, data=body, headers={**headers, "X-Dinkster-Digest": DIGEST_B}
             )
+            assert resp.status == (400 if destination == "anonymous" else 409)
+            assert (await client.get(f"/api/assets/{digest_bytes(body)}")).status == 404
+            if destination == "transfer":
+                assert (await client.post(path, data=body, headers=headers)).status == 400
+            headers["X-Dinkster-Digest"] = digest_bytes(body)
+            resp = await client.post(path, data=body, headers=headers)
             assert resp.status == 201
             saved_files = sorted(entry.name for entry in root.iterdir())
 
-            assert (await client.post(path, data=b"x" * 65)).status == 413
-            assert (await client.post(path, data=oversized_chunks())).status == 413
-            assert (await client.post(path, data=b"")).status == 400
-            if named:
+            assert (await client.post(path, data=b"x" * 65, headers=headers)).status == 413
+            assert (await client.post(path, data=oversized_chunks(), headers=headers)).status == 413
+            assert (await client.post(path, data=b"", headers=headers)).status == 400
+            if destination == "named":
                 assert (root / "source.bin").read_bytes() == body
                 assert sorted(entry.name for entry in root.iterdir()) == saved_files
                 assert client.app[LIBRARY_KEY].vault.digests() == []
+            elif destination == "transfer":
+                assert not (root / "source.bin").exists()
+                assert client.app[LIBRARY_KEY].vault.digests() == [digest_bytes(body)]
             assert not list(client.app[LIBRARY_KEY].vault.root.glob(".media-upload-*"))
         finally:
             await client.close()

@@ -889,6 +889,13 @@ returned, with their actual `path` and `storage` type. Missing, changed,
 excluded and revoked copies are omitted. Responses use `Cache-Control: no-store`.
 Each observed filename is verified separately, so identical content at multiple
 names remains revealable without substituting the resolver's preferred alias.
+Vault paths must remain inside the canonical vault root, including after
+symlink resolution. A digest query with both a `vault` string and a `locations`
+array supports exact-file lookup; `locations: []` means no verified location.
+A host without a configured library omits `vault` and does not support that
+lookup, even if it returns an empty `locations` array. Missing fields on older
+hosts likewise do not advertise support. HTTP 400, 403, 404 and 5xx responses
+are errors or unavailable capability, never a successful empty lookup.
 This endpoint only reports locations; it neither downloads nor opens files in
 the desktop shell.
 

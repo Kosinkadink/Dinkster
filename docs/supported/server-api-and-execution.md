@@ -37,6 +37,11 @@
   without buffering the whole file. Anonymous workflow and digest transfers
   retain deduplicated vault storage; named generic imports do not grant
   classified media authority.
+- Explicit scoped digest transfers retain their name, receive time and
+  caller-reported source-machine label across restarts, with recoverable
+  catalog publication. The label is advisory, not verified machine identity.
+  Transfers verify the declared digest, use the existing upload limit and
+  streaming vault path, and do not create classified media authority.
 - Named and classified-media uploads retain their original names, observed
   virtual locations and upload history across server restarts. The scoped
   asset catalog groups aliases by digest, supports name/kind/origin/date
@@ -66,7 +71,8 @@
 - Human operators can inspect the vault directory and verified physical
   locations for a scoped project asset, including identical bytes under
   different observed filenames. Changed, missing, excluded and revoked
-  copies are not offered as reveal targets. Ordinary catalogs remain path-free;
+  copies and vault symlinks escaping the vault root are not offered as reveal
+  targets. Ordinary catalogs remain path-free;
   location reporting does not download assets or open the desktop shell.
 - Operators can persist project folder membership, independent display order,
   shared folders, and project output selections through the mount API.

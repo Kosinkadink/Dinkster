@@ -361,15 +361,19 @@ async def handle_mount_locations(request: web.Request) -> web.Response:
         if groups and library is not None:
             asset = groups[0][-1].asset
             try:
-                path = await asyncio.to_thread(
-                    AssetRef(
-                        asset.digest, asset.name, asset.size, resolver=library.vault
-                    ).local_path
-                )
+                root = library.vault.root.resolve()
+                path = library.vault.resolve(asset.digest)
+                if path is not None and path.resolve().is_relative_to(root):
+                    path = await asyncio.to_thread(
+                        AssetRef(
+                            asset.digest, asset.name, asset.size, resolver=library.vault
+                        ).local_path
+                    )
+                    path = path.resolve()
+                    if path.is_relative_to(root):
+                        locations.append({"storage": "vault", "path": str(path)})
             except (AssetError, OSError):
                 pass
-            else:
-                locations.append({"storage": "vault", "path": str(path)})
             for virtual_path in dict.fromkeys(item.asset.virtual_path for item in groups[0]):
                 parts = virtual_path.split("/", 2)
                 if len(parts) != 3 or parts[0] != "mounts" or parts[1] not in context.mounts:

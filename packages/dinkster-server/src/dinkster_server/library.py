@@ -579,8 +579,33 @@ async def handle_media_upload(request: web.Request) -> web.Response:
     return await _ingest_file_upload(request, scope, claimed_kind, name)
 
 
+async def handle_transfer_upload(request: web.Request) -> web.Response:
+    query = _file_upload_query(request, classified=False)
+    if isinstance(query, web.Response):
+        return query
+    if {"mount", "folder"}.intersection(request.query):
+        return _json_error(400, "digest transfers do not accept a folder destination")
+    machine = request.headers.get("X-Dinkster-Source-Machine", "")
+    if (
+        not machine
+        or machine != machine.strip()
+        or len(machine) > 255
+        or any(ord(character) < 32 for character in machine)
+    ):
+        return _json_error(400, "X-Dinkster-Source-Machine must be a nonempty machine label")
+    if not is_digest(request.headers.get(DIGEST_HEADER, "")):
+        return _json_error(400, "digest transfers require a canonical X-Dinkster-Digest")
+    scope, _kind, name = query
+    return await _ingest_file_upload(request, scope, None, name, transfer_from=machine)
+
+
 async def _ingest_file_upload(
-    request: web.Request, scope: str, claimed_kind: str | None, name: str
+    request: web.Request,
+    scope: str,
+    claimed_kind: str | None,
+    name: str,
+    *,
+    transfer_from: str | None = None,
 ) -> web.Response:
     error: Callable[[int, str, str], web.Response] = (
         _media_error
@@ -612,7 +637,7 @@ async def _ingest_file_upload(
     library = request.app[LIBRARY_KEY]
     project = request.query.get("project", "default")
     target: SaveTarget | None = None
-    if (
+    if transfer_from is None and (
         claimed_kind is None
         or library.upload_writer is not None
         or {"mount", "folder", "project"}.intersection(request.query)
@@ -699,6 +724,11 @@ async def _ingest_file_upload(
         observation_id = uuid.uuid4().hex
         created_at = time.time()
         journal = library.vault.root / ".upload-observations" / f"{observation_id}.json"
+        origin = (
+            {"kind": "transfer", "machine": transfer_from}
+            if transfer_from is not None
+            else {"kind": "upload"}
+        )
 
         def prepare(ref: AssetRef) -> None:
             payload = {
@@ -709,6 +739,7 @@ async def _ingest_file_upload(
                 "extension": grant.extension if grant is not None else None,
                 "project": project,
                 "created": created_at,
+                "origin": origin,
             }
             _write_asset_observation_journal(journal, payload)
 
@@ -736,27 +767,28 @@ async def _ingest_file_upload(
                         ref,
                         original_name=name,
                         kind=grant.kind if grant is not None else "asset/file",
-                        origin={"kind": "upload"},
+                        origin=origin,
                         project=project,
                         observation_id=observation_id,
                         created=created_at,
                     )
                     journal.unlink()
                     return ref, True
-                assert grant is not None
                 ref = AssetRef(digest, name, received, media_type, "")
                 prepare(ref)
                 with library.vault.writer(digest) as writer, temporary_path.open("rb") as source:
                     while chunk := source.read(64 * 1024):
                         writer.write(chunk)
                     _path, bytes_created = writer.commit_with_result()
-                _stored, grant_created = library.store.grant_media_result(grant, temporary_path)
+                grant_created = False
+                if grant is not None:
+                    _stored, grant_created = library.store.grant_media_result(grant, temporary_path)
                 library.store.record_asset(
                     scope,
                     ref,
                     original_name=name,
-                    kind=grant.kind,
-                    origin={"kind": "upload"},
+                    kind=grant.kind if grant is not None else "asset/file",
+                    origin=origin,
                     project=project,
                     observation_id=observation_id,
                     created=created_at,
@@ -1462,6 +1494,7 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
 
     app[LIBRARY_KEY] = library
     app.router.add_post("/api/assets", handle_upload)
+    app.router.add_post("/api/assets/transfers", handle_transfer_upload)
     app.router.add_post("/api/assets/media", handle_media_upload)
     app.router.add_post("/api/assets/latent", handle_latent_upload)
     app.router.add_post("/api/assets/image-document", handle_image_document)

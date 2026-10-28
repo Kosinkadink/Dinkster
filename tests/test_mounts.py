@@ -2016,6 +2016,59 @@ def test_project_folder_paths_and_mutations_require_operator(tmp_path: Path) -> 
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("library_state", ("absent", "empty", "escaping"))
+def test_operator_location_support_and_vault_containment(
+    tmp_path: Path, library_state: str
+) -> None:
+    data = b"bytes outside the authoritative vault root"
+    digest = digest_bytes(data)
+    library = (
+        ServerLibrary(
+            vault=AssetVault(tmp_path / "vault"), store=LibraryStore(tmp_path / "catalog.sqlite")
+        )
+        if library_state != "absent"
+        else None
+    )
+    if library_state == "escaping":
+        assert library is not None
+        outside = tmp_path / "private-file.bin"
+        outside.write_bytes(data)
+        hexpart = digest.split(":", 1)[1]
+        shard = library.vault.root / hexpart[:2]
+        shard.mkdir()
+        try:
+            (shard / hexpart).symlink_to(outside)
+        except OSError:
+            pytest.skip("symlink creation is unavailable")
+        library.store.record_asset(
+            "local",
+            AssetRef(digest, "file.bin", len(data)),
+            original_name="file.bin",
+            kind="asset/file",
+            origin={"kind": "unknown"},
+        )
+
+    async def scenario() -> None:
+        app = create_app(make_engine, SCHEMAS, library=library)
+        add_mount_routes(app, MountService(MountTable()))
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            response = await client.get("/api/mounts/locations", params={"digest": digest})
+            assert response.status == 200
+            assert response.headers["Cache-Control"] == "no-store"
+            body = await response.json()
+            assert body["locations"] == []
+            if library is None:
+                assert "vault" not in body
+            else:
+                assert body["vault"] == str(library.vault.root.resolve())
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
 def test_operator_asset_locations_verify_scoped_project_content(tmp_path: Path) -> None:
     table = MountTable()
     seed(tmp_path / "imports", {"first.bin": b"first", "other.bin": b"other"})
