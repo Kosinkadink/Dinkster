@@ -14,7 +14,6 @@ packages = ["src/dinkster_nodes_foundation"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "dinkster-pack.toml" = "dinkster_nodes_foundation_pack/dinkster-pack.toml"
-"comfy-aliases.json" = "dinkster_nodes_foundation_pack/comfy-aliases.json"
 "docs" = "dinkster_nodes_foundation_pack/docs"
 "src/dinkster_nodes_foundation" = "dinkster_nodes_foundation_pack/dinkster_nodes_foundation"
 
