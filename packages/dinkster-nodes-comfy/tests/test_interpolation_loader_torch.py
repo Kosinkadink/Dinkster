@@ -1,13 +1,30 @@
 """Real checkpoint loading through the public interpolation node."""
 
+import asyncio
+import os
+import sys
 from pathlib import Path
 
 import pytest
 import torch
-from dinkster_api.v1 import AssetRef, initialize_inference_process
-from dinkster_assets import digest_file
+from dinkster_api.v1 import (
+    CORE_STRING,
+    INTERP_MODEL_TYPE,
+    AssetRef,
+    InputSpec,
+    LocalAssetRef,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+    initialize_inference_process,
+)
+from dinkster_assets import MountDef, MountTable, digest_file
+from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.interpolation_loader import FrameInterpolationModelLoader
 from safetensors.torch import save_file
+
+from dinkster.compose import PackSpec, ServingComposer
 
 
 class _Resolver:
@@ -71,3 +88,133 @@ def test_unrecognized_checkpoint_has_reference_error(tmp_path: Path) -> None:
 def test_unbound_checkpoint_is_rejected() -> None:
     with pytest.raises(TypeError, match="AssetRef or LocalAssetRef"):
         FrameInterpolationModelLoader.execute(model_name="checkpoint.safetensors")
+
+
+class InspectInterpolationModel(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="interpolation-fixture.inspect",
+            inputs=(InputSpec("model", TypeExpr.concrete(INTERP_MODEL_TYPE)),),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, model: object) -> dict[str, object]:
+        from dinkster_inference.model_patcher import CoreModelPatcher
+
+        assert isinstance(model, CoreModelPatcher)
+        assert model.load_device == model.offload_device == torch.device("cpu")
+        assert not model.model.training
+        assert model.model.encode.cnn3.out_channels == 6
+        assert [block.conv0[1][0].out_channels for block in model.model.blocks] == [
+            8,
+            10,
+            12,
+            14,
+            16,
+        ]
+        weight = model.model.state_dict()["encode.cnn0.weight"]
+        assert weight.dtype == torch.float32
+        torch.testing.assert_close(
+            weight,
+            (torch.arange(432, dtype=torch.float32).reshape(16, 3, 3, 3) - 137) / 1024,
+            rtol=0,
+            atol=0,
+        )
+        return cls.outputs(summary="resident RIFE has exact weights, channels, dtype and devices")
+
+
+@pytest.mark.parametrize("verified", (False, True))
+@pytest.mark.parametrize("in_process", (True, False))
+def test_mounted_checkpoint_crosses_ordinary_hosts_twice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verified: bool, in_process: bool
+) -> None:
+    initialize_inference_process()
+    from dinkster_nodes_comfy.interpolation_models import rife_model
+
+    state = {
+        key: torch.zeros_like(value)
+        for key, value in rife_model(6, (8, 10, 12, 14, 16)).state_dict().items()
+    }
+    state["encode.cnn0.weight"] = (
+        torch.arange(432, dtype=torch.float32).reshape(16, 3, 3, 3) - 137
+    ) / 1024
+    path = tmp_path / "rife.safetensors"
+    save_file(state, path)
+    before = digest_file(path)
+    snapshot = tmp_path / "mounts.json"
+    mounts = MountTable(snapshot, index_root=tmp_path / "index")
+    mounts.add(MountDef(id="interpolation", path=tmp_path), kind="model/frame-interpolation")
+    if verified:
+        mounts.scan("interpolation")
+    asset = mounts.bind_name(path.name, "model/frame-interpolation")
+    assert isinstance(asset, AssetRef if verified else LocalAssetRef)
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+    module = "interpolation_fixture_" + tmp_path.name.replace("-", "_")
+    (tmp_path / f"{module}.py").write_text(
+        "from test_interpolation_loader_torch import InspectInterpolationModel\n"
+        "from dinkster_nodes_comfy import register_inference_types\n"
+        "NODES = (InspectInterpolationModel,)\n",
+        encoding="ascii",
+    )
+    fixture = tmp_path / "fixture.toml"
+    fixture.write_text(
+        '[pack]\nname = "interpolation-fixture"\npublisher = "dinkster"\n'
+        'namespaces = ["interpolation-fixture"]\n[pack.entry]\n'
+        f'nodes = "{module}:NODES"\ntypes = "{module}:register_inference_types"\n',
+        encoding="ascii",
+    )
+    package = Path(__file__).resolve().parents[1]
+    checkout = package.parents[1]
+    native = package / "dinkster-pack.toml"
+
+    async def scenario() -> None:
+        composer = ServingComposer(
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
+                "PYTHONPATH": os.pathsep.join(
+                    (
+                        str(tmp_path),
+                        str(Path(__file__).parent),
+                        str(checkout / "src"),
+                        *(str(p) for p in sorted(checkout.glob("packages/*/src"))),
+                        *(p for p in sys.path if p),
+                    )
+                ),
+            }
+        )
+        try:
+            manifests = (native, fixture)
+            for manifest in manifests:
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=manifest,
+                        in_process=in_process,
+                        worker_group=None if in_process else "interpolation-fixture",
+                        group_manifests=() if in_process else manifests,
+                    )
+                )
+            graph = Graph(
+                nodes={
+                    "load": GraphNode(
+                        "FrameInterpolationModelLoader", {"model_name": asset.to_wire()}
+                    ),
+                    "inspect": GraphNode(
+                        "interpolation-fixture.inspect", {"model": Link("load", "INTERP_MODEL")}
+                    ),
+                }
+            )
+            engine = composer.composition.make_engine(lambda _event: None)
+            for _ in range(2):
+                result = await engine.run(graph, ["inspect"])
+                assert result.outputs["inspect"]["summary"].resolve() == (
+                    "resident RIFE has exact weights, channels, dtype and devices"
+                )
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+    assert digest_file(path) == before
