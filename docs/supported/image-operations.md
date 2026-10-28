@@ -24,6 +24,8 @@
   with stretching or aspect-preserving black padding.
 - Native `SDPoseFaceBBoxes` converts canonical pose face keypoints into per-frame
   pixel boxes with area scaling and optional square expansion for cropping.
+- Native `SDPoseDrawKeypoints` renders body, head, hand, foot and face keypoints
+  as pose images with confidence thresholds and adjustable marker widths.
 - Native `RTDETR_detect` returns per-frame pixel bounding boxes filtered by
   confidence and COCO class, ordered by score and limited per frame.
   `DrawBBoxes` overlays boxes and labels on images or a black canvas.
