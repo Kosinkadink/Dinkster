@@ -45,6 +45,7 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
 def test_release_workflow_builds_all_wheels_and_checks_tag_metadata() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
     build = workflow["jobs"]["build"]
+    assert build["permissions"] == {"actions": "read", "contents": "read"}
     commands = "\n".join(step.get("run", "") for step in build["steps"])
     assert "-m scripts.build_release" in commands
     assert '--tag "$GITHUB_REF_NAME"' in commands

@@ -18,6 +18,9 @@ jobs:
 
   build:
     needs: validation
+    permissions:
+      actions: read
+      contents: read
     runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
     timeout-minutes: 30
     steps:
