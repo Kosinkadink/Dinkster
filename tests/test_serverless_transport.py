@@ -12,6 +12,7 @@ import pytest
 from dinkster_caches import DiskCAS, MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link
+from dinkster_nodes_comfy import register_inference_types
 from dinkster_protocol import (
     ErrorHint,
     ExportSnapshot,
@@ -46,7 +47,6 @@ from dinkster_values import (
 from dinkster_workers import InProcessWorker
 from dinkster_workers.boundary import BoundaryError, encode_invocation
 
-from dinkster.comfy_compose import register_comfy_host_types
 from tools.serverless_transport import (
     DiskObjectStore,
     Envelope,
@@ -119,7 +119,7 @@ class Harness:
     def transport(self, name: str, *, limits: Limits | None = None) -> Transport:
         registry = TypeRegistry()
         register_core_types(registry)
-        register_comfy_host_types(registry)
+        register_inference_types(registry)
         return Transport(
             registry,
             self.store,
