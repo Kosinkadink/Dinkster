@@ -92,6 +92,7 @@ from dinkster_assets import (
     probe_handle,
     valid_vae_hint,
 )
+from dinkster_protocol import AssetFolderContext
 from dinkster_values import (
     LATENT_UPLOAD_HEADROOM_BYTES,
     MEBIBYTE,
@@ -163,6 +164,7 @@ class ServerLibrary:
     #: hits are STREAMED, not buffered - a mount can hold model-sized
     #: files, unlike the capped upload vault.
     resolver: AssetResolver | None = None
+    project_folders_for: Callable[[str], AssetFolderContext] | None = None
     #: Optional digest-keyed source leads (where bytes can be obtained).
     #: Enables the sources routes and job-preflight acquisition; records
     #: are leads, never authorities - fetched bytes verify against the
