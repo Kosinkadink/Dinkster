@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import re
@@ -21,6 +22,7 @@ from packaging.tags import Tag
 from packaging.utils import canonicalize_name, parse_wheel_filename
 from packaging.version import Version
 
+from .manifest import load_manifest
 from .provision import ProvisionError
 
 OPENCV_ALIASES = {
@@ -104,7 +106,10 @@ class PackLock:
     @classmethod
     def read(cls, path: Path) -> PackLock:
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(raw, dict):
+                raise ValueError("dependency lock must be an object")
+            data = cast("dict[str, Any]", raw)
             if data.pop("format") != "dinkster.pack-lock/1":
                 raise ValueError("unsupported dependency lock format")
             return cls(
@@ -308,3 +313,39 @@ def resolve_pack_lock(
                 )
             )
     return PackLock(pack, variant, requires_python, normalized, tuple(indexes), tuple(packages))
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Resolve a publisher or local checkout once, not during published installation."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("pack_root", type=Path)
+    parser.add_argument("--variant", required=True)
+    parser.add_argument("--generation-python", type=Path, required=True)
+    parser.add_argument("--constraints", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--index", action="append", default=[])
+    parser.add_argument("--find-links", type=Path, action="append", default=[])
+    parser.add_argument("--requires-python", default=">=3.12")
+    parser.add_argument("--accelerator")
+    parser.add_argument("--uv", default="uv")
+    args = parser.parse_args(argv)
+    manifest = load_manifest(args.pack_root / "dinkster-pack.toml")
+    lock = resolve_pack_lock(
+        pack=manifest.name,
+        variant=args.variant,
+        requirements=(
+            manifest.requires_for(args.accelerator) if args.accelerator else manifest.requires
+        ),
+        python=args.generation_python,
+        constraints=args.constraints,
+        indexes=args.index,
+        find_links=args.find_links,
+        requires_python=args.requires_python,
+        uv=args.uv,
+    )
+    lock.write(args.output)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

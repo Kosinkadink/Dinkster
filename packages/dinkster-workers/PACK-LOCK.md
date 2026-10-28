@@ -70,3 +70,59 @@ defines no alternative `generation.json`, `current`, `store` or journal format.
 and reports missing, extra and differing packages with a rebuild-from-lock offer.
 `scratch_venv` supplies a terminal interpreter over the generation without opening
 the immutable generation itself to package installation.
+
+## Generation subprocess adapter
+
+The generation manager runs its target interpreter with
+`-m dinkster_workers.pack_environment <preflight|rebuild|doctor|terminal>`.
+All operations accept these explicit options:
+
+```
+--generation <root>/generations/<n>
+--generation-python <generation>/python/bin/python3
+--constraints <generation>/constraints.txt
+--variant linux-cpu
+--worker-protocol <integer>
+--wheel-store <data>/wheels
+--uv-cache <data>/uv-cache
+--own-environment-size <base bundle bytes>
+--uv <uv executable>
+```
+
+On Windows the generation interpreter is `python/python.exe`. Generation
+metadata, current/store newline files, and journals belong to `dinkster-env`.
+This adapter never changes them. `preflight` and `rebuild` also accept
+`--source-generation <old generation>` and repeatable `--lock <path>` for new
+installs or explicitly selected target-variant locks. Source pack locks are
+mandatory; a supplied replacement may replace one pack's lock, but missing or
+incompatible packs are never silently omitted. A variant switch without a matching
+lock fails rather than resolving again. Setup may omit the source generation.
+
+Stdout is exactly one JSON object, including on operational failures:
+
+```json
+{"packs": [{"pack": "example", "conflicts": [], "downloadBytes": 0, "ownEnvironmentBytes": 1000}], "changes": []}
+```
+
+`downloadBytes` counts selected wheels not already hash-verified in the store.
+Exit 0 means no blocking conflict or drift; nonzero means the caller must not
+swap. `preflight` plans every pack without downloads or venv mutation. `rebuild`
+rechecks plans, installs into a fresh target, and removes packs it created if a
+later pack fails. It finishes before the caller starts the target supervisor.
+`doctor` is read-only and returns drift/rebuild offers in `changes`; confirmed
+repair builds a fresh generation rather than modifying a running pack venv.
+`terminal --pack <id>` returns the installed pack interpreter as the sole
+`changes` entry. Without `--pack` it creates/returns `<root>/scratch/<n>/`.
+Neither choice returns the generation interpreter.
+
+Python callers use `GenerationContext(generation, generation_python, constraints,
+variant, worker_protocol, wheel_store, uv_cache, own_environment_size, uv="uv")`,
+`preflight_generation(context, *, source_generation=None, locks=())`,
+`rebuild_generation(context, plans)` and `doctor_generation(context)`.
+
+An own environment uses a separately installed base of its required variant,
+created by the generation manager rather than layered on the conflicting engine.
+That base includes its own `dinkster-workers` distribution. The same adapter
+consumes the lock over that base. Both local and remote worker sessions verify
+the `protocol` integer in the worker hello before adopting its declarations, so
+separately shipped workers cannot assume their engine's `workerProtocol`.

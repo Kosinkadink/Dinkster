@@ -14,7 +14,17 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from dinkster_workers.pack_environment import pack_drift, provision_pack, venv_python
+from dinkster_workers.boundary import PROTOCOL_VERSION
+from dinkster_workers.pack_environment import (
+    GenerationContext,
+    doctor_generation,
+    main,
+    pack_drift,
+    preflight_generation,
+    provision_pack,
+    rebuild_generation,
+    venv_python,
+)
 from dinkster_workers.pack_lock import (
     OPENCV_ALIASES,
     GenerationPackages,
@@ -210,6 +220,35 @@ def test_local_resolution_uses_constraints_and_provision_rejects_bad_hash(tmp_pa
         ("fixture-extra", "1.2")
     ]
     assert lock.packages[0].wheels[0].sha256 == extra.sha256
+    pack_root = tmp_path / "checkout"
+    pack_root.mkdir()
+    (pack_root / "dinkster-pack.toml").write_text(
+        '[pack]\nname="example"\nnamespaces=["example"]\nrequires=["fixture-extra>=1"]\n'
+        '[pack.entry]\nnodes="example:NODES"\n'
+    )
+    published = tmp_path / "published.json"
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "dinkster_workers.pack_lock",
+            str(pack_root),
+            "--variant",
+            "linux-cpu",
+            "--generation-python",
+            str(parent),
+            "--constraints",
+            str(constraints),
+            "--find-links",
+            str(tmp_path),
+            "--output",
+            str(published),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert PackLock.read(published) == lock
     bad = replace(
         lock, packages=(replace(lock.packages[0], wheels=(replace(extra, sha256="b" * 64),)),)
     )
@@ -226,3 +265,113 @@ def test_local_resolution_uses_constraints_and_provision_rejects_bad_hash(tmp_pa
             variant="linux-cpu",
         )
     assert not venv_python(tmp_path / "packs/example").exists()
+
+
+def test_generation_adapter_preflights_rebuilds_and_reports_drift(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    extra = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "value = 23\n")
+    lock = PackLock(
+        "example",
+        "linux-cpu",
+        ">=3.12",
+        ("fixture-extra==1.2",),
+        (),
+        (LockedDistribution("fixture-extra", "1.2", (extra,)),),
+    )
+    old = tmp_path / "generations/1"
+    (old / "packs/example").mkdir(parents=True)
+    lock.write(old / "packs/example/pack-lock.json")
+    current = tmp_path / "current"
+    current.write_text("1\n")
+    target = tmp_path / "generations/2"
+    python = _generation(target / "python", [])
+    constraints = target / "constraints.txt"
+    constraints.write_text("packaging==26.2\n")
+    context = GenerationContext(
+        target,
+        python,
+        constraints,
+        "linux-cpu",
+        PROTOCOL_VERSION,
+        tmp_path / "wheels",
+        tmp_path / "cache",
+        9000,
+    )
+    plans = preflight_generation(context, source_generation=old)
+    assert plans[0].wheels == (extra,)
+    assert not (target / "packs").exists()
+    assert not context.wheel_store.exists()
+    assert rebuild_generation(context, plans) == ("rebuilt pack example from its dependency lock",)
+    assert doctor_generation(context) == ()
+    assert current.read_text() == "1\n"
+    assert (old / "packs/example/pack-lock.json").is_file()
+    args = [
+        "--generation",
+        str(target),
+        "--generation-python",
+        str(python),
+        "--constraints",
+        str(constraints),
+        "--variant",
+        "linux-cpu",
+        "--worker-protocol",
+        str(PROTOCOL_VERSION),
+        "--wheel-store",
+        str(context.wheel_store),
+        "--uv-cache",
+        str(context.uv_cache),
+        "--own-environment-size",
+        "9000",
+    ]
+    assert main(["doctor", *args]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["changes"] == []
+    assert result["packs"] == [
+        {"pack": "example", "conflicts": [], "downloadBytes": 0, "ownEnvironmentBytes": 9000}
+    ]
+    assert main(["terminal", *args, "--pack", "example"]) == 0
+    terminal = json.loads(capsys.readouterr().out)["changes"][0]
+    assert Path(terminal) == venv_python(target / "packs/example")
+    assert main(["terminal", *args]) == 0
+    scratch = Path(json.loads(capsys.readouterr().out)["changes"][0])
+    assert scratch == venv_python(tmp_path / "scratch/2")
+    assert scratch != python
+    metadata = next((target / "packs/example").rglob("fixture_extra-1.2.dist-info")) / "METADATA"
+    metadata.write_text("Name: fixture-extra\nVersion: 9.0\n")
+    assert main(["doctor", *args]) == 1
+    drift = json.loads(capsys.readouterr().out)["changes"]
+    assert any("fixture-extra" in message and "found 9.0" in message for message in drift)
+
+
+def test_generation_preflight_never_silently_omits_packs(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    (source / "packs/broken").mkdir(parents=True)
+    target = tmp_path / "target"
+    python = _generation(target / "python", [])
+    constraints = target / "constraints.txt"
+    constraints.write_text("")
+    context = GenerationContext(
+        target,
+        python,
+        constraints,
+        "linux-cpu",
+        PROTOCOL_VERSION,
+        tmp_path / "wheels",
+        tmp_path / "cache",
+        1000,
+    )
+    with pytest.raises(ProvisionError, match="broken.*lock missing"):
+        preflight_generation(context, source_generation=source)
+    wrong_variant = PackLock("broken", "win-cpu", ">=3.12", (), (), ())
+    wrong_variant.write(source / "packs/broken/pack-lock.json")
+    plans = preflight_generation(context, source_generation=source)
+    assert plans[0].conflicts == ("variant win-cpu does not match linux-cpu",)
+    with pytest.raises(ProvisionError, match="variant win-cpu"):
+        rebuild_generation(context, plans)
+    assert not (target / "packs").exists()
+    replacement = tmp_path / "replacement.json"
+    replace(wrong_variant, variant="linux-cpu").write(replacement)
+    assert not preflight_generation(context, source_generation=source, locks=[replacement])[
+        0
+    ].conflicts
