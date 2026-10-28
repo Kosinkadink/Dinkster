@@ -289,6 +289,7 @@ def build(
     external_wheels: list[Path] | None = None,
     base_manifests: list[Path] | None = None,
     target_variants: set[str] | None = None,
+    payload_artifacts: list[Path] | None = None,
 ) -> dict[str, object]:
     version = release_version(root, tag) if tag else development_version(root)
     sources = json.loads((root / "scripts/release_sources.json").read_text(encoding="utf-8"))
@@ -315,6 +316,23 @@ def build(
     )
     source = build_source_archive(root, version, output)
     artifacts = sorted([*wheels, *external, constraints, source], key=lambda path: path.name)
+    reserved = {path.name.casefold() for path in artifacts} | {
+        "release-manifest.json",
+        "sha256sums",
+    }
+    for candidate in payload_artifacts or []:
+        name = candidate.name
+        if (
+            re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name) is None
+            or name.casefold() in reserved
+            or candidate.suffix.casefold() == ".whl"
+        ):
+            raise ValueError(f"invalid or duplicate release payload name: {name}")
+        target = output / name
+        shutil.copyfile(candidate, target)
+        artifacts.append(target)
+        reserved.add(name.casefold())
+    artifacts.sort(key=lambda path: path.name)
     boundary = (root / "packages/dinkster-workers/src/dinkster_workers/boundary.py").read_text()
     protocol = re.search(r"(?m)^PROTOCOL_VERSION = ([0-9]+)$", boundary)
     if protocol is None:
@@ -351,6 +369,7 @@ if __name__ == "__main__":
     parser.add_argument("--external-wheel", type=Path, action="append", default=[])
     parser.add_argument("--base-manifest", type=Path, action="append", default=[])
     parser.add_argument("--target-variant", action="append", default=[])
+    parser.add_argument("--artifact", type=Path, action="append", default=[])
     args = parser.parse_args()
     build(
         Path(__file__).resolve().parent.parent,
@@ -362,4 +381,5 @@ if __name__ == "__main__":
         external_wheels=args.external_wheel,
         base_manifests=args.base_manifest,
         target_variants=set(args.target_variant),
+        payload_artifacts=args.artifact,
     )

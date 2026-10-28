@@ -15,6 +15,7 @@ import pytest
 import yaml
 
 from scripts.build_release import (
+    build,
     build_frontend_wheel,
     build_source_archive,
     development_version,
@@ -547,6 +548,88 @@ def test_external_payload_omits_only_exact_members_shared_by_all_target_bases(
     wheels[0].write_bytes(b"tampered")
     with pytest.raises(ValueError, match="does not match a locked artifact"):
         stage_external_wheels(tmp_path, tmp_path, wheels[:1], [], set())
+
+
+def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "source"
+    frontend = tmp_path / "frontend"
+    frontend.mkdir()
+    (frontend / "index.html").write_text('<div id="root"></div>')
+    subprocess.run(["git", "init", "--quiet", str(frontend)], check=True)
+    subprocess.run(["git", "-C", str(frontend), "add", "."], check=True)
+    tree = subprocess.check_output(["git", "-C", str(frontend), "write-tree"], text=True).strip()
+    (frontend / ".git/HEAD").write_text(tree + "\n")
+    files = {
+        "pyproject.toml": (
+            '[project]\nname = "dinkster"\nversion = "1.2.3"\n'
+            "[dependency-groups]\nengine-base = []\n"
+            '[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n'
+        ),
+        "src/dinkster/__init__.py": "",
+        "packages/dinkster-workers/src/dinkster_workers/boundary.py": "PROTOCOL_VERSION = 1\n",
+        "scripts/release_sources.json": json.dumps({"commit": tree}),
+    }
+    for name, value in files.items():
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(value)
+    subprocess.run(["uv", "lock", "--project", str(root)], check=True)
+    subprocess.run(["git", "init", "--quiet", str(root)], check=True)
+    subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+    tree = subprocess.check_output(["git", "-C", str(root), "write-tree"], text=True).strip()
+    (root / ".git/HEAD").write_text(tree + "\n")
+    payload = tmp_path / "official-pack-1.2.3.tar.gz"
+    payload.write_bytes(b"finished pack archive")
+    bootstrap = tmp_path / "dinkster-tools-linux-x86_64.tar.gz"
+    bootstrap.write_bytes(b"finished interpreter and supervisor payload")
+    output = tmp_path / "release"
+    built = build(
+        root, output, "v1.2.3", frontend, frontend, payload_artifacts=[payload, bootstrap]
+    )
+    manifest = json.loads((output / "release-manifest.json").read_text())
+    assert built == manifest
+    assert set(manifest["workspaceWheels"]) == {
+        "dinkster-1.2.3-py2.py3-none-any.whl",
+        "dinkster_frontend-1.2.3-py3-none-any.whl",
+    }
+    for candidate in (payload, bootstrap):
+        assert (output / candidate.name).read_bytes() == candidate.read_bytes()
+        row = next(row for row in manifest["artifacts"] if row["name"] == candidate.name)
+        assert row == {
+            "name": candidate.name,
+            "size": len(candidate.read_bytes()),
+            "sha256": hashlib.sha256(candidate.read_bytes()).hexdigest(),
+        }
+    sums = dict(
+        line.split("  ", 1)[::-1] for line in (output / "SHA256SUMS").read_text().splitlines()
+    )
+    assert set(sums) == {row["name"] for row in manifest["artifacts"]} | {"release-manifest.json"}
+    assert all(
+        hashlib.sha256((output / name).read_bytes()).hexdigest() == value
+        for name, value in sums.items()
+    )
+    for index, name in enumerate(
+        (
+            "constraints.txt",
+            "RELEASE-MANIFEST.JSON",
+            "SHA256SUMS",
+            payload.name.upper(),
+            "extra.whl",
+        )
+    ):
+        candidate = tmp_path / name
+        candidate.write_bytes(b"must not replace a release asset or bypass locked wheels")
+        with pytest.raises(ValueError, match="invalid or duplicate release payload name"):
+            build(
+                root,
+                tmp_path / f"invalid-{index}",
+                "v1.2.3",
+                frontend,
+                frontend,
+                payload_artifacts=[payload, candidate],
+            )
 
 
 def test_main_release_retention_preserves_stable_drafts_and_newest_fifty(
