@@ -182,3 +182,11 @@ supplies variant, worker protocol, measured own-environment size and shared stor
 paths explicitly. A nonzero exit, conflicting pack, doctor drift or malformed
 single-object JSON result fails construction and removes the target. Supervisor
 never imports the engine's worker packages to perform these operations.
+
+`environment_archives.extract_base(parts, destination)` reconstructs verified
+split 7z parts in order and stages their contents beside the final base path.
+The caller verifies part digests and holds the store writer lock. Extraction
+accepts only `python/` and `wheels/`, rejects links, traversal, Windows device
+names and case-ambiguous paths, and promotes the complete tree only on success.
+It returns `destination/python`. Existing bases are never replaced; failed
+reconstruction or extraction removes temporary archives and staging trees.
