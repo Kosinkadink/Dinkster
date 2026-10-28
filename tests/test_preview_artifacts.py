@@ -224,27 +224,35 @@ def test_preview_boundary_rejects_independent_blob_claims(mp4: bytes) -> None:
         )
 
 
-def test_failed_batch_removes_only_newly_committed_content(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mp4: bytes
+@pytest.mark.parametrize("pre_existing", (False, True))
+def test_failed_batch_preserves_content_adopted_by_an_independent_ingest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mp4: bytes, pre_existing: bool
 ) -> None:
     vault = AssetVault(tmp_path / "vault")
     publisher = PreviewArtifactPublisher(vault)
     second = _tiny_mp4(99)
     existing = digest_bytes(mp4)
-    with vault.writer(existing) as writer:
-        writer.write(mp4)
-        writer.commit()
+    if pre_existing:
+        with vault.writer(existing) as writer:
+            writer.write(mp4)
+            writer.commit()
     calls = 0
-    original = type(vault.writer(digest_bytes(mp4))).commit_with_result
+    original = VaultWriter.commit_with_result
 
     def fail_second(self: VaultWriter) -> tuple[Path, bool]:
         nonlocal calls
         calls += 1
         if calls == 2:
             raise AssetError("commit failed")
-        return original(self)
+        result = original(self)
+        with vault.writer(existing) as independent:
+            independent.write(mp4)
+            adopted_path, created = original(independent)
+            assert not created
+            assert adopted_path.read_bytes() == mp4
+        return result
 
-    monkeypatch.setattr(type(vault.writer(digest_bytes(mp4))), "commit_with_result", fail_second)
+    monkeypatch.setattr(VaultWriter, "commit_with_result", fail_second)
 
     async def scenario() -> None:
         with pytest.raises(AssetError, match="commit failed"):
@@ -256,6 +264,9 @@ def test_failed_batch_removes_only_newly_committed_content(
                 ),
             )
         assert vault.digests() == [existing]
+        stored = vault.resolve(existing)
+        assert stored is not None and stored.read_bytes() == mp4
+        assert list(vault.root.glob(".ingest-*")) == []
 
     asyncio.run(scenario())
 

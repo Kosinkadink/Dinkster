@@ -21,16 +21,16 @@ from dinkster_schema.reporting import (
 @dataclass
 class _StagedPreviews:
     stack: ExitStack
-    writers: list[tuple[str, VaultWriter]]
+    writers: list[VaultWriter]
     artifacts: tuple[SavedArtifact, ...]
 
 
 class PreviewArtifactPublisher:
     """Stage off-loop, then commit one successful invocation's preview batch.
 
-    Cancellation before commit discards staging. Once the synchronous commit
-    finishes, content has the vault's normal retention, including when a later
-    part of a job fails or is cancelled. It is never a temporary output mount.
+    Cancellation before commit discards staging. Each committed digest has the
+    vault's normal retention even if a later commit fails: another ingest may
+    already share it. Failed batches return no descriptors. There is no output mount.
     """
 
     def __init__(self, vault: AssetVault | None) -> None:
@@ -62,12 +62,12 @@ class PreviewArtifactPublisher:
                 )
             )
         stack = ExitStack()
-        writers: list[tuple[str, VaultWriter]] = []
+        writers: list[VaultWriter] = []
         try:
             for claim, artifact in zip(validated, artifacts, strict=True):
                 writer = stack.enter_context(self._vault.writer(artifact.digest))
                 writer.write(claim.data)
-                writers.append((artifact.digest, writer))
+                writers.append(writer)
             return _StagedPreviews(stack, writers, tuple(artifacts))
         except BaseException:
             stack.close()
@@ -89,18 +89,10 @@ class PreviewArtifactPublisher:
                 if not task.cancelled() and task.exception() is None:
                     task.result().stack.close()
                 raise
-            created: set[str] = set()
-            assert self._vault is not None
             try:
                 # No await splits the publication commit from its result handoff.
-                for digest, writer in staged.writers:
-                    _path, won = writer.commit_with_result()
-                    if won:
-                        created.add(digest)
+                for writer in staged.writers:
+                    writer.commit_with_result()
                 return staged.artifacts
-            except BaseException:
-                for digest in created:
-                    self._vault.delete(digest)
-                raise
             finally:
                 staged.stack.close()
