@@ -203,6 +203,7 @@ class ConcatenateVideo(Node):
                 InputSpec("complete_audio", _AUDIO, required=False, advanced=True),
             ),
             outputs=(OutputSpec("video", _VIDEO),),
+            input_order=("videos", "codec", "complete_audio"),
         )
 
     @classmethod
