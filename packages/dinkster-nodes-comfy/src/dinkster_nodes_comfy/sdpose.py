@@ -1,4 +1,4 @@
-"""Face bounding boxes from canonical SDPose keypoint frames."""
+"""Face boxes and whole-body rendering from canonical SDPose keypoint frames."""
 
 from __future__ import annotations
 
@@ -10,6 +10,8 @@ from dinkster_api.v1 import (
     BOUNDING_BOX_TYPE,
     CORE_BOOLEAN,
     CORE_FLOAT,
+    CORE_INT,
+    IMAGE_TYPE,
     POSE_KEYPOINT_TYPE,
     InputSpec,
     Node,
@@ -17,6 +19,7 @@ from dinkster_api.v1 import (
     NumberWidget,
     OutputSpec,
     TypeExpr,
+    initialize_inference_process,
 )
 
 
@@ -105,3 +108,109 @@ class SDPoseFaceBBoxes(Node):
                     frame_bboxes.append({"x": x1, "y": y1, "width": x2 - x1, "height": y2 - y1})
             all_bboxes.append(frame_bboxes)
         return cls.outputs(bboxes=all_bboxes)
+
+
+class SDPoseDrawKeypoints(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        boolean = TypeExpr.concrete(CORE_BOOLEAN)
+        integer = TypeExpr.concrete(CORE_INT)
+        return NodeSchema(
+            node_type="SDPoseDrawKeypoints",
+            display_name="SDPose Draw Keypoints",
+            category="image/detection",
+            search_terms=("openpose", "pose detection", "preprocessor", "keypoints", "pose"),
+            inputs=(
+                InputSpec("keypoints", TypeExpr.concrete(POSE_KEYPOINT_TYPE)),
+                InputSpec("draw_body", boolean, default=True),
+                InputSpec("draw_hands", boolean, default=True),
+                InputSpec("draw_face", boolean, default=True),
+                InputSpec("draw_feet", boolean, default=False),
+                InputSpec(
+                    "stick_width", integer, default=4, widget=NumberWidget(min=1, max=10, step=1)
+                ),
+                InputSpec(
+                    "face_point_size",
+                    integer,
+                    default=3,
+                    widget=NumberWidget(min=1, max=10, step=1),
+                ),
+                InputSpec(
+                    "score_threshold",
+                    TypeExpr.concrete(CORE_FLOAT),
+                    default=0.3,
+                    widget=NumberWidget(min=0.0, max=1.0, step=0.01),
+                ),
+                InputSpec("draw_head", boolean, default=True),
+            ),
+            outputs=(OutputSpec("IMAGE", TypeExpr.concrete(IMAGE_TYPE)),),
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        keypoints: list[dict[str, Any]],
+        draw_body: bool,
+        draw_hands: bool,
+        draw_face: bool,
+        draw_feet: bool,
+        stick_width: int,
+        face_point_size: int,
+        score_threshold: float,
+        draw_head: bool,
+    ) -> Mapping[str, object]:
+        torch = importlib.import_module("torch")
+        if not keypoints:
+            return cls.outputs(IMAGE=torch.zeros((1, 64, 64, 3), dtype=torch.float32))
+        initialize_inference_process()
+        management = importlib.import_module("dinkster_inference.model_management")
+        np = importlib.import_module("numpy")
+        from .pose_draw import draw_pose
+
+        height, width = keypoints[0]["canvas_height"], keypoints[0]["canvas_width"]
+
+        def parse(flat: Any, count: int) -> tuple[Any, Any]:
+            arr = np.array(flat, dtype=np.float32).reshape(count, 3)
+            return arr[:, :2], arr[:, 2]
+
+        outputs: list[Any] = []
+        for frame in keypoints:
+            canvas = np.zeros((height, width, 3), dtype=np.uint8)
+            for person in frame["people"]:
+                body, body_scores = parse(person["pose_keypoints_2d"], 18)
+                foot_raw = person.get("foot_keypoints_2d")
+                feet, feet_scores = (
+                    parse(foot_raw, 6)
+                    if foot_raw
+                    else (np.zeros((6, 2), dtype=np.float32), np.zeros(6, dtype=np.float32))
+                )
+                face, face_scores = parse(person["face_keypoints_2d"], 70)
+                right, right_scores = parse(person["hand_right_keypoints_2d"], 21)
+                left, left_scores = parse(person["hand_left_keypoints_2d"], 21)
+                points = np.concatenate([body, feet, face[:68], right, left], axis=0)
+                scores = np.concatenate(
+                    [body_scores, feet_scores, face_scores[:68], right_scores, left_scores], axis=0
+                )
+                canvas = draw_pose(
+                    canvas,
+                    points,
+                    scores,
+                    threshold=score_threshold,
+                    draw_body=draw_body,
+                    draw_head=draw_head,
+                    draw_feet=draw_feet,
+                    draw_face=draw_face,
+                    draw_hands=draw_hands,
+                    stick_width=stick_width,
+                    face_point_size=face_point_size,
+                )
+            outputs.append(canvas)
+        images = np.stack(outputs) if len(outputs) > 1 else np.expand_dims(outputs[0], 0)
+        result = (
+            torch.from_numpy(images).to(
+                device=management.intermediate_device(), dtype=management.intermediate_dtype()
+            )
+            / 255.0
+        )
+        return cls.outputs(IMAGE=result)
