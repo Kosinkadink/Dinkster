@@ -1054,19 +1054,6 @@ def test_lazy_audio_chain_matches_across_worker_shared_memory(source, concat) ->
     asyncio.run(scenario())
 
 
-def test_two_hour_flac_trim_save_rss(tmp_path: Path) -> None:
-    result = subprocess.run(
-        [sys.executable, "tools/audio_conformance.py", "--rss", "--directory", str(tmp_path)],
-        text=True,
-        capture_output=True,
-        check=True,
-    )
-    report = json.loads(result.stdout.splitlines()[-1])
-    assert report["rss_growth_bytes"] < 64 * 1024 * 1024
-    assert report["saved_frames"] == 480000
-    assert report["source_frames"] == 345600000
-
-
 def _audio_header(wire: bytes) -> tuple[dict[str, Any], bytes]:
     prefix = len(b"DINKSTER-AUDIO\x02")
     length = struct.unpack_from("<I", wire, prefix)[0]

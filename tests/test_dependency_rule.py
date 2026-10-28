@@ -135,8 +135,8 @@ ALLOWED: dict[str, set[str]] = {
         "dinkster_workers",
     },
     # The door (DESIGN 3.6): re-exports the pack-author surface from the
-    # bottom layers and the RPC-clean protocol leaf - never engine, workers,
-    # caches, or server.
+    # bottom layers, the RPC-clean protocol leaf and the worker's task-local
+    # invocation reader. No scheduler or server access crosses the door.
     "dinkster_api": {
         "dinkster_schema",
         "dinkster_values",
@@ -145,15 +145,17 @@ ALLOWED: dict[str, set[str]] = {
         "dinkster_inference_wire",
         "dinkster_memory",
         "dinkster_assets",
+        "dinkster_image_document",
+        "dinkster_workers",
     },
     # The install suite contains metadata only; component packs author
     # through the door exclusively and never import one another.
     "dinkster_nodes_std": set(),
     "dinkster_nodes_comfy": {"dinkster_api"},
     "dinkster_nodes_foundation": {"dinkster_api"},
-    "dinkster_nodes_media_io": {"dinkster_api", "dinkster_image_document"},
-    "dinkster_nodes_image": {"dinkster_api", "dinkster_image_document"},
-    "dinkster_nodes_remote": {"dinkster_api", "dinkster_workers"},
+    "dinkster_nodes_media_io": {"dinkster_api"},
+    "dinkster_nodes_image": {"dinkster_api"},
+    "dinkster_nodes_remote": {"dinkster_api"},
     "dinkster_nodes_generation": {"dinkster_api"},
     # Model-backed vision providers execute stable owner schemas through the
     # pack-author door and stay independent of the host scheduler.

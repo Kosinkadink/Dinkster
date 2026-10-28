@@ -225,6 +225,7 @@ from dinkster_assets import (
     AssetError,
     AssetIntegrityError,
     DeclaredAsset,
+    MountsError,
     asset_selection_options,
     is_digest,
 )
@@ -260,6 +261,7 @@ from dinkster_memory import (
     ReservationTimeout,
 )
 from dinkster_protocol import (
+    AssetFolderContext,
     AttentionPolicy,
     AttentionPolicyConfig,
     CompatGateDiagnostic,
@@ -308,6 +310,7 @@ from dinkster_values import (
     Value,
     list_children,
 )
+from dinkster_values.asset_folders import use_asset_folders
 
 from ._federated_asset_catalog import add_federated_asset_routes
 from .asset_stream import open_verified_sized, stream_verified
@@ -332,7 +335,13 @@ from .events import (
 )
 from .execution_journal import ExecutionJournal, add_execution_journal_routes
 from .history import HistoryStore, add_history_routes
-from .library import LIBRARY_KEY, ServerLibrary, add_library_routes
+from .library import (
+    LIBRARY_KEY,
+    ServerLibrary,
+    add_library_routes,
+    recover_asset_observations,
+    run_media_publication,
+)
 from .pack_settings import PackSettingsStore
 from .pack_surfaces import FrontendModuleRead, PackRouteDispatch, install_pack_surfaces
 from .paging import decode_cursor, encode_cursor
@@ -3336,6 +3345,8 @@ async def handle_submit(request: web.Request) -> web.Response:
     if isinstance(previews, str):
         raise _bad_request(previews)
     library = request.app.get(LIBRARY_KEY)
+    project = body.get("project", "default")
+    asset_folders = _project_asset_folders(library, project)
     parsed = parse_asset_consent(body)
     if isinstance(parsed, str):
         raise _bad_request(parsed)
@@ -3347,6 +3358,8 @@ async def handle_submit(request: web.Request) -> web.Response:
         "scope": scope,
         "sourceDocument": source_document,
     }
+    if "project" in body:
+        fingerprint_payload["project"] = project
     if export_snapshot is not None:
         fingerprint_payload["exportSnapshot"] = {
             "prompt": export_snapshot.prompt,
@@ -3437,14 +3450,17 @@ async def handle_submit(request: web.Request) -> web.Response:
             raise _bad_request(str(exc)) from exc
         graph = lowered.graph
         targets = list(lowered.targets)
-        graph, missing_names = await asyncio.to_thread(
-            bind_model_names, graph, execution.schemas, library
-        )
+        with use_asset_folders(asset_folders):
+            graph, missing_names = await asyncio.to_thread(
+                bind_model_names, graph, execution.schemas, library
+            )
         if missing_names:
             return web.json_response(
                 {"error": "assets-missing", "assets": missing_names}, status=409
             )
         execution = state.place_execution(execution, placement)
+        if asset_folders is not None:
+            execution = replace(execution, asset_folders=asset_folders)
         execution_graph = graph
         if execution.resolve_providers is not None:
             try:
@@ -3534,12 +3550,15 @@ async def handle_submit(request: web.Request) -> web.Response:
                         continue
                     referenced.setdefault(digest, need.name)
             if referenced:
+                await run_media_publication(library, lambda: recover_asset_observations(library))
                 local_plan = await asyncio.to_thread(
                     asset_preflight,
                     library,
                     referenced,
                     consented,
                     hinted_sources,
+                    scope=scope,
+                    project=project,
                 )
         if (
             execution.preflight_provider_assets is not None
@@ -4453,11 +4472,28 @@ async def handle_assets_list(request: web.Request) -> web.Response:
 
 async def handle_asset_selections(request: web.Request) -> web.Response:
     kind = request.query.get("kind", "")
+    folders = _project_asset_folders(
+        request.app.get(LIBRARY_KEY), request.query.get("project", "default")
+    )
     try:
-        options = await asyncio.to_thread(asset_selection_options, kind)
+        with use_asset_folders(folders):
+            options = await asyncio.to_thread(asset_selection_options, kind)
     except AssetError:
         return web.json_response({"error": "unsupported-selection-kind"}, status=400)
     return web.json_response({"kind": kind, "options": list(options)})
+
+
+def _project_asset_folders(
+    library: ServerLibrary | None, project: object
+) -> AssetFolderContext | None:
+    if not isinstance(project, str) or not project:
+        raise _bad_request("project must be a non-empty project id")
+    if library is None or library.project_folders_for is None:
+        return None
+    try:
+        return library.project_folders_for(project)
+    except (ValueError, MountsError) as exc:
+        raise _bad_request(str(exc)) from exc
 
 
 async def handle_asset_bytes(request: web.Request) -> web.StreamResponse:
