@@ -98,7 +98,6 @@ from .list_utilities import LIST_UTILITY_NODES
 from .logic import LOGIC_NODES
 from .loops import LOOP_NODES
 from .lora_file_loaders import LORA_FILE_LOADER_NODES
-from .loss_graph import LossGraphNode
 from .lotus import LotusConditioning
 from .ltx_audio import LTX_AUDIO_NODES
 from .ltx_av_latent import LTX_AV_LATENT_NODES
@@ -429,7 +428,6 @@ COMFY_NODES = (
     *YUE2_CONDITIONING_NODES,
     *FOLDER_DATASET_NODES,
     UpscaleModelLoader,
-    LossGraphNode,
     CurveEditor,
 )
 
