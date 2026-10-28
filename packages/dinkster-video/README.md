@@ -8,6 +8,17 @@ Native savers encode at the frame-owning worker into a bounded local spool;
 the spool rolls to disk after 512 KiB. The asset writer receives encoded
 bytes, including for remote save targets.
 
+`save_video_stream(..., source_components=True, preset=None)` opts an
+unedited component VIDEO into source-component H.264/AV1 encoding. Only the
+encoded stream rate is rounded to a thousandth. Float pixels are clamped and
+truncated, with float32 staging before 16-bit RGB conversion for 10-bit YUV.
+The source color conversion and encoder timing defaults are retained. CRF
+defaults to 18 for H.264 and 24 for AV1; an explicit `crf` still takes priority.
+`preset` optionally selects the H.264 preset on this path. Unsupported source
+dimensions or codecs fail rather than selecting FFV1 or resizing frames.
+Without the opt-in, existing quantization, rate, encoder and fallback defaults
+remain unchanged. The caller still owns the spool and publication.
+
 `save_frame_records(records, destination, *, format, bit_depth, color,
 frame_count=None, loop=0, dither="sierra2_4a", lossless=True, quality=80,
 method=4, compression=6, metadata=None, on_diagnostic=None)` is the same

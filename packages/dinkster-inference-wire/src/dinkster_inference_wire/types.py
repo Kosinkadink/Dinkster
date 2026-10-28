@@ -25,10 +25,10 @@ from dinkster_values import (
     IC_LORA_PARAMETERS_TYPE,
     IMAGECOMPARE_TYPE,
     INFERENCE_LATENT_OPERATION_TYPE,
+    INTERP_MODEL_TYPE,
     LATENT_UPSCALE_MODEL_TYPE,
     LAYERS_TYPE,
     LOAD3D_CAMERA_TYPE,
-    LORA_MODEL_TYPE,
     MODEL_PATCH_TYPE,
     MODEL_TYPE,
     MOGE_GEOMETRY_TYPE,
@@ -36,6 +36,7 @@ from dinkster_values import (
     NOISE_TYPE,
     OPTICAL_FLOW_TYPE,
     PHOTOMAKER_TYPE,
+    POSE_KEYPOINT_TYPE,
     RESOLUTION_PREVIEW_TYPE,
     SAM3_TRACK_DATA_TYPE,
     SAMPLER_TYPE,
@@ -45,6 +46,7 @@ from dinkster_values import (
     TRACKS_TYPE,
     UPSCALE_MODEL_TYPE,
     VAE_TYPE,
+    VIDEO_EDIT_TYPE,
     WAN_CAMERA_EMBEDDING_TYPE,
     TypeRegistry,
     TypeSpec,
@@ -52,6 +54,7 @@ from dinkster_values import (
     encode_latent,
     latent_fingerprint,
     register_resident_type,
+    register_video_edit_type,
     validate_latent_encoded,
 )
 
@@ -63,13 +66,13 @@ from .hook_values import (
     register_hook_structural_type,
 )
 from .ic_lora_parameters import register_ic_lora_parameters_type
-from .loss_map import register_loss_map_type
 from .media_wire import (
     materialize_audio,
     materialize_image,
     materialize_latent,
     register_media_types,
 )
+from .pose_keypoint import register_pose_keypoint_type
 from .sam3_wire import register_sam3_track_type
 from .sampling_wire import register_sampling_type
 from .vision_wire import (
@@ -79,6 +82,7 @@ from .vision_wire import (
     materialize_clip_vision_output,
     validate_clip_vision_output,
 )
+from .voxel_wire import materialize_voxel, register_voxel_type
 from .wan_wire import register_wan_type
 
 MODEL_TYPE_ID = MODEL_TYPE
@@ -96,6 +100,7 @@ _RESIDENT_TYPE_IDS = (
     MOGE_MODEL_TYPE,
     MODEL_PATCH_TYPE,
     OPTICAL_FLOW_TYPE,
+    INTERP_MODEL_TYPE,
     CLIP_TYPE_ID,
     CLIP_VISION_TYPE_ID,
     VAE_TYPE_ID,
@@ -187,19 +192,11 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
         if LOAD3D_CAMERA_TYPE in registry
         else register_load3d_camera_type(registry)
     )
-    if LORA_MODEL_TYPE not in registry:
-        registry.register(
-            LORA_MODEL_TYPE,
-            encode=partial(encode_latent, preserve_mapping_order=True),
-            decode=partial(decode_latent, require_samples=False, preserve_mapping_order=True),
-            fingerprint=latent_fingerprint(LORA_MODEL_TYPE, preserve_mapping_order=True),
-            validate_encoded=partial(
-                validate_latent_encoded,
-                require_samples=False,
-                preserve_mapping_order=True,
-            ),
-        )
-    registered.append(registry.spec(LORA_MODEL_TYPE))
+    registered.append(
+        registry.spec(POSE_KEYPOINT_TYPE)
+        if POSE_KEYPOINT_TYPE in registry
+        else register_pose_keypoint_type(registry)
+    )
     if MOGE_GEOMETRY_TYPE not in registry:
         registry.register(
             MOGE_GEOMETRY_TYPE,
@@ -223,7 +220,9 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
             registry.spec(type_id) if type_id in registry else register_wan_type(registry, type_id)
         )
     registered.extend(register_media_types(registry))
-    registered.append(register_loss_map_type(registry))
+    registered.append(register_voxel_type(registry))
+    register_video_edit_type(registry)
+    registered.append(registry.spec(VIDEO_EDIT_TYPE))
     return tuple(registered)
 
 
@@ -240,5 +239,6 @@ __all__ = [
     "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
+    "materialize_voxel",
     "register_inference_types",
 ]
