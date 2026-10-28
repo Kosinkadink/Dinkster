@@ -192,6 +192,8 @@ def write_constraints(root: Path, output: Path, wheels: list[Path], uv: str) -> 
                 "--locked",
                 "--all-packages",
                 "--no-dev",
+                "--group",
+                "engine-base",
                 "--no-emit-project",
                 "--no-emit-workspace",
                 "--no-annotate",

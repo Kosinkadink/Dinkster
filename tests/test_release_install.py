@@ -19,6 +19,7 @@ from scripts.build_release import (
     release_version,
     versioned_sources,
     workspace_projects,
+    write_constraints,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -328,6 +329,24 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     assert f"Requires-Dist: dinkster-frontend=={version}\n" in metadata
     assert "Requires-Dist: aiohttp>=3.10\n" in metadata
     assert hashlib.sha256((ROOT / "uv.lock").read_bytes()).hexdigest() == original_lock
+
+
+def test_engine_constraints_include_the_locked_base_but_not_the_dev_tools(tmp_path: Path) -> None:
+    constraints = write_constraints(ROOT, tmp_path, [], "uv").read_text()
+    requirements = constraints.replace("\\\n", "").splitlines()
+    for requirement in (
+        "torch==2.14.1",
+        "torchvision==0.29.1",
+        "numpy==2.5.1",
+        "opencv-contrib-python-headless==5.0.0.93",
+    ):
+        assert any(
+            line.startswith(requirement + " ") and "--hash=sha256:" in line for line in requirements
+        )
+    assert "opencv-python-headless==" not in constraints
+    assert "pytest==" not in constraints
+    assert "pyright==" not in constraints
+    assert "--index-url" not in constraints
 
 
 def test_maintainer_source_archive_excludes_non_release_material(tmp_path: Path) -> None:

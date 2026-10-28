@@ -8,7 +8,7 @@ dependencies = [
     "dinkster-api",
     "dinkster-image-document",
     "numpy>=1.26",
-    "opencv-python-headless>=4.10",
+    "opencv-contrib-python-headless>=5.0,<5.1",
     "pillow>=10",
     "PyOpenGL>=3.1.8,<4",
 ]

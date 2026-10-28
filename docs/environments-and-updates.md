@@ -374,7 +374,7 @@ directory is the build artifact used by installation checks and publication:
 | Asset | Contract |
 |---|---|
 | `*.whl` | Every workspace distribution, including the root `dinkster` distribution, plus `dinkster-frontend`; workspace dependencies require the exact same release version |
-| `constraints.txt` | Hashed `uv export --locked --all-packages --no-dev` requirements, excluding editable workspace entries and including exact versions and SHA-256 hashes of the built workspace and frontend wheels |
+| `constraints.txt` | Hashed `uv export --locked --all-packages --no-dev --group engine-base` requirements, excluding editable workspace entries and including exact versions and SHA-256 hashes of the built workspace and frontend wheels |
 | `release-manifest.json` | UTF-8 JSON with a trailing LF; `format: dinkster.engine/1`, `repository`, `tag`, full source `commit`, PEP 440 `version`, integer `workerProtocol`, `workspaceWheels` filenames and `artifacts` rows containing `name`, lowercase hex `sha256` and byte `size` |
 | `SHA256SUMS` | One lowercase SHA-256, two spaces, asset basename and LF per line; covers every asset except itself, including the manifest; verifiable with `sha256sum -c SHA256SUMS` |
 | `dinkster-source-<version>.zip` | Maintainer source archive; never an installation requirement |
@@ -384,6 +384,14 @@ of the exact `release-manifest.json` bytes. The manifest lists payload assets,
 not itself or `SHA256SUMS`, avoiding a circular digest. Artifact names are
 basenames relative to the release directory. Clients verify the manifest
 against the channel id before trusting its artifact hashes.
+
+The non-default `engine-base` dependency group carries torch 2.14.1,
+torchvision 0.29.1, numpy 2.5.1 and contrib-headless OpenCV 5.0.0.93 in
+`uv.lock`. Ordinary `uv sync --locked --all-packages` does not install
+torch; the release export explicitly includes the group. These requirements
+do not embed an index URL. A torch/torchvision bump must have cp314 wheels
+for both Windows and Linux on every supported torch index before the lock
+moves, not just a PyPI release.
 
 Tag releases use `vX.Y.Z` and require every workspace project's source
 version to equal `X.Y.Z`. A main commit uses GitHub release tag
