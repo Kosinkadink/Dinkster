@@ -28,6 +28,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
+    current_export_snapshot,
     initialize_inference_process,
     materialize_image,
 )
@@ -232,6 +233,17 @@ class SaveImageAdvanced(Node):
         write_metadata = not importlib.import_module(
             "dinkster_inference.cli_args"
         ).args.disable_metadata
+        submitted = current_export_snapshot()
+        prompt = (
+            dict(submitted.prompt)
+            if submitted is not None and submitted.prompt is not None
+            else None
+        )
+        extra_pnginfo = (
+            dict(submitted.extra_pnginfo)
+            if submitted is not None and submitted.extra_pnginfo is not None
+            else None
+        )
         batch = materialize_image(images)
         if batch.ndim == 3:
             # Source grayscale batches omit channels; width four is not RGBA.
@@ -261,6 +273,13 @@ class SaveImageAdvanced(Node):
                     save_mode = selected_mode
                 animated = save_mode["save_mode"] == "animated"
                 batches = (batch,) if animated else batch.unsqueeze(1)
+                metadata: dict[str, Any] | None = None
+                if write_metadata:
+                    metadata = {}
+                    if prompt is not None:
+                        metadata["prompt"] = prompt
+                    if extra_pnginfo:
+                        metadata.update(extra_pnginfo)
                 for frames in batches:
                     with tempfile.TemporaryDirectory() as directory:
                         path = Path(directory) / "image.avif"
@@ -272,6 +291,7 @@ class SaveImageAdvanced(Node):
                             format.get("crf", 18),
                             fps=save_mode.get("fps", 1.0),
                             loop_count=save_mode.get("loop_count") if animated else None,
+                            metadata=metadata,
                         )
                         with path.open("rb") as stream:
                             yield stream
@@ -285,8 +305,13 @@ class SaveImageAdvanced(Node):
                         bit_depth,
                         "linear" if file_format == "exr" else colorspace,
                     )
-                    if file_format == "exr" and write_metadata:
-                        encoded = encoding.inject_exr_metadata(encoded, None, None, colorspace)
+                    if write_metadata:
+                        if file_format == "png":
+                            encoded = encoding.inject_png_metadata(encoded, prompt, extra_pnginfo)
+                        elif file_format == "exr":
+                            encoded = encoding.inject_exr_metadata(
+                                encoded, prompt, extra_pnginfo, colorspace
+                            )
                     if len(encoded) > ENCODED_MEDIA_LIMIT_BYTES:
                         raise ValueError("encoded image exceeds the output byte limit")
                     with BytesIO(encoded) as stream:

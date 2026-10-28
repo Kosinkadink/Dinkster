@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import struct
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,6 +20,7 @@ from dinkster_api.v1 import (
     MASK_TYPE,
     AssetError,
     AssetRef,
+    ExportSnapshot,
     InputSpec,
     Node,
     NodeSchema,
@@ -1009,3 +1011,121 @@ def test_advanced_avif_exports_use_nested_variants_through_native_hosts(
     for red, blue in zip(colors[::2], colors[1::2], strict=True):
         assert red[0] > max(red[1], red[2])
         assert blue[2] > max(blue[0], blue[1])
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("disabled", (False, True))
+@pytest.mark.parametrize("prompt", ({"source": {"inputs": {"seed": 47}}}, None))
+def test_advanced_image_exports_consume_submission_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    in_process: bool,
+    disabled: bool,
+    prompt: dict | None,
+) -> None:
+    from dinkster_inference.cli_args import args
+
+    monkeypatch.setattr(args, "disable_metadata", disabled)
+    output = tmp_path / "output"
+    output.mkdir()
+    mounts = tmp_path / "mounts.json"
+    table = MountTable(mounts, index_root=tmp_path / "index")
+    table.add(MountDef("output", output, mode="readwrite"))
+    table.scan("output")
+    table.select_output_mount("output")
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(mounts))
+    extra = {"workflow": {"nodes": [{"id": 23, "title": "metadata source"}]}, "seed": 109}
+
+    async def scenario():
+        native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+        module = f"advanced_metadata_fixture_{tmp_path.name.replace('-', '_')}"
+        (tmp_path / f"{module}.py").write_text(
+            "from test_save_image_torch import _AdvancedAVIFHostSource\n"
+            "from dinkster_nodes_comfy import register_inference_types\n"
+            "from dinkster_api.v1 import initialize_inference_process\n"
+            "initialize_inference_process()\n"
+            "from dinkster_inference.cli_args import args\n"
+            f"args.disable_metadata = {disabled!r}\n"
+            "NODES = (_AdvancedAVIFHostSource,)\n",
+            encoding="ascii",
+        )
+        fixture = tmp_path / "dinkster-pack.toml"
+        fixture.write_text(
+            '[pack]\nname="advanced-metadata-fixture"\npublisher="dinkster"\n'
+            'namespaces=["advanced-avif-fixture"]\n[pack.entry]\n'
+            f'nodes="{module}:NODES"\ntypes="{module}:register_inference_types"\n',
+            encoding="ascii",
+        )
+        paths = (str(tmp_path), str(Path(__file__).parent), *(p for p in sys.path if p))
+        composer = ServingComposer(
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "DINKSTER_MOUNTS_SNAPSHOT": str(mounts),
+                "PYTHONPATH": os.pathsep.join(paths),
+            }
+        )
+        try:
+            manifests = (native, fixture)
+            for manifest in manifests:
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=manifest,
+                        in_process=in_process,
+                        worker_group=None if in_process else "advanced-metadata-fixture",
+                        group_manifests=() if in_process else manifests,
+                    )
+                )
+            nodes = {"source": GraphNode("advanced-avif-fixture.source")}
+            for fmt in ("png", "exr", "avif"):
+                nodes[fmt] = GraphNode(
+                    "SaveImageAdvanced",
+                    {"images": Link("source", "images"), "filename_prefix": fmt},
+                    slot_variants={
+                        "format": fmt,
+                        **({"format.save_mode": "still images"} if fmt == "avif" else {}),
+                    },
+                )
+            engine = composer.composition.make_engine(lambda _event: None)
+            await engine.run(
+                Graph(nodes=nodes),
+                ["png", "exr", "avif"],
+                export_snapshot=ExportSnapshot(prompt=prompt, extra_pnginfo=extra),
+            )
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+    expected = {} if disabled else {**({"prompt": prompt} if prompt is not None else {}), **extra}
+    for fmt in ("png", "exr", "avif"):
+        files = sorted(output.glob(f"*.{fmt}"))
+        assert len(files) == 2
+        for path in files:
+            if fmt == "png":
+                with Image.open(path) as image:
+                    metadata = {key: json.loads(value) for key, value in image.text.items()}
+            elif fmt == "exr":
+                encoded, pos, metadata = path.read_bytes(), 8, {}
+                while encoded[pos]:
+                    end = encoded.index(b"\0", pos)
+                    type_end = encoded.index(b"\0", end + 1)
+                    size = struct.unpack_from("<i", encoded, type_end + 1)[0]
+                    name = encoded[pos:end].decode()
+                    if name in ("prompt", "workflow", "seed"):
+                        assert encoded[end + 1 : type_end] == b"string"
+                        metadata[name] = json.loads(encoded[type_end + 5 : type_end + 5 + size])
+                    pos = type_end + 5 + size
+            else:
+                encoded = path.read_bytes()
+                if b"Exif" not in encoded:
+                    metadata = {}
+                else:
+                    tiff = max(encoded.rfind(b"MM\0*"), encoded.rfind(b"II*\0"))
+                    assert tiff >= 0
+                    exif = Image.Exif()
+                    exif.load(b"Exif\0\0" + encoded[tiff:])
+                    metadata = {
+                        key: json.loads(value)
+                        for key, value in (str(item).split(":", 1) for item in exif.values())
+                    }
+            assert metadata == expected
