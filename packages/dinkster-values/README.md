@@ -47,6 +47,11 @@ answer = types.wrap(CORE_INT, 42)
 Node authors normally work with plain Python values. Worker shims construct
 the envelopes at the execution boundary.
 
+Core `STRING` values expose a default `text` rendition containing the full UTF-8
+text, including strings too long for inline status descriptors. Use
+`GET /api/values?...&rendition=text` for full execution-scoped text retrieval;
+the 256-character inline preview limit does not truncate that response.
+
 ### Bounded media streams
 
 `MediaStream` exposes replayable half-open frame or sample ranges with a
