@@ -1,5 +1,8 @@
 ## Image operations
 
+- Native `LossGraphNode` previews training loss as a line chart without saving an output file.
+- Native `UpscaleModelLoader` loads granted single-image upscale checkpoints
+  into the shared `UPSCALE_MODEL` value.
 - Native `CameraAngle` produces an orbit-camera dictionary and shot description
   from horizontal angle, elevation, and zoom.
 - Native `MoGeGeometryToFOV` derives horizontal, vertical, or diagonal field of
@@ -8,6 +11,8 @@
   square, resizes with Lanczos, and composites the image over black.
 - Native `TripoSplatConditioning` combines normalized vision tokens and VAE
   reference latents with zero negative conditioning and fixed shape/camera noise targets.
+- Native `Trellis2UpsampleStage` cascades sparse shape latents through a VAE
+  and prepares second-pass conditioning, projection features, and padded sparse latents.
 - Color strings, ordered color palettes, bounding boxes, and optional
   resolution-preview metadata pass between node packs without rewriting their values.
 - Native `PrimitiveBoundingBox` constructs pixel bounding boxes; `ImageCropV2`

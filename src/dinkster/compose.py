@@ -185,6 +185,7 @@ from dinkster_server import (
     validate_comfy_args,
 )
 from dinkster_values import (
+    AUDIO_RECORD_TYPE,
     MEBIBYTE,
     RESOURCE_ID_META_KEY,
     RESOURCES_META_KEY,
@@ -7590,6 +7591,8 @@ class ServingComposer:
             raise CompositionError(str(exc)) from exc
         if ASSET_TYPE in type_ids and ASSET_TYPE not in registry:
             register_asset_type(registry, resolver_from_env())
+        if AUDIO_RECORD_TYPE in type_ids and AUDIO_RECORD_TYPE not in registry:
+            register_asset_type(registry, resolver_from_env(), type_id=AUDIO_RECORD_TYPE)
 
     @staticmethod
     def _register_worker_renditions(registry: TypeRegistry, owner: str, worker: Any) -> None:

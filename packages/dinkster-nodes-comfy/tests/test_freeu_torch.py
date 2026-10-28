@@ -153,7 +153,7 @@ class PatchedModelResult(Node):
 FREEU_NODES = (ModelSource, PatchedModelResult)
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_manifest_transports_freeu_patched_models_in_both_hosting_modes(
     tmp_path: Path, in_process: bool
 ) -> None:

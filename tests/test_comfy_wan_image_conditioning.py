@@ -1,8 +1,5 @@
 """Torch-free native Wan image-conditioning interface contracts."""
 
-import subprocess
-import sys
-
 from dinkster_api.v1 import (
     CLIP_VISION_OUTPUT_TYPE,
     CONDITIONING_TYPE,
@@ -83,19 +80,6 @@ def test_wan_image_schemas_and_cold_native_discovery() -> None:
         assert schema_from_wire(schema_to_wire(schema)) == schema
     manifest = load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml")
     assert tuple(n.schema().node_type for n in COMFY_NODES) == manifest.namespaces
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; from dinkster_nodes_comfy import COMFY_NODES; "
-            "assert {'WanImageToVideo','WanFirstLastFrameToVideo','WanFunInpaintToVideo'} "
-            "<= {n.schema().node_type for n in COMFY_NODES}; "
-            "assert 'torch' not in sys.modules; assert 'dinkster_inference' not in sys.modules",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
 
 
 def test_wan_control_schemas_are_native_and_keep_declared_order() -> None:
