@@ -42,7 +42,7 @@ from dinkster_memory import (
 from dinkster_nodes_foundation import FOUNDATION_NODES
 from dinkster_nodes_image import IMAGE_NODES
 from dinkster_nodes_media_io import MEDIA_IO_NODES
-from dinkster_schema import ComfyAliasRegistry, ComfyGroupRegistry, build_schemas
+from dinkster_schema import build_schemas
 from dinkster_server import PackInfo, ServerLibrary, create_app
 from dinkster_values import EncodedPayload, TypeRegistry, Value, ValueMeta, default_encode
 from dinkster_values.storage import image_input
@@ -54,7 +54,6 @@ from dinkster.compose import (
     CompositionError,
     PackSpec,
     ServingComposer,
-    _merge_pack_entry,
     compose_serving,
     default_pack_spec,
     default_pack_specs,
@@ -1201,40 +1200,6 @@ def test_vision_pack_license_worktree_bytes_are_lf() -> None:
     ] == []
 
 
-def test_default_pack_publishes_alias_registry_from_manifest(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from dinkster import compose
-
-    aliases = ComfyAliasRegistry(source_schemas=(), records=())
-    real_load_manifest = compose.load_manifest
-
-    def load_manifest_with_aliases(path: Path | str):
-        return replace(real_load_manifest(path), comfy_aliases=aliases)
-
-    monkeypatch.setattr(compose, "load_manifest", load_manifest_with_aliases)
-    spec = default_pack_spec("dinkster-nodes-foundation")
-    assert spec.packs is not None
-    assert spec.packs["dinkster-nodes-foundation"].comfy_aliases is aliases
-
-
-def test_default_pack_publishes_group_registry_from_manifest(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from dinkster import compose
-
-    groups = ComfyGroupRegistry(source_schemas=(), group_schemas=(), records=())
-    real_load_manifest = compose.load_manifest
-
-    def load_manifest_with_groups(path: Path | str):
-        return replace(real_load_manifest(path), comfy_groups=groups)
-
-    monkeypatch.setattr(compose, "load_manifest", load_manifest_with_groups)
-    spec = default_pack_spec("dinkster-nodes-foundation")
-    assert spec.packs is not None
-    assert spec.packs["dinkster-nodes-foundation"].comfy_groups is groups
-
-
 def test_default_pack_uses_embedded_wheel_artifact(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2180,7 +2145,7 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
             if node_type.startswith("iso.") or node_type == "std.math.add_ints"
         }
         published_packs = {
-            pack_id: replace(info, comfy_aliases=None, comfy_groups=None)
+            pack_id: info
             for pack_id, info in composition.packs.items()
             if pack_id in {"isopack", "dinkster-nodes-foundation"}
         }
@@ -3289,34 +3254,6 @@ def test_pack_table_entries_merge_only_when_identical(tmp_path: Path) -> None:
             await compose_serving([first, second])
 
     asyncio.run(scenario())
-
-
-def test_pack_table_rejects_comfy_alias_collisions_without_mutating() -> None:
-    from test_comfy_alias_registry import registry
-
-    packs = {"native-a": PackInfo("Native A", comfy_aliases=registry())}
-    with pytest.raises(CompositionError, match="collide on comfy alias record id"):
-        _merge_pack_entry(
-            packs,
-            "native-b",
-            PackInfo("Native B", comfy_aliases=registry()),
-            "test",
-        )
-    assert set(packs) == {"native-a"}
-
-
-def test_pack_table_rejects_comfy_group_collisions_without_mutating() -> None:
-    from test_comfy_group_registry import registry
-
-    packs = {"native-a": PackInfo("Native A", comfy_groups=registry())}
-    with pytest.raises(CompositionError, match="collide on comfy group record id"):
-        _merge_pack_entry(
-            packs,
-            "native-b",
-            PackInfo("Native B", comfy_groups=registry()),
-            "test",
-        )
-    assert set(packs) == {"native-a"}
 
 
 def test_comfy_compat_specs_shapes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
