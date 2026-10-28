@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast
 
-from .catalog import AssetCatalog, AssetEntry, FolderListing, glob_regex
+from .catalog import AssetCatalog, AssetEntry, FolderListing, glob_regex, validate_virtual_path
 from .identity import AssetError, is_digest
 from .integrity import AssetVerificationRecord, digest_file_with_record
 from .model import AssetRef, AssetResolution
@@ -660,6 +660,7 @@ class IndexedAssetResolver:
         self._rows_by_digest: dict[
             str, list[tuple[str, int, int, AssetVerificationRecord | None]]
         ] = {}
+        self._entries_by_relative: dict[str, AssetEntry] = {}
         try:
             loaded: object = json.loads(self._index_path.read_text("utf-8"))
         except (OSError, ValueError) as error:
@@ -681,6 +682,34 @@ class IndexedAssetResolver:
                 self._rows_by_digest.setdefault(digest, []).append(
                     (str(relative), size, mtime, record)
                 )
+                if record is not None:
+                    self._entries_by_relative[str(relative)] = AssetEntry(
+                        virtual_path=str(relative),
+                        digest=digest,
+                        size=size,
+                        media_type=_guess_media_type(Path(str(relative))),
+                    )
+
+    def ref(self, relative: str) -> AssetRef:
+        """Look up a selected file in the engine-written index without hashing it."""
+        validate_virtual_path(relative)
+        entry = self._entries_by_relative.get(relative)
+        if entry is None:
+            raise AssetError(f"no verified asset indexed at relative path: {relative!r}")
+        path = self._root / relative
+        try:
+            if not path.resolve(strict=True).is_relative_to(self._root.resolve()):
+                raise AssetError("indexed file is outside its root")
+            stat = path.stat()
+            records = self._rows_by_digest[entry.digest]
+            if not any(
+                name == relative and record is not None and record.matches(stat)
+                for name, _size, _mtime, record in records
+            ):
+                raise AssetError("indexed file changed; scan the mount before selection")
+        except OSError as error:
+            raise AssetError("indexed file is unavailable") from error
+        return entry.ref(resolver=self)
 
     def resolve(self, digest: str) -> Path | None:
         """AssetResolver: digest -> a path whose size+mtime still match the
