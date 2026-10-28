@@ -2,6 +2,9 @@
 
 - First-party pack inference dependencies install from a pinned source archive
   without requiring a Git executable.
+- Pack dependency provisioning can consume per-variant hashed locks, reject
+  shared-package conflicts and layer only extra wheels over an engine
+  interpreter without copying torch or opencv into the pack venv.
 - Packs may own exact node IDs with case, spaces and dots, without renaming
   them. Namespace and exact-node ownership reject overlapping owners through
   install, composition and reload. Pack and publisher identities remain
