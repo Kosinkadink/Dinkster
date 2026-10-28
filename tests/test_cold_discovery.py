@@ -98,7 +98,8 @@ assert spec.decode(data) == value
 tensor = EncodedLatentTensor('bool', (0, 3), b'')
 for name, value in [('WAN_CAMERA_EMBEDDING', tensor), ('TRACKS', {'track_path': tensor}),
                     ('AUDIO_ENCODER_OUTPUT', {'encoded_audio': tensor,
-                     'encoded_audio_all_layers': [tensor], 'audio_samples': 0})]:
+                     'encoded_audio_all_layers': [tensor], 'audio_samples': 0}),
+                    ('AUDIO_ENCODER_OUTPUT', {'audio_feature': tensor, 'fps': 15.0})]:
     spec = registry.spec(name)
     data = spec.encode(value)
     spec.validate_encoded(data, {})
