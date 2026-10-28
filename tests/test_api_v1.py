@@ -282,6 +282,7 @@ GOLDEN_V1_SURFACE = (
     "ReadableImageSource",
     "decode_image_array",
     "decode_image_components",
+    "open_image_components",
     "encode_image_array",
     "image_array_fingerprint",
     "image_array_meta",

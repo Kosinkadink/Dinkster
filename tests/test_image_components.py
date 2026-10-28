@@ -7,7 +7,7 @@ import av
 import numpy as np
 import pytest
 from av.error import ArgumentError
-from dinkster_api.v1 import ImageComponents, decode_image_components
+from dinkster_api.v1 import ImageComponents, decode_image_components, open_image_components
 from dinkster_assets import AssetRef, digest_file
 from PIL import Image
 
@@ -228,3 +228,93 @@ def test_decode_image_components_admits_alignment_working_set(tmp_path: Path) ->
     # Unaligned pixels fit; the 64x32 conversion scratch does not.
     with pytest.raises(ValueError, match="working-set limit"):
         decode_image_components(_asset(path), max_working_set_bytes=200_000)
+
+
+@pytest.mark.parametrize("suffix", ("gif", "png"))
+def test_open_image_components_preserves_animation_order_and_alpha(
+    tmp_path: Path, suffix: str
+) -> None:
+    colors = ((19, 73, 211), (241, 5, 91), (37, 183, 13))
+    arrays = [
+        np.full(
+            (2, 32 if suffix == "gif" else 3, 4),
+            (*color, 255 if suffix == "gif" else 71 + i * 61),
+            np.uint8,
+        )
+        for i, color in enumerate(colors)
+    ]
+    path = tmp_path / f"animation.{suffix}"
+    images = [Image.fromarray(array) for array in arrays]
+    images[0].save(path, save_all=True, append_images=images[1:], duration=80, loop=0)
+    expected_frames = [array.astype(np.float32) / 255 for array in arrays]
+    if suffix == "gif":
+        # GIF decodes as BGRA, whose float conversion is not byte normalization.
+        with av.open(path) as container:
+            expected_frames = [
+                frame.to_ndarray(format="gbrapf32le") for frame in container.decode(video=0)
+            ]
+
+    with open_image_components(_asset(path)) as frames:
+        decoded = list(frames)
+
+    assert len(decoded) == 3
+    for result, expected in zip(decoded, expected_frames, strict=True):
+        assert result.pixels.dtype == np.float32
+        np.testing.assert_array_equal(result.pixels, expected[..., :3])
+        assert result.alpha is not None
+        np.testing.assert_array_equal(result.alpha, expected[..., 3:])
+    first = decode_image_components(_asset(path))
+    np.testing.assert_array_equal(first.pixels, decoded[0].pixels)
+    np.testing.assert_array_equal(first.alpha, decoded[0].alpha)
+
+
+@pytest.mark.parametrize("finish", ("exhaust", "stop", "error"))
+def test_open_image_components_closes_source_and_iterator_on_exit(
+    tmp_path: Path, finish: str
+) -> None:
+    path = tmp_path / "animation.png"
+    Image.new("RGB", (3, 2), (17, 92, 211)).save(
+        path, save_all=True, append_images=[Image.new("RGB", (3, 2), (201, 3, 47))], duration=80
+    )
+
+    class Source:
+        handle: Any = None
+
+        def open(self):
+            assert self.handle is None
+            self.handle = path.open("rb")
+            return self.handle
+
+    source = Source()
+    frames = None
+    first = None
+    try:
+        with open_image_components(source) as frames:
+            first = next(frames)
+            assert not source.handle.closed
+            if finish == "exhaust":
+                assert len(list(frames)) == 1
+            elif finish == "error":
+                raise RuntimeError("consumer failed")
+    except RuntimeError as error:
+        assert finish == "error" and str(error) == "consumer failed"
+    assert source.handle.closed
+    assert frames is not None and first is not None
+    with pytest.raises(StopIteration):
+        next(frames)
+    np.testing.assert_array_equal(first.pixels[0, 0], np.array([17, 92, 211], np.float32) / 255)
+
+
+def test_open_image_components_checks_each_frame_before_conversion(tmp_path: Path) -> None:
+    import io
+
+    path = tmp_path / "varying.mjpeg"
+    with path.open("wb") as handle:
+        for size in ((3, 2), (5, 2)):
+            encoded = io.BytesIO()
+            Image.new("RGB", size, (61, 122, 183)).save(encoded, format="JPEG")
+            handle.write(encoded.getvalue())
+    with open_image_components(_asset(path), max_dimension=3) as frames:
+        assert next(frames).pixels.shape == (2, 3, 3)
+        with pytest.raises(ValueError, match="dimensions"):
+            next(frames)
