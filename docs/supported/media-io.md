@@ -111,7 +111,9 @@
   nonblocking value diagnostics, including isolated-worker execution
 - Asset-backed native audio loading to AUDIO (first audio stream of audio or
   video containers), including audio-only Opus/Vorbis WebM and AAC M4A uploads
-  classified from their track metadata; silent-audio construction with declared
+  classified from their track metadata; Record Audio decodes a canonical recorded
+  file identity to AUDIO through ordinary in-process and isolated hosts;
+  silent-audio construction with declared
   duration, sample rate, and channel count; and typed audio preview. Value discovery
   advertises versioned waveform PNG and bounded WAV window renditions with
   explicit batch selection, normalized selectors in cache identity, and

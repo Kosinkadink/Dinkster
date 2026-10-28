@@ -536,6 +536,7 @@ namespaces = [
     "TripoSplatConditioning",
     "LoadTrainingDataset",
     "LoadAudio",
+    "RecordAudio",
     "PreviewAudio",
     "SaveAudio",
     "SaveAudioMP3",
