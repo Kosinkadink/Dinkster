@@ -129,6 +129,7 @@ def test_animated_savers_preserve_source_controls_and_append_mount() -> None:
 def test_advanced_image_save_retains_format_branches_and_adjacent_mount() -> None:
     schema = SaveImageAdvanced.schema()
     assert schema.input_order == ("images", "filename_prefix", "format", "mount")
+    assert schema.inputs[1].widget == StringWidget(multiline=False)
     assert schema.inputs[-1].widget == MountWidget()
     assert schema.inputs[-1].adjacent_to == "filename_prefix"
     assert not schema.inputs[-1].required and schema.inputs[-1].default is None

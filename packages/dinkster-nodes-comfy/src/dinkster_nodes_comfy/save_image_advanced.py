@@ -26,6 +26,7 @@ from dinkster_api.v1 import (
     NodeSchema,
     NumberWidget,
     OutputSpec,
+    StringWidget,
     TypeExpr,
     initialize_inference_process,
     materialize_image,
@@ -56,6 +57,7 @@ class SaveImageAdvanced(Node):
                     "filename_prefix",
                     _STRING,
                     default="ComfyUI",
+                    widget=StringWidget(multiline=False),
                     doc=(
                         "The prefix for the file to save. May include formatting tokens such as "
                         "%date:yyyy-MM-dd% or %Empty Latent Image.width%."
