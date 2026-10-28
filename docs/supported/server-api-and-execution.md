@@ -42,6 +42,9 @@
   asset catalog groups aliases by digest, supports name/kind/origin/date
   filters and paged queries, and keeps workflow records separate. Catalog
   locations do not grant filesystem access or expose physical paths.
+  Interrupted publication recovers completed files on restart or the next
+  catalog query, after checking their bytes and current folder authority.
+  Unpublished, changed, unavailable or revoked files are not restored or granted.
 - Operators can persist project folder membership, independent display order,
   shared folders, and project output selections through the mount API.
   Removing a project association does not delete files or revoke the grant.

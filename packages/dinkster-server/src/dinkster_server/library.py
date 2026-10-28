@@ -65,6 +65,8 @@ import re
 import shutil
 import sqlite3
 import tempfile
+import time
+import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -672,6 +674,33 @@ async def _ingest_file_upload(
                 byte_size=received,
             )
 
+        observation_id = uuid.uuid4().hex
+        created_at = time.time()
+        journal = library.vault.root / ".upload-observations" / f"{observation_id}.json"
+
+        def prepare(ref: AssetRef) -> None:
+            journal.parent.mkdir(exist_ok=True)
+            if journal.parent.is_symlink():
+                raise AssetError("upload recovery directory must not be a symlink")
+            payload = {
+                "scope": scope,
+                "asset": ref.to_wire(),
+                "originalName": name,
+                "kind": grant.kind if grant is not None else "asset/file",
+                "extension": grant.extension if grant is not None else None,
+                "project": project,
+                "created": created_at,
+            }
+            temporary_journal = journal.with_suffix(".tmp")
+            try:
+                with temporary_journal.open("x", encoding="utf-8") as handle:
+                    json.dump(payload, handle)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                temporary_journal.replace(journal)
+            finally:
+                temporary_journal.unlink(missing_ok=True)
+
         def publish() -> tuple[AssetRef, bool]:
             try:
                 if target is not None:
@@ -683,7 +712,11 @@ async def _ingest_file_upload(
                         raise AssetError("upload folder was removed from this project")
                     with temporary_path.open("rb") as source:
                         ref = library.upload_writer.save_named_stream(
-                            target, source, media_type=media_type, limit=limit
+                            target,
+                            source,
+                            media_type=media_type,
+                            limit=limit,
+                            before_publish=prepare,
                         )
                     if grant is not None:
                         library.store.grant_media_result(grant, temporary_path)
@@ -694,15 +727,19 @@ async def _ingest_file_upload(
                         kind=grant.kind if grant is not None else "asset/file",
                         origin={"kind": "upload"},
                         project=project,
+                        observation_id=observation_id,
+                        created=created_at,
                     )
+                    journal.unlink()
                     return ref, True
                 assert grant is not None
+                ref = AssetRef(digest, name, received, media_type, "")
+                prepare(ref)
                 with library.vault.writer(digest) as writer, temporary_path.open("rb") as source:
                     while chunk := source.read(64 * 1024):
                         writer.write(chunk)
                     _path, bytes_created = writer.commit_with_result()
                 _stored, grant_created = library.store.grant_media_result(grant, temporary_path)
-                ref = AssetRef(digest, name, received, media_type, "")
                 library.store.record_asset(
                     scope,
                     ref,
@@ -710,7 +747,10 @@ async def _ingest_file_upload(
                     kind=grant.kind,
                     origin={"kind": "upload"},
                     project=project,
+                    observation_id=observation_id,
+                    created=created_at,
                 )
+                journal.unlink()
                 return ref, bytes_created or grant_created
             finally:
                 temporary_path.unlink(missing_ok=True)
@@ -769,6 +809,65 @@ async def run_media_publication(
             library.media_ingest_lock.release()
 
 
+def _recover_upload_observations(library: ServerLibrary) -> None:
+    folder = library.vault.root / ".upload-observations"
+    if folder.is_symlink():
+        return
+    for journal in folder.glob("*.json"):
+        if journal.is_symlink():
+            continue
+        try:
+            loaded: object = json.loads(journal.read_text("utf-8"))
+            if not isinstance(loaded, dict):
+                continue
+            payload = cast("dict[str, Any]", loaded)
+            if not isinstance(payload.get("asset"), dict):
+                continue
+            ref = AssetRef.from_wire(payload["asset"])
+            project = payload["project"]
+            if ref.virtual_path:
+                if library.upload_writer is None or library.project_folders_for is None:
+                    continue
+                mount = ref.virtual_path.split("/", 2)[1]
+                if mount not in library.project_folders_for(project).mounts:
+                    continue
+                path = library.upload_writer.recover_named_asset(ref)
+            else:
+                path = library.vault.resolve(ref.digest)
+                if path is not None:
+                    with open_verified(path, ref.digest) as handle:
+                        if os.fstat(handle.fileno()).st_size != ref.size:
+                            continue
+            if path is None:
+                continue
+            if payload["extension"] is not None:
+                library.store.grant_media_result(
+                    MediaGrant(
+                        payload["scope"],
+                        ref.digest,
+                        payload["kind"],
+                        ref.media_type,
+                        payload["extension"],
+                        ref.size,
+                    ),
+                    path,
+                )
+            library.store.record_asset(
+                payload["scope"],
+                ref,
+                original_name=payload["originalName"],
+                kind=payload["kind"],
+                origin={"kind": "upload"},
+                project=project,
+                observation_id=journal.stem,
+                created=payload["created"],
+            )
+            journal.unlink()
+        except (AssetError, OSError, sqlite3.Error, ValueError, KeyError, TypeError, IndexError):
+            # Unavailable/revoked bytes keep their recovery record, not a grant.
+            continue
+
+
 async def handle_asset_catalog(request: web.Request) -> web.Response:
     scope = resolve_scope(principal_for(request), "assets:read", request.query.get("scope"))
     allowed = {"scope", "project", "q", "kind", "origin", "since", "until", "limit", "cursor"}
@@ -795,6 +894,8 @@ async def handle_asset_catalog(request: web.Request) -> web.Response:
     bound.update(scope=scope, project=project)
     cursor = request.query.get("cursor")
     after = decode_cursor(cursor, bound) if cursor else None
+    library = request.app[LIBRARY_KEY]
+    await run_media_publication(library, lambda: _recover_upload_observations(library))
     try:
         groups = await asyncio.to_thread(
             request.app[LIBRARY_KEY].store.query_assets,
@@ -1226,6 +1327,9 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
     app.router.add_patch("/api/library/{record_id}", handle_library_update)
     app.router.add_delete("/api/library/{record_id}", handle_library_delete)
 
+    async def recover_upload_observations(app: web.Application) -> None:
+        await run_media_publication(library, lambda: _recover_upload_observations(library))
+
     async def remove_stale_latent_uploads(app: web.Application) -> None:
         def remove() -> None:
             for path in library.vault.root.glob(".latent-upload-*"):
@@ -1244,5 +1348,6 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
             library.latent_ingest_slots.release()
             library.latent_ingest_slots.release()
 
+    app.on_startup.append(recover_upload_observations)
     app.on_startup.append(remove_stale_latent_uploads)
     app.on_cleanup.append(close_store)

@@ -227,6 +227,7 @@ class AssetWriter:
         *,
         media_type: str = "application/octet-stream",
         limit: int,
+        before_publish: Callable[[AssetRef], None] | None = None,
     ) -> AssetRef:
         """Import bytes under the target's full filename, numbering collisions only."""
         if type(limit) is not int or limit < 0:
@@ -258,8 +259,32 @@ class AssetWriter:
                 limit=limit,
                 expected_root=root,
                 prefer_exact_name=True,
+                before_publish=before_publish,
             )
         return ref
+
+    def recover_named_asset(self, ref: AssetRef) -> Path | None:
+        """Verify a journaled publication under current authority without creating bytes."""
+        namespace, mount, relative = ref.virtual_path.split("/", 2)
+        if namespace != MOUNT_NAMESPACE:
+            raise AssetError("recovery requires a mounted asset")
+        target = SaveTarget(mount, relative)
+        root = self._authority.writable_root(mount)
+        path = root / relative
+        self._require_contained(root, path, target)
+        if not path.is_file():
+            return None
+        from .integrity import open_verified
+
+        with open_verified(path, ref.digest) as handle:
+            observed = os.fstat(handle.fileno())
+            if observed.st_size != ref.size:
+                raise AssetError("journaled asset size changed")
+        if self._authority.writable_root(mount).resolve() != root.resolve():
+            raise AssetError("journaled mount changed its root")
+        self._require_contained(root, path, target)
+        append_write_record(root, relative, ref.digest, ref.size, observed.st_mtime_ns)
+        return path
 
     def save_encoded(
         self,
@@ -366,6 +391,7 @@ class AssetWriter:
         expected_root: Path | None = None,
         strict_counter: bool = False,
         prefer_exact_name: bool = False,
+        before_publish: Callable[[AssetRef], None] | None = None,
     ) -> tuple[AssetRef, int]:
         root, folder = self._writable_folder(parsed)
         if expected_root is not None and root.resolve() != expected_root.resolve():
@@ -406,6 +432,22 @@ class AssetWriter:
                 current_root, _ = self._writable_folder(parsed)
                 if current_root.resolve() != root.resolve():
                     raise AssetError(f"mount {parsed.mount!r} changed its root during import")
+
+            def prepare(final: Path) -> None:
+                if before_publish is not None:
+                    before_publish(
+                        AssetRef(
+                            digest,
+                            final.name,
+                            size,
+                            media_type,
+                            f"{MOUNT_NAMESPACE}/{parsed.mount}/{final.relative_to(root).as_posix()}",
+                        )
+                    )
+                    if self._authority.writable_root(parsed.mount).resolve() != root.resolve():
+                        raise AssetError("import mount changed its root before publication")
+                    self._require_contained(root, final, parsed)
+
             final, used_counter = self._claim_and_land(
                 folder,
                 stem,
@@ -414,6 +456,7 @@ class AssetWriter:
                 counter,
                 strict_counter=strict_counter,
                 prefer_exact_name=prefer_exact_name,
+                before_publish=prepare if before_publish is not None else None,
             )
         finally:
             tmp.unlink(missing_ok=True)
@@ -630,6 +673,7 @@ class AssetWriter:
         *,
         strict_counter: bool = False,
         prefer_exact_name: bool = False,
+        before_publish: Callable[[Path], None] | None = None,
     ) -> tuple[Path, int]:
         """Publish the temp file under the next free counter name.
 
@@ -639,6 +683,8 @@ class AssetWriter:
         """
         if prefer_exact_name:
             final = folder / f"{stem}{suffix}"
+            if before_publish is not None:
+                before_publish(final)
             try:
                 os.link(tmp, final)
             except FileExistsError:
@@ -649,6 +695,8 @@ class AssetWriter:
             counter = AssetWriter._next_counter_for_suffix(folder, stem, suffix)
         while True:
             final = folder / f"{stem}_{counter:05d}{suffix}"
+            if before_publish is not None:
+                before_publish(final)
             try:
                 os.link(tmp, final)
             except FileExistsError:

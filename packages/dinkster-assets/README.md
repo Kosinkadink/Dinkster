@@ -144,6 +144,17 @@ userinfo, query strings and fragments. `query_assets` pages digest identities
 within one scope/project and retains all their aliases and origin events even
 when only one event matches the name, kind, origin or date filter. Dates are
 observation times, not claims about a file's original creation time.
+Publication callers can supply an observation ID and time for idempotent
+recovery; a repeated ID must describe the identical event.
+
+Named imports can prepare metadata with `before_publish` before the writer's
+atomic link. The server journals upload observations in the private vault's
+`.upload-observations` directory before publishing bytes, removing the journal
+only after grant/catalog commits. Startup and catalog queries retry unfinished
+observations. Mounted recovery verifies the exact filename/digest and current
+writable/project grant, repairs digest indexing, and never creates missing bytes.
+Unavailable, changed or revoked locations retain their journal for a later retry.
+The catalog cannot turn that journal into filesystem authority.
 
 From the repository root:
 

@@ -258,6 +258,8 @@ class LibraryStore:
         kind: str,
         origin: Mapping[str, str],
         project: str = "default",
+        observation_id: str | None = None,
+        created: float | None = None,
     ) -> AssetObservation:
         scope = _clean_scope(scope)
         original_name = _clean_name(original_name)
@@ -294,17 +296,40 @@ class LibraryStore:
             details["url"] = urlunsplit(
                 (url.scheme, url.netloc.rsplit("@", 1)[-1], url.path, "", "")
             )
+        if observation_id is not None and re.fullmatch(r"[0-9a-f]{32}", observation_id) is None:
+            raise AssetError("invalid observation id")
+        if created is not None and (not math.isfinite(created) or created < 0):
+            raise AssetError("invalid observation time")
         observation = AssetObservation(
-            uuid.uuid4().hex,
+            observation_id or uuid.uuid4().hex,
             scope,
             asset,
             original_name,
             kind,
             details,
             project,
-            time.time(),
+            time.time() if created is None else created,
         )
         with self._lock, self._conn:
+            existing = self._conn.execute(
+                "SELECT * FROM asset_observations WHERE id = ?", (observation.id,)
+            ).fetchone()
+            if existing is not None:
+                if (
+                    existing["scope"] != scope
+                    or existing["digest"] != asset.digest
+                    or existing["original_name"] != original_name
+                    or existing["stored_name"] != asset.name
+                    or existing["kind"] != kind
+                    or existing["media_type"] != asset.media_type
+                    or existing["byte_size"] != asset.size
+                    or existing["virtual_path"] != asset.virtual_path
+                    or json.loads(existing["origin"]) != details
+                    or existing["project"] != project
+                    or existing["created"] != observation.created
+                ):
+                    raise AssetError("observation id already describes another publication")
+                return observation
             self._conn.execute(
                 "INSERT INTO asset_observations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (

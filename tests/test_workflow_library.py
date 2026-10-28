@@ -450,6 +450,184 @@ def test_named_model_upload_streams_to_folder_without_redirecting_workflows(tmp_
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("failure", ("before-observation", "after-observation"))
+@pytest.mark.parametrize("mounted", (False, True))
+def test_upload_catalog_recovers_failed_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str, mounted: bool
+) -> None:
+    async def scenario() -> None:
+        root = tmp_path / "imports"
+        root.mkdir()
+        mounts = MountTable()
+        mounts.add(MountDef("imports", root, "readwrite"))
+        mounts.scan("imports")
+        options: dict[str, object] = (
+            {
+                "resolver": mounts,
+                "upload_writer": AssetWriter(mounts),
+                "project_folders_for": lambda _project: AssetFolderContext(("imports",)),
+            }
+            if mounted
+            else {}
+        )
+        image = BytesIO()
+        Image.new("RGB", (3, 2), (21, 50, 100)).save(image, format="PNG")
+        body = image.getvalue()
+        client = await make_client(tmp_path, **options)
+        original = LibraryStore.record_asset
+
+        def fail(store: LibraryStore, *args: object, **kwargs: object) -> object:
+            if failure == "after-observation":
+                original(store, *args, **kwargs)  # type: ignore[arg-type]
+            raise sqlite3.OperationalError("injected observation failure")
+
+        try:
+            with monkeypatch.context() as patch:
+                patch.setattr(LibraryStore, "record_asset", fail)
+                response = await client.post(
+                    "/api/assets/media?scope=local&name=portrait.png&kind=media/image",
+                    data=body,
+                    headers={"Content-Type": "image/png"},
+                )
+            assert response.status == 503, await response.text()
+            assert len(list((tmp_path / "vault" / ".upload-observations").glob("*.json"))) == 1
+            if mounted:
+                assert (root / "portrait.png").read_bytes() == body
+                assert client.app[LIBRARY_KEY].vault.digests() == []
+            else:
+                path = client.app[LIBRARY_KEY].vault.resolve(digest_bytes(body))
+                assert path is not None and path.read_bytes() == body
+        finally:
+            await client.close()
+
+        # Revocation must not be undone by the pending recovery record.
+        if mounted:
+            mounts.remove("imports")
+            client = await make_client(tmp_path, **options)
+            try:
+                result = await (await client.get("/api/assets/catalog?scope=local")).json()
+                assert len(result["assets"]) == (1 if failure == "after-observation" else 0)
+                assert len(list((tmp_path / "vault" / ".upload-observations").glob("*.json"))) == 1
+            finally:
+                await client.close()
+            mounts.add(MountDef("imports", root, "readwrite"))
+            mounts.scan("imports")
+
+        before = None
+        for _restart in range(2):
+            client = await make_client(tmp_path, **options)
+            try:
+                result = await (await client.get("/api/assets/catalog?scope=local")).json()
+                assert len(result["assets"]) == 1
+                observed = result["assets"][0]
+                assert observed["aliases"] == ["portrait.png"]
+                assert len(observed["observations"]) == 1
+                assert observed["observations"][0]["origin"] == {"kind": "upload"}
+                assert observed["asset"]["digest"] == digest_bytes(body)
+                assert observed["asset"]["virtualPath"] == (
+                    "mounts/imports/portrait.png" if mounted else ""
+                )
+                assert await (await client.get("/api/assets/" + digest_bytes(body))).read() == body
+                assert not list((tmp_path / "vault" / ".upload-observations").glob("*.json"))
+                if before is not None:
+                    assert result == before
+                before = result
+            finally:
+                await client.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("published,changed", ((False, False), (True, False), (True, True)))
+def test_upload_catalog_survives_process_exit_at_publication(
+    tmp_path: Path, published: bool, changed: bool
+) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import asyncio, os, runpy, sys
+from pathlib import Path
+from io import BytesIO
+from PIL import Image
+from dinkster_assets import AssetWriter, MountDef, MountTable
+from dinkster_protocol import AssetFolderContext
+
+make_client = runpy.run_path('tests/test_workflow_library.py')['make_client']
+root = Path(sys.argv[1])
+folder = root / 'imports'
+folder.mkdir()
+mounts = MountTable()
+mounts.add(MountDef('imports', folder, 'readwrite'))
+mounts.scan('imports')
+link = os.link
+def interrupted(source, destination, **kwargs):
+    if Path(destination).name == 'portrait.png':
+        if sys.argv[2] == 'True':
+            link(source, destination, **kwargs)
+        os._exit(86)
+    return link(source, destination, **kwargs)
+os.link = interrupted
+async def upload():
+    client = await make_client(root, resolver=mounts, upload_writer=AssetWriter(mounts),
+        project_folders_for=lambda project: AssetFolderContext(('imports',)))
+    image = BytesIO()
+    Image.new('RGB', (3, 2), (21, 50, 100)).save(image, format='PNG')
+    await client.post('/api/assets/media?scope=local&name=portrait.png&kind=media/image',
+        data=image.getvalue(), headers={'Content-Type': 'image/png'})
+asyncio.run(upload())
+""",
+            str(tmp_path),
+            str(published),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 86, result.stdout + result.stderr
+    folder = tmp_path / "imports"
+    assert (folder / "portrait.png").exists() == published
+    if changed:
+        (folder / "portrait.png").write_bytes(b"replaced after publication")
+
+    async def scenario() -> None:
+        mounts = MountTable()
+        mounts.add(MountDef("imports", folder, "readwrite"))
+        # Start recovery before scan readiness, then let the live catalog retry it.
+        client = await make_client(
+            tmp_path,
+            resolver=mounts,
+            upload_writer=AssetWriter(mounts),
+            project_folders_for=lambda _project: AssetFolderContext(("imports",)),
+        )
+        try:
+            mounts.scan("imports")
+            response = await client.get("/api/assets/catalog?scope=local")
+            assert response.status == 200
+            assets = (await response.json())["assets"]
+            image = BytesIO()
+            Image.new("RGB", (3, 2), (21, 50, 100)).save(image, format="PNG")
+            body = image.getvalue()
+            recovered = published and not changed
+            assert len(assets) == int(recovered)
+            grant = client.app[LIBRARY_KEY].store.media_grant(
+                "local", digest_bytes(body), "media/image"
+            )
+            assert (grant is not None) == recovered
+            if recovered:
+                assert assets[0]["asset"]["digest"] == digest_bytes(body)
+                assert assets[0]["aliases"] == ["portrait.png"]
+                assert len(assets[0]["observations"]) == 1
+                response = await client.get("/api/assets/" + digest_bytes(body))
+                assert response.status == 200 and await response.read() == body
+                assert client.app[LIBRARY_KEY].vault.digests() == []
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
 def test_asset_catalog_persists_aliases_and_pages_identities(tmp_path: Path) -> None:
     async def scenario() -> None:
         root = tmp_path / "imports"
