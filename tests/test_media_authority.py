@@ -25,9 +25,12 @@ from dinkster_assets import (
     AssetError,
     AssetRef,
     AssetVault,
+    AssetWriter,
     LibraryStore,
     MediaClassification,
     MediaGrant,
+    MountDef,
+    MountTable,
     classify_media,
     classify_media_file,
     classify_media_handle,
@@ -36,6 +39,7 @@ from dinkster_assets import (
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EventListener
 from dinkster_nodes_media_io import LoadAudio, writable_media_recorder_webm_audio_encoders
+from dinkster_protocol import AssetFolderContext
 from dinkster_schema import Node, NodeSchema, build_node_types, build_schemas
 from dinkster_server import Principal, ServerLibrary, create_app
 from dinkster_server.auth import LOCAL_PRINCIPAL, PRINCIPAL_KEY
@@ -943,6 +947,7 @@ async def _media_client(
     upload_limit: int = 1024 * 1024,
     media_upload_limits: Mapping[str, int] | None = None,
     authenticator: _Tokens | None = None,
+    mounts: MountTable | None = None,
 ) -> tuple[TestClient, ServerLibrary]:
     library = ServerLibrary(
         vault=AssetVault(tmp_path / "vault"),
@@ -952,6 +957,17 @@ async def _media_client(
             _uniform_media_limits(upload_limit)
             if media_upload_limits is None
             else media_upload_limits
+        ),
+        resolver=mounts,
+        upload_writer=AssetWriter(mounts) if mounts is not None else None,
+        project_folders_for=(
+            (
+                lambda project: AssetFolderContext(
+                    ("imports", "project") if project == "film" else ()
+                )
+            )
+            if mounts is not None
+            else None
         ),
     )
     app = create_app(
@@ -1162,6 +1178,123 @@ def _media_headers(media_type: str, token: str | None = None) -> dict[str, str]:
     if token is not None:
         headers["Authorization"] = f"Bearer {token}"
     return headers
+
+
+@pytest.mark.parametrize(
+    ("data", "kind", "media_type"),
+    (
+        (_png(), "media/image", "image/png"),
+        (_mp4(_video_mp4_track()), "media/video", "video/mp4"),
+        (_glb(), "media/model3d", "model/gltf-binary"),
+    ),
+)
+def test_named_media_upload_uses_project_folder_without_vault_copy(
+    tmp_path: Path, data: bytes, kind: str, media_type: str
+) -> None:
+    async def scenario() -> None:
+        mounts = MountTable()
+        for mount_id in ("imports", "project"):
+            root = tmp_path / mount_id
+            root.mkdir()
+            mounts.add(MountDef(id=mount_id, path=root, mode="readwrite"))
+            mounts.scan(mount_id)
+        client, library = await _media_client(tmp_path, mounts=mounts)
+        try:
+            for destination, folder, expected in (
+                (None, None, "mounts/imports/portrait.png"),
+                (None, None, "mounts/imports/portrait_00001.png"),
+                ("project", "plates", "mounts/project/plates/portrait.png"),
+            ):
+                params = {
+                    "scope": "local",
+                    "kind": kind,
+                    "name": "portrait.png",
+                    "project": "film",
+                }
+                if destination is not None:
+                    params["mount"] = destination
+                    assert folder is not None
+                    params["folder"] = folder
+                response = await client.post(
+                    "/api/assets/media",
+                    params=params,
+                    data=data,
+                    headers=_media_headers(media_type),
+                )
+                assert response.status == 201, await response.text()
+                body = await response.json()
+                assert body["asset"]["virtualPath"] == expected
+                assert body["asset"]["digest"] == digest_bytes(data)
+                assert body["asset"]["mediaType"] == media_type
+                assert (tmp_path / expected.removeprefix("mounts/")).read_bytes() == data
+                fetched = await client.get(f"/api/assets/{digest_bytes(data)}")
+                assert fetched.status == 200
+                assert await fetched.read() == data
+            assert library.vault.digests() == []
+            assert not list(library.vault.root.glob(".media-upload-*"))
+            assert library.store.media_grant("local", digest_bytes(data), kind) is not None
+            assert library.store.media_grant("other", digest_bytes(data), kind) is None
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "condition", ("readonly", "offline", "revoked", "other-project", "traversal", "symlink")
+)
+def test_named_media_upload_refuses_destination_without_fallback(
+    tmp_path: Path, condition: str
+) -> None:
+    async def scenario() -> None:
+        root = tmp_path / "project"
+        root.mkdir()
+        mounts = MountTable()
+        mounts.add(
+            MountDef(
+                id="project", path=root, mode="read" if condition == "readonly" else "readwrite"
+            )
+        )
+        mounts.scan("project")
+        if condition == "offline":
+            root.rename(tmp_path / "disconnected")
+        elif condition == "revoked":
+            mounts.remove("project")
+        elif condition == "symlink":
+            from tests.platform_support import symlink_or_skip
+
+            outside = tmp_path / "outside"
+            outside.mkdir()
+            symlink_or_skip(root / "plates", outside, target_is_directory=True)
+        client, library = await _media_client(tmp_path, mounts=mounts)
+        try:
+            response = await client.post(
+                "/api/assets/media",
+                params={
+                    "scope": "local",
+                    "kind": "media/image",
+                    "name": "portrait.png",
+                    "project": "other" if condition == "other-project" else "film",
+                    "mount": "project",
+                    "folder": "../outside" if condition == "traversal" else "plates",
+                },
+                data=_png(),
+                headers=_media_headers("image/png"),
+            )
+            expected = {"other-project": 403, "traversal": 400}.get(condition, 503)
+            assert response.status == expected, await response.text()
+            assert str(tmp_path) not in await response.text()
+            assert library.vault.digests() == []
+            assert not list(library.vault.root.glob(".media-upload-*"))
+            assert not (root / "plates" / "portrait.png").exists()
+            assert not (tmp_path / "outside" / "portrait.png").exists()
+            assert library.store.media_grant("local", digest_bytes(_png()), "media/image") is None
+            if condition == "offline":
+                assert not root.exists()
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
 
 
 def test_media_ingest_auth_scope_idempotence_and_canonical_response(

@@ -83,8 +83,16 @@ The main protocol routes include:
 - `GET /api/queue` and `POST /api/queue/pause`, `/resume`, or `/clear`
 - `/api/assets`, `/api/library`, and `/api/history` when their stores are composed.
   `POST /api/assets/media?scope=&kind=&name=` is the bounded authenticated media
-  ingest: it accepts only the closed image/audio/video Content-Types, derives
-  canonical facts from bytes, and creates exact scoped immutable authority
+  ingest: it accepts only the closed image/audio/video/model3d Content-Types,
+  derives canonical facts from bytes, and creates exact scoped immutable authority.
+  Hosts with an `upload_writer` publish named files to the configured
+  `import_mount` by default. Optional `project` (default `default`), `mount`,
+  and relative `folder` select a project-member writable destination.
+  Original filenames are preserved, collisions are numbered, and the response
+  carries the actual virtual path. No durable vault copy is created.
+  Destinations are rechecked at publication; unavailable or revoked grants
+  fail rather than redirecting. Vault-only embedding hosts keep digest storage
+  and reject explicit folder requests.
 - `POST /api/assets/latent?scope=&name=` streams and strictly validates native
   or supported ComfyUI latent safetensors under independent concurrency, size,
   idle-timeout, and disk-headroom limits

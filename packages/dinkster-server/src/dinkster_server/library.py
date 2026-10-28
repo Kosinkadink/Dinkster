@@ -56,6 +56,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 import sqlite3
 import tempfile
@@ -72,8 +73,10 @@ from dinkster_assets import (
     MAX_LATENT_DATA_BYTES,
     AssetError,
     AssetIntegrityError,
+    AssetRef,
     AssetResolver,
     AssetVault,
+    AssetWriter,
     LibraryStore,
     MediaGrant,
     PackAssetCatalog,
@@ -82,6 +85,7 @@ from dinkster_assets import (
     PublicAcquisitionReceiptStore,
     PublicAcquisitionSourceV1,
     RemoteSource,
+    SaveTarget,
     StaleRevision,
     classify_media_file,
     digest_bytes,
@@ -159,12 +163,14 @@ class ServerLibrary:
     upload_limit: int = 16 * MEBIBYTE
     #: Per-kind bounds for classified media ingest; must cover _MEDIA_KINDS.
     media_upload_limits: Mapping[str, int] = _MEDIA_UPLOAD_LIMITS
-    #: Optional read-only fallback for digest GETs (e.g. filesystem
-    #: mounts, composed by the umbrella). Uploads never write here, and
-    #: hits are STREAMED, not buffered - a mount can hold model-sized
-    #: files, unlike the capped upload vault.
+    #: Optional read fallback for digest GETs (e.g. filesystem mounts).
+    #: Hits stream rather than buffer: a mount can hold model-sized files.
     resolver: AssetResolver | None = None
     project_folders_for: Callable[[str], AssetFolderContext] | None = None
+    #: Hosts with mount grants publish named media through the same writer as saves.
+    #: Vault-only embedding hosts retain digest-only media storage.
+    upload_writer: AssetWriter | None = None
+    import_mount: str = "imports"
     #: Optional digest-keyed source leads (where bytes can be obtained).
     #: Enables the sources routes and job-preflight acquisition; records
     #: are leads, never authorities - fetched bytes verify against the
@@ -346,14 +352,19 @@ async def handle_upload(request: web.Request) -> web.Response:
 
 def _media_query(request: web.Request) -> tuple[str, str, str] | web.Response:
     expected = {"scope", "kind", "name"}
-    if set(request.query) != expected or any(
-        len(request.query.getall(field, [])) != 1 for field in expected
+    optional = {"project", "mount", "folder"}
+    if (
+        not expected.issubset(request.query)
+        or set(request.query) - expected - optional
+        or any(len(request.query.getall(field, [])) != 1 for field in request.query)
     ):
         return _media_error(
             400,
             "invalid_query",
             "exactly one scope, kind, and name query field is required",
         )
+    if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", request.query.get("project", "default")) is None:
+        return _media_error(400, "invalid_project", "project must be a lowercase project id")
     scope = request.query["scope"]
     kind = request.query["kind"]
     name = request.query["name"]
@@ -543,6 +554,26 @@ async def handle_media_upload(request: web.Request) -> web.Response:
         )
 
     library = request.app[LIBRARY_KEY]
+    project = request.query.get("project", "default")
+    target: SaveTarget | None = None
+    if library.upload_writer is not None or {"mount", "folder", "project"}.intersection(
+        request.query
+    ):
+        if library.upload_writer is None or library.project_folders_for is None:
+            return _media_error(503, "destination_unavailable", "upload folders are not configured")
+        folder = request.query.get("folder", "")
+        try:
+            target = SaveTarget(
+                request.query.get("mount", library.import_mount),
+                f"{folder}/{name}" if folder else name,
+            )
+            context = library.project_folders_for(project)
+        except (AssetError, ValueError):
+            return _media_error(400, "invalid_destination", "invalid project or upload folder")
+        if target.mount not in context.mounts:
+            return _media_error(
+                403, "destination_forbidden", "upload folder is not in this project"
+            )
     # The claimed kind is binding: classification later rejects any body
     # whose actual kind differs (kind_mismatch), so an oversized image
     # cannot ride in under a roomier video claim.
@@ -603,35 +634,41 @@ async def handle_media_upload(request: web.Request) -> web.Response:
             byte_size=received,
         )
 
-        def publish() -> tuple[bool, bool]:
+        def publish() -> tuple[AssetRef, bool]:
             try:
+                if target is not None:
+                    assert (
+                        library.upload_writer is not None
+                        and library.project_folders_for is not None
+                    )
+                    if target.mount not in library.project_folders_for(project).mounts:
+                        raise AssetError("upload folder was removed from this project")
+                    with temporary_path.open("rb") as source:
+                        ref = library.upload_writer.save_named_stream(
+                            target, source, media_type=classification.media_type, limit=limit
+                        )
+                    library.store.grant_media_result(grant, temporary_path)
+                    return ref, True
                 with library.vault.writer(digest) as writer, temporary_path.open("rb") as source:
                     while chunk := source.read(64 * 1024):
                         writer.write(chunk)
                     _path, bytes_created = writer.commit_with_result()
                 _stored, grant_created = library.store.grant_media_result(grant, temporary_path)
-                return bytes_created, grant_created
+                return AssetRef(
+                    digest, name, received, classification.media_type, ""
+                ), bytes_created or grant_created
             finally:
                 temporary_path.unlink(missing_ok=True)
 
         try:
-            bytes_created, grant_created = await run_media_publication(
+            ref, created = await run_media_publication(
                 library, publish, handoff=publication_handoff
             )
         except (AssetError, OSError, sqlite3.Error):
             return _media_error(503, "storage_unavailable", "media storage is unavailable")
 
-        body = {
-            "asset": {
-                "digest": digest,
-                "name": name,
-                "size": received,
-                "mediaType": classification.media_type,
-                "virtualPath": "",
-            },
-            "kind": classification.kind,
-        }
-        return web.json_response(body, status=201 if bytes_created or grant_created else 200)
+        body = {"asset": ref.to_wire(), "kind": classification.kind}
+        return web.json_response(body, status=201 if created else 200)
     finally:
         temporary.close()
         if not publication_handoff.is_set():
@@ -640,10 +677,10 @@ async def handle_media_upload(request: web.Request) -> web.Response:
 
 async def run_media_publication(
     library: ServerLibrary,
-    publish: Callable[[], tuple[bool, bool]],
+    publish: Callable[[], _T],
     *,
     handoff: asyncio.Event | None = None,
-) -> tuple[bool, bool]:
+) -> _T:
     """Keep serialization owned until an uncancellable worker actually settles."""
     await library.media_ingest_lock.acquire()
     task = asyncio.ensure_future(asyncio.to_thread(publish))
@@ -655,7 +692,7 @@ async def run_media_publication(
     except asyncio.CancelledError:
         handed_off = True
 
-        def release_lock(settled: asyncio.Task[tuple[bool, bool]]) -> None:
+        def release_lock(settled: asyncio.Task[_T]) -> None:
             library.media_ingest_lock.release()
             if not settled.cancelled():
                 settled.exception()

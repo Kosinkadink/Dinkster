@@ -25,6 +25,12 @@
   Existing import paths and read-only grants are preserved; unavailable
   configured directories are not recreated or replaced. Removing the import
   grant remains effective across restarts and repeated setup.
+- Classified media uploads in the managed server use original filenames in
+  the configured imports folder, with collision-safe numbering and no durable
+  vault duplicate. Requests can select another writable project folder and
+  relative subfolder; the returned asset records the actual virtual path.
+  Read-only, unavailable, revoked, escaping, or other-project destinations
+  fail without silently redirecting the upload.
 - Operators can persist project folder membership, independent display order,
   shared folders, and project output selections through the mount API.
   Removing a project association does not delete files or revoke the grant.

@@ -3631,6 +3631,33 @@ def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
                 assert imports["path"] == str(library_root / "imports")
                 assert imports["mode"] == "readwrite"
             assert (library_root / "imports").is_dir()
+            async with asyncio.timeout(60):
+                while imports["state"] != "ready":
+                    await asyncio.sleep(0.05)
+                    async with session.get(base + "/api/mounts") as resp:
+                        (imports,) = (await resp.json())["mounts"]
+            from io import BytesIO
+
+            from PIL import Image
+
+            image = BytesIO()
+            Image.new("RGB", (2, 1), (17, 42, 93)).save(image, format="PNG")
+            async with session.post(
+                base + "/api/assets/media",
+                params={"scope": "local", "kind": "media/image", "name": "dropped.png"},
+                data=image.getvalue(),
+                headers={"Content-Type": "image/png"},
+            ) as resp:
+                assert resp.status == 201, await resp.text()
+                imported = (await resp.json())["asset"]
+            assert imported["virtualPath"] == "mounts/imports/dropped.png"
+            assert (library_root / "imports" / "dropped.png").read_bytes() == image.getvalue()
+            from dinkster_assets import AssetVault
+
+            assert not AssetVault(library_root / "vault").has(imported["digest"])
+            async with session.get(base + "/api/assets/" + imported["digest"]) as resp:
+                assert resp.status == 200
+                assert await resp.read() == image.getvalue()
             async with session.post(
                 base + "/api/mounts", json={"id": "shots", "path": str(granted)}
             ) as resp:
