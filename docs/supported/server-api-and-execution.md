@@ -45,6 +45,12 @@
   Interrupted publication recovers completed files on restart or the next
   catalog query, after checking their bytes and current folder authority.
   Unpublished, changed, unavailable or revoked files are not restored or granted.
+  Existing scoped media grants and workflow records become discoverable after
+  verified vault backfill, with Unknown origin where history was not recorded.
+  Missing historical media names display the digest, not an invented filename.
+  Workflow records remain document-kind entries; existing project observations
+  do not acquire default-project membership, and anonymous bytes do not acquire
+  membership in any user's scope through this backfill.
 - Read-only asset availability checks distinguish held vault/granted-folder
   identities from missing ones without downloading, saving, granting or
   cataloging bytes. Replaced, missing and revoked files are unavailable;

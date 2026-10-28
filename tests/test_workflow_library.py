@@ -341,6 +341,103 @@ async def make_client(tmp_path: Path, **library_overrides: object) -> TestClient
     return client
 
 
+def test_catalog_backfills_known_scopes_without_claiming_anonymous_bytes(tmp_path: Path) -> None:
+    from dinkster_assets import MediaGrant
+
+    image = BytesIO()
+    Image.new("RGB", (3, 5), "red").save(image, format="PNG")
+    image_bytes = image.getvalue()
+    damaged = BytesIO()
+    Image.new("RGB", (2, 4), "blue").save(damaged, format="PNG")
+    damaged_bytes = damaged.getvalue()
+    workflow = b'{"graphs":{"main":{"nodes":{}}}}'
+    unknown = b"anonymous historical content"
+    vault = AssetVault(tmp_path / "vault")
+    for data in (image_bytes, damaged_bytes, workflow, unknown):
+        with vault.writer(digest_bytes(data)) as writer:
+            writer.write(data)
+            writer.commit()
+    store = LibraryStore(tmp_path / "library.sqlite")
+    for scope in ("alice", "charlie"):
+        store.grant_media(
+            MediaGrant(
+                scope,
+                digest_bytes(image_bytes),
+                "media/image",
+                "image/png",
+                "png",
+                len(image_bytes),
+            ),
+            image_bytes,
+        )
+    store.grant_media(
+        MediaGrant(
+            "alice",
+            digest_bytes(damaged_bytes),
+            "media/image",
+            "image/png",
+            "png",
+            len(damaged_bytes),
+        ),
+        damaged_bytes,
+    )
+    store.record_asset(
+        "charlie",
+        AssetRef(digest_bytes(image_bytes), "original.png", len(image_bytes), "image/png"),
+        original_name="original.png",
+        kind="media/image",
+        origin={"kind": "upload"},
+        project="film",
+    )
+    for name in ("Story", "Alternate story"):
+        store.create("bob", name, digest_bytes(workflow), WORKFLOW_MEDIA_TYPE)
+    path = vault.resolve(digest_bytes(damaged_bytes))
+    assert path is not None
+    path.write_bytes(b"corrupted")
+    store.close()
+
+    async def scenario() -> None:
+        previous: list[dict[str, object]] | None = None
+        for _ in range(2):
+            client = await make_client(tmp_path)
+            try:
+                response = await client.get("/api/assets/catalog?scope=alice")
+                assert response.status == 200
+                body = await response.json()
+                assert len(body["assets"]) == 1
+                item = body["assets"][0]
+                assert item["asset"]["digest"] == digest_bytes(image_bytes)
+                assert item["asset"]["size"] == len(image_bytes)
+                assert item["aliases"] == [digest_bytes(image_bytes).split(":", 1)[1]]
+                assert item["observations"][0]["origin"] == {"kind": "unknown"}
+                assert item["observations"][0]["kind"] == "media/image"
+                if previous is not None:
+                    assert body["assets"] == previous
+                previous = body["assets"]
+                response = await client.get("/api/assets/catalog?scope=bob")
+                body = await response.json()
+                assert len(body["assets"]) == 1
+                assert set(body["assets"][0]["aliases"]) == {"Story", "Alternate story"}
+                assert {o["kind"] for o in body["assets"][0]["observations"]} == {
+                    "document/workflow"
+                }
+                for scope in ("local", "other", "charlie"):
+                    response = await client.get("/api/assets/catalog", params={"scope": scope})
+                    assert (await response.json())["assets"] == []
+                response = await client.get("/api/assets/catalog?scope=charlie&project=film")
+                assert (await response.json())["assets"][0]["aliases"] == ["original.png"]
+                assert (
+                    client.app[LIBRARY_KEY].store.media_grant(
+                        "other", digest_bytes(image_bytes), "media/image"
+                    )
+                    is None
+                )
+            finally:
+                await client.close()
+
+    asyncio.run(scenario())
+
+
 def test_upload_and_fetch_roundtrip(tmp_path: Path) -> None:
     """Upload returns the canonical digest (201 new, 200 already-held);
     fetch serves the bytes back under the immutable-cache contract."""

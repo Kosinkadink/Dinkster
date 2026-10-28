@@ -951,6 +951,8 @@ def recover_asset_observations(
         except (AssetError, OSError, sqlite3.Error, ValueError, KeyError, TypeError, IndexError):
             # Unavailable/revoked bytes keep their recovery record, not a grant.
             continue
+    if journals is None:
+        library.store.backfill_asset_observations(library.vault)
 
 
 async def handle_asset_availability(request: web.Request) -> web.Response:

@@ -53,6 +53,7 @@ from .kind import require_asset_kind
 from .media import MediaClassification, classify_media, classify_media_file
 from .model import AssetRef
 from .schema import migration_config
+from .vault import AssetVault
 
 DEFAULT_SCOPE = "local"
 
@@ -350,6 +351,75 @@ class LibraryStore:
                 ),
             )
         return observation
+
+    def backfill_asset_observations(self, vault: AssetVault) -> None:
+        """Recover known scoped membership, never assign anonymous bytes to a scope."""
+        with self._lock:
+            grants = self._conn.execute(
+                "SELECT * FROM media_grants WHERE NOT EXISTS "
+                "(SELECT 1 FROM asset_observations WHERE "
+                "asset_observations.scope = media_grants.scope AND "
+                "asset_observations.digest = media_grants.digest)"
+            ).fetchall()
+            records = self._conn.execute(
+                "SELECT * FROM records WHERE NOT EXISTS "
+                "(SELECT 1 FROM asset_observations WHERE "
+                "asset_observations.scope = records.scope AND "
+                "asset_observations.digest = records.digest)"
+            ).fetchall()
+        candidates: list[tuple[str, AssetRef, str, str, float | None]] = []
+        for row in grants:
+            grant = _media_grant_from_row(row)
+            name = grant.digest.split(":", 1)[1]
+            candidates.append(
+                (
+                    grant.scope,
+                    AssetRef(grant.digest, name, grant.byte_size, grant.media_type),
+                    grant.kind,
+                    f"media:{grant.scope}:{grant.digest}:{grant.kind}",
+                    None,
+                )
+            )
+        for row in records:
+            name = row["name"]
+            if not name.strip() or name in {".", ".."} or "/" in name or "\\" in name:
+                name = row["digest"].split(":", 1)[1]
+            candidates.append(
+                (
+                    row["scope"],
+                    AssetRef(row["digest"], name, 0, row["media_type"]),
+                    "document/workflow"
+                    if row["media_type"] == "application/x-dinkster-workflow+json"
+                    else "document/file",
+                    f"record:{row['id']}:{row['digest']}",
+                    row["created"],
+                )
+            )
+        for scope, ref, kind, identity, created in candidates:
+            try:
+                with AssetRef(
+                    ref.digest, ref.name, ref.size, ref.media_type, resolver=vault
+                ).open() as handle:
+                    size = handle.seek(0, 2)
+                if identity.startswith("media:") and size != ref.size:
+                    continue
+                observation_id = uuid.uuid5(uuid.NAMESPACE_URL, identity).hex
+                with self._lock:
+                    if self._conn.execute(
+                        "SELECT 1 FROM asset_observations WHERE id = ?", (observation_id,)
+                    ).fetchone():
+                        continue
+                self.record_asset(
+                    scope,
+                    AssetRef(ref.digest, ref.name, size, ref.media_type),
+                    original_name=ref.name,
+                    kind=kind,
+                    origin={"kind": "unknown"},
+                    observation_id=observation_id,
+                    created=created,
+                )
+            except (AssetError, OSError):
+                continue
 
     def query_assets(
         self,

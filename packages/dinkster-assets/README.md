@@ -146,6 +146,12 @@ when only one event matches the name, kind, origin or date filter. Dates are
 observation times, not claims about a file's original creation time.
 Publication callers can supply an observation ID and time for idempotent
 recovery; a repeated ID must describe the identical event.
+Startup and catalog recovery backfill verified vault bytes already named by
+scoped records or media grants. Existing project observations are not widened
+to the default project. Historical media without a recorded name uses its digest
+as a label and Unknown origin, not an invented filename or download URL.
+Workflow records stay document-kind observations; neither backfill nor an
+anonymous blob on disk creates new media or filesystem authority.
 
 Named imports can prepare metadata with `before_publish` before the writer's
 atomic link. The server journals upload observations in the private vault's
