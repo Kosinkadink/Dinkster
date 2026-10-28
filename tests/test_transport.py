@@ -6,7 +6,6 @@ every platform so it cannot rot until someone boots Windows."""
 from __future__ import annotations
 
 import asyncio
-import glob
 import os
 import tempfile
 from pathlib import Path
@@ -103,7 +102,7 @@ def test_unix_listener_where_supported() -> None:
     asyncio.run(scenario())
 
 
-def test_isolated_worker_over_tcp_matches_unix(tmp_path: Path) -> None:
+def test_isolated_worker_over_tcp_matches_unix(tmp_path: Path, shm_segments: set[str]) -> None:
     """The whole M2 flow - handshake, invocation, shm handoff, ack - over
     the TCP fallback. Fingerprints must match the unix-transport run
     (hazard H4: location - and transport - independence)."""
@@ -138,10 +137,13 @@ def test_isolated_worker_over_tcp_matches_unix(tmp_path: Path) -> None:
 
     asyncio.run(scenario())
     if os.path.isdir("/dev/shm"):
-        assert glob.glob("/dev/shm/dinkster*") == []
+        assert shm_segments
+        assert not [name for name in shm_segments if (Path("/dev/shm") / name).exists()]
 
 
-def test_cancel_mid_flight_leaves_no_segments(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cancel_mid_flight_leaves_no_segments(
+    monkeypatch: pytest.MonkeyPatch, shm_segments: set[str]
+) -> None:
     """Held-until-ack segment handles (the Windows-safe lifetime) must not
     leak when an invocation is cancelled after its shm inputs were sent.
     The large string input rides shm (threshold 64); whether the cancel
@@ -183,4 +185,5 @@ def test_cancel_mid_flight_leaves_no_segments(monkeypatch: pytest.MonkeyPatch) -
 
     asyncio.run(scenario())
     if os.path.isdir("/dev/shm"):
-        assert glob.glob("/dev/shm/dinkster*") == []
+        assert shm_segments
+        assert not [name for name in shm_segments if (Path("/dev/shm") / name).exists()]
