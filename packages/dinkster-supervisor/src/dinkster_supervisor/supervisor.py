@@ -76,6 +76,7 @@ import argparse
 import asyncio
 import contextlib
 import logging
+import os
 import socket
 import sys
 import time
@@ -222,6 +223,8 @@ SESSION_KEY: web.AppKey[aiohttp.ClientSession] = web.AppKey("supervisor_session"
 RESTART_KEY: web.AppKey[Callable[[], Awaitable[None]] | None] = web.AppKey("supervisor_restart")
 CORS_KEY: web.AppKey[frozenset[str]] = web.AppKey("supervisor_cors")
 INSTANCE_KEY: web.AppKey[str | None] = web.AppKey("supervisor_instance")
+SHUTDOWN_TOKEN_KEY: web.AppKey[str | None] = web.AppKey("supervisor_shutdown_token")
+SHUTDOWN_KEY: web.AppKey[Callable[[], None] | None] = web.AppKey("supervisor_shutdown")
 
 
 def _progress_from_health(body: object) -> dict[str, object] | None:
@@ -413,6 +416,7 @@ class EngineProcess:
 
 async def _handle_status(request: web.Request) -> web.Response:
     status = request.app[LINK_KEY].status_wire()
+    status["supervisor"] = {"pid": os.getpid()}
     instance = request.app[INSTANCE_KEY]
     if instance is not None:
         status["instance"] = instance
@@ -436,6 +440,23 @@ async def _handle_restart(request: web.Request) -> web.Response:
         return web.json_response({"error": "restart-unavailable"}, status=409)
     await restart()
     return web.json_response(request.app[LINK_KEY].status_wire())
+
+
+async def _handle_shutdown(request: web.Request) -> web.Response:
+    instance = request.app[INSTANCE_KEY]
+    token = request.app[SHUTDOWN_TOKEN_KEY]
+    if (
+        instance is None
+        or token is None
+        or request.headers.get("X-Dinkster-Instance") != instance
+        or request.headers.get("X-Dinkster-Shutdown-Token") != token
+    ):
+        return web.json_response({"error": "shutdown-unauthorized"}, status=403)
+    shutdown = request.app[SHUTDOWN_KEY]
+    if shutdown is None:
+        return web.json_response({"error": "shutdown-unavailable"}, status=409)
+    asyncio.get_running_loop().call_soon(shutdown)
+    return web.json_response({"state": "stopping"})
 
 
 def _not_ready(link: EngineLink) -> web.Response:
@@ -531,6 +552,8 @@ def create_supervisor_app(
     restart: Callable[[], Awaitable[None]] | None = None,
     allow_origins: Sequence[str] = (),
     instance: str | None = None,
+    shutdown_token: str | None = None,
+    shutdown: Callable[[], None] | None = None,
 ) -> web.Application:
     """The supervisor's HTTP surface over an EngineLink. Process management
     is the caller's (main() wires an EngineProcess; tests drive the link
@@ -540,6 +563,8 @@ def create_supervisor_app(
     app[RESTART_KEY] = restart
     app[CORS_KEY] = frozenset(allow_origins)
     app[INSTANCE_KEY] = instance
+    app[SHUTDOWN_TOKEN_KEY] = shutdown_token
+    app[SHUTDOWN_KEY] = shutdown
     install_cors(app, app[CORS_KEY])
 
     async def manage_session(app: web.Application) -> None:
@@ -556,6 +581,7 @@ def create_supervisor_app(
     app.on_cleanup.append(close_session)
     app.router.add_get(STATUS_PATH, _handle_status)
     app.router.add_post("/supervisor/engine/restart", _handle_restart)
+    app.router.add_post("/supervisor/shutdown", _handle_shutdown)
     # Reserved namespace: registered before the proxy catch-all, so any
     # /supervisor/ path not claimed above answers locally, never proxies.
     app.router.add_route("*", "/supervisor/{tail:.*}", _handle_supervisor_unknown)
@@ -576,6 +602,10 @@ def main() -> None:
     parser.add_argument(
         "--instance",
         help="opaque launcher identifier echoed by /supervisor/status",
+    )
+    parser.add_argument(
+        "--shutdown-token",
+        help="opaque token required with the matching instance to stop this supervisor",
     )
     parser.add_argument(
         "--engine-host",
@@ -618,23 +648,37 @@ def main() -> None:
     engine = EngineProcess(
         command, link, host=args.engine_host, startup_timeout=args.startup_timeout
     )
-    app = create_supervisor_app(
-        link,
-        restart=engine.restart,
-        allow_origins=args.allow_origin,
-        instance=args.instance,
-    )
 
-    async def start_engine(app: web.Application) -> None:
-        await engine.start()
+    async def serve() -> None:
+        stopped = asyncio.Event()
+        app = create_supervisor_app(
+            link,
+            restart=engine.restart,
+            allow_origins=args.allow_origin,
+            instance=args.instance,
+            shutdown_token=args.shutdown_token,
+            shutdown=stopped.set,
+        )
 
-    async def stop_engine(app: web.Application) -> None:
-        await engine.close()
+        async def start_engine(app: web.Application) -> None:
+            await engine.start()
 
-    app.on_startup.append(start_engine)
-    app.on_cleanup.append(stop_engine)
-    print(f"dinkster supervisor on http://{args.host}:{args.port} (status: {STATUS_PATH})")
-    web.run_app(app, host=args.host, port=args.port, print=None)
+        async def stop_engine(app: web.Application) -> None:
+            await engine.close()
+
+        app.on_startup.append(start_engine)
+        app.on_cleanup.append(stop_engine)
+        runner = web.AppRunner(app)
+        try:
+            await runner.setup()
+            site = web.TCPSite(runner, args.host, args.port)
+            await site.start()
+            await stopped.wait()
+        finally:
+            await runner.cleanup()
+            await engine.close()
+
+    asyncio.run(serve())
 
 
 if __name__ == "__main__":

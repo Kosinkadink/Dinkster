@@ -1,5 +1,9 @@
 ## Server API and execution
 
+- Environment catalog/status/doctor queries share a JSON command interface.
+  Catalog preserves the selected channel's variant manifests; status reports
+  configured channel/variant and observed engines without starting them.
+  Doctor reports content and pack drift without repairing it.
 - Schema wire version 1 with stored output descriptors, compact-storage and
   stream input declarations, alpha and mask policies, range-aware inputs, and
   chunk-safe declarations scoped to supported dynamic-combo options. Stream

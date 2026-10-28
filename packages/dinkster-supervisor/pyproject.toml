@@ -10,6 +10,7 @@ dependencies = [
 ]
 
 [project.scripts]
+dinkster-env = "dinkster_supervisor.environment:main"
 dinkster-installs = "dinkster_supervisor.install_manager:main"
 dinkster-supervisor = "dinkster_supervisor.supervisor:main"
 dinkster-station = "dinkster_supervisor.station:main"

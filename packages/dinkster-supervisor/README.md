@@ -226,3 +226,21 @@ accepts only `python/` and `wheels/`, rejects links, traversal, Windows device
 names and case-ambiguous paths, and promotes the complete tree only on success.
 It returns `destination/python`. Existing bases are never replaced; failed
 reconstruction or extraction removes temporary archives and staging trees.
+
+## Environment queries and runtime
+
+`dinkster-env --root <absolute-path> catalog|status|doctor --json` emits one
+`dinkster.environment-result/1` object with `operation`, `root`, `current`,
+`plan` and `status`. Catalog accepts repeatable `--mirror` and `--channel`
+stable/main; it adds `channel`, `channelManifest` and intact `variants`.
+Status returns configured `channel`/`variant` and observed `engines`, never
+starts a process and never creates a prospective root. Doctor reports content
+and pack drift without repair and exits nonzero on drift or errors.
+
+Runtime launches the generation interpreter through the independent supervisor.
+Public engine rows contain `name`, `generation`, `state` and `url`; private
+`runtime/<name>.json` records retain process identity and shutdown credentials.
+Graceful shutdown requires both the live instance identity and its private
+token. An unreachable or ambiguous supervisor cannot establish an idle engine;
+queue checks refuse mutation unless every observed engine is safely idle.
+Supervisor and engine output goes to private runtime logs, not CLI JSON stdout.
