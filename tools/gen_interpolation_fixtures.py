@@ -44,6 +44,8 @@ def main() -> None:
         ("rife", "ifnet.py", "IFNet"),
     ):
         path = root / "comfy_extras/frame_interpolation_models" / filename
+        if kind == "film":
+            (output / "film_net.py.txt").write_bytes(path.read_bytes())
         tree = ast.parse(path.read_text())
         tree.body = [
             node

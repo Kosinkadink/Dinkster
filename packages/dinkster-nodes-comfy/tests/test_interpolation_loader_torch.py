@@ -1,10 +1,13 @@
 """Real checkpoint loading through the public interpolation node."""
 
+import ast
 import asyncio
+import hashlib
 import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -42,6 +45,30 @@ def _reference_state(kind: str) -> dict[str, torch.Tensor]:
     }
 
 
+def _reference_film(state: dict[str, torch.Tensor]) -> Any:
+    metadata = json.loads((_FIXTURES / "reference.json").read_text())
+    path = _FIXTURES / "film_net.py.txt"
+    source = path.read_bytes()
+    assert hashlib.sha256(source).hexdigest() == metadata["models"]["film"]["source_sha256"]
+    tree = ast.parse(source, filename=str(path))
+    # Only the operations provider changes; the frozen reference arithmetic is untouched.
+    tree.body = [
+        node
+        for node in tree.body
+        if not (
+            isinstance(node, ast.Import)
+            and any(alias.name == "comfy.ops" for alias in node.names)
+            or isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "ops" for target in node.targets)
+        )
+    ]
+    scope: dict[str, Any] = {"ops": torch.nn}
+    exec(compile(tree, str(path), "exec"), scope)
+    model = scope["FILMNet"]()
+    model.load_state_dict(state)
+    return model.eval()
+
+
 class _Resolver:
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -50,8 +77,14 @@ class _Resolver:
         return self.path
 
 
-@pytest.mark.parametrize("kind", ("film", "rife", "raw-rife"))
-def test_real_checkpoint_loads_exact_weights_and_configuration(tmp_path: Path, kind: str) -> None:
+@pytest.mark.parametrize(
+    ("kind", "mkldnn_enabled"),
+    (("film", True), ("film", False), ("rife", True), ("raw-rife", True)),
+    ids=("film", "film-native", "rife", "raw-rife"),
+)
+def test_real_checkpoint_loads_exact_weights_and_configuration(
+    tmp_path: Path, kind: str, mkldnn_enabled: bool
+) -> None:
     initialize_inference_process()
     from dinkster_inference.model_patcher import CoreModelPatcher
 
@@ -76,10 +109,23 @@ def test_real_checkpoint_loads_exact_weights_and_configuration(tmp_path: Path, k
     assert actual.keys() == expected.keys()
     for key in expected:
         torch.testing.assert_close(actual[key], expected[key], rtol=0, atol=0)
-    with np.load(_FIXTURES / "outputs.npz") as fixture, torch.inference_mode():
+    with (
+        np.load(_FIXTURES / "outputs.npz") as fixture,
+        torch.inference_mode(),
+        torch.backends.mkldnn.flags(enabled=mkldnn_enabled),
+    ):
         images = torch.from_numpy(fixture["images"])
         output = result.model(images[:1].movedim(-1, 1), images[1:2].movedim(-1, 1), timestep=0.375)
-        torch.testing.assert_close(output, torch.from_numpy(fixture[architecture]), rtol=0, atol=0)
+        if kind == "film":
+            # Float32 convolution accumulation varies across CPU backends. Compare the
+            # independent fixed-source model on this backend, retaining bit equality.
+            reference = _reference_film(expected)
+            expected_output = reference(
+                images[:1].movedim(-1, 1), images[1:2].movedim(-1, 1), timestep=0.375
+            )
+        else:
+            expected_output = torch.from_numpy(fixture[architecture])
+        torch.testing.assert_close(output, expected_output, rtol=0, atol=0)
     assert digest_file(path) == digest
     if kind != "film":
         assert result.model.encode.cnn3.out_channels == 6
