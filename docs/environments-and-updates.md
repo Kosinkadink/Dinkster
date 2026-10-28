@@ -441,6 +441,20 @@ a pip user chooses the index for their hardware the way ComfyUI users do, or
 runs `dinkster-env setup`, which applies the variant rule above and installs
 the base for the machine.
 
+A PyPI project that does not exist yet cannot be created by the workflow
+for every workspace package: a pending trusted publisher is unique per
+(repository, workflow, environment), so one workflow can pre-register one
+project, not thirty. A package's first upload is therefore made once by the
+owner with twine from the artifacts of the verified tag run; the trusted
+publisher is then added to the existing PyPI project and the workflow
+uploads every later version with `skip-existing`, so a rerun of a tag
+workflow never fails on a file PyPI already has.
+
+The release workflow keeps the newest fifty `main` prereleases on GitHub
+and deletes older ones; tagged `stable` releases are never deleted by
+automation. Rollback never depends on an old prerelease staying published,
+because the previous generation's wheels are already in the local store.
+
 ## What Desktop adds
 
 - The NSIS installer and Windows code signing; the macOS app bundle, Developer
@@ -536,8 +550,12 @@ Settled:
   from the per-commit bundle `Dinkster-Frontend` publishes.
 - Channels `stable` and `main`, both prebuilt by the same workflow; no
   nightly; `minimumDesktopVersion` in the channel file.
-- Engine wheels published to PyPI by the tag workflow; cross-repository
-  dependencies are versioned PyPI releases.
+- Engine wheels published to PyPI by the tag workflow with `skip-existing`;
+  a package's first upload is made by the owner with twine, then its
+  trusted publisher is added; cross-repository dependencies are versioned
+  PyPI releases.
+- The newest fifty `main` prereleases are kept on GitHub; stable releases
+  are never deleted by automation.
 - Signing workflows run on tag push behind an owner-approved environment;
   a hand-dispatched run needs the same approval.
 - Electron shell updater checks on startup only, installs on the next
