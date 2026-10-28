@@ -12,6 +12,7 @@ on:
       - scripts/prune_engine_prereleases.py
       - scripts/release_sources.json
       - scripts/verify_release_install.py
+      - src/dinkster/frontend.py
       - tests/test_release_install.py
 
 permissions:
@@ -134,7 +135,7 @@ jobs:
           "$python" -m pip check
           "$python" -m dinkster.cli --help
           "$python" -c "from dinkster_frontend import bundle_path; assert bundle_path().joinpath('index.html').is_file()"
-          "$python" scripts/verify_release_install.py "$GITHUB_WORKSPACE" --python "$python"
+          "$python" scripts/verify_release_install.py "$GITHUB_WORKSPACE" --python "$python" --require-frontend
 
   release:
     needs: install
