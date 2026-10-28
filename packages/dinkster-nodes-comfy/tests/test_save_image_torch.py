@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import torch
+from av.error import ArgumentError
 from dinkster_api.v1 import (
     CORE_STRING,
     IMAGE_TYPE,
@@ -78,7 +79,7 @@ def test_image_loader_retains_animation_frames_and_alpha(tmp_path: Path, format_
 
 
 @pytest.mark.parametrize("format_name", ("PNG", "GIF"))
-def test_load_palette_image_preserves_transparency_mask(tmp_path: Path, format_name: str) -> None:
+def test_load_palette_image_preserves_source_result(tmp_path: Path, format_name: str) -> None:
     path = tmp_path / f"palette.{format_name.lower()}"
     image = Image.fromarray(np.array([[0, 1, 2], [2, 0, 1]], dtype=np.uint8)).convert("P")
     image.putpalette([11, 43, 97, 191, 7, 53, 29, 227, 83] + [0] * (256 * 3 - 9))
@@ -89,6 +90,12 @@ def test_load_palette_image_preserves_transparency_mask(tmp_path: Path, format_n
         path.stat().st_size,
         resolver=SimpleNamespace(resolve=lambda _digest: path),
     )
+
+    if format_name == "GIF":
+        with pytest.raises(ArgumentError) as failure:
+            LoadImage.execute(image=asset)
+        assert failure.value.errno == 22
+        return
 
     result = LoadImage.execute(image=asset)
     expected_mask = torch.tensor([[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]])
