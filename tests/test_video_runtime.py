@@ -204,6 +204,23 @@ def test_saved_source_file_retains_timestamps_without_streaming_encoder_options(
             assert frame.pts * frame.time_base == Fraction(i, 10) + Fraction(1, 20)
 
 
+def test_av1_file_defaults_preserve_timestamps_and_explicit_crf() -> None:
+    value = assemble_video(
+        np.random.default_rng(97).integers(0, 256, (4, 64, 64, 3), dtype=np.uint8), fps=30
+    )
+    defaults, explicit = io.BytesIO(), io.BytesIO()
+    save_video_stream(value, defaults, container="mkv", codec="av1")
+    save_video_stream(value, explicit, container="mkv", codec="av1", crf=18)
+    assert _packets(defaults.getvalue()) != _packets(explicit.getvalue())
+    for encoded in (defaults, explicit):
+        with av.open(io.BytesIO(encoded.getvalue()), mode="r") as container:
+            frames = list(container.decode(video=0))
+            assert len(frames) == 4
+            for i, frame in enumerate(frames):
+                assert frame.pts is not None and frame.time_base is not None
+                assert frame.pts * frame.time_base == Fraction(round(i * 1000 / 30), 1000)
+
+
 @pytest.mark.parametrize("shape", [(2, 16, 25, 3), (2, 16, 24, 4)])
 def test_source_component_h264_preserves_source_shape_failures(
     shape: tuple[int, int, int, int],

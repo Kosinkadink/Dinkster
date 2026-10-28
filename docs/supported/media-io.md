@@ -79,6 +79,9 @@
   low-latency tuning. Component inputs permit B-frames; encoded-source and
   timeline saves retain timestamp-preserving B-frame suppression. Explicit
   CRF, microsecond timing, source-copy saves and preview encoding are unchanged.
+- AV1 file saves default to CRF 24 and SVT preset 8 with its standard quality
+  behavior. The bounded one-logical-processor policy, component encoding, and
+  source/timeline timing behavior are unchanged.
 - Opt-in unedited component-video encoding preserves source H.264/AV1
   quantization, color signaling, CRF defaults, optional H.264 preset, and
   thousandth-rounded encoded frame rates without changing component values.
