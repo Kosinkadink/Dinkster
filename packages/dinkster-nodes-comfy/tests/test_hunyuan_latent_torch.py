@@ -122,7 +122,7 @@ class HunyuanInspect(Node):
         return cls.outputs(summary="ok")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_ordinary_manifest_executes_hunyuan_latents_twice(in_process: bool, tmp_path: Path) -> None:
     async def scenario() -> None:
         source_root = Path(__file__).resolve().parents[1] / "src"

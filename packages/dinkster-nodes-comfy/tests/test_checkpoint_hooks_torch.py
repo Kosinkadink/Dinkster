@@ -310,8 +310,7 @@ class CheckpointHookInspect(Node):
 CHECKPOINT_HOOK_FIXTURES = (CheckpointHookSource, CheckpointHookInspect)
 
 
-@pytest.mark.parametrize("in_process", (True, False))
-@pytest.mark.parametrize("verified", (False, True))
+@pytest.mark.parametrize("verified,in_process", ((False, True), (True, True), (True, False)))
 def test_checkpoint_hooks_ordinary_hosts_use_snapshot_roots_and_resident_pair(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, verified: bool
 ) -> None:

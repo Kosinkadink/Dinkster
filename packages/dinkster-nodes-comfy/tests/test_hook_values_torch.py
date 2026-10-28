@@ -308,9 +308,16 @@ def test_ordinary_manifest_transports_float_strengths_twice(
                 f'types = "{module}:register_inference_types"\n',
                 encoding="ascii",
             )
-            await composer.add_pack(PackSpec(manifest=source_manifest, in_process=in_process))
-            await composer.add_pack(PackSpec(manifest=consumer_manifest, in_process=in_process))
-            await composer.add_pack(PackSpec(manifest=hook_manifest, in_process=in_process))
+            manifests = (source_manifest, consumer_manifest, hook_manifest)
+            for manifest in manifests:
+                pack = PackSpec(manifest=manifest, in_process=True)
+                if not in_process:
+                    pack = PackSpec(
+                        manifest=manifest,
+                        worker_group="hook-values-fixture",
+                        group_manifests=manifests,
+                    )
+                await composer.add_pack(pack)
             graph = Graph(
                 nodes={
                     "source": GraphNode("hook-values-source.source", {}),
