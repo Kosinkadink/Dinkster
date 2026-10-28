@@ -1051,7 +1051,10 @@ def recover_asset_observations(
             if path is None:
                 continue
             origin = payload.get("origin")
-            if isinstance(origin, dict) and origin.get("kind") == "produced":
+            if (
+                isinstance(origin, dict)
+                and cast("dict[str, object]", origin).get("kind") == "produced"
+            ):
                 try:
                     classification = classify_media_file(path)
                 except AssetError:
