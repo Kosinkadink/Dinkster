@@ -1772,8 +1772,17 @@ def test_worker_conversion_refusal_is_distinct_from_transport_failure(
 
 
 def test_torch_free_worker_omits_legacy_conversion_capability(tmp_path: Path) -> None:
+    (tmp_path / "torch.py").write_text(
+        "raise ModuleNotFoundError('No module named torch', name='torch')\n",
+        encoding="utf-8",
+    )
+
     async def scenario() -> None:
-        worker = IsolatedWorker(DEV_MANIFEST, core_registry())
+        worker = IsolatedWorker(
+            DEV_MANIFEST,
+            core_registry(),
+            extra_env={"PYTHONPATH": os.pathsep.join((str(tmp_path), str(TESTS_DIR)))},
+        )
         await worker.start()
         try:
             assert worker.can_convert_legacy_checkpoint is False
