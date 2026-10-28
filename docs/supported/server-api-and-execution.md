@@ -21,11 +21,12 @@
   indexed assets before the scan finishes; reuse unchanged-file indexes; and
   keep per-mount indexes under the configured library root
 - Setup and serving with mount changes enabled initialize a writable
-  `<library-root>/imports` folder when no imports grant is configured.
-  Existing import paths and read-only grants are preserved; unavailable
+  `<library-root>/imports` folder and a selected writable
+  `<library-root>/output` folder when those defaults are not configured.
+  Existing output selections, folder paths and read-only grants are preserved; unavailable
   configured directories are not recreated or replaced. Removing the import
-  grant remains effective across restarts and repeated setup.
-  New default imports become available to existing projects without resetting
+  or output grant remains effective across restarts and repeated setup.
+  New default folders become available to existing projects without resetting
   folder order, exclusions, project-only grants or output selections.
 - Named file and classified media uploads in the managed server use original
   filenames in the configured imports folder, with collision-safe numbering and no durable
