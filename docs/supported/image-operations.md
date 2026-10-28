@@ -1,5 +1,7 @@
 ## Image operations
 
+- Native `LoadMoGeModel` loads granted geometry-estimation checkpoints into
+  the shared `MOGE_MODEL` value.
 - Native `LossGraphNode` previews training loss as a line chart without saving an output file.
 - Native `UpscaleModelLoader` loads granted single-image upscale checkpoints
   into the shared `UPSCALE_MODEL` value.
