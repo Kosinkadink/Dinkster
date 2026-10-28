@@ -83,11 +83,54 @@ def generation_number(value: object) -> int:
 
 
 @dataclass(frozen=True)
+class ArtifactLocation:
+    kind: str
+    path: str = ""
+    repository: str = ""
+    tag: str = ""
+    asset: str = ""
+
+    @classmethod
+    def read(cls, value: object, expected_path: str) -> ArtifactLocation:
+        if not isinstance(value, dict):
+            raise EnvironmentError("artifact location must be an object")
+        row = cast("dict[str, object]", value)
+        if row.get("type") == "mirror":
+            path = relative_file(row.get("path"))
+            if path != expected_path:
+                raise EnvironmentError("mirror manifest path must name its exact content digest")
+            return cls("mirror", path=path)
+        if row.get("type") == "github":
+            repository = row.get("repository")
+            if (
+                not isinstance(repository, str)
+                or re.fullmatch(r"[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+", repository) is None
+            ):
+                raise EnvironmentError("GitHub location must name owner/repository")
+            tag = relative_file(row.get("tag"))
+            if tag in {"latest", "stable", "main"}:
+                raise EnvironmentError("GitHub manifest locations must not use alias tags")
+            asset = relative_file(row.get("asset"))
+            if asset != expected_path.rsplit("/", 1)[-1]:
+                raise EnvironmentError("GitHub location must name the expected manifest asset")
+            return cls("github", repository=repository, tag=tag, asset=asset)
+        raise EnvironmentError("unsupported artifact location type")
+
+
+def _locations(value: object, expected_path: str) -> tuple[ArtifactLocation, ...]:
+    if not isinstance(value, list) or not value:
+        raise EnvironmentError("artifact locations must be a nonempty ordered array")
+    return tuple(ArtifactLocation.read(row, expected_path) for row in cast("list[object]", value))
+
+
+@dataclass(frozen=True)
 class Channel:
     engine_version: str
     engine_release: str
     bases: tuple[tuple[str, str], ...]
     minimum_desktop_version: str
+    engine_locations: tuple[ArtifactLocation, ...]
+    base_locations: tuple[tuple[str, tuple[ArtifactLocation, ...]], ...]
 
     @classmethod
     def read(cls, path: Path) -> Channel:
@@ -105,11 +148,29 @@ class Channel:
             raise EnvironmentError("channel engine version must be a nonempty string")
         if not isinstance(minimum, str) or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", minimum) is None:
             raise EnvironmentError("minimumDesktopVersion must be X.Y.Z")
+        if value.get("signature") is not None:
+            raise EnvironmentError("signed channel verification is not supported")
+        release = digest(engine.get("release"))
+        base_ids: list[tuple[str, str]] = []
+        base_locations: list[tuple[str, tuple[ArtifactLocation, ...]]] = []
+        for name, entry in sorted(bases.items()):
+            if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name) is None:
+                raise EnvironmentError("channel variant must be a portable variant name")
+            if not isinstance(entry, dict):
+                raise EnvironmentError("channel base must name id and locations")
+            row = cast("dict[str, object]", entry)
+            sha = digest(row.get("id"))
+            base_ids.append((name, sha))
+            base_locations.append(
+                (name, _locations(row.get("locations"), f"base/{name}/{sha[7:]}/manifest.json"))
+            )
         return cls(
             version,
-            digest(engine.get("release")),
-            tuple(sorted((relative_file(name), digest(sha)) for name, sha in bases.items())),
+            release,
+            tuple(base_ids),
             minimum,
+            _locations(engine.get("locations"), f"engine/{release[7:]}/release-manifest.json"),
+            tuple(base_locations),
         )
 
     def base_for(self, variant: str) -> str:

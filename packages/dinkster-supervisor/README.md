@@ -146,10 +146,17 @@ Pointer and journal writes flush to disk before atomic replacement. The
 `Generation`, `Journal`, `read_current` and `set_current` APIs read and write
 these records; the latter refuses missing or misnumbered target generations.
 
-The channel format is `dinkster.channel/1`, with `engine: {version, release}`,
-`base: {variant: digest}`, `minimumDesktopVersion`, and `signature`. Both stable
-and main name exact content digests, never a latest-release lookup. A null
-signature is acceptable only for a Dinkster-operated mirror. Engine and base
+The channel format is `dinkster.channel/1`, with
+`engine: {version, release, locations}`, `base: {variant: {id, locations}}`,
+`minimumDesktopVersion`, and `signature`. Locations are a nonempty ordered array:
+`{type: "mirror", path}` names the complete manifest path relative to a configured
+mirror; `{type: "github", repository, tag, asset}` names an immutable release asset.
+Mirror paths are `engine/<release hex>/release-manifest.json` and
+`base/<variant>/<base hex>/manifest.json`. GitHub assets use those same manifest
+basenames, never alias tags. Both stable and main name exact content digests,
+never a latest-release lookup. Location hints do not replace digest verification.
+A null signature is acceptable only for a Dinkster-operated mirror; signed
+documents are refused until signature verification is available. Engine and base
 artifact layouts are owned by their publishing tools, not this package.
 
 `environment_downloads.fetch_artifact(mirrors, relative_path, destination,

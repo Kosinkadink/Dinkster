@@ -115,23 +115,106 @@ def test_journal_records_recovery_state_and_retains_failure_diagnostics(tmp_path
     assert json.loads(path.read_text())["format"] == "dinkster.journal/1"
 
 
+def _channel_document() -> dict:
+    return {
+        "format": "dinkster.channel/1",
+        "engine": {
+            "version": "0.4.0.dev1",
+            "release": "sha256:" + "a" * 64,
+            "locations": [
+                {"type": "mirror", "path": "engine/" + "a" * 64 + "/release-manifest.json"},
+                {
+                    "type": "github",
+                    "repository": "Kosinkadink/Dinkster",
+                    "tag": "main-" + "d" * 40,
+                    "asset": "release-manifest.json",
+                },
+            ],
+        },
+        "base": {
+            variant: {
+                "id": "sha256:" + sha * 64,
+                "locations": [
+                    {"type": "mirror", "path": f"base/{variant}/" + sha * 64 + "/manifest.json"}
+                ],
+            }
+            for variant, sha in (("win-cpu", "b"), ("linux-cpu", "c"))
+        },
+        "minimumDesktopVersion": "0.2.0",
+        "signature": None,
+    }
+
+
 def test_channel_selects_an_exact_base_and_never_falls_back_to_cpu(tmp_path: Path):
     path = tmp_path / "main.json"
-    path.write_text(
-        json.dumps(
-            {
-                "format": "dinkster.channel/1",
-                "engine": {"version": "0.4.0.dev1", "release": "sha256:" + "a" * 64},
-                "base": {"win-cpu": "sha256:" + "b" * 64, "linux-cpu": "sha256:" + "c" * 64},
-                "minimumDesktopVersion": "0.2.0",
-                "signature": None,
-            }
-        )
-    )
+    path.write_text(json.dumps(_channel_document()))
     channel = Channel.read(path)
     assert channel.engine_version == "0.4.0.dev1"
     assert channel.engine_release == "sha256:" + "a" * 64
     assert channel.base_for("linux-cpu") == "sha256:" + "c" * 64
     assert channel.base_for("win-cpu") == "sha256:" + "b" * 64
+    assert [location.kind for location in channel.engine_locations] == ["mirror", "github"]
+    assert channel.engine_locations[1].tag == "main-" + "d" * 40
+    assert channel.engine_locations[1].repository == "Kosinkadink/Dinkster"
+    assert dict(channel.base_locations)["linux-cpu"][0].path == (
+        "base/linux-cpu/" + "c" * 64 + "/manifest.json"
+    )
     with pytest.raises(EnvironmentError, match="does not provide variant win-nvidia"):
         channel.base_for("win-nvidia")
+
+
+@pytest.mark.parametrize(
+    "locations",
+    [
+        [],
+        [{"type": "mirror", "path": "engine/latest/release-manifest.json"}],
+        [{"type": "mirror", "path": "../release-manifest.json"}],
+        [{"type": "https", "path": "https://example.org/release-manifest.json"}],
+        [
+            {
+                "type": "github",
+                "repository": "https://example.org/repo",
+                "tag": "v1",
+                "asset": "release-manifest.json",
+            }
+        ],
+        [
+            {
+                "type": "github",
+                "repository": "owner/repo",
+                "tag": "../v1",
+                "asset": "release-manifest.json",
+            }
+        ],
+        [
+            {
+                "type": "github",
+                "repository": "owner/repo",
+                "tag": "main",
+                "asset": "release-manifest.json",
+            }
+        ],
+        [{"type": "github", "repository": "owner/repo", "tag": "v1", "asset": "other.json"}],
+    ],
+)
+def test_channel_refuses_ambiguous_or_unsafe_manifest_locations(tmp_path: Path, locations: list):
+    document = _channel_document()
+    document["engine"]["locations"] = locations
+    path = tmp_path / "main.json"
+    path.write_text(json.dumps(document))
+    with pytest.raises(EnvironmentError):
+        Channel.read(path)
+
+
+def test_channel_refuses_digest_only_base_and_unverified_signature(tmp_path: Path):
+    path = tmp_path / "main.json"
+    document = _channel_document()
+    document["base"]["win-cpu"] = "sha256:" + "b" * 64
+    path.write_text(json.dumps(document))
+    with pytest.raises(EnvironmentError, match="id and locations"):
+        Channel.read(path)
+    document = _channel_document()
+    document["signature"] = "not-verified"
+    path.write_text(json.dumps(document))
+    with pytest.raises(EnvironmentError, match="signed channel verification"):
+        Channel.read(path)
