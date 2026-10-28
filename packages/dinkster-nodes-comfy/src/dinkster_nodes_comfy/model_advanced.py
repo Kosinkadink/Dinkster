@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import importlib
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import Any
 
 from dinkster_api.v1 import (
@@ -472,24 +472,6 @@ class ModelComputeDtype(Node):
         return cls.outputs(MODEL=result)
 
 
-def _attention_backends() -> tuple[str, ...]:
-    backends = ("pytorch attention",)
-    try:
-        torch = importlib.import_module("torch")
-    except ModuleNotFoundError:
-        return backends
-    if torch.cuda.is_available() or torch.version.hip is not None:
-        initialize_inference_process()
-        attention = importlib.import_module("dinkster_inference.ldm.modules.attention")
-        if attention.COMFY_KITCHEN_INT8_ATTENTION_IS_AVAILABLE:
-            backends += ("comfy kitchen attention",)
-    return backends
-
-
-def attention_choices() -> Mapping[str, Callable[[], tuple[str, ...]]]:
-    return {"model-attention.backends": _attention_backends}
-
-
 class ModelAttentionBackend(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -514,10 +496,7 @@ class ModelAttentionBackend(Node):
                         "The dense attention backend. Comfy Kitchen attention uses quantized INT8 "
                         "attention and is available only on Nvidia and AMD GPUs."
                     ),
-                    widget=ComboWidget(
-                        ("pytorch attention",),
-                        remote_route="/api/choices/model-attention.backends",
-                    ),
+                    widget=ComboWidget(("pytorch attention", "comfy kitchen attention")),
                 ),
             ),
             outputs=(

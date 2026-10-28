@@ -1,21 +1,14 @@
 """Public interfaces for native model-sampling and model patches."""
 
-import asyncio
 import subprocess
 import sys
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from dinkster_api.v1 import MODEL_TYPE, NumberWidget, TypeExpr, TypeRegistry
+from dinkster_api.v1 import MODEL_TYPE, NumberWidget, TypeExpr
 from dinkster_nodes_comfy import COMFY_NODES, model_advanced
 from dinkster_nodes_comfy.device_routing import DEVICE_ROUTING_NODES
 from dinkster_nodes_comfy.model_advanced import MODEL_ADVANCED_NODES
-from dinkster_workers import InProcessWorker
-from dinkster_workers.host import load_choices
-from dinkster_workers.manifest import load_manifest
-
-MANIFEST = Path(__file__).resolve().parents[1] / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
 
 
 def test_advanced_model_patch_interfaces() -> None:
@@ -70,9 +63,9 @@ def test_device_routing_required_inputs_and_cold_discovery() -> None:
         assert schema.inputs[0].type == schema.outputs[0].type
 
 
-def test_attention_schema_and_choice_discovery_never_request_torch() -> None:
+def test_attention_schema_discovery_never_requests_torch_or_inference() -> None:
     result = subprocess.run(
-        [sys.executable, "-c", _COLD_ATTENTION, str(MANIFEST)],
+        [sys.executable, "-c", _COLD_ATTENTION],
         capture_output=True,
         text=True,
         timeout=30,
@@ -80,50 +73,40 @@ def test_attention_schema_and_choice_discovery_never_request_torch() -> None:
     assert result.returncode == 0, result.stderr
 
 
-def test_attention_choices_follow_live_device_and_kernel_availability(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("available", (False, True))
+def test_attention_backend_resolves_availability_only_when_executing(
+    monkeypatch: pytest.MonkeyPatch, available: bool
 ) -> None:
-    state = SimpleNamespace(cuda=False, hip=None, kernel=True, initialized=False)
+    state = SimpleNamespace(initialized=False)
+    pytorch, kitchen = object(), object()
+    runtime = SimpleNamespace(
+        get_attention_function=lambda name, default=None: (
+            pytorch if name == "pytorch" else kitchen if available else default
+        )
+    )
 
     def initialize() -> None:
         state.initialized = True
 
     def load(name: str) -> object:
-        if name == "torch":
-            return SimpleNamespace(
-                cuda=SimpleNamespace(is_available=lambda: state.cuda),
-                version=SimpleNamespace(hip=state.hip),
-            )
         assert name == "dinkster_inference.ldm.modules.attention"
         assert state.initialized
-        return SimpleNamespace(COMFY_KITCHEN_INT8_ATTENTION_IS_AVAILABLE=state.kernel)
+        return runtime
 
     monkeypatch.setattr(model_advanced, "importlib", SimpleNamespace(import_module=load))
     monkeypatch.setattr(model_advanced, "initialize_inference_process", initialize)
-    choices = load_choices(load_manifest(MANIFEST))
-    worker = InProcessWorker({}, TypeRegistry(), lazy_choices=choices.lazy)
-
-    async def scenario() -> None:
-        # ModelAttentionBackend, F bc5f880d, define_schema() with controlled
-        # CUDA/HIP/kernel states below: CPU, CUDA missing kernel, CUDA, HIP.
-        assert await worker.fetch_choices("model-attention.backends") == ("pytorch attention",)
-        assert not state.initialized
-        state.cuda, state.kernel = True, False
-        assert await worker.fetch_choices("model-attention.backends") == ("pytorch attention",)
-        state.kernel = True
-        assert await worker.fetch_choices("model-attention.backends") == (
-            "pytorch attention",
-            "comfy kitchen attention",
-        )
-        state.cuda, state.hip = False, "test-hip"
-        assert await worker.fetch_choices("model-attention.backends") == (
-            "pytorch attention",
-            "comfy kitchen attention",
-        )
-        state.hip = None
-        assert await worker.fetch_choices("model-attention.backends") == ("pytorch attention",)
-
-    asyncio.run(scenario())
+    clone = SimpleNamespace(attention=None)
+    clone.set_model_optimized_attention = lambda callback: setattr(clone, "attention", callback)
+    original = SimpleNamespace(attention=None, clone=lambda: clone)
+    model_advanced.ModelAttentionBackend.schema()
+    assert not state.initialized
+    result = model_advanced.ModelAttentionBackend.execute(
+        model=original, attention="comfy kitchen attention"
+    )["MODEL"]
+    # Hand-derived callback identity: available kernel wins; otherwise fallback.
+    assert result is clone
+    assert clone.attention is (kitchen if available else pytorch)
+    assert original.attention is None
 
 
 _COLD_ATTENTION = """
@@ -138,20 +121,13 @@ class NoTensorRuntime(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0, NoTensorRuntime())
 from dinkster_nodes_comfy.model_advanced import ModelAttentionBackend
 from dinkster_schema import schema_to_wire
-from dinkster_values.names import claim_covers
-from dinkster_workers.host import load_choices
-from dinkster_workers.manifest import load_manifest
 
-manifest = load_manifest(sys.argv[1])
-choices = load_choices(manifest)
-assert not choices.static
 schema = schema_to_wire(ModelAttentionBackend.schema())
 assert schema
 widget = ModelAttentionBackend.schema().inputs[1].widget
-# Native remote-choice contract: immediate CPU fallback and deferred live choices.
-assert widget.options == ('pytorch attention',)
-choice_id = widget.remote_route.removeprefix('/api/choices/')
-assert choice_id in choices.lazy
-assert any(claim_covers(claim, choice_id) for claim in manifest.namespaces)
+# ModelAttentionBackend, F bc5f880d: union of define_schema() choices with
+# and without the supported GPU/kernel. Availability is deferred to execute.
+assert widget.options == ('pytorch attention', 'comfy kitchen attention')
+assert not widget.remote_route
 assert not any(name.split('.')[0] in {'torch', 'dinkster_inference'} for name in sys.modules)
 """

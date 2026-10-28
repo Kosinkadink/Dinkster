@@ -530,7 +530,6 @@ namespaces = [
     "SDPoseFaceBBoxes",
     "SDPoseDrawKeypoints",
     "SDPoseKeypointExtractor",
-    "model-attention",
 ]
 
 [pack.sandbox]
@@ -542,4 +541,3 @@ api = "dinkster-api/v1"
 [pack.entry]
 nodes = "dinkster_nodes_comfy:COMFY_NODES"
 types = "dinkster_nodes_comfy:register_inference_types"
-choices = "dinkster_nodes_comfy.model_advanced:attention_choices"

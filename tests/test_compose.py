@@ -1880,15 +1880,12 @@ def test_rootless_native_runtime_configuration(
     assert not spec.trust_reserved
 
 
-@pytest.mark.parametrize("in_process", (False, True))
-def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(
-    tmp_path: Path, in_process: bool
-) -> None:
+def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(tmp_path: Path) -> None:
     from dinkster_nodes_comfy import COMFY_NODES
 
     claims = tuple(node.schema().node_type for node in COMFY_NODES)
     manifest = TESTS_DIR.parent / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
-    assert load_manifest(manifest).namespaces == (*claims, "model-attention")
+    assert load_manifest(manifest).namespaces == claims
     other_manifest = tmp_path / "dinkster-pack.toml"
     other_manifest.write_text(
         '[pack]\nname = "other-owner"\npublisher = "dinkster"\n'
@@ -1902,18 +1899,10 @@ def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(
     async def scenario() -> None:
         composer = ServingComposer()
         try:
-            await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
+            await composer.add_pack(PackSpec(manifest=manifest))
             assert set(composer.composition.schemas) == set(claims)
             assert set(composer.composition.node_packs.values()) == {"dinkster-nodes-comfy"}
-            choice_id = "model-attention.backends"
-            assert choice_id in composer.composition.lazy_choices
-            assert (await composer.composition.lazy_choices[choice_id]())[0] == "pytorch attention"
-            if in_process:
-                with pytest.raises(CompositionError, match="cannot reload in-process pack"):
-                    await composer.reload_pack("dinkster-nodes-comfy")
-            else:
-                await composer.reload_pack("dinkster-nodes-comfy")
-            assert (await composer.composition.lazy_choices[choice_id]())[0] == "pytorch attention"
+            await composer.reload_pack("dinkster-nodes-comfy")
             result = await composer.composition.make_engine(lambda _event: None).run(
                 Graph(
                     nodes={
