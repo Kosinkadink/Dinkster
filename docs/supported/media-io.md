@@ -76,9 +76,8 @@
   and reports that shortest-audio trimming was not applied exactly.
   NVENC requests are refused until a hardware-encoder policy exists.
 - H.264 file saves default to CRF 18 and the encoder's medium preset without
-  low-latency tuning. Component inputs permit B-frames; encoded-source and
-  timeline saves retain timestamp-preserving B-frame suppression. Explicit
-  CRF, microsecond timing, source-copy saves and preview encoding are unchanged.
+  low-latency tuning and retain B-frame suppression. Explicit CRF, microsecond
+  timing, source-copy saves and preview encoding are unchanged.
 - AV1 file saves default to CRF 24 and SVT preset 8 with its standard quality
   behavior. The bounded one-logical-processor policy, component encoding, and
   source/timeline timing behavior are unchanged.

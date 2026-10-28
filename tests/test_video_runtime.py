@@ -176,7 +176,7 @@ def test_default_component_writer_remains_separate_from_source_component_encodin
     assert _packets(implicit.getvalue()) == _packets(explicit.getvalue())
     options = _x264_options(implicit.getvalue())
     assert b"crf=18.0" in options
-    assert b"bframes=3" in options
+    assert b"bframes=0" in options
     assert b"rc_lookahead=40" in options and b"mbtree=1" in options
     with av.open(io.BytesIO(implicit.getvalue())) as container:
         # Four frames span 133467 ticks under the default microsecond timestamp policy.

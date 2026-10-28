@@ -1319,9 +1319,7 @@ def save_video_stream(
             video.pix_fmt = pixel_format
             if not source_components:
                 video.codec_context.thread_count = 1
-                # Source and timeline frames can carry irregular presentation timestamps.
-                if name != "h264" or "components" not in value:
-                    video.codec_context.max_b_frames = 0
+                video.codec_context.max_b_frames = 0
                 video.codec_context.time_base = Fraction(1, 1_000_000)
             for key, attr in zip(
                 _COLOR_KEYS,
