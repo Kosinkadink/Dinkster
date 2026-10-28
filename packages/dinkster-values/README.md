@@ -66,6 +66,13 @@ allows 96 bytes per pixel plus 32,768 bytes for a missing-alpha mask; non-byte
 unaligned conversion also charges its padded dimensions. Batch consumers must
 add their retained-frame budget separately.
 
+`with open_image_components(source) as frames` yields the same components for
+every decoded frame in source order without collecting them. It accepts the
+same admission limits and checks each frame before conversion. Exiting the
+context closes the frame iterator, decoder and source even after early stop or
+failure. Retaining yielded arrays is valid, but their accumulated size is the
+caller's responsibility; the working-set limit applies to one frame at a time.
+
 `MediaStream` exposes replayable half-open frame or sample ranges with a
 declared total and per-read chunk limit. `iter_chunks()` is ordered and
 demand-driven; it does not prefetch. `retain()` creates an independent consumer

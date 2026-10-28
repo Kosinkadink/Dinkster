@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import os
-from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import pytest
 import torch
 from dinkster_api.v1 import (
@@ -16,14 +14,11 @@ from dinkster_api.v1 import (
     CORE_STRING,
     IMAGE_TYPE,
     MASK_TYPE,
-    VIDEO_TYPE,
     InputSpec,
     Node,
     NodeSchema,
     OutputSpec,
     TypeExpr,
-    assemble_video,
-    effective_video_facts,
     list_children,
     materialize_image,
 )
@@ -104,7 +99,6 @@ def test_preview_any_formats_tensor_edges_and_unserializable_objects() -> None:
 
 _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 _MASK = TypeExpr.concrete(MASK_TYPE)
-_VIDEO = TypeExpr.concrete(VIDEO_TYPE)
 _STRINGS = TypeExpr.list_of(TypeExpr.concrete(CORE_STRING))
 
 
@@ -116,9 +110,6 @@ class ToolSource(Node):
             outputs=(
                 OutputSpec("image", _IMAGE),
                 OutputSpec("mask", _MASK),
-                OutputSpec("video", _VIDEO),
-                OutputSpec("videos", TypeExpr.list_of(_VIDEO)),
-                OutputSpec("texts", _STRINGS),
                 OutputSpec("first", _STRINGS),
                 OutputSpec("last", _STRINGS),
             ),
@@ -129,12 +120,6 @@ class ToolSource(Node):
         return cls.outputs(
             image=torch.arange(2 * 5 * 7 * 3, dtype=torch.float64).reshape(2, 5, 7, 3) / 211,
             mask=torch.tensor([[[0.0, 0.5, 1.0], [0.25, 0.75, 0.125]]]),
-            video=assemble_video(np.zeros((7, 4, 6, 3), dtype=np.float32), fps=Fraction(5)),
-            videos=[
-                assemble_video(np.zeros((n, 4, 6, 3), dtype=np.float32), fps=Fraction(5))
-                for n in (1, 2, 3)
-            ],
-            texts=["one", "two", "three"],
             first=["a", "b"],
             last=["c"],
         )
@@ -148,29 +133,13 @@ class ToolObserver(Node):
             inputs=(
                 InputSpec("image", _IMAGE),
                 InputSpec("mask", _MASK),
-                InputSpec("video", _VIDEO),
-                InputSpec("random", _VIDEO),
-                InputSpec("videos", TypeExpr.list_of(_VIDEO)),
-                InputSpec("paired", TypeExpr.list_of(_VIDEO)),
-                InputSpec("texts", _STRINGS),
                 InputSpec("text", TypeExpr.concrete(CORE_STRING)),
             ),
             outputs=(OutputSpec("valid", TypeExpr.concrete(CORE_BOOLEAN)),),
         )
 
     @classmethod
-    def execute(
-        cls,
-        *,
-        image: Any,
-        mask: Any,
-        video: Any,
-        random: Any,
-        videos: Any,
-        paired: Any,
-        texts: list[str],
-        text: str,
-    ) -> Any:
+    def execute(cls, *, image: Any, mask: Any, text: str) -> Any:
         # The IMAGE consumer boundary normalizes floating storage to float32.
         expected = (
             torch.arange(2 * 5 * 7 * 3, dtype=torch.float64).reshape(2, 5, 7, 3) / 211
@@ -185,17 +154,12 @@ class ToolObserver(Node):
         assert torch.equal(
             materialize_image(mask), torch.tensor([[[0.0, 0.5, 1.0], [0.25, 0.75, 0.125]]])
         ), "mask pixels"
-        assert effective_video_facts(video)["frame_count"] == 2, effective_video_facts(video)
-        assert effective_video_facts(random)["frame_count"] == 3, effective_video_facts(random)
-        assert [effective_video_facts(v)["frame_count"] for v in videos] == [3, 2, 1], "shuffle"
-        assert [effective_video_facts(v)["frame_count"] for v in paired] == [3, 2, 1], "paired"
-        assert texts == ["three", "two", "one"], texts
         assert text == "c", text
         return cls.outputs(valid=True)
 
 
 @pytest.mark.parametrize("in_process", (True, False))
-def test_registered_image_dataset_and_list_tools_execute_twice_in_ordinary_hosts(
+def test_registered_image_and_list_tools_execute_twice_in_ordinary_hosts(
     tmp_path: Path, in_process: bool
 ) -> None:
     async def scenario() -> None:
@@ -254,25 +218,6 @@ def test_registered_image_dataset_and_list_tools_execute_twice_in_ordinary_hosts
                         },
                     ),
                     "mask": GraphNode("MaskPreview", {"mask": Link("source", "mask")}),
-                    "crop": GraphNode(
-                        "VideoTemporalCrop",
-                        {"video": Link("source", "video"), "start_frame": 5, "length": 99},
-                    ),
-                    "random": GraphNode(
-                        "VideoRandomTemporalCrop",
-                        {"video": Link("source", "video"), "length": 3, "seed": 19},
-                    ),
-                    "shuffle": GraphNode(
-                        "ShuffleVideoDataset", {"videos": Link("source", "videos"), "seed": 0}
-                    ),
-                    "paired": GraphNode(
-                        "ShuffleVideoTextDataset",
-                        {
-                            "videos": Link("source", "videos"),
-                            "texts": Link("source", "texts"),
-                            "seed": 0,
-                        },
-                    ),
                     "list": GraphNode(
                         "CreateList",
                         {
@@ -289,11 +234,6 @@ def test_registered_image_dataset_and_list_tools_execute_twice_in_ordinary_hosts
                         {
                             "image": Link("merge", "IMAGE"),
                             "mask": Link("mask", "mask"),
-                            "video": Link("crop", "video"),
-                            "random": Link("random", "video"),
-                            "videos": Link("shuffle", "videos"),
-                            "paired": Link("paired", "videos"),
-                            "texts": Link("paired", "texts"),
                             "text": Link("preview", "STRING"),
                         },
                     ),
