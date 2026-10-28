@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Any
 
 import av
-import dinkster_nodes_comfy.video_components as video_components
 import numpy as np
 import pytest
 from dinkster_api.v1 import (
@@ -22,6 +21,7 @@ from dinkster_api.v1 import (
     CORE_FLOAT,
     CORE_STRING,
     IMAGE_TYPE,
+    VIDEO_TYPE,
     InputSpec,
     Node,
     NodeSchema,
@@ -33,7 +33,7 @@ from dinkster_api.v1 import (
     video_from_source,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.video_components import ConcatenateVideo, CreateVideo, GetVideoComponents
+from dinkster_nodes_comfy.video_components import CreateVideo, GetVideoComponents
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -42,6 +42,7 @@ _AUDIO = TypeExpr.concrete(AUDIO_TYPE)
 _COMBO = TypeExpr.concrete(CORE_COMBO)
 _FLOAT = TypeExpr.concrete(CORE_FLOAT)
 _STRING = TypeExpr.concrete(CORE_STRING)
+_VIDEO = TypeExpr.concrete(VIDEO_TYPE)
 _FLOAT64 = np.dtype(np.float64)
 
 
@@ -167,7 +168,11 @@ assert videos.id == "videos"
 assert videos.member_prefix == "video"
 assert (videos.min_members, videos.max_members) == (1, 100)
 assert [(item.id, item.type, item.doc) for item in videos.template] == [
-    ("video", TypeExpr.concrete(VIDEO_TYPE), "Video segments to concatenate in input order.")
+    (
+        "video",
+        TypeExpr.list_of(TypeExpr.concrete(VIDEO_TYPE)),
+        "VIDEO lists to concatenate in input order.",
+    )
 ]
 assert [(item.id, item.default, item.advanced) for item in concat.inputs] == [
     ("codec", "auto", True),
@@ -242,46 +247,6 @@ def test_create_and_get_components_preserve_inputs_without_encoding(
     )
     assert result["bit_depth"] == expected_depth
     assert result["color_space"] == color_space
-
-
-def test_concatenate_video_binds_family_members_in_input_order(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[object] = []
-
-    def bind(value: object, resolver: object) -> object:
-        calls.append(("bind", value, resolver))
-        return f"bound:{value}"
-
-    def concatenate(
-        videos: list[object], *, codec: str, complete_audio: object | None
-    ) -> dict[str, object]:
-        calls.append(("concatenate", videos, codec, complete_audio))
-        return {"video": videos}
-
-    resolver = object()
-    monkeypatch.setattr(video_components, "bind_video_value", bind)
-    monkeypatch.setattr(video_components, "concatenate_video", concatenate)
-    monkeypatch.setattr(video_components, "resolver_from_env", lambda: resolver)
-
-    result = ConcatenateVideo.execute(
-        videos={"video_2": ["third"], "video_1": ["first", "second"]},
-        codec="h264",
-        complete_audio={"waveform": "replacement"},
-    )
-
-    assert calls == [
-        ("bind", "third", resolver),
-        ("bind", "first", resolver),
-        ("bind", "second", resolver),
-        (
-            "concatenate",
-            ["bound:third", "bound:first", "bound:second"],
-            "h264",
-            {"waveform": "replacement"},
-        ),
-    ]
-    assert result == {"video": {"video": ["bound:third", "bound:first", "bound:second"]}}
 
 
 def test_create_and_get_components_allow_no_audio_without_mutating_images() -> None:
@@ -429,6 +394,54 @@ class ComponentConsumer(Node):
         return cls.outputs(summary="components-preserved")
 
 
+class ConcatenateSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="video-components-public.concatenate-source",
+            outputs=(
+                OutputSpec("first", TypeExpr.list_of(_VIDEO)),
+                OutputSpec("second", TypeExpr.list_of(_VIDEO)),
+                OutputSpec("replacement", _AUDIO),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        def video(color: tuple[float, float, float]) -> object:
+            images = np.full((1, 2, 2, 3), color, dtype=np.float32)
+            return CreateVideo.execute(images=images, fps=12.0, codec="none")["video"]
+
+        return cls.outputs(
+            first=[video((1.0, 0.0, 0.0)), video((0.0, 1.0, 0.0))],
+            second=[video((0.0, 0.0, 1.0))],
+            replacement=_audio(),
+        )
+
+
+class ConcatenateConsumer(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="video-components-public.concatenate-consumer",
+            inputs=(InputSpec("video", _VIDEO),),
+            outputs=(OutputSpec("summary", _STRING),),
+        )
+
+    @classmethod
+    def execute(cls, *, video: object) -> dict[str, object]:
+        components = disassemble_video(video)
+        images = components["images"]
+        assert isinstance(images, np.ndarray)
+        assert images.shape == (3, 2, 2, 3)
+        assert [int(np.argmax(frame.mean(axis=(0, 1)))) for frame in images] == [0, 1, 2]
+        assert components["fps"] == 12.0
+        audio = components["audio"]
+        assert isinstance(audio, Mapping)
+        assert audio["sample_rate"] == 48_000
+        return cls.outputs(summary="concatenated-in-document-order")
+
+
 @pytest.mark.parametrize("in_process", (True, False))
 def test_native_video_components_cross_public_hosts_twice(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
@@ -441,10 +454,13 @@ def test_native_video_components_cross_public_hosts_twice(tmp_path: Path, in_pro
             "from pathlib import Path\n"
             "import dinkster_nodes_comfy.video_components as native\n"
             "from dinkster_nodes_comfy import register_inference_types\n"
-            "from test_video_components import ComponentConsumer, ComponentSource\n"
+            "from test_video_components import (\n"
+            "    ComponentConsumer, ComponentSource, ConcatenateConsumer, ConcatenateSource,\n"
+            ")\n"
             "assert Path(native.__file__).resolve() == "
             f"Path({str(package / 'src/dinkster_nodes_comfy/video_components.py')!r})\n"
-            "NODES = (ComponentSource, ComponentConsumer)\n",
+            "NODES = (ComponentSource, ComponentConsumer, "
+            "ConcatenateSource, ConcatenateConsumer)\n",
             encoding="ascii",
         )
         fixture = tmp_path / "video-components-public-dinkster-pack.toml"
@@ -486,35 +502,28 @@ def test_native_video_components_cross_public_hosts_twice(tmp_path: Path, in_pro
                 await composer.add_pack(pack)
             graph = Graph(
                 nodes={
-                    "source": GraphNode("video-components-public.source"),
-                    "create": GraphNode(
-                        "CreateVideo",
+                    "source": GraphNode("video-components-public.concatenate-source"),
+                    "concatenate": GraphNode(
+                        "ConcatenateVideo",
                         {
-                            "images": Link("source", "images"),
-                            "fps": Link("source", "fps"),
-                            "audio": Link("source", "audio"),
-                            "bit_depth": Link("source", "bit_depth"),
-                            "color_space": Link("source", "color_space"),
-                            "codec": "none",
+                            "videos.video_z": Link("source", "first"),
+                            "videos.video_a": Link("source", "second"),
+                            "complete_audio": Link("source", "replacement"),
                         },
                     ),
-                    "get": GraphNode("GetVideoComponents", {"video": Link("create", "video")}),
                     "consumer": GraphNode(
-                        "video-components-public.consumer",
-                        {
-                            "images": Link("get", "images"),
-                            "audio": Link("get", "audio"),
-                            "fps": Link("get", "fps"),
-                            "bit_depth": Link("get", "bit_depth"),
-                            "color_space": Link("get", "color_space"),
-                        },
+                        "video-components-public.concatenate-consumer",
+                        {"video": Link("concatenate", "video")},
                     ),
                 }
             )
             engine = composer.composition.make_engine(lambda _event: None)
             for attempt in range(2):
                 result = await engine.run(graph, ["consumer"])
-                assert result.outputs["consumer"]["summary"].resolve() == "components-preserved"
+                assert (
+                    result.outputs["consumer"]["summary"].resolve()
+                    == "concatenated-in-document-order"
+                )
                 assert set(result.cached) == (set() if attempt == 0 else set(graph.nodes))
         finally:
             await composer.close()

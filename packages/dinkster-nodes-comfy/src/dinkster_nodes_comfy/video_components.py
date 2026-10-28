@@ -182,7 +182,9 @@ class ConcatenateVideo(Node):
                     "videos",
                     (
                         InputSpec(
-                            "video", _VIDEO, doc="Video segments to concatenate in input order."
+                            "video",
+                            TypeExpr.list_of(_VIDEO),
+                            doc="VIDEO lists to concatenate in input order.",
                         ),
                     ),
                     min_members=1,
