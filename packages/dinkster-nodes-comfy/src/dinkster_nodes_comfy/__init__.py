@@ -160,6 +160,7 @@ from .rope_and_mask import ROPE_AND_MASK_NODES
 from .rtdetr import RTDETR_NODES
 from .sam3 import SAM3_TRACKING_NODES
 from .sam3_detection import SAM3_Detect
+from .sam3_preview import SAM3_TrackPreview
 from .sampler_factories import SAMPLER_FACTORY_NODES
 from .save_text import SaveText
 from .scail_masks import SCAIL2ColoredMask
@@ -407,6 +408,7 @@ COMFY_NODES = (
     *MODEL_SELECTION_NODES,
     *SAM3_TRACKING_NODES,
     SAM3_Detect,
+    SAM3_TrackPreview,
     VideoFrameSample,
     *MODEL_FILE_LOADER_NODES,
     *LORA_FILE_LOADER_NODES,
