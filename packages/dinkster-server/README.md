@@ -115,6 +115,14 @@ The main protocol routes include:
   `limit` and query-bound `cursor` page identities, retaining their aliases
   and history. The route requires `assets:read` in the requested scope,
   defaults to project `default`, and exposes virtual locations only.
+  It remains available when the optional federated catalog is enabled.
+  Consumers merge project observations and mount rows with federated candidates
+  by digest, retaining each source's names, locations and authority separately.
+  Observation kinds describe ingest, not model-loader compatibility: a generic
+  transfer or model upload is `asset/file`, even with a model-like filename.
+  Logical model kind, variant and compatibility must come from the resolution
+  catalog; a local copy does not make unknown runtime compatibility compatible.
+  Project observations are not copied into the project-unaware resolution store.
 - `GET /api/assets/availability?scope=&digest=&digest=` checks exact local
   identities without acquisition, writes, grants or catalog recovery. It
   returns `{assets: [{digest, status}]}` with `available` or `missing` and
