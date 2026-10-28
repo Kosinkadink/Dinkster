@@ -29,6 +29,7 @@ from dinkster_values import (
     EncodedMultiStreamLatent,
     decode_latent,
     encode_latent,
+    latent_fingerprint,
     validate_latent_encoded,
 )
 from dinkster_values.latent_codec import _copy_address
@@ -475,6 +476,14 @@ def test_structural_latent_codec_is_deterministic_and_round_trips_streams() -> N
     assert decoded["metadata"] == {"enabled": True, "name": "value"}
 
 
+def test_default_latent_keeps_existing_identity() -> None:
+    value = {"samples": EncodedLatentTensor("float32", (1,), b"\x00\x00\x80?")}
+    encoded = encode_latent(value)
+
+    assert encode_latent(decode_latent(encoded)) == encoded
+    assert latent_fingerprint(LATENT_TYPE)(value) == "ab5ebb24357a9feccebd5d0e2f3717711d2b6ddf"
+
+
 @pytest.mark.parametrize("reserved", ("tensor", "multi", "tuple", "map", "user"))
 def test_latent_codec_escapes_reserved_mapping_keys(reserved: str) -> None:
     value = {
@@ -497,6 +506,9 @@ def test_latent_codec_validator_rejects_old_and_corrupt_frames() -> None:
     malformed = {"$": "map", "items": {}, "extra": True}
     with pytest.raises(ValueError, match="mapping"):
         validate_latent_encoded(prefix + json.dumps(malformed).encode(), {})
+    ordered_mapping = {"$": "map", "items": [["samples", None]]}
+    with pytest.raises(ValueError, match="invalid mapping"):
+        validate_latent_encoded(prefix + json.dumps(ordered_mapping).encode(), {})
 
 
 @pytest.mark.parametrize("perspective,normals", ((False, False), (True, False), (True, True)))
