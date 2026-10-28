@@ -522,6 +522,8 @@ namespaces = [
     "YuE2GenerateMusic",
     "UpscaleModelLoader",
     "CurveEditor",
+    "CreateVideo",
+    "GetVideoComponents",
 ]
 
 [pack.sandbox]
