@@ -1617,9 +1617,6 @@ class ServerState:
         schemas: Mapping[str, NodeSchema],
         packs: Mapping[str, PackInfo],
         node_packs: Mapping[str, str],
-        *,
-        subject: str,
-        defer_unpublished_carriers: bool = False,
     ) -> _SurfaceValidation:
         source_epoch = self.schema_epoch
         frozen_schemas = MappingProxyType(dict(schemas))
@@ -1651,7 +1648,6 @@ class ServerState:
             schemas,
             next_packs,
             node_packs,
-            subject="server generation",
         )
 
     async def prepare_replace(
@@ -1686,8 +1682,6 @@ class ServerState:
             merged_schemas,
             merged_packs,
             merged_node_packs,
-            subject="server replacement",
-            defer_unpublished_carriers=True,
         )
 
     def replace(
