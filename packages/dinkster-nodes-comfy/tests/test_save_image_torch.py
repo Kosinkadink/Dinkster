@@ -37,6 +37,7 @@ from dinkster_nodes_comfy.image_file_tools import (
     SaveAnimatedWEBP,
     SaveImage,
 )
+from dinkster_nodes_comfy.save_image_advanced import SaveImageAdvanced
 from PIL import Image
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -516,3 +517,156 @@ def test_image_file_nodes_execute_twice_through_unchanged_manifest(
         for path in saved:
             with Image.open(path) as image:
                 np.testing.assert_array_equal(np.asarray(image.convert("RGB")), source_pixels)
+
+
+@pytest.mark.parametrize("depth", ("8-bit", "16-bit"))
+def test_advanced_image_png_keeps_depth_alpha_counters_and_mount(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, depth: str
+) -> None:
+    import av
+
+    default, alternate = _mount(tmp_path, monkeypatch)
+    existing = alternate / "sample_00004.png"
+    existing.write_bytes(b"existing")
+    images = torch.linspace(-0.1, 1.15, 2 * 17 * 19 * 4).reshape(2, 17, 19, 4)
+    before = images.clone()
+    result = SaveImageAdvanced.execute(
+        images=images,
+        filename_prefix="sample",
+        mount="alternate",
+        format={"format": "png", "bit_depth": depth, "input_color_space": "sRGB"},
+    )
+    assert result["images"] is images
+    assert torch.equal(images, before)
+    assert not list(default.iterdir())
+    assert existing.read_bytes() == b"existing"
+    scale, pixel_format = (255, "rgba") if depth == "8-bit" else (65535, "rgba64le")
+    expected = (
+        (images.numpy() * scale).clip(0, scale).astype(np.uint8 if depth == "8-bit" else np.uint16)
+    )
+    for index in range(2):
+        with av.open(str(alternate / f"sample_{index + 5:05d}.png")) as container:
+            frame = next(container.decode(video=0))
+            np.testing.assert_array_equal(frame.to_ndarray(format=pixel_format), expected[index])
+    assert len(list(alternate.glob("*.png"))) == 3
+
+
+@pytest.mark.parametrize(
+    ("depth", "colorspace"),
+    (("16-bit float", "linear"), ("32-bit float", "sRGB"), ("32-bit float", "HDR")),
+)
+def test_advanced_image_exr_preserves_range_scene_light_and_alpha(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, depth: str, colorspace: str
+) -> None:
+    import av
+
+    default, alternate = _mount(tmp_path, monkeypatch)
+    images = torch.tensor([-0.25, 0.031, 1.75, 0.37]).expand(1, 17, 19, 4).clone()
+    before = images.clone()
+    SaveImageAdvanced.execute(
+        images=images,
+        filename_prefix="scene",
+        format={"format": "exr", "bit_depth": depth, "input_color_space": colorspace},
+    )
+    # Derive the scene-light RGB independently, leaving straight alpha untouched.
+    rgb = images[0, 0, 0, :3].numpy()
+    if colorspace == "sRGB":
+        rgb = np.where(rgb <= 0.04045, rgb / 12.92, ((rgb.clip(0) + 0.055) / 1.055) ** 2.4)
+    elif colorspace == "HDR":
+        rgb = np.where(
+            rgb <= 0.5,
+            rgb**2 / 3.0,
+            (np.exp((rgb.clip(0.5) - 0.55991072928) / 0.17883277) + 0.28466892) / 12.0,
+        )
+    expected = np.concatenate((rgb, [np.float32(0.37)])).astype(np.float32)
+    if depth == "16-bit float":
+        expected = expected.astype(np.float16).astype(np.float32)
+    with av.open(str(default / "scene_00001.exr")) as container:
+        frame = next(container.decode(video=0))
+        if depth == "16-bit float":
+            assert frame.format.name == "gbrapf16le"
+            # swscale's half-to-float route clips extended range; read native planes.
+            planes = [
+                np.frombuffer(plane, dtype="<f2")
+                .reshape(frame.height, plane.line_size // 2)[:, : frame.width]
+                .astype(np.float32)
+                for plane in frame.planes
+            ]
+            actual = np.stack([planes[index] for index in (2, 0, 1, 3)], axis=-1)
+        else:
+            actual = frame.to_ndarray(format="gbrapf32le")
+    np.testing.assert_allclose(actual, np.broadcast_to(expected, actual.shape), rtol=1e-6, atol=0)
+    assert torch.equal(images, before)
+    assert not list(alternate.iterdir())
+
+
+@pytest.mark.parametrize("disabled", (False, True))
+def test_advanced_image_exr_metadata_flag_controls_chromaticities(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, disabled: bool
+) -> None:
+    import struct
+
+    from dinkster_inference.cli_args import args
+
+    default, _ = _mount(tmp_path, monkeypatch)
+    monkeypatch.setattr(args, "disable_metadata", disabled)
+    SaveImageAdvanced.execute(
+        images=torch.full((1, 17, 19, 3), 0.23),
+        filename_prefix="aces",
+        format={
+            "format": "exr",
+            "bit_depth": "32-bit float",
+            "input_color_space": "linear ACEScg",
+        },
+    )
+    encoded = (default / "aces_00001.exr").read_bytes()
+    attribute = (
+        b"chromaticities\x00chromaticities\x00"
+        + struct.pack("<i", 32)
+        + struct.pack("<8f", 0.713, 0.293, 0.165, 0.830, 0.128, 0.044, 0.32168, 0.33767)
+    )
+    assert (attribute in encoded) is not disabled
+
+
+@pytest.mark.parametrize("mode", ("still images", "animated"))
+def test_advanced_image_avif_retains_mode_frame_order_and_hdr_auto(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    from fractions import Fraction
+
+    import av
+
+    default, _ = _mount(tmp_path, monkeypatch)
+    images = torch.tensor([[0.8, 0.1, 0.2], [0.1, 0.2, 0.7]])[:, None, None, :].expand(2, 64, 64, 3)
+    result = SaveImageAdvanced.execute(
+        images=images,
+        filename_prefix="movie-%batch_num%",
+        format={
+            "format": "avif",
+            "bit_depth": "auto",
+            "input_color_space": "HDR PQ",
+            "crf": 18,
+            "save_mode": {"save_mode": mode, "fps": 7.0, "loop_count": 2},
+        },
+    )
+    assert result["images"] is images
+    files = sorted(default.glob("movie-*.avif"))
+    assert len(files) == (1 if mode == "animated" else 2)
+    frames = []
+    for index, path in enumerate(files):
+        assert path.name == f"movie-{index}_{index + 1:05d}.avif"
+        with av.open(str(path)) as container:
+            # Animated AVIF exposes a primary still item before its timed track.
+            track = 1 if mode == "animated" else 0
+            stream = container.streams.video[track]
+            assert stream.codec_context.color_primaries == 9
+            assert stream.codec_context.color_trc == 16
+            decoded = list(container.decode(video=track))
+            assert len(decoded) == (2 if mode == "animated" else 1)
+            if mode == "animated":
+                assert decoded[1].pts * stream.time_base == Fraction(1, 7)
+            for frame in decoded:
+                assert frame.format.name == "yuv420p10le"
+                frames.append(frame.to_ndarray(format="rgb24").mean(axis=(0, 1)))
+    assert frames[0][0] > frames[0][2]
+    assert frames[1][2] > frames[1][0]

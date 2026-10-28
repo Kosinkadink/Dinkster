@@ -53,7 +53,7 @@ _MAX_IMAGE_DIMENSION = 16_384
 _MAX_IMAGE_FRAMES = 4096
 
 
-def _writer() -> AssetWriter:
+def image_writer() -> AssetWriter:
     snapshot = os.environ.get("DINKSTER_MOUNTS_SNAPSHOT", "")
     if not snapshot:
         raise AssetError("saving requires DINKSTER_MOUNTS_SNAPSHOT")
@@ -68,7 +68,7 @@ def _check_dimensions(width: int, height: int) -> None:
         raise ValueError("decoded image exceeds the image working-set limit")
 
 
-def _image_batch(images: Any) -> Any:
+def image_batch(images: Any) -> Any:
     batch = materialize_image(images)
     if batch.ndim != 4 or batch.shape[0] < 1 or batch.shape[3] not in (1, 3, 4):
         raise ValueError("images must be a nonempty [B,H,W,1|3|4] batch")
@@ -196,12 +196,12 @@ def _save_animation(
 ) -> None:
     torch = importlib.import_module("torch")
     image_module = importlib.import_module("PIL.Image")
-    batch = _image_batch(images)
+    batch = image_batch(images)
     pixels = torch.floor(torch.clamp(batch, 0, 1) * 255).to(torch.uint8).cpu().numpy()
     frames = [image_module.fromarray(frame) for frame in pixels]
     if format_name == "WEBP":
         options = {**options, "exif": frames[0].getexif()}
-    writer = _writer()
+    writer = image_writer()
     suffix, media_type = (".webp", "image/webp") if format_name == "WEBP" else (".png", "image/png")
     with tempfile.TemporaryFile() as buffer:
         frames[0].save(
@@ -267,8 +267,8 @@ class SaveImage(Node):
     def execute(
         cls, *, images: Any, filename_prefix: str = "ComfyUI", mount: str | None = None
     ) -> Mapping[str, object]:
-        batch = _image_batch(images)
-        writer = _writer()
+        batch = image_batch(images)
+        writer = image_writer()
         torch = importlib.import_module("torch")
         target = writer.output_target(
             filename_prefix,

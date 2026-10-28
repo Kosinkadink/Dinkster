@@ -19,6 +19,7 @@ from dinkster_nodes_comfy.image_file_tools import (
     SaveAnimatedWEBP,
     SaveImage,
 )
+from dinkster_nodes_comfy.save_image_advanced import SaveImageAdvanced
 from dinkster_schema import schema_to_wire
 
 
@@ -123,3 +124,17 @@ def test_animated_savers_preserve_source_controls_and_append_mount() -> None:
             assert fields["quality"].default == 80
             assert fields["quality"].widget == NumberWidget(min=0, max=100)
             assert fields["method"].widget == ComboWidget(options=("default", "fastest", "slowest"))
+
+
+def test_advanced_image_save_retains_format_branches_and_adjacent_mount() -> None:
+    schema = SaveImageAdvanced.schema()
+    assert schema.input_order == ("images", "filename_prefix", "format", "mount")
+    assert schema.inputs[-1].widget == MountWidget()
+    assert schema.inputs[-1].adjacent_to == "filename_prefix"
+    assert not schema.inputs[-1].required and schema.inputs[-1].default is None
+    assert schema.output_node and not schema.idempotent
+    assert tuple(item.id for item in schema.outputs) == ("images",)
+    formats = schema.combos[0]
+    assert formats.id == "format"
+    assert tuple(option.key for option in formats.options) == ("png", "exr", "avif")
+    assert schema_to_wire(schema)["nodeType"] == "SaveImageAdvanced"

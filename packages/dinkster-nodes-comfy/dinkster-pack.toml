@@ -534,6 +534,7 @@ namespaces = [
     "LoraSave",
     "CheckpointSave",
     "ModelSave",
+    "SaveImageAdvanced",
 ]
 
 [pack.sandbox]

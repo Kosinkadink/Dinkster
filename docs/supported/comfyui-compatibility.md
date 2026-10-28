@@ -217,3 +217,6 @@
   output mount, retaining architecture and prediction metadata, auxiliary sampling
   tensors, and the reserved filename in supported model-spec titles. Tiny CPU
   checks use controlled model state, not full-model or GPU execution.
+- Native SaveImageAdvanced writes 8/16-bit PNG and half/full-float EXR through
+  the selected output mount, preserving source counters and straight alpha.
+  EXR exports retain extended range and convert sRGB or HLG input to scene light.
