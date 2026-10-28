@@ -69,6 +69,8 @@ class _Msvcrt(Protocol):
 
     def locking(self, fd: int, mode: int, nbytes: int, /) -> None: ...
 
+    def open_osfhandle(self, handle: int, flags: int, /) -> int: ...
+
 
 class MountWriteAuthority(Protocol):
     """Where mount ids become writable roots. Raises AssetError for an
@@ -554,7 +556,7 @@ class AssetWriter:
     def _open_windows_lock_file(lock_path: Path) -> BinaryIO:
         ctypes = importlib.import_module("ctypes")
         wintypes = importlib.import_module("ctypes.wintypes")
-        msvcrt = importlib.import_module("msvcrt")
+        msvcrt = cast("_Msvcrt", importlib.import_module("msvcrt"))
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         create_file = kernel32.CreateFileW
         create_file.argtypes = [
@@ -607,8 +609,7 @@ class AssetWriter:
                 None,
             )
             if handle != invalid_handle_value:
-                descriptor = msvcrt.open_osfhandle(handle, os.O_RDWR)
-                with os.fdopen(descriptor, "r+b") as created:
+                with AssetWriter._windows_file_from_handle(handle, msvcrt, close_handle) as created:
                     created.write(b"\0")
                     created.flush()
                 continue
@@ -638,11 +639,27 @@ class AssetWriter:
                 or information.number_of_links != 1
             ):
                 raise AssetError(f"unsafe writer lock path: {lock_path}")
+        except BaseException:
+            close_handle(handle)
+            raise
+        return AssetWriter._windows_file_from_handle(handle, msvcrt, close_handle)
+
+    @staticmethod
+    def _windows_file_from_handle(
+        handle: int,
+        msvcrt: _Msvcrt,
+        close_handle: Callable[[int], object],
+    ) -> BinaryIO:
+        try:
             descriptor = msvcrt.open_osfhandle(handle, os.O_RDWR)
         except BaseException:
             close_handle(handle)
             raise
-        return os.fdopen(descriptor, "r+b")
+        try:
+            return os.fdopen(descriptor, "r+b")
+        except BaseException:
+            os.close(descriptor)
+            raise
 
     @staticmethod
     def _path_lock(path: Path) -> threading.RLock:

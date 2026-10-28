@@ -533,6 +533,50 @@ def test_save_bytes_rejects_hardlinked_writer_lock(tmp_path: Path) -> None:
     assert not (root / "probe_00001.bin").exists()
 
 
+def test_windows_lock_handle_closes_when_descriptor_conversion_fails() -> None:
+    class FailingMsvcrt:
+        LK_NBLCK: int = 1
+        LK_UNLCK: int = 0
+
+        def locking(self, fd: int, mode: int, nbytes: int, /) -> None:
+            raise AssertionError("locking is not used while opening a file")
+
+        def open_osfhandle(self, handle: int, flags: int, /) -> int:
+            raise OSError("descriptor conversion failed")
+
+    closed: list[int] = []
+    with pytest.raises(OSError, match="descriptor conversion failed"):
+        AssetWriter._windows_file_from_handle(41, FailingMsvcrt(), closed.append)
+    assert closed == [41]
+
+
+def test_windows_lock_descriptor_closes_when_file_conversion_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Msvcrt:
+        LK_NBLCK: int = 1
+        LK_UNLCK: int = 0
+
+        def locking(self, fd: int, mode: int, nbytes: int, /) -> None:
+            raise AssertionError("locking is not used while opening a file")
+
+        def open_osfhandle(self, handle: int, flags: int, /) -> int:
+            return 42
+
+    closed_handles: list[int] = []
+    closed_descriptors: list[int] = []
+
+    def fail_fdopen(descriptor: int, mode: str) -> BinaryIO:
+        raise OSError("file conversion failed")
+
+    monkeypatch.setattr(os, "fdopen", fail_fdopen)
+    monkeypatch.setattr(os, "close", closed_descriptors.append)
+    with pytest.raises(OSError, match="file conversion failed"):
+        AssetWriter._windows_file_from_handle(41, Msvcrt(), closed_handles.append)
+    assert closed_handles == []
+    assert closed_descriptors == [42]
+
+
 def test_save_bytes_no_temp_litter(tmp_path: Path) -> None:
     writer, root = make_writer(tmp_path)
     writer.save_bytes({"mount": "out", "prefix": "a"}, b"x", suffix=".bin")
