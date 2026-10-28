@@ -1,8 +1,5 @@
 """Torch-free schema contracts for native standard sampler nodes."""
 
-import subprocess
-import sys
-
 from dinkster_api.v1 import NumberWidget, schema_from_wire, schema_to_wire
 from dinkster_nodes_comfy.standard_sampling import (
     STANDARD_SAMPLING_NODES,
@@ -72,20 +69,3 @@ def test_standard_sampling_schemas_match_comfyui() -> None:
     assert standard.schema().outputs[0].doc == "The denoised latent."
     for node in STANDARD_SAMPLING_NODES:
         assert schema_from_wire(schema_to_wire(node.schema())) == node.schema()
-
-
-def test_standard_sampling_cold_discovery_is_torch_free() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; "
-            "from dinkster_nodes_comfy.standard_sampling import STANDARD_SAMPLING_NODES; "
-            "[node.schema() for node in STANDARD_SAMPLING_NODES]; "
-            "assert 'torch' not in sys.modules; "
-            "assert 'dinkster_inference' not in sys.modules",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr

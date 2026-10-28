@@ -350,6 +350,7 @@ def test_station_two_real_engines_share_one_store(
         sys.executable,
         "-m",
         "dinkster.serve",
+        "--no-default-packs",
         "--library-root",
         "",
     )

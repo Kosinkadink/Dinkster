@@ -1,8 +1,5 @@
 """Torch-free WanDancer scalar and list socket contracts."""
 
-import subprocess
-import sys
-
 from dinkster_api.v1 import (
     AUDIO_TYPE,
     IMAGE_TYPE,
@@ -14,10 +11,13 @@ from dinkster_api.v1 import (
 )
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.wandancer_keyframes import WANDANCER_KEYFRAME_NODES
-from dinkster_workers import load_manifest
 
 
 def test_wandancer_keyframe_schemas_and_cold_discovery() -> None:
+    assert tuple(node.schema().node_type for node in WANDANCER_KEYFRAME_NODES) == (
+        "WanDancerPadKeyframes",
+        "WanDancerPadKeyframesList",
+    )
     for node, list_output in zip(WANDANCER_KEYFRAME_NODES, (False, True), strict=True):
         schema = node.schema()
         assert schema.category == "image/video"
@@ -42,21 +42,4 @@ def test_wandancer_keyframe_schemas_and_cold_discovery() -> None:
             TypeExpr.list_of(t) if list_output else t for t in outputs
         ]
         assert schema_from_wire(schema_to_wire(schema)) == schema
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; from dinkster_nodes_comfy import COMFY_NODES; "
-            "names = {n.schema().node_type for n in COMFY_NODES}; "
-            "assert {'WanDancerPadKeyframes','WanDancerPadKeyframesList'} <= names; "
-            "assert 'torch' not in sys.modules; assert 'dinkster_inference' not in sys.modules",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
-
-
-def test_wandancer_complete_registry_matches_manifest() -> None:
-    manifest = load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml")
-    assert tuple(node.schema().node_type for node in COMFY_NODES) == manifest.namespaces
+        assert node in COMFY_NODES

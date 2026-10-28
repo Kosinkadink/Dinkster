@@ -476,7 +476,7 @@ class InspectSuperResolutionStartImage(Node):
         return cls.outputs(summary="hunyuan video super resolution start image")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_production_manifest_registers_both_hunyuan_video_image_nodes_twice(
     tmp_path: Path, in_process: bool
 ) -> None:

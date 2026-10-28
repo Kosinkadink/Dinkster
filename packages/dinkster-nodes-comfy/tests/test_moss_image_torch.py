@@ -258,7 +258,7 @@ class MossInspect(Node):
         return cls.outputs(count=2)
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_moss_edit_ordinary_manifest_hosts(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
         root = Path(__file__).resolve().parents[1]

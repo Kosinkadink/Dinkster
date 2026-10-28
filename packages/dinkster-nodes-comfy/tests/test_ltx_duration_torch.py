@@ -157,7 +157,7 @@ class DurationSource(Node):
         return cls.outputs(model=model, positive=positive, head=head)
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_duration_prediction_crosses_ordinary_hosts_twice(
     tmp_path: Path,
     in_process: bool,

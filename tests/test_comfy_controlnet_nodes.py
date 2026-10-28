@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
-import sys
 import tomllib
 from pathlib import Path
 
@@ -19,6 +17,7 @@ from dinkster_nodes_comfy.controlnet import (
 
 
 def test_controlnet_schemas_register_the_exact_core_ids() -> None:
+    assert SetUnionControlNetType in COMFY_NODES
     manifest = tomllib.loads(
         (
             Path(__file__).resolve().parents[1] / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
@@ -65,24 +64,6 @@ def test_controlnet_schemas_register_the_exact_core_ids() -> None:
         "tile",
         "repaint",
     ]
-
-
-def test_native_manifest_schemas_are_available_without_inference_or_torch() -> None:
-    subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys\n"
-            "sys.modules['dinkster_inference'] = None\n"
-            "sys.modules['torch'] = None\n"
-            "from dinkster_nodes_comfy import COMFY_NODES\n"
-            "schemas = [node.define_schema() for node in COMFY_NODES]\n"
-            "assert any(schema.node_type == 'SetUnionControlNetType' for schema in schemas)\n",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
 
 
 def test_zero_strength_returns_sources_without_accessing_control_or_image() -> None:

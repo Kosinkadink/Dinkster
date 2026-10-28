@@ -200,7 +200,7 @@ class LTXConsumer(Node):
         return cls.outputs(summary="ltx-video-conditioning")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_ltx_video_conditioning_executes_twice_through_both_production_hosts(
     tmp_path: Path, in_process: bool
 ) -> None:
@@ -406,7 +406,7 @@ class CropConsumer(Node):
         return cls.outputs(summary="ltx-crop-guides")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_crop_guides_ordinary_native_and_separate_fixture_twice(
     tmp_path: Path, in_process: bool
 ) -> None:

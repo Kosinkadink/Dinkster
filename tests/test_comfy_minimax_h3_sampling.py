@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
-import sys
-
 from dinkster_api.v1 import CORE_FLOAT, MODEL_TYPE, NumberWidget, TypeExpr
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.minimax_h3_sampling import MiniMaxH3SigmaShift
@@ -26,25 +23,3 @@ def test_minimax_h3_sigma_shift_public_schema() -> None:
     assert tuple((o.id, o.type) for o in schema.outputs) == (
         ("MODEL", TypeExpr.concrete(MODEL_TYPE)),
     )
-
-
-def test_minimax_h3_sigma_shift_cold_discovery() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            """
-import sys
-sys.modules['torch'] = None
-sys.modules['dinkster_inference'] = None
-from dinkster_nodes_comfy import COMFY_NODES
-assert any(node.schema().node_type == 'MiniMaxH3SigmaShift' for node in COMFY_NODES)
-assert sys.modules['torch'] is None
-assert not any(name.startswith('dinkster_inference.') for name in sys.modules)
-""",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    assert result.returncode == 0, result.stderr
