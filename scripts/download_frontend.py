@@ -83,7 +83,7 @@ def verify_and_extract(payload: bytes, sources: dict, output: Path) -> None:
             if (
                 path.is_absolute()
                 or ".." in path.parts
-                or "\\" in entry.filename
+                or "\\" in entry.orig_filename
                 or ":" in entry.filename
                 or entry.is_dir()
                 or entry.external_attr >> 16 != 0o100644
