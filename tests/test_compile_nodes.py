@@ -8,7 +8,6 @@ import sys
 from dinkster_api.v1 import CORE_COMBO, MODEL_TYPE, TypeExpr
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.compile import COMPILE_NODES, TorchCompileModel, wanBlockSwap
-from dinkster_workers import load_manifest
 
 
 def test_compile_nodes_are_registered_once_with_their_public_schemas() -> None:
@@ -16,6 +15,10 @@ def test_compile_nodes_are_registered_once_with_their_public_schemas() -> None:
 
     assert COMPILE_NODES == (TorchCompileModel, wanBlockSwap)
     assert all(node in COMFY_NODES for node in COMPILE_NODES)
+    assert tuple(node for node in COMFY_NODES if node in COMPILE_NODES) == (
+        TorchCompileModel,
+        wanBlockSwap,
+    )
     assert compile_schema.node_type == "TorchCompileModel"
     assert compile_schema.category == "experimental"
     assert compile_schema.inputs[0].type == TypeExpr.concrete(MODEL_TYPE)
@@ -25,14 +28,6 @@ def test_compile_nodes_are_registered_once_with_their_public_schemas() -> None:
     assert nop_schema.node_type == "wanBlockSwap"
     assert nop_schema.deprecation is not None
     assert nop_schema.search_visibility == "deprecated"
-
-
-def test_complete_comfy_manifest_claims_compile_nodes() -> None:
-    manifest = load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml")
-
-    assert ("TorchCompileModel", "wanBlockSwap") == tuple(
-        node for node in manifest.namespaces if node in {"TorchCompileModel", "wanBlockSwap"}
-    )
 
 
 def test_compile_schemas_serialize_without_importing_torch() -> None:

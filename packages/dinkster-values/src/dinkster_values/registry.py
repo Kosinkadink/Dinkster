@@ -11,6 +11,7 @@ fingerprint is an optimization, never a prerequisite.
 from __future__ import annotations
 
 import json
+import math
 import pickle
 from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
@@ -29,6 +30,7 @@ from .builtin_types import (
     CORE_INT,
     CORE_STRING,
     DICT_TYPE,
+    HISTOGRAM_TYPE,
 )
 from .lists import make_list_value, parse_list_type_id, value_children
 from .model import (
@@ -1008,10 +1010,14 @@ class TypeRegistry:
         return Value(type_id=type_id, fingerprint=fp, meta=meta, payload=PyObjPayload(obj))
 
 
-def _coerce_combo(obj: object) -> str:
-    if type(obj) is not str:
-        raise TypeError(f"COMBO expects a string, got {type(obj).__name__}")
-    return obj
+def _coerce_combo(obj: object) -> str | bool | int | float:
+    if type(obj) not in (str, bool, int, float):
+        raise TypeError(f"COMBO expects a JSON scalar, got {type(obj).__name__}")
+    if type(obj) is int and abs(obj) > 2**53 - 1:
+        raise ValueError("COMBO expects a JSON-safe integer")
+    if type(obj) is float and not math.isfinite(obj):
+        raise ValueError("COMBO expects a finite number")
+    return cast("str | bool | int | float", obj)
 
 
 def _validate_combo_encoded(data: bytes, _metadata: Mapping[str, object]) -> None:
@@ -1023,13 +1029,50 @@ def _validate_combo_encoded(data: bytes, _metadata: Mapping[str, object]) -> Non
         raise ValueError("COMBO expects canonical JSON encoding")
 
 
+def _coerce_histogram(obj: object) -> list[int]:
+    if type(obj) is not list:
+        raise TypeError("HISTOGRAM requires a list of integers")
+    values = cast("list[object]", obj)
+    if any(type(value) is not int for value in values):
+        raise TypeError("HISTOGRAM requires a list of integers")
+    return cast("list[int]", values)
+
+
+def _validate_histogram_encoded(data: bytes, _metadata: Mapping[str, object]) -> None:
+    if not data.startswith(b"json:"):
+        raise ValueError("HISTOGRAM expects canonical JSON encoding")
+    value = _coerce_histogram(default_decode(data))
+    if default_encode(value) != data:
+        raise ValueError("HISTOGRAM expects canonical JSON encoding")
+
+
+def register_histogram_type(registry: TypeRegistry) -> TypeSpec:
+    """Register the built-in structural histogram value without replacing an authority."""
+    if HISTOGRAM_TYPE in registry:
+        return registry.spec(HISTOGRAM_TYPE)
+    return registry.register(
+        HISTOGRAM_TYPE,
+        coerce=_coerce_histogram,
+        validate_encoded=_validate_histogram_encoded,
+    )
+
+
 def register_core_types(registry: TypeRegistry) -> None:
     """Primitives are envelope types like everything else (hazard H2)."""
+    # Imported here because curve depends on this module's TypeRegistry.
+    from .curve import register_curve_type
+
     # Core scalars inline as themselves (DESIGN 3.5): peeking an int or a
     # short string never needs a payload round trip. core.absent does NOT
     # inline - absence has its own channel, never a smuggled null.
     for type_id in (CORE_INT, CORE_FLOAT, CORE_STRING):
         registry.register(type_id, inline=lambda obj: obj)
+    registry.register_rendition(
+        CORE_STRING,
+        "text",
+        mime="text/plain",
+        render=lambda obj: cast(str, obj).encode("utf-8"),
+    )
     registry.register(
         CORE_COMBO,
         coerce=_coerce_combo,
@@ -1039,6 +1082,8 @@ def register_core_types(registry: TypeRegistry) -> None:
     registry.register(CORE_BOOLEAN, inline=lambda obj: obj)
     registry.register(DICT_TYPE)
     registry.register(ARRAY_TYPE)
+    register_histogram_type(registry)
+    register_curve_type(registry)
     # core.absent registers with the default codec (payload is None, which
     # JSON-encodes) so absences cross boundaries and caches like any value.
     registry.register(CORE_ABSENT)

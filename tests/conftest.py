@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import os
+from collections.abc import Iterator
+from contextlib import AbstractAsyncContextManager, nullcontext
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from dinkster.compose import Composition
 
 # Tests opt in to an isolated fake gateway explicitly. Collection and ordinary
 # composition tests must never contact the production remote-node service.
@@ -36,3 +43,17 @@ def installed_default_catalogs(tmp_path_factory: pytest.TempPathFactory) -> None
             spec.manifest, environment={**(spec.env or {}), "CUDA_VISIBLE_DEVICES": ""}
         )
         assert read_catalog(load_manifest(spec.manifest)) is not None, report
+
+
+@pytest.fixture(scope="session")
+def shared_default_composition() -> Iterator[
+    tuple[asyncio.Runner, AbstractAsyncContextManager[Composition]]
+]:
+    from dinkster.compose import compose_serving
+
+    with asyncio.Runner() as runner:
+        composition = runner.run(compose_serving())
+        try:
+            yield runner, nullcontext(composition)
+        finally:
+            runner.run(composition.close())

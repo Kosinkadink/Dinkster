@@ -44,6 +44,7 @@ from typing import Any, Protocol, cast
 
 from dinkster_assets import AssetError, digest_bytes
 from dinkster_protocol import (
+    AssetFolderContext,
     ErrorHint,
     ExportSnapshot,
     Invocation,
@@ -57,6 +58,7 @@ from dinkster_protocol import (
     validate_preview_mode,
 )
 from dinkster_schema import schema_from_wire, schema_to_wire
+from dinkster_schema.reporting import EncodedPreviewArtifact
 from dinkster_values import (
     CONVERSATION_CAS_BUDGET_BYTES,
     WORKER_FRAME_HEADER_LIMIT_BYTES,
@@ -96,12 +98,13 @@ Once a codec's retained bytes reach this budget, further first-crossings
 still work - they just carry their bytes every time instead of becoming
 digest-only. Bounds the RAM a long-lived connection can pin."""
 
-PROTOCOL_VERSION = 10
+PROTOCOL_VERSION = 11
 """The boundary protocol version. Carried in the remote hello exchange
 (clientHello/hello) so peers built against different wire contracts refuse
 each other explicitly instead of corrupting frames. Local parent/child pairs
 ship together and do not negotiate.
 
+v11: encoded preview artifacts in successful invocation results;
 v10: invocation-scoped run-control relay;
 v9: schema declarations and invocation effective schemas;
 v8: stable engine, daemon, job-attempt, and invocation identities with
@@ -827,17 +830,17 @@ def encode_invocation(
         header["expectedExecutionIdentity"] = invocation.expected_execution_identity
     if invocation.extension_snapshot_digest is not None:
         header["extensionSnapshotDigest"] = invocation.extension_snapshot_digest
+    if invocation.asset_folders is not None:
+        header["assetFolders"] = invocation.asset_folders.to_wire()
     if invocation.connected_undemanded_inputs:
         header["connectedUndemandedInputs"] = list(invocation.connected_undemanded_inputs)
     if invocation.export_snapshot is not None:
-        header["exportSnapshot"] = {
-            "prompt": dict(invocation.export_snapshot.prompt),
-            "extraPnginfo": (
-                None
-                if invocation.export_snapshot.extra_pnginfo is None
-                else dict(invocation.export_snapshot.extra_pnginfo)
-            ),
-        }
+        snapshot_wire: dict[str, object] = {}
+        if invocation.export_snapshot.prompt is not None:
+            snapshot_wire["prompt"] = dict(invocation.export_snapshot.prompt)
+        if invocation.export_snapshot.extra_pnginfo is not None:
+            snapshot_wire["extraPnginfo"] = dict(invocation.export_snapshot.extra_pnginfo)
+        header["exportSnapshot"] = snapshot_wire
     header["fp8Matmul"] = invocation.fp8_matmul
     if invocation.diffusion_dtype is not None:
         header["componentDtypes"] = {
@@ -937,21 +940,31 @@ def decode_invocation(
             "invocation extensionSnapshotDigest must be a sha256 digest when present"
         )
     export_snapshot_raw = header.get("exportSnapshot")
+    try:
+        asset_folders = (
+            AssetFolderContext.from_wire(header["assetFolders"])
+            if "assetFolders" in header
+            else None
+        )
+    except ValueError as exc:
+        raise BoundaryError(f"invalid invocation assetFolders: {exc}") from exc
     export_snapshot = None
     if "exportSnapshot" in header:
         if not isinstance(export_snapshot_raw, Mapping):
-            raise BoundaryError("invocation exportSnapshot must contain prompt and extraPnginfo")
+            raise BoundaryError("invocation exportSnapshot must be an object")
         export_snapshot_wire = cast("Mapping[str, Any]", export_snapshot_raw)
-        if set(export_snapshot_wire) != {
-            "prompt",
-            "extraPnginfo",
-        }:
-            raise BoundaryError("invocation exportSnapshot must contain prompt and extraPnginfo")
+        if set(export_snapshot_wire) - {"prompt", "extraPnginfo"}:
+            raise BoundaryError("invocation exportSnapshot has unknown fields")
+        for field_name in ("prompt", "extraPnginfo"):
+            if field_name in export_snapshot_wire and not isinstance(
+                export_snapshot_wire[field_name], Mapping
+            ):
+                raise BoundaryError(f"invocation exportSnapshot {field_name} must be an object")
         try:
             export_snapshot = ExportSnapshot(
-                prompt=cast("Mapping[str, object]", export_snapshot_wire["prompt"]),
+                prompt=cast("Mapping[str, object] | None", export_snapshot_wire.get("prompt")),
                 extra_pnginfo=cast(
-                    "Mapping[str, object] | None", export_snapshot_wire["extraPnginfo"]
+                    "Mapping[str, object] | None", export_snapshot_wire.get("extraPnginfo")
                 ),
             )
         except ValueError as exc:
@@ -1061,6 +1074,7 @@ def decode_invocation(
             expected_execution_identity=identity_raw,
             extension_snapshot_digest=extension_digest_raw,
             export_snapshot=export_snapshot,
+            asset_folders=asset_folders,
             fp8_matmul=fp8_matmul_raw,
             diffusion_dtype=component_dtypes[0],
             text_dtype=component_dtypes[1],
@@ -1118,6 +1132,7 @@ def encode_result(
             execute_ms,
         )
         header.update(algebra_header)
+        _encode_preview_artifacts(header, blobs, result.preview_artifacts)
         return header, blobs, segments
     blobs: list[bytes] = []
     segments: list[SharedMemory] = []
@@ -1153,7 +1168,48 @@ def encode_result(
         raise
     header["outputs"] = outputs_wire
     header["outputStats"] = stats_wire
+    _encode_preview_artifacts(header, blobs, result.preview_artifacts)
     return header, blobs, segments
+
+
+def _encode_preview_artifacts(
+    header: dict[str, object], blobs: list[bytes], artifacts: Sequence[EncodedPreviewArtifact]
+) -> None:
+    if not artifacts:
+        return
+    claims: list[dict[str, object]] = []
+    for artifact in artifacts:
+        claims.append({"name": artifact.name, "mediaType": artifact.media_type, "blob": len(blobs)})
+        blobs.append(artifact.data)
+    header["previewArtifacts"] = claims
+
+
+def _decode_preview_artifacts(
+    header: Mapping[str, Any], blobs: Sequence[bytes]
+) -> tuple[EncodedPreviewArtifact, ...]:
+    from dinkster_schema.reporting import capture_preview_artifacts, publish_preview_artifact
+
+    claims = header.get("previewArtifacts", [])
+    if type(claims) is not list or len(claims) > 64:
+        raise BoundaryError("invalid preview artifact batch")
+    try:
+        with capture_preview_artifacts() as artifacts:
+            for position, claim in enumerate(claims):
+                if type(claim) is not dict or set(claim) != {"name", "mediaType", "blob"}:
+                    raise BoundaryError("invalid preview artifact fields")
+                index = claim["blob"]
+                if (
+                    type(index) is not int
+                    or not 0 <= index < len(blobs)
+                    or index != len(blobs) - len(claims) + position
+                ):
+                    raise BoundaryError("invalid preview artifact blob index")
+                publish_preview_artifact(
+                    blobs[index], name=claim["name"], media_type=claim["mediaType"]
+                )
+            return tuple(artifacts)
+    except ValueError as exc:
+        raise BoundaryError(str(exc)) from exc
 
 
 def decode_result_artifact_candidates(
@@ -1732,23 +1788,32 @@ def decode_result(
     """Decode ordinary values or one scalar expansion onto the same handoff path."""
     if "resultAlgebra" not in header:
         outputs, stats = decode_result_outputs(codec, header, blobs, consumed)
-        return InvocationResult(outputs=outputs), stats
+        return InvocationResult(
+            outputs=outputs, preview_artifacts=_decode_preview_artifacts(header, blobs)
+        ), stats
     from dinkster_protocol import ExpandedReturn, InvocationReturn
 
     # Conversation identity and artifact claims are validated by the session;
     # the algebra codec owns only the result payload's exact envelope.
     fields = {"type", "invocationId", "executeMs", "resultAlgebra", "blobs"}
-    if set(header) - fields - {"jobRef", "attemptId", "artifactCandidates"}:
+    if set(header) - fields - {"jobRef", "attemptId", "artifactCandidates", "previewArtifacts"}:
         raise BoundaryError("invalid invocation expansion frame fields")
     payload = {key: header[key] for key in fields if key in header}
-    outcome, stats = decode_invocation_outcome(codec, payload, blobs, consumed)
+    previews = _decode_preview_artifacts(header, blobs)
+    value_blobs = blobs[: len(blobs) - len(previews)]
+    if "blobs" in payload:
+        lengths = payload["blobs"]
+        if type(lengths) is not list or lengths != [len(blob) for blob in blobs]:
+            raise BoundaryError("preview result has invalid blob lengths")
+        payload["blobs"] = lengths[: len(value_blobs)]
+    outcome, stats = decode_invocation_outcome(codec, payload, value_blobs, consumed)
     if (
         not isinstance(outcome, InvocationReturn)
         or outcome.batch.mode != "scalar"
         or not isinstance(outcome.batch.units[0], ExpandedReturn)
     ):
         raise BoundaryError("invocation expansion must contain one scalar expanded return")
-    return InvocationResult(expansion=outcome.batch.units[0]), {
+    return InvocationResult(expansion=outcome.batch.units[0], preview_artifacts=previews), {
         name: stat for (_, name), stat in stats.items()
     }
 

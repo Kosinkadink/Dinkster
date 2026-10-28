@@ -986,8 +986,10 @@ def test_cursor_pages_share_one_timeout_and_preserve_previous_refresh(tmp_path: 
 def test_refresh_deadline_interrupts_trickling_http_response(tmp_path: Path, part: str) -> None:
     async def scenario() -> None:
         finished = asyncio.Event()
+        sent = 0
 
         async def serve(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            nonlocal sent
             try:
                 await reader.readuntil(b"\r\n\r\n")
                 if part == "headers":
@@ -1000,6 +1002,7 @@ def test_refresh_deadline_interrupts_trickling_http_response(tmp_path: Path, par
                     for _ in range(100):
                         writer.write(b"x")
                         await writer.drain()
+                        sent += 1
                         await asyncio.sleep(0.03)
             finally:
                 writer.close()
@@ -1015,11 +1018,10 @@ def test_refresh_deadline_interrupts_trickling_http_response(tmp_path: Path, par
                 ProvenanceStore(tmp_path / "provenance.json"),
                 fetch_timeout=0.2,
             )
-            started = time.monotonic()
             with pytest.raises(ResolverSubscriptionError):
                 await asyncio.to_thread(store.subscribe, f"http://127.0.0.1:{port}/index")
-            assert time.monotonic() - started < 1.5
             await asyncio.wait_for(finished.wait(), 1.0)
+            assert 0 < sent < 100
             assert store.subscriptions() == ()
 
     asyncio.run(scenario())
@@ -1047,10 +1049,8 @@ def test_fetch_deadline_covers_blocking_connection_establishment(phase: str) -> 
         resolver_fetch_threads() as workers,
     ):
         try:
-            started = time.monotonic()
             with pytest.raises(ResolverSubscriptionError, match="time limit"):
                 resolver_transport._fetch_url(url, "", timeout=0.05)
-            assert time.monotonic() - started < 0.5
             blocked_phase.assert_called_once()
             assert len(workers) == 1
             assert workers[0].is_alive() and workers[0].daemon
@@ -1079,12 +1079,12 @@ def test_fetch_capacity_is_held_until_timed_out_dns_workers_exit() -> None:
             assert len(workers) == capacity
             assert blocked_dns.call_count == capacity
             assert all(worker.daemon and worker.is_alive() for worker in workers)
-            started = time.monotonic()
             for _ in range(capacity * 2):
                 with pytest.raises(ResolverSubscriptionError, match="capacity exhausted"):
                     resolver_transport._fetch_url("http://localhost/index", "", timeout=15.0)
-            assert time.monotonic() - started < 0.5
             assert len(workers) == capacity
+            assert all(worker.is_alive() for worker in workers)
+            assert not release.is_set()
         finally:
             release.set()
             for worker in workers:
@@ -1909,9 +1909,7 @@ def test_refresh_deadline_releases_store_lock_and_rejects_late_results(
 
     with patch.object(resolver_transport, "_fetch_page", side_effect=blocked):
         try:
-            started = time.monotonic()
             failed = store.refresh()
-            assert time.monotonic() - started < 0.75
             assert len(failed) == 2 and all(row["error"] for row in failed)
             assert len(workers) == 2 and all(worker.is_alive() for worker in workers)
             read_finished = threading.Event()

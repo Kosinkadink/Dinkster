@@ -15,6 +15,7 @@ from dinkster_values import (
     CURVE_TYPE,
     INLINE_STRING_CAP,
     BufferEncoding,
+    Curve,
     EncodedPayload,
     Rendition,
     TypeRegistry,
@@ -30,6 +31,24 @@ def make_registry() -> TypeRegistry:
     registry = TypeRegistry()
     register_core_types(registry)
     return registry
+
+
+def test_core_registration_registers_curve_and_preserves_first_authority() -> None:
+    registry = make_registry()
+    curve = Curve(((3.5, -2.0), (-1.0, 4.25), (0.0, 0.5)), "linear")
+    spec = registry.spec(CURVE_TYPE)
+
+    assert spec.decode(spec.encode(curve)) == curve
+    assert registry.wrap(CURVE_TYPE, curve).resolve() == curve
+
+    first = TypeRegistry()
+    first_spec = first.register(
+        CURVE_TYPE, encode=lambda _value: b"first", decode=lambda _data: "first"
+    )
+    register_core_types(first)
+
+    assert first.spec(CURVE_TYPE) is first_spec
+    assert first.spec(CURVE_TYPE).decode(b"ignored") == "first"
 
 
 def test_type_claims_refuse_overlapping_owners_and_preserve_reference_access() -> None:
@@ -108,19 +127,16 @@ def test_declared_type_can_activate_and_release_its_codec_and_providers() -> Non
     assert registry.wrap("mypack.thing", 23).payload.load() == 23
 
 
-def test_builtin_owner_survives_official_codec_registration_and_pack_removal() -> None:
+def test_builtin_curve_owner_survives_pack_removal_in_core_registry() -> None:
     registry = make_registry()
     assert registry.owner_of(CURVE_TYPE) == "dinkster-nodes-foundation"
-    assert CURVE_TYPE not in registry
+    assert CURVE_TYPE in registry
     with pytest.raises(ValueError, match="overlaps"):
         registry.claim_types("another-official", (CURVE_TYPE,))
-    with registry.registering_pack("official-provider", ("official-provider",), allow_bare=True):
-        registry.register(CURVE_TYPE)
-    assert registry.type_owners()[CURVE_TYPE] == "dinkster-nodes-foundation"
     registry.remove_pack_types("official-provider")
     registry.remove_pack_types("dinkster-nodes-foundation")
-    assert registry.wrap(CURVE_TYPE, {"points": [2, 7]}).resolve() == {"points": [2, 7]}
-    assert registry.owner_of(CURVE_TYPE) == "dinkster-nodes-foundation"
+    assert registry.type_owners()[CURVE_TYPE] == "dinkster-nodes-foundation"
+    assert registry.wrap(CURVE_TYPE, {"points": [[2, 7]]}).resolve() == Curve(((2, 7),))
     assert registry.wrap(CORE_INT, 17).resolve() == 17
 
 
@@ -300,11 +316,44 @@ class ComboStringSubclass(str):
 
 
 @pytest.mark.parametrize(
-    "invalid", [True, 1, 1.5, None, {}, [], ["euler"], ComboStringSubclass("euler")]
+    "selected", [False, True, 0, 1, 8, 10, 1.5, -2.75, "8", -(2**53 - 1), 2**53 - 1]
 )
-def test_core_combo_rejects_non_string_values(invalid: object) -> None:
+def test_core_combo_preserves_scalar_type_and_identity(selected: object) -> None:
     registry = make_registry()
-    with pytest.raises(TypeError, match="COMBO expects a string"):
+    value = registry.wrap(CORE_COMBO, selected)
+    spec = registry.spec(CORE_COMBO)
+    decoded = spec.decode(spec.encode(value.resolve()))
+    assert type(decoded) is type(selected)
+    assert decoded == selected
+    assert type(registry.inline_of(value)) is type(selected)
+    assert registry.inline_of(value) == selected
+    assert spec.validate_encoded is not None
+    spec.validate_encoded(spec.encode(selected), {})
+    assert (
+        value.fingerprint != registry.wrap(CORE_COMBO, str(selected)).fingerprint
+        or type(selected) is str
+    )
+    if type(selected) is bool:
+        assert value.fingerprint != registry.wrap(CORE_COMBO, int(selected)).fingerprint
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        None,
+        {},
+        [],
+        ["euler"],
+        ComboStringSubclass("euler"),
+        float("nan"),
+        float("inf"),
+        -(2**53),
+        2**53,
+    ],
+)
+def test_core_combo_rejects_non_scalar_values(invalid: object) -> None:
+    registry = make_registry()
+    with pytest.raises((TypeError, ValueError), match="COMBO expects"):
         registry.wrap(CORE_COMBO, invalid)
 
 
@@ -314,17 +363,21 @@ def test_core_combo_rejects_non_string_values(invalid: object) -> None:
         b"",
         b"json:",
         b"json:null",
-        b"json:true",
-        b"json:1",
-        b"json:1.5",
+        b"json:NaN",
+        b"json:Infinity",
+        b"json:-Infinity",
         b"json:{}",
         b"json:[]",
         b'json:["euler"]',
         b'json: "euler"',
         b'pickle:"euler"',
+        b"json:9007199254740992",
+        b"json:-9007199254740992",
+        b"json:9007199254740993",
+        b"json:-9007199254740993",
     ],
 )
-def test_core_combo_rejects_noncanonical_or_non_string_encoded_values(
+def test_core_combo_rejects_noncanonical_or_non_scalar_encoded_values(
     data: bytes,
 ) -> None:
     validator = make_registry().spec(CORE_COMBO).validate_encoded
@@ -439,9 +492,14 @@ def test_long_strings_do_not_inline() -> None:
     inline channel carries peeks, never documents."""
     registry = make_registry()
     at_cap = registry.wrap(CORE_STRING, "x" * INLINE_STRING_CAP)
-    over_cap = registry.wrap(CORE_STRING, "x" * (INLINE_STRING_CAP + 1))
+    text = "y" * (INLINE_STRING_CAP + 1) + "\u03a9\n"
+    over_cap = registry.wrap(CORE_STRING, text)
     assert registry.inline_of(at_cap) == "x" * INLINE_STRING_CAP
     assert registry.inline_of(over_cap) is None
+    rendered = registry.render(over_cap, "text")
+    assert rendered.mime == "text/plain"
+    assert rendered.data == text.encode("utf-8")
+    assert registry.render(at_cap).data == b"x" * INLINE_STRING_CAP
 
 
 def test_absence_does_not_inline() -> None:

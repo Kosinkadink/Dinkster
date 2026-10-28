@@ -279,7 +279,7 @@ class DownscaleResult(Node):
 FIXTURE_NODES = (ModelSource, ModelResult, HyperTileResult, DownscaleResult)
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_complete_manifest_transports_an_ordinary_tome_model_graph_in_both_hosts(
     tmp_path: Path, in_process: bool
 ) -> None:

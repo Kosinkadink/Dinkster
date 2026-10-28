@@ -50,6 +50,10 @@ Qwen Image 2.1 control, SigLIP feature projection, ZImage control, MiniMax H3
 control, Wan Uni3C and MultiTalk, LTX duration heads, and SUPIR. Loading a patch
 does not apply it to a model.
 
+`OPTICAL_FLOW` is a governed resident value identity for optical-flow models.
+It remains in the holding worker and is resolved through the shared
+resident pool by its consumers.
+
 Self-Attention Guidance, Perturbed Attention Guidance, and both Skip Layer
 Guidance DiT nodes clone a model and install sampler or attention callbacks.
 They use the inference sampler's conditional-routing and model-patch mechanisms;

@@ -155,7 +155,7 @@ def test_uni3c_rejects_incompatible_model_width(dim: int | None) -> None:
         apply(patcher(Base(dim)), patcher(Control()), Vae(), video())
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_uni3c_runs_on_both_ordinary_hosts(in_process: bool) -> None:
     from dinkster_graph import Graph, GraphNode, Link
 

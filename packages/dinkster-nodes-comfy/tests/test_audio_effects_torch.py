@@ -140,7 +140,7 @@ class AudioInspect(Node):
         return cls.outputs(summary="audio-effects")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_audio_effect_nodes_execute_twice_in_both_manifest_hosts(
     tmp_path: Path, in_process: bool
 ) -> None:

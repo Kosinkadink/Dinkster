@@ -14,12 +14,29 @@
   library root is configured, including classified bounded latent upload
 - The node catalog and native job submission use `/api/nodes` and `/api/jobs`.
   There is no separate ComfyUI schema catalog or prompt submission endpoint.
+- String outputs have a lossless UTF-8 `text` rendition through `/api/values`.
+  Long paths and documents can be read in full without the status descriptor's
+  256-character inline preview limit. Retrieval retains job/scope authority.
 - Asset record catalogs upgrade automatically with versioned migrations.
   Matching unversioned catalogs retain scoped records, verified media grants,
   dependency manifests, and derivations; incompatible schemas are refused.
 - Filesystem mount scans report file, byte, and elapsed progress; publish
   indexed assets before the scan finishes; reuse unchanged-file indexes; and
   keep per-mount indexes under the configured library root
+- Operators can persist project folder membership, independent display order,
+  shared folders, and project output selections through the mount API.
+  Removing a project association does not delete files or revoke the grant.
+  A selected project output requires a writable replacement before removal;
+  projects without an output can remain without one.
+  Failed mounts can be explicitly rescanned after reconnecting a drive.
+  Saving to a missing output root fails without recreating that root or
+  redirecting the output to another folder.
+  With fixed pack sandboxes, folder grant edits persist as restart-required
+  changes without altering live worker authority or restarting the server.
+- Jobs retain their project's folder preferences in both in-process and
+  isolated execution. Name and directory selections follow that order;
+  saved digest references retain their identity independently of folder order.
+  Filesystem revocation still takes effect. Host locations are operator-only.
 - Scans exclude partial downloads and files changing between observations.
   Missing and replaced asset identities survive rescans and restart without
   being offered as live content; restored content recovers its digest.

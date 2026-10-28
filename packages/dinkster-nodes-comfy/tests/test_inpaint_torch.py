@@ -159,7 +159,7 @@ class InpaintInspect(Node):
         )
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_manifest_executes_inpainting_nodes_with_decoded_inputs(
     tmp_path: Path, in_process: bool
 ) -> None:

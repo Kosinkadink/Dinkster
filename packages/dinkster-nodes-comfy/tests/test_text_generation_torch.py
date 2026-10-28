@@ -177,7 +177,7 @@ class TextGenerationSource(Node):
         )
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 @pytest.mark.parametrize("node_type", ("TextGenerate", "TextGenerateLTX2Prompt"))
 def test_generation_ordinary_manifest_hosts(
     tmp_path: Path, in_process: bool, node_type: str

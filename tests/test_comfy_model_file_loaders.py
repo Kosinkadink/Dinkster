@@ -1,0 +1,265 @@
+"""Torch-free schemas for native bound model-file loaders."""
+
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+from dinkster_api.v1 import ASSET_TYPE, AssetRef, AssetWidget, ComboWidget, TypeExpr, digest_bytes
+from dinkster_nodes_comfy import model_file_loaders
+from dinkster_nodes_comfy.model_file_loaders import MODEL_FILE_LOADER_NODES
+
+
+class _Resolver:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    def resolve(self, digest: str) -> Path:
+        return self.path
+
+
+def _asset(path: Path) -> AssetRef:
+    data = path.read_bytes()
+    return AssetRef(digest_bytes(data), path.name, len(data), resolver=_Resolver(path))
+
+
+def test_model_file_loaders_use_bound_asset_inputs_and_expected_outputs() -> None:
+    schemas = {node.schema().node_type: node.schema() for node in MODEL_FILE_LOADER_NODES}
+
+    assert tuple(schemas) == (
+        "CheckpointLoaderSimple",
+        "CheckpointLoader",
+        "unCLIPCheckpointLoader",
+        "ControlNetLoader",
+        "DiffControlNetLoader",
+        "UNETLoader",
+        "CLIPLoader",
+        "DualCLIPLoader",
+        "CLIPVisionLoader",
+        "StyleModelLoader",
+        "GLIGENLoader",
+        "ImageOnlyCheckpointLoader",
+        "LTXVAudioVAELoader",
+        "LTXAVTextEncoderLoader",
+    )
+    assert schemas["CheckpointLoader"].display_name == "Load Checkpoint With Config (DEPRECATED)"
+    assert schemas["CheckpointLoader"].deprecation is not None
+    assert schemas["GLIGENLoader"].display_name == "Load GLIGEN Model"
+    assert schemas["CheckpointLoader"].search_terms == ("load model", "model loader")
+    assert schemas["CheckpointLoaderSimple"].description == (
+        "Loads a diffusion model checkpoint, diffusion models are used to denoise latents."
+    )
+    assert schemas["CheckpointLoaderSimple"].search_terms == (
+        "load model",
+        "checkpoint",
+        "model loader",
+        "load checkpoint",
+        "ckpt",
+        "model",
+    )
+    assert tuple(output.id for output in schemas["CheckpointLoaderSimple"].outputs) == (
+        "MODEL",
+        "CLIP",
+        "VAE",
+    )
+    assert tuple(output.id for output in schemas["unCLIPCheckpointLoader"].outputs) == (
+        "MODEL",
+        "CLIP",
+        "VAE",
+        "CLIP_VISION",
+    )
+    assert tuple(input.id for input in schemas["DualCLIPLoader"].inputs) == (
+        "clip_name1",
+        "clip_name2",
+        "type",
+        "device",
+    )
+    assert not schemas["CLIPLoader"].inputs[2].required
+    assert not schemas["DualCLIPLoader"].inputs[3].required
+    assert tuple(output.id for output in schemas["ImageOnlyCheckpointLoader"].outputs) == (
+        "MODEL",
+        "CLIP_VISION",
+        "VAE",
+    )
+    assert schemas["LTXVAudioVAELoader"].outputs[0].display_name == "Audio VAE"
+    assert tuple(input.id for input in schemas["LTXAVTextEncoderLoader"].inputs) == (
+        "text_encoder",
+        "ckpt_name",
+        "device",
+    )
+    assert schemas["LTXAVTextEncoderLoader"].inputs[2].required
+    assert schemas["CheckpointLoaderSimple"].inputs[0].doc == (
+        "The name of the checkpoint (model) to load."
+    )
+    assert tuple(output.doc for output in schemas["CheckpointLoaderSimple"].outputs) == (
+        "The model used for denoising latents.",
+        "The CLIP model used for encoding text prompts.",
+        "The VAE model used for encoding and decoding images to and from latent space.",
+    )
+    for schema in schemas.values():
+        for input in schema.inputs:
+            if input.id.endswith("name") or input.id == "text_encoder":
+                assert input.type == TypeExpr.concrete(ASSET_TYPE)
+                assert isinstance(input.widget, AssetWidget)
+
+
+def test_model_file_loader_defaults_match_comfyui() -> None:
+    schemas = {node.schema().node_type: node.schema() for node in MODEL_FILE_LOADER_NODES}
+    assert schemas["UNETLoader"].inputs[1].default == "default"
+    assert schemas["CLIPLoader"].inputs[1].default == "stable_diffusion"
+    clip_type_widget = schemas["CLIPLoader"].inputs[1].widget
+    assert isinstance(clip_type_widget, ComboWidget)
+    assert len(clip_type_widget.options) == 32
+    assert schemas["CLIPLoader"].inputs[2].default == "default"
+    assert schemas["DualCLIPLoader"].inputs[2].default == "sdxl"
+    assert schemas["DualCLIPLoader"].inputs[3].default == "default"
+    assert schemas["CLIPLoader"].description == model_file_loaders._CLIP_DESCRIPTION
+    assert schemas["DualCLIPLoader"].description == model_file_loaders._DUAL_CLIP_DESCRIPTION
+
+
+def test_ltx_text_encoder_admits_omitted_device_with_default(tmp_path: Path) -> None:
+    from dinkster_graph import Graph, GraphNode
+    from dinkster_graph.validate import validate
+
+    path = tmp_path / "fixture.safetensors"
+    path.write_bytes(b"fixture")
+    asset = _asset(path).to_wire()
+    schema = model_file_loaders.LTXAVTextEncoderLoader.schema()
+    graph = Graph(
+        nodes={
+            "loader": GraphNode(
+                "LTXAVTextEncoderLoader", {"text_encoder": asset, "ckpt_name": asset}
+            )
+        }
+    )
+    assert validate(graph, {schema.node_type: schema}, ["loader"]) == []
+
+
+def test_model_file_loader_execution_adapts_bound_assets_to_pinned_loader_calls(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    path = tmp_path / "fixture.safetensors"
+    path.write_bytes(b"fixture")
+    asset = _asset(path)
+    calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
+    model, clip, vae, vision = object(), object(), object(), object()
+    controlnet, style_model, gligen = object(), object(), object()
+
+    def record(name: str, result: object):
+        def call(*args: object, **kwargs: object) -> object:
+            calls.append((name, args, kwargs))
+            return result
+
+        return call
+
+    sd = SimpleNamespace(
+        CLIPType=SimpleNamespace(STABLE_DIFFUSION="stable-diffusion", SDXL="sdxl"),
+        load_checkpoint=record("checkpoint", (model, clip, vae)),
+        load_checkpoint_guess_config=record("checkpoint-guess", (model, clip, vae, vision)),
+        load_diffusion_model=record("diffusion", model),
+        load_clip=record("clip", clip),
+        load_style_model=record("style-model", style_model),
+        load_gligen=record("gligen", gligen),
+    )
+    modules = {
+        "dinkster_inference.sd": sd,
+        "dinkster_inference.clip_vision": SimpleNamespace(load=record("vision", vision)),
+        "dinkster_inference.controlnet": SimpleNamespace(
+            load_controlnet=record("controlnet", controlnet)
+        ),
+        "torch": SimpleNamespace(float8_e4m3fn="fp8-e4m3fn", float8_e5m2="fp8-e5m2"),
+    }
+    monkeypatch.setattr(model_file_loaders, "initialize_inference_process", lambda: None)
+    monkeypatch.setattr(model_file_loaders, "mount_roots_for_kind", lambda kind: (tmp_path,))
+    real_import = model_file_loaders.importlib.import_module
+    monkeypatch.setattr(
+        model_file_loaders.importlib,
+        "import_module",
+        lambda name: modules.get(name) or real_import(name),
+    )
+
+    assert model_file_loaders.CheckpointLoaderSimple.execute(ckpt_name=asset) == {
+        "MODEL": model,
+        "CLIP": clip,
+        "VAE": vae,
+    }
+    assert model_file_loaders.CheckpointLoader.execute(config_name=asset, ckpt_name=asset) == {
+        "MODEL": model,
+        "CLIP": clip,
+        "VAE": vae,
+    }
+    assert model_file_loaders.unCLIPCheckpointLoader.execute(ckpt_name=asset) == {
+        "MODEL": model,
+        "CLIP": clip,
+        "VAE": vae,
+        "CLIP_VISION": vision,
+    }
+    assert model_file_loaders.ControlNetLoader.execute(control_net_name=asset) == {
+        "CONTROL_NET": controlnet
+    }
+    assert model_file_loaders.DiffControlNetLoader.execute(model=model, control_net_name=asset) == {
+        "CONTROL_NET": controlnet
+    }
+    assert model_file_loaders.UNETLoader.execute(unet_name=asset, weight_dtype="fp8_e4m3fn") == {
+        "MODEL": model
+    }
+    assert model_file_loaders.CLIPLoader.execute(
+        clip_name=asset, type="stable_diffusion", device="default"
+    ) == {"CLIP": clip}
+    assert model_file_loaders.DualCLIPLoader.execute(
+        clip_name1=asset, clip_name2=asset, type="sdxl", device="default"
+    ) == {"CLIP": clip}
+    assert model_file_loaders.CLIPVisionLoader.execute(clip_name=asset) == {"CLIP_VISION": vision}
+    assert model_file_loaders.StyleModelLoader.execute(style_model_name=asset) == {
+        "STYLE_MODEL": style_model
+    }
+    assert model_file_loaders.GLIGENLoader.execute(gligen_name=asset) == {"GLIGEN": gligen}
+
+    root = str(tmp_path)
+    assert calls == [
+        (
+            "checkpoint-guess",
+            (str(path),),
+            {"output_vae": True, "output_clip": True, "embedding_directory": [root]},
+        ),
+        (
+            "checkpoint",
+            (str(path), str(path)),
+            {"output_vae": True, "output_clip": True, "embedding_directory": [root]},
+        ),
+        (
+            "checkpoint-guess",
+            (str(path),),
+            {
+                "output_vae": True,
+                "output_clip": True,
+                "output_clipvision": True,
+                "embedding_directory": [root],
+            },
+        ),
+        ("controlnet", (str(path),), {}),
+        ("controlnet", (str(path), model), {}),
+        ("diffusion", (str(path),), {"model_options": {"dtype": "fp8-e4m3fn"}}),
+        (
+            "clip",
+            (),
+            {
+                "ckpt_paths": [str(path)],
+                "embedding_directory": [root],
+                "clip_type": "stable-diffusion",
+                "model_options": {},
+            },
+        ),
+        (
+            "clip",
+            (),
+            {
+                "ckpt_paths": [str(path), str(path)],
+                "embedding_directory": [root],
+                "clip_type": "sdxl",
+                "model_options": {},
+            },
+        ),
+        ("vision", (str(path),), {}),
+        ("style-model", (str(path),), {}),
+        ("gligen", (str(path),), {}),
+    ]

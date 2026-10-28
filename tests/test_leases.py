@@ -5,7 +5,11 @@ semantics stay the governor's; the broker adds identity and mortality."""
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable
+from types import SimpleNamespace
+from typing import TypeVar
 
+import dinkster_memory.leases as leases_module
 import pytest
 from dinkster_memory import (
     BudgetExceeded,
@@ -17,6 +21,29 @@ from dinkster_memory import (
 )
 
 VRAM0 = "vram:cuda:0"
+_T = TypeVar("_T")
+
+
+@pytest.fixture
+def lease_clock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[list[float], asyncio.Queue[float]]:
+    now = [100.0]
+    checked: asyncio.Queue[float] = asyncio.Queue()
+
+    def running_loop() -> SimpleNamespace:
+        loop = asyncio.get_running_loop()
+        return SimpleNamespace(time=lambda: now[0], create_future=loop.create_future)
+
+    async def poll_release(awaitable: Awaitable[_T], timeout: float) -> _T:
+        checked.put_nowait(now[0])
+        return await asyncio.wait_for(awaitable, min(timeout, 0.001))
+
+    clocked_asyncio = SimpleNamespace(**vars(asyncio))
+    clocked_asyncio.get_running_loop = running_loop
+    clocked_asyncio.wait_for = poll_release
+    monkeypatch.setattr(leases_module, "asyncio", clocked_asyncio)
+    return now, checked
 
 
 def reserved(governor: MemoryGovernor) -> int:
@@ -57,7 +84,11 @@ def test_ttl_expiry_frees_the_reservation() -> None:
     asyncio.run(scenario())
 
 
-def test_renew_extends_and_expired_lease_cannot_renew() -> None:
+def test_renew_extends_and_expired_lease_cannot_renew(
+    lease_clock: tuple[list[float], asyncio.Queue[float]],
+) -> None:
+    now, checked = lease_clock
+
     async def scenario() -> None:
         governor = MemoryGovernor({VRAM0: 100})
         broker = LeaseBroker(governor)
@@ -67,9 +98,12 @@ def test_renew_extends_and_expired_lease_cannot_renew() -> None:
         assert renewed is not None
         assert renewed.expires_at > original_expiry
         # The renewal keeps the lease alive beyond its original lifetime.
-        await asyncio.sleep(0.25)
+        now[0] += 0.25
+        async with asyncio.timeout(2):
+            while await checked.get() < now[0]:
+                pass
         assert reserved(governor) == 10
-        await asyncio.sleep(2.0)  # silence: the renewed lease dies
+        now[0] += 2.0
         assert broker.renew(lease.lease_id, ttl=1.0) is None
         async with asyncio.timeout(2):
             while reserved(governor) > 0:
@@ -108,22 +142,32 @@ def test_governor_verdicts_are_relayed_not_rewritten() -> None:
     asyncio.run(scenario())
 
 
-def test_waiting_acquire_gets_full_ttl_at_grant() -> None:
+def test_waiting_acquire_gets_full_ttl_at_grant(
+    lease_clock: tuple[list[float], asyncio.Queue[float]],
+) -> None:
+    now, _ = lease_clock
+
     async def scenario() -> None:
         governor = MemoryGovernor({VRAM0: 100})
         broker = LeaseBroker(governor)
         first = await broker.acquire(VRAM0, 100, ttl=30.0)
+        attempted = asyncio.Event()
 
         async def blocked() -> float:
+            attempted.set()
             lease = await broker.acquire(VRAM0, 50, ttl=0.5, timeout=5.0)
             return lease.ttl_remaining()
 
         task = asyncio.create_task(blocked())
-        await asyncio.sleep(0.2)  # let it sit in admission for a while
+        await asyncio.wait_for(attempted.wait(), 2)
+        assert not task.done()
+        assert reserved(governor) == 100
+        now[0] += 10
         await broker.release(first.lease_id)
-        remaining = await task
-        # The clock started at grant: near-full TTL despite the 0.2s wait.
+        remaining = await asyncio.wait_for(task, 2)
+        # Admission took ten clock seconds; the full TTL still starts at grant.
         assert remaining > 0.4
+        await broker.close()
 
     asyncio.run(scenario())
 

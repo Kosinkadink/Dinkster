@@ -68,7 +68,7 @@ def mount_roots_for_kind(kind: str, *, env: Mapping[str, str] | None = None) -> 
     return MountSnapshotResolver(snapshot).roots_for_kind(kind) if snapshot else ()
 
 
-def produced_asset_vault(env: Mapping[str, str] | None = None) -> AssetVault | None:
+def produced_output_scratch(env: Mapping[str, str] | None = None) -> AssetVault | None:
     """Worker publications use writable scratch, not the sandbox's read-only input vault."""
     environment = os.environ if env is None else env
     scratch = environment.get("DINKSTER_PACK_SCRATCH")
@@ -88,7 +88,7 @@ def resolver_from_env(env: Mapping[str, str] | None = None) -> AssetResolver | N
         env = os.environ
     resolvers: list[AssetResolver] = []
     if env.get("DINKSTER_PACK_SCRATCH"):
-        produced = produced_asset_vault(env)
+        produced = produced_output_scratch(env)
         assert produced is not None
         resolvers.append(produced)
     vault_root = env.get(VAULT_ENV, "")

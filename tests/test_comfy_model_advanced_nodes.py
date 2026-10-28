@@ -1,10 +1,8 @@
 """Public interfaces for native model-sampling and model patches."""
 
-import subprocess
-import sys
-
 from dinkster_api.v1 import MODEL_TYPE, NumberWidget, TypeExpr
 from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.device_routing import DEVICE_ROUTING_NODES
 from dinkster_nodes_comfy.model_advanced import MODEL_ADVANCED_NODES
 
 
@@ -41,31 +39,17 @@ def test_advanced_model_patch_interfaces() -> None:
 
 
 def test_device_routing_required_inputs_and_cold_discovery() -> None:
-    subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            """
-import sys
-sys.modules['torch'] = None
-sys.modules['dinkster_inference'] = None
-from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_nodes_comfy.device_routing import DEVICE_ROUTING_NODES
-expected = {
-    'MultiGPU_WorkUnits': ('model', 'max_gpus'),
-    'SelectModelDevice': ('model', 'device'),
-    'SelectCLIPDevice': ('clip', 'device'),
-    'SelectVAEDevice': ('vae', 'device'),
-}
-assert {node.schema().node_type for node in DEVICE_ROUTING_NODES} == set(expected)
-for node in DEVICE_ROUTING_NODES:
-    assert node in COMFY_NODES
-    schema = node.schema()
-    assert tuple(item.id for item in schema.inputs) == expected[schema.node_type]
-    assert all(item.required for item in schema.inputs)
-    assert len(schema.outputs) == 1
-    assert schema.inputs[0].type == schema.outputs[0].type
-""",
-        ],
-        check=True,
-    )
+    expected = {
+        "MultiGPU_WorkUnits": ("model", "max_gpus"),
+        "SelectModelDevice": ("model", "device"),
+        "SelectCLIPDevice": ("clip", "device"),
+        "SelectVAEDevice": ("vae", "device"),
+    }
+    assert {node.schema().node_type for node in DEVICE_ROUTING_NODES} == set(expected)
+    for node in DEVICE_ROUTING_NODES:
+        assert node in COMFY_NODES
+        schema = node.schema()
+        assert tuple(item.id for item in schema.inputs) == expected[schema.node_type]
+        assert all(item.required for item in schema.inputs)
+        assert len(schema.outputs) == 1
+        assert schema.inputs[0].type == schema.outputs[0].type

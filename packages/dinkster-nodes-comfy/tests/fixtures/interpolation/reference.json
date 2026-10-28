@@ -1,0 +1,1158 @@
+{
+  "reference_commit": "bc5f880dbdd43e426077f42ccec53bb577ffee9f",
+  "seed": 82371,
+  "weight_scale": 0.003,
+  "timestep": 0.375,
+  "models": {
+    "film": {
+      "source_sha256": "e4efa6666846cecb5dc83cb4668410b37b6c4ffae6b08e48b74184bc037c4ab1",
+      "shapes": {
+        "extract.extract_sublevels.convs.0.0.conv.weight": [
+          64,
+          3,
+          3,
+          3
+        ],
+        "extract.extract_sublevels.convs.0.0.conv.bias": [
+          64
+        ],
+        "extract.extract_sublevels.convs.0.1.conv.weight": [
+          64,
+          64,
+          3,
+          3
+        ],
+        "extract.extract_sublevels.convs.0.1.conv.bias": [
+          64
+        ],
+        "extract.extract_sublevels.convs.1.0.conv.weight": [
+          128,
+          64,
+          3,
+          3
+        ],
+        "extract.extract_sublevels.convs.1.0.conv.bias": [
+          128
+        ],
+        "extract.extract_sublevels.convs.1.1.conv.weight": [
+          128,
+          128,
+          3,
+          3
+        ],
+        "extract.extract_sublevels.convs.1.1.conv.bias": [
+          128
+        ],
+        "extract.extract_sublevels.convs.2.0.conv.weight": [
+          256,
+          128,
+          3,
+          3
+        ],
+        "extract.extract_sublevels.convs.2.0.conv.bias": [
+          256
+        ],
+        "extract.extract_sublevels.convs.2.1.conv.weight": [
+          256,
+          256,
+          3,
+          3
+        ],
+        "extract.extract_sublevels.convs.2.1.conv.bias": [
+          256
+        ],
+        "extract.extract_sublevels.convs.3.0.conv.weight": [
+          512,
+          256,
+          3,
+          3
+        ],
+        "extract.extract_sublevels.convs.3.0.conv.bias": [
+          512
+        ],
+        "extract.extract_sublevels.convs.3.1.conv.weight": [
+          512,
+          512,
+          3,
+          3
+        ],
+        "extract.extract_sublevels.convs.3.1.conv.bias": [
+          512
+        ],
+        "predict_flow._predictor._convs.0.conv.weight": [
+          256,
+          1920,
+          3,
+          3
+        ],
+        "predict_flow._predictor._convs.0.conv.bias": [
+          256
+        ],
+        "predict_flow._predictor._convs.1.conv.weight": [
+          256,
+          256,
+          3,
+          3
+        ],
+        "predict_flow._predictor._convs.1.conv.bias": [
+          256
+        ],
+        "predict_flow._predictor._convs.2.conv.weight": [
+          256,
+          256,
+          3,
+          3
+        ],
+        "predict_flow._predictor._convs.2.conv.bias": [
+          256
+        ],
+        "predict_flow._predictor._convs.3.conv.weight": [
+          128,
+          256,
+          1,
+          1
+        ],
+        "predict_flow._predictor._convs.3.conv.bias": [
+          128
+        ],
+        "predict_flow._predictor._convs.4.conv.weight": [
+          2,
+          128,
+          1,
+          1
+        ],
+        "predict_flow._predictor._convs.4.conv.bias": [
+          2
+        ],
+        "predict_flow._predictors.0._convs.0.conv.weight": [
+          128,
+          896,
+          3,
+          3
+        ],
+        "predict_flow._predictors.0._convs.0.conv.bias": [
+          128
+        ],
+        "predict_flow._predictors.0._convs.1.conv.weight": [
+          128,
+          128,
+          3,
+          3
+        ],
+        "predict_flow._predictors.0._convs.1.conv.bias": [
+          128
+        ],
+        "predict_flow._predictors.0._convs.2.conv.weight": [
+          128,
+          128,
+          3,
+          3
+        ],
+        "predict_flow._predictors.0._convs.2.conv.bias": [
+          128
+        ],
+        "predict_flow._predictors.0._convs.3.conv.weight": [
+          64,
+          128,
+          1,
+          1
+        ],
+        "predict_flow._predictors.0._convs.3.conv.bias": [
+          64
+        ],
+        "predict_flow._predictors.0._convs.4.conv.weight": [
+          2,
+          64,
+          1,
+          1
+        ],
+        "predict_flow._predictors.0._convs.4.conv.bias": [
+          2
+        ],
+        "predict_flow._predictors.1._convs.0.conv.weight": [
+          64,
+          384,
+          3,
+          3
+        ],
+        "predict_flow._predictors.1._convs.0.conv.bias": [
+          64
+        ],
+        "predict_flow._predictors.1._convs.1.conv.weight": [
+          64,
+          64,
+          3,
+          3
+        ],
+        "predict_flow._predictors.1._convs.1.conv.bias": [
+          64
+        ],
+        "predict_flow._predictors.1._convs.2.conv.weight": [
+          64,
+          64,
+          3,
+          3
+        ],
+        "predict_flow._predictors.1._convs.2.conv.bias": [
+          64
+        ],
+        "predict_flow._predictors.1._convs.3.conv.weight": [
+          32,
+          64,
+          1,
+          1
+        ],
+        "predict_flow._predictors.1._convs.3.conv.bias": [
+          32
+        ],
+        "predict_flow._predictors.1._convs.4.conv.weight": [
+          2,
+          32,
+          1,
+          1
+        ],
+        "predict_flow._predictors.1._convs.4.conv.bias": [
+          2
+        ],
+        "predict_flow._predictors.2._convs.0.conv.weight": [
+          32,
+          128,
+          3,
+          3
+        ],
+        "predict_flow._predictors.2._convs.0.conv.bias": [
+          32
+        ],
+        "predict_flow._predictors.2._convs.1.conv.weight": [
+          32,
+          32,
+          3,
+          3
+        ],
+        "predict_flow._predictors.2._convs.1.conv.bias": [
+          32
+        ],
+        "predict_flow._predictors.2._convs.2.conv.weight": [
+          32,
+          32,
+          3,
+          3
+        ],
+        "predict_flow._predictors.2._convs.2.conv.bias": [
+          32
+        ],
+        "predict_flow._predictors.2._convs.3.conv.weight": [
+          16,
+          32,
+          1,
+          1
+        ],
+        "predict_flow._predictors.2._convs.3.conv.bias": [
+          16
+        ],
+        "predict_flow._predictors.2._convs.4.conv.weight": [
+          2,
+          16,
+          1,
+          1
+        ],
+        "predict_flow._predictors.2._convs.4.conv.bias": [
+          2
+        ],
+        "fuse.output_conv.weight": [
+          3,
+          64,
+          1,
+          1
+        ],
+        "fuse.output_conv.bias": [
+          3
+        ],
+        "fuse.convs.0.0.conv.weight": [
+          512,
+          1930,
+          2,
+          2
+        ],
+        "fuse.convs.0.0.conv.bias": [
+          512
+        ],
+        "fuse.convs.0.1.conv.weight": [
+          512,
+          2442,
+          3,
+          3
+        ],
+        "fuse.convs.0.1.conv.bias": [
+          512
+        ],
+        "fuse.convs.0.2.conv.weight": [
+          512,
+          512,
+          3,
+          3
+        ],
+        "fuse.convs.0.2.conv.bias": [
+          512
+        ],
+        "fuse.convs.1.0.conv.weight": [
+          256,
+          512,
+          2,
+          2
+        ],
+        "fuse.convs.1.0.conv.bias": [
+          256
+        ],
+        "fuse.convs.1.1.conv.weight": [
+          256,
+          1162,
+          3,
+          3
+        ],
+        "fuse.convs.1.1.conv.bias": [
+          256
+        ],
+        "fuse.convs.1.2.conv.weight": [
+          256,
+          256,
+          3,
+          3
+        ],
+        "fuse.convs.1.2.conv.bias": [
+          256
+        ],
+        "fuse.convs.2.0.conv.weight": [
+          128,
+          256,
+          2,
+          2
+        ],
+        "fuse.convs.2.0.conv.bias": [
+          128
+        ],
+        "fuse.convs.2.1.conv.weight": [
+          128,
+          522,
+          3,
+          3
+        ],
+        "fuse.convs.2.1.conv.bias": [
+          128
+        ],
+        "fuse.convs.2.2.conv.weight": [
+          128,
+          128,
+          3,
+          3
+        ],
+        "fuse.convs.2.2.conv.bias": [
+          128
+        ],
+        "fuse.convs.3.0.conv.weight": [
+          64,
+          128,
+          2,
+          2
+        ],
+        "fuse.convs.3.0.conv.bias": [
+          64
+        ],
+        "fuse.convs.3.1.conv.weight": [
+          64,
+          202,
+          3,
+          3
+        ],
+        "fuse.convs.3.1.conv.bias": [
+          64
+        ],
+        "fuse.convs.3.2.conv.weight": [
+          64,
+          64,
+          3,
+          3
+        ],
+        "fuse.convs.3.2.conv.bias": [
+          64
+        ]
+      }
+    },
+    "rife": {
+      "source_sha256": "854b808a425d01a82df2395cb925d7a5dab86669c62485f95fb790736ced11a3",
+      "shapes": {
+        "encode.cnn0.weight": [
+          16,
+          3,
+          3,
+          3
+        ],
+        "encode.cnn0.bias": [
+          16
+        ],
+        "encode.cnn1.weight": [
+          16,
+          16,
+          3,
+          3
+        ],
+        "encode.cnn1.bias": [
+          16
+        ],
+        "encode.cnn2.weight": [
+          16,
+          16,
+          3,
+          3
+        ],
+        "encode.cnn2.bias": [
+          16
+        ],
+        "encode.cnn3.weight": [
+          16,
+          6,
+          4,
+          4
+        ],
+        "encode.cnn3.bias": [
+          6
+        ],
+        "blocks.0.conv0.0.0.weight": [
+          4,
+          19,
+          3,
+          3
+        ],
+        "blocks.0.conv0.0.0.bias": [
+          4
+        ],
+        "blocks.0.conv0.1.0.weight": [
+          8,
+          4,
+          3,
+          3
+        ],
+        "blocks.0.conv0.1.0.bias": [
+          8
+        ],
+        "blocks.0.convblock.0.beta": [
+          1,
+          8,
+          1,
+          1
+        ],
+        "blocks.0.convblock.0.conv.weight": [
+          8,
+          8,
+          3,
+          3
+        ],
+        "blocks.0.convblock.0.conv.bias": [
+          8
+        ],
+        "blocks.0.convblock.1.beta": [
+          1,
+          8,
+          1,
+          1
+        ],
+        "blocks.0.convblock.1.conv.weight": [
+          8,
+          8,
+          3,
+          3
+        ],
+        "blocks.0.convblock.1.conv.bias": [
+          8
+        ],
+        "blocks.0.convblock.2.beta": [
+          1,
+          8,
+          1,
+          1
+        ],
+        "blocks.0.convblock.2.conv.weight": [
+          8,
+          8,
+          3,
+          3
+        ],
+        "blocks.0.convblock.2.conv.bias": [
+          8
+        ],
+        "blocks.0.convblock.3.beta": [
+          1,
+          8,
+          1,
+          1
+        ],
+        "blocks.0.convblock.3.conv.weight": [
+          8,
+          8,
+          3,
+          3
+        ],
+        "blocks.0.convblock.3.conv.bias": [
+          8
+        ],
+        "blocks.0.convblock.4.beta": [
+          1,
+          8,
+          1,
+          1
+        ],
+        "blocks.0.convblock.4.conv.weight": [
+          8,
+          8,
+          3,
+          3
+        ],
+        "blocks.0.convblock.4.conv.bias": [
+          8
+        ],
+        "blocks.0.convblock.5.beta": [
+          1,
+          8,
+          1,
+          1
+        ],
+        "blocks.0.convblock.5.conv.weight": [
+          8,
+          8,
+          3,
+          3
+        ],
+        "blocks.0.convblock.5.conv.bias": [
+          8
+        ],
+        "blocks.0.convblock.6.beta": [
+          1,
+          8,
+          1,
+          1
+        ],
+        "blocks.0.convblock.6.conv.weight": [
+          8,
+          8,
+          3,
+          3
+        ],
+        "blocks.0.convblock.6.conv.bias": [
+          8
+        ],
+        "blocks.0.convblock.7.beta": [
+          1,
+          8,
+          1,
+          1
+        ],
+        "blocks.0.convblock.7.conv.weight": [
+          8,
+          8,
+          3,
+          3
+        ],
+        "blocks.0.convblock.7.conv.bias": [
+          8
+        ],
+        "blocks.0.lastconv.0.weight": [
+          8,
+          52,
+          4,
+          4
+        ],
+        "blocks.0.lastconv.0.bias": [
+          52
+        ],
+        "blocks.1.conv0.0.0.weight": [
+          5,
+          32,
+          3,
+          3
+        ],
+        "blocks.1.conv0.0.0.bias": [
+          5
+        ],
+        "blocks.1.conv0.1.0.weight": [
+          10,
+          5,
+          3,
+          3
+        ],
+        "blocks.1.conv0.1.0.bias": [
+          10
+        ],
+        "blocks.1.convblock.0.beta": [
+          1,
+          10,
+          1,
+          1
+        ],
+        "blocks.1.convblock.0.conv.weight": [
+          10,
+          10,
+          3,
+          3
+        ],
+        "blocks.1.convblock.0.conv.bias": [
+          10
+        ],
+        "blocks.1.convblock.1.beta": [
+          1,
+          10,
+          1,
+          1
+        ],
+        "blocks.1.convblock.1.conv.weight": [
+          10,
+          10,
+          3,
+          3
+        ],
+        "blocks.1.convblock.1.conv.bias": [
+          10
+        ],
+        "blocks.1.convblock.2.beta": [
+          1,
+          10,
+          1,
+          1
+        ],
+        "blocks.1.convblock.2.conv.weight": [
+          10,
+          10,
+          3,
+          3
+        ],
+        "blocks.1.convblock.2.conv.bias": [
+          10
+        ],
+        "blocks.1.convblock.3.beta": [
+          1,
+          10,
+          1,
+          1
+        ],
+        "blocks.1.convblock.3.conv.weight": [
+          10,
+          10,
+          3,
+          3
+        ],
+        "blocks.1.convblock.3.conv.bias": [
+          10
+        ],
+        "blocks.1.convblock.4.beta": [
+          1,
+          10,
+          1,
+          1
+        ],
+        "blocks.1.convblock.4.conv.weight": [
+          10,
+          10,
+          3,
+          3
+        ],
+        "blocks.1.convblock.4.conv.bias": [
+          10
+        ],
+        "blocks.1.convblock.5.beta": [
+          1,
+          10,
+          1,
+          1
+        ],
+        "blocks.1.convblock.5.conv.weight": [
+          10,
+          10,
+          3,
+          3
+        ],
+        "blocks.1.convblock.5.conv.bias": [
+          10
+        ],
+        "blocks.1.convblock.6.beta": [
+          1,
+          10,
+          1,
+          1
+        ],
+        "blocks.1.convblock.6.conv.weight": [
+          10,
+          10,
+          3,
+          3
+        ],
+        "blocks.1.convblock.6.conv.bias": [
+          10
+        ],
+        "blocks.1.convblock.7.beta": [
+          1,
+          10,
+          1,
+          1
+        ],
+        "blocks.1.convblock.7.conv.weight": [
+          10,
+          10,
+          3,
+          3
+        ],
+        "blocks.1.convblock.7.conv.bias": [
+          10
+        ],
+        "blocks.1.lastconv.0.weight": [
+          10,
+          52,
+          4,
+          4
+        ],
+        "blocks.1.lastconv.0.bias": [
+          52
+        ],
+        "blocks.2.conv0.0.0.weight": [
+          6,
+          32,
+          3,
+          3
+        ],
+        "blocks.2.conv0.0.0.bias": [
+          6
+        ],
+        "blocks.2.conv0.1.0.weight": [
+          12,
+          6,
+          3,
+          3
+        ],
+        "blocks.2.conv0.1.0.bias": [
+          12
+        ],
+        "blocks.2.convblock.0.beta": [
+          1,
+          12,
+          1,
+          1
+        ],
+        "blocks.2.convblock.0.conv.weight": [
+          12,
+          12,
+          3,
+          3
+        ],
+        "blocks.2.convblock.0.conv.bias": [
+          12
+        ],
+        "blocks.2.convblock.1.beta": [
+          1,
+          12,
+          1,
+          1
+        ],
+        "blocks.2.convblock.1.conv.weight": [
+          12,
+          12,
+          3,
+          3
+        ],
+        "blocks.2.convblock.1.conv.bias": [
+          12
+        ],
+        "blocks.2.convblock.2.beta": [
+          1,
+          12,
+          1,
+          1
+        ],
+        "blocks.2.convblock.2.conv.weight": [
+          12,
+          12,
+          3,
+          3
+        ],
+        "blocks.2.convblock.2.conv.bias": [
+          12
+        ],
+        "blocks.2.convblock.3.beta": [
+          1,
+          12,
+          1,
+          1
+        ],
+        "blocks.2.convblock.3.conv.weight": [
+          12,
+          12,
+          3,
+          3
+        ],
+        "blocks.2.convblock.3.conv.bias": [
+          12
+        ],
+        "blocks.2.convblock.4.beta": [
+          1,
+          12,
+          1,
+          1
+        ],
+        "blocks.2.convblock.4.conv.weight": [
+          12,
+          12,
+          3,
+          3
+        ],
+        "blocks.2.convblock.4.conv.bias": [
+          12
+        ],
+        "blocks.2.convblock.5.beta": [
+          1,
+          12,
+          1,
+          1
+        ],
+        "blocks.2.convblock.5.conv.weight": [
+          12,
+          12,
+          3,
+          3
+        ],
+        "blocks.2.convblock.5.conv.bias": [
+          12
+        ],
+        "blocks.2.convblock.6.beta": [
+          1,
+          12,
+          1,
+          1
+        ],
+        "blocks.2.convblock.6.conv.weight": [
+          12,
+          12,
+          3,
+          3
+        ],
+        "blocks.2.convblock.6.conv.bias": [
+          12
+        ],
+        "blocks.2.convblock.7.beta": [
+          1,
+          12,
+          1,
+          1
+        ],
+        "blocks.2.convblock.7.conv.weight": [
+          12,
+          12,
+          3,
+          3
+        ],
+        "blocks.2.convblock.7.conv.bias": [
+          12
+        ],
+        "blocks.2.lastconv.0.weight": [
+          12,
+          52,
+          4,
+          4
+        ],
+        "blocks.2.lastconv.0.bias": [
+          52
+        ],
+        "blocks.3.conv0.0.0.weight": [
+          7,
+          32,
+          3,
+          3
+        ],
+        "blocks.3.conv0.0.0.bias": [
+          7
+        ],
+        "blocks.3.conv0.1.0.weight": [
+          14,
+          7,
+          3,
+          3
+        ],
+        "blocks.3.conv0.1.0.bias": [
+          14
+        ],
+        "blocks.3.convblock.0.beta": [
+          1,
+          14,
+          1,
+          1
+        ],
+        "blocks.3.convblock.0.conv.weight": [
+          14,
+          14,
+          3,
+          3
+        ],
+        "blocks.3.convblock.0.conv.bias": [
+          14
+        ],
+        "blocks.3.convblock.1.beta": [
+          1,
+          14,
+          1,
+          1
+        ],
+        "blocks.3.convblock.1.conv.weight": [
+          14,
+          14,
+          3,
+          3
+        ],
+        "blocks.3.convblock.1.conv.bias": [
+          14
+        ],
+        "blocks.3.convblock.2.beta": [
+          1,
+          14,
+          1,
+          1
+        ],
+        "blocks.3.convblock.2.conv.weight": [
+          14,
+          14,
+          3,
+          3
+        ],
+        "blocks.3.convblock.2.conv.bias": [
+          14
+        ],
+        "blocks.3.convblock.3.beta": [
+          1,
+          14,
+          1,
+          1
+        ],
+        "blocks.3.convblock.3.conv.weight": [
+          14,
+          14,
+          3,
+          3
+        ],
+        "blocks.3.convblock.3.conv.bias": [
+          14
+        ],
+        "blocks.3.convblock.4.beta": [
+          1,
+          14,
+          1,
+          1
+        ],
+        "blocks.3.convblock.4.conv.weight": [
+          14,
+          14,
+          3,
+          3
+        ],
+        "blocks.3.convblock.4.conv.bias": [
+          14
+        ],
+        "blocks.3.convblock.5.beta": [
+          1,
+          14,
+          1,
+          1
+        ],
+        "blocks.3.convblock.5.conv.weight": [
+          14,
+          14,
+          3,
+          3
+        ],
+        "blocks.3.convblock.5.conv.bias": [
+          14
+        ],
+        "blocks.3.convblock.6.beta": [
+          1,
+          14,
+          1,
+          1
+        ],
+        "blocks.3.convblock.6.conv.weight": [
+          14,
+          14,
+          3,
+          3
+        ],
+        "blocks.3.convblock.6.conv.bias": [
+          14
+        ],
+        "blocks.3.convblock.7.beta": [
+          1,
+          14,
+          1,
+          1
+        ],
+        "blocks.3.convblock.7.conv.weight": [
+          14,
+          14,
+          3,
+          3
+        ],
+        "blocks.3.convblock.7.conv.bias": [
+          14
+        ],
+        "blocks.3.lastconv.0.weight": [
+          14,
+          52,
+          4,
+          4
+        ],
+        "blocks.3.lastconv.0.bias": [
+          52
+        ],
+        "blocks.4.conv0.0.0.weight": [
+          8,
+          32,
+          3,
+          3
+        ],
+        "blocks.4.conv0.0.0.bias": [
+          8
+        ],
+        "blocks.4.conv0.1.0.weight": [
+          16,
+          8,
+          3,
+          3
+        ],
+        "blocks.4.conv0.1.0.bias": [
+          16
+        ],
+        "blocks.4.convblock.0.beta": [
+          1,
+          16,
+          1,
+          1
+        ],
+        "blocks.4.convblock.0.conv.weight": [
+          16,
+          16,
+          3,
+          3
+        ],
+        "blocks.4.convblock.0.conv.bias": [
+          16
+        ],
+        "blocks.4.convblock.1.beta": [
+          1,
+          16,
+          1,
+          1
+        ],
+        "blocks.4.convblock.1.conv.weight": [
+          16,
+          16,
+          3,
+          3
+        ],
+        "blocks.4.convblock.1.conv.bias": [
+          16
+        ],
+        "blocks.4.convblock.2.beta": [
+          1,
+          16,
+          1,
+          1
+        ],
+        "blocks.4.convblock.2.conv.weight": [
+          16,
+          16,
+          3,
+          3
+        ],
+        "blocks.4.convblock.2.conv.bias": [
+          16
+        ],
+        "blocks.4.convblock.3.beta": [
+          1,
+          16,
+          1,
+          1
+        ],
+        "blocks.4.convblock.3.conv.weight": [
+          16,
+          16,
+          3,
+          3
+        ],
+        "blocks.4.convblock.3.conv.bias": [
+          16
+        ],
+        "blocks.4.convblock.4.beta": [
+          1,
+          16,
+          1,
+          1
+        ],
+        "blocks.4.convblock.4.conv.weight": [
+          16,
+          16,
+          3,
+          3
+        ],
+        "blocks.4.convblock.4.conv.bias": [
+          16
+        ],
+        "blocks.4.convblock.5.beta": [
+          1,
+          16,
+          1,
+          1
+        ],
+        "blocks.4.convblock.5.conv.weight": [
+          16,
+          16,
+          3,
+          3
+        ],
+        "blocks.4.convblock.5.conv.bias": [
+          16
+        ],
+        "blocks.4.convblock.6.beta": [
+          1,
+          16,
+          1,
+          1
+        ],
+        "blocks.4.convblock.6.conv.weight": [
+          16,
+          16,
+          3,
+          3
+        ],
+        "blocks.4.convblock.6.conv.bias": [
+          16
+        ],
+        "blocks.4.convblock.7.beta": [
+          1,
+          16,
+          1,
+          1
+        ],
+        "blocks.4.convblock.7.conv.weight": [
+          16,
+          16,
+          3,
+          3
+        ],
+        "blocks.4.convblock.7.conv.bias": [
+          16
+        ],
+        "blocks.4.lastconv.0.weight": [
+          16,
+          52,
+          4,
+          4
+        ],
+        "blocks.4.lastconv.0.bias": [
+          52
+        ]
+      }
+    }
+  }
+}
