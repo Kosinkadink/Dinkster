@@ -593,8 +593,6 @@ class LoadVideoValue(Node):
 
     @classmethod
     def execute(cls, *, video: AssetRef) -> Mapping[str, object]:
-        if video.size > MAX_ENCODED_VIDEO_BYTES:
-            raise ValueError("video asset exceeds the 1 GiB input limit")
         return cls.outputs(video=video_from_source(video))
 
 
