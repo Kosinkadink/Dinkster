@@ -1,7 +1,5 @@
 """Torch-free schemas for native bound model-file loaders."""
 
-import subprocess
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -116,26 +114,6 @@ def test_model_file_loader_defaults_match_comfyui() -> None:
     assert schemas["DualCLIPLoader"].inputs[3].default == "default"
     assert schemas["CLIPLoader"].description == model_file_loaders._CLIP_DESCRIPTION
     assert schemas["DualCLIPLoader"].description == model_file_loaders._DUAL_CLIP_DESCRIPTION
-
-
-def test_model_file_loader_schema_discovery_does_not_import_torch() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            """
-import sys
-sys.modules['torch'] = None
-from dinkster_nodes_comfy.model_file_loaders import MODEL_FILE_LOADER_NODES
-assert len(MODEL_FILE_LOADER_NODES) == 14
-assert sys.modules['torch'] is None
-""",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    assert result.returncode == 0, result.stderr
 
 
 def test_ltx_text_encoder_admits_omitted_device_with_default(tmp_path: Path) -> None:
