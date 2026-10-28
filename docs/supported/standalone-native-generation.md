@@ -26,3 +26,5 @@
 - The server accepts native packs, not ComfyUI installations or unmodified
   custom node packs. `--comfy-root` and `--legacy-pack` are rejected. Model and
   output locations come from configured mounts, not an inferred ComfyUI tree.
+- Pack authors use the native pack template and public API. The CLI does not
+  generate translated schemas or aliased node stubs from legacy packs.

@@ -10,7 +10,7 @@ between the `dinkster foo` and `dinkster-foo` spellings.
 
 Subcommand modules import lazily: `dinkster doctor` must not pay for (or
 fail on) the server stack, and vice versa. Two delegation shapes exist
-because the underlying mains do: argv-style mains (doctor, port) take
+because the underlying mains do: argv-style mains (doctor, setup) take
 an argument list and return an exit code; the rest parse sys.argv
 internally, so the dispatcher rebinds sys.argv around the call with
 `dinkster <name>` as argv[0] (argparse derives usage prose from it).
@@ -60,11 +60,6 @@ _COMMANDS: dict[str, _Command] = {
         "dinkster_supervisor.install_manager",
         passes_argv=False,
         summary="manage the station's install registry (alias: dinkster-installs)",
-    ),
-    "port": _Command(
-        "dinkster.port",
-        passes_argv=True,
-        summary="generate a native pack skeleton from a legacy pack (alias: dinkster-port)",
     ),
     "demo": _Command(
         "dinkster.demo",

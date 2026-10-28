@@ -162,7 +162,7 @@ def test_installed_entry_points_match_the_shipped_commands() -> None:
         entry.name
         for entry in distribution("dinkster").entry_points
         if entry.group == "console_scripts"
-    } == {"dinkster", "dinkster-serve", "dinkster-pack", "dinkster-isolated", "dinkster-port"}
+    } == {"dinkster", "dinkster-serve", "dinkster-pack", "dinkster-isolated"}
 
 
 def test_feature_flags_require_boolean_opt_in() -> None:

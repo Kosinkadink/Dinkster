@@ -133,19 +133,13 @@ dynamic". Failure mode: one consumer that re-derives, re-elaborates, or
 special-cases dynamic membership, and interface shape becomes distributed mutable
 state - the bookkeeping headache the elaboration step exists to prevent.
 
-## H11. Legacy compatibility is quarantined
+## H11. Native packs own execution
 
-The ComfyUI compat loader is one isolated Worker, purpose-bound to migration and
-quick testing, best-effort by design. Packs that monkey-patch ComfyUI's server,
-executor, or samplers get a diagnostic, not emulation. No parameter, branch, or
-schema feature may exist in dinkster-schema/values/graph/engine because the adapter
-needs it - if the adapter cannot express something, the adapter stays imperfect.
-That core-boundary rule is absolute; narrow bug-for-bug reproductions *inside
-the quarantine* may be granted case by case (each explicit in DESIGN 3.8,
-naming the v1 behavior, rationale, and blast radius, and revocable). Native
-ports (helped by `dinkster-port` codegen) are the destination. Failure mode:
-chasing bug-for-bug compatibility until Dinkster is a second ComfyUI carrying the
-exact tech debt it was created to shed.
+ComfyUI workflows resolve native nodes by their canonical IDs. Importing a
+workflow does not load a ComfyUI installation or custom node implementation.
+Pack authors implement behavior through the public native API; translating
+schemas into aliased stubs does not supply that behavior. Failure mode:
+advertising a schema whose execution still depends on a separate legacy runtime.
 
 ## H12. Parallelism is a scheduler property, never a node property
 

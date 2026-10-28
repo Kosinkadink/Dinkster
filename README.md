@@ -176,13 +176,6 @@ installation and runtime use do not require that checkout.
   the wire), image payloads cross via shared memory, and per-edge boundary
   diagnostics print live (`DINKSTER_SLOW_TESTS=1 uv run pytest` also covers
   provisioning a real per-pack venv with uv)
-- `uv run dinkster-port <legacy-pack> --name my-pack` - generate a doctor-clean
-  native pack skeleton from a ComfyUI pack (v1 `NODE_CLASS_MAPPINGS`, V3
-  `comfy_entrypoint`, or a mixed pack shipping both): real translated schemas
-  (source names kept as aliases), loud `execute()` stubs carrying the source
-  as reference, tests and README; the pack imports only in a disposable probe
-  subprocess under the ComfyUI install's interpreter (`--comfyui-root` or
-  `DINKSTER_COMFYUI_ROOT`). See docs/pack-authoring.md.
 
 # Fleet ingress
 

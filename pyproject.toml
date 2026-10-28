@@ -46,7 +46,6 @@ dinkster = "dinkster.cli:main"
 dinkster-serve = "dinkster.serve:main"
 dinkster-pack = "dinkster.manager:main"
 dinkster-isolated = "dinkster.isolated_demo:main"
-dinkster-port = "dinkster.port:main"
 
 [project.optional-dependencies]
 default = [

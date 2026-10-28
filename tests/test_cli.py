@@ -69,7 +69,6 @@ def test_help_lists_every_command_exit_0(capsys) -> None:
         "setup",
         "pack",
         "installs",
-        "port",
         "demo",
         "isolated-demo",
     ):
@@ -77,10 +76,11 @@ def test_help_lists_every_command_exit_0(capsys) -> None:
     assert "run/bootstrap a registry service" not in listing
 
 
-def test_unknown_command_is_loud_exit_2(capsys) -> None:
-    assert main(["frobnicate"]) == 2
+@pytest.mark.parametrize("command", ["frobnicate", "port"])
+def test_unknown_command_is_loud_exit_2(capsys, command: str) -> None:
+    assert main([command]) == 2
     err = capsys.readouterr().err
-    assert "unknown command 'frobnicate'" in err
+    assert f"unknown command {command!r}" in err
     assert "usage: dinkster" in err
 
 

@@ -12,9 +12,8 @@ from dinkster_workers.interpreter import InterpreterPreflightError
 from dinkster_workers.manifest import load_manifest
 from dinkster_workers.provision import ProvisionError
 
-from dinkster import comfy_compose, port
+from dinkster import comfy_compose
 from dinkster.compose import CompositionError
-from dinkster.port import PortError
 
 
 def _venv_python(venv_dir: Path) -> Path:
@@ -74,15 +73,6 @@ def test_comfy_specs_preflight_before_core_or_legacy_blake3_probe(
             python="/selected/python",
             legacy_packs=(legacy,) if with_legacy else (),
         )
-
-
-def test_dinkster_port_preflights_before_legacy_pack_import(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(port, "preflight_interpreter", _reject, raising=False)
-    monkeypatch.setattr(port.subprocess, "run", _unexpected)
-    with pytest.raises(PortError, match="unsupported selected interpreter"):
-        port._run_probe(tmp_path / "pack", tmp_path, python="/selected/python")
 
 
 @pytest.mark.parametrize("reused", [True, False])

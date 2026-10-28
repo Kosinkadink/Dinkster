@@ -209,7 +209,7 @@ Interpreter for native execution. The resolution chain is: CLI value,
 then the `DINKSTER_EXECUTION_PYTHON` environment variable, then the current Python.
 
 The earlier names `--comfy-python` and `DINKSTER_COMFYUI_PYTHON` are retired
-with no aliases: `dinkster-serve`, `dinkster-port` and composition refuse them
+with no aliases: `dinkster-serve` refuses them
 with a message pointing at this flag and variable.
 
 `--comfy-root` and `--legacy-pack` are not supported. The server never derives
