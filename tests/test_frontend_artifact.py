@@ -110,3 +110,43 @@ def test_missing_commit_names_the_required_artifact(
     )
     assert f"commit {pin['commit']}" in str(error.value)
     assert not (tmp_path / "bundle").exists()
+
+
+def test_download_selects_only_the_pinned_successful_frontend_ci(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload, pin = artifact()
+    candidates = [
+        {
+            "id": number,
+            "expired": number == 1,
+            "workflow_run": {"id": number, "head_sha": "b" * 40 if number == 2 else pin["commit"]},
+        }
+        for number in range(1, 8)
+    ]
+
+    def github(arguments: list[str]) -> bytes:
+        endpoint = arguments[2]
+        if "/artifacts?" in endpoint:
+            return json.dumps({"artifacts": candidates}).encode()
+        if "/runs/" in endpoint:
+            number = int(endpoint.rsplit("/", 1)[1])
+            return json.dumps(
+                {
+                    "id": number,
+                    "conclusion": "failure" if number == 3 else "success",
+                    "path": "unrelated.yml" if number == 4 else ".github/workflows/ci.yml",
+                    "event": "workflow_dispatch" if number == 5 else "push",
+                    "head_repository": {
+                        "full_name": "other/frontend" if number == 6 else REPOSITORY
+                    },
+                }
+            ).encode()
+        if endpoint.endswith("/artifacts/7/zip"):
+            return payload
+        raise AssertionError(f"attempted to download an ineligible artifact: {endpoint}")
+
+    monkeypatch.setattr("scripts.download_frontend.subprocess.check_output", github)
+    output = tmp_path / "frontend.zip"
+    download(pin, output)
+    assert output.read_bytes() == payload
