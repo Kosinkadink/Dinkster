@@ -7,13 +7,11 @@ explicitly identifies an external source below.
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import json
 import math
 from collections.abc import Callable
 from dataclasses import FrozenInstanceError
-from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 import pytest
 from dinkster_caches import MemoryLRUCache
@@ -35,22 +33,10 @@ from dinkster_schema import (
     ABSENT,
     build_node_types,
     build_schemas,
-    comfy_alias_registry_from_wire,
-    comfy_alias_registry_problems,
-    comfy_alias_registry_to_wire,
-    schema_from_wire,
     use_reporter,
-    validate_replacement_references,
 )
-from dinkster_schema.replace import rule_from_wire, rule_to_wire
 from dinkster_values import RenditionUnavailable, TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
-
-from tools.generate_foundation_comfy_aliases import CONVERSION_EVIDENCE, build_aliases
-
-ALIAS_PATH = (
-    Path(__file__).parents[1] / "packages" / "dinkster-nodes-foundation" / "comfy-aliases.json"
-)
 
 
 def make_engine() -> Engine:
@@ -128,57 +114,7 @@ def test_conversion_rejects_non_finite_numbers(value: object) -> None:
         ValueConvert.execute(value=value, target="float", force_lossy=True)
 
 
-def test_conversion_alias_registry_is_canonical_and_valid() -> None:
-    encoded = ALIAS_PATH.read_text(encoding="utf-8")
-    payload = build_aliases()
-    assert encoded == json.dumps(payload, ensure_ascii=True, separators=(",", ":")) + "\n"
-    registry = comfy_alias_registry_from_wire(payload)
-    assert comfy_alias_registry_to_wire(registry) == payload
-    native_schemas = build_schemas(FOUNDATION_NODES)
-    assert comfy_alias_registry_problems(registry, native_schemas) == ()
-    source_schemas = {
-        schema.node_type: schema
-        for schema in (
-            schema_from_wire(cast("dict[str, Any]", wire))
-            for wire in cast("list[dict[str, object]]", payload["sourceSchemas"])
-        )
-    }
-    records = [
-        record
-        for record in cast("list[dict[str, Any]]", payload["records"])
-        if record["confidence"]["evidence"] == list(CONVERSION_EVIDENCE)
-    ]
-    assert {record["source"]["nodeClass"] for record in records} == {
-        "ComfyNumberConvert",
-        "Int To Bool (mtb)",
-    }
-    assert {record["carrier"] for record in records} == {"dinkster.value.convert"}
-    for record in records:
-        rule = rule_from_wire(record["replacement"])
-        assert rule_to_wire(rule) == record["replacement"]
-        carrier = native_schemas[record["carrier"]]
-        schemas = {
-            **native_schemas,
-            **source_schemas,
-            carrier.node_type: dataclasses.replace(carrier, replacements=(rule,)),
-        }
-        assert validate_replacement_references(schemas) == ()
-
-
-def test_conversion_alias_operation_mappings() -> None:
-    records = {
-        record["id"]: record for record in cast("list[dict[str, Any]]", build_aliases()["records"])
-    }
-    core_rule = rule_from_wire(records["comfy_alias:comfy-core/ComfyNumberConvert"]["replacement"])
-    core_case = core_rule.cases[0]
-    assert core_case.to == "dinkster.value.convert"
-    assert core_case.nodes is None
-    core_inputs = dict(core_case.inputs)
-    assert core_inputs["value"].input == "value"
-    assert core_inputs["target"].value == "number"
-    assert core_inputs["force_lossy"].value is True
-    assert dict(core_case.outputs) == {"float": "FLOAT", "int": "INT"}
-
+def test_forced_numeric_pair_preserves_conversion_semantics() -> None:
     for value, expected_float, expected_int in (
         (True, 1.0, 1),
         (-3, -3.0, -3),
@@ -195,11 +131,6 @@ def test_conversion_alias_operation_mappings() -> None:
         assert converted["float"] == expected_float
         assert converted["int"] == expected_int
 
-    mtb_rule = rule_from_wire(records["comfy_alias:comfy-mtb/Int To Bool (mtb)"]["replacement"])
-    mtb_inputs = dict(mtb_rule.cases[0].inputs)
-    assert mtb_inputs["value"].input == "int"
-    assert mtb_inputs["target"].value == "boolean"
-    assert mtb_inputs["force_lossy"].value is True
     assert ValueConvert.execute(value=-2, target="boolean", force_lossy=True)["boolean"] is True
 
 

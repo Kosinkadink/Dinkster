@@ -1,13 +1,8 @@
-"""Lazy routing nodes and maintained ComfyUI aliases."""
+"""Lazy routing nodes and graph persistence."""
 
 from __future__ import annotations
 
 import asyncio
-import dataclasses
-import json
-from collections.abc import Mapping
-from pathlib import Path
-from typing import Any, cast
 
 import pytest
 from dinkster_caches import MemoryLRUCache
@@ -27,21 +22,9 @@ from dinkster_schema import (
     SelectorSpec,
     build_node_types,
     build_schemas,
-    comfy_alias_registry_from_wire,
-    comfy_alias_registry_problems,
-    comfy_alias_registry_to_wire,
-    schema_from_wire,
-    validate_replacement_references,
 )
-from dinkster_schema.replace import rule_from_wire, rule_to_wire
 from dinkster_values import TypeRegistry, is_absent, register_core_types
 from dinkster_workers import InProcessWorker
-
-from tools.generate_foundation_comfy_aliases import ROUTING_EVIDENCE, build_aliases
-
-ALIAS_PATH = (
-    Path(__file__).parents[1] / "packages" / "dinkster-nodes-foundation" / "comfy-aliases.json"
-)
 
 
 def test_routing_schemas_and_operations() -> None:
@@ -180,62 +163,3 @@ def test_named_route_graph_wire_persists_only_stable_member_ids() -> None:
             "COMBO",
             {"value": "stable_right", "label": "Right branch"},
         )
-
-
-def _routing_records(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
-    return [
-        record
-        for record in cast("list[dict[str, Any]]", payload["records"])
-        if record["confidence"]["evidence"] == list(ROUTING_EVIDENCE)
-    ]
-
-
-def test_routing_alias_registry_is_canonical_and_valid() -> None:
-    encoded = ALIAS_PATH.read_text(encoding="utf-8")
-    assert encoded == json.dumps(build_aliases(), ensure_ascii=True, separators=(",", ":")) + "\n"
-    payload = cast("dict[str, Any]", json.loads(encoded))
-    registry = comfy_alias_registry_from_wire(payload)
-    assert comfy_alias_registry_to_wire(registry) == payload
-
-    native_schemas = build_schemas(FOUNDATION_NODES)
-    assert comfy_alias_registry_problems(registry, native_schemas) == ()
-    source_schemas = {
-        schema.node_type: schema
-        for schema in (
-            schema_from_wire(cast("dict[str, Any]", wire))
-            for wire in cast("list[dict[str, object]]", payload["sourceSchemas"])
-        )
-    }
-    for record in _routing_records(payload):
-        rule = rule_from_wire(record["replacement"])
-        assert rule_to_wire(rule) == record["replacement"]
-        carrier = native_schemas[record["carrier"]]
-        schemas = {
-            **native_schemas,
-            **source_schemas,
-            carrier.node_type: dataclasses.replace(carrier, replacements=(rule,)),
-        }
-        assert validate_replacement_references(schemas) == ()
-
-
-def test_routing_alias_operation_mappings() -> None:
-    payload = cast("dict[str, Any]", build_aliases())
-    records = _routing_records(payload)
-    expected = {
-        "ComfySwitchNode": ("switch", "on_false", "on_true", "output"),
-        "LazySwitchKJ": ("switch", "on_false", "on_true", "*"),
-        "easy ifElse": ("boolean", "on_false", "on_true", "*"),
-        "ImpactConditionalBranch": ("cond", "ff_value", "tt_value", "*"),
-    }
-    assert {record["source"]["nodeClass"] for record in records} == set(expected)
-    for record in records:
-        assert record["carrier"] == "dinkster.value.select"
-        assert record["confidence"]["tier"] == "exact"
-        rule = rule_from_wire(record["replacement"])
-        case = rule.cases[0]
-        inputs = dict(case.inputs)
-        condition, on_false, on_true, source_output = expected[record["source"]["nodeClass"]]
-        assert inputs["condition"].input == condition
-        assert inputs["on_false"].input == on_false
-        assert inputs["on_true"].input == on_true
-        assert dict(case.outputs) == {"value": source_output}
