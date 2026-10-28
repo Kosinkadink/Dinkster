@@ -193,6 +193,7 @@ from .video_edits import VideoCrop, VideoSlice, VideoTrim
 from .video_guidance import VIDEO_GUIDANCE_NODES
 from .video_latent import VIDEO_LATENT_NODES
 from .video_latent_ops import VIDEO_LATENT_OPERATION_NODES
+from .video_load import LoadVideo
 from .video_save import SaveVideo
 from .void_conditioning import (
     VOIDInpaintConditioning,
@@ -454,6 +455,7 @@ COMFY_NODES = (
     SDPoseDrawKeypoints,
     SDPoseKeypointExtractor,
     AddLayer,
+    LoadVideo,
 )
 
 
