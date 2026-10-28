@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 from typing import Any, cast
 
@@ -48,8 +49,8 @@ def _asset(path: Path, kind: str, vault_backed: bool) -> Any:
 
 
 def _diffusion_state() -> dict[str, Any]:
-    from dinkster_inference import ops
-    from dinkster_inference.ldm.flux.model import Flux
+    ops = importlib.import_module("dinkster_inference.ops")
+    Flux = importlib.import_module("dinkster_inference.ldm.flux.model").Flux
 
     model = Flux(
         in_channels=4,
@@ -78,7 +79,7 @@ def _diffusion_state() -> dict[str, Any]:
 
 
 def _vae_state() -> dict[str, Any]:
-    from dinkster_inference.taesd.taesd import TAESD
+    TAESD = importlib.import_module("dinkster_inference.taesd.taesd").TAESD
 
     model = TAESD(latent_channels=4)
     state = {key: torch.zeros_like(value) for key, value in model.state_dict().items()}
@@ -117,7 +118,7 @@ def _check_vae(vae: Any) -> None:
 
 @pytest.mark.parametrize("vault_backed", [False, True], ids=["named-mount", "vault"])
 def test_native_diffusion_model_real_checkpoint(tmp_path: Path, vault_backed: bool) -> None:
-    from safetensors.torch import save_file
+    save_file = importlib.import_module("safetensors.torch").save_file
 
     path = tmp_path / "diffusion.safetensors"
     save_file(_diffusion_state(), path)
@@ -129,7 +130,7 @@ def test_native_diffusion_model_real_checkpoint(tmp_path: Path, vault_backed: bo
 
 @pytest.mark.parametrize("vault_backed", [False, True], ids=["named-mount", "vault"])
 def test_native_vae_real_checkpoint(tmp_path: Path, vault_backed: bool) -> None:
-    from safetensors.torch import save_file
+    save_file = importlib.import_module("safetensors.torch").save_file
 
     path = tmp_path / "vae.safetensors"
     save_file(_vae_state(), path)
@@ -140,7 +141,7 @@ def test_native_vae_real_checkpoint(tmp_path: Path, vault_backed: bool) -> None:
 
 @pytest.mark.parametrize("vault_backed", [False, True], ids=["named-mount", "vault"])
 def test_native_combined_real_checkpoint(tmp_path: Path, vault_backed: bool) -> None:
-    from safetensors.torch import save_file
+    save_file = importlib.import_module("safetensors.torch").save_file
 
     path = tmp_path / "checkpoint.safetensors"
     state = {f"model.diffusion_model.{key}": value for key, value in _diffusion_state().items()}
@@ -156,7 +157,7 @@ def test_native_combined_real_checkpoint(tmp_path: Path, vault_backed: bool) -> 
 
 @pytest.mark.parametrize("vault_backed", [False, True], ids=["named-mount", "vault"])
 def test_native_clip_real_checkpoint(tmp_path: Path, vault_backed: bool) -> None:
-    from dinkster_inference.sd1_clip import SD1ClipModel
+    SD1ClipModel = importlib.import_module("dinkster_inference.sd1_clip").SD1ClipModel
 
     # CLIP's file loader fixes the architecture. Expanded tensors retain its full
     # state with scalar backing storage; torch serialization preserves strides.
