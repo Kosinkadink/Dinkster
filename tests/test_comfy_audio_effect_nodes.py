@@ -1,5 +1,6 @@
 """Torch-free schemas for native ComfyUI audio effect nodes."""
 
+import subprocess
 import sys
 
 from dinkster_api.v1 import (
@@ -19,7 +20,17 @@ from dinkster_nodes_comfy.audio_effects import (
 
 
 def test_audio_effect_schemas_match_comfyui_without_torch() -> None:
-    assert "torch" not in sys.modules
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from dinkster_nodes_comfy.audio_effects import AUDIO_EFFECT_NODES; "
+            "[node.schema() for node in AUDIO_EFFECT_NODES]; "
+            "import sys; assert 'torch' not in sys.modules",
+        ],
+        check=True,
+        timeout=30,
+    )
     assert AUDIO_EFFECT_NODES == (TrimAudioDuration, AudioEqualizer3Band)
     trim, equalizer = (node.schema() for node in AUDIO_EFFECT_NODES)
     assert all(node in COMFY_NODES for node in AUDIO_EFFECT_NODES)
