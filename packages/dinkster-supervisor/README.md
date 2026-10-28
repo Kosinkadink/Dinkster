@@ -148,3 +148,14 @@ The channel format is `dinkster.channel/1`, with `engine: {version, release}`,
 and main name exact content digests, never a latest-release lookup. A null
 signature is acceptable only for a Dinkster-operated mirror. Engine and base
 artifact layouts are owned by their publishing tools, not this package.
+
+`environment_downloads.fetch_artifact(mirrors, relative_path, destination,
+sha256, size)` downloads a known artifact from ordered local directories or
+HTTPS mirrors (HTTP is limited to loopback fixtures). Its digest argument is
+bare lowercase hexadecimal, not a `sha256:` identifier. Transfers hash bytes
+while streaming, retain interrupted `.part` files and validate exact HTTP
+range offsets on resume. A corrupt saved prefix retries once from zero;
+an ignored Range also restarts from zero. Final publication requires both
+the expected size and digest. Signed query redirects are allowed without
+logging their URLs; external non-TLS redirects and credential-bearing mirror
+URLs are rejected. Calls have a bounded per-socket network timeout.
