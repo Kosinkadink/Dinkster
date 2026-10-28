@@ -27,6 +27,7 @@ import contextlib
 import json
 import os
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from types import TracebackType
 
@@ -43,6 +44,10 @@ _HEX = frozenset("0123456789abcdef")
 
 class VaultError(AssetError):
     """A vault operation could not preserve content-addressed integrity."""
+
+
+class AssetPublicationError(RuntimeError):
+    """Publication metadata failed; retrying a source cannot repair it."""
 
 
 class AssetVault:
@@ -132,9 +137,10 @@ class VaultWriter:
         self._handle.write(chunk)
         self._hasher.update(chunk)
 
-    def commit(self) -> Path:
+    def commit(self, *, before_publish: Callable[[int], None] | None = None) -> Path:
         """Verify and land the file; raises AssetError (and rolls back) if
-        the bytes do not hash to the expected digest."""
+        the bytes do not hash to the expected digest. A failed metadata
+        callback raises AssetPublicationError, not a failed-source error."""
         self._handle.flush()
         verified_stat = os.fstat(self._handle.fileno())
         self._handle.close()
@@ -144,6 +150,11 @@ class VaultWriter:
             raise AssetError(
                 f"ingest did not verify: expected {self._expected}, bytes hash to {actual}"
             )
+        if before_publish is not None:
+            try:
+                before_publish(verified_stat.st_size)
+            except Exception as exc:
+                raise AssetPublicationError("asset publication metadata is unavailable") from exc
         self._target.parent.mkdir(parents=True, exist_ok=True)
         try:
             os.replace(self._tmp, self._target)

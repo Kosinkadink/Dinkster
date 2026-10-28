@@ -43,6 +43,28 @@ sa.Table(
     sa.Column("cache_key", sa.Text, primary_key=True, nullable=True),
     sa.Column("manifest", sa.Text, nullable=False),
 )
+asset_observations = sa.Table(
+    "asset_observations",
+    metadata,
+    sa.Column("id", sa.Text, primary_key=True, nullable=False),
+    sa.Column("scope", sa.Text, nullable=False),
+    sa.Column("digest", sa.Text, nullable=False),
+    sa.Column("original_name", sa.Text, nullable=False),
+    sa.Column("stored_name", sa.Text, nullable=False),
+    sa.Column("kind", sa.Text, nullable=False),
+    sa.Column("media_type", sa.Text, nullable=False),
+    sa.Column("byte_size", sa.Integer, nullable=False),
+    sa.Column("virtual_path", sa.Text, nullable=False),
+    sa.Column("origin", sa.Text, nullable=False),
+    sa.Column("project", sa.Text, nullable=False),
+    sa.Column("created", sa.REAL[float], nullable=False),
+)
+sa.Index(
+    "asset_observations_scope_digest",
+    asset_observations.c.scope,
+    asset_observations.c.digest,
+    asset_observations.c.created,
+)
 
 
 def migration_config() -> Config:

@@ -22,5 +22,8 @@
   Serving fails before binding when an installed catalog is missing or stale.
 - The default local launcher prepares missing or stale catalogs before binding,
   then serves the browser application and engine API from one loopback origin.
+- Released engines discover the installed frontend wheel without a frontend
+  checkout. Release installation checks require the browser application document
+  at `/` as well as the engine API.
 - Health reports composed and failed counts and is not ready when composition
   is empty or any pack failed.
