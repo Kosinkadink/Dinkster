@@ -9,7 +9,6 @@ from dinkster_api.v1 import (
     register_asset_type,
     register_audio_value_type,
     register_curve_type,
-    register_video_edit_type,
     register_video_value_type,
     resolver_from_env,
 )
@@ -436,7 +435,6 @@ def register_inference_types(registry: TypeRegistry) -> None:
         register_audio_value_type(registry, AUDIO_TYPE, resolver_from_env())
     if VIDEO_TYPE not in registry:
         register_video_value_type(registry, VIDEO_TYPE, resolver_from_env())
-    register_video_edit_type(registry)
     register_curve_type(registry)
     _register_inference_types(registry)
 

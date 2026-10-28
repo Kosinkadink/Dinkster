@@ -52,6 +52,8 @@
   returning raw seconds and a frame count snapped to the causal VAE grid.
 - Native ComfyUI AUDIO sockets retain the first registered audio authority
   and work across isolated pack processes without a companion media pack.
+- Literal VIDEO_EDIT mappings retain their crop and trim fields across ordinary
+  in-process and isolated pack hosts without host type overrides.
 - Native LTXVCropGuides removes appended guide frames and their conditioning
   metadata while preserving the remaining video latent and noise mask.
 - Native LTXV latent-guide and generated-keyframe nodes attach, separate and
