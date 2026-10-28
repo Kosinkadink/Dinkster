@@ -107,6 +107,9 @@
   WebP, 8/16-bit APNG with alpha, and ZIP PNG sequences; variable frame
   durations, animation loops, workflow metadata, and declared-count checks
 - PNG/APNG workflow metadata readable by ordinary image metadata readers
+- Native Save WEBM exports IMAGE sequences as VP9 or 10-bit AV1, retaining
+  VP9 RGBA transparency, fractional frame rates and submitted workflow metadata,
+  with default or selected writable output mounts and unchanged image output
 - Native saver format fallback reports requested/effective choices through
   nonblocking value diagnostics, including isolated-worker execution
 - Asset-backed native audio loading to AUDIO (first audio stream of audio or
