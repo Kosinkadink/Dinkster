@@ -237,6 +237,21 @@ Status returns configured `channel`/`variant` and observed `engines`, never
 starts a process and never creates a prospective root. Doctor reports content
 and pack drift without repair and exits nonzero on drift or errors.
 
+`start --engine <name> [--port <port>] [--gpu <device> ...]` and
+`stop --engine <name>` share the same result envelope. They show a plan and
+require `--yes` or terminal confirmation; `--plan` and unconfirmed machine
+invocations do not launch/stop processes or create runtime/lock files. Main
+uses the configured port by default; another engine name requires an explicit
+port. An empty device list hides GPUs, including inherited host assignments.
+Identical ready assignments are idempotent; a changed assignment requires stop
+first. Applied results include observed engines and the started engine URL.
+
+Runtime writers serialize through the project's persistent `.lock` file using
+an OS-held nonblocking lock. The same primitive serializes shared-store writes;
+callers needing both acquire project then store. Process exit releases the lock,
+but its file is never removed. Apply rechecks project/current under lock and
+refuses incomplete lifecycle journals until recovery.
+
 Runtime launches the generation interpreter through the independent supervisor.
 Public engine rows contain `name`, `generation`, `state` and `url`; private
 `runtime/<name>.json` records retain process identity and shutdown credentials.

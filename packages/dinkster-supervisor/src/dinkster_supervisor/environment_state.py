@@ -7,6 +7,8 @@ import json
 import os
 import re
 import tempfile
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import cast
@@ -16,6 +18,39 @@ _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 
 class EnvironmentError(ValueError):
     """An environment cannot be safely read or changed."""
+
+
+@contextmanager
+def writer_lock(root: Path) -> Generator[None]:
+    """Hold a persistent inode's OS lock; never unlink another writer's lock."""
+    with (root / ".lock").open("a+b") as handle:
+        if os.name == "nt":
+            import msvcrt
+
+            if handle.tell() == 0:
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            try:
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError as exc:
+                raise EnvironmentError(f"another environment writer holds {root}") from exc
+            try:
+                yield
+            finally:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise EnvironmentError(f"another environment writer holds {root}") from exc
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def content_digest(path: Path) -> str:

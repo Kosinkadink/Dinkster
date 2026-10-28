@@ -16,7 +16,7 @@ from urllib.request import Request, urlopen
 
 from .environment_state import EnvironmentError, Generation, atomic_write, interpreter
 
-__all__ = ["engine_status", "require_idle", "start_engine", "stop_engine"]
+__all__ = ["engine_status", "require_idle", "start_engine", "stop_engine", "validate_assignment"]
 
 _ENGINE_NAME = re.compile(r"[a-z0-9][a-z0-9-]*\Z")
 _GPU_ID = re.compile(r"(?:[0-9]+|GPU-[0-9A-Fa-f-]+)\Z")
@@ -34,7 +34,7 @@ def start_engine(
 ) -> dict[str, object]:
     """Start one generation through an identity-bound loopback supervisor."""
     root = Path(root)
-    _validate_request(generation, name, port, gpus)
+    validate_assignment(generation, name, port, gpus)
     target = root / "generations" / str(generation)
     Generation.read(target / "generation.json")
     python = interpreter(target)
@@ -50,7 +50,7 @@ def start_engine(
                     _write_record(root, name, existing)
                 return _public_row(existing)
             raise EnvironmentError("engine assignment changed; stop it first")
-        if _process_alive(existing) and existing["state"] != "stopped":
+        if existing["state"] != "stopped":
             raise EnvironmentError("engine record is live but not safely reachable; stop it first")
 
     instance = secrets.token_urlsafe(24)
@@ -69,10 +69,7 @@ def start_engine(
     }
     _write_record(root, name, record)
     environment = dict(os.environ)
-    if gpus:
-        environment["CUDA_VISIBLE_DEVICES"] = ",".join(gpus)
-    else:
-        environment.pop("CUDA_VISIBLE_DEVICES", None)
+    environment["CUDA_VISIBLE_DEVICES"] = ",".join(gpus)
     command = [
         sys.executable,
         "-m",
@@ -177,7 +174,7 @@ def require_idle(root: Path) -> None:
             raise EnvironmentError("Finish or cancel the running job before updating.")
 
 
-def _validate_request(generation: int, name: str, port: int, gpus: tuple[str, ...]) -> None:
+def validate_assignment(generation: int, name: str, port: int, gpus: tuple[str, ...]) -> None:
     if type(generation) is not int or generation < 1:
         raise EnvironmentError("generation must be a positive integer")
     _validate_name(name)
@@ -230,7 +227,7 @@ def _parse_record(path: Path) -> dict[str, object]:
     if type(generation) is not int or not isinstance(name, str) or type(port) is not int:
         raise EnvironmentError(f"runtime record {path.name} is invalid")
     gpu_ids = tuple(cast("str", gpu) for gpu in gpu_values)
-    _validate_request(generation, name, port, gpu_ids)
+    validate_assignment(generation, name, port, gpu_ids)
     if (
         not isinstance(instance, str)
         or not instance

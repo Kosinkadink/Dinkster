@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -14,7 +16,39 @@ from dinkster_supervisor.environment_state import (
     Journal,
     read_current,
     set_current,
+    writer_lock,
 )
+
+
+def test_writer_lock_serializes_processes_and_survives_owner_exit(tmp_path: Path):
+    command = [
+        sys.executable,
+        "-c",
+        "from pathlib import Path; from dinkster_supervisor.environment_state import writer_lock; "
+        "import sys\nwith writer_lock(Path(sys.argv[1])): print('locked', flush=True)",
+        str(tmp_path),
+    ]
+    with pytest.raises(RuntimeError, match="release on error"), writer_lock(tmp_path):
+        refused = subprocess.run(command, capture_output=True, text=True, timeout=10)
+        assert refused.returncode != 0
+        assert "another environment writer holds" in refused.stderr
+        raise RuntimeError("release on error")
+    assert (tmp_path / ".lock").is_file()
+    assert subprocess.run(command, capture_output=True, text=True, timeout=10).stdout == "locked\n"
+    holder = [*command]
+    holder[2] += "; sys.stdin.read()"
+    with subprocess.Popen(
+        holder, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
+    ) as process:
+        assert process.stdout is not None
+        assert process.stdout.readline() == "locked\n"
+        try:
+            refused = subprocess.run(command, capture_output=True, text=True, timeout=10)
+            assert refused.returncode != 0
+        finally:
+            process.kill()
+            process.wait(timeout=10)
+    assert subprocess.run(command, capture_output=True, text=True, timeout=10).stdout == "locked\n"
 
 
 def _generation(root: Path, number: int) -> Path:

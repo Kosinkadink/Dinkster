@@ -146,6 +146,7 @@ def test_status_rejects_malformed_record_without_mutating(tmp_path: Path) -> Non
 
 @pytest.mark.parametrize("live", [False, True])
 def test_unverified_supervisor_exit_does_not_prove_idle(tmp_path: Path, live: bool) -> None:
+    make_generation(tmp_path)
     with subprocess.Popen([sys.executable, "-c", "pass"]) as exited:
         assert exited.wait(timeout=10) == 0
     runtime = tmp_path / "runtime"
@@ -165,6 +166,8 @@ def test_unverified_supervisor_exit_does_not_prove_idle(tmp_path: Path, live: bo
     assert engine_status(tmp_path)[0]["state"] == "failed"
     with pytest.raises(EnvironmentError, match="cannot verify"):
         require_idle(tmp_path)
+    with pytest.raises(EnvironmentError, match="not safely reachable"):
+        start_engine(tmp_path, 1, "main", record["port"])
 
 
 def test_zero_pid_recovers_identity_for_authenticated_stop(tmp_path: Path) -> None:
