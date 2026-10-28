@@ -5959,43 +5959,23 @@ def test_values_endpoint_image_png_rendition() -> None:
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("type_id", ["LAYERS", "comfy.LAYERS"])
-def test_values_endpoint_layer_document_rendition(
-    type_id: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_values_endpoint_layer_document_rendition(monkeypatch: pytest.MonkeyPatch) -> None:
     import numpy as np
     from dinkster_graph import TypedLiteral
     from dinkster_image_document.document import ImageDocument
     from dinkster_image_document.format import IMAGE_DOCUMENT_MEDIA_TYPE
     from dinkster_nodes_image import AddLayer, register_image_types
 
-    from dinkster.comfy_compose import register_comfy_host_types
-
     pixels = np.array([[[[1, 0, 0, 1], [0, 1, 0, 0.5]]]], dtype=np.float32)
     expected = cast(ImageDocument, AddLayer.execute(image=pixels)["layers"]).data
 
-    class CompatLayers(Node):
-        @classmethod
-        def define_schema(cls) -> NodeSchema:
-            return NodeSchema(
-                node_type="test.compat_layers",
-                outputs=(OutputSpec("layers", TypeExpr.concrete("comfy.LAYERS")),),
-            )
-
-        @classmethod
-        def execute(cls) -> Mapping[str, object]:
-            return AddLayer.execute(image=pixels)
-
-    nodes: list[type[Node]] = [AddLayer] if type_id == "LAYERS" else [CompatLayers]
+    nodes: list[type[Node]] = [AddLayer]
     schemas = build_schemas(nodes)
 
     def factory(on_event: EventListener) -> Engine:
         registry = TypeRegistry()
         register_core_types(registry)
-        if type_id == "LAYERS":
-            register_image_types(registry)
-        else:
-            register_comfy_host_types(registry)
+        register_image_types(registry)
         return Engine(
             schemas=schemas,
             registry=registry,
@@ -6011,13 +5991,9 @@ def test_values_endpoint_layer_document_rendition(
         client = TestClient(TestServer(create_app(factory, schemas)))
         await client.start_server()
         try:
-            node = (
-                GraphNode(
-                    "dinkster.layers.add",
-                    {"image": TypedLiteral("IMAGE", pixels.tolist())},
-                )
-                if type_id == "LAYERS"
-                else GraphNode("test.compat_layers", {})
+            node = GraphNode(
+                "dinkster.layers.add",
+                {"image": TypedLiteral("IMAGE", pixels.tolist())},
             )
             await finish_job(client, Graph(nodes={"layers": node}), ["layers"])
             monkeypatch.setattr(ImageDocument, "render", forbid_raster)
@@ -6027,7 +6003,7 @@ def test_values_endpoint_layer_document_rendition(
             assert resp.status == 200
             data = await resp.json()
             assert data["available"] is True
-            assert data["descriptor"]["typeId"] == type_id
+            assert data["descriptor"]["typeId"] == "LAYERS"
             assert "value" not in data["descriptor"]
             renditions = [
                 {
@@ -6037,11 +6013,11 @@ def test_values_endpoint_layer_document_rendition(
                     "cacheKey": "image",
                 }
             ]
-            assert data["renditions"] == (renditions if type_id == "LAYERS" else []) + [
+            assert data["renditions"] == renditions + [
                 {
                     "kind": "document",
                     "mime": IMAGE_DOCUMENT_MEDIA_TYPE,
-                    "default": type_id == "comfy.LAYERS",
+                    "default": False,
                     "cacheKey": "document",
                 }
             ]
@@ -6049,7 +6025,7 @@ def test_values_endpoint_layer_document_rendition(
             resp = await client.get(url + "&rendition=document")
             assert resp.status == 200
             assert resp.headers["Content-Type"] == IMAGE_DOCUMENT_MEDIA_TYPE
-            assert resp.headers["X-Dinkster-Type-Id"] == type_id
+            assert resp.headers["X-Dinkster-Type-Id"] == "LAYERS"
             assert resp.headers["X-Dinkster-Rendition"] == "document"
             fingerprint = data["descriptor"]["fingerprint"]
             assert resp.headers["X-Dinkster-Fingerprint"] == fingerprint
@@ -6068,26 +6044,20 @@ def test_values_endpoint_layer_document_rendition(
     asyncio.run(scenario())
 
 
-def test_values_endpoint_comfy_image_png_rendition() -> None:
-    """The compat host registration at the endpoint: a comfy.IMAGE value
-    (numpy BHWC floats - exactly the form the compat npy codec decodes to
-    host-side) DECLARES the png rendition on peek and serves valid PNG
-    bytes of the first batch element. This is the contract the frontend
-    negotiates against; it never hardcodes png."""
+def test_values_endpoint_native_image_png_rendition() -> None:
+    """The native host declares PNG and serves the first image batch element."""
     import struct
 
     import numpy as np
+    from dinkster_nodes_media_io import register_media_types
+    from dinkster_values import IMAGE_TYPE
 
-    from dinkster.comfy_compose import COMFY_IMAGE_TYPE, register_comfy_host_types
-
-    class CompatImage(Node):
-        """Stands in for the compat worker: emits the host runtime form."""
-
+    class NativeImage(Node):
         @classmethod
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
-                node_type="test.compat_image",
-                outputs=(OutputSpec("image", TypeExpr.concrete(COMFY_IMAGE_TYPE)),),
+                node_type="test.native_image",
+                outputs=(OutputSpec("image", TypeExpr.concrete(IMAGE_TYPE)),),
             )
 
         @classmethod
@@ -6095,13 +6065,13 @@ def test_values_endpoint_comfy_image_png_rendition() -> None:
             batch = np.linspace(0.0, 1.0, 2 * 4 * 3 * 3, dtype=np.float32)
             return cls.outputs(image=batch.reshape(2, 4, 3, 3))
 
-    nodes: list[type[Node]] = [CompatImage]
+    nodes: list[type[Node]] = [NativeImage]
     schemas = build_schemas(nodes)
 
     def factory(on_event: EventListener) -> Engine:
         registry = TypeRegistry()
         register_core_types(registry)
-        register_comfy_host_types(registry)
+        register_media_types(registry)
         return Engine(
             schemas=schemas,
             registry=registry,
@@ -6115,14 +6085,14 @@ def test_values_endpoint_comfy_image_png_rendition() -> None:
         client = TestClient(TestServer(app))
         await client.start_server()
         try:
-            graph = Graph(nodes={"i": GraphNode("test.compat_image", {})})
+            graph = Graph(nodes={"i": GraphNode("test.native_image", {})})
             await finish_job(client, graph, ["i"])
             url = values_url("i", output_id="image")
 
             resp = await client.get(url)
             data = await resp.json()
             assert data["available"] is True
-            assert data["descriptor"]["typeId"] == COMFY_IMAGE_TYPE
+            assert data["descriptor"]["typeId"] == IMAGE_TYPE
             assert "value" not in data["descriptor"]  # tensors never inline
             assert data["renditions"] == [
                 {
@@ -6136,7 +6106,7 @@ def test_values_endpoint_comfy_image_png_rendition() -> None:
             resp = await client.get(url + "&rendition=png")
             assert resp.status == 200
             assert resp.headers["Content-Type"] == "image/png"
-            assert resp.headers["X-Dinkster-Type-Id"] == COMFY_IMAGE_TYPE
+            assert resp.headers["X-Dinkster-Type-Id"] == IMAGE_TYPE
             body = await resp.read()
             assert body[:8] == b"\x89PNG\r\n\x1a\n"
             # IHDR carries the FIRST batch element's dimensions (H=4, W=3).
@@ -6151,9 +6121,8 @@ def test_values_endpoint_comfy_image_png_rendition() -> None:
 def test_values_endpoint_omits_original_rendition_for_component_video() -> None:
     import numpy as np
     from dinkster_api.v1 import VIDEO_TYPE
+    from dinkster_nodes_media_io import register_media_types
     from dinkster_nodes_media_io.video_ops import AssembleVideo
-
-    from dinkster.comfy_compose import register_comfy_host_types
 
     class ComponentVideo(Node):
         @classmethod
@@ -6174,7 +6143,7 @@ def test_values_endpoint_omits_original_rendition_for_component_video() -> None:
     def factory(on_event: EventListener) -> Engine:
         registry = TypeRegistry()
         register_core_types(registry)
-        register_comfy_host_types(registry)
+        register_media_types(registry)
         return Engine(
             schemas=schemas,
             registry=registry,
@@ -6215,8 +6184,8 @@ def test_values_endpoint_av_renditions_share_discovery_and_response_mime(
 
     import numpy as np
     from dinkster_api.v1 import AUDIO_TYPE, VIDEO_TYPE
+    from dinkster_nodes_media_io import register_media_types
 
-    from dinkster.comfy_compose import register_comfy_host_types
     from tests.test_video_probe import _encode
 
     mp4 = _encode("mp4", "libx264", "yuv420p")
@@ -6247,7 +6216,7 @@ def test_values_endpoint_av_renditions_share_discovery_and_response_mime(
     schemas = build_schemas(nodes)
     expected_registry = TypeRegistry()
     register_core_types(expected_registry)
-    register_comfy_host_types(expected_registry)
+    register_media_types(expected_registry)
     expected_fingerprints = {
         "audio": expected_registry.wrap(
             AUDIO_TYPE, {"waveform": waveform, "sample_rate": 8_000}
@@ -6261,7 +6230,7 @@ def test_values_endpoint_av_renditions_share_discovery_and_response_mime(
     def factory(on_event: EventListener) -> Engine:
         registry = TypeRegistry()
         register_core_types(registry)
-        register_comfy_host_types(registry)
+        register_media_types(registry)
         return Engine(
             schemas=schemas,
             registry=registry,
@@ -6404,14 +6373,11 @@ def test_values_endpoint_av_renditions_share_discovery_and_response_mime(
     asyncio.run(scenario())
 
 
-def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
+def test_native_save_target_reaches_execution_with_default_and_explicit_value(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The compat host registry must wrap the SAVE_TARGET literal before a
-    job reaches its worker. This is the no-ComfyUI regression for the real
-    dinkster.save_image input contract: both its advertised default and an
-    explicit graph value arrive as validated SaveTarget values and produce
-    digest-addressed asset receipts."""
+    """Save-target literals and computed prefixes reach native workers as
+    validated values before saving digest-addressed assets."""
     from dinkster_assets import (
         ASSET_TYPE,
         SAVE_TARGET_TYPE,
@@ -6423,8 +6389,6 @@ def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
     )
     from dinkster_nodes_foundation import StringPrimitive
     from dinkster_nodes_media_io import SetSaveTargetPrefix, register_media_types
-
-    from dinkster.comfy_compose import register_comfy_host_types
 
     output_root = tmp_path / "output"
     output_root.mkdir()
@@ -6447,7 +6411,7 @@ def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
 
     save_target = TypeExpr.concrete(SAVE_TARGET_TYPE)
 
-    class CompatSave(Node):
+    class NativeSave(Node):
         seen: list[SaveTarget] = []
 
         @classmethod
@@ -6480,14 +6444,13 @@ def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
             cls.seen.append(target)
             return cls.outputs(receipt=receipt)
 
-    nodes: list[type[Node]] = [StringPrimitive, SetSaveTargetPrefix, CompatSave]
+    nodes: list[type[Node]] = [StringPrimitive, SetSaveTargetPrefix, NativeSave]
     schemas = build_schemas(nodes)
 
     def factory(on_event: EventListener) -> Engine:
         registry = TypeRegistry()
         register_core_types(registry)
         register_media_types(registry)
-        register_comfy_host_types(registry)
         return Engine(
             schemas=schemas,
             registry=registry,
@@ -6624,7 +6587,7 @@ def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
             assert revoked_status["state"] == "failed"
             assert "no ready mount 'comfy-output'" in json.dumps(revoked_status)
 
-            assert CompatSave.seen == [
+            assert NativeSave.seen == [
                 SaveTarget(mount="comfy-output", prefix="ComfyUI"),
                 SaveTarget(**explicit),
                 SaveTarget(mount="comfy-output", prefix="computed/live-scene"),

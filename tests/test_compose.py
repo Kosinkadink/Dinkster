@@ -100,15 +100,14 @@ def isolated_full_free_pool(monkeypatch: pytest.MonkeyPatch) -> ResidentPool:
     return pool
 
 
-def test_lazy_media_pack_resolves_assets_after_compat_host_registration(
+def test_lazy_media_pack_resolves_assets_after_native_host_registration(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import io
 
     import numpy as np
+    from dinkster_nodes_media_io import register_media_types
     from PIL import Image
-
-    from dinkster.comfy_compose import register_comfy_host_types
 
     pixels = np.zeros((3, 5, 3), dtype=np.uint8)
     pixels[..., 1] = 255
@@ -131,7 +130,7 @@ def test_lazy_media_pack_resolves_assets_after_compat_host_registration(
             media = replace(default_pack_spec("dinkster-nodes-media-io"), require_catalog=True)
             assert prepare_catalog(media.manifest, environment=os.environ).ok
             await composer.add_pack(media)
-            register_comfy_host_types(composer.composition._registry)
+            register_media_types(composer.composition._registry)
 
             engine = composer.composition.make_engine(lambda _event: None)
             result = await engine.run(
@@ -3402,15 +3401,14 @@ def test_comfy_compat_specs_shapes(tmp_path: Path, monkeypatch: pytest.MonkeyPat
         comfy_compat_specs(root, legacy_packs=[tmp_path / "missing"])
 
 
-def test_comfy_host_types_register_save_target_runtime_values() -> None:
+def test_native_host_types_register_save_target_runtime_values() -> None:
     from dinkster_assets import SAVE_TARGET_TYPE, AssetError, SaveTarget
+    from dinkster_nodes_media_io import register_media_types
     from dinkster_values import TypeRegistry
 
-    from dinkster.comfy_compose import register_comfy_host_types
-
     registry = TypeRegistry()
-    register_comfy_host_types(registry)
-    register_comfy_host_types(registry)  # both compat PackSpecs share the hook
+    register_media_types(registry)
+    register_media_types(registry)
 
     explicit = {"mount": "comfy-output", "prefix": "renders/scene"}
     wrapped = registry.wrap(SAVE_TARGET_TYPE, explicit)
