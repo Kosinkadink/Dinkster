@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -12,14 +13,53 @@ from pathlib import Path
 import pytest
 import yaml
 
-from scripts.build_release import build_source_archive, release_version, workspace_projects
+from scripts.build_release import (
+    build_frontend_wheel,
+    build_source_archive,
+    release_version,
+    workspace_projects,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_built_frontend_wheel_is_discovered_without_a_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "frontend-source"
+    source.mkdir()
+    (source / "package.json").write_text('{"version": "0.0.1"}')
+    bundle = source / "packages/app/dist"
+    bundle.mkdir(parents=True)
+    (bundle / "index.html").write_text('<!doctype html><div id="root"></div>')
+    monkeypatch.setattr("scripts.build_release.git_head", lambda _: "frontend-commit")
+    uv = shutil.which("uv")
+    assert uv is not None, "release packaging requires uv"
+    wheel = build_frontend_wheel(source, bundle, "0.0.1", "frontend-commit", tmp_path, uv)
+    installed = tmp_path / "site-packages"
+    with zipfile.ZipFile(wheel) as archive:
+        archive.extractall(installed)
+    shutil.rmtree(source)
+    discovered = subprocess.check_output(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            f"import sys; sys.path[:0] = {[str(installed), str(ROOT / 'src')]!r}; "
+            "from dinkster import frontend; "
+            f"frontend.__file__ = {str(tmp_path / 'engine/src/dinkster/frontend.py')!r}; "
+            "print(frontend.discover_frontend_bundle())",
+        ],
+        cwd=tmp_path,
+        text=True,
+    ).strip()
+    assert discovered == str(installed / "dinkster_frontend/static")
+
+
 def test_release_workflow_validates_tag_before_building_and_publishing() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
-    assert workflow[True] == {"push": {"tags": ["v*.*.*"]}}
+    assert workflow[True]["push"] == {"tags": ["v*.*.*"]}
+    assert "src/dinkster/frontend.py" in workflow[True]["pull_request"]["paths"]
     assert set(workflow["jobs"]) == {"validation", "build", "install", "release"}
     assert workflow["jobs"]["validation"] == {
         "uses": "./.github/workflows/ci.yml",
@@ -27,6 +67,9 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert workflow["jobs"]["build"]["needs"] == "validation"
     assert workflow["jobs"]["install"]["needs"] == "build"
     assert workflow["jobs"]["release"]["needs"] == "install"
+    assert workflow["jobs"]["release"]["if"] == (
+        "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
+    )
     assert workflow["jobs"]["release"]["permissions"] == {"contents": "write"}
     preflight = workflow["jobs"]["release"]["steps"][-2]
     assert preflight["uses"] == "actions/github-script@v7"
@@ -47,7 +90,7 @@ def test_release_workflow_builds_all_wheels_and_checks_tag_metadata() -> None:
     build = workflow["jobs"]["build"]
     commands = "\n".join(step.get("run", "") for step in build["steps"])
     assert "scripts/build_release.py" in commands
-    assert '--tag "$GITHUB_REF_NAME"' in commands
+    assert '--tag "$RELEASE_TAG"' in commands
     assert "--identity-root" not in commands
     assert "uvx twine check dist/*.whl" in commands
     assert "pnpm --filter @dinkster/app build" in commands
@@ -129,6 +172,7 @@ def test_release_install_launches_without_private_registry_inputs() -> None:
         step for step in steps if step.get("name") == "Install and launch from wheels"
     )
     assert "scripts/verify_release_install.py" in wheel_install["run"]
+    assert "--require-frontend" in wheel_install["run"]
     assert "--registry-command" not in wheel_install["run"]
 
 
@@ -141,6 +185,27 @@ def test_independent_release_launch_serves_composition_and_nodes(tmp_path: Path)
     verify_launch(state, Path(sys.executable))
     assert json.loads((state / "nodes.json").read_text())["nodes"] == {}
     assert (state / "composition.json").is_file()
+
+
+@pytest.mark.parametrize("has_root", [True, False])
+def test_release_http_check_requires_the_application_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, has_root: bool
+) -> None:
+    from scripts.verify_release_install import verify_launch
+
+    module = tmp_path / "dinkster_frontend"
+    (module / "static").mkdir(parents=True)
+    (module / "__init__.py").touch()
+    document = '<html><div id="root"></div></html>' if has_root else "<html>Error</html>"
+    (module / "static/index.html").write_text(document)
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path))
+    state = tmp_path / "release"
+    if has_root:
+        verify_launch(state, Path(sys.executable), require_frontend=True)
+        assert (state / "index.html").read_text() == document
+    else:
+        with pytest.raises(AssertionError, match="application root"):
+            verify_launch(state, Path(sys.executable), require_frontend=True)
 
 
 def test_release_failure_prints_service_and_publication_log_tails(
