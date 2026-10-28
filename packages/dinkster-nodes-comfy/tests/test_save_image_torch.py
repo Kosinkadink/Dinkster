@@ -860,3 +860,152 @@ def test_advanced_image_exports_use_native_manifest_twice(
         with av.open(str(exr)) as container:
             pixels = next(container.decode(video=0)).to_ndarray(format="gbrapf32le")
             np.testing.assert_array_equal(pixels, raw[index])
+
+
+class _AdvancedAVIFHostSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "advanced-avif-fixture.source",
+            outputs=(OutputSpec("images", TypeExpr.concrete(IMAGE_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls):
+        pixels = torch.tensor([[0.75, 0.125, 0.25], [0.125, 0.25, 0.625]])
+        return cls.outputs(images=pixels[:, None, None, :].expand(2, 64, 64, 3).contiguous())
+
+
+class _AdvancedAVIFHostInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "advanced-avif-fixture.inspect",
+            inputs=(InputSpec("images", TypeExpr.concrete(IMAGE_TYPE)),),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, images):
+        pixels = materialize_image(images)
+        expected = torch.tensor([[0.75, 0.125, 0.25], [0.125, 0.25, 0.625]])
+        torch.testing.assert_close(
+            pixels, expected[:, None, None, :].expand(2, 64, 64, 3), rtol=0, atol=0
+        )
+        return cls.outputs(summary="AVIF exports preserve source pixels")
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("mode", ("still images", "animated"))
+def test_advanced_avif_exports_use_nested_variants_through_native_hosts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, mode: str
+) -> None:
+    from fractions import Fraction
+
+    import av
+
+    output, alternate = tmp_path / "output", tmp_path / "alternate"
+    output.mkdir()
+    alternate.mkdir()
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot, index_root=tmp_path / "index")
+    for name, root in (("output", output), ("alternate", alternate)):
+        table.add(MountDef(name, root, mode="readwrite"))
+        table.scan(name)
+    table.select_output_mount("output")
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+
+    async def scenario():
+        native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+        module = f"advanced_avif_host_fixture_{tmp_path.name.replace('-', '_')}"
+        (tmp_path / f"{module}.py").write_text(
+            "from test_save_image_torch import _AdvancedAVIFHostSource, _AdvancedAVIFHostInspect\n"
+            "from dinkster_nodes_comfy import register_inference_types\n"
+            "NODES = (_AdvancedAVIFHostSource, _AdvancedAVIFHostInspect)\n",
+            encoding="ascii",
+        )
+        fixture = tmp_path / "dinkster-pack.toml"
+        fixture.write_text(
+            '[pack]\nname="advanced-avif-fixture"\npublisher="dinkster"\n'
+            'namespaces=["advanced-avif-fixture"]\n[pack.entry]\n'
+            f'nodes="{module}:NODES"\ntypes="{module}:register_inference_types"\n',
+            encoding="ascii",
+        )
+        paths = (str(tmp_path), str(Path(__file__).parent), *(p for p in sys.path if p))
+        composer = ServingComposer(
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
+                "PYTHONPATH": os.pathsep.join(paths),
+            }
+        )
+        try:
+            manifests = (native, fixture)
+            for manifest in manifests:
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=manifest,
+                        in_process=in_process,
+                        worker_group=None if in_process else "advanced-avif-fixture",
+                        group_manifests=() if in_process else manifests,
+                    )
+                )
+            options = {
+                "images": Link("source", "images"),
+                "filename_prefix": "movie",
+                "mount": "alternate",
+                "format.bit_depth": "auto",
+                "format.input_color_space": "HDR",
+                "format.crf": 13,
+            }
+            if mode == "animated":
+                options.update({"format.save_mode.fps": 11.0, "format.save_mode.loop_count": 1})
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("advanced-avif-fixture.source"),
+                    "save": GraphNode(
+                        "SaveImageAdvanced",
+                        options,
+                        slot_variants={"format": "avif", "format.save_mode": mode},
+                    ),
+                    "inspect": GraphNode(
+                        "advanced-avif-fixture.inspect", {"images": Link("save", "images")}
+                    ),
+                }
+            )
+            engine = composer.composition.make_engine(lambda _event: None)
+            for attempt in range(2):
+                result = await engine.run(graph, ["inspect"])
+                assert result.outputs["inspect"]["summary"].resolve() == (
+                    "AVIF exports preserve source pixels"
+                )
+                if attempt:
+                    assert "source" in result.cached
+                    assert "save" not in result.cached
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+    files = sorted(alternate.glob("*.avif"))
+    assert len(files) == (2 if mode == "animated" else 4)
+    assert not list(output.rglob("*.avif"))
+    colors = []
+    for counter, path in enumerate(files, 1):
+        assert path.name == f"movie_{counter:05d}.avif"
+        with av.open(str(path)) as container:
+            track = 1 if mode == "animated" else 0
+            stream = container.streams.video[track]
+            assert stream.codec_context.color_primaries == 9
+            assert stream.codec_context.color_trc == 18
+            frames = list(container.decode(video=track))
+            assert len(frames) == (2 if mode == "animated" else 1)
+            if mode == "animated":
+                assert frames[1].pts * stream.time_base == Fraction(1, 11)
+            for frame in frames:
+                assert (frame.width, frame.height) == (64, 64)
+                assert frame.format.name == "yuv420p10le"
+                colors.append(frame.to_ndarray(format="rgb24").mean(axis=(0, 1)))
+    for red, blue in zip(colors[::2], colors[1::2], strict=True):
+        assert red[0] > max(red[1], red[2])
+        assert blue[2] > max(blue[0], blue[1])
