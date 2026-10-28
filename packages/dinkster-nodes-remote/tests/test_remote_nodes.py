@@ -36,7 +36,7 @@ from dinkster_nodes_remote.runtime import (
 )
 from dinkster_schema import use_reporter
 from dinkster_workers import ExecutionContext, use_execution_context
-from dinkster_workers.boundary import write_frame
+from dinkster_workers.boundary import PROTOCOL_VERSION, write_frame
 
 IMAGE = TypeExpr.asset_of(TypeExpr.concrete("IMAGE"))
 STRING = TypeExpr.concrete("STRING")
@@ -877,6 +877,7 @@ async def schema_reload_peer(
         peer_writer.set_result(writer)
         header: dict[str, object] = {
             "type": "hello",
+            "protocol": PROTOCOL_VERSION,
             "pack": "remote-test",
             "workerInstance": "instance-1",
             "schemas": {},

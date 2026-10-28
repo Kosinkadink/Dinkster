@@ -106,6 +106,8 @@
   one optional complete AUDIO soundtrack. Later trims select the matching
   soundtrack window; explicit audio replaces nested inherited soundtracks
   in both playback and serialized identity.
+  Native Concatenate Video accepts one to 100 ordered VIDEO list family
+  members with an advanced codec choice and optional complete AUDIO soundtrack.
   Decoded source trims select half-open stream-tick windows while retaining
   rational timeline bounds and independent audio sample windows.
   Encoded sources can be MP4, MKV, MOV, WebM, AVI, or GIF. Source-copy saves
@@ -140,7 +142,9 @@
   nonblocking value diagnostics, including isolated-worker execution
 - Asset-backed native audio loading to AUDIO (first audio stream of audio or
   video containers), including audio-only Opus/Vorbis WebM and AAC M4A uploads
-  classified from their track metadata; silent-audio construction with declared
+  classified from their track metadata; Record Audio decodes a canonical recorded
+  file identity to AUDIO through ordinary in-process and isolated hosts;
+  silent-audio construction with declared
   duration, sample rate, and channel count; and typed audio preview. Value discovery
   advertises versioned waveform PNG and bounded WAV window renditions with
   explicit batch selection, normalized selectors in cache identity, and
@@ -200,6 +204,10 @@
   the existing custom-sampling path, without ordinary KSampler noise scaling.
   Controlled CPU schedules cover the numerical contract, not real-model or
   GPU output parity.
+- Native VOID quadmask quantization and spatial dilation, inpainting
+  conditioning with even temporal latent lengths, and precomputed warped
+  noise sources. Controlled CPU encoders cover mask/video conditioning and
+  source preservation; real-model and GPU output parity are not certified.
 - Native Create Video assembles IMAGE frames, rational frame rate and optional
   AUDIO as a VIDEO, retaining component storage until explicit encoding.
   Bit depth and sRGB/HLG/PQ color choices are retained; optional immediate
