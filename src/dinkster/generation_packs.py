@@ -2,16 +2,26 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
+import sys
 import tempfile
+import zipfile
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
 
-from dinkster_registry import LockedPack, Lockfile, build_artifact, unpack_artifact
+from dinkster_registry import (
+    ArtifactError,
+    InstallError,
+    LockedPack,
+    Lockfile,
+    build_artifact,
+    unpack_artifact,
+)
 from dinkster_schema import canonical_claim, canonical_name
-from dinkster_workers import PackManifest, load_manifest
+from dinkster_workers import ManifestError, PackManifest, load_manifest
 
 from .compose import CompositionError, PackSpec
 from .packs import pack_info_from_manifest
@@ -106,3 +116,48 @@ def generation_pack_specs(generation: Path) -> tuple[PackSpec, ...]:
             )
         )
     return tuple(specs)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--generation", type=Path, required=True)
+    parser.add_argument("--catalog-lock", type=Path, required=True)
+    parser.add_argument("--artifacts", type=Path, required=True)
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args()
+    packs: list[str] = []
+    errors: list[str] = []
+    try:
+        if not all(
+            path.is_absolute() for path in (args.generation, args.catalog_lock, args.artifacts)
+        ):
+            raise CompositionError(
+                "--generation, --catalog-lock and --artifacts require absolute paths"
+            )
+        lock = Lockfile.from_record_json(args.catalog_lock.read_text(encoding="utf-8"))
+        artifacts = {
+            entry.pack: args.artifacts / f"{entry.artifact_digest.removeprefix('blake3:')}.zip"
+            for entry in lock.packs
+        }
+        stage_generation_packs(args.generation, lock, artifacts)
+        packs = [entry.pack for entry in lock.packs]
+    except (
+        ArtifactError,
+        CompositionError,
+        InstallError,
+        ManifestError,
+        OSError,
+        ValueError,
+        zipfile.BadZipFile,
+    ) as exc:
+        errors.append(str(exc))
+        print(str(exc), file=sys.stderr)
+    if args.json:
+        print(json.dumps({"packs": packs, "errors": errors}))
+    elif packs:
+        print("\n".join(packs))
+    return int(bool(errors))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
