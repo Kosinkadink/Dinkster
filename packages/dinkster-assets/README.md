@@ -156,6 +156,14 @@ writable/project grant, repairs digest indexing, and never creates missing bytes
 Unavailable, changed or revoked locations retain their journal for a later retry.
 The catalog cannot turn that journal into filesystem authority.
 
+Consented job acquisition uses the same journal for the verified winning
+source before vault publication. Download observations retain only a sanitized
+URL; packaged acquisitions record unknown origin rather than inventing a URL.
+The request's scope and project own the observation, not the global vault.
+Metadata preparation failures abort publication with `AssetPublicationError`
+and do not try another mirror. A catalog failure after publication retains the
+journal for verified, idempotent recovery at startup or catalog access.
+
 From the repository root:
 
 ```sh

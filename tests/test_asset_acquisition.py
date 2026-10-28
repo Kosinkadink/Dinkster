@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 import struct
 from collections.abc import Mapping
 from dataclasses import replace
@@ -1021,6 +1022,77 @@ def test_submit_with_consent_acquires_and_runs(tmp_path: Path) -> None:
             # Success recorded the lead for future machines.
             assert library.provenance is not None
             assert url in library.provenance.sources(MODEL_DIGEST)
+        finally:
+            await client.close()
+            await host.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("failure", ["none", "journal", "catalog"])
+def test_acquisition_catalog_records_verified_source_and_recovers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    async def scenario() -> None:
+        hits: list[str] = []
+        host = TestServer(
+            make_asset_host({"bad": b"wrong", "good": MODEL_BYTES, "unused": MODEL_BYTES}, hits)
+        )
+        await host.start_server()
+        client, library = await make_asset_client(tmp_path)
+        try:
+            bad = str(host.make_url("/files/bad"))
+            good = str(host.make_url("/files/good"))
+            unused = str(host.make_url("/files/unused"))
+            journal_folder = library.vault.root / ".upload-observations"
+            if failure == "journal":
+                journal_folder.write_bytes(b"not a directory")
+            body = submit_body(
+                asset_graph(name="models/original.bin"),
+                project="film",
+                assetSources={MODEL_DIGEST: [bad, good + "?private=not-persisted", unused]},
+                acquireAssets=[MODEL_DIGEST],
+            )
+
+            def unavailable(*args: object, **kwargs: object) -> None:
+                raise sqlite3.OperationalError("catalog unavailable")
+
+            with monkeypatch.context() as patch:
+                if failure == "catalog":
+                    patch.setattr(LibraryStore, "record_asset", unavailable)
+                response = await client.post("/api/jobs", json=body)
+            assert response.status == (202 if failure == "none" else 409), await response.text()
+            assert hits == ["bad", "good"]
+            if failure == "journal":
+                assert library.vault.resolve(MODEL_DIGEST) is None
+                journal_folder.unlink()
+            else:
+                path = library.vault.resolve(MODEL_DIGEST)
+                assert path is not None and path.read_bytes() == MODEL_BYTES
+                assert len(list(journal_folder.glob("*.json"))) == (failure == "catalog")
+                if failure == "catalog":
+                    journal_text = next(journal_folder.glob("*.json")).read_text()
+                    assert "private" not in journal_text
+                    assert "not-persisted" not in journal_text
+            await client.close()
+            client, library = await make_asset_client(tmp_path)
+            result = await (await client.get("/api/assets/catalog?scope=local&project=film")).json()
+            if failure == "journal":
+                assert result["assets"] == []
+            else:
+                assert len(result["assets"]) == 1
+                asset = result["assets"][0]
+                assert asset["asset"]["digest"] == MODEL_DIGEST
+                assert len(asset["observations"]) == 1
+                observation = asset["observations"][0]
+                assert observation["originalName"] == "original.bin"
+                assert observation["origin"] == {"kind": "download", "url": good}
+                assert observation["asset"]["size"] == len(MODEL_BYTES)
+                assert not list(journal_folder.glob("*.json"))
+            assert (await (await client.get("/api/assets/catalog?scope=local")).json())[
+                "assets"
+            ] == []
+            assert hits == ["bad", "good"]
         finally:
             await client.close()
             await host.close()

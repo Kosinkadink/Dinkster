@@ -72,16 +72,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, BinaryIO, TypeVar, cast
+from urllib.parse import urlsplit, urlunsplit
 
 from aiohttp import web
 from dinkster_assets import (
     LATENT_ASSET_KIND,
     LATENT_MEDIA_TYPE,
     MAX_LATENT_DATA_BYTES,
+    AcquisitionResult,
     AssetError,
     AssetIntegrityError,
+    AssetNeed,
     AssetRef,
     AssetResolver,
+    AssetSource,
     AssetVault,
     AssetWriter,
     LibraryStore,
@@ -94,6 +98,7 @@ from dinkster_assets import (
     RemoteSource,
     SaveTarget,
     StaleRevision,
+    acquire_need,
     classify_media_file,
     digest_bytes,
     is_digest,
@@ -693,9 +698,6 @@ async def _ingest_file_upload(
         journal = library.vault.root / ".upload-observations" / f"{observation_id}.json"
 
         def prepare(ref: AssetRef) -> None:
-            journal.parent.mkdir(exist_ok=True)
-            if journal.parent.is_symlink():
-                raise AssetError("upload recovery directory must not be a symlink")
             payload = {
                 "scope": scope,
                 "asset": ref.to_wire(),
@@ -705,15 +707,7 @@ async def _ingest_file_upload(
                 "project": project,
                 "created": created_at,
             }
-            temporary_journal = journal.with_suffix(".tmp")
-            try:
-                with temporary_journal.open("x", encoding="utf-8") as handle:
-                    json.dump(payload, handle)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                temporary_journal.replace(journal)
-            finally:
-                temporary_journal.unlink(missing_ok=True)
+            _write_asset_observation_journal(journal, payload)
 
         def publish() -> tuple[AssetRef, bool]:
             try:
@@ -823,11 +817,82 @@ async def run_media_publication(
             library.media_ingest_lock.release()
 
 
-def _recover_upload_observations(library: ServerLibrary) -> None:
+def _write_asset_observation_journal(journal: Path, payload: Mapping[str, object]) -> None:
+    journal.parent.mkdir(exist_ok=True)
+    if journal.parent.is_symlink():
+        raise AssetError("asset recovery directory must not be a symlink")
+    temporary = journal.with_suffix(".tmp")
+    try:
+        with temporary.open("x", encoding="utf-8") as handle:
+            json.dump(dict(payload), handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(journal)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def acquire_library_asset(
+    library: ServerLibrary, need: AssetNeed, *, scope: str, project: str
+) -> AcquisitionResult:
+    """Journal the verified winning source before acquisition publishes bytes."""
+    observation_id = uuid.uuid4().hex
+    journal = library.vault.root / ".upload-observations" / f"{observation_id}.json"
+
+    def prepare(source: AssetSource, size: int) -> None:
+        origin = {"kind": "unknown"}
+        if isinstance(source, RemoteSource):
+            url = urlsplit(source.url)
+            origin = {
+                "kind": "download",
+                "url": urlunsplit((url.scheme, url.netloc.rsplit("@", 1)[-1], url.path, "", "")),
+            }
+        name = need.name.replace("\\", "/").rsplit("/", 1)[-1]
+        if not name or name in {".", ".."}:
+            name = need.digest.split(":", 1)[1]
+        ref = AssetRef(need.digest, name, size, need.media_type, "")
+        _write_asset_observation_journal(
+            journal,
+            {
+                "scope": scope,
+                "asset": ref.to_wire(),
+                "originalName": name,
+                "kind": need.kind or "asset/file",
+                "extension": None,
+                "project": project,
+                "created": time.time(),
+                "origin": origin,
+            },
+        )
+
+    result = acquire_need(
+        need,
+        library.vault,
+        resolver=library.resolver,
+        pack_roots=library.pack_assets.pack_roots() if library.pack_assets is not None else {},
+        provenance=library.provenance,
+        public_sources=(
+            library.public_sources_for(need.digest)
+            if library.public_sources_for is not None
+            else ()
+        ),
+        receipts=library.receipts,
+        before_publish=prepare,
+    )
+    if result.ok and journal.exists():
+        _recover_upload_observations(library, journals=(journal,))
+        if journal.exists():
+            raise OSError("acquired asset catalog is unavailable")
+    return result
+
+
+def _recover_upload_observations(
+    library: ServerLibrary, *, journals: Sequence[Path] | None = None
+) -> None:
     folder = library.vault.root / ".upload-observations"
     if folder.is_symlink():
         return
-    for journal in folder.glob("*.json"):
+    for journal in journals if journals is not None else folder.glob("*.json"):
         if journal.is_symlink():
             continue
         try:
@@ -871,7 +936,7 @@ def _recover_upload_observations(library: ServerLibrary) -> None:
                 ref,
                 original_name=payload["originalName"],
                 kind=payload["kind"],
-                origin={"kind": "upload"},
+                origin=payload.get("origin", {"kind": "upload"}),
                 project=project,
                 observation_id=journal.stem,
                 created=payload["created"],

@@ -21,8 +21,9 @@ the next machine that consults it.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Literal
 
@@ -36,7 +37,7 @@ from .fetch import (
 )
 from .identity import AssetError
 from .model import AssetResolver
-from .need import AssetNeed, PackagedSource, RemoteSource
+from .need import AssetNeed, AssetSource, PackagedSource, RemoteSource
 from .provenance import ProvenanceRecord, ProvenanceStore
 from .public_acquisition import PublicAcquisitionReceiptStore, PublicAcquisitionSourceV1
 from .vault import AssetVault
@@ -86,6 +87,7 @@ def acquire_need(
     public_sources: Sequence[PublicAcquisitionSourceV1] = (),
     receipts: PublicAcquisitionReceiptStore | None = None,
     timeout: float = DEFAULT_FETCH_TIMEOUT,
+    before_publish: Callable[[AssetSource, int], None] | None = None,
 ) -> AcquisitionResult:
     """Materialize one need, verified, in cost order.
 
@@ -95,7 +97,9 @@ def acquire_need(
     3. Remote: the need's URLs plus any ``provenance`` leads for the
        digest, via ``fetch_asset`` (verified the same way).
 
-    Success from a non-local source records the winning provenance."""
+    Success from a non-local source records the winning provenance.
+    ``before_publish`` observes only a source whose bytes verified; a
+    metadata failure aborts publication rather than trying another source."""
     if not need.digest:
         return AcquisitionResult(
             need,
@@ -125,7 +129,11 @@ def acquire_need(
             with file.open("rb") as handle, vault.writer(need.digest) as writer:
                 while chunk := handle.read(_COPY_CHUNK_SIZE):
                     writer.write(chunk)
-                path = writer.commit()
+                path = writer.commit(
+                    before_publish=(
+                        partial(before_publish, source) if before_publish is not None else None
+                    )
+                )
         except (OSError, AssetError) as exc:
             failures.append(f"packaged {source.pack}:{source.path}: {exc}")
             continue
@@ -155,6 +163,11 @@ def acquire_need(
                             source.size_bytes,
                             vault,
                             timeout=timeout,
+                            before_publish=(
+                                partial(before_publish, RemoteSource(url))
+                                if before_publish is not None
+                                else None
+                            ),
                         )
                     except FetchAborted:
                         raise
@@ -171,7 +184,17 @@ def acquire_need(
                                 pass
                     _record_provenance(need, provenance)
                     return AcquisitionResult(need, "acquired", path=fetched.path)
-        path = fetch_asset(need.digest, urls, vault, timeout=timeout)
+        path = fetch_asset(
+            need.digest,
+            urls,
+            vault,
+            timeout=timeout,
+            before_publish=(
+                (lambda url, size: before_publish(RemoteSource(url), size))
+                if before_publish is not None
+                else None
+            ),
+        )
         if path is not None:
             _record_provenance(need, provenance)
             return AcquisitionResult(need, "acquired", path=path)

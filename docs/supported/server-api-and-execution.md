@@ -94,6 +94,9 @@
 - Asset acquisition checks the local vault and mounted files before packaged
   assets and HTTP sources. Remote bytes verify against the requested digest
   before publication, and job acquisition requires explicit consent.
+  Newly acquired assets retain a discoverable name and sanitized winning
+  download URL in the submitting scope and project. Interrupted catalog
+  publication recovers verified vault bytes without downloading again.
 - Durable job queue when history is configured: accepted jobs are recorded
   before acknowledgment, and jobs lost to a server crash or restart appear
   in history as "interrupted" (distinguishing never-started from

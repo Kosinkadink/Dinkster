@@ -3550,6 +3550,8 @@ async def handle_submit(request: web.Request) -> web.Response:
                     referenced,
                     consented,
                     hinted_sources,
+                    scope=scope,
+                    project=project,
                 )
         if (
             execution.preflight_provider_assets is not None
