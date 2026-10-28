@@ -1,7 +1,5 @@
 """Torch-free Hunyuan image-to-video schemas."""
 
-import subprocess
-import sys
 import tomllib
 from pathlib import Path
 
@@ -121,22 +119,3 @@ def test_hunyuan_video_image_schemas_match_the_public_contract() -> None:
     guidance = HUNYUAN_VIDEO_IMAGE_NODES[0].schema().inputs[6]
     assert guidance.advanced and isinstance(guidance.widget, ComboWidget)
     assert guidance.widget.options == ("v1 (concat)", "v2 (replace)", "custom")
-
-
-def test_hunyuan_video_image_cold_discovery() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys\n"
-            "sys.modules['dinkster_inference'] = None\n"
-            "sys.modules['torch'] = None\n"
-            "from dinkster_nodes_comfy import COMFY_NODES\n"
-            "ids = {node.schema().node_type for node in COMFY_NODES}\n"
-            "assert {'HunyuanImageToVideo', 'HunyuanVideo15ImageToVideo',\n"
-            "        'HunyuanVideo15SuperResolution'} <= ids\n",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr

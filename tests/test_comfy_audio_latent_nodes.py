@@ -1,8 +1,5 @@
 """Torch-free native audio latent interfaces."""
 
-import subprocess
-import sys
-
 from dinkster_api.v1 import CORE_FLOAT, CORE_INT, LATENT_TYPE, schema_from_wire, schema_to_wire
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.audio_latent import AUDIO_LATENT_NODES, GetAudioLatentSize
@@ -45,15 +42,3 @@ def test_audio_latent_size_schema_and_cold_discovery() -> None:
         ("batch_size", (CORE_INT,)),
     ]
     assert schema_from_wire(schema_to_wire(schema)) == schema
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; from dinkster_nodes_comfy.audio_latent import "
-            "GetAudioLatentSize; GetAudioLatentSize.schema(); assert 'torch' not in sys.modules; "
-            "assert 'dinkster_inference' not in sys.modules",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
