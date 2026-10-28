@@ -143,6 +143,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       pypi-ready: ${{ steps.projects.outputs.ready }}
+      engine-id: ${{ steps.identity.outputs.engine-id }}
+      engine-tag: ${{ steps.identity.outputs.tag }}
     permissions:
       contents: write
     steps:
@@ -158,8 +160,11 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const manifest = JSON.parse(fs.readFileSync('dist/release-manifest.json', 'utf8'));
+            const crypto = require('crypto');
+            const bytes = fs.readFileSync('dist/release-manifest.json');
+            const manifest = JSON.parse(bytes.toString('utf8'));
             if (manifest.commit !== context.sha) throw new Error('Release commit mismatch');
+            core.setOutput('engine-id', 'sha256:' + crypto.createHash('sha256').update(bytes).digest('hex'));
             core.setOutput('tag', manifest.tag);
             try {
               await github.rest.repos.getReleaseByTag({ ...context.repo, tag: manifest.tag });

@@ -76,6 +76,11 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert workflow["jobs"]["release"]["needs"] == "install"
     assert workflow["jobs"]["release"]["if"] == "github.event_name == 'push'"
     assert workflow["jobs"]["release"]["permissions"] == {"contents": "write"}
+    assert workflow["jobs"]["release"]["outputs"] == {
+        "pypi-ready": "${{ steps.projects.outputs.ready }}",
+        "engine-id": "${{ steps.identity.outputs.engine-id }}",
+        "engine-tag": "${{ steps.identity.outputs.tag }}",
+    }
     preflight = next(
         step for step in workflow["jobs"]["release"]["steps"] if step.get("id") == "identity"
     )
