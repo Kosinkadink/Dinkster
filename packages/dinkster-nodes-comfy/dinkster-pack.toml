@@ -187,6 +187,8 @@ namespaces = [
     "LTXVLatentUpsampler",
     "LatentUpscaleModelLoader",
     "OpticalFlowLoader",
+    "FrameInterpolationModelLoader",
+    "FrameInterpolate",
     "EmptySD3LatentImage",
     "EmptyFlux2LatentImage",
     "EmptyChromaRadianceLatentImage",
