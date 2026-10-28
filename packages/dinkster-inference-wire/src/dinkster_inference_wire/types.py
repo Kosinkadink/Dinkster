@@ -32,6 +32,7 @@ from dinkster_values import (
     NOISE_TYPE,
     OPTICAL_FLOW_TYPE,
     PHOTOMAKER_TYPE,
+    POSE_KEYPOINT_TYPE,
     RESOLUTION_PREVIEW_TYPE,
     SAM3_TRACK_DATA_TYPE,
     SAMPLER_TYPE,
@@ -67,6 +68,7 @@ from .media_wire import (
     materialize_latent,
     register_media_types,
 )
+from .pose_keypoint import register_pose_keypoint_type
 from .sam3_wire import register_sam3_track_type
 from .sampling_wire import register_sampling_type
 from .vision_wire import (
@@ -177,6 +179,11 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
         registry.spec(LOAD3D_CAMERA_TYPE)
         if LOAD3D_CAMERA_TYPE in registry
         else register_load3d_camera_type(registry)
+    )
+    registered.append(
+        registry.spec(POSE_KEYPOINT_TYPE)
+        if POSE_KEYPOINT_TYPE in registry
+        else register_pose_keypoint_type(registry)
     )
     if MOGE_GEOMETRY_TYPE not in registry:
         registry.register(

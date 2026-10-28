@@ -14,6 +14,14 @@ framing and structural validation that does not import Torch or inference;
 expired or foreign-worker identities raise the existing residency error.
 The package does not contain a model runtime or an inference registry.
 
+`POSE_KEYPOINT` preserves a list of frame mappings with integer `canvas_width`
+and `canvas_height`, a `people` list and flat numeric keypoint triples. Optional
+body, foot, face and hand fields retain absence, empty lists and `None`; numeric
+coordinates and scores are not normalized or range-limited. Supported structural
+metadata also round-trips. Its Torch-free structural codec has a type-specific
+fingerprint and preserves existing registration authority. This format is not
+converted to the distinct skeleton/edge representation of `POSE`.
+
 `INTERP_MODEL` is a canonical builtin exported as `INTERP_MODEL_TYPE` through
 `dinkster_api.v1`. Shared inference registration uses the existing default
 resident pool and preserves an already registered type spec. Interpolation
