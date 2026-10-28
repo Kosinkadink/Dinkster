@@ -37,6 +37,7 @@ from .cache import CACHE_NODES
 from .camera_angle import CameraAngle
 from .cfg_guidance import CFG_GUIDANCE_NODES
 from .cfg_guiders import CFG_GUIDER_NODES
+from .checkpoint_save import ImageOnlyCheckpointSave
 from .chroma_options import ChromaRadianceOptions
 from .clip import CLIP_NODES
 from .clip_loaders import QuadrupleCLIPLoader, TripleCLIPLoader
@@ -75,6 +76,7 @@ from .image_core import IMAGE_CORE_NODES
 from .image_crop import ImageCropV2, PrimitiveBoundingBox
 from .image_dimensions import IMAGE_DIMENSION_NODES
 from .image_filters import IMAGE_FILTER_NODES
+from .image_layers import AddLayer
 from .image_tiles import ImageMergeTileList, SplitImageToTileList
 from .image_transform import IMAGE_TRANSFORM_NODES
 from .inpaint import INPAINT_NODES
@@ -126,6 +128,8 @@ from .model_merging_specific import MODEL_SPECIFIC_MERGE_NODES
 from .model_patch_loader import MODEL_PATCH_LOADER_NODES
 from .model_selections import MODEL_SELECTION_NODES
 from .model_specific_schedulers import MODEL_SPECIFIC_SCHEDULER_NODES
+from .moge import MoGeGeometryToFOV
+from .moge_inference import MoGeInference
 from .morphology import MORPHOLOGY_NODES
 from .moss_image import MOSSImageControl, MOSSImageLayoutPrompt, TextEncodeMOSSImageEdit
 from .noise import NOISE_NODES
@@ -185,6 +189,7 @@ from .utilities import ComfyNumberConvert, PreviewAny, SeedNode
 from .vae import VAE_NODES
 from .video_components import ConcatenateVideo, CreateVideo, GetVideoComponents
 from .video_conditioning import VIDEO_CONDITIONING_NODES
+from .video_edits import VideoCrop, VideoSlice, VideoTrim
 from .video_guidance import VIDEO_GUIDANCE_NODES
 from .video_latent import VIDEO_LATENT_NODES
 from .video_latent_ops import VIDEO_LATENT_OPERATION_NODES
@@ -194,6 +199,7 @@ from .void_conditioning import (
     VOIDQuadmaskPreprocess,
     VOIDWarpedNoiseSource,
 )
+from .void_sampler import VOIDSampler
 from .void_warped_noise import VOIDWarpedNoise
 from .wan22_latent import Wan22ImageToVideoLatent
 from .wan_animate import WAN_ANIMATE_NODES
@@ -410,12 +416,16 @@ COMFY_NODES = (
     *SAM3_TRACKING_NODES,
     SAM3_Detect,
     SAM3_TrackPreview,
+    VideoSlice,
+    VideoTrim,
+    VideoCrop,
     SaveVideo,
     *MODEL_FILE_LOADER_NODES,
     *LORA_FILE_LOADER_NODES,
     CropByBBoxes,
     CameraAngle,
     Trellis2UpsampleStage,
+    MoGeInference,
     TripoSplatPreprocessImage,
     TripoSplatConditioning,
     LoadAudio,
@@ -428,7 +438,10 @@ COMFY_NODES = (
     SaveWEBM,
     WanDancerEncodeAudio,
     *YUE2_CONDITIONING_NODES,
+    MoGeGeometryToFOV,
     UpscaleModelLoader,
+    ImageOnlyCheckpointSave,
+    VOIDSampler,
     VOIDQuadmaskPreprocess,
     VOIDInpaintConditioning,
     VOIDWarpedNoiseSource,
@@ -441,6 +454,7 @@ COMFY_NODES = (
     SDPoseFaceBBoxes,
     SDPoseDrawKeypoints,
     SDPoseKeypointExtractor,
+    AddLayer,
     VOIDWarpedNoise,
 )
 
