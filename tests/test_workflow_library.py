@@ -205,6 +205,27 @@ def make_store(tmp_path: Path) -> LibraryStore:
     return LibraryStore(tmp_path / "library.sqlite")
 
 
+def test_store_read_only_lookup_refuses_writes_and_creation(tmp_path: Path) -> None:
+    store = make_store(tmp_path)
+    try:
+        record = store.create("local", "Saved", digest_bytes(b"saved"), WORKFLOW_MEDIA_TYPE)
+        reader = LibraryStore(tmp_path / "library.sqlite", read_only=True)
+        try:
+            assert reader.get("local", record.id) == record
+            assert reader.get("other", record.id) is None
+            with pytest.raises(sqlite3.OperationalError, match="readonly"):
+                reader.update("local", record.id, revision=record.revision, name="Changed")
+            assert store.get("local", record.id) == record
+        finally:
+            reader.close()
+    finally:
+        store.close()
+    missing = tmp_path / "missing" / "library.sqlite"
+    with pytest.raises(sqlite3.OperationalError, match="unable to open database file"):
+        LibraryStore(missing, read_only=True)
+    assert not missing.parent.exists()
+
+
 def test_store_create_get_roundtrip(tmp_path: Path) -> None:
     store = make_store(tmp_path)
     record = store.create(

@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import (
+    AssetError,
     AssetRef,
     AssetVault,
     LibraryStore,
@@ -29,6 +30,7 @@ from dinkster_values import TypeRegistry
 from dinkster_workers import InProcessWorker, PackSandboxNeeds, VisionProvider, load_manifest
 
 from dinkster.mounts_api import MountService, add_mount_routes
+from dinkster.project_requirements import load_project_requirements
 from dinkster.workflow_requirements import (
     PackRequirement,
     RequirementError,
@@ -335,3 +337,67 @@ def test_public_plan_is_read_only_project_filtered_and_verified(tmp_path: Path) 
         assert provenance.sources(first_digest) == (url,)
     finally:
         store.close()
+
+
+def test_project_registered_records_are_scoped_verified_and_read_only(tmp_path: Path) -> None:
+    library = tmp_path / "library"
+    vault = AssetVault(library / "vault")
+    store = LibraryStore(library / "library.sqlite")
+    data = json.dumps(workflow()).encode()
+    digest = digest_bytes(data)
+    with vault.writer(digest) as writer:
+        writer.write(data)
+        blob = writer.commit()
+    try:
+        record = store.create(
+            "local", "Saved workflow", digest, "application/x-dinkster-workflow+json"
+        )
+        other = store.create("local", "Not a workflow", digest, "application/json")
+    finally:
+        store.close()
+    project = {
+        "format": "dinkster.project/1",
+        "workflows": [{"scope": "local", "id": record.id}],
+        "additions": {"packs": [{"pack": "user-added", "version": "7.0.0"}]},
+    }
+    path = tmp_path / "project.json"
+    path.write_text(json.dumps(project))
+    database = (library / "library.sqlite").read_bytes()
+    before = path.read_bytes()
+    requirements, inputs = load_project_requirements(tmp_path)
+    assert requirements.packs == (
+        PackRequirement("tools-a", "1.2.3", ("a.load",)),
+        PackRequirement("tools-b", "4.5.6", ("b.save",)),
+        PackRequirement("user-added", "7.0.0"),
+    )
+    assert {asset.digest for asset in requirements.assets} == {
+        digest_bytes(b"first"),
+        digest_bytes(b"second"),
+    }
+    assert inputs == (
+        {"scope": "local", "id": record.id, "revision": record.revision, "digest": digest},
+    )
+    assert (library / "library.sqlite").read_bytes() == database
+    assert path.read_bytes() == before
+    assert blob.read_bytes() == data
+    project["workflows"] = [{"scope": "other", "id": record.id}]
+    path.write_text(json.dumps(project))
+    with pytest.raises(RequirementError, match="workflow record other/.* is unavailable"):
+        load_project_requirements(tmp_path)
+    project["workflows"] = [{"scope": "local", "id": other.id}]
+    path.write_text(json.dumps(project))
+    with pytest.raises(RequirementError, match="is not a workflow"):
+        load_project_requirements(tmp_path)
+    path.write_bytes(before)
+    blob.write_bytes(b"x" * len(data))
+    with pytest.raises(AssetError):
+        load_project_requirements(tmp_path)
+
+
+def test_empty_project_requirements_do_not_create_library(tmp_path: Path) -> None:
+    path = tmp_path / "project.json"
+    path.write_text('{"format":"dinkster.project/1"}')
+    requirements, inputs = load_project_requirements(tmp_path)
+    assert requirements == WorkflowRequirements()
+    assert inputs == ()
+    assert sorted(child.name for child in tmp_path.iterdir()) == ["project.json"]

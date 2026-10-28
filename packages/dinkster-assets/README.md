@@ -128,6 +128,10 @@ records. Record CRUD remains stdlib SQLite. The initial revision creates
 only when its schema matches; an incompatible schema fails without changing
 its records or recording a version. Back up the catalog before upgrading.
 
+`LibraryStore(path, read_only=True)` opens an existing catalog without creating
+directories, migrating schemas or changing journal mode. Scoped lookups retain
+the same membership rules, and SQLite refuses writes through this connection.
+
 From the repository root:
 
 ```sh
