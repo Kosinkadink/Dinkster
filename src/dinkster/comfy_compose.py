@@ -79,7 +79,6 @@ from dinkster_values import (
 )
 from dinkster_workers import (
     SingleJobMultiGpuConfig,
-    load_manifest,
     load_pack_assets,
     load_pack_blueprints,
     load_pack_presentation,
@@ -639,10 +638,7 @@ def comfy_compat_specs(
     # corresponding parent-visible index.
     vram_budgets = cuda_vram_budgets(memory_budgets or {})
 
-    comfy_info = replace(
-        _COMFY_INFO,
-        comfy_aliases=load_manifest(find_compat_manifest()).comfy_aliases,
-    )
+    comfy_info = _COMFY_INFO
     core_env = dict(base_env)
     if asset_vault:
         core_env["DINKSTER_ASSET_VAULT"] = str(asset_vault)
