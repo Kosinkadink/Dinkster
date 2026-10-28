@@ -1,5 +1,9 @@
 ## Pack execution isolation
 
+- Packs can use image-document construction, editing, rendering, import/export
+  and blend helpers through `dinkster_api.v1`, alongside VIDEO values and
+  streaming helpers. Remote clients can read host invocation cancellation
+  through that API without importing worker internals.
 - `dinkster-serve --pack packages/dinkster-nodes-dev` composes the development
   scaffold pack as an ordinary isolated pack. It stays outside the default pack
   set. Its `dev` namespace is not reserved; overlapping pack claims are refused.
