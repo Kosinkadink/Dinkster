@@ -188,6 +188,7 @@ from .video_frame_sample import VideoFrameSample
 from .video_guidance import VIDEO_GUIDANCE_NODES
 from .video_latent import VIDEO_LATENT_NODES
 from .video_latent_ops import VIDEO_LATENT_OPERATION_NODES
+from .void_warped_noise import VOIDWarpedNoise
 from .wan22_latent import Wan22ImageToVideoLatent
 from .wan_animate import WAN_ANIMATE_NODES
 from .wan_camera import WanCameraEmbedding
@@ -422,6 +423,7 @@ COMFY_NODES = (
     *FOLDER_DATASET_NODES,
     UpscaleModelLoader,
     LossGraphNode,
+    VOIDWarpedNoise,
 )
 
 

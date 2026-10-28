@@ -547,6 +547,7 @@ namespaces = [
     "LoadImageTextDataSetFromFolder",
     "UpscaleModelLoader",
     "LossGraphNode",
+    "VOIDWarpedNoise",
 ]
 
 [pack.sandbox]
