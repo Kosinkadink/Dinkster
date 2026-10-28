@@ -7,6 +7,9 @@
   interpreter without copying torch or opencv into the pack venv.
 - In-process pack dependencies stage only into a fresh, inactive generation;
   their terminals use scratch venvs and doctor reports dependency drift.
+- The official pack artifact builder produces deterministic source archives and
+  an existing registry artifact lock from committed sources, preserving the
+  fifteen pack identities and node entry points without importing node code.
 - Packs may own exact node IDs with case, spaces and dots, without renaming
   them. Namespace and exact-node ownership reject overlapping owners through
   install, composition and reload. Pack and publisher identities remain
