@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import subprocess
+import sys
 from dataclasses import replace
 from pathlib import Path
 
@@ -25,6 +27,7 @@ from dinkster_assets import (
 )
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
+from dinkster_registry.install import LockedPack, Lockfile
 from dinkster_server import PackInfo, ServerLibrary, create_app
 from dinkster_values import TypeRegistry
 from dinkster_workers import InProcessWorker, PackSandboxNeeds, VisionProvider, load_manifest
@@ -407,6 +410,111 @@ def test_project_registered_records_are_scoped_verified_and_read_only(tmp_path: 
     assert (library / "library.sqlite").read_bytes() == database
     assert path.read_bytes() == before
     assert blob.read_bytes() == data
+
+    source = tmp_path / "source"
+    source.mkdir()
+    staging = tmp_path / "staged-release"
+    staging.mkdir()
+    target_packs = [
+        LockedPack(pack, version, digest_bytes(pack.encode()), "author", ())
+        for pack, version in (("tools-a", "1.2.3"), ("tools-b", "4.5.6"), ("user-added", "7.0.0"))
+    ]
+    catalog = staging / "official-packs.lock"
+    catalog.write_text(Lockfile.of(target_packs).record_json())
+    for pack in target_packs:
+        manifest = staging / "pack-sources" / pack.pack / "dinkster-pack.toml"
+        manifest.parent.mkdir(parents=True)
+        name = "user_added" if pack.pack == "user-added" else pack.pack
+        manifest.write_text(
+            f'[pack]\nname = "{name}"\n[pack.entry]\nnodes = "never_import:NODES"\n'
+        )
+    inventory = source / "dinkster.lock"
+    inventory.write_text(
+        Lockfile.of(
+            [
+                replace(pack, version="0.1.0") if pack.pack == "tools-b" else pack
+                for pack in target_packs
+            ]
+        ).record_json()
+    )
+
+    def run_plan(variant: str, *extra: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "dinkster.workflow_requirements",
+                "project-plan",
+                "--project-root",
+                str(tmp_path),
+                "--source-generation",
+                str(source),
+                "--catalog",
+                str(catalog),
+                "--variant",
+                variant,
+                "--json",
+                *extra,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+
+    cpu = run_plan("linux-cpu")
+    nvidia = run_plan("win-nvidia")
+    assert cpu.returncode == nvidia.returncode == 0, (cpu.stderr, nvidia.stderr)
+    assert cpu.stdout == nvidia.stdout
+    result = json.loads(cpu.stdout)
+    assert result["requirements"] == requirements.to_wire()
+    assert result["inputs"] == list(inputs)
+    assert result["plan"]["packs"] == [{"pack": "tools-b", "version": "4.5.6"}]
+    assert {row["digest"] for row in result["plan"]["assets"]} == {
+        digest_bytes(b"first"),
+        digest_bytes(b"second"),
+    }
+
+    for content in (b"first", b"second"):
+        with vault.writer(digest_bytes(content)) as writer:
+            writer.write(content)
+            writer.commit()
+    inventory.write_text(Lockfile.of(target_packs).record_json())
+    present = run_plan("win-nvidia")
+    assert present.returncode == 0, present.stderr
+    assert json.loads(present.stdout)["plan"] == {"packs": [], "assets": [], "errors": []}
+    gpu_manifest = staging / "pack-sources/tools-a/dinkster-pack.toml"
+    gpu_manifest.write_text(gpu_manifest.read_text() + "\n[pack.sandbox]\ngpu = true\n")
+    refused = run_plan("linux-cpu")
+    assert refused.returncode == 1
+    assert json.loads(refused.stdout)["plan"]["errors"] == [
+        "pack tools-a: pack.sandbox.gpu requires a GPU"
+    ]
+    assert "blocking errors" in refused.stderr
+    assert run_plan("win-nvidia").returncode == 0
+    absent_target = tmp_path / "not-created"
+    absent = run_plan("win-nvidia", "--generation", str(absent_target))
+    assert absent.returncode == 1 and "planning never creates it" in absent.stderr
+    assert not absent_target.exists()
+    catalog.write_text(
+        Lockfile.of(
+            [
+                replace(pack, version="9.9.9") if pack.pack == "tools-b" else pack
+                for pack in target_packs
+            ]
+        ).record_json()
+    )
+    wrong_version = run_plan("win-nvidia")
+    assert wrong_version.returncode == 1
+    assert json.loads(wrong_version.stdout)["plan"]["errors"] == [
+        "pack tools-b: saved version is unavailable in the selected target release"
+    ]
+    inventory.unlink()
+    assert run_plan("win-nvidia").returncode == 1
+    assert (library / "library.sqlite").read_bytes() == database
+    assert path.read_bytes() == before
+    assert blob.read_bytes() == data
+
     project["workflows"] = [{"scope": "other", "id": record.id}]
     path.write_text(json.dumps(project))
     with pytest.raises(RequirementError, match="workflow record other/.* is unavailable"):
@@ -421,10 +529,34 @@ def test_project_registered_records_are_scoped_verified_and_read_only(tmp_path: 
         load_project_requirements(tmp_path)
 
 
-def test_empty_project_requirements_do_not_create_library(tmp_path: Path) -> None:
+def test_empty_project_requirements_do_not_create_library(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from dinkster.workflow_requirements import main
+
     path = tmp_path / "project.json"
     path.write_text('{"format":"dinkster.project/1"}')
     requirements, inputs = load_project_requirements(tmp_path)
     assert requirements == WorkflowRequirements()
     assert inputs == ()
+    args = ["project-plan", "--project-root", str(tmp_path), "--variant", "linux-cpu", "--json"]
+    assert main(args) == 0
+    output = capsys.readouterr()
+    assert output.err == ""
+    assert json.loads(output.out) == {
+        "requirements": {"packs": [], "assets": [], "unattributedNodes": []},
+        "plan": {"packs": [], "assets": [], "errors": []},
+        "inputs": [],
+    }
+    path.write_text(
+        json.dumps(
+            {
+                "format": "dinkster.project/1",
+                "additions": {"packs": [{"pack": "added", "version": "1.0.0"}]},
+            }
+        )
+    )
+    assert main(args) == 1
+    output = capsys.readouterr()
+    assert output.out == "" and "trusted target pack catalog is unavailable" in output.err
     assert sorted(child.name for child in tmp_path.iterdir()) == ["project.json"]

@@ -251,12 +251,51 @@ def main(argv: list[str] | None = None) -> int:
     import urllib.request
     from pathlib import Path
 
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments[:1] == ["project-plan"]:
+        from dinkster_assets import AssetError
+        from dinkster_registry.install import InstallError
+        from dinkster_workers import ManifestError
+
+        from .project_requirements import plan_project_requirements
+
+        parser = argparse.ArgumentParser(description="Read a project's workflow requirement plan")
+        parser.add_argument("--project-root", required=True, type=Path)
+        parser.add_argument("--source-generation", type=Path)
+        parser.add_argument("--generation", type=Path)
+        parser.add_argument("--catalog", type=Path)
+        parser.add_argument("--variant", required=True)
+        parser.add_argument("--json", action="store_true", required=True)
+        args = parser.parse_args(arguments[1:])
+        try:
+            for path in (args.project_root, args.source_generation, args.generation, args.catalog):
+                if path is not None and not path.is_absolute():
+                    raise RequirementError("project and generation/catalog paths must be absolute")
+            if args.generation is not None and not args.generation.is_dir():
+                raise RequirementError(
+                    "target generation is unavailable; planning never creates it"
+                )
+            result = plan_project_requirements(
+                args.project_root,
+                variant=args.variant,
+                source_generation=args.source_generation,
+                catalog=args.catalog,
+            )
+            print(json.dumps(result))
+            plan = cast("dict[str, object]", result["plan"])
+            if plan["errors"]:
+                print("project requirement plan has blocking errors", file=sys.stderr)
+            return int(bool(plan["errors"]))
+        except (OSError, ValueError, AssetError, InstallError, ManifestError) as exc:
+            print(f"project plan failed: {exc}", file=sys.stderr)
+            return 1
+
     parser = argparse.ArgumentParser(description="Print workflow requirements without installing")
     parser.add_argument("workflows", nargs="+", type=Path)
     parser.add_argument("--server", default="http://127.0.0.1:3639")
     parser.add_argument("--variant", required=True)
     parser.add_argument("--project")
-    args = parser.parse_args(argv)
+    args = parser.parse_args(arguments)
     try:
         documents = [json.loads(path.read_text("utf-8")) for path in args.workflows]
         body = {"workflows": documents, "variant": args.variant}
