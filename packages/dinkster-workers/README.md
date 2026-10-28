@@ -40,6 +40,10 @@ the jail changes what a hostile import can do, not what the report means.
 
 ## Use
 
+Generation-layered dependency provisioning uses per-variant, hashed pack locks.
+See [Pack dependency locks](PACK-LOCK.md) for the format, opencv aliases and
+publisher/planner/provisioner interfaces.
+
 Nodes can call `dinkster_api.v1.publish_preview_artifact` with encoded bytes,
 a safe basename, and the matching media type. Successful invocations attach
 host-validated digest-backed artifacts to the ordinary job result. The host
