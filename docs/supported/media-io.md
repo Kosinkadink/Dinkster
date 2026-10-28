@@ -196,6 +196,10 @@
   nodes: `dinkster.splat` batches of activated world-space gaussians with
   binary little-endian PLY interchange byte-compatible with ComfyUI's
   splat PLY files
+- Native VOID quadmask quantization and spatial dilation, inpainting
+  conditioning with even temporal latent lengths, and precomputed warped
+  noise sources. Controlled CPU encoders cover mask/video conditioning and
+  source preservation; real-model and GPU output parity are not certified.
 - Native Create Video assembles IMAGE frames, rational frame rate and optional
   AUDIO as a VIDEO, retaining component storage until explicit encoding.
   Bit depth and sRGB/HLG/PQ color choices are retained; optional immediate

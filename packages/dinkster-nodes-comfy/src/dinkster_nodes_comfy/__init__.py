@@ -189,6 +189,11 @@ from .video_guidance import VIDEO_GUIDANCE_NODES
 from .video_latent import VIDEO_LATENT_NODES
 from .video_latent_ops import VIDEO_LATENT_OPERATION_NODES
 from .video_save import SaveVideo
+from .void_conditioning import (
+    VOIDInpaintConditioning,
+    VOIDQuadmaskPreprocess,
+    VOIDWarpedNoiseSource,
+)
 from .wan22_latent import Wan22ImageToVideoLatent
 from .wan_animate import WAN_ANIMATE_NODES
 from .wan_camera import WanCameraEmbedding
@@ -423,6 +428,9 @@ COMFY_NODES = (
     WanDancerEncodeAudio,
     *YUE2_CONDITIONING_NODES,
     UpscaleModelLoader,
+    VOIDQuadmaskPreprocess,
+    VOIDInpaintConditioning,
+    VOIDWarpedNoiseSource,
     CurveEditor,
     CreateVideo,
     ConcatenateVideo,
