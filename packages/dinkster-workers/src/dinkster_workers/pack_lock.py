@@ -71,10 +71,6 @@ class LockedDistribution:
         }:
             raise ProvisionError(f"noncanonical lock package: {self.name}")
         version = Version(self.version)
-        if not self.wheels:
-            raise ProvisionError(
-                f"{self.name}=={self.version}: no wheel candidates in dependency lock"
-            )
         for wheel in self.wheels:
             wheel_name, wheel_version, _, _ = parse_wheel_filename(wheel.filename)
             if wheel_name != self.name or wheel_version != version:
@@ -308,6 +304,11 @@ def resolve_pack_lock(
                         digest,
                         url,
                     )
+                )
+            if not candidates:
+                raise ProvisionError(
+                    f"pack {pack}: {item['name']}=={item['version']}: "
+                    "source-only closure has no wheel candidates"
                 )
             packages.append(
                 LockedDistribution(

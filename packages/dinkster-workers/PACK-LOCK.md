@@ -26,10 +26,12 @@ records the pack's Python constraint; `--accelerator` selects its manifest extra
 | `packages` | Complete resolved closure, including generation-provided packages |
 
 Each package has a canonical distribution `name`, exact `version` and `wheels`.
-Every package must have at least one wheel candidate, including packages supplied
-by the generation. Source-only resolver results are rejected, even when the
-resolver accepts a direct archive URL with binary-only options. A pack with no
-Python dependencies may have an empty `packages` array.
+Publisher/local resolution requires at least one hashed wheel candidate per
+resolved package. Source-only results are rejected, even when the resolver accepts
+a direct archive URL with binary-only options. The shared planning record still
+permits wheel-less distributions supplied by the generation; the publisher must
+not emit them as a resolved closure. A dependency-free pack may have an empty
+`packages` array.
 Each wheel has its original `filename`, byte `size`, lowercase hex `sha256`, and
 concrete source `url`. Only wheel archives are accepted, and filename name/version
 must agree with their package entry. Candidate wheels allow the planner to select
