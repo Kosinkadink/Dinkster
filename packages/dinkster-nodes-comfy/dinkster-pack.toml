@@ -528,6 +528,7 @@ namespaces = [
     "SaveConditioning",
     "SDPoseFaceBBoxes",
     "SDPoseDrawKeypoints",
+    "SDPoseKeypointExtractor",
 ]
 
 [pack.sandbox]
