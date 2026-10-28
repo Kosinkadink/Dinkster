@@ -30,6 +30,28 @@ from dinkster_values import register_core_types
 from dinkster_workers import InProcessWorker
 
 GOLDEN_V1_SURFACE = (
+    "IMAGE_DOCUMENT_MEDIA_TYPE",
+    "BLEND_MODES",
+    "ImageDocument",
+    "append_raster",
+    "apply_commands",
+    "blend",
+    "canonical_json",
+    "current_execution_context",
+    "dissolve_alpha",
+    "document_meta",
+    "empty_document",
+    "export_ora",
+    "export_psd",
+    "flatten",
+    "from_comfy_layers",
+    "linear_to_srgb",
+    "load_document",
+    "ordered_layer_ids",
+    "raster_png",
+    "register_comfy_compositor",
+    "register_comfy_layers",
+    "srgb_to_linear",
     "obtain_resident",
     "LatentStream",
     "MultiStreamLatent",
@@ -38,6 +60,7 @@ GOLDEN_V1_SURFACE = (
     "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
+    "materialize_svg",
     "materialize_voxel",
     "register_inference_types",
     "FrontendContribution",
@@ -222,6 +245,7 @@ GOLDEN_V1_SURFACE = (
     "SIGMAS_TYPE",
     "SPLAT_TYPE",
     "STYLE_MODEL_TYPE",
+    "SVG_TYPE",
     "TIMESTEPS_RANGE_TYPE",
     "TRACKS_TYPE",
     "UPSCALE_MODEL_TYPE",
@@ -845,6 +869,11 @@ def test_golden_surface_is_exact() -> None:
 def test_reexports_are_the_internal_objects() -> None:
     """Zero wrappers: the door hands out the internal objects themselves."""
     import dinkster_assets
+    import dinkster_image_document.blend as document_blend
+    import dinkster_image_document.compat as document_compat
+    import dinkster_image_document.document as document
+    import dinkster_image_document.format as document_format
+    import dinkster_image_document.interchange as document_interchange
     import dinkster_inference_wire.latents as latent_values
     import dinkster_inference_wire.process as inference_process
     import dinkster_inference_wire.types as inference_types
@@ -853,6 +882,32 @@ def test_reexports_are_the_internal_objects() -> None:
     import dinkster_schema
     import dinkster_values
     import dinkster_video
+    import dinkster_workers.execution as worker_execution
+
+    document_sources = {
+        "IMAGE_DOCUMENT_MEDIA_TYPE": document_format,
+        "BLEND_MODES": document_format,
+        "canonical_json": document_format,
+        "ordered_layer_ids": document_format,
+        "ImageDocument": document,
+        "apply_commands": document,
+        "append_raster": document,
+        "document_meta": document,
+        "empty_document": document,
+        "flatten": document,
+        "raster_png": document,
+        "blend": document_blend,
+        "dissolve_alpha": document_blend,
+        "linear_to_srgb": document_blend,
+        "srgb_to_linear": document_blend,
+        "from_comfy_layers": document_compat,
+        "register_comfy_compositor": document_compat,
+        "register_comfy_layers": document_compat,
+        "export_ora": document_interchange,
+        "export_psd": document_interchange,
+        "load_document": document_interchange,
+        "current_execution_context": worker_execution,
+    }
 
     sources = (
         latent_values,
@@ -867,6 +922,9 @@ def test_reexports_are_the_internal_objects() -> None:
     )
     for name in GOLDEN_V1_SURFACE:
         exported = getattr(api, name)
+        if name in document_sources:
+            assert exported is getattr(document_sources[name], name), f"{name} is a wrapper/copy"
+            continue
         owners = [m for m in sources if name in m.__all__]
         assert owners, f"{name} is not exported by any internal package"
         expected_owners = (
@@ -876,6 +934,33 @@ def test_reexports_are_the_internal_objects() -> None:
         assert all(getattr(owner, name) is exported for owner in owners), (
             f"{name} is a wrapper/copy"
         )
+
+
+def test_image_document_round_trip_through_v1() -> None:
+    import numpy as np
+
+    pixels = np.array([[[1, 0, 0], [0, 0.5, 1]]], dtype=np.float32)
+    document = api.append_raster(api.empty_document(2, 1), api.raster_png(pixels))
+    restored = api.ImageDocument(document.data)
+    rendered, transparency = api.flatten(restored)
+    np.testing.assert_allclose(rendered, [[[[1, 0, 0], [0, 128 / 255, 1]]]])
+    np.testing.assert_array_equal(transparency, [[[0, 0]]])
+
+
+def test_remote_client_reads_host_cancellation_through_v1() -> None:
+    from dinkster_workers.execution import ExecutionContext, use_execution_context
+
+    assert api.current_execution_context() is None
+    cancelled = False
+    context = ExecutionContext(None, None, cancelled=lambda: cancelled)
+    with use_execution_context(context):
+        active = api.current_execution_context()
+        assert active is not None
+        assert active is context
+        assert not active.cancelled()
+        cancelled = True
+        assert active.cancelled()
+    assert api.current_execution_context() is None
 
 
 def test_dynamic_combo_specs_construct_through_v1() -> None:

@@ -46,6 +46,16 @@ class Double(Node):
 Import the version explicitly. Do not import pack APIs from `dinkster_schema`,
 `dinkster_values`, or other internal packages.
 
+Layered-image packs use `ImageDocument`, `empty_document`, `append_raster`,
+`apply_commands`, `flatten`, and the document import/export and blend helpers
+through the same door. VIDEO values, codecs, timeline modules and streaming
+helpers are also public. These exports are the original objects, not wrappers.
+Media implementations load only when their exports are requested, so importing
+the node-authoring API does not initialize numpy, PyAV, or an inference runtime.
+Remote clients use `current_execution_context()` to read the worker's current
+invocation and its cooperative `cancelled()` callback; outside an invocation it
+returns `None`. Packs do not create or replace the host's execution context.
+
 `OutputDescriptorsSpec` declares ordered heterogeneous outputs from a stored
 JSON input. Execution receives `OutputInterface.outputs`; use
 `output_descriptor_entries` to read node-owned entry fields and return a plain
