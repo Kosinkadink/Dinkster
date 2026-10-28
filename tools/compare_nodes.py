@@ -19,6 +19,9 @@ around it. Unflagged and nested-list differences remain differences.
 Declared FLOAT bounds, step and round compare exactly after projecting the
 reference numbers to float; INT and field presence remain exact. Boolean
 round sentinels are not numeric precision values.
+API nodes and nodes originating in nodes_train.py or nodes_dataset.py are
+excluded from required coverage. Training-origin nodes must also be absent
+from the served registry; their exclusion does not hide pending deletions.
 
 Usage: python tools/compare_nodes.py COMFY_JSON REGISTRY_JSON OUT_CSV OUT_JSON
 """
@@ -406,6 +409,13 @@ def compare_registry(reference: dict[str, Any], registry: dict[str, Any]) -> dic
         exclusion = ""
         if row.get("api_node") or str(row.get("file", "")).startswith("comfy_api_nodes/"):
             exclusion = "API node"
+        elif row.get("file") in (
+            "comfy_extras/nodes_train.py",
+            "comfy_extras/nodes_dataset.py",
+        ):
+            exclusion = "training-origin node"
+            if name in served:
+                errors.append(f"excluded training-origin node remains registered: {name}")
         differences = []
         if exclusion:
             status = "excluded"
@@ -439,6 +449,9 @@ def compare_registry(reference: dict[str, Any], registry: dict[str, Any]) -> dic
     counts = dict(Counter(row["status"] for row in results))
     return {
         "reference_commit": reference.get("source_commit"),
+        "eligible_node_count": sum(
+            row["status"] in ("identical", "differs", "absent") for row in results
+        ),
         "counts": counts,
         "engine_exclusions": {},
         "registry_errors": sorted(set(errors)),

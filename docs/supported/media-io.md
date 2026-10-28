@@ -12,8 +12,6 @@
   sequences, sample counts and structural metadata across execution hosts and caches
 - Portable IC-LoRA parameter mappings preserve source fields, ordering, and
   structural extras across execution hosts and caches
-- Portable `LORA_MODEL` values preserve ordered state-dictionary keys and tensor
-  dtype, shape, and bytes across execution hosts and caches
 - Portable LOAD3D_CAMERA values preserve perspective and orthographic camera
   dictionaries, including position, target, zoom, camera type, optional camera
   controls, and structural extensions across execution hosts and caches
@@ -89,8 +87,6 @@
   resampling matching native video loading; deferred assembly with optional
   audio, 8/10-bit precision, sRGB, HLG, and HDR PQ; disassembly to frames,
   optional audio, fps, duration, bit depth, and color space
-- Native Sample Video Frame selects head or tail windows with audio retained,
-  or ordered uniform/random frames at the source frame rate without audio
 - Public `iter_video_pixels` yields edited, display-oriented float32 pixels
   with rational timestamps without accumulating the complete frame batch.
   Consumers that stop early close the iterator to release the decoder and
