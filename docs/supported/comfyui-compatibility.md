@@ -6,17 +6,6 @@
 - Core schema comparison permits the optional output mount for output nodes
   with a scalar STRING filename prefix, including CLIPSave, VAESave,
   CheckpointSave, and ModelSave, without relying on their class-name spelling.
-- Native animated PNG and WebP outputs retain frame order, alpha, timing,
-  compression controls and source images while writing to the selected mount.
-- Native CLIP and VAE exports preserve tensor keys and dtypes in safetensors
-  on the selected output mount. CLIP weights split by encoder prefix.
-- Native latent files load verified safetensors, convert samples to float32,
-  and apply legacy scaling only when the format marker is absent. Saving
-  writes contiguous samples and the format marker to the selected output mount.
-- Native image file schemas expose bound assets and adjacent output mounts;
-  PNG output truncates channel values and preview outputs retain source images.
-  PNG batches retain source counter progression and the trailing filename underscore.
-  File operations reject oversized image batches and encoded outputs.
 - The native pack declares bound-file checkpoint, diffusion-model, text
   encoder, vision-encoder, ControlNet, style-model and GLIGEN loader schemas.
   Model construction uses the pinned inference package; file inputs grant
@@ -216,3 +205,14 @@
 - Reference file-input metadata includes manually enumerated file choices whose
   declared execution method directly resolves the input as an annotated path.
   Empty file lists retain this classification; unrelated empty combos do not.
+- Native animated PNG and WebP outputs retain frame order, alpha, timing,
+  compression controls and source images while writing to the selected mount.
+- Native CLIP and VAE exports preserve tensor keys and dtypes in safetensors
+  on the selected output mount. CLIP weights split by encoder prefix.
+- Native latent files load verified safetensors, convert samples to float32,
+  and apply legacy scaling only when the format marker is absent. Saving
+  writes contiguous samples and the format marker to the selected output mount.
+- Native image file schemas expose bound assets and adjacent output mounts;
+  PNG output truncates channel values and preview outputs retain source images.
+  PNG batches retain source counter progression and the trailing filename underscore.
+  File operations reject oversized image batches and encoded outputs.
