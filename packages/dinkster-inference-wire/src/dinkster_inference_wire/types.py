@@ -9,11 +9,13 @@ from dinkster_values import (
     AUDIO_ENCODER_OUTPUT_TYPE,
     AUDIO_ENCODER_TYPE,
     BOUNDING_BOX_TYPE,
+    BOUNDING_BOXES_TYPE,
     CLIP_TYPE,
     CLIP_VISION_OUTPUT_TYPE,
     CLIP_VISION_TYPE,
     COLOR_TYPE,
     COLORS_TYPE,
+    COMPOSITOR_TYPE,
     CONTROL_NET_TYPE,
     FLOATS_TYPE,
     GLIGEN_TYPE,
@@ -21,9 +23,11 @@ from dinkster_values import (
     HOOK_KEYFRAMES_TYPE,
     HOOKS_TYPE,
     IC_LORA_PARAMETERS_TYPE,
+    IMAGECOMPARE_TYPE,
     INFERENCE_LATENT_OPERATION_TYPE,
     INTERP_MODEL_TYPE,
     LATENT_UPSCALE_MODEL_TYPE,
+    LAYERS_TYPE,
     LOAD3D_CAMERA_TYPE,
     MODEL_PATCH_TYPE,
     MODEL_TYPE,
@@ -146,7 +150,15 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
             if type_id in registry
             else register_sampling_type(registry, type_id)
         )
-    for type_id in (BOUNDING_BOX_TYPE, COLOR_TYPE, COLORS_TYPE, RESOLUTION_PREVIEW_TYPE):
+    for type_id in (
+        BOUNDING_BOX_TYPE,
+        BOUNDING_BOXES_TYPE,
+        COLOR_TYPE,
+        COLORS_TYPE,
+        COMPOSITOR_TYPE,
+        IMAGECOMPARE_TYPE,
+        RESOLUTION_PREVIEW_TYPE,
+    ):
         registered.append(
             registry.spec(type_id) if type_id in registry else registry.register(type_id)
         )
@@ -194,6 +206,15 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
             validate_encoded=partial(validate_latent_encoded, require_samples=False),
         )
     registered.append(registry.spec(MOGE_GEOMETRY_TYPE))
+    if LAYERS_TYPE not in registry:
+        registry.register(
+            LAYERS_TYPE,
+            encode=encode_latent,
+            decode=partial(decode_latent, require_samples=False),
+            fingerprint=latent_fingerprint(LAYERS_TYPE),
+            validate_encoded=partial(validate_latent_encoded, require_samples=False),
+        )
+    registered.append(registry.spec(LAYERS_TYPE))
     for type_id in (WAN_CAMERA_EMBEDDING_TYPE, TRACKS_TYPE, AUDIO_ENCODER_OUTPUT_TYPE):
         registered.append(
             registry.spec(type_id) if type_id in registry else register_wan_type(registry, type_id)
