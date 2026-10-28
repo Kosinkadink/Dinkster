@@ -165,8 +165,9 @@ are clearly labeled, and skip loudly rather than silently not existing:
   where the kernel says no.
 - **GPU/multi-GPU** (`test_device_map.py`, placement): device-conditional;
   the two-4090 box is the reference machine.
-- **Headless ANGLE mirror parity** (`test_image_mirror_angle.py`): install
-  the optional runtime with `uv sync --group angle`, then run the test to
+- **Headless ANGLE mirror parity** (`test_image_mirror_angle.py`): workspace
+  synchronization installs ANGLE through the image pack dependency on supported
+  platforms. A core-only checkout can use `uv sync --group angle`. Run the test to
   execute every declared GLSL image mirror against its CPU parity corpus.
   It skips when ANGLE or a float-renderable EGL/GLES 3 context is unavailable.
 - **CI matrix**: Linux + Windows, Python 3.12 - Windows is the

@@ -2,7 +2,7 @@
 # Build the three validation environments the AGENTS.md gates need,
 # from a fresh checkout, with no sudo and no system mutation:
 #
-#   .venv        torch-free root env        (uv sync --all-packages)
+#   .venv        locked workspace env      (uv sync --all-packages)
 #   .venv-torch  CPU torch test env         (torch README "Setup: torch
 #                                            environments")
 #   .venv-gpu    CUDA torch test env        (torch README "GPU
@@ -54,7 +54,7 @@ if [ "$FORCE" = 1 ]; then
 fi
 
 # ---------------------------------------------------------------- .venv
-echo "==> .venv (torch-free root env)"
+echo "==> .venv (locked workspace env)"
 UV_PROJECT_ENVIRONMENT="$PWD/.venv" uv sync --project "$PWD" --python 3.12 --all-packages
 
 # ---------------------------------------------------------- .venv-torch
@@ -78,7 +78,7 @@ fi
 # benchmark-harness tests can run in this venv.
 uv pip install --python .venv-torch/bin/python pytest packaging "numpy>=1.26" "scipy>=1.11" \
     "simpleeval==1.0.8" \
-    "onnxruntime==1.29.0" "opencv-python-headless==5.0.0.93" "pillow==12.0.0" \
+    "onnxruntime==1.29.0" "opencv-contrib-python-headless==5.0.0.93" "pillow==12.0.0" \
     "safetensors==0.8.0" "sentencepiece==0.2.1" "tokenizers==0.23.1" \
     "transformers==5.16.1" \
     -e packages/dinkster-api \
