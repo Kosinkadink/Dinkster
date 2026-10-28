@@ -50,6 +50,7 @@ Grouped by concern:
 
 from __future__ import annotations
 
+from importlib import import_module
 from typing import TYPE_CHECKING
 
 from dinkster_assets import (
@@ -408,10 +409,36 @@ from dinkster_video import (
 _VIDEO_MODULE_EXPORTS = frozenset(
     {"image_math", "timeline_document", "timeline_render", "timeline_runtime"}
 )
+_PACK_MEDIA_EXPORTS = {
+    "IMAGE_DOCUMENT_MEDIA_TYPE": "dinkster_image_document.format",
+    "BLEND_MODES": "dinkster_image_document.format",
+    "canonical_json": "dinkster_image_document.format",
+    "ordered_layer_ids": "dinkster_image_document.format",
+    "ImageDocument": "dinkster_image_document.document",
+    "apply_commands": "dinkster_image_document.document",
+    "append_raster": "dinkster_image_document.document",
+    "document_meta": "dinkster_image_document.document",
+    "empty_document": "dinkster_image_document.document",
+    "flatten": "dinkster_image_document.document",
+    "raster_png": "dinkster_image_document.document",
+    "blend": "dinkster_image_document.blend",
+    "dissolve_alpha": "dinkster_image_document.blend",
+    "linear_to_srgb": "dinkster_image_document.blend",
+    "srgb_to_linear": "dinkster_image_document.blend",
+    "from_comfy_layers": "dinkster_image_document.compat",
+    "register_comfy_compositor": "dinkster_image_document.compat",
+    "register_comfy_layers": "dinkster_image_document.compat",
+    "export_ora": "dinkster_image_document.interchange",
+    "export_psd": "dinkster_image_document.interchange",
+    "load_document": "dinkster_image_document.interchange",
+    "current_execution_context": "dinkster_workers.execution",
+}
 
 
 def __getattr__(name: str) -> object:
-    if name in _VIDEO_MODULE_EXPORTS:
+    if name in _PACK_MEDIA_EXPORTS:
+        value = getattr(import_module(_PACK_MEDIA_EXPORTS[name]), name)
+    elif name in _VIDEO_MODULE_EXPORTS:
         import dinkster_video
 
         value = getattr(dinkster_video, name)
@@ -444,6 +471,7 @@ def __dir__() -> list[str]:
     return sorted(
         set(globals())
         | _VIDEO_MODULE_EXPORTS
+        | _PACK_MEDIA_EXPORTS.keys()
         | {
             "LatentStream",
             "MultiStreamLatent",
@@ -459,6 +487,28 @@ def __dir__() -> list[str]:
 
 
 if TYPE_CHECKING:
+    from dinkster_image_document.blend import blend, dissolve_alpha, linear_to_srgb, srgb_to_linear
+    from dinkster_image_document.compat import (
+        from_comfy_layers,
+        register_comfy_compositor,
+        register_comfy_layers,
+    )
+    from dinkster_image_document.document import (
+        ImageDocument,
+        append_raster,
+        apply_commands,
+        document_meta,
+        empty_document,
+        flatten,
+        raster_png,
+    )
+    from dinkster_image_document.format import (
+        BLEND_MODES,
+        IMAGE_DOCUMENT_MEDIA_TYPE,
+        canonical_json,
+        ordered_layer_ids,
+    )
+    from dinkster_image_document.interchange import export_ora, export_psd, load_document
     from dinkster_inference_wire.latents import LatentStream, MultiStreamLatent
     from dinkster_inference_wire.process import initialize_inference_process
     from dinkster_inference_wire.types import (
@@ -472,8 +522,31 @@ if TYPE_CHECKING:
     from dinkster_video import document as timeline_document
     from dinkster_video import image_math, timeline_runtime
     from dinkster_video import timeline as timeline_render
+    from dinkster_workers.execution import current_execution_context
 
 __all__ = [
+    "IMAGE_DOCUMENT_MEDIA_TYPE",
+    "BLEND_MODES",
+    "ImageDocument",
+    "append_raster",
+    "apply_commands",
+    "blend",
+    "canonical_json",
+    "current_execution_context",
+    "dissolve_alpha",
+    "document_meta",
+    "empty_document",
+    "export_ora",
+    "export_psd",
+    "flatten",
+    "from_comfy_layers",
+    "linear_to_srgb",
+    "load_document",
+    "ordered_layer_ids",
+    "raster_png",
+    "register_comfy_compositor",
+    "register_comfy_layers",
+    "srgb_to_linear",
     "RunExecutionContext",
     "obtain_resident",
     "Expansion",
