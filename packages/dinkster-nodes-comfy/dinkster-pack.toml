@@ -531,6 +531,7 @@ namespaces = [
     "CropByBBoxes",
     "CameraAngle",
     "MakeTrainingDataset",
+    "Trellis2UpsampleStage",
     "TripoSplatPreprocessImage",
     "TripoSplatConditioning",
     "LoadTrainingDataset",
@@ -544,6 +545,7 @@ namespaces = [
     "YuE2GenerateMusic",
     "LoadImageDataSetFromFolder",
     "LoadImageTextDataSetFromFolder",
+    "UpscaleModelLoader",
 ]
 
 [pack.sandbox]

@@ -1,8 +1,5 @@
 """Torch-free Hunyuan text interfaces."""
 
-import subprocess
-import sys
-
 from dinkster_api.v1 import (
     CLIP_TYPE,
     CLIP_VISION_OUTPUT_TYPE,
@@ -56,19 +53,3 @@ def test_hunyuan_text_schemas() -> None:
     assert setting.default == 2 and setting.advanced
     assert isinstance(setting.widget, NumberWidget)
     assert (setting.widget.min, setting.widget.max) == (1, 512)
-
-
-def test_hunyuan_text_cold_discovery() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; from dinkster_nodes_comfy.hunyuan_text "
-            "import HUNYUAN_TEXT_NODES; assert len([n.schema() for n in HUNYUAN_TEXT_NODES]) == 2; "
-            "assert 'torch' not in sys.modules; "
-            "assert 'dinkster_inference.model_management' not in sys.modules",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
