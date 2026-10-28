@@ -2,11 +2,13 @@
 
 from dinkster_api.v1 import (
     ASSET_TYPE,
+    AUDIO_RECORD_TYPE,
     AUDIO_TYPE,
     VIDEO_TYPE,
     TypeRegistry,
     register_asset_type,
     register_audio_value_type,
+    register_curve_type,
     register_video_edit_type,
     register_video_value_type,
     resolver_from_env,
@@ -49,6 +51,7 @@ from .conditioning import CONDITIONING_NODES
 from .context_windows import CONTEXT_WINDOW_NODES
 from .controlnet import CONTROLNET_NODES
 from .cosmos_conditioning import COSMOS_CONDITIONING_NODES
+from .curve_editor import CurveEditor
 from .custom_sampling import CUSTOM_SAMPLING_NODES
 from .dataset_collections import DATASET_COLLECTION_NODES
 from .dataset_folders import FOLDER_DATASET_NODES
@@ -95,6 +98,7 @@ from .list_utilities import LIST_UTILITY_NODES
 from .logic import LOGIC_NODES
 from .loops import LOOP_NODES
 from .lora_file_loaders import LORA_FILE_LOADER_NODES
+from .loss_graph import LossGraphNode
 from .lotus import LotusConditioning
 from .ltx_audio import LTX_AUDIO_NODES
 from .ltx_av_latent import LTX_AV_LATENT_NODES
@@ -132,6 +136,7 @@ from .morphology import MORPHOLOGY_NODES
 from .moss_image import MOSSImageControl, MOSSImageLayoutPrompt, TextEncodeMOSSImageEdit
 from .noise import NOISE_NODES
 from .noise_guidance import NOISE_GUIDANCE_NODES
+from .optical_flow import OpticalFlowLoader
 from .perpneg import PERPNEG_NODES
 from .photomaker import PhotoMakerEncode, PhotoMakerLoader
 from .pid_conditioning import PiDConditioning
@@ -176,6 +181,7 @@ from .supir import SUPIRApply
 from .switch import ComfySwitchNode
 from .text import TEXT_NODES
 from .text_generation import TextGenerate, TextGenerateLTX2Prompt
+from .trellis_upsample import Trellis2UpsampleStage
 from .triposplat import TripoSplatConditioning, TripoSplatPreprocessImage
 from .upscale_model_loader import UpscaleModelLoader
 from .utilities import ComfyNumberConvert, PreviewAny, SeedNode
@@ -205,6 +211,7 @@ from .wan_sound import WanHuMoImageToVideo, WanSoundImageToVideo, WanSoundImageT
 from .wan_track_conditioning import WanTrackToVideo
 from .wan_uni3c import WanUni3CControlnetApply
 from .wandancer_keyframes import WANDANCER_KEYFRAME_NODES
+from .webm_save import SaveWEBM
 from .yue2_conditioning import YUE2_CONDITIONING_NODES
 from .zimage_encoders import TextEncodeZImageOmni
 
@@ -266,6 +273,7 @@ COMFY_NODES = (
     *LATENT_OPERATION_NODES,
     *LATENT_UPSCALE_NODES,
     *LATENT_UPSCALE_LOADER_NODES,
+    OpticalFlowLoader,
     *MODEL_LATENT_NODES,
     *CLIP_NODES,
     *STYLE_MODEL_NODES,
@@ -410,6 +418,7 @@ COMFY_NODES = (
     CropByBBoxes,
     CameraAngle,
     MakeTrainingDataset,
+    Trellis2UpsampleStage,
     TripoSplatPreprocessImage,
     TripoSplatConditioning,
     LoadTrainingDataset,
@@ -419,23 +428,29 @@ COMFY_NODES = (
     SaveAudioMP3,
     SaveAudioOpus,
     SaveAudioAdvanced,
+    SaveWEBM,
     *YUE2_CONDITIONING_NODES,
     *FOLDER_DATASET_NODES,
     UpscaleModelLoader,
     VOIDQuadmaskPreprocess,
     VOIDInpaintConditioning,
     VOIDWarpedNoiseSource,
+    LossGraphNode,
+    CurveEditor,
 )
 
 
 def register_inference_types(registry: TypeRegistry) -> None:
     if ASSET_TYPE not in registry:
         register_asset_type(registry, resolver_from_env())
+    if AUDIO_RECORD_TYPE not in registry:
+        register_asset_type(registry, resolver_from_env(), type_id=AUDIO_RECORD_TYPE)
     if AUDIO_TYPE not in registry:
         register_audio_value_type(registry, AUDIO_TYPE, resolver_from_env())
     if VIDEO_TYPE not in registry:
         register_video_value_type(registry, VIDEO_TYPE, resolver_from_env())
     register_video_edit_type(registry)
+    register_curve_type(registry)
     _register_inference_types(registry)
 
 

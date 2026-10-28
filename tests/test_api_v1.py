@@ -38,6 +38,7 @@ GOLDEN_V1_SURFACE = (
     "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
+    "materialize_voxel",
     "register_inference_types",
     "FrontendContribution",
     "FrontendModule",
@@ -150,6 +151,7 @@ GOLDEN_V1_SURFACE = (
     "PREVIEW_EVENT",
     "PROGRESS_EVENT",
     "pack_logger",
+    "publish_preview_artifact",
     "report_event",
     "report_log",
     "report_preview",
@@ -162,6 +164,7 @@ GOLDEN_V1_SURFACE = (
     "CORE_INT",
     "CORE_STRING",
     "ARRAY_TYPE",
+    "AUDIO_RECORD_TYPE",
     "AUDIO_ENCODER_OUTPUT_TYPE",
     "AUDIO_ENCODER_TYPE",
     "AUDIO_TYPE",
@@ -205,6 +208,7 @@ GOLDEN_V1_SURFACE = (
     "MOGE_GEOMETRY_TYPE",
     "MOGE_MODEL_TYPE",
     "NOISE_TYPE",
+    "OPTICAL_FLOW_TYPE",
     "POSE_TYPE",
     "RESOLUTION_PREVIEW_TYPE",
     "RESOURCE_HANDLE_TYPE",
@@ -592,6 +596,81 @@ except ResidentLookupError:
 else:
     raise AssertionError("released {type_name} remained resolvable")
 assert "torch" not in sys.modules
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_optical_flow_registration_uses_shared_holding_pool_without_torch() -> None:
+    script = """
+import sys
+sys.modules['torch'] = None
+sys.modules['dinkster_inference'] = None
+from dinkster_api.v1 import OPTICAL_FLOW_TYPE, TypeRegistry, register_inference_types
+from dinkster_inference_wire import types as wire_types
+from dinkster_memory.resident import ResidentPool
+from dinkster_native.native import register_native_types
+from dinkster_values import ResidentLookupError, register_resident_type
+from dinkster_values.builtin_types import OPTICAL_FLOW_TYPE as builtin_type
+from dinkster_values import OPTICAL_FLOW_TYPE as values_type
+
+assert OPTICAL_FLOW_TYPE == values_type == builtin_type == 'OPTICAL_FLOW'
+holding_pool = ResidentPool()
+wire_types.default_pool = lambda: holding_pool
+registry = TypeRegistry()
+register_native_types(registry)
+spec = registry.spec(OPTICAL_FLOW_TYPE)
+register_inference_types(registry)
+assert registry.spec(OPTICAL_FLOW_TYPE) is spec
+assert holding_pool in registry.resident_tables
+model_patcher = object()
+encoded = spec.encode(model_patcher)
+assert spec.decode(encoded) is model_patcher
+
+foreign_pool = ResidentPool()
+foreign = TypeRegistry()
+first_authority = register_resident_type(foreign, OPTICAL_FLOW_TYPE, table=foreign_pool)
+register_inference_types(foreign)
+assert foreign.spec(OPTICAL_FLOW_TYPE) is first_authority
+try:
+    first_authority.decode(encoded)
+except ResidentLookupError:
+    pass
+else:
+    raise AssertionError('foreign pool resolved a holding-pool value')
+assert sys.modules['torch'] is None
+assert sys.modules['dinkster_inference'] is None
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_voxel_registration_is_public_cold_and_preserves_first_authority() -> None:
+    script = """
+import sys
+sys.modules['torch'] = None
+sys.modules['dinkster_inference'] = None
+import dinkster_api.v1 as api
+from dinkster_inference_wire import materialize_voxel
+from dinkster_native.native import register_native_types
+assert materialize_voxel is api.materialize_voxel
+for registrations in ((api.register_inference_types, register_native_types),
+                      (register_native_types, api.register_inference_types)):
+    for preexisting in (True, False):
+        registry = api.TypeRegistry()
+        first = registry.register(api.VOXEL_TYPE) if preexisting else None
+        registrations[0](registry)
+        spec = registry.spec(api.VOXEL_TYPE)
+        registrations[1](registry)
+        registrations[0](registry)
+        assert registry.spec(api.VOXEL_TYPE) is spec
+        assert first is None or spec is first
+assert sys.modules['torch'] is None
+assert sys.modules['dinkster_inference'] is None
 """
     result = subprocess.run(
         [sys.executable, "-c", script], capture_output=True, text=True, timeout=30

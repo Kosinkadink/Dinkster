@@ -197,6 +197,7 @@ from dinkster_schema import (
     WidgetRepresentations,
     output_descriptor_entries,
     pack_logger,
+    publish_preview_artifact,
     report_event,
     report_log,
     report_preview,
@@ -210,6 +211,7 @@ from dinkster_values import (
     ARRAY_TYPE,
     AUDIO_ENCODER_OUTPUT_TYPE,
     AUDIO_ENCODER_TYPE,
+    AUDIO_RECORD_TYPE,
     AUDIO_TYPE,
     BACKGROUND_REMOVAL_TYPE,
     BOUNDING_BOX_TYPE,
@@ -267,6 +269,7 @@ from dinkster_values import (
     MOGE_GEOMETRY_TYPE,
     MOGE_MODEL_TYPE,
     NOISE_TYPE,
+    OPTICAL_FLOW_TYPE,
     PHOTOMAKER_TYPE,
     PNG_CONTAINER_VERSION,
     POSE_TYPE,
@@ -421,6 +424,7 @@ def __getattr__(name: str) -> object:
         "materialize_image",
         "materialize_latent",
         "materialize_clip_vision_output",
+        "materialize_voxel",
     }:
         from dinkster_inference_wire import types
 
@@ -447,6 +451,7 @@ def __dir__() -> list[str]:
             "materialize_image",
             "materialize_latent",
             "materialize_clip_vision_output",
+            "materialize_voxel",
             "initialize_inference_process",
         }
     )
@@ -460,6 +465,7 @@ if TYPE_CHECKING:
         materialize_clip_vision_output,
         materialize_image,
         materialize_latent,
+        materialize_voxel,
         register_inference_types,
     )
     from dinkster_video import document as timeline_document
@@ -480,6 +486,7 @@ __all__ = [
     "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
+    "materialize_voxel",
     "register_inference_types",
     "FrontendContribution",
     "FrontendModule",
@@ -602,6 +609,7 @@ __all__ = [
     "PREVIEW_EVENT",
     "PROGRESS_EVENT",
     "pack_logger",
+    "publish_preview_artifact",
     "report_event",
     "report_log",
     "report_preview",
@@ -614,6 +622,7 @@ __all__ = [
     "CORE_INT",
     "CORE_STRING",
     "ASSET_TYPE",
+    "AUDIO_RECORD_TYPE",
     "AUDIO_ENCODER_OUTPUT_TYPE",
     "AUDIO_ENCODER_TYPE",
     "AUDIO_TYPE",
@@ -653,6 +662,7 @@ __all__ = [
     "MODEL_PATCH_TYPE",
     "MODEL_TYPE",
     "NOISE_TYPE",
+    "OPTICAL_FLOW_TYPE",
     "POSE_TYPE",
     "IMAGE_BATCH_MERGER_ID",
     "INLINE_STRING_CAP",

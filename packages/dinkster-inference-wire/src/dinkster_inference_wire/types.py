@@ -27,7 +27,10 @@ from dinkster_values import (
     LORA_MODEL_TYPE,
     MODEL_PATCH_TYPE,
     MODEL_TYPE,
+    MOGE_GEOMETRY_TYPE,
+    MOGE_MODEL_TYPE,
     NOISE_TYPE,
+    OPTICAL_FLOW_TYPE,
     PHOTOMAKER_TYPE,
     RESOLUTION_PREVIEW_TYPE,
     SAM3_TRACK_DATA_TYPE,
@@ -72,6 +75,7 @@ from .vision_wire import (
     materialize_clip_vision_output,
     validate_clip_vision_output,
 )
+from .voxel_wire import materialize_voxel, register_voxel_type
 from .wan_wire import register_wan_type
 
 MODEL_TYPE_ID = MODEL_TYPE
@@ -86,7 +90,9 @@ NOISE_TYPE_ID = NOISE_TYPE
 _RESIDENT_TYPE_IDS = (
     AUDIO_ENCODER_TYPE,
     MODEL_TYPE_ID,
+    MOGE_MODEL_TYPE,
     MODEL_PATCH_TYPE,
+    OPTICAL_FLOW_TYPE,
     CLIP_TYPE_ID,
     CLIP_VISION_TYPE_ID,
     VAE_TYPE_ID,
@@ -183,12 +189,22 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
             ),
         )
     registered.append(registry.spec(LORA_MODEL_TYPE))
+    if MOGE_GEOMETRY_TYPE not in registry:
+        registry.register(
+            MOGE_GEOMETRY_TYPE,
+            encode=encode_latent,
+            decode=partial(decode_latent, require_samples=False),
+            fingerprint=latent_fingerprint(MOGE_GEOMETRY_TYPE),
+            validate_encoded=partial(validate_latent_encoded, require_samples=False),
+        )
+    registered.append(registry.spec(MOGE_GEOMETRY_TYPE))
     for type_id in (WAN_CAMERA_EMBEDDING_TYPE, TRACKS_TYPE, AUDIO_ENCODER_OUTPUT_TYPE):
         registered.append(
             registry.spec(type_id) if type_id in registry else register_wan_type(registry, type_id)
         )
     registered.extend(register_media_types(registry))
     registered.append(register_loss_map_type(registry))
+    registered.append(register_voxel_type(registry))
     return tuple(registered)
 
 
@@ -205,5 +221,6 @@ __all__ = [
     "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
+    "materialize_voxel",
     "register_inference_types",
 ]

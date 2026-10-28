@@ -101,8 +101,11 @@ next completed run at a descendant head. Find candidate runs in the Actions
 dispatched and release-called runs use a separate non-cancelling durable group,
 so push traffic neither queues nor replaces them. Full validation runs the
 Python 3.12 Linux suite as four whole-file shards, both Python 3.12 Windows
-shards, branch coverage as four shards combined before enforcing the unchanged
-80% floor, model tests, one torch CPU job, translation coverage, artifact
+shards, and branch coverage collected during those same Linux test shards.
+All four coverage artifacts are required and combined before enforcing the
+unchanged 80% floor, without a second root-suite run. Model pytest invocations
+report their ten slowest durations. Full validation also runs model tests,
+one torch CPU job, translation coverage, artifact
 smoke checks and the macOS descriptor test. Every complete lane has a
 20-minute or lower job timeout. `main-status` uploads one JSON artifact with
 every aggregate result and fails unless every selected lane passed. Select a branch in Actions'
