@@ -5,6 +5,7 @@ import hashlib
 import tomllib
 from pathlib import Path
 
+import pytest
 from dinkster_assets import RemoteSource
 from dinkster_nodes_image import (
     DETECT_PROVIDER_CHOICE,
@@ -22,7 +23,7 @@ from dinkster_nodes_vision.sam31 import DetectObjects as SAM31DetectObjects
 from dinkster_nodes_vision.sam31 import SegmentByText as SAM31SegmentByText
 from dinkster_nodes_vision.sam31 import SegmentDetections as SAM31SegmentDetections
 from dinkster_nodes_vision.sam31 import TrackObjects as SAM31TrackObjects
-from dinkster_schema import ComboWidget, schema_signature, schema_to_wire
+from dinkster_schema import ComboWidget, Node, schema_signature, schema_to_wire
 from dinkster_workers import load_manifest
 
 from dinkster.compose import compose_serving
@@ -42,61 +43,28 @@ TOKENIZER_SHA256 = "924691ac288e54409236115652ad4aa250f48203de50a9e4722a6ecd48d6
 MODEL_DIGEST = "blake3:1c8d5762dbaf238bc9a2f10de07e0c476d1b68e75453566feb8dc9bcf2cb41c5"
 
 
-def test_detect_owner_schema_is_reused_without_wire_expansion() -> None:
-    schema = OwnerDetectObjects.schema()
-    provider_schema = SAM31DetectObjects.schema()
+@pytest.mark.parametrize(
+    ("owner", "implementation", "choice"),
+    (
+        (OwnerDetectObjects, SAM31DetectObjects, DETECT_PROVIDER_CHOICE),
+        (OwnerSegmentDetections, SAM31SegmentDetections, SEGMENT_PROVIDER_CHOICE),
+        (OwnerSegmentByText, SAM31SegmentByText, TEXT_SEGMENT_PROVIDER_CHOICE),
+        (OwnerTrackObjects, SAM31TrackObjects, TRACK_PROVIDER_CHOICE),
+    ),
+    ids=("detect", "segment", "text-segment", "track"),
+)
+def test_owner_schema_is_reused_without_wire_expansion(
+    owner: type[Node], implementation: type[Node], choice: str
+) -> None:
+    schema = owner.schema()
+    provider_schema = implementation.schema()
     provider = schema.input("provider")
     assert provider is not None and not provider.required and provider.hidden
     assert isinstance(provider.widget, ComboWidget)
     assert provider.widget.options == ()
-    assert provider.widget.remote_route == f"/api/choices/{DETECT_PROVIDER_CHOICE}"
-    assert vision_choices()[DETECT_PROVIDER_CHOICE] == ()
-    assert OwnerDetectObjects in IMAGE_NODES
-    assert provider_schema == schema
-    assert schema_to_wire(provider_schema) == schema_to_wire(schema)
-    assert schema_signature(provider_schema) == schema_signature(schema)
-
-
-def test_segment_owner_schema_is_reused_without_wire_expansion() -> None:
-    schema = OwnerSegmentDetections.schema()
-    provider_schema = SAM31SegmentDetections.schema()
-    provider = schema.input("provider")
-    assert provider is not None and not provider.required and provider.hidden
-    assert isinstance(provider.widget, ComboWidget)
-    assert provider.widget.options == ()
-    assert provider.widget.remote_route == f"/api/choices/{SEGMENT_PROVIDER_CHOICE}"
-    assert vision_choices()[SEGMENT_PROVIDER_CHOICE] == ()
-    assert OwnerSegmentDetections in IMAGE_NODES
-    assert provider_schema == schema
-    assert schema_to_wire(provider_schema) == schema_to_wire(schema)
-    assert schema_signature(provider_schema) == schema_signature(schema)
-
-
-def test_text_segment_owner_schema_is_reused_without_wire_expansion() -> None:
-    schema = OwnerSegmentByText.schema()
-    provider_schema = SAM31SegmentByText.schema()
-    provider = schema.input("provider")
-    assert provider is not None and not provider.required and provider.hidden
-    assert isinstance(provider.widget, ComboWidget)
-    assert provider.widget.options == ()
-    assert provider.widget.remote_route == f"/api/choices/{TEXT_SEGMENT_PROVIDER_CHOICE}"
-    assert vision_choices()[TEXT_SEGMENT_PROVIDER_CHOICE] == ()
-    assert OwnerSegmentByText in IMAGE_NODES
-    assert provider_schema == schema
-    assert schema_to_wire(provider_schema) == schema_to_wire(schema)
-    assert schema_signature(provider_schema) == schema_signature(schema)
-
-
-def test_track_owner_schema_is_reused_without_wire_expansion() -> None:
-    schema = OwnerTrackObjects.schema()
-    provider_schema = SAM31TrackObjects.schema()
-    provider = schema.input("provider")
-    assert provider is not None and not provider.required and provider.hidden
-    assert isinstance(provider.widget, ComboWidget)
-    assert provider.widget.options == ()
-    assert provider.widget.remote_route == f"/api/choices/{TRACK_PROVIDER_CHOICE}"
-    assert vision_choices()[TRACK_PROVIDER_CHOICE] == ()
-    assert OwnerTrackObjects in IMAGE_NODES
+    assert provider.widget.remote_route == f"/api/choices/{choice}"
+    assert vision_choices()[choice] == ()
+    assert owner in IMAGE_NODES
     assert provider_schema == schema
     assert schema_to_wire(provider_schema) == schema_to_wire(schema)
     assert schema_signature(provider_schema) == schema_signature(schema)
