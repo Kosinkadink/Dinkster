@@ -11,6 +11,7 @@ import pytest
 import torch
 from dinkster_api.v1 import (
     CORE_STRING,
+    IMAGE_TYPE,
     INTERP_MODEL_TYPE,
     AssetRef,
     InputSpec,
@@ -20,6 +21,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     TypeExpr,
     initialize_inference_process,
+    materialize_image,
 )
 from dinkster_assets import MountDef, MountTable, digest_file
 from dinkster_graph import Graph, GraphNode, Link
@@ -139,6 +141,42 @@ class InspectInterpolationModel(Node):
         return cls.outputs(summary="resident RIFE has exact weights, channels, dtype and devices")
 
 
+class InterpolationImages(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="interpolation-fixture.images",
+            outputs=(OutputSpec("images", TypeExpr.concrete(IMAGE_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        return cls.outputs(
+            images=torch.tensor([0.125, 0.75, 0.375])
+            .reshape(3, 1, 1, 1)
+            .expand(3, 64, 64, 3)
+            .clone()
+        )
+
+
+class InspectInterpolatedImages(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="interpolation-fixture.frames",
+            inputs=(InputSpec("images", TypeExpr.concrete(IMAGE_TYPE)),),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, images: object) -> dict[str, object]:
+        actual = materialize_image(images)
+        expected = torch.tensor([0.125, 0.4375, 0.4375, 0.75, 0.5625, 0.5625, 0.375])
+        expected = expected.reshape(7, 1, 1, 1).expand(7, 64, 64, 3)
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+        return cls.outputs(summary="native loader feeds native interpolation with ordered frames")
+
+
 @pytest.mark.parametrize("verified", (False, True))
 @pytest.mark.parametrize("in_process", (True, False))
 def test_mounted_checkpoint_crosses_ordinary_hosts_twice(
@@ -146,7 +184,7 @@ def test_mounted_checkpoint_crosses_ordinary_hosts_twice(
 ) -> None:
     initialize_inference_process()
 
-    state = _reference_state("rife")
+    state = {key: torch.zeros_like(value) for key, value in _reference_state("rife").items()}
     state["encode.cnn0.weight"] = (
         torch.arange(432, dtype=torch.float32).reshape(16, 3, 3, 3) - 137
     ) / 1024
@@ -163,9 +201,10 @@ def test_mounted_checkpoint_crosses_ordinary_hosts_twice(
     monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
     module = "interpolation_fixture_" + tmp_path.name.replace("-", "_")
     (tmp_path / f"{module}.py").write_text(
-        "from test_interpolation_loader_torch import InspectInterpolationModel\n"
+        "from test_interpolation_loader_torch import (InspectInterpolationModel, "
+        "InterpolationImages, InspectInterpolatedImages)\n"
         "from dinkster_nodes_comfy import register_inference_types\n"
-        "NODES = (InspectInterpolationModel,)\n",
+        "NODES = (InspectInterpolationModel, InterpolationImages, InspectInterpolatedImages)\n",
         encoding="ascii",
     )
     fixture = tmp_path / "fixture.toml"
@@ -215,13 +254,31 @@ def test_mounted_checkpoint_crosses_ordinary_hosts_twice(
                     "inspect": GraphNode(
                         "interpolation-fixture.inspect", {"model": Link("load", "INTERP_MODEL")}
                     ),
+                    "images": GraphNode("interpolation-fixture.images"),
+                    "interpolate": GraphNode(
+                        "FrameInterpolate",
+                        {
+                            "interp_model": Link("load", "INTERP_MODEL"),
+                            "images": Link("images", "images"),
+                            "multiplier": 3,
+                        },
+                    ),
+                    "frames": GraphNode(
+                        "interpolation-fixture.frames",
+                        {
+                            "images": Link("interpolate", "IMAGE"),
+                        },
+                    ),
                 }
             )
             engine = composer.composition.make_engine(lambda _event: None)
             for _ in range(2):
-                result = await engine.run(graph, ["inspect"])
+                result = await engine.run(graph, ["inspect", "frames"])
                 assert result.outputs["inspect"]["summary"].resolve() == (
                     "resident RIFE has exact weights, channels, dtype and devices"
+                )
+                assert result.outputs["frames"]["summary"].resolve() == (
+                    "native loader feeds native interpolation with ordered frames"
                 )
         finally:
             await composer.close()

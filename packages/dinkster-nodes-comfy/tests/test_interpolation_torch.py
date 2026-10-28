@@ -4,7 +4,12 @@ from types import SimpleNamespace
 
 import pytest
 import torch
-from dinkster_api.v1 import initialize_inference_process
+from dinkster_api.v1 import (
+    IMAGE_TYPE,
+    TypeRegistry,
+    initialize_inference_process,
+    register_inference_types,
+)
 from dinkster_nodes_comfy.interpolation import FrameInterpolate
 from dinkster_schema import use_reporter
 
@@ -38,7 +43,10 @@ class LinearInterpolation:
 
 
 @pytest.mark.parametrize("mode", ("single", "multi", "single-oom", "multi-oom"))
-def test_frame_order_clamping_padding_progress_and_recovery(monkeypatch, mode: str) -> None:
+@pytest.mark.parametrize("portable", (False, True))
+def test_frame_order_clamping_padding_progress_and_recovery(
+    monkeypatch, mode: str, portable: bool
+) -> None:
     initialize_inference_process()
     from dinkster_inference import model_management
 
@@ -49,9 +57,15 @@ def test_frame_order_clamping_padding_progress_and_recovery(monkeypatch, mode: s
     )
     images = torch.linspace(-0.25, 1.25, 3 * 3 * 5 * 3).reshape(3, 3, 5, 3)
     before = images.clone()
+    supplied = images
+    if portable:
+        registry = TypeRegistry()
+        register_inference_types(registry)
+        spec = registry.spec(IMAGE_TYPE)
+        supplied = spec.decode(spec.encode(images))
     reports = []
     with use_reporter(lambda name, data, blob: reports.append((name, dict(data)))):
-        output = FrameInterpolate.execute(interp_model=patcher, images=images, multiplier=4)[
+        output = FrameInterpolate.execute(interp_model=patcher, images=supplied, multiplier=4)[
             "IMAGE"
         ]
     expected = [images[0]]
