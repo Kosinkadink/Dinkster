@@ -98,6 +98,18 @@
   resampling matching native video loading; deferred assembly with optional
   audio, 8/10-bit precision, sRGB, HLG, and HDR PQ; disassembly to frames,
   optional audio, fps, duration, bit depth, and color space
+- Native Trim Video and Trim Video (Advanced) select presentation-time
+  windows, including tail-relative starts and strict duration checks.
+  Component inputs encode with source defaults before selection; the
+  advanced editor's zero window keeps its input unchanged.
+  Empty selections fail immediately rather than producing an empty VIDEO;
+  see [video behavior differences](video-deliberate-differences.md).
+- Native Crop Video clamps and even-aligns a pixel rectangle, retaining the
+  full frame for empty or full-frame selections. Component crops copy pixels
+  without changing their precision, frame rate, or complete audio, but reset
+  encoding color space to sRGB as in the fixed source. No-op selections keep
+  their original color space;
+  encoded inputs retain their source with composable lazy crops.
 - Public `iter_video_pixels` yields edited, display-oriented float32 pixels
   with rational timestamps without accumulating the complete frame batch.
   Consumers that stop early close the iterator to release the decoder and

@@ -188,6 +188,7 @@ from .utilities import ComfyNumberConvert, PreviewAny, SeedNode
 from .vae import VAE_NODES
 from .video_components import ConcatenateVideo, CreateVideo, GetVideoComponents
 from .video_conditioning import VIDEO_CONDITIONING_NODES
+from .video_edits import VideoCrop, VideoSlice, VideoTrim
 from .video_guidance import VIDEO_GUIDANCE_NODES
 from .video_latent import VIDEO_LATENT_NODES
 from .video_latent_ops import VIDEO_LATENT_OPERATION_NODES
@@ -412,6 +413,9 @@ COMFY_NODES = (
     *SAM3_TRACKING_NODES,
     SAM3_Detect,
     SAM3_TrackPreview,
+    VideoSlice,
+    VideoTrim,
+    VideoCrop,
     SaveVideo,
     *MODEL_FILE_LOADER_NODES,
     *LORA_FILE_LOADER_NODES,
