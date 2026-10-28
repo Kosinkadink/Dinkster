@@ -35,8 +35,6 @@
   `ResolutionSelector` rounds aspect-ratio and megapixel dimensions to a chosen multiple.
 - Marigold V2 decoded predictions convert to per-image normalized depth,
   unit surface normals, or sRGB albedo.
-- Native video dataset transforms lazily crop continuous frame ranges and
-  shuffle video lists or video-text pairs with seeded ordering.
 - Native list construction preserves member order and nested values across
   independently typed elements; indexed selection supports positive and negative
   indices and retains the selected element's type.
@@ -90,8 +88,6 @@
   paired comparison previews accept either, both, or neither image
 - ComfyUI ResizeImageMaskNode, BatchImagesNode, BatchMasksNode, BatchLatentsNode,
   and ColorTransfer native nodes
-- ComfyUI dataset image transforms for shorter/longer-edge resize, center/random
-  crop, normalization, brightness, and contrast adjustment
 - Alpha premultiply/unpremultiply and mask polarity conversion are native-only
   operations without fabricated ComfyUI aliases
 - Image operations declare alpha preservation, required alpha, creation, or
@@ -113,15 +109,6 @@
 - Image and mask batch range, repeat, reverse, shuffle, ping-pong loop, count
   expansion, concatenation, insertion, and replacement; image batch/list
   conversion and rebatching
-- Dataset image and image-text pair shuffling, perceptual-hash deduplication,
-  row-major image grids, and deprecated text-list merging
-- Training dataset preparation with RGB VAE encoding and scheduled CLIP
-  conditioning, preserving image-list order and supporting omitted, shared,
-  or per-image captions
-- Encoded training datasets loaded from granted dataset folders, preserving
-  sorted shard order, latent tensors and conditioning metadata
-- Image and image-caption datasets loaded from granted input folders, with
-  per-file RGB images, optional sidecar captions and one-level repeated folders
 - Row-major image grid composition and decomposition; image stitching; split
   and merge with overlapping tiles
 - Image transitions between inputs, within a batch, or while joining batches,
