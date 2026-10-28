@@ -1,5 +1,9 @@
 ## Media I/O
 
+- Indexed video file selections remain references to their granted files,
+  without input copying or an encoded-file size cap. Unindexed selections
+  must be scanned before VIDEO admission. Decode working-set and produced
+  output limits still apply.
 - Portable SAM3 track values preserve packed uint8 masks, empty object axes or
   absent masks, original dimensions, frame counts, optional scores, and structural
   metadata across worker boundaries
@@ -111,6 +115,9 @@
 - Native optical-flow loading from granted RAFT-large checkpoint assets, with
   safe state-dict loading, float32 evaluation and ordinary resident model transport;
   controlled CPU loader coverage does not certify real-model optical-flow quality
+- Native Save WEBM exports IMAGE sequences as VP9 or 10-bit AV1, retaining
+  VP9 RGBA transparency, fractional frame rates and submitted workflow metadata,
+  with default or selected writable output mounts and unchanged image output
 - Native saver format fallback reports requested/effective choices through
   nonblocking value diagnostics, including isolated-worker execution
 - Asset-backed native audio loading to AUDIO (first audio stream of audio or
