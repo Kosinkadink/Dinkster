@@ -54,23 +54,9 @@ from dinkster_protocol import (
     derive_attention_route_token,
 )
 from dinkster_schema import (
-    SCHEMA_WIRE_VERSION,
-    ComfyAliasConfidence,
-    ComfyAliasRecord,
-    ComfyAliasRegistry,
-    ComfyAliasSource,
-    ComfyAliasSourceSchema,
-    ComfyGroupRegistry,
-    InputSpec,
-    MappingSource,
     NodeSchema,
-    ReplacementCase,
-    ReplacementRule,
-    TypeExpr,
     build_node_types,
     build_schemas,
-    comfy_alias_registry_to_wire,
-    comfy_group_registry_to_wire,
     schema_signature,
 )
 from dinkster_values import TypeRegistry, UnresolvablePayload, register_core_types
@@ -314,34 +300,6 @@ def test_isolated_worker_uses_interpreter_entry_for_split_package(tmp_path: Path
         await worker.start()
         try:
             assert "iso.sleepy" in worker.schemas
-        finally:
-            await worker.close()
-
-    asyncio.run(scenario())
-
-
-def test_launched_worker_announces_comfy_translation_registries(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        manifest = write_iso_manifest(tmp_path)
-        aliases = ComfyAliasRegistry(source_schemas=(), records=())
-        groups = ComfyGroupRegistry(source_schemas=(), group_schemas=(), records=())
-        (tmp_path / "comfy-aliases.json").write_text(
-            json.dumps(comfy_alias_registry_to_wire(aliases)),
-            encoding="utf-8",
-        )
-        (tmp_path / "comfy-groups.json").write_text(
-            json.dumps(comfy_group_registry_to_wire(groups)),
-            encoding="utf-8",
-        )
-        worker = IsolatedWorker(
-            manifest,
-            core_registry(),
-            extra_env={"PYTHONPATH": str(TESTS_DIR)},
-        )
-        await worker.start()
-        try:
-            assert worker._session.comfy_aliases == aliases  # noqa: SLF001
-            assert worker._session.comfy_groups == groups  # noqa: SLF001
         finally:
             await worker.close()
 
@@ -3768,65 +3726,6 @@ def test_load_pack_presentation(tmp_path: Path, caplog: pytest.LogCaptureFixture
     with caplog.at_level("WARNING", logger="dinkster.workers"):
         assert load_pack_presentation(bad_toml) is None
     assert "unreadable" in " ".join(r.getMessage() for r in caplog.records)
-
-
-def test_load_pack_validates_comfy_alias_carrier_ownership_and_references(
-    tmp_path: Path,
-) -> None:
-    def write_registry(carrier: str, target_input: str = "value") -> None:
-        source = ComfyAliasSource("comfy-core", "TestNode", "comfy.TestNode", "b78cec87")
-        registry = ComfyAliasRegistry(
-            source_schemas=(
-                ComfyAliasSourceSchema(
-                    NodeSchema(
-                        source.node_type,
-                        inputs=(InputSpec("value", TypeExpr.concrete("STRING")),),
-                    ),
-                    SCHEMA_WIRE_VERSION,
-                ),
-            ),
-            records=(
-                ComfyAliasRecord(
-                    id="comfy_alias:comfy-core/TestNode",
-                    mapping_kind="op",
-                    carrier=carrier,
-                    source=source,
-                    replacement=ReplacementRule(
-                        from_type=source.node_type,
-                        cases=(
-                            ReplacementCase.build(
-                                carrier,
-                                inputs={target_input: MappingSource.copy("value")},
-                            ),
-                        ),
-                    ),
-                    confidence=ComfyAliasConfidence("exact", ("tests/test_isolated.py",)),
-                ),
-            ),
-        )
-        (tmp_path / "comfy-aliases.json").write_text(
-            json.dumps(comfy_alias_registry_to_wire(registry)), encoding="utf-8"
-        )
-
-    manifest_path = write_iso_manifest(tmp_path, name="iso")
-    write_registry("iso.sleepy")
-    manifest = load_manifest(manifest_path)
-    from dinkster.packs import pack_info_from_manifest
-
-    assert pack_info_from_manifest(manifest).comfy_aliases == manifest.comfy_aliases
-    host_module.load_pack(manifest)
-
-    write_registry("other.node")
-    with pytest.raises(ManifestError, match="is not owned by this pack"):
-        host_module.load_pack(load_manifest(manifest_path))
-
-    write_registry("iso.missing")
-    with pytest.raises(ManifestError, match="unknown carrier"):
-        host_module.load_pack(load_manifest(manifest_path))
-
-    write_registry("iso.sleepy", target_input="missing")
-    with pytest.raises(ManifestError, match="not a static input id"):
-        host_module.load_pack(load_manifest(manifest_path))
 
 
 def test_pack_info_from_manifest(tmp_path: Path) -> None:

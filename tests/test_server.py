@@ -71,6 +71,7 @@ from dinkster_schema import (
     report_progress,
     schema_signature,
     schema_to_wire,
+    validate_replacement_references,
 )
 from dinkster_server import (
     BINARY_BLOB_KEY,
@@ -2470,7 +2471,7 @@ def test_prepared_surface_validation_keeps_requests_responsive(
 
     import dinkster_server.app as app_module
 
-    original_validate = app_module.validate_replacement_references
+    original_validate = validate_replacement_references
     validation_started = threading.Event()
     release_validation = threading.Event()
     app = create_app(make_engine, SCHEMAS)
