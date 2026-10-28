@@ -208,11 +208,13 @@ def test_av1_file_defaults_preserve_timestamps_and_explicit_crf() -> None:
     value = assemble_video(
         np.random.default_rng(97).integers(0, 256, (4, 64, 64, 3), dtype=np.uint8), fps=30
     )
-    defaults, explicit = io.BytesIO(), io.BytesIO()
+    defaults, explicit_default, explicit = io.BytesIO(), io.BytesIO(), io.BytesIO()
     save_video_stream(value, defaults, container="mkv", codec="av1")
+    save_video_stream(value, explicit_default, container="mkv", codec="av1", crf=24)
     save_video_stream(value, explicit, container="mkv", codec="av1", crf=18)
+    assert _packets(defaults.getvalue()) == _packets(explicit_default.getvalue())
     assert _packets(defaults.getvalue()) != _packets(explicit.getvalue())
-    for encoded in (defaults, explicit):
+    for encoded in (defaults, explicit_default, explicit):
         with av.open(io.BytesIO(encoded.getvalue()), mode="r") as container:
             frames = list(container.decode(video=0))
             assert len(frames) == 4
