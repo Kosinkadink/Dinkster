@@ -69,6 +69,7 @@ from .builtin_types import (
     IMPACT_BASIC_PIPE_TYPE,
     INFERENCE_LATENT_OPERATION_TYPE,
     INPAINT_CONDITIONING_TYPE,
+    INTERP_MODEL_TYPE,
     LATENT_OPERATION_TYPE,
     LATENT_TYPE,
     LATENT_UPSCALE_MODEL_TYPE,
@@ -143,7 +144,12 @@ from .image_codec import (
     render_mask_png,
     validate_image_encoded,
 )
-from .image_components import ImageComponents, ReadableImageSource, decode_image_components
+from .image_components import (
+    ImageComponents,
+    ReadableImageSource,
+    decode_image_components,
+    open_image_components,
+)
 from .latent_codec import (
     LATENT_CODEC_MAGIC,
     LATENT_CODEC_VERSION,
@@ -359,6 +365,7 @@ __all__ = [
     "IMPACT_BASIC_PIPE_TYPE",
     "INFERENCE_LATENT_OPERATION_TYPE",
     "INLINE_STRING_CAP",
+    "INTERP_MODEL_TYPE",
     "InvalidRenditionRequest",
     "INT8_BACKWARD_TEMP_LIMIT_BYTES",
     "JsonValue",
@@ -485,6 +492,7 @@ __all__ = [
     "detection_meta",
     "decode_image_array",
     "decode_image_components",
+    "open_image_components",
     "decode_image_file",
     "decode_model3d",
     "decode_model3d_file",

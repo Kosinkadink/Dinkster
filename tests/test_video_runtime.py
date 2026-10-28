@@ -13,7 +13,7 @@ from typing import Any, BinaryIO, cast
 import av
 import numpy as np
 import pytest
-from av.error import InvalidDataError
+from av.error import FFmpegError, InvalidDataError
 from dinkster_api.v1 import VIDEO_TYPE
 from dinkster_assets import AssetRef, AssetVault, digest_bytes, register_video_value_type
 from dinkster_nodes_media_io.video_ops import CropVideo, TrimVideo, VideoInfo
@@ -65,6 +65,152 @@ def _packets(data: bytes) -> list[bytes]:
     with av.open(io.BytesIO(data), mode="r") as source:
         packets = [bytes(p) for p in source.demux(video=0) if p.size]
     return packets
+
+
+def _x264_options(data: bytes) -> bytes:
+    payload = b"".join(_packets(data))
+    start = payload.index(b"x264 -")
+    return payload[start : payload.index(b"\x00", start)]
+
+
+def _source_style_h264(
+    images: np.ndarray,
+    *,
+    fps: Fraction,
+    depth: int,
+    color: str,
+    crf: float | None = None,
+    preset: str | None = None,
+) -> bytes:
+    """Encode source components with the approved public-source conversion recipe."""
+    output = io.BytesIO()
+    rate = Fraction(round(fps * 1000), 1000)
+    pix_fmt = "yuv420p10le" if depth > 8 else "yuv420p"
+    color_values = {"sRGB": (1, 13, 1, 1), "HDR PQ": (9, 16, 9, 1)}[color]
+    with av.open(output, "w", format="mp4", options={"movflags": "use_metadata_tags"}) as opened:
+        mux = cast(Any, opened)
+        stream = mux.add_stream("libx264", rate=rate)
+        stream.width, stream.height = images.shape[2], images.shape[1]
+        stream.pix_fmt = pix_fmt
+        stream.options = {"crf": str(18 if crf is None else crf)}
+        if preset is not None:
+            stream.options["preset"] = preset
+        (
+            stream.codec_context.color_primaries,
+            stream.codec_context.color_trc,
+            stream.codec_context.colorspace,
+            stream.codec_context.color_range,
+        ) = color_values
+        for samples in images:
+            if depth > 8:
+                pixels = np.clip(samples.astype(np.float32) * 65535, 0, 65535).astype("<u2")
+                frame = av.VideoFrame.from_ndarray(pixels, format="rgb48le")
+            else:
+                pixels = np.clip(samples * 255, 0, 255).astype(np.uint8)
+                frame = av.VideoFrame.from_ndarray(pixels, format="rgb24")
+            frame = frame.reformat(format=pix_fmt, dst_colorspace=color_values[2])
+            (
+                frame.color_primaries,
+                frame.color_trc,
+                frame.colorspace,
+                frame.color_range,
+            ) = color_values
+            for packet in stream.encode(frame):
+                mux.mux(packet)
+        for packet in stream.encode():
+            mux.mux(packet)
+    return output.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("depth", "color", "crf", "preset"),
+    [(8, "sRGB", None, None), (10, "HDR PQ", 18.5, "slow")],
+)
+def test_source_component_h264_matches_approved_source_encoding(
+    depth: int, color: str, crf: float | None, preset: str | None
+) -> None:
+    fps = Fraction(30000, 1001)
+    images = np.linspace(-0.01, 1.01, 4 * 64 * 64 * 3, dtype=np.float64).reshape(4, 64, 64, 3)
+    value = assemble_video(images, fps=fps, bit_depth=str(depth), color_space=color)
+    expected = _source_style_h264(images, fps=fps, depth=depth, color=color, crf=crf, preset=preset)
+    actual = io.BytesIO()
+    save_video_stream(
+        value,
+        actual,
+        codec="h264",
+        crf=crf,
+        preset=preset,
+        source_components=True,
+    )
+    assert cast(dict[str, object], value["probe"])["fps"] == fps
+    with av.open(io.BytesIO(actual.getvalue()), mode="r") as container:
+        stream = container.streams.video[0]
+        assert stream.average_rate == Fraction(2997, 100)
+        assert stream.pix_fmt == ("yuv420p10le" if depth > 8 else "yuv420p")
+        assert (
+            stream.codec_context.color_primaries,
+            stream.codec_context.color_trc,
+            stream.codec_context.colorspace,
+            stream.codec_context.color_range,
+        ) == {"sRGB": (1, 13, 1, 1), "HDR PQ": (9, 16, 9, 1)}[color]
+    assert len(_packets(actual.getvalue())) == len(_packets(expected))
+    assert _x264_options(actual.getvalue()) == _x264_options(expected)
+    np.testing.assert_array_equal(
+        disassemble_video(video_from_source(actual.getvalue()))["images"],
+        disassemble_video(video_from_source(expected))["images"],
+    )
+
+
+def test_default_component_writer_remains_separate_from_source_component_encoding() -> None:
+    fps = Fraction(30000, 1001)
+    images = np.linspace(0, 1, 4 * 16 * 24 * 3, dtype=np.float32).reshape(4, 16, 24, 3)
+    value = assemble_video(images, fps=fps)
+    implicit, explicit, source_style = io.BytesIO(), io.BytesIO(), io.BytesIO()
+    save_video_stream(value, implicit, codec="h264")
+    save_video_stream(value, explicit, codec="h264", source_components=False)
+    save_video_stream(value, source_style, codec="h264", source_components=True)
+    assert cast(dict[str, object], value["probe"])["fps"] == fps
+    assert _packets(implicit.getvalue()) == _packets(explicit.getvalue())
+    assert b"crf=23.0" in _x264_options(implicit.getvalue())
+    assert b"bframes=0" in _x264_options(implicit.getvalue())
+    with av.open(io.BytesIO(implicit.getvalue())) as container:
+        # Four frames span 133467 ticks under the default microsecond timestamp policy.
+        assert container.streams.video[0].average_rate == Fraction(4_000_000, 133_467)
+    assert _x264_options(source_style.getvalue()) == _x264_options(
+        _source_style_h264(images, fps=fps, depth=8, color="sRGB")
+    )
+
+
+@pytest.mark.parametrize("shape", [(2, 16, 25, 3), (2, 16, 24, 4)])
+def test_source_component_h264_preserves_source_shape_failures(
+    shape: tuple[int, int, int, int],
+) -> None:
+    images = np.zeros(shape, dtype=np.float32)
+    with pytest.raises((ValueError, FFmpegError)):
+        save_video_stream(
+            assemble_video(images, fps=30),
+            io.BytesIO(),
+            container="mkv",
+            codec="h264",
+            source_components=True,
+        )
+
+
+def test_source_component_small_av1_keeps_explicit_codec() -> None:
+    images = np.linspace(0, 1, 2 * 8 * 12 * 3, dtype=np.float32).reshape(2, 8, 12, 3)
+    encoded = io.BytesIO()
+    save_video_stream(
+        assemble_video(images, fps=30),
+        encoded,
+        container="mkv",
+        codec="av1",
+        source_components=True,
+    )
+    with av.open(io.BytesIO(encoded.getvalue()), mode="r") as container:
+        stream = container.streams.video[0]
+        assert stream.codec_context.codec.canonical_name == "av1"
+        assert (stream.width, stream.height) == (12, 8)
+        assert len(list(container.decode(video=0))) == 2
 
 
 @pytest.mark.parametrize("encoded", (False, True))

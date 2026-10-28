@@ -6,7 +6,7 @@ cache boundaries. Add a keeper when a new boundary needs coverage, not for
 each node that uses an existing value type. In-process cases retain the
 node-specific output assertions.
 
-The following 44 subprocess cases are the boundary keepers. Paths are
+The following 42 subprocess cases are the boundary keepers. Paths are
 relative to this directory; bracketed suffixes are pytest parameter IDs.
 The three grouped fixtures use one worker per composition while retaining
 the production encode/decode path.
@@ -35,9 +35,7 @@ the production encode/decode path.
 | `test_image_color_conversion_torch.py::test_color_conversion_ordinary_manifest_twice[False]` | Numpy float16 IMAGE and dynamic slot variants |
 | `test_flux_image_layout_torch.py::test_ordinary_manifest_executes_flux_image_layout_nodes[False]` | ARRAY and IMAGE |
 | `test_image_crop_torch.py::test_crop_and_bounding_box_execute_twice_through_ordinary_manifest[False]` | BOUNDING_BOX and exact cropped IMAGE values in a shared worker |
-| `test_dataset_groups_torch.py::test_dataset_groups_ordinary_manifest_twice[False]` | Lists of IMAGE, LATENT and CONDITIONING |
-| `test_dataset_collections_torch.py::test_collections_ordinary_manifest_selection_and_paired_map[False]` | IMAGE lists, STRING lists, INT selection and paired map |
-| `test_image_tiles_torch.py::test_registered_image_dataset_and_list_tools_execute_twice_in_ordinary_hosts[False]` | VIDEO and lists, STRING, MASK and float64-to-float32 IMAGE |
+| `test_image_tiles_torch.py::test_registered_image_and_list_tools_execute_twice_in_ordinary_hosts[False]` | Lists, STRING, MASK and float64-to-float32 IMAGE |
 | `test_image_tiles_torch.py::test_native_mixed_lists_cross_hosts_and_persistent_cache[False]` | Heterogeneous lists and persistent layered cache across two shared-worker compositions |
 | `test_standard_sampling_torch.py::test_standard_samplers_execute_on_both_ordinary_hosts[False]` | Real MODEL, CONDITIONING and LATENT; cached sampling result |
 | `test_model_file_loaders_torch.py::test_model_file_loaders_bind_tiny_safetensors_through_ordinary_hosts[True-False-True]` | Worker safetensors loading of MODEL, CLIP, VAE, CLIP_VISION, CONTROL_NET, STYLE_MODEL and GLIGEN |

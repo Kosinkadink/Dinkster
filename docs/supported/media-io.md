@@ -24,10 +24,14 @@
   receive normalized float32 values at invocation, while inputs that declare
   compact-storage support receive the retained dtype unchanged
 - Public bound-image component decoding returns first-frame RGB float32 pixels
-  and optional straight alpha through the existing openable asset capability,
+  or ordered frames with optional straight alpha under explicit source ownership,
   using the same PyAV precision, channel, alignment, and display-orientation
   handling as the ComfyUI reference without admitting still images as VIDEO;
-  PyAV's non-byte alignment graph rejects some small asymmetric inputs
+  source bytes, dimensions and estimated aligned conversion working sets are
+  admitted before conversion, with source length checked before opening the
+  decoder. FFmpeg probing is not a hard allocation sandbox. PyAV's non-byte
+  alignment graph rejects some small asymmetric inputs. Frame iteration does not
+  accumulate a batch; consumers admit the memory of frames they retain separately
 - Ordered animated and multipage image loading; pages with different dimensions
   from the first page are omitted from the batch
 - Ordered mounted image saving to PNG, JPEG, or WebP; Save Image defaults to a
@@ -73,13 +77,18 @@
   Component audio without proven sample coverage preserves finite VIDEO length
   and reports that shortest-audio trimming was not applied exactly.
   NVENC requests are refused until a hardware-encoder policy exists.
+- Opt-in unedited component-video encoding preserves source H.264/AV1
+  quantization, color signaling, CRF defaults, optional H.264 preset, and
+  thousandth-rounded encoded frame rates without changing component values.
+  Explicit codec failures propagate without FFV1 substitution or resizing.
+  Small AV1 inputs may succeed when the encoder supports them. Automatic
+  PyAV conversion threading can produce nondeterministic pixels on small
+  10-bit inputs; this path retains that source behavior.
 - Value-level video operations on IMAGE batches and VIDEO values: frame
   windowing with skip, stride, and cap controls; exact nearest-tick frame-rate
   resampling matching native video loading; deferred assembly with optional
   audio, 8/10-bit precision, sRGB, HLG, and HDR PQ; disassembly to frames,
   optional audio, fps, duration, bit depth, and color space
-- Native Sample Video Frame selects head or tail windows with audio retained,
-  or ordered uniform/random frames at the source frame rate without audio
 - Public `iter_video_pixels` yields edited, display-oriented float32 pixels
   with rational timestamps without accumulating the complete frame batch.
   Consumers that stop early close the iterator to release the decoder and

@@ -1,6 +1,5 @@
 ## Image operations
 
-- Native `LossGraphNode` previews training loss as a line chart without saving an output file.
 - Native `UpscaleModelLoader` loads granted single-image upscale checkpoints
   into the shared `UPSCALE_MODEL` value.
 - Native `CurveEditor` passes canonical curves through the curve editor and
@@ -25,14 +24,16 @@
 - Native `SAM3_VideoTrack` tracks initial masks or text-prompted objects across
   video frames. `SAM3_TrackToMask` selects tracked objects and resizes their union
   to the original frame dimensions using the portable packed-track value.
+- Native `SAM3_TrackPreview` publishes an MP4 preview of packed tracks with
+  colored overlays, object numbers and confidence labels, optionally over images.
+  Its H264 `yuv420p` encoding requires even width and height; odd dimensions
+  retain the [reference encoding failure](../comfyui-issues/sam3-preview-odd-dimensions.md).
 - Native `SAM3_Detect` segments text, box or point prompts with optional mask
   refinement, returning per-object or union masks and scored text detections.
 - Native `ColorToRGBInt` preserves RGB letter casing and separates optional alpha;
   `ResolutionSelector` rounds aspect-ratio and megapixel dimensions to a chosen multiple.
 - Marigold V2 decoded predictions convert to per-image normalized depth,
   unit surface normals, or sRGB albedo.
-- Native video dataset transforms lazily crop continuous frame ranges and
-  shuffle video lists or video-text pairs with seeded ordering.
 - Native list construction preserves member order and nested values across
   independently typed elements; indexed selection supports positive and negative
   indices and retains the selected element's type.
@@ -86,8 +87,6 @@
   paired comparison previews accept either, both, or neither image
 - ComfyUI ResizeImageMaskNode, BatchImagesNode, BatchMasksNode, BatchLatentsNode,
   and ColorTransfer native nodes
-- ComfyUI dataset image transforms for shorter/longer-edge resize, center/random
-  crop, normalization, brightness, and contrast adjustment
 - Alpha premultiply/unpremultiply and mask polarity conversion are native-only
   operations without fabricated ComfyUI aliases
 - Image operations declare alpha preservation, required alpha, creation, or
@@ -109,15 +108,6 @@
 - Image and mask batch range, repeat, reverse, shuffle, ping-pong loop, count
   expansion, concatenation, insertion, and replacement; image batch/list
   conversion and rebatching
-- Dataset image and image-text pair shuffling, perceptual-hash deduplication,
-  row-major image grids, and deprecated text-list merging
-- Training dataset preparation with RGB VAE encoding and scheduled CLIP
-  conditioning, preserving image-list order and supporting omitted, shared,
-  or per-image captions
-- Encoded training datasets loaded from granted dataset folders, preserving
-  sorted shard order, latent tensors and conditioning metadata
-- Image and image-caption datasets loaded from granted input folders, with
-  per-file RGB images, optional sidecar captions and one-level repeated folders
 - Row-major image grid composition and decomposition; image stitching; split
   and merge with overlapping tiles
 - Image transitions between inputs, within a batch, or while joining batches,

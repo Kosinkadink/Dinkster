@@ -53,13 +53,6 @@ from .controlnet import CONTROLNET_NODES
 from .cosmos_conditioning import COSMOS_CONDITIONING_NODES
 from .curve_editor import CurveEditor
 from .custom_sampling import CUSTOM_SAMPLING_NODES
-from .dataset_collections import DATASET_COLLECTION_NODES
-from .dataset_folders import FOLDER_DATASET_NODES
-from .dataset_groups import DATASET_GROUP_NODES, MakeTrainingDataset
-from .dataset_images import DATASET_IMAGE_NODES
-from .dataset_shards import LoadTrainingDataset
-from .dataset_text import DATASET_TEXT_NODES
-from .dataset_video import DATASET_VIDEO_NODES
 from .device_routing import DEVICE_ROUTING_NODES
 from .fibo2_encoders import TextEncodeFibo2
 from .flux_conditioning import FLUX_CONDITIONING_NODES
@@ -109,7 +102,6 @@ from .logic import LOGIC_NODES
 from .loops import LOOP_NODES
 from .lora_extract_save import LoraSave
 from .lora_file_loaders import LORA_FILE_LOADER_NODES
-from .loss_graph import LossGraphNode
 from .lotus import LotusConditioning
 from .ltx_audio import LTX_AUDIO_NODES
 from .ltx_av_latent import LTX_AV_LATENT_NODES
@@ -172,6 +164,7 @@ from .rope_and_mask import ROPE_AND_MASK_NODES
 from .rtdetr import RTDETR_NODES
 from .sam3 import SAM3_TRACKING_NODES
 from .sam3_detection import SAM3_Detect
+from .sam3_preview import SAM3_TrackPreview
 from .sampler_factories import SAMPLER_FACTORY_NODES
 from .save_text import SaveText
 from .scail_masks import SCAIL2ColoredMask
@@ -199,7 +192,6 @@ from .upscale_model_loader import UpscaleModelLoader
 from .utilities import ComfyNumberConvert, PreviewAny, SeedNode
 from .vae import VAE_NODES
 from .video_conditioning import VIDEO_CONDITIONING_NODES
-from .video_frame_sample import VideoFrameSample
 from .video_guidance import VIDEO_GUIDANCE_NODES
 from .video_latent import VIDEO_LATENT_NODES
 from .video_latent_ops import VIDEO_LATENT_OPERATION_NODES
@@ -225,9 +217,7 @@ from .zimage_encoders import TextEncodeZImageOmni
 COMFY_NODES = (
     *AUDIO_ENCODER_NODES,
     *TEXT_NODES,
-    *DATASET_TEXT_NODES,
     SaveText,
-    *DATASET_COLLECTION_NODES,
     PrimitiveString,
     PrimitiveStringMultiline,
     PrimitiveInt,
@@ -336,7 +326,6 @@ COMFY_NODES = (
     *AUDIO_EFFECT_NODES,
     *AUDIO_GENERATOR_NODES,
     *AUDIO_LATENT_NODES,
-    *DATASET_GROUP_NODES,
     *ACE_TEXT_CONDITIONING_NODES,
     *AUDIO_MUSIC_CONDITIONING_NODES,
     *AUDIO_TRANSFORM_NODES,
@@ -346,7 +335,6 @@ COMFY_NODES = (
     *LTX_AV_LATENT_NODES,
     *LTX_VIDEO_PREPROCESS_NODES,
     *LTX_SAMPLING_NODES,
-    *DATASET_IMAGE_NODES,
     *SIGMA_SCHEDULER_NODES,
     *SAMPLER_FACTORY_NODES,
     *ADVANCED_SAMPLER_NODES,
@@ -368,7 +356,6 @@ COMFY_NODES = (
     MiniMaxH3AddGuide,
     MiniMaxH3ReferenceToVideo,
     MiniMaxH3FunControlNetApply,
-    *DATASET_VIDEO_NODES,
     *LIST_UTILITY_NODES,
     SplitImageToTileList,
     ImageMergeTileList,
@@ -419,16 +406,14 @@ COMFY_NODES = (
     *MODEL_SELECTION_NODES,
     *SAM3_TRACKING_NODES,
     SAM3_Detect,
-    VideoFrameSample,
+    SAM3_TrackPreview,
     *MODEL_FILE_LOADER_NODES,
     *LORA_FILE_LOADER_NODES,
     CropByBBoxes,
     CameraAngle,
-    MakeTrainingDataset,
     Trellis2UpsampleStage,
     TripoSplatPreprocessImage,
     TripoSplatConditioning,
-    LoadTrainingDataset,
     LoadAudio,
     PreviewAudio,
     SaveAudio,
@@ -437,9 +422,7 @@ COMFY_NODES = (
     SaveAudioAdvanced,
     SaveWEBM,
     *YUE2_CONDITIONING_NODES,
-    *FOLDER_DATASET_NODES,
     UpscaleModelLoader,
-    LossGraphNode,
     CurveEditor,
     SaveImage,
     PreviewImage,

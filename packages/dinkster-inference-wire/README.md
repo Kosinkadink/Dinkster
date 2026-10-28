@@ -14,6 +14,12 @@ framing and structural validation that does not import Torch or inference;
 expired or foreign-worker identities raise the existing residency error.
 The package does not contain a model runtime or an inference registry.
 
+`INTERP_MODEL` is a canonical builtin exported as `INTERP_MODEL_TYPE` through
+`dinkster_api.v1`. Shared inference registration uses the existing default
+resident pool and preserves an already registered type spec. Interpolation
+model objects stay in their holding process; normal value transport carries
+their resident identity, not model contents.
+
 `MOGE_MODEL` uses that same holding-process resident pool. `MOGE_GEOMETRY`
 uses the structural latent codec without requiring a `samples` entry. Geometry
 tensor fields (`points`, `depth`, `intrinsics`, `mask`, `normal`, and `image`)
