@@ -46,9 +46,96 @@ from collections.abc import Callable, Generator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Protocol, cast
 
 from dinkster_values import SAVED_ARTIFACT_LIMIT_BYTES
+
+_saved_artifact_sink: ContextVar[Callable[[Mapping[str, object]], None] | None] = ContextVar(
+    "dinkster_saved_artifact_sink", default=None
+)
+
+
+def attach_saved_artifact(ref: Mapping[str, object]) -> None:
+    """Attach an AssetRef wire mapping for host validation after successful execution.
+
+    The claim is not authority: the host checks the actual mounted writer
+    publication. Ordinary ASSET outputs never imply a saved-file attachment.
+    """
+    if not isinstance(cast("object", ref), Mapping) or set(ref) != {
+        "digest",
+        "name",
+        "size",
+        "mediaType",
+        "virtualPath",
+    }:
+        raise ValueError("saved artifact requires exactly the five AssetRef wire fields")
+    digest, name, size, media_type, path = (
+        ref["digest"],
+        ref["name"],
+        ref["size"],
+        ref["mediaType"],
+        ref["virtualPath"],
+    )
+    if (
+        type(digest) is not str
+        or not digest.startswith("blake3:")
+        or len(digest) != 71
+        or any(char not in "0123456789abcdef" for char in digest[7:])
+    ):
+        raise ValueError("saved artifact digest must be canonical blake3")
+    if type(size) is not int or not 0 <= size <= SAVED_ARTIFACT_LIMIT_BYTES:
+        raise ValueError("saved artifact size exceeds invocation limits")
+    for field, value, limit in (
+        ("name", name, 255),
+        ("mediaType", media_type, 255),
+        ("virtualPath", path, 4096),
+    ):
+        if (
+            type(value) is not str
+            or not value
+            or len(value) > limit
+            or any(ord(char) < 32 or ord(char) == 127 for char in value)
+        ):
+            raise ValueError(f"saved artifact {field} must be bounded nonempty text")
+    assert isinstance(name, str) and isinstance(path, str)
+    parts = path.split("/")
+    if (
+        len(parts) < 3
+        or parts[0] != "mounts"
+        or any(part in ("", ".", "..") or "\\" in part for part in parts)
+        or parts[-1] != name
+        or "/" in name
+        or "\\" in name
+    ):
+        raise ValueError("saved artifact requires a safe mounted file path matching its name")
+    sink = _saved_artifact_sink.get()
+    if sink is None:
+        raise RuntimeError("saved artifact attachment requires an active invocation")
+    sink(MappingProxyType(dict(ref)))
+
+
+@contextmanager
+def capture_saved_artifacts() -> Generator[list[Mapping[str, object]]]:
+    claims: list[Mapping[str, object]] = []
+    lock = threading.Lock()
+    active = True
+
+    def capture(claim: Mapping[str, object]) -> None:
+        with lock:
+            if not active:
+                raise RuntimeError("saved artifact invocation is closed")
+            if len(claims) >= 64:
+                raise ValueError("saved artifact batch exceeds invocation limits")
+            claims.append(claim)
+
+    token = _saved_artifact_sink.set(capture)
+    try:
+        yield claims
+    finally:
+        with lock:
+            active = False
+        _saved_artifact_sink.reset(token)
 
 
 @dataclass(frozen=True)

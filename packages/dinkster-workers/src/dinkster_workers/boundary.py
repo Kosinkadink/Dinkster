@@ -98,12 +98,13 @@ Once a codec's retained bytes reach this budget, further first-crossings
 still work - they just carry their bytes every time instead of becoming
 digest-only. Bounds the RAM a long-lived connection can pin."""
 
-PROTOCOL_VERSION = 11
+PROTOCOL_VERSION = 12
 """The boundary protocol version. Carried in the remote hello exchange
 (clientHello/hello) so peers built against different wire contracts refuse
 each other explicitly instead of corrupting frames. Local parent/child pairs
 ship together and do not negotiate.
 
+v12: explicit mounted saved-file attachments in successful invocation results;
 v11: encoded preview artifacts in successful invocation results;
 v10: invocation-scoped run-control relay;
 v9: schema declarations and invocation effective schemas;
@@ -1122,6 +1123,9 @@ def encode_result(
         ]
     if result.artifacts:
         raise BoundaryError("workers cannot send authoritative saved artifact descriptors")
+    if result.error is None and result.saved_artifact_claims:
+        header["savedArtifactClaims"] = [dict(claim) for claim in result.saved_artifact_claims]
+        decode_saved_artifact_claims(header)
     if result.expansion is not None:
         from dinkster_protocol import InvocationReturn, ReturnBatch
 
@@ -1209,6 +1213,23 @@ def _decode_preview_artifacts(
                 )
             return tuple(artifacts)
     except ValueError as exc:
+        raise BoundaryError(str(exc)) from exc
+
+
+def decode_saved_artifact_claims(header: Mapping[str, Any]) -> tuple[Mapping[str, object], ...]:
+    from dinkster_schema.reporting import attach_saved_artifact, capture_saved_artifacts
+
+    raw = header.get("savedArtifactClaims", [])
+    if type(raw) is not list or len(raw) > 64:
+        raise BoundaryError("savedArtifactClaims must be a bounded list")
+    try:
+        with capture_saved_artifacts() as claims:
+            for claim in raw:
+                if not isinstance(claim, Mapping):
+                    raise BoundaryError("saved artifact claim must be a mapping")
+                attach_saved_artifact(claim)
+        return tuple(claims)
+    except (TypeError, ValueError) as exc:
         raise BoundaryError(str(exc)) from exc
 
 
@@ -1789,14 +1810,20 @@ def decode_result(
     if "resultAlgebra" not in header:
         outputs, stats = decode_result_outputs(codec, header, blobs, consumed)
         return InvocationResult(
-            outputs=outputs, preview_artifacts=_decode_preview_artifacts(header, blobs)
+            outputs=outputs,
+            preview_artifacts=_decode_preview_artifacts(header, blobs),
+            saved_artifact_claims=decode_saved_artifact_claims(header),
         ), stats
     from dinkster_protocol import ExpandedReturn, InvocationReturn
 
     # Conversation identity and artifact claims are validated by the session;
     # the algebra codec owns only the result payload's exact envelope.
     fields = {"type", "invocationId", "executeMs", "resultAlgebra", "blobs"}
-    if set(header) - fields - {"jobRef", "attemptId", "artifactCandidates", "previewArtifacts"}:
+    if (
+        set(header)
+        - fields
+        - {"jobRef", "attemptId", "artifactCandidates", "previewArtifacts", "savedArtifactClaims"}
+    ):
         raise BoundaryError("invalid invocation expansion frame fields")
     payload = {key: header[key] for key in fields if key in header}
     previews = _decode_preview_artifacts(header, blobs)
@@ -1813,9 +1840,11 @@ def decode_result(
         or not isinstance(outcome.batch.units[0], ExpandedReturn)
     ):
         raise BoundaryError("invocation expansion must contain one scalar expanded return")
-    return InvocationResult(expansion=outcome.batch.units[0], preview_artifacts=previews), {
-        name: stat for (_, name), stat in stats.items()
-    }
+    return InvocationResult(
+        expansion=outcome.batch.units[0],
+        preview_artifacts=previews,
+        saved_artifact_claims=decode_saved_artifact_claims(header),
+    ), {name: stat for (_, name), stat in stats.items()}
 
 
 def error_from_wire(wire: Mapping[str, Any]) -> NodeError:
