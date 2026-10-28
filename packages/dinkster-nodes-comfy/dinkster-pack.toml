@@ -519,7 +519,6 @@ namespaces = [
     "YuE2GenerateABC",
     "YuE2GenerateMusic",
     "UpscaleModelLoader",
-    "LossGraphNode",
     "CurveEditor",
 ]
 
