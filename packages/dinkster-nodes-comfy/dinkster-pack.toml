@@ -537,6 +537,7 @@ namespaces = [
     "SDPoseFaceBBoxes",
     "SDPoseDrawKeypoints",
     "SDPoseKeypointExtractor",
+    "AddLayer",
 ]
 
 [pack.sandbox]
