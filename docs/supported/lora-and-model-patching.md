@@ -6,6 +6,10 @@ rescale classifier-free guidance; select compute dtype; and select a supported
 dense attention backend. They use the pinned `dinkster_inference` sampler and
 model patcher.
 
+Attention backend choices are fetched when the dropdown opens, without loading
+the tensor runtime during schema discovery. PyTorch attention is always offered;
+Comfy Kitchen attention requires an available Nvidia or AMD GPU and INT8 kernel.
+
 `ChromaRadianceOptions` applies Chroma Radiance transformer options over an
 inclusive sigma range while optionally retaining an existing model wrapper.
 `FluxKVCache` reuses reference-image attention keys and values independently
