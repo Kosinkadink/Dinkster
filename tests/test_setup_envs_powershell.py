@@ -53,6 +53,14 @@ def test_powershell_setup_matches_posix_editable_package_closure() -> None:
 
 def test_powershell_setup_pins_native_windows_test_environments() -> None:
     setup = POWERSHELL_SETUP.read_text()
+    assert '"pip", "uninstall", "--python", $TorchPython, "opencv-python-headless"' in setup
+    assert '"--reinstall-package", "opencv-contrib-python-headless"' in setup
+    posix = POSIX_SETUP.read_text()
+    assert "uv pip uninstall --python .venv-torch/bin/python opencv-python-headless" in posix
+    assert (
+        '--reinstall-package opencv-contrib-python-headless "opencv-contrib-python-headless=='
+        in posix
+    )
 
     assert _powershell_dependency_array(setup, "CpuDependencies") == [
         "pytest",

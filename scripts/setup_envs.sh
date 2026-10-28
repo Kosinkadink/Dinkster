@@ -60,6 +60,10 @@ UV_PROJECT_ENVIRONMENT="$PWD/.venv" uv sync --project "$PWD" --python 3.12 --all
 # ---------------------------------------------------------- .venv-torch
 echo "==> .venv-torch (CPU torch test env)"
 [ -x .venv-torch/bin/python ] || uv venv .venv-torch --python 3.12
+# Both OpenCV distributions own cv2; restore contrib's files after removing the old one.
+uv pip uninstall --python .venv-torch/bin/python opencv-python-headless
+uv pip install --python .venv-torch/bin/python \
+    --reinstall-package opencv-contrib-python-headless "opencv-contrib-python-headless==5.0.0.93"
 if [ "$os" = "Darwin" ]; then
     # The mac torch wheel is one native arm64 build with MPS included;
     # PyPI is its canonical source (the cpu index mirrors it).

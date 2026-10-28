@@ -114,6 +114,13 @@ try {
     if (-not (Test-Path $TorchPython)) {
         Invoke-Native "uv" @("venv", $TorchEnvironment, "--python", "3.12")
     }
+    # Both OpenCV distributions own cv2; restore contrib's files after removing the old one.
+    Invoke-Native "uv" @("pip", "uninstall", "--python", $TorchPython, "opencv-python-headless")
+    Invoke-Native "uv" @(
+        "pip", "install", "--python", $TorchPython,
+        "--reinstall-package", "opencv-contrib-python-headless",
+        "opencv-contrib-python-headless==5.0.0.93"
+    )
     Invoke-Native "uv" @(
         "pip", "install", "--python", $TorchPython,
         "--index-url", "https://download.pytorch.org/whl/cpu",
