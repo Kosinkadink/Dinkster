@@ -475,16 +475,7 @@ class ModelComputeDtype(Node):
 class ModelAttentionBackend(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        backends = ("pytorch attention",)
-        try:
-            torch = importlib.import_module("torch")
-        except ModuleNotFoundError:
-            pass
-        else:
-            if torch.cuda.is_available() or torch.version.hip is not None:
-                attention = importlib.import_module("dinkster_inference.ldm.modules.attention")
-                if attention.COMFY_KITCHEN_INT8_ATTENTION_IS_AVAILABLE:
-                    backends += ("comfy kitchen attention",)
+        backends = ("pytorch attention", "comfy kitchen attention")
         return NodeSchema(
             node_type="ModelAttentionBackend",
             display_name="Model Attention Backend",

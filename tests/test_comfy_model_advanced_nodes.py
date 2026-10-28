@@ -36,6 +36,10 @@ def test_advanced_model_patch_interfaces() -> None:
     assert not aura.define_schema().inputs[-1].required
     attention = MODEL_ADVANCED_NODES[-1].define_schema()
     assert attention.outputs[0].display_name == "model"
+    assert tuple(option.value for option in attention.inputs[1].widget.options) == (
+        "pytorch attention",
+        "comfy kitchen attention",
+    )
 
 
 def test_device_routing_required_inputs_and_cold_discovery() -> None:
