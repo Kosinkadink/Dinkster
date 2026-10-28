@@ -75,6 +75,7 @@ from .vision_wire import (
     materialize_clip_vision_output,
     validate_clip_vision_output,
 )
+from .voxel_wire import materialize_voxel, register_voxel_type
 from .wan_wire import register_wan_type
 
 MODEL_TYPE_ID = MODEL_TYPE
@@ -203,6 +204,7 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
         )
     registered.extend(register_media_types(registry))
     registered.append(register_loss_map_type(registry))
+    registered.append(register_voxel_type(registry))
     return tuple(registered)
 
 
@@ -219,5 +221,6 @@ __all__ = [
     "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
+    "materialize_voxel",
     "register_inference_types",
 ]
