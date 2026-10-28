@@ -44,7 +44,7 @@ from dinkster_values.asset_folders import current_asset_folders
 
 from .identity import DIGEST_PREFIX, AssetError, new_hasher
 from .integrity import verification_record_for_publication
-from .library import append_write_record
+from .library import INDEX_NAME, append_write_record, load_write_records
 from .model import AssetRef
 from .mounts import MOUNT_NAMESPACE
 from .save_target import SaveTarget, coerce_save_target
@@ -94,6 +94,26 @@ class MountSnapshotWriter:
         self._path = Path(snapshot_path)
 
     def writable_root(self, mount_id: str) -> Path:
+        return Path(cast("str", self._writable_mount(mount_id)["root"]))
+
+    def publication_record(self, mount_id: str, relative: str) -> dict[str, object] | None:
+        """Find writer evidence before or after its absorption into the mount index."""
+        mount = self._writable_mount(mount_id)
+        root = Path(cast("str", mount["root"]))
+        record = load_write_records(root).get(relative)
+        if record is not None:
+            return record
+        index = mount.get("index", str(root / INDEX_NAME))
+        if not isinstance(index, str):
+            raise AssetError("mount index must be a path")
+        try:
+            loaded: object = json.loads(Path(index).read_text("utf-8"))
+        except (OSError, ValueError):
+            return None
+        row = cast("dict[str, object]", loaded).get(relative) if isinstance(loaded, dict) else None
+        return cast("dict[str, object]", row) if isinstance(row, dict) else None
+
+    def _writable_mount(self, mount_id: str) -> dict[str, object]:
         try:
             loaded: object = json.loads(self._path.read_text("utf-8"))
         except (OSError, ValueError):
@@ -119,7 +139,7 @@ class MountSnapshotWriter:
                 raise AssetError(
                     f"mount {mount_id!r} is granted read-only; saving needs a readwrite mount"
                 )
-            return Path(root)
+            return entry
         raise AssetError(
             f"no ready mount {mount_id!r}: it was never granted, was "
             "revoked, or has not finished scanning"
@@ -474,6 +494,7 @@ class AssetWriter:
                 size,
                 stat.st_mtime_ns,
                 record,
+                published_at_ns=time.time_ns(),
             )
         except OSError:
             pass  # resolvability degrades to next-scan; the save itself stood
