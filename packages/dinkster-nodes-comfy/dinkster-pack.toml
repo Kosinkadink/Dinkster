@@ -513,6 +513,7 @@ namespaces = [
     "TripoSplatPreprocessImage",
     "TripoSplatConditioning",
     "LoadAudio",
+    "RecordAudio",
     "PreviewAudio",
     "SaveAudio",
     "SaveAudioMP3",
