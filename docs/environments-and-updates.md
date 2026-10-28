@@ -292,6 +292,16 @@ previous pointer and running assignments, stops only authenticated candidate
 processes and discards newly built failed targets. A retained rollback target
 is never discarded. Process identity ambiguity leaves the journal incomplete.
 
+Per-instance process receipts are private runtime state under
+`runtime/<generation>/<name>.process/<sha256 of instance>/state.json`, containing
+the instance, lifecycle state and supervisor PID. A launch guard holds the
+directory's OS lock through child cleanup. Recovery may cancel a still-pending
+launch under that lock; a delayed supervisor then exits without an engine.
+The supervisor writes a stopped receipt only after cleanup, so interruption
+of the updater before its own record write cannot erase shutdown evidence.
+A dead supervisor without that receipt remains ambiguous. No process receipt
+or shutdown credential is added to the exported operation journal.
+
 ### Shipping code before it is public
 
 For a release that must exist before an announcement, the engine wheels are

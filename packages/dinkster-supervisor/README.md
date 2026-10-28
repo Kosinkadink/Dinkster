@@ -277,3 +277,15 @@ target processes, restores the previous pointer and running assignments, removes
 only a newly constructed failed target, and marks the journal `rolled-back`.
 A rollback target is retained even if its activation fails. Ambiguous process
 identity leaves the journal incomplete rather than killing an unrelated process.
+
+Managed supervisors also use a private per-instance lifecycle directory at
+`runtime/<generation>/<name>.process/<sha256 of instance>/`. Its persistent
+`.lock` is held from launch admission through child/listener cleanup, and
+`state.json` contains `instance`, `state` and `pid`. States are `pending`,
+`running`, `stopped` and `cancelled`. Recovery can cancel an unclaimed pending
+launch under the same lock, so a delayed supervisor cannot start afterward.
+Only the supervisor writes `stopped`, after cleanup; that receipt survives a
+client exit before its binding record is updated. A dead supervisor with a
+`running` receipt does not prove its child exited and still refuses mutation.
+These private process receipts contain no shutdown token and do not replace
+generation metadata, dependency locks or operation journals.

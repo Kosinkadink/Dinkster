@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -14,6 +15,7 @@ from typing import Any, cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from .environment_process import cancel_pending_process, prepare_process, process_state
 from .environment_state import EnvironmentError, Generation, atomic_write, interpreter, read_current
 
 __all__ = [
@@ -63,6 +65,8 @@ def start_engine(
 
     instance = secrets.token_urlsafe(24)
     token = secrets.token_urlsafe(32)
+    lifecycle = _process_directory(_runtime_path(root, name, generation), instance)
+    prepare_process(lifecycle, instance)
     url = f"http://127.0.0.1:{port}"
     record: dict[str, object] = {
         "name": name,
@@ -74,6 +78,7 @@ def start_engine(
         "pid": 0,
         "url": url,
         "state": "starting",
+        "_processState": lifecycle,
     }
     _write_record(root, name, record)
     environment = dict(os.environ)
@@ -84,6 +89,8 @@ def start_engine(
         "dinkster_supervisor.supervisor",
         f"--instance={instance}",
         f"--shutdown-token={token}",
+        "--process-state",
+        str(lifecycle),
         "--host",
         "127.0.0.1",
         "--port",
@@ -110,11 +117,15 @@ def start_engine(
         inspected = _inspect(record)
         if inspected["state"] == "ready" and _health_is_ready(inspected):
             return _public_row(inspected)
+        if inspected["state"] == "failed" and _identity_matches(inspected):
+            stop_engine(root, name, generation=generation)
+            raise EnvironmentError(f"engine {name} failed before becoming ready")
         if process.poll() is not None:
             record["state"] = "failed"
             _write_record(root, name, record)
             raise EnvironmentError(f"engine {name} exited before becoming ready")
         time.sleep(_POLL_INTERVAL)
+    stop_engine(root, name, generation=generation)
     raise EnvironmentError(f"engine {name} did not become ready")
 
 
@@ -128,11 +139,22 @@ def stop_engine(root: Path, name: str, *, generation: int | None = None) -> None
     record = _load_record(root, name, selected)
     if record is None:
         return
-    inspected = _inspect(record)
-    if inspected["state"] == "stopped":
-        return
-    if not _identity_matches(inspected):
-        raise EnvironmentError("engine identity is unreachable or mismatched; refusing to stop it")
+    lifecycle = cast("Path", record["_processState"])
+    deadline = time.monotonic() + _STARTUP_TIMEOUT
+    while True:
+        claimed = lifecycle.is_dir() and cancel_pending_process(
+            lifecycle, cast("str", record["instance"])
+        )
+        inspected = _inspect(record)
+        if inspected["state"] == "stopped":
+            return
+        if _identity_matches(inspected):
+            break
+        if not claimed or time.monotonic() >= deadline:
+            raise EnvironmentError(
+                "engine identity is unreachable or mismatched; refusing to stop it"
+            )
+        time.sleep(_POLL_INTERVAL)
     headers = {
         "X-Dinkster-Instance": cast("str", inspected["instance"]),
         "X-Dinkster-Shutdown-Token": cast("str", inspected["shutdownToken"]),
@@ -146,6 +168,14 @@ def stop_engine(root: Path, name: str, *, generation: int | None = None) -> None
     deadline = time.monotonic() + _STARTUP_TIMEOUT
     while time.monotonic() < deadline:
         if not _process_alive(inspected):
+            if (
+                lifecycle.is_dir()
+                and process_state(
+                    lifecycle, cast("str", inspected["instance"]), pid=cast("int", inspected["pid"])
+                )
+                != "stopped"
+            ):
+                raise EnvironmentError("supervisor exited without proving child cleanup")
             inspected["state"] = "stopped"
             inspected["pid"] = 0
             _write_record(root, name, inspected)
@@ -202,6 +232,7 @@ def preserve_stopped_engine(root: Path, name: str, previous: int, target: int, p
             "port": port,
             "url": f"http://127.0.0.1:{port}",
             "pid": 0,
+            "state": "stopped",
         },
     )
 
@@ -249,6 +280,10 @@ def _validate_name(name: str) -> None:
 
 def _runtime_path(root: Path, name: str, generation: int) -> Path:
     return root / "runtime" / str(generation) / f"{name}.json"
+
+
+def _process_directory(path: Path, instance: str) -> Path:
+    return path.with_suffix(".process") / hashlib.sha256(instance.encode()).hexdigest()
 
 
 def _load_record(root: Path, name: str, generation: int) -> dict[str, object] | None:
@@ -300,6 +335,7 @@ def _parse_record(path: Path) -> dict[str, object]:
         or pid < 0
     ):
         raise EnvironmentError(f"runtime record {path.name} is invalid")
+    record["_processState"] = _process_directory(path, instance)
     return record
 
 
@@ -314,6 +350,14 @@ def _write_record(root: Path, name: str, record: dict[str, object]) -> None:
 def _inspect(record: dict[str, object]) -> dict[str, object]:
     inspected = dict(record)
     inspected["_verifiedIdentity"] = False
+    lifecycle = cast("Path", record["_processState"])
+    if lifecycle.is_dir():
+        state = process_state(
+            lifecycle, cast("str", record["instance"]), pid=cast("int", record["pid"])
+        )
+        if state in {"stopped", "cancelled"}:
+            inspected.update(state="stopped", pid=0)
+            return inspected
     if inspected["state"] == "stopped":
         if _process_alive(inspected):
             inspected["state"] = "failed"

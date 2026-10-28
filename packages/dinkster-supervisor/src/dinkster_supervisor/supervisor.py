@@ -82,10 +82,13 @@ import sys
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import cast
 
 import aiohttp
 from aiohttp import WSMsgType, web
+
+from .environment_process import complete_process, process_lifetime
 
 __all__ = [
     "PROTOCOL_VERSION",
@@ -608,6 +611,11 @@ def main() -> None:
         help="opaque token required with the matching instance to stop this supervisor",
     )
     parser.add_argument(
+        "--process-state",
+        type=Path,
+        help="private launcher lifecycle directory; requires --instance",
+    )
+    parser.add_argument(
         "--engine-host",
         default="127.0.0.1",
         metavar="HOST",
@@ -636,6 +644,8 @@ def main() -> None:
         help="engine command after '--' (default: '<this python> -m dinkster.serve')",
     )
     args = parser.parse_args()
+    if args.process_state is not None and not args.instance:
+        parser.error("--process-state requires --instance")
     logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
 
     command = list(args.engine)
@@ -675,10 +685,19 @@ def main() -> None:
             await site.start()
             await stopped.wait()
         finally:
-            await runner.cleanup()
-            await engine.close()
+            try:
+                await runner.cleanup()
+            finally:
+                await engine.close()
+            if args.process_state is not None:
+                complete_process(args.process_state, args.instance)
 
-    asyncio.run(serve())
+    if args.process_state is None:
+        asyncio.run(serve())
+    else:
+        with process_lifetime(args.process_state, args.instance) as admitted:
+            if admitted:
+                asyncio.run(serve())
 
 
 if __name__ == "__main__":

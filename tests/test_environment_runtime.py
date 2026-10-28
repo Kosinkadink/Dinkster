@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.request import urlopen
 
 import pytest
+from dinkster_supervisor.environment_process import cancel_pending_process, prepare_process
 from dinkster_supervisor.environment_runtime import (
     engine_assignments,
     engine_status,
@@ -227,3 +228,47 @@ def test_same_name_generations_coexist_and_current_selects_status(tmp_path: Path
             stop_engine(tmp_path, "main", generation=2)
     finally:
         stop_engine(tmp_path, "main", generation=1)
+
+
+def test_cancelled_delayed_supervisor_cannot_spawn_its_engine(tmp_path: Path) -> None:
+    lifecycle = tmp_path / "lifecycle"
+    prepare_process(lifecycle, "cancelled-launch")
+    assert not cancel_pending_process(lifecycle, "cancelled-launch")
+    sentinel = tmp_path / "engine-started"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "dinkster_supervisor.supervisor",
+            "--instance=cancelled-launch",
+            "--process-state",
+            str(lifecycle),
+            "--",
+            sys.executable,
+            "-c",
+            "from pathlib import Path; import sys; Path(sys.argv[1]).touch()",
+            str(sentinel),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert not sentinel.exists()
+
+
+def test_failed_candidate_listener_proves_cleanup_and_can_restart(tmp_path: Path) -> None:
+    make_generation(tmp_path, 1)
+    make_generation(tmp_path, 2)
+    port = free_port()
+    prior = start_engine(tmp_path, 1, "main", port)
+    try:
+        with pytest.raises(EnvironmentError, match="before becoming ready"):
+            start_engine(tmp_path, 2, "main", port)
+        stop_engine(tmp_path, "main", generation=2)
+        assert engine_status(tmp_path) == (prior,)
+        candidate = start_engine(tmp_path, 2, "main", free_port())
+        assert candidate["generation"] == 2 and candidate["state"] == "ready"
+    finally:
+        stop_engine(tmp_path, "main", generation=1)
+        stop_engine(tmp_path, "main", generation=2)

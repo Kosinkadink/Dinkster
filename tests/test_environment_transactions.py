@@ -6,6 +6,7 @@ import json
 import shutil
 import subprocess
 import sys
+from contextlib import suppress
 from dataclasses import replace
 from pathlib import Path
 
@@ -65,7 +66,10 @@ def test_update_and_rollback_reactivate_retained_tree_without_rebuild(tmp_path: 
     )
     start_engine(tmp_path, 1, "main", free_port(), ("GPU-aB12",))
     start_engine(tmp_path, 1, "parked", free_port())
+    parked_path = tmp_path / "runtime/1/parked.json"
+    stale_parked = parked_path.read_bytes()
     stop_engine(tmp_path, "parked", generation=1)
+    parked_path.write_bytes(stale_parked)
     path = begin_activation(tmp_path, 2, "update")
     _target(tmp_path, 2)
     try:
@@ -105,10 +109,13 @@ def test_update_and_rollback_reactivate_retained_tree_without_rebuild(tmp_path: 
         stop_engine(tmp_path, "main", generation=2)
 
 
-@pytest.mark.parametrize("switched", [False, True])
+@pytest.mark.parametrize(
+    "interruption",
+    ["before-spawn", "before-switch", "after-switch", "after-shutdown", "during-recovery"],
+)
 def test_interrupted_activation_restores_previous_serving_generation(
     tmp_path: Path,
-    switched: bool,
+    interruption: str,
 ) -> None:
     make_generation(tmp_path)
     prior = start_engine(tmp_path, 1, "main", free_port())
@@ -120,28 +127,63 @@ import os
 import sys
 from pathlib import Path
 from dinkster_supervisor import environment_transactions as transactions
+from dinkster_supervisor import environment_runtime as runtime
 root, journal = Path(sys.argv[1]), Path(sys.argv[2])
 def interrupted():
     os._exit(71)
-if sys.argv[3] == 'True':
+if sys.argv[3] == 'after-switch':
     original = transactions.set_current
     def switch_then_interrupt(root, number):
         original(root, number)
         interrupted()
     transactions.set_current = switch_then_interrupt
     transactions.activate(root, journal, revalidate=lambda: None)
-else:
+elif sys.argv[3] in {'before-switch', 'during-recovery'}:
     transactions.activate(root, journal, revalidate=interrupted)
+elif sys.argv[3] == 'before-spawn':
+    runtime.subprocess.Popen = lambda *a, **kw: interrupted()
+    transactions.activate(root, journal, revalidate=lambda: None)
+else:
+    original = runtime._write_record
+    def stopped_then_interrupt(root, name, record):
+        if record['state'] == 'stopped' and record['generation'] == 1:
+            interrupted()
+        original(root, name, record)
+    runtime._write_record = stopped_then_interrupt
+    transactions.activate(root, journal, revalidate=lambda: None)
 """
     try:
         exited = subprocess.run(
-            [sys.executable, "-c", script, str(tmp_path), str(path), str(switched)],
+            [sys.executable, "-c", script, str(tmp_path), str(path), interruption],
             capture_output=True,
             text=True,
             timeout=45,
         )
         assert exited.returncode == 71, exited.stderr
         assert Journal.read(path).incomplete
+        if interruption == "during-recovery":
+            recovery_script = """
+import os
+import sys
+from pathlib import Path
+from dinkster_supervisor import environment_runtime as runtime
+from dinkster_supervisor.environment_transactions import recover_activation
+original = runtime._write_record
+def stopped_then_interrupt(root, name, record):
+    if record['state'] == 'stopped' and record['generation'] == 2:
+        os._exit(72)
+    original(root, name, record)
+runtime._write_record = stopped_then_interrupt
+recover_activation(Path(sys.argv[1]), Path(sys.argv[2]))
+"""
+            exited = subprocess.run(
+                [sys.executable, "-c", recovery_script, str(tmp_path), str(path)],
+                capture_output=True,
+                text=True,
+                timeout=45,
+            )
+            assert exited.returncode == 72, exited.stderr
+            assert Journal.read(path).incomplete
         recover_activation(tmp_path, path)
         assert read_current(tmp_path) == 1
         assert engine_status(tmp_path) == (prior,)
@@ -150,8 +192,9 @@ else:
         recover_activation(tmp_path, path)
         assert engine_status(tmp_path) == (prior,)
     finally:
-        stop_engine(tmp_path, "main", generation=1)
-        stop_engine(tmp_path, "main", generation=2)
+        for number in (1, 2):
+            with suppress(EnvironmentError):
+                stop_engine(tmp_path, "main", generation=number)
 
 
 def test_busy_refusal_and_failed_final_revalidation_preserve_current(tmp_path: Path) -> None:
