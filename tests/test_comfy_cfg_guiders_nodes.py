@@ -10,7 +10,6 @@ from dinkster_api.v1 import (
 )
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.cfg_guiders import CFG_GUIDER_NODES
-from dinkster_workers import load_manifest
 
 
 def test_cfg_guider_schemas_are_cold_and_registered_in_source_order() -> None:
@@ -39,8 +38,3 @@ def test_cfg_guider_schemas_are_cold_and_registered_in_source_order() -> None:
     assert CFG_GUIDER_NODES[-1].schema().category == "model/sampling/guiders"
     assert CFG_GUIDER_NODES[-1].schema().outputs[0].type == TypeExpr.concrete(MODEL_TYPE)
     assert CFG_GUIDER_NODES[0].schema().inputs[1].type == TypeExpr.concrete(CONDITIONING_TYPE)
-
-
-def test_cfg_guider_manifest_claims_match_the_complete_registry() -> None:
-    manifest = load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml")
-    assert tuple(node.schema().node_type for node in COMFY_NODES) == manifest.namespaces

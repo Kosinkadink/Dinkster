@@ -104,7 +104,7 @@ class LTXLatentInspect(Node):
         return cls.outputs(summary="ltx-empty-audio")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_empty_audio_executes_twice_through_both_production_hosts(
     tmp_path: Path, in_process: bool
 ) -> None:

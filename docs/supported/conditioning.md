@@ -1,5 +1,7 @@
 ## Conditioning
 
+- Conditioning safetensors can be loaded from granted embedding assets or saved
+  to mounted output folders, retaining tensor options, tensor lists and scalar metadata.
 - SD1.5 positive and negative text conditioning executes through the pinned
   `dinkster_inference` runtime.
 - Flux Kontext image scaling selects its preferred resolution from the native

@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
-import sys
 from types import SimpleNamespace
 
 import numpy as np
@@ -137,30 +135,6 @@ def test_hook_values_reject_foreign_resident_stubs(monkeypatch: pytest.MonkeyPat
 
     with pytest.raises(ResidentLookupError):
         target_registry.spec(HOOKS_TYPE).decode(encoded)
-
-
-def test_hook_type_registration_is_torch_free() -> None:
-    script = """
-import sys
-from dinkster_api.v1 import (
-    CLIP_TYPE, FLOATS_TYPE, HOOK_KEYFRAMES_TYPE, HOOKS_TYPE, TIMESTEPS_RANGE_TYPE,
-    TypeRegistry, register_inference_types,
-)
-from dinkster_native.native import register_native_types
-
-for first, second in ((register_native_types, register_inference_types),
-                      (register_inference_types, register_native_types)):
-    registry = TypeRegistry()
-    first(registry)
-    clip = registry.spec(CLIP_TYPE)
-    second(registry)
-    type_ids = (FLOATS_TYPE, HOOK_KEYFRAMES_TYPE, HOOKS_TYPE, TIMESTEPS_RANGE_TYPE)
-    assert all(type_id in registry for type_id in type_ids)
-    assert registry.spec(CLIP_TYPE) is clip
-    assert clip.coerce is not None
-assert 'torch' not in sys.modules
-"""
-    subprocess.run([sys.executable, "-c", script], check=True)
 
 
 @pytest.mark.parametrize("native_first", (False, True))

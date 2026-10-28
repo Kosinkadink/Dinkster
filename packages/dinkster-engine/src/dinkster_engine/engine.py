@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import itertools
+import json
 import logging
 import time
 import uuid
@@ -55,6 +56,7 @@ from dinkster_protocol import (
     GRAPH_COMPILE_ERROR_GENERATION_MISMATCH,
     AdmissionInvocation,
     AdmissionWorker,
+    AssetFolderContext,
     AttentionPolicy,
     AttentionPolicyConfig,
     AttentionRouteToken,
@@ -96,6 +98,7 @@ from dinkster_schema import (
     schema_signature,
 )
 from dinkster_schema.media import media_diagnostics
+from dinkster_schema.reporting import EncodedPreviewArtifact
 from dinkster_values import (
     ABSENT_ORIGIN_META_KEY,
     ABSENT_REASON_META_KEY,
@@ -282,6 +285,11 @@ class ExecutionRuntime:
     known_types: Container[str] | None = None
     placement_worker: Callable[[str], str | None] | None = None
     """Run-local worker attribution for placed nodes without a dispatch selection."""
+    publish_preview_artifacts: (
+        Callable[[str, Sequence[EncodedPreviewArtifact]], Awaitable[tuple[SavedArtifact, ...]]]
+        | None
+    ) = None
+    asset_folders: AssetFolderContext | None = None
 
     def __post_init__(self) -> None:
         if bool(self.graph_compiler_registry.contributions) != (
@@ -1007,6 +1015,9 @@ class Engine:
         if behavior_hash is not None:
             parts.append(b"extensions")
             parts.append(behavior_hash.encode("ascii"))
+        folders = self._runtime().asset_folders
+        if folders is not None:
+            parts.extend((b"asset-folders", json.dumps(folders.to_wire(), sort_keys=True).encode()))
         if selection is not None:
             # The selected implementation is part of the computation's
             # identity (stage 6 dispatch): the same inputs through compat
@@ -1530,6 +1541,7 @@ class Engine:
                                     name for name in lazy_links if name not in demanded
                                 ),
                                 effective_schema=schema,
+                                asset_folders=self._runtime().asset_folders,
                                 extension_snapshot_digest=(
                                     self._runtime().extension_snapshot_digest
                                     if self._runtime().extension_behavior_hash is not None
@@ -1830,6 +1842,7 @@ class Engine:
                     else None
                 ),
                 export_snapshot=(deepcopy(export_snapshot) if schema.output_node else None),
+                asset_folders=self._runtime().asset_folders,
                 fp8_matmul=(selection.fp8_matmul if selection is not None else False),
                 diffusion_dtype=(selection.diffusion_dtype if selection is not None else None),
                 text_dtype=(selection.text_dtype if selection is not None else None),
@@ -1952,6 +1965,23 @@ class Engine:
                     )
                 )
                 raise ExecutionError(NodeError(label, node.node_type, message))
+            if result.preview_artifacts:
+                publisher = self._runtime().publish_preview_artifacts
+                try:
+                    if publisher is None:
+                        raise RuntimeError("preview artifact publication has no host publisher")
+                    artifacts = await publisher(label, result.preview_artifacts)
+                except Exception as exc:
+                    self._emit(
+                        EngineEvent(
+                            "node_failed",
+                            run_id,
+                            label,
+                            self._execution_detail(label, selection, message=str(exc)),
+                        )
+                    )
+                    raise ExecutionError(NodeError(label, node.node_type, str(exc))) from exc
+                self._run_artifacts[run_id].extend(artifacts)
             self._run_artifacts[run_id].extend(result.artifacts)
             entry = CachedResult(result.outputs, result.expansion)
             if entry.expansion is not None:

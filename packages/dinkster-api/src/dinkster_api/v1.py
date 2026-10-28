@@ -6,9 +6,9 @@ asset system, re-exported from the internal packages in one place.
 
 The compat promise (DESIGN 3.6, enforced by tests/test_api_v1.py):
 
-- Within v1 this surface only ever GROWS. Nothing here is renamed,
-  removed, or changed incompatibly; breaking changes mean a ``v2``
-  module next to this one, never edits to this one.
+- Within v1 supported extension contracts grow compatibly; breaking changes
+  require a ``v2`` module next to this one. Training-origin nodes and their
+  exclusive value identifiers are excluded from this supported surface.
 - Every name below is the internal object itself, not a wrapper - zero
   overhead, and ``isinstance``/identity checks agree across the door.
 - Internal modules stay reachable (this is Python) but carry no promise:
@@ -197,6 +197,7 @@ from dinkster_schema import (
     WidgetRepresentations,
     output_descriptor_entries,
     pack_logger,
+    publish_preview_artifact,
     report_event,
     report_log,
     report_preview,
@@ -210,6 +211,7 @@ from dinkster_values import (
     ARRAY_TYPE,
     AUDIO_ENCODER_OUTPUT_TYPE,
     AUDIO_ENCODER_TYPE,
+    AUDIO_RECORD_TYPE,
     AUDIO_TYPE,
     BACKGROUND_REMOVAL_TYPE,
     BOUNDING_BOX_TYPE,
@@ -248,14 +250,13 @@ from dinkster_values import (
     INFERENCE_LATENT_OPERATION_TYPE,
     INLINE_STRING_CAP,
     INPAINT_CONDITIONING_TYPE,
+    INTERP_MODEL_TYPE,
     LATENT_OPERATION_TYPE,
     LATENT_TYPE,
     LATENT_UPSCALE_MODEL_TYPE,
     LAYERS_TYPE,
     LENGTH_META_KEY,
     LOAD3D_CAMERA_TYPE,
-    LORA_MODEL_TYPE,
-    LOSS_MAP_TYPE,
     MASK_TYPE,
     MAX_CURVE_POINTS,
     MEBIBYTE,
@@ -267,8 +268,10 @@ from dinkster_values import (
     MOGE_GEOMETRY_TYPE,
     MOGE_MODEL_TYPE,
     NOISE_TYPE,
+    OPTICAL_FLOW_TYPE,
     PHOTOMAKER_TYPE,
     PNG_CONTAINER_VERSION,
+    POSE_KEYPOINT_TYPE,
     POSE_TYPE,
     REGION_TYPE,
     RESOLUTION_PREVIEW_TYPE,
@@ -353,6 +356,7 @@ from dinkster_values import (
     model3d_fingerprint,
     model3d_format,
     model3d_meta,
+    open_image_components,
     parse_ply_splat,
     prepare_image_array_encoding,
     region_meta,
@@ -422,6 +426,7 @@ def __getattr__(name: str) -> object:
         "materialize_image",
         "materialize_latent",
         "materialize_clip_vision_output",
+        "materialize_voxel",
     }:
         from dinkster_inference_wire import types
 
@@ -448,6 +453,7 @@ def __dir__() -> list[str]:
             "materialize_image",
             "materialize_latent",
             "materialize_clip_vision_output",
+            "materialize_voxel",
             "initialize_inference_process",
         }
     )
@@ -461,6 +467,7 @@ if TYPE_CHECKING:
         materialize_clip_vision_output,
         materialize_image,
         materialize_latent,
+        materialize_voxel,
         register_inference_types,
     )
     from dinkster_video import document as timeline_document
@@ -481,6 +488,7 @@ __all__ = [
     "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
+    "materialize_voxel",
     "register_inference_types",
     "FrontendContribution",
     "FrontendModule",
@@ -604,6 +612,7 @@ __all__ = [
     "PREVIEW_EVENT",
     "PROGRESS_EVENT",
     "pack_logger",
+    "publish_preview_artifact",
     "report_event",
     "report_log",
     "report_preview",
@@ -616,6 +625,7 @@ __all__ = [
     "CORE_INT",
     "CORE_STRING",
     "ASSET_TYPE",
+    "AUDIO_RECORD_TYPE",
     "AUDIO_ENCODER_OUTPUT_TYPE",
     "AUDIO_ENCODER_TYPE",
     "AUDIO_TYPE",
@@ -643,18 +653,19 @@ __all__ = [
     "IMAGE_TYPE",
     "IMPACT_BASIC_PIPE_TYPE",
     "INFERENCE_LATENT_OPERATION_TYPE",
+    "INTERP_MODEL_TYPE",
     "LATENT_OPERATION_TYPE",
     "LATENT_TYPE",
     "LATENT_UPSCALE_MODEL_TYPE",
     "LAYERS_TYPE",
-    "LOSS_MAP_TYPE",
     "LOAD3D_CAMERA_TYPE",
-    "LORA_MODEL_TYPE",
     "MASK_TYPE",
     "MODEL3D_TYPE",
     "MODEL_PATCH_TYPE",
     "MODEL_TYPE",
     "NOISE_TYPE",
+    "OPTICAL_FLOW_TYPE",
+    "POSE_KEYPOINT_TYPE",
     "POSE_TYPE",
     "IMAGE_BATCH_MERGER_ID",
     "INLINE_STRING_CAP",
@@ -728,6 +739,7 @@ __all__ = [
     "decode_detection",
     "decode_image_array",
     "decode_image_components",
+    "open_image_components",
     "decode_model3d",
     "decode_model3d_file",
     "decode_region",

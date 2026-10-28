@@ -4,7 +4,7 @@ publisher = "dinkster"
 namespaces = []
 executes = ["dinkster.image.matte"]
 requires = [
-    "dinkster-inference @ git+https://github.com/Kosinkadink/dinkster-inference.git@dacdebc66f097e9889ce66e36e41c25a7b8f6494",
+    "dinkster-inference @ https://github.com/Kosinkadink/dinkster-inference/archive/9a9d0fd74ede9dea3058a0a63b2c5e9a8b00cb1c.zip",
     "numpy==2.5.1",
     "safetensors==0.8.0",
     "torch==2.13.0",

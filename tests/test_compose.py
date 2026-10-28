@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tomllib
 import weakref
+from contextlib import AbstractAsyncContextManager
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -908,12 +909,15 @@ def test_unpinned_pack_records_development_mode_when_production_was_requested(
     asyncio.run(scenario())
 
 
-def test_compose_defaults_only(tmp_path: Path) -> None:
+def test_compose_defaults_only(
+    tmp_path: Path,
+    shared_default_composition: tuple[asyncio.Runner, AbstractAsyncContextManager[Composition]],
+) -> None:
     """Installed defaults provide the standard surface through independent packs."""
+    runner, defaults = shared_default_composition
 
     async def scenario() -> None:
-        composition = await compose_serving()
-        try:
+        async with defaults as composition:
             assert set(composition.schemas) == set(build_schemas(DEFAULT_NODES))
             assert not any(t.startswith("dev.") for t in composition.schemas)
             assert set(composition.packs) == (
@@ -1031,10 +1035,8 @@ def test_compose_defaults_only(tmp_path: Path) -> None:
                 assert "provider" not in exact_node.inputs
             finally:
                 await client.close()
-        finally:
-            await composition.close()
 
-    asyncio.run(scenario())
+    runner.run(scenario())
 
 
 def test_compose_serving_default_resolution_is_atomic(
@@ -1058,7 +1060,7 @@ def test_compose_serving_default_resolution_is_atomic(
         ),
         (
             "dinkster-nodes-media-io",
-            "blake3:5ee752cb71aeddb6564a1f953ee5a6e03cdfa291fe0c5cffe4b73c7cdc493ed7",
+            "blake3:44693b7bf18f7adfce77bf77f168537445768178993b53713b56c720bb7d6ac8",
         ),
         (
             "dinkster-nodes-image",
@@ -1538,9 +1540,9 @@ def test_compose_dev_pack_adds_scaffold_nodes(tmp_path: Path) -> None:
     from dinkster_nodes_dev import PACK_NODES
 
     async def scenario() -> None:
-        composition = await compose_serving([DEV_PACK_MANIFEST])
+        composition = await compose_serving([DEV_PACK_MANIFEST], include_default_packs=False)
         try:
-            expected = set(build_schemas(DEFAULT_NODES)) | set(build_schemas(PACK_NODES))
+            expected = set(build_schemas(PACK_NODES))
             assert set(composition.schemas) == expected
             info = composition.packs["dinkster-nodes-dev"]
             assert info.source == f"local:{DEV_PACK_MANIFEST.parent.resolve()}"
@@ -1558,35 +1560,39 @@ def test_compose_dev_pack_adds_scaffold_nodes(tmp_path: Path) -> None:
             CompositionError,
             match="'dev' claimed by 'other-dev' overlaps 'dev' claimed by 'dinkster-nodes-dev'",
         ):
-            await compose_serving([DEV_PACK_MANIFEST, second], worker_env=WORKER_ENV)
+            await compose_serving(
+                [DEV_PACK_MANIFEST, second], include_default_packs=False, worker_env=WORKER_ENV
+            )
 
     asyncio.run(scenario())
 
 
-def test_conformance_proof_nodes_follow_explicit_dev_pack_composition() -> None:
+def test_conformance_proof_nodes_follow_explicit_dev_pack_composition(
+    shared_default_composition: tuple[asyncio.Runner, AbstractAsyncContextManager[Composition]],
+) -> None:
     """Conformance probes appear only when the development pack is composed."""
+    runner, defaults = shared_default_composition
 
     async def scenario() -> None:
-        dev = await compose_serving([PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)])
+        dev = await compose_serving(
+            [PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)], include_default_packs=False
+        )
         try:
             assert "dev.conformance.preview" in dev.schemas
             assert "dev.conformance.cancellable" in dev.schemas
         finally:
             await dev.close()
 
-        production = await compose_serving()
-        try:
+        async with defaults as production:
             assert not any(
                 node_type.startswith("dev.conformance.") for node_type in production.schemas
             )
             assert not any(
                 node_type.startswith("dev.conformance.") for node_type in production.node_packs
             )
-        finally:
-            await production.close()
 
         manifest_composition = await compose_serving(
-            [PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)]
+            [PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)], include_default_packs=False
         )
         try:
             assert "dev.image.gradient" in manifest_composition.schemas
@@ -1594,7 +1600,7 @@ def test_conformance_proof_nodes_follow_explicit_dev_pack_composition() -> None:
         finally:
             await manifest_composition.close()
 
-    asyncio.run(scenario())
+    runner.run(scenario())
 
 
 def test_compose_dev_mode(caplog: pytest.LogCaptureFixture) -> None:
@@ -1603,7 +1609,9 @@ def test_compose_dev_mode(caplog: pytest.LogCaptureFixture) -> None:
 
     async def scenario() -> None:
         composition = await compose_serving(
-            [PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)], dev=True
+            [PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)],
+            include_default_packs=False,
+            dev=True,
         )
         try:
             events: list[object] = []
@@ -2136,10 +2144,11 @@ def test_compose_gates_reserved_claims_on_host_trust(tmp_path: Path) -> None:
             tmp_path, presentation=False, namespaces=("iso", "comfy.extras")
         )
         with pytest.raises(CompositionError, match="explicit host trust"):
-            await compose_serving([manifest], worker_env=WORKER_ENV)
+            await compose_serving([manifest], include_default_packs=False, worker_env=WORKER_ENV)
 
         composition = await compose_serving(
-            [PackSpec(manifest=manifest, env=WORKER_ENV, trust_reserved=True)]
+            [PackSpec(manifest=manifest, env=WORKER_ENV, trust_reserved=True)],
+            include_default_packs=False,
         )
         try:
             assert composition.node_packs["iso.chatty"] == "isopack"
@@ -2156,7 +2165,15 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
 
     async def scenario() -> None:
         manifest = write_iso_manifest(tmp_path)
-        composition = await compose_serving([manifest], worker_env=WORKER_ENV)
+        composition = await compose_serving(
+            [
+                default_pack_spec("dinkster-nodes-foundation"),
+                default_pack_spec("dinkster-nodes-media-io"),
+                manifest,
+            ],
+            include_default_packs=False,
+            worker_env=WORKER_ENV,
+        )
         published_schemas = {
             node_type: schema
             for node_type, schema in composition.schemas.items()
@@ -3486,7 +3503,9 @@ def test_comfy_host_types_register_save_target_runtime_values() -> None:
 def test_composition_close_is_idempotent(tmp_path: Path) -> None:
     async def scenario() -> None:
         manifest = write_iso_manifest(tmp_path, presentation=False)
-        composition = await compose_serving([manifest], worker_env=WORKER_ENV)
+        composition = await compose_serving(
+            [manifest], include_default_packs=False, worker_env=WORKER_ENV
+        )
         assert isinstance(composition, Composition)
         await composition.close()
         await composition.close()  # second close is a no-op, not an error
@@ -3551,6 +3570,7 @@ def test_compose_serving_relays_pack_consumers_to_governor(tmp_path: Path) -> No
         )
         composition = await compose_serving(
             [manifest],
+            include_default_packs=False,
             worker_env=WORKER_ENV,
             governor=governor,
             reservations=GovernorReservationService(governor),
@@ -3617,11 +3637,15 @@ def test_serving_composer_full_free_releases_live_worker_without_startup_guard(
                 }
             )
             await engine.run(graph, ["load"])
-            await asyncio.sleep(0.05)
 
-            results = await composer.full_free("maintenance-composed")
+            async with asyncio.timeout(5):
+                while True:
+                    results = await composer.full_free("maintenance-composed")
+                    worker = next(row for row in results[1:] if row["worker"] == "memorypack")
+                    if worker["status"] != "busy":
+                        break
+                    await asyncio.sleep(0)
             local = results[0]
-            worker = next(row for row in results[1:] if row["worker"] == "memorypack")
             assert local["status"] == "complete"
             assert worker["worker"] == "memorypack"
             assert worker["status"] == "complete"
@@ -3770,6 +3794,7 @@ def test_compose_serving_delivers_pack_telemetry(tmp_path: Path) -> None:
         )
         composition = await compose_serving(
             [manifest],
+            include_default_packs=False,
             worker_env=WORKER_ENV,
             governor=governor,
             telemetry=reported,
@@ -3806,6 +3831,7 @@ def test_compose_serving_wires_worker_reservations(tmp_path: Path) -> None:
         )
         composition = await compose_serving(
             [manifest],
+            include_default_packs=False,
             worker_env=WORKER_ENV,
             governor=governor,
             reservations=GovernorReservationService(governor),

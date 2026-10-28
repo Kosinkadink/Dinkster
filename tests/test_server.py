@@ -8,8 +8,8 @@ import asyncio
 import hashlib
 import json
 import os
-import time
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
@@ -631,14 +631,22 @@ def test_queue_cancel_queued_and_running() -> None:
     asyncio.run(scenario())
 
 
-def test_queue_pause_holds_dispatch_and_resume_releases() -> None:
+def test_queue_pause_holds_dispatch_and_resume_releases(monkeypatch: pytest.MonkeyPatch) -> None:
     async def scenario() -> None:
         queue = JobQueue(make_engine())
+        dispatch_checked = asyncio.Event()
+        original_clear = queue._wakeup.clear
+
+        def clear_wakeup() -> None:
+            original_clear()
+            dispatch_checked.set()
+
+        monkeypatch.setattr(queue._wakeup, "clear", clear_wakeup)
         queue.start()
         assert not queue.paused
         queue.pause()
         job = queue.submit("c", "j1", echo_graph(), ["s"])
-        await asyncio.sleep(0.05)  # dispatcher had every chance to misbehave
+        await asyncio.wait_for(dispatch_checked.wait(), 5)
         assert job.state == "queued"
         assert queue.status()["paused"] is True
         queue.resume()
@@ -702,18 +710,24 @@ def test_queue_history_forgets_oldest_terminal_jobs() -> None:
     asyncio.run(scenario())
 
 
-def test_new_job_ref_globally_unique_and_time_ordered() -> None:
+def test_new_job_ref_globally_unique_and_time_ordered(monkeypatch: pytest.MonkeyPatch) -> None:
     """jobRef contract (platform plan): server-assigned, globally unique,
     opaque; lexical order approximates submission order (ms-timestamp
     prefix + 80 random bits)."""
+    from types import SimpleNamespace
+
+    import dinkster_server.queue as queue_module
     from dinkster_server.queue import new_job_ref
+
+    now = 1000.0
+    monkeypatch.setattr(queue_module, "time", SimpleNamespace(time=lambda: now))
 
     refs = [new_job_ref() for _ in range(1000)]
     assert len(set(refs)) == len(refs)
     assert all(len(r) == 32 and int(r, 16) >= 0 for r in refs)
-    # Refs minted across a real clock tick sort after earlier ones.
+    # Refs minted across a clock tick sort after earlier ones.
     early = new_job_ref()
-    time.sleep(0.002)
+    now += 0.002
     assert new_job_ref() > early
 
 
@@ -2643,7 +2657,7 @@ def test_prepared_surface_validation_keeps_requests_responsive(
         defer_unpublished_carriers: bool = False,
     ) -> None:
         validation_started.set()
-        release_validation.wait()
+        assert release_validation.wait(2)
         original_validate(
             packs,
             schemas,
@@ -2675,18 +2689,19 @@ def test_prepared_surface_validation_keeps_requests_responsive(
                     {"late.echo": "native"},
                 )
             )
-        fallback_release = threading.Timer(2, release_validation.set)
-        fallback_release.start()
         try:
-            assert await asyncio.to_thread(validation_started.wait)
-            started = time.monotonic()
-            health_response, job_response, nodes_response = await asyncio.gather(
-                client.get("/api/health"),
-                client.get("/api/jobs/client/missing"),
-                client.get("/api/nodes"),
+            assert await asyncio.to_thread(validation_started.wait, 2)
+            assert not validation.done()
+            health_response, job_response, nodes_response = await asyncio.wait_for(
+                asyncio.gather(
+                    client.get("/api/health"),
+                    client.get("/api/jobs/client/missing"),
+                    client.get("/api/nodes"),
+                ),
+                2,
             )
-            elapsed = time.monotonic() - started
-            assert elapsed < 1
+            assert not validation.done()
+            assert not release_validation.is_set()
             assert health_response.status == 200
             assert job_response.status == 404
             assert "late.echo" not in (await nodes_response.json())["nodes"]
@@ -2716,10 +2731,10 @@ def test_prepared_surface_validation_keeps_requests_responsive(
             assert "late.echo" in (await (await client.get("/api/nodes")).json())["nodes"]
         finally:
             release_validation.set()
-            fallback_release.cancel()
-            if not validation.done():
+            try:
                 await validation
-            await client.close()
+            finally:
+                await client.close()
 
     asyncio.run(scenario())
 
@@ -4454,6 +4469,20 @@ def test_server_compile_once_preserves_raw_fingerprint_and_pinned_generation(
 
         app = create_app(factory, SCHEMAS)
         app[STATE_KEY].queue.pause()
+        admission_entered = asyncio.Event()
+        admission_calls = 0
+        original_admission = app[STATE_KEY].job_admission
+
+        @asynccontextmanager
+        async def observe_admission(client_id: str, job_id: str) -> AsyncIterator[None]:
+            nonlocal admission_calls
+            admission_calls += 1
+            if admission_calls == 2:
+                admission_entered.set()
+            async with original_admission(client_id, job_id):
+                yield
+
+        monkeypatch.setattr(app[STATE_KEY], "job_admission", observe_admission)
         client = TestClient(TestServer(app))
         await client.start_server()
         try:
@@ -4461,7 +4490,8 @@ def test_server_compile_once_preserves_raw_fingerprint_and_pinned_generation(
             first_task = asyncio.create_task(client.post("/api/jobs", json=body))
             await compile_entered.wait()
             duplicate_task = asyncio.create_task(client.post("/api/jobs", json=body))
-            await asyncio.sleep(0.01)
+            await asyncio.wait_for(admission_entered.wait(), 5)
+            assert not duplicate_task.done()
             assert len(calls) == 1
             compile_release.set()
             first_response, duplicate_response = await asyncio.gather(
@@ -4921,10 +4951,19 @@ def test_progress_events_throttled_at_ingestion_final_survives_in_replay() -> No
     asyncio.run(scenario())
 
 
-def test_queue_endpoints_over_http() -> None:
+def test_queue_endpoints_over_http(monkeypatch: pytest.MonkeyPatch) -> None:
     async def scenario() -> None:
         reset_sleeper()
         client = await make_client()
+        queue = client.app[STATE_KEY].queue
+        dispatch_checked = asyncio.Event()
+        original_clear = queue._wakeup.clear
+
+        def clear_wakeup() -> None:
+            original_clear()
+            dispatch_checked.set()
+
+        monkeypatch.setattr(queue._wakeup, "clear", clear_wakeup)
         try:
             # Baseline shape: nothing queued, nothing running, not paused.
             status = await (await client.get("/api/queue")).json()
@@ -4936,9 +4975,10 @@ def test_queue_endpoints_over_http() -> None:
             }
 
             assert (await client.post("/api/queue/pause")).status == 200
+            dispatch_checked.clear()
             graph = Graph(nodes={"n": GraphNode("test.sleeper", {"tag": "x"})})
             assert (await client.post("/api/jobs", json=submit_body(graph, ["n"]))).status == 202
-            await asyncio.sleep(0.05)
+            await asyncio.wait_for(dispatch_checked.wait(), 5)
             status = await (await client.get("/api/queue")).json()
             assert status["paused"] is True
             assert [j["jobId"] for j in status["queued"]] == ["j1"]
@@ -5986,12 +6026,21 @@ def test_values_endpoint_serves_target_and_intermediate() -> None:
             assert data["descriptor"]["typeId"] == "STRING"
             assert data["descriptor"]["value"] == "HELLO"
             assert data["descriptor"]["fingerprint"]
-            assert data["renditions"] == []  # strings have no rich rendition
+            assert data["renditions"] == [
+                {"kind": "text", "mime": "text/plain", "default": True, "cacheKey": "text"}
+            ]
+            text = await client.get(values_url("s", rendition="text"))
+            assert text.status == 200
+            assert text.content_type == "text/plain"
+            assert await text.text() == "HELLO"
 
             resp = await client.get(values_url("e"))  # intermediate, retained
             data = await resp.json()
             assert (resp.status, data["available"]) == (200, True)
             assert data["descriptor"]["value"] == "hello"
+            text = await client.get(values_url("e", rendition="default"))
+            assert text.status == 200
+            assert await text.text() == "hello"
         finally:
             await client.close()
 

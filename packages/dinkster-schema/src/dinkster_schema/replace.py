@@ -252,6 +252,8 @@ class InputFamilyMapping:
     source_family: str = ""
     inputs: tuple[tuple[str, MappingSource], ...] = ()
     members: tuple[InputFamilyMember, ...] = ()
+    source_template: tuple[str, ...] = ()
+    source_member_port: str = ""
 
     def __post_init__(self) -> None:
         if self.kind == "copy":
@@ -262,7 +264,7 @@ class InputFamilyMapping:
             if self.members:
                 raise ValueError("copy input family mapping carries no explicit members")
         elif self.kind == "members":
-            if self.source_family or self.inputs:
+            if self.source_family or self.inputs or self.source_template or self.source_member_port:
                 raise ValueError("members input family mapping carries only explicit members")
             if not self.members:
                 raise ValueError("members input family mapping requires explicit members")
@@ -277,10 +279,46 @@ class InputFamilyMapping:
         for input_id in input_ids:
             if _STRUCTURAL_ID.fullmatch(input_id) is None:
                 raise ValueError(f"invalid input family template input id: {input_id!r}")
+        if not isinstance(self.source_template, tuple):  # pyright: ignore[reportUnnecessaryIsInstance]
+            raise ValueError("source template must be a tuple of input ids")
+        for input_id in self.source_template:
+            if not isinstance(input_id, str) or _STRUCTURAL_ID.fullmatch(input_id) is None:  # pyright: ignore[reportUnnecessaryIsInstance]
+                raise ValueError("source template requires structural input ids")
+        if len(set(self.source_template)) != len(self.source_template):
+            raise ValueError("source template has duplicate input ids")
+        if not isinstance(self.source_member_port, str):  # pyright: ignore[reportUnnecessaryIsInstance]
+            raise ValueError("source member port must be a path string")
+        if self.source_template:
+            for _, mapping in self.inputs:
+                if mapping.kind != "constant" and mapping.input not in self.source_template:
+                    raise ValueError("mapping input is not declared in source template")
+        if self.source_member_port:
+            if len(self.source_template) != 1 or any(
+                _STRUCTURAL_ID.fullmatch(part) is None
+                for part in self.source_member_port.split(".")
+            ):
+                raise ValueError(
+                    "source member port requires a single-input source template and path"
+                )
 
     @classmethod
-    def copy(cls, source_family: str, *, inputs: Mapping[str, MappingSource]) -> InputFamilyMapping:
-        return cls(kind="copy", source_family=source_family, inputs=tuple(inputs.items()))
+    def copy(
+        cls,
+        source_family: str,
+        *,
+        inputs: Mapping[str, MappingSource],
+        source_template: Sequence[str] = (),
+        source_member_port: str = "",
+    ) -> InputFamilyMapping:
+        if isinstance(source_template, str):
+            raise ValueError("source template must be a sequence of input ids, not a string")
+        return cls(
+            kind="copy",
+            source_family=source_family,
+            inputs=tuple(inputs.items()),
+            source_template=tuple(source_template),
+            source_member_port=source_member_port,
+        )
 
     @classmethod
     def from_members(cls, *members: InputFamilyMember) -> InputFamilyMapping:
@@ -667,11 +705,17 @@ def input_family_member_to_wire(member: InputFamilyMember) -> dict[str, object]:
 
 def input_family_mapping_to_wire(mapping: InputFamilyMapping) -> dict[str, object]:
     if mapping.kind == "copy":
-        return {
+        wire: dict[str, object] = {
             "kind": "copy",
             "sourceFamily": mapping.source_family,
             "inputs": {target: mapping_source_to_wire(source) for target, source in mapping.inputs},
         }
+        if mapping.source_template:
+            template: dict[str, object] = {"inputs": list(mapping.source_template)}
+            if mapping.source_member_port:
+                template["memberPort"] = mapping.source_member_port
+            wire["sourceTemplate"] = template
+        return wire
     return {
         "kind": "members",
         "members": [input_family_member_to_wire(member) for member in mapping.members],
@@ -799,6 +843,27 @@ def input_family_member_from_wire(wire: Any) -> InputFamilyMember:
 
 def input_family_mapping_from_wire(wire: Any) -> InputFamilyMapping:
     kind = str(wire["kind"])
+    source_template: tuple[str, ...] = ()
+    source_member_port = ""
+    if "sourceTemplate" in wire:
+        template = wire["sourceTemplate"]
+        if kind != "copy" or not isinstance(template, Mapping):
+            raise ValueError("sourceTemplate requires a copy mapping and an object")
+        template = cast("Mapping[str, Any]", template)
+        if set(template) - {"inputs", "memberPort"} or "inputs" not in template:
+            raise ValueError("sourceTemplate requires inputs and optional memberPort")
+        raw_inputs = template["inputs"]
+        if (
+            not isinstance(raw_inputs, list)
+            or not raw_inputs
+            or not all(isinstance(input_id, str) for input_id in cast("list[object]", raw_inputs))
+        ):
+            raise ValueError("sourceTemplate inputs must be a nonempty string array")
+        source_template = tuple(cast("list[str]", raw_inputs))
+        if "memberPort" in template:
+            source_member_port = template["memberPort"]
+            if not isinstance(source_member_port, str) or not source_member_port:
+                raise ValueError("sourceTemplate memberPort must be a nonempty path")
     if kind == "copy":
         return InputFamilyMapping(
             kind="copy",
@@ -807,6 +872,8 @@ def input_family_mapping_from_wire(wire: Any) -> InputFamilyMapping:
                 (str(target), mapping_source_from_wire(source))
                 for target, source in wire["inputs"].items()
             ),
+            source_template=source_template,
+            source_member_port=source_member_port,
         )
     if kind == "members":
         return InputFamilyMapping(
@@ -1219,6 +1286,9 @@ def validate_replacement_references(
                     for _, family_mapping in case.input_families:
                         if family_mapping.kind != "copy":
                             continue
+                        # A same-type rule describes a retired shape, not the current schema.
+                        if rule.migration is not None and family_mapping.source_template:
+                            continue
                         family = source_families.get(family_mapping.source_family)
                         if family is None:
                             add(
@@ -1239,6 +1309,16 @@ def validate_replacement_references(
                                 f"{rule.from_type} has nested dynamic entries",
                             )
                             continue
+                        if (
+                            family_mapping.source_template
+                            and frozenset(family_mapping.source_template) != template_ids
+                        ):
+                            add(
+                                family_mapping.source_family,
+                                "input",
+                                rule.from_type,
+                                "source template ids do not match the predecessor family",
+                            )
                         for _, mapping in family_mapping.inputs:
                             if mapping.kind == "constant":
                                 continue

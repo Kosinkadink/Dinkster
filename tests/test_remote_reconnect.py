@@ -108,7 +108,8 @@ def test_reattach_after_daemon_restart_swaps_in_a_new_session(tmp_path: Path) ->
             await composer.add_remote(spec)
             first_token = composer._remotes["box1"].instance_token
             assert first_token is not None
-            await stop_service(proc)
+            proc.kill()
+            await proc.wait()
             await wait_for_connected(composer, "box1", False)
             assert worker_status(composer, spec) == "disconnected"
             # A failed redial (daemon still down) changes nothing.
@@ -353,8 +354,35 @@ def test_failed_resume_publication_preserves_invocation_for_retry(
 
 
 def test_completed_result_replays_after_reconnect(tmp_path: Path) -> None:
+    finish = tmp_path / "finish"
+    retained = tmp_path / "retained"
+    (tmp_path / "resume_probe.py").write_text(
+        "import asyncio\n"
+        "from pathlib import Path\n"
+        "from dinkster_workers.resume import ResumableConversation\n"
+        "from isopack_nodes import NODES, Sleepy, register_types\n"
+        "\n"
+        "async def execute(cls, *, value, seconds):\n"
+        "    async with asyncio.timeout(10):\n"
+        f"        while not Path({str(finish)!r}).exists():\n"
+        "            await asyncio.sleep(0.005)\n"
+        "    return cls.outputs(value=value)\n"
+        "\n"
+        "Sleepy.execute = classmethod(execute)\n"
+        "send = ResumableConversation.send\n"
+        "\n"
+        "async def observed_send(self, header, blobs=()):\n"
+        "    await send(self, header, blobs)\n"
+        "    if header.get('type') == 'result':\n"
+        f"        Path({str(retained)!r}).touch()\n"
+        "\n"
+        "ResumableConversation.send = observed_send\n"
+    )
+    manifest = write_iso_manifest(tmp_path)
+    manifest.write_text(manifest.read_text().replace("isopack_nodes:", "resume_probe:"))
+
     async def scenario() -> None:
-        proc, host, port = await start_service(write_iso_manifest(tmp_path), tmp_path)
+        proc, host, port = await start_service(manifest, tmp_path, pythonpath=(tmp_path,))
         composer = ServingComposer()
         try:
             spec = remote_spec(host, port, tmp_path)
@@ -378,7 +406,10 @@ def test_completed_result_replays_after_reconnect(tmp_path: Path) -> None:
             assert session._writer is not None
             session._writer.transport.abort()
             await wait_for_connected(composer, "box1", False)
-            await asyncio.sleep(0.4)
+            finish.touch()
+            async with asyncio.timeout(10):
+                while not retained.exists():
+                    await asyncio.sleep(0.005)
             outcome = await composer.reattach_remote(spec)
             assert outcome.same_instance is True
             result = await asyncio.wait_for(run, 10.0)
@@ -536,7 +567,8 @@ def test_reattach_adopts_a_changed_daemon_surface(tmp_path: Path) -> None:
             spec = remote_spec(host, port, tmp_path)
             await composer.add_remote(spec)
             assert "iso.chatty" in composer.composition.schemas
-            await stop_service(proc)
+            proc.kill()
+            await proc.wait()
             await wait_for_connected(composer, "box1", False)
 
             variant_root = tmp_path / "variant"
@@ -579,7 +611,8 @@ def test_reattach_refuses_a_surface_change_that_strands_dependents(tmp_path: Pat
             assert composer._owners["iso.chatty"] == "box1"
             assert "iso.chatty" in composer._remotes["box2"].node_types
 
-            await stop_service(proc1)
+            proc1.kill()
+            await proc1.wait()
             await wait_for_connected(composer, "box1", False)
             variant_root = tmp_path / "variant"
             manifest = write_variant_manifest(variant_root, "iso.chatty")
@@ -618,7 +651,8 @@ def test_reattach_aborts_when_the_old_session_cannot_be_reaped(
         try:
             spec = remote_spec(host, port, tmp_path)
             await composer.add_remote(spec)
-            await stop_service(proc)
+            proc.kill()
+            await proc.wait()
             await wait_for_connected(composer, "box1", False)
             restarted, _, _ = await start_service(write_iso_manifest(tmp_path), tmp_path, port=port)
 
@@ -710,7 +744,8 @@ def test_supervisor_redials_and_hinted_jobs_resume(
             assert (await hinted_job("warm")).status == 202
             assert (await wait_for_job(client, "warm", "one"))["state"] == "completed"
 
-            await stop_service(proc)
+            proc.kill()
+            await proc.wait()
             await wait_for_connected(composer, "box1", False)
             # While down: submission hints naming box1 are refused and the
             # composition report row flips to failed.

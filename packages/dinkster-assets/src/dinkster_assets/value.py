@@ -17,10 +17,10 @@ The registration makes three deliberate choices:
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import cast
 
 from dinkster_values import (
@@ -43,9 +43,10 @@ from dinkster_values.video_codec import VIDEO_INLINE_LIMIT, coerce_video, video_
 from dinkster_values.video_probe import probe_video
 
 from .audio import bind_audio_value
-from .declared import produced_asset_vault
+from .declared import MOUNTS_ENV, produced_output_scratch
 from .identity import AssetError, digest_bytes, digest_file
 from .model import AssetRef, AssetResolver, LocalAssetRef, LocalAssetResolver
+from .mounts import MountSnapshotResolver
 
 ASSET_TYPE = ASSET_BASE_TYPE
 """Aliases dinkster_values.ASSET_BASE_TYPE (typed assets pinned the constant
@@ -53,8 +54,13 @@ down there so TypeRegistry can resolve ``asset<...>`` ids without importing
 upward); this package keeps its historical name."""
 
 
-def register_asset_type(registry: TypeRegistry, resolver: AssetResolver | None = None) -> None:
-    """Register ``dinkster.asset`` bound to this process's resolver (or none:
+def register_asset_type(
+    registry: TypeRegistry,
+    resolver: AssetResolver | None = None,
+    *,
+    type_id: str = ASSET_TYPE,
+) -> None:
+    """Register a bound asset identity to this process's resolver (or none:
     refs still flow, cache, and interrogate; only local_path() requires a
     resolver where bytes are actually read)."""
 
@@ -92,7 +98,7 @@ def register_asset_type(registry: TypeRegistry, resolver: AssetResolver | None =
 
     def encode(obj: object) -> bytes:
         if not isinstance(obj, AssetRef | LocalAssetRef):
-            raise AssetError(f"cannot encode {type(obj).__name__} as {ASSET_TYPE}")
+            raise AssetError(f"cannot encode {type(obj).__name__} as {type_id}")
         return json.dumps(obj.to_wire(), sort_keys=True, separators=(",", ":")).encode("utf-8")
 
     def decode(data: bytes) -> object:
@@ -117,7 +123,7 @@ def register_asset_type(registry: TypeRegistry, resolver: AssetResolver | None =
         return obj.to_wire()
 
     registry.register(
-        ASSET_TYPE,
+        type_id,
         encode=encode,
         decode=decode,
         fingerprint=fingerprint,
@@ -130,7 +136,7 @@ def _publish_video_source(source: bytes | Path) -> AssetRef:
     size = len(source) if isinstance(source, bytes) else source.stat().st_size
     if size > GIBIBYTE:
         raise AssetError("VIDEO source exceeds 1 GiB")
-    vault = produced_asset_vault()
+    vault = produced_output_scratch()
     if vault is None:
         raise AssetError(
             "publishing VIDEO sources requires DINKSTER_PACK_SCRATCH or DINKSTER_ASSET_VAULT"
@@ -151,29 +157,37 @@ def _publish_video_source(source: bytes | Path) -> AssetRef:
 
 
 def admit_video_source(source: bytes | Path | AssetRef | LocalAssetRef) -> dict[str, object]:
-    """Probe before publishing local media as a portable VIDEO value."""
+    """Admit indexed files by reference; publish only produced byte streams."""
     if isinstance(source, AssetRef):
-        with source.open() as handle:
-            handle.seek(0, 2)
-            if handle.tell() > GIBIBYTE:
-                raise AssetError("VIDEO source exceeds 1 GiB")
+        with source.open():
+            pass
         return video_from_source(source)
     if isinstance(source, LocalAssetRef):
-        with TemporaryDirectory(prefix="dinkster-video-") as directory:
-            path = Path(directory) / "video"
-            with source.open() as handle, path.open("wb") as output:
-                size = 0
-                while chunk := handle.read(MEBIBYTE):
-                    size += len(chunk)
-                    if size > GIBIBYTE:
-                        raise AssetError("VIDEO source exceeds 1 GiB")
-                    output.write(chunk)
-            return admit_video_source(path)
-    size = len(source) if isinstance(source, bytes) else source.stat().st_size
+        source.local_path()
+        verified = source.verified()
+        if verified is None:
+            raise AssetError("VIDEO file selection must be indexed before admission")
+        return admit_video_source(verified)
+    if isinstance(source, Path):
+        snapshot = os.environ.get(MOUNTS_ENV)
+        if snapshot:
+            resolver = MountSnapshotResolver(snapshot)
+            path = source.resolve(strict=True)
+            for kind in ("media/video", "directory/input"):
+                for root in resolver.roots_for_kind(kind):
+                    root = root.resolve()
+                    if path.is_relative_to(root):
+                        return admit_video_source(
+                            resolver.bind_relative_file(
+                                kind, root, path.relative_to(root).as_posix()
+                            )
+                        )
+        raise AssetError("VIDEO file selection requires an indexed asset reference")
+    size = len(source)
     if size > GIBIBYTE:
         raise AssetError("VIDEO source exceeds 1 GiB")
     if size <= VIDEO_INLINE_LIMIT:
-        return video_from_source(source if isinstance(source, bytes) else source.read_bytes())
+        return video_from_source(source)
     probe = probe_video(source)
     effective_video_facts({"probe": probe, "edits": []})
     return video_from_source(_publish_video_source(source))

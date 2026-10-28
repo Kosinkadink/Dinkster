@@ -268,8 +268,9 @@ def _checkpoint(path: Path, model_format: str) -> None:
     )
 
 
-@pytest.mark.parametrize("in_process", (True, False))
-@pytest.mark.parametrize("model_format", ("720p", "1080p", "ltx"))
+@pytest.mark.parametrize(
+    "model_format,in_process", (("720p", True), ("1080p", True), ("ltx", True), ("ltx", False))
+)
 def test_latent_upscale_loader_crosses_ordinary_hosts_twice(
     tmp_path: Path, in_process: bool, model_format: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -1,5 +1,11 @@
 ## ComfyUI compatibility
 
+- Native POSE_KEYPOINT values preserve frame canvas dimensions, people and flat
+  body, foot, face and hand keypoints across isolated hosts, including absent
+  and empty optional fields. This is distinct from the existing POSE format.
+- The `--comfy-root` and `--execution-python` composition supports an installed
+  inference package alongside source-only ComfyUI modules from the checkout,
+  while sharing one inference module state and leaving source files unchanged.
 - Core schema comparison permits the optional output mount for output nodes
   with a scalar STRING filename prefix, including CLIPSave, VAESave,
   CheckpointSave, and ModelSave, without relying on their class-name spelling.
@@ -46,8 +52,22 @@
   returning raw seconds and a frame count snapped to the causal VAE grid.
 - Native ComfyUI AUDIO sockets retain the first registered audio authority
   and work across isolated pack processes without a companion media pack.
+- Literal VIDEO_EDIT mappings retain their crop and trim fields across ordinary
+  in-process and isolated pack hosts without host type overrides.
 - Native LTXVCropGuides removes appended guide frames and their conditioning
   metadata while preserving the remaining video latent and noise mask.
+- Native LTXV latent-guide and generated-keyframe nodes attach, separate and
+  convert guide frames while preserving conditioning histories and source tensors.
+- Native LTXV image guides accept canonical IC-LoRA parameters extracted from
+  LoRA model metadata, including sparse spatial reference downscaling.
+- LTXV reference-audio, spatio-temporal and modality guidance preserve the source
+  model and apply guidance within the requested sampling window. The dual-CFG
+  guider applies separate video/audio scales to native multi-stream latents.
+  Controlled CPU predictions cover nonempty Euler sampling, masks, seeded noise
+  and denoised output restoration; real-model AV sampling is not validated.
+- MiniMax H3 reference conditioning pairs image, video and soundtrack inputs;
+  Fun ControlNet applies scheduled control while preserving the source model. CPU tests
+  use controlled encoders and predictions, not real-model or GPU execution.
 - Native SeedVR2 output post-processing aligns video frames, restores alpha
   and applies LAB, wavelet or AdaIN color matching with bounded chunks.
 - Native ARVideoI2V encodes the first start-image frame into a cloned model's
@@ -61,9 +81,6 @@
 - Native EmptyMochiLatentVideo creates video latents with the core interface.
   Empty image and Mochi latents honor CPU-only process policy without requiring
   attention discovery or command-line initialization first.
-- Seven native dataset text nodes lowercase, uppercase, truncate, prefix,
-  suffix, replace, and strip text under exact core IDs, retaining the fixed
-  reference's one-element list payloads on scalar STRING outputs.
 - Save Text preserves its core text, filename prefix, and format inputs while
   writing UTF-8 output through the configured mounted output target. Filename
   variables use 1-by-1 dimensions and local time; unknown variables stay literal.
@@ -83,8 +100,6 @@
   across ordinary native pack hosts without loading Torch during registration.
 - UPSCALE_MODEL preserves the live image-upscale descriptor and its patcher as a
   resident value across ordinary pack hosts; model contents are not serialized.
-- LOSS_MAP transports ordered training loss values and structural extras through
-  the shared latent framing without changing the recorded numeric values.
 - Hunyuan Video 1.5 and LTXV latent upscale consumers preserve core resize,
   normalization, dtype, device, and latent metadata behavior.
 - Nine native advanced latent nodes add, subtract, multiply, interpolate,
@@ -124,8 +139,6 @@
   stitch, resize with padding, rotate, flip, and scale to a maximum dimension.
 - Native morphology applies erosion, dilation, opening, closing, gradients and
   top/bottom hats; RGB/YUV conversion splits and joins three image channels.
-- Native dataset nodes merge image batches into frame lists and bucket training
-  latents with their paired conditioning by resolution in first-seen order.
 - Eight native video latent nodes create Hunyuan Video, Hunyuan Video 1.5, LTXV,
   Cosmos, and autoregressive video samples, trim video frames, freeze LTXV video
   or audio samples, and normalize video latent starts under their exact ComfyUI IDs.
