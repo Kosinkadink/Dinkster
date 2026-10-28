@@ -25,7 +25,6 @@ from dinkster_values import (
     INTERP_MODEL_TYPE,
     LATENT_UPSCALE_MODEL_TYPE,
     LOAD3D_CAMERA_TYPE,
-    LORA_MODEL_TYPE,
     MODEL_PATCH_TYPE,
     MODEL_TYPE,
     MOGE_GEOMETRY_TYPE,
@@ -60,7 +59,6 @@ from .hook_values import (
     register_hook_structural_type,
 )
 from .ic_lora_parameters import register_ic_lora_parameters_type
-from .loss_map import register_loss_map_type
 from .media_wire import (
     materialize_audio,
     materialize_image,
@@ -178,19 +176,6 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
         if LOAD3D_CAMERA_TYPE in registry
         else register_load3d_camera_type(registry)
     )
-    if LORA_MODEL_TYPE not in registry:
-        registry.register(
-            LORA_MODEL_TYPE,
-            encode=partial(encode_latent, preserve_mapping_order=True),
-            decode=partial(decode_latent, require_samples=False, preserve_mapping_order=True),
-            fingerprint=latent_fingerprint(LORA_MODEL_TYPE, preserve_mapping_order=True),
-            validate_encoded=partial(
-                validate_latent_encoded,
-                require_samples=False,
-                preserve_mapping_order=True,
-            ),
-        )
-    registered.append(registry.spec(LORA_MODEL_TYPE))
     if MOGE_GEOMETRY_TYPE not in registry:
         registry.register(
             MOGE_GEOMETRY_TYPE,
@@ -205,7 +190,6 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
             registry.spec(type_id) if type_id in registry else register_wan_type(registry, type_id)
         )
     registered.extend(register_media_types(registry))
-    registered.append(register_loss_map_type(registry))
     registered.append(register_voxel_type(registry))
     return tuple(registered)
 

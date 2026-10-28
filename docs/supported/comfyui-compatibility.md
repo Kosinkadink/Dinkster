@@ -98,8 +98,6 @@
   across ordinary native pack hosts without loading Torch during registration.
 - UPSCALE_MODEL preserves the live image-upscale descriptor and its patcher as a
   resident value across ordinary pack hosts; model contents are not serialized.
-- LOSS_MAP transports ordered training loss values and structural extras through
-  the shared latent framing without changing the recorded numeric values.
 - Hunyuan Video 1.5 and LTXV latent upscale consumers preserve core resize,
   normalization, dtype, device, and latent metadata behavior.
 - Nine native advanced latent nodes add, subtract, multiply, interpolate,
