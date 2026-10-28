@@ -23,7 +23,8 @@
 - Setup and serving with mount changes enabled initialize a writable
   `<library-root>/imports` folder when no imports grant is configured.
   Existing import paths and read-only grants are preserved; unavailable
-  configured directories are not recreated or replaced.
+  configured directories are not recreated or replaced. Removing the import
+  grant remains effective across restarts and repeated setup.
 - Operators can persist project folder membership, independent display order,
   shared folders, and project output selections through the mount API.
   Removing a project association does not delete files or revoke the grant.

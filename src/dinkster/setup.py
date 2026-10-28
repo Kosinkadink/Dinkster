@@ -18,10 +18,14 @@ def default_roots() -> tuple[Path, Path]:
 
 def ensure_import_mount(library_root: Path) -> None:
     """Initialize visible imports without widening or replacing an existing grant."""
+    initialized = library_root / ".imports-initialized"
+    if initialized.exists():
+        return
     mounts_path = library_root / "mounts.toml"
     mounts = load_mounts(mounts_path)
     imports_root = library_root / "imports"
     if any(mount.id == "imports" or mount.path == imports_root for mount in mounts):
+        initialized.touch()
         return
     imports_root.mkdir(parents=True, exist_ok=True)
     text = dump_mounts(
@@ -37,6 +41,7 @@ def ensure_import_mount(library_root: Path) -> None:
         os.replace(temporary, mounts_path)
     finally:
         temporary.unlink(missing_ok=True)
+    initialized.touch()
 
 
 def main(argv: list[str] | None = None) -> int:

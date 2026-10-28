@@ -90,6 +90,21 @@ def test_setup_preserves_existing_import_grants(
     assert load_output_mount(config) == "output"
 
 
+def test_setup_does_not_restore_a_removed_import_grant(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "state"))
+    setup.main([])
+    library, _ = setup.default_roots()
+    config = library / "mounts.toml"
+    remaining = tuple(mount for mount in load_mounts(config) if mount.id != "imports")
+    config.write_text(dump_mounts(remaining, output_mount="output"), "utf-8")
+    (library / "imports").rmdir()
+
+    setup.main([])
+
+    assert load_mounts(config) == remaining
+    assert not (library / "imports").exists()
+
+
 def test_bare_cli_launches_one_origin_and_opens_browser(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
