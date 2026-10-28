@@ -160,11 +160,16 @@ dependency of `dinkster-inference`, the sampling runtime that
 whatever version resolution picks. The base pins fix that version: the root
 `pyproject.toml` declares torch, torchvision, numpy and
 `opencv-contrib-python-headless` at the settled versions in a dependency
-group (alongside the existing `angle` and `dev` groups). The group's job is
-to pin, not to install; the lock resolves every workspace package against
-those exact versions, and the engine release's `constraints.txt` carries
-them, which is what makes a generation sync and a pack venv resolve against
-the same torch the base carries.
+group (alongside the existing `angle` and `dev` groups). Two separate
+things decide what a sync installs and at which version. Which packages
+land is the dependency closure of the selected members: a default sync does
+not select the group, but it does install torch, because
+`dinkster-inference` requires it unconditionally. Which version lands is
+the lock, and the group exists so the lock resolves every workspace package
+against the settled versions whether or not the group is selected. The
+engine release's `constraints.txt` carries the same pins, which is what
+makes a generation sync and a pack venv resolve against the same torch the
+base carries.
 
 The lock pins the base by version, not by per-variant wheel. torch and
 torchvision wheels differ per variant and come from the torch index for
@@ -514,9 +519,10 @@ Settled:
   either channel. The one index read is rebuilding a base whose archive is
   no longer hosted, from its retained base manifest.
 - The base pins live in Dinkster's lock through a root dependency group
-  whose job is to pin versions, not to install; torch reaches the default
-  sync through `dinkster-inference`; the base manifest holds the
-  per-variant wheel hashes from the variant's index.
+  that a default sync does not select; the group fixes the versions the
+  lock resolves, while the dependency closure (torch through
+  `dinkster-inference`) decides what a sync installs; the base manifest
+  holds the per-variant wheel hashes from the variant's index.
 - A generation's effective constraints take base-owned distributions from
   the selected base manifest and everything else from the engine
   `constraints.txt`; versions must agree or the assembler fails closed.
