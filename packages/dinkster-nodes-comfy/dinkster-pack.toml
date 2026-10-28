@@ -541,6 +541,7 @@ namespaces = [
     "SaveAudioMP3",
     "SaveAudioOpus",
     "SaveAudioAdvanced",
+    "SaveWEBM",
     "YuE2GenerateABC",
     "YuE2GenerateMusic",
     "LoadImageDataSetFromFolder",
