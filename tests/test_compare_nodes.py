@@ -13,6 +13,74 @@ import pytest
 
 
 @pytest.mark.parametrize(
+    "source,excluded",
+    [
+        ("comfy_extras/nodes_train.py", True),
+        ("comfy_extras/nodes_dataset.py", True),
+        ("custom_nodes/nodes_train.py", False),
+        ("nodes.py", False),
+    ],
+)
+def test_cli_training_exclusion_keeps_deletion_errors(
+    tmp_path: Path, source: str, excluded: bool
+) -> None:
+    reference = tmp_path / "reference.json"
+    registry = tmp_path / "registry.json"
+    csv_output = tmp_path / "comparison.csv"
+    summary_output = tmp_path / "summary.json"
+    reference.write_text(
+        json.dumps(
+            {
+                "nodes": [
+                    {"class_name": "LoraModelLoader", "file": source, "input_types": {}},
+                    {"class_name": "OrdinaryNode", "file": "nodes.py", "input_types": {}},
+                    {"class_name": "ApiNode", "api_node": True},
+                ]
+            }
+        )
+    )
+    served = {
+        name: {"nodeType": name, "interface": []}
+        for name in ("LoraModelLoader", "OrdinaryNode", "NativeOnly")
+    }
+    for present in (True, False):
+        if not present:
+            del served["LoraModelLoader"]
+        registry.write_text(json.dumps({"nodes": served}))
+        result = subprocess.run(
+            [
+                sys.executable,
+                "tools/compare_nodes.py",
+                str(reference),
+                str(registry),
+                str(csv_output),
+                str(summary_output),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.stderr == ""
+        summary = json.loads(summary_output.read_text())
+        assert summary["eligible_node_count"] == (1 if excluded else 2)
+        assert summary["passed"] is (not present if excluded else present)
+        assert result.returncode == (0 if summary["passed"] else 1)
+        assert summary["registry_errors"] == (
+            ["excluded training-origin node remains registered: LoraModelLoader"]
+            if excluded and present
+            else []
+        )
+        with csv_output.open() as handle:
+            rows = {row["class_name"]: row for row in csv.DictReader(handle)}
+        assert rows["LoraModelLoader"]["status"] == (
+            "excluded" if excluded else "identical" if present else "absent"
+        )
+        assert rows["LoraModelLoader"]["exclusion"] == ("training-origin node" if excluded else "")
+        assert rows["ApiNode"]["status"] == "excluded"
+        assert rows["NativeOnly"]["status"] == "Dinkster-only"
+
+
+@pytest.mark.parametrize(
     "name", ["SaveExample", "CLIPSave", "VAESave", "CheckpointSave", "ModelSave"]
 )
 @pytest.mark.parametrize(
