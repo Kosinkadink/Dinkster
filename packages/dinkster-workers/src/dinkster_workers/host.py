@@ -91,17 +91,11 @@ from dinkster_protocol.pack_surfaces import (
     pack_surfaces_to_wire,
 )
 from dinkster_schema import (
-    ComfyAliasRegistry,
-    ComfyGroupRegistry,
     Node,
     NodeSchema,
     build_node_types,
     build_schemas,
     claim_covers,
-    comfy_alias_registry_problems,
-    comfy_alias_registry_to_wire,
-    comfy_group_registry_problems,
-    comfy_group_registry_to_wire,
     configure_logging_from_env,
     install_stream_capture,
     schema_from_wire,
@@ -477,26 +471,6 @@ def load_pack(
                 )
             ),
         )
-        if manifest.comfy_aliases is not None:
-            for record in manifest.comfy_aliases.records:
-                if not any(claim_covers(claim, record.carrier) for claim in manifest.namespaces):
-                    raise ManifestError(
-                        f"{manifest.path}: comfy alias record {record.id!r} carrier "
-                        f"{record.carrier!r} is not owned by this pack"
-                    )
-            problems = comfy_alias_registry_problems(manifest.comfy_aliases, default_schemas)
-            if problems:
-                raise ManifestError(f"{manifest.path}: invalid comfy alias registry: {problems[0]}")
-        if manifest.comfy_groups is not None:
-            for record in manifest.comfy_groups.records:
-                if not any(claim_covers(claim, record.carrier) for claim in manifest.namespaces):
-                    raise ManifestError(
-                        f"{manifest.path}: comfy group record {record.id!r} carrier "
-                        f"{record.carrier!r} is not owned by this pack"
-                    )
-            problems = comfy_group_registry_problems(manifest.comfy_groups, default_schemas)
-            if problems:
-                raise ManifestError(f"{manifest.path}: invalid comfy group registry: {problems[0]}")
         arm_workers: dict[str, InProcessWorker] = {}
         declared_arms = dict(manifest.arms)
     if manifest.arm_nodes_entry is not None:
@@ -828,8 +802,6 @@ async def serve(endpoint: str, manifest_path: str, *, shm_threshold: int, use_sh
             pack_name=manifest.name,
             worker=worker,
             schemas=schemas,
-            comfy_aliases=manifest.comfy_aliases,
-            comfy_groups=manifest.comfy_groups,
             planner=planner,
             consumers=consumers,
             telemetry=telemetry,
@@ -904,8 +876,6 @@ async def serve_many(
                 pack_name=manifest.name,
                 worker=worker,
                 schemas=schemas,
-                comfy_aliases=manifest.comfy_aliases,
-                comfy_groups=manifest.comfy_groups,
                 planner=planner,
                 consumers=consumers,
                 telemetry=telemetry,
@@ -943,8 +913,6 @@ async def serve_connection(
     pack_name: str,
     worker: InProcessWorker,
     schemas: Mapping[str, NodeSchema],
-    comfy_aliases: ComfyAliasRegistry | None = None,
-    comfy_groups: ComfyGroupRegistry | None = None,
     planner: ReservationPlanner | None,
     consumers: Mapping[str, Shedder],
     codec: ValueCodec,
@@ -1202,10 +1170,6 @@ async def serve_connection(
             for spec in worker.registry.registered_renditions()
         ],
     }
-    if comfy_aliases is not None:
-        hello["comfyAliases"] = comfy_alias_registry_to_wire(comfy_aliases)
-    if comfy_groups is not None:
-        hello["comfyGroups"] = comfy_group_registry_to_wire(comfy_groups)
     if worker.attention_route_token is not None:
         hello["attentionRouteToken"] = attention_route_token_to_wire(worker.attention_route_token)
     if worker.attention_capabilities is not None:

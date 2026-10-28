@@ -280,17 +280,9 @@ from dinkster_protocol import (
 from dinkster_schema import (
     PROGRESS_EVENT,
     SCHEMA_WIRE_VERSION,
-    ComfyAliasRegistry,
-    ComfyGroupRegistry,
     NodeSchema,
     ReplacementProblem,
     combo_choices_json_bytes,
-    comfy_alias_collision_problems,
-    comfy_alias_registry_problems,
-    comfy_alias_registry_to_wire,
-    comfy_group_collision_problems,
-    comfy_group_registry_problems,
-    comfy_group_registry_to_wire,
     core_logger,
     problem_to_wire,
     schema_signature,
@@ -918,11 +910,6 @@ class PackInfo:
     locale_catalogs: tuple[PackLocaleCatalogAsset, ...] = ()
     """Pack translations listed as locale-to-digest descriptors;
     exact bytes ride the immutable per-pack endpoint."""
-    comfy_aliases: ComfyAliasRegistry | None = None
-    """Maintained ComfyUI import translations. Dedicated pack metadata:
-    rules are never copied into native node schemas or execution surfaces."""
-    comfy_groups: ComfyGroupRegistry | None = None
-    """Maintained ComfyUI group patterns, separate from executable schemas."""
     frontend_assets: tuple[PackFrontendAsset, ...] = ()
     """Validated static frontend files, served lazily outside the packs table."""
     settings_schema: PackSettingsSchema | None = None
@@ -982,44 +969,6 @@ class PackInfo:
                     catalog.locale: catalog.digest
                     for catalog in sorted(catalogs, key=lambda item: item.locale)
                 }
-        if self.comfy_aliases is not None:
-            aliases = self.comfy_aliases
-            if published_types is not None:
-                alias_records = tuple(r for r in aliases.records if r.carrier in published_types)
-                source_types = {r.source.node_type for r in alias_records}
-                aliases = replace(
-                    aliases,
-                    records=alias_records,
-                    source_schemas=tuple(
-                        s for s in aliases.source_schemas if s.schema.node_type in source_types
-                    ),
-                )
-            wire["comfyAliases"] = comfy_alias_registry_to_wire(
-                aliases,
-                schemas=schemas,
-            )
-        if self.comfy_groups is not None:
-            groups = self.comfy_groups
-            if published_types is not None:
-                group_records = tuple(r for r in groups.records if r.carrier in published_types)
-                source_types = {
-                    node.source.node_type for r in group_records for _, node in r.pattern.nodes
-                }
-                group_types = {r.pattern.group_type for r in group_records}
-                groups = replace(
-                    groups,
-                    records=group_records,
-                    source_schemas=tuple(
-                        s for s in groups.source_schemas if s.schema.node_type in source_types
-                    ),
-                    group_schemas=tuple(
-                        s for s in groups.group_schemas if s.schema.node_type in group_types
-                    ),
-                )
-            wire["comfyGroups"] = comfy_group_registry_to_wire(
-                groups,
-                schemas=schemas,
-            )
         if self.settings_schema is not None:
             wire["settings"] = True
         if self.inference_unavailable is not None:
@@ -1028,114 +977,6 @@ class PackInfo:
             # client already refetches on every schema change.
             wire["inferenceUnavailable"] = self.inference_unavailable.to_wire()
         return wire
-
-
-def _registry_validation_schemas(
-    schemas: Mapping[str, NodeSchema],
-    node_packs: Mapping[str, str],
-    import_types: set[str],
-) -> dict[str, NodeSchema]:
-    """Exclude live ComfyUI source schemas from import-only collision checks."""
-    return {
-        node_type: schema
-        for node_type, schema in schemas.items()
-        if not (
-            node_type in import_types
-            and (
-                (owner := node_packs.get(node_type, CORE_PACK_ID)) == "comfy"
-                or owner.startswith("comfy.")
-            )
-        )
-    }
-
-
-def _validate_comfy_registry_packs(
-    packs: Mapping[str, PackInfo],
-    schemas: Mapping[str, NodeSchema],
-    node_packs: Mapping[str, str],
-    *,
-    subject: str,
-    defer_unpublished_carriers: bool = False,
-) -> None:
-    """Check every pack's comfy alias/group registry against the served surface.
-
-    ``defer_unpublished_carriers`` is the incremental-growth relaxation: a
-    pack's registry arrives with its pack entry, but provider-gated
-    schema-only carriers publish only once an execution provider composes
-    (the generation schema owner precedes the compat worker that executes
-    its nodes). Records naming a carrier that is not in ``schemas`` yet are
-    skipped; the replace that publishes the carrier re-runs this validation
-    over the complete merged state, so a carrier owned by the wrong pack is
-    still refused - just at publication time. Complete-surface callers keep
-    the strict check: there, an unknown carrier is a miswired registry.
-    """
-    registries = {
-        pack_id: info.comfy_aliases
-        for pack_id, info in packs.items()
-        if info.comfy_aliases is not None
-    }
-    collisions = comfy_alias_collision_problems(registries)
-    if collisions:
-        raise ValueError(f"{subject}: {collisions[0]}")
-    for pack_id, registry in registries.items():
-        for record in registry.records:
-            if record.carrier not in schemas:
-                if defer_unpublished_carriers:
-                    continue
-                raise ValueError(
-                    f"{subject}: comfy alias record {record.id!r} carrier "
-                    f"{record.carrier!r} is not owned by pack {pack_id!r}"
-                )
-            if node_packs.get(record.carrier, CORE_PACK_ID) != pack_id:
-                raise ValueError(
-                    f"{subject}: comfy alias record {record.id!r} carrier "
-                    f"{record.carrier!r} is not owned by pack {pack_id!r}"
-                )
-        source_types = {snapshot.schema.node_type for snapshot in registry.source_schemas}
-        problems = comfy_alias_registry_problems(
-            registry,
-            _registry_validation_schemas(schemas, node_packs, source_types),
-            ignore_unknown_carriers=defer_unpublished_carriers,
-        )
-        if problems:
-            raise ValueError(
-                f"{subject}: invalid comfy alias registry for {pack_id!r}: {problems[0]}"
-            )
-    group_registries = {
-        pack_id: info.comfy_groups
-        for pack_id, info in packs.items()
-        if info.comfy_groups is not None
-    }
-    group_collisions = comfy_group_collision_problems(group_registries)
-    if group_collisions:
-        raise ValueError(f"{subject}: {group_collisions[0]}")
-    for pack_id, registry in group_registries.items():
-        for record in registry.records:
-            if record.carrier not in schemas:
-                if defer_unpublished_carriers:
-                    continue
-                raise ValueError(
-                    f"{subject}: comfy group record {record.id!r} carrier "
-                    f"{record.carrier!r} is not owned by pack {pack_id!r}"
-                )
-            if node_packs.get(record.carrier, CORE_PACK_ID) != pack_id:
-                raise ValueError(
-                    f"{subject}: comfy group record {record.id!r} carrier "
-                    f"{record.carrier!r} is not owned by pack {pack_id!r}"
-                )
-        import_types = {
-            snapshot.schema.node_type
-            for snapshot in (*registry.source_schemas, *registry.group_schemas)
-        }
-        problems = comfy_group_registry_problems(
-            registry,
-            _registry_validation_schemas(schemas, node_packs, import_types),
-            ignore_unknown_carriers=defer_unpublished_carriers,
-        )
-        if problems:
-            raise ValueError(
-                f"{subject}: invalid comfy group registry for {pack_id!r}: {problems[0]}"
-            )
 
 
 @dataclass(frozen=True)
@@ -1342,12 +1183,6 @@ class ServerState:
                 raise ValueError(f"node_packs names unknown node type {node_type!r}")
             if pack_id not in self.packs:
                 raise ValueError(f"node_packs attributes {node_type!r} to unknown pack {pack_id!r}")
-        _validate_comfy_registry_packs(
-            self.packs,
-            self.schemas,
-            self.node_packs,
-            subject="server construction",
-        )
         # Cross-pack replacement-rule check over the COMPLETE mapping this
         # instance actually serves: doctor can only see one pack at a time,
         # so references between installed packs are verifiable exactly here.
@@ -1657,13 +1492,6 @@ class ServerState:
         for key in incoming_skips:
             if key in self.compat_skips:
                 raise ValueError(f"announce would redefine compat skip {key!r}")
-        _validate_comfy_registry_packs(
-            merged_packs,
-            {**self.schemas, **schemas},
-            {**self.node_packs, **node_packs},
-            subject="server announcement",
-            defer_unpublished_carriers=True,
-        )
         # The engine holds its own copy of the surface; grow it first so a
         # failure there (host miswiring) leaves the served state untouched.
         self.engine.announce_schemas(schemas)
@@ -1750,12 +1578,6 @@ class ServerState:
             for node_id, diagnostic in skips.items()
         }
         if _validation is None:
-            _validate_comfy_registry_packs(
-                next_packs,
-                next_schemas,
-                next_node_packs,
-                subject="server generation",
-            )
             replacement_problems = tuple(validate_replacement_references(next_schemas))
         else:
             if (
@@ -1805,13 +1627,6 @@ class ServerState:
         frozen_node_packs = MappingProxyType(dict(node_packs))
 
         def validate() -> tuple[ReplacementProblem, ...]:
-            _validate_comfy_registry_packs(
-                frozen_packs,
-                frozen_schemas,
-                frozen_node_packs,
-                subject=subject,
-                defer_unpublished_carriers=defer_unpublished_carriers,
-            )
             return tuple(validate_replacement_references(frozen_schemas))
 
         replacement_problems = await asyncio.to_thread(validate)
@@ -2063,13 +1878,6 @@ class ServerState:
             subject="server replacement result",
         )
         if _validation is None:
-            _validate_comfy_registry_packs(
-                merged_packs,
-                merged_schemas,
-                merged_node_packs,
-                subject="server replacement",
-                defer_unpublished_carriers=True,
-            )
             replacement_problems = tuple(validate_replacement_references(merged_schemas))
         else:
             if (

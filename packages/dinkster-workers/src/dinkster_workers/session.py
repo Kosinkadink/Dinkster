@@ -66,13 +66,9 @@ from dinkster_protocol import (
 )
 from dinkster_protocol.pack_surfaces import PackRoute, pack_surfaces_from_wire
 from dinkster_schema import (
-    ComfyAliasRegistry,
-    ComfyGroupRegistry,
     NodeSchema,
     TypeExpr,
     combo_choices_json_bytes,
-    comfy_alias_registry_from_wire,
-    comfy_group_registry_from_wire,
     schema_from_wire,
     schema_to_wire,
     validate_name,
@@ -541,8 +537,6 @@ class BoundarySession:
         self._blob_store: ValueStore | None = None
         self._blob_transfer: BlobTransfer | None = None
         self._schemas: dict[str, NodeSchema] | None = None
-        self._comfy_aliases: ComfyAliasRegistry | None = None
-        self._comfy_groups: ComfyGroupRegistry | None = None
         self._combo_choices: dict[str, tuple[str, ...]] = {}
         self._renditions: tuple[RenditionDeclaration, ...] = ()
         self._registered_types: tuple[str, ...] = ()
@@ -632,20 +626,6 @@ class BoundarySession:
         if self._schemas is None:
             raise RuntimeError("BoundarySession.begin() has not completed")
         return self._schemas
-
-    @property
-    def comfy_aliases(self) -> ComfyAliasRegistry | None:
-        """Maintained ComfyUI import translations announced by the pack."""
-        if self._schemas is None:
-            raise RuntimeError("BoundarySession.begin() has not completed")
-        return self._comfy_aliases
-
-    @property
-    def comfy_groups(self) -> ComfyGroupRegistry | None:
-        """ComfyUI group translations announced by the pack."""
-        if self._schemas is None:
-            raise RuntimeError("BoundarySession.begin() has not completed")
-        return self._comfy_groups
 
     @property
     def combo_choices(self) -> Mapping[str, tuple[str, ...]]:
@@ -831,22 +811,6 @@ class BoundarySession:
         self._pack = str(header.get("pack", self._pack))
         declarations = PackDeclarations(header, role=self._role, pack=self._pack)
         self._schemas = declarations.schemas
-        aliases_wire = header.get("comfyAliases")
-        if aliases_wire is not None:
-            try:
-                self._comfy_aliases = comfy_alias_registry_from_wire(aliases_wire)
-            except (KeyError, OverflowError, TypeError, ValueError) as exc:
-                raise RuntimeError(
-                    f"{self._role} '{self._pack}' hello carried malformed comfyAliases: {exc}"
-                ) from exc
-        groups_wire = header.get("comfyGroups")
-        if groups_wire is not None:
-            try:
-                self._comfy_groups = comfy_group_registry_from_wire(groups_wire)
-            except (KeyError, OverflowError, TypeError, ValueError) as exc:
-                raise RuntimeError(
-                    f"{self._role} '{self._pack}' hello carried malformed comfyGroups: {exc}"
-                ) from exc
         self._combo_choices = declarations.combo_choices
         self._renditions = declarations.renditions
         self._registered_types = declarations.registered_types

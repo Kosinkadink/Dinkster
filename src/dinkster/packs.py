@@ -182,10 +182,6 @@ def pack_info_from_manifest(manifest: PackManifest) -> PackInfo:
         # Already validated DeclaredAssets - the server carries them
         # verbatim as descriptors; bytes never ride the packs table.
         info = replace(info, assets=manifest.assets)
-    if manifest.comfy_aliases is not None:
-        info = replace(info, comfy_aliases=manifest.comfy_aliases)
-    if manifest.comfy_groups is not None:
-        info = replace(info, comfy_groups=manifest.comfy_groups)
     if manifest.frontend_assets:
         info = replace(
             info,

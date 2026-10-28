@@ -132,11 +132,6 @@ so stored nodes migrate once into the selected dynamic shape.
 dynamic family while preserving suffixes and authored order, or creating an
 explicit ordered member list from static source inputs.
 
-`ComfyAliasRegistry` models maintained ComfyUI import translations separately
-from native schemas. Each record carries an exact `ReplacementRule`, confidence
-metadata, and an import-only source schema snapshot. Registry wire helpers are
-strict and reject unknown or noncanonical fields.
-
 ## Pre-execution known values
 
 An `OutputSpec` may declare `known_value=OutputKnownValue(input="value")` when
@@ -214,12 +209,6 @@ Bounded GLSL mirrors declare `tolerance.per_channel`. GLSL ES 3.00 does not
 guarantee correctly rounded arithmetic, so `exact` generally overclaims for
 shaders.
 
-`ComfyGroupRegistry` describes bounded, connected ComfyUI subgraphs with static
-interfaces that can collapse to import-only group schemas before the same
-replacement language is applied. Records classify every source input, preserve
-declared boundaries, parameters, constants, modes, and topology, and carry
-grouped confidence.
-
 ## Learn more
 
 See DESIGN 3.1 for the single schema source of truth, DESIGN 3.13 for generic
@@ -227,6 +216,4 @@ and list types, and DESIGN 3.15 for optional outputs. See hazards H1, H7, H9,
 H10, H19, and H23 in `docs/hazards.md`.
 
 Focused tests include `tests/test_schema.py`, `tests/test_names.py`,
-`tests/test_replace.py`, `tests/test_comfy_alias_registry.py`,
-`tests/test_comfy_group_registry.py`, `tests/test_reporting.py`, and
-`tests/test_logging.py`.
+`tests/test_replace.py`, `tests/test_reporting.py`, and `tests/test_logging.py`.

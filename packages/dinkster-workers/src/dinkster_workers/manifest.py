@@ -56,11 +56,11 @@ import mimetypes
 import re
 import tomllib
 import unicodedata
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from pathlib import Path
-from typing import TypeVar, cast
+from typing import cast
 
 from dinkster_assets import (
     AssetComponentManifest,
@@ -81,14 +81,10 @@ from dinkster_protocol import (
 from dinkster_protocol.frontend_modules import FrontendModule
 from dinkster_protocol.pack_surfaces import PACK_SETTINGS_SCHEMA_MAX_BYTES, pack_surfaces_from_wire
 from dinkster_schema import (
-    ComfyAliasRegistry,
-    ComfyGroupRegistry,
     canonical_claim,
     canonical_name,
     claim_covers,
     claims_conflict,
-    comfy_alias_registry_from_wire,
-    comfy_group_registry_from_wire,
     core_logger,
     reserved_root,
     validate_claim,
@@ -164,12 +160,8 @@ _DOC_FRONT_MATTER_RE = re.compile(
     rb"\A\+\+\+\r?\n(.*?)^\+\+\+(?:\r?\n|\Z)", re.MULTILINE | re.DOTALL
 )
 _LOCALE_TAG_RE = re.compile(r"^[a-z]{2,3}(?:-[a-z0-9]{1,8})*$")
-
-COMFY_ALIASES_FILENAME = "comfy-aliases.json"
-COMFY_GROUPS_FILENAME = "comfy-groups.json"
-COMFY_ALIASES_MAX_BYTES = 4 * MEBIBYTE
-COMFY_ALIASES_MAX_DEPTH = 64
-COMFY_ALIASES_MAX_ITEMS = 100_000
+_JSON_MAX_DEPTH = 64
+_JSON_MAX_ITEMS = 100_000
 
 
 def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -198,79 +190,16 @@ def _validate_json_budget(value: object) -> None:
     while stack:
         item, depth = stack.pop()
         count += 1
-        if count > COMFY_ALIASES_MAX_ITEMS:
-            raise ValueError(f"JSON item count exceeds {COMFY_ALIASES_MAX_ITEMS}")
-        if depth > COMFY_ALIASES_MAX_DEPTH:
-            raise ValueError(f"JSON nesting depth exceeds {COMFY_ALIASES_MAX_DEPTH}")
+        if count > _JSON_MAX_ITEMS:
+            raise ValueError(f"JSON item count exceeds {_JSON_MAX_ITEMS}")
+        if depth > _JSON_MAX_DEPTH:
+            raise ValueError(f"JSON nesting depth exceeds {_JSON_MAX_DEPTH}")
         if isinstance(item, dict):
             obj = cast("dict[object, object]", item)
             stack.extend((child, depth + 1) for child in obj.values())
         elif isinstance(item, list):
             array = cast("list[object]", item)
             stack.extend((child, depth + 1) for child in array)
-
-
-_RegistryT = TypeVar("_RegistryT")
-
-
-def _load_comfy_registry(
-    manifest_path: Path,
-    filename: str,
-    kind: str,
-    decode: Callable[[object], _RegistryT],
-) -> _RegistryT | None:
-    path = manifest_path.with_name(filename)
-    if not path.exists() and not path.is_symlink():
-        return None
-    try:
-        if not path.resolve().is_relative_to(manifest_path.parent.resolve()):
-            raise ManifestError(f"{path}: must not escape the pack directory (symlink?)")
-        with path.open("rb") as file:
-            data = file.read(COMFY_ALIASES_MAX_BYTES + 1)
-    except ManifestError:
-        raise
-    except OSError as exc:
-        raise ManifestError(f"{path}: unreadable: {exc}") from exc
-    if len(data) > COMFY_ALIASES_MAX_BYTES:
-        raise ManifestError(f"{path}: exceeds the {COMFY_ALIASES_MAX_BYTES}-byte cap")
-    try:
-        document = json.loads(
-            data.decode("utf-8"),
-            object_pairs_hook=_unique_json_object,
-            parse_constant=_reject_json_constant,
-            parse_float=_finite_json_float,
-        )
-        _validate_json_budget(document)
-        return decode(document)
-    except (
-        UnicodeDecodeError,
-        json.JSONDecodeError,
-        OverflowError,
-        RecursionError,
-        TypeError,
-        ValueError,
-    ) as exc:
-        raise ManifestError(f"{path}: invalid {kind} registry: {exc}") from None
-
-
-def load_comfy_aliases(manifest_path: Path) -> ComfyAliasRegistry | None:
-    """Load the strict adjacent alias registry without importing pack code."""
-    return _load_comfy_registry(
-        manifest_path,
-        COMFY_ALIASES_FILENAME,
-        "comfy alias",
-        comfy_alias_registry_from_wire,
-    )
-
-
-def load_comfy_groups(manifest_path: Path) -> ComfyGroupRegistry | None:
-    """Load the strict adjacent group registry without importing pack code."""
-    return _load_comfy_registry(
-        manifest_path,
-        COMFY_GROUPS_FILENAME,
-        "comfy group",
-        comfy_group_registry_from_wire,
-    )
 
 
 @dataclass(frozen=True)
@@ -2214,10 +2143,6 @@ class PackManifest:
     """
     workgroup_handler_entry: str | None = None
     """Optional zero-argument factory for a launched-child workgroup handler."""
-    comfy_aliases: ComfyAliasRegistry | None = None
-    """Strict import-only translation data from adjacent ``comfy-aliases.json``."""
-    comfy_groups: ComfyGroupRegistry | None = None
-    """Strict group-pattern data from adjacent ``comfy-groups.json``."""
     frontend_assets: tuple[PackFrontendAsset, ...] = ()
     """Immutable bytes from the optional ``[pack.frontend] assets`` tree."""
     settings_schema: PackSettingsSchema | None = None
@@ -2921,8 +2846,6 @@ def load_manifest(path: Path | str) -> PackManifest:
         arms=arms,
         extension=_parse_extension(pack.get("extension"), manifest_path),
         extension_declared="extension" in pack,
-        comfy_aliases=load_comfy_aliases(manifest_path),
-        comfy_groups=load_comfy_groups(manifest_path),
         frontend_assets=_parse_frontend_assets(pack.get("frontend"), manifest_path),
         settings_schema=_parse_pack_settings(pack.get("settings"), manifest_path),
     )

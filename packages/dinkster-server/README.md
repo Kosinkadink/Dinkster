@@ -38,11 +38,9 @@ The main protocol routes include:
 
 - `GET /api/health`, `/api/nodes`, `/api/workers`, `/api/composition`, and
   `/api/diagnostics`. The workers catalog reports the implicit `local` worker
-  and configured remotes without probing their endpoints. `/api/nodes` pack
-  entries may carry dedicated `comfyAliases` and `comfyGroups` translation
-  registries; these rules and import-only schemas are not copied into native
-  node schemas. `/api/health` remains an HTTP 200 liveness endpoint; `ok` is
-  false when composition has no nodes or any failed pack
+  and configured remotes without probing their endpoints. `/api/health`
+  remains an HTTP 200 liveness endpoint; `ok` is false when composition has
+  no nodes or any failed pack
 - `GET /api/choices/{choice_id}` for pack-announced combo choice lists (a
   plain JSON array of strings; unknown ids answer 404) - the remote half of
   the schema wire's COMBO widget descriptor. Lazy ids fetch from the owning
