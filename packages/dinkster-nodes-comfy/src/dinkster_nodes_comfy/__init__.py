@@ -201,6 +201,7 @@ from .void_conditioning import (
     VOIDWarpedNoiseSource,
 )
 from .void_sampler import VOIDSampler
+from .void_warped_noise import VOIDWarpedNoise
 from .wan22_latent import Wan22ImageToVideoLatent
 from .wan_animate import WAN_ANIMATE_NODES
 from .wan_camera import WanCameraEmbedding
@@ -455,6 +456,7 @@ COMFY_NODES = (
     SDPoseDrawKeypoints,
     SDPoseKeypointExtractor,
     AddLayer,
+    VOIDWarpedNoise,
     LoadVideo,
 )
 

@@ -140,6 +140,9 @@
   deterministic CPU text effects
 - Streamed media uploads and video encoding with explicit upload, decoded
   frame, decoded audio, and encoded output limits
+- Native VOID optical-flow-warped noise with 16 latent channels, even temporal
+  lengths, spatial resizing and batch replication. Controlled CPU coverage does
+  not certify real-model optical-flow quality or GPU parity.
 - Native Comfy packs exchange portable VIDEO and VIDEO_EDIT values without
   requiring the media I/O pack. Native Load Video accepts a single indexed,
   granted video asset and retains its encoded source without copying it or
