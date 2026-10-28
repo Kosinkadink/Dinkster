@@ -3,7 +3,7 @@
 from dinkster_api.v1 import CLIP_TYPE, MODEL_TYPE, VAE_TYPE, MountWidget, TypeExpr
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.lora_extract_save import LoraSave
-from dinkster_nodes_comfy.model_file_savers import CLIPSave, VAESave
+from dinkster_nodes_comfy.model_file_savers import CheckpointSave, CLIPSave, ModelSave, VAESave
 from dinkster_workers import load_manifest
 
 
@@ -21,6 +21,30 @@ def test_encoder_savers_keep_model_inputs_and_append_the_public_mount() -> None:
         assert schema.inputs[2].default is None and not schema.inputs[2].required
         assert schema.outputs == ()
         assert schema.output_node and not schema.idempotent
+
+
+def test_checkpoint_savers_keep_core_inputs_and_manifest_order() -> None:
+    for node, inputs, types, prefix in (
+        (
+            CheckpointSave,
+            ["model", "clip", "vae"],
+            [MODEL_TYPE, CLIP_TYPE, VAE_TYPE],
+            "checkpoints/ComfyUI",
+        ),
+        (ModelSave, ["model"], [MODEL_TYPE], "diffusion_models/ComfyUI"),
+    ):
+        schema = node.schema()
+        assert [item.id for item in schema.inputs] == [*inputs, "filename_prefix", "mount"]
+        assert [item.type for item in schema.inputs[:-2]] == list(map(TypeExpr.concrete, types))
+        assert all(item.required for item in schema.inputs[:-1])
+        assert schema.inputs[-2].default == prefix
+        assert schema.inputs[-1].widget == MountWidget()
+        assert schema.inputs[-1].adjacent_to == "filename_prefix"
+        assert schema.inputs[-1].default is None and not schema.inputs[-1].required
+        assert schema.outputs == () and schema.output_node and not schema.idempotent
+    manifest = load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml")
+    assert tuple(node.schema().node_type for node in COMFY_NODES) == manifest.namespaces
+    assert manifest.namespaces[-2:] == ("CheckpointSave", "ModelSave")
 
 
 def test_lora_save_keeps_source_inputs_and_native_manifest_claim() -> None:

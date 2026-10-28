@@ -216,3 +216,7 @@
   PNG output truncates channel values and preview outputs retain source images.
   PNG batches retain source counter progression and the trailing filename underscore.
   File operations reject oversized image batches and encoded outputs.
+- Native CheckpointSave and ModelSave export model weights through the selected
+  output mount, retaining architecture and prediction metadata, auxiliary sampling
+  tensors, and the reserved filename in supported model-spec titles. Tiny CPU
+  checks use controlled model state, not full-model or GPU execution.

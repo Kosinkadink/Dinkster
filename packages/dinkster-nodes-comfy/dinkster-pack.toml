@@ -562,6 +562,8 @@ namespaces = [
     "SaveAnimatedWEBP",
     "SaveAnimatedPNG",
     "LoraSave",
+    "CheckpointSave",
+    "ModelSave",
 ]
 
 [pack.sandbox]
