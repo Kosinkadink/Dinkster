@@ -50,6 +50,9 @@
   cataloging bytes. Replaced, missing and revoked files are unavailable;
   the same digest at a different granted location remains usable. Results
   are scope-authorized, uncached and do not expose physical paths.
+  Job preflight uses the same verified local presence rule, never a fetching
+  fallback. Corrupted vault content can be replaced only through consented
+  acquisition; a digest-shaped filename is not proof that the bytes are held.
 - Operators can persist project folder membership, independent display order,
   shared folders, and project output selections through the mount API.
   Removing a project association does not delete files or revoke the grant.

@@ -162,7 +162,9 @@ URL; packaged acquisitions record unknown origin rather than inventing a URL.
 The request's scope and project own the observation, not the global vault.
 Metadata preparation failures abort publication with `AssetPublicationError`
 and do not try another mirror. A catalog failure after publication retains the
-journal for verified, idempotent recovery at startup or catalog access.
+journal for verified, idempotent recovery at startup, catalog access or job
+resubmission. Observation display names are not filesystem components and do
+not inherit the mutable workflow record's name-length limit.
 
 From the repository root:
 

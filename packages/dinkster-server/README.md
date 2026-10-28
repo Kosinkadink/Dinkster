@@ -113,8 +113,12 @@ The main protocol routes include:
   `assets:read` in scope and returns no host paths. The managed server checks
   its vault and current mount grants with the existing descriptor-bound read
   verification. Embedding hosts must supply `ServerLibrary.local_resolver`
-  for their local-only mount checks; the possibly fetching `resolver` is never
-  used by this route. An absent local resolver checks the vault only.
+  for their local-only mount checks and job preflight; the possibly fetching
+  `resolver` is used by neither presence check. An absent local resolver checks
+  the vault only. Corrupted vault bytes do not shadow a valid granted copy.
+  Job acquisition still requires digest-exact consent, including replacement
+  of corrupted vault content. Submission retries recover pending catalog
+  observations before preflight, without holding the upload lock during downloads.
 - `POST /api/assets/latent?scope=&name=` streams and strictly validates native
   or supported ComfyUI latent safetensors under independent concurrency, size,
   idle-timeout, and disk-headroom limits

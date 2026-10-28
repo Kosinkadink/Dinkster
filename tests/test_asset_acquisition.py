@@ -30,9 +30,11 @@ from dinkster_assets import (
     AssetError,
     AssetNeed,
     AssetRef,
+    AssetResolver,
     AssetVault,
     ChainResolver,
     DeclaredAsset,
+    FetchingResolver,
     LibraryStore,
     MountDef,
     MountTable,
@@ -690,14 +692,18 @@ def test_preflight_sees_through_typed_literals() -> None:
 
 
 async def make_asset_client(
-    tmp_path: Path, *, mounts: MountTable | None = None
+    tmp_path: Path,
+    *,
+    mounts: MountTable | None = None,
+    resolver: AssetResolver | None = None,
 ) -> tuple[TestClient, ServerLibrary]:
     vault = AssetVault(tmp_path / "vault")
     library = ServerLibrary(
         vault=vault,
         store=LibraryStore(tmp_path / "library.sqlite"),
         provenance=ProvenanceStore(tmp_path / "provenance.json"),
-        resolver=mounts,
+        resolver=resolver or mounts,
+        local_resolver=mounts,
     )
 
     def make_engine(on_event: EventListener | None = None) -> Engine:
@@ -995,6 +1001,43 @@ def test_submit_never_downloads_without_consent(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
+def test_preflight_never_calls_fetching_fallback_and_checks_content(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        hits: list[str] = []
+        host = TestServer(make_asset_host({"model": MODEL_BYTES}, hits))
+        await host.start_server()
+        vault = AssetVault(tmp_path / "vault")
+        url = str(host.make_url("/files/model"))
+        fetching = FetchingResolver(vault, lambda _digest: [url])
+        client, library = await make_asset_client(tmp_path, resolver=fetching)
+        try:
+            body = submit_body(asset_graph(), assetSources={MODEL_DIGEST: [url]})
+            response = await client.post("/api/jobs", json=body)
+            assert response.status == 409, await response.text()
+            assert hits == []
+            assert not vault.has(MODEL_DIGEST)
+
+            # A digest-shaped filename alone is not locally available content.
+            with vault.writer(MODEL_DIGEST) as writer:
+                writer.write(MODEL_BYTES)
+                path = writer.commit()
+            path.write_bytes(b"wrong bytes")
+            response = await client.post("/api/jobs", json=body)
+            assert response.status == 409, await response.text()
+            assert hits == []
+            body["acquireAssets"] = [MODEL_DIGEST]
+            response = await client.post("/api/jobs", json=body)
+            assert response.status == 202, await response.text()
+            assert hits == ["model"]
+            assert library.asset_available(MODEL_DIGEST)
+            assert path.read_bytes() == MODEL_BYTES
+        finally:
+            await client.close()
+            await host.close()
+
+    asyncio.run(scenario())
+
+
 def test_submit_with_consent_acquires_and_runs(tmp_path: Path) -> None:
     async def scenario() -> None:
         hits: list[str] = []
@@ -1029,7 +1072,7 @@ def test_submit_with_consent_acquires_and_runs(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("failure", ["none", "journal", "catalog"])
+@pytest.mark.parametrize("failure", ["none", "journal", "catalog", "retry"])
 def test_acquisition_catalog_records_verified_source_and_recovers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
@@ -1048,7 +1091,7 @@ def test_acquisition_catalog_records_verified_source_and_recovers(
             if failure == "journal":
                 journal_folder.write_bytes(b"not a directory")
             body = submit_body(
-                asset_graph(name="models/original.bin"),
+                asset_graph(name="models/" + "long-display-" * 50 + "original.bin"),
                 project="film",
                 assetSources={MODEL_DIGEST: [bad, good + "?private=not-persisted", unused]},
                 acquireAssets=[MODEL_DIGEST],
@@ -1058,7 +1101,7 @@ def test_acquisition_catalog_records_verified_source_and_recovers(
                 raise sqlite3.OperationalError("catalog unavailable")
 
             with monkeypatch.context() as patch:
-                if failure == "catalog":
+                if failure in {"catalog", "retry"}:
                     patch.setattr(LibraryStore, "record_asset", unavailable)
                 response = await client.post("/api/jobs", json=body)
             assert response.status == (202 if failure == "none" else 409), await response.text()
@@ -1069,11 +1112,15 @@ def test_acquisition_catalog_records_verified_source_and_recovers(
             else:
                 path = library.vault.resolve(MODEL_DIGEST)
                 assert path is not None and path.read_bytes() == MODEL_BYTES
-                assert len(list(journal_folder.glob("*.json"))) == (failure == "catalog")
-                if failure == "catalog":
+                assert len(list(journal_folder.glob("*.json"))) == (failure in {"catalog", "retry"})
+                if failure in {"catalog", "retry"}:
                     journal_text = next(journal_folder.glob("*.json")).read_text()
                     assert "private" not in journal_text
                     assert "not-persisted" not in journal_text
+            if failure == "retry":
+                response = await client.post("/api/jobs", json=body)
+                assert response.status == 202, await response.text()
+                assert not list(journal_folder.glob("*.json"))
             await client.close()
             client, library = await make_asset_client(tmp_path)
             result = await (await client.get("/api/assets/catalog?scope=local&project=film")).json()
@@ -1085,7 +1132,7 @@ def test_acquisition_catalog_records_verified_source_and_recovers(
                 assert asset["asset"]["digest"] == MODEL_DIGEST
                 assert len(asset["observations"]) == 1
                 observation = asset["observations"][0]
-                assert observation["originalName"] == "original.bin"
+                assert observation["originalName"] == "long-display-" * 50 + "original.bin"
                 assert observation["origin"] == {"kind": "download", "url": good}
                 assert observation["asset"]["size"] == len(MODEL_BYTES)
                 assert not list(journal_folder.glob("*.json"))

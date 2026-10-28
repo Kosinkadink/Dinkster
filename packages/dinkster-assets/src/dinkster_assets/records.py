@@ -262,7 +262,9 @@ class LibraryStore:
         created: float | None = None,
     ) -> AssetObservation:
         scope = _clean_scope(scope)
-        original_name = _clean_name(original_name)
+        if not original_name.strip():
+            raise AssetError("asset name must be a non-empty string")
+        original_name = original_name.strip()
         require_asset_kind(kind)
         if any(
             not name or name in {".", ".."} or "/" in name or "\\" in name

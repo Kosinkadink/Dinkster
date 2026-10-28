@@ -232,8 +232,10 @@ class ServerLibrary:
     )
 
     def locate(self, digest: str) -> Path | None:
-        """One local-presence answer for every surface (GETs, metadata,
-        job preflight): the vault first, then the read-only fallback."""
+        """Locate byte GETs and metadata through the host's read fallback.
+
+        Preflight and availability use asset_available to exclude acquisition.
+        """
         path = self.vault.resolve(digest)
         if path is None and self.resolver is not None:
             path = self.resolver.resolve(digest)
@@ -241,14 +243,15 @@ class ServerLibrary:
 
     def asset_available(self, digest: str) -> bool:
         """Check local bytes with read authority, never acquisition or catalog recovery."""
-        resolver = self.vault if self.vault.has(digest) else self.local_resolver
-        if resolver is None:
-            return False
-        try:
-            with AssetRef(digest, "", 0, resolver=resolver).open():
-                return True
-        except (AssetError, OSError):
-            return False
+        for resolver in (self.vault, self.local_resolver):
+            if resolver is None:
+                continue
+            try:
+                with AssetRef(digest, "", 0, resolver=resolver).open():
+                    return True
+            except (AssetError, OSError):
+                continue
+        return False
 
 
 LIBRARY_KEY: web.AppKey[ServerLibrary] = web.AppKey("server_library")
@@ -868,7 +871,7 @@ def acquire_library_asset(
     result = acquire_need(
         need,
         library.vault,
-        resolver=library.resolver,
+        resolver=library.local_resolver,
         pack_roots=library.pack_assets.pack_roots() if library.pack_assets is not None else {},
         provenance=library.provenance,
         public_sources=(
@@ -880,15 +883,16 @@ def acquire_library_asset(
         before_publish=prepare,
     )
     if result.ok and journal.exists():
-        _recover_upload_observations(library, journals=(journal,))
+        recover_asset_observations(library, journals=(journal,))
         if journal.exists():
             raise OSError("acquired asset catalog is unavailable")
     return result
 
 
-def _recover_upload_observations(
+def recover_asset_observations(
     library: ServerLibrary, *, journals: Sequence[Path] | None = None
 ) -> None:
+    """Replay completed publications without creating bytes or restoring revoked grants."""
     folder = library.vault.root / ".upload-observations"
     if folder.is_symlink():
         return
@@ -904,6 +908,8 @@ def _recover_upload_observations(
                 continue
             ref = AssetRef.from_wire(payload["asset"])
             project = payload["project"]
+            if not isinstance(project, str) or not isinstance(payload["scope"], str):
+                continue
             if ref.virtual_path:
                 if library.upload_writer is None or library.project_folders_for is None:
                     continue
@@ -941,7 +947,7 @@ def _recover_upload_observations(
                 observation_id=journal.stem,
                 created=payload["created"],
             )
-            journal.unlink()
+            journal.unlink(missing_ok=True)
         except (AssetError, OSError, sqlite3.Error, ValueError, KeyError, TypeError, IndexError):
             # Unavailable/revoked bytes keep their recovery record, not a grant.
             continue
@@ -1001,7 +1007,7 @@ async def handle_asset_catalog(request: web.Request) -> web.Response:
     cursor = request.query.get("cursor")
     after = decode_cursor(cursor, bound) if cursor else None
     library = request.app[LIBRARY_KEY]
-    await run_media_publication(library, lambda: _recover_upload_observations(library))
+    await run_media_publication(library, lambda: recover_asset_observations(library))
     try:
         groups = await asyncio.to_thread(
             request.app[LIBRARY_KEY].store.query_assets,
@@ -1435,7 +1441,7 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
     app.router.add_delete("/api/library/{record_id}", handle_library_delete)
 
     async def recover_upload_observations(app: web.Application) -> None:
-        await run_media_publication(library, lambda: _recover_upload_observations(library))
+        await run_media_publication(library, lambda: recover_asset_observations(library))
 
     async def remove_stale_latent_uploads(app: web.Application) -> None:
         def remove() -> None:

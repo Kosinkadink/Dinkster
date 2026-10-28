@@ -335,7 +335,13 @@ from .events import (
 )
 from .execution_journal import ExecutionJournal, add_execution_journal_routes
 from .history import HistoryStore, add_history_routes
-from .library import LIBRARY_KEY, ServerLibrary, add_library_routes
+from .library import (
+    LIBRARY_KEY,
+    ServerLibrary,
+    add_library_routes,
+    recover_asset_observations,
+    run_media_publication,
+)
 from .pack_settings import PackSettingsStore
 from .pack_surfaces import FrontendModuleRead, PackRouteDispatch, install_pack_surfaces
 from .paging import decode_cursor, encode_cursor
@@ -3544,6 +3550,7 @@ async def handle_submit(request: web.Request) -> web.Response:
                         continue
                     referenced.setdefault(digest, need.name)
             if referenced:
+                await run_media_publication(library, lambda: recover_asset_observations(library))
                 local_plan = await asyncio.to_thread(
                     asset_preflight,
                     library,

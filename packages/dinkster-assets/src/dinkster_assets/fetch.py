@@ -376,9 +376,8 @@ def fetch_asset(
     the winning URL and verified size before bytes land; metadata errors
     escape as AssetPublicationError rather than trying another mirror."""
     require_digest(digest)
-    held = vault.resolve(digest)
-    if held is not None:
-        return held
+    with contextlib.suppress(AssetError, OSError):
+        return AssetRef(digest, "", 0, resolver=vault).local_path()
     for url in urls:
         if should_abort is not None and should_abort():
             raise FetchAborted(f"fetch of {digest} aborted")

@@ -36,7 +36,7 @@ from .fetch import (
     fetch_public_asset,
 )
 from .identity import AssetError
-from .model import AssetResolver
+from .model import AssetRef, AssetResolver
 from .need import AssetNeed, AssetSource, PackagedSource, RemoteSource
 from .provenance import ProvenanceRecord, ProvenanceStore
 from .public_acquisition import PublicAcquisitionReceiptStore, PublicAcquisitionSourceV1
@@ -111,10 +111,13 @@ def acquire_need(
             ),
         )
 
-    held = vault.resolve(need.digest)
-    if held is None and resolver is not None:
-        held = resolver.resolve(need.digest)
-    if held is not None:
+    for local in (vault, resolver):
+        if local is None:
+            continue
+        try:
+            held = AssetRef(need.digest, need.name, 0, resolver=local).local_path()
+        except (AssetError, OSError):
+            continue
         return AcquisitionResult(need, "held", path=held)
 
     failures: list[str] = []

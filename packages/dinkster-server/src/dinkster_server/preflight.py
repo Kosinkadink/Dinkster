@@ -276,7 +276,7 @@ def asset_preflight(
     catalog = library.pack_assets
     plan: list[dict[str, object]] = []
     for digest in sorted(required):
-        if library.locate(digest) is not None:
+        if library.asset_available(digest):
             continue
         name = required[digest]
         declared = catalog.need_for(digest) if catalog is not None else None
