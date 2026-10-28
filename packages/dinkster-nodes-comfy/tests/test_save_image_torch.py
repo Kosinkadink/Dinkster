@@ -670,3 +670,41 @@ def test_advanced_image_avif_retains_mode_frame_order_and_hdr_auto(
                 frames.append(frame.to_ndarray(format="rgb24").mean(axis=(0, 1)))
     assert frames[0][0] > frames[0][2]
     assert frames[1][2] > frames[1][0]
+
+
+@pytest.mark.parametrize("layout", ("channel-less", "one-channel"))
+@pytest.mark.parametrize("colorspace", ("sRGB", "HDR"))
+def test_advanced_image_grayscale_width_four_converts_every_column(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, layout: str, colorspace: str
+) -> None:
+    import av
+
+    default, _ = _mount(tmp_path, monkeypatch)
+    pixels = np.array([0.1, 0.3, 0.6, 0.9], dtype=np.float32)[None, :] + np.arange(
+        17, dtype=np.float32
+    )[:, None] * np.float32(0.001)
+    batch = np.stack((pixels, pixels[::-1, ::-1].copy()))
+    images = torch.from_numpy(batch.copy())
+    if layout == "one-channel":
+        images = images.unsqueeze(-1)
+    before = images.clone()
+    result = SaveImageAdvanced.execute(
+        images=images,
+        filename_prefix="gray",
+        format={"format": "exr", "bit_depth": "32-bit float", "input_color_space": colorspace},
+    )
+    assert result["images"] is images
+    assert torch.equal(images, before)
+    if colorspace == "sRGB":
+        expected = np.where(batch <= 0.04045, batch / 12.92, ((batch + 0.055) / 1.055) ** 2.4)
+    else:
+        expected = np.where(
+            batch <= 0.5,
+            batch**2 / 3.0,
+            (np.exp((batch.clip(0.5) - 0.55991072928) / 0.17883277) + 0.28466892) / 12.0,
+        )
+    for index in range(2):
+        with av.open(str(default / f"gray_{index + 1:05d}.exr")) as container:
+            frame = next(container.decode(video=0))
+            assert frame.format.name == "grayf32le"
+            np.testing.assert_allclose(frame.to_ndarray(), expected[index], rtol=1e-6, atol=0)

@@ -28,6 +28,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     TypeExpr,
     initialize_inference_process,
+    materialize_image,
 )
 
 from . import advanced_image_encoding as encoding
@@ -229,7 +230,11 @@ class SaveImageAdvanced(Node):
         write_metadata = not importlib.import_module(
             "dinkster_inference.cli_args"
         ).args.disable_metadata
-        batch = image_batch(images)
+        batch = materialize_image(images)
+        if batch.ndim == 3:
+            # Source grayscale batches omit channels; width four is not RGBA.
+            batch = batch.unsqueeze(-1)
+        batch = image_batch(batch)
         writer = image_writer()
         target = writer.output_target(
             filename_prefix,
