@@ -134,7 +134,10 @@ class Channel:
 
     @classmethod
     def read(cls, path: Path) -> Channel:
-        value = read_document(path)
+        return cls.parse(read_document(path))
+
+    @classmethod
+    def parse(cls, value: dict[str, object]) -> Channel:
         if value.get("format") != "dinkster.channel/1":
             raise EnvironmentError("unsupported channel format")
         engine, bases = value.get("engine"), value.get("base")

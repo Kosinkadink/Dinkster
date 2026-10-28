@@ -8,7 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
-from dinkster_supervisor.environment_downloads import DownloadError, fetch_artifact
+from dinkster_supervisor.environment_downloads import DownloadError, fetch_artifact, read_metadata
 
 
 @contextmanager
@@ -197,3 +197,17 @@ def test_accepts_integrity_checked_signed_query_redirect(tmp_path: Path) -> None
         with artifact_server(b"", redirect=f"{target}/artifact.bin?signature=fixture") as mirror:
             fetch_artifact((mirror,), "artifact.bin", destination, digest(data), len(data))
     assert destination.read_bytes() == data
+
+
+def test_metadata_is_bounded_and_read_only_for_local_and_http_sources(tmp_path: Path) -> None:
+    metadata = b'{"format":"fixture"}'
+    (tmp_path / "channel.json").write_bytes(metadata)
+    assert read_metadata(str(tmp_path), "channel.json") == metadata
+    with artifact_server(metadata) as mirror:
+        assert read_metadata(mirror, "channel.json") == metadata
+    assert [path.name for path in tmp_path.iterdir()] == ["channel.json"]
+    (tmp_path / "channel.json").write_bytes(b"x" * (8 * 1024 * 1024 + 1))
+    with pytest.raises(DownloadError, match="exceeds eight MiB"):
+        read_metadata(str(tmp_path), "channel.json")
+    with pytest.raises(DownloadError, match="unsafe artifact path"):
+        read_metadata(str(tmp_path), "../channel.json")

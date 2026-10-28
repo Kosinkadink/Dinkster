@@ -170,6 +170,25 @@ the expected size and digest. Signed query redirects are allowed without
 logging their URLs; external non-TLS redirects and credential-bearing mirror
 URLs are rejected. Calls have a bounded per-socket network timeout.
 
+`environment_artifacts.discover(mirrors, channel)` reads bounded metadata
+without creating a project, cache or store. It verifies engine manifest bytes
+and the base producer's canonical identity, including replacement membership,
+then returns the intact manifests for catalog display. Unsigned remote metadata
+is accepted only from `releases.dinkster.org` or the official Dinkster GitHub
+repositories; local directories and loopback servers support offline fixtures.
+Unknown remote mirrors require signing support and are refused. Invalid or
+corrupt metadata falls through to the next configured location.
+
+Under the caller's store writer lock, `acquire(catalog, variant, store)` fetches
+and verifies base parts, safely extracts a missing base, verifies its selected
+wheels and populates `wheels/<sha256 hex>/<filename>`. Engine-owned wheel and
+constraints artifacts are verified through the same downloader. Base-owned
+engine wheels are omitted, and tools/source archives are not installed into
+the generation. Effective constraints are stored under
+`engines/<release hex>/constraints-<variant>.txt`. A base without hosted parts
+currently reports that manifest reconstruction is required; it never resolves
+or substitutes dependencies silently.
+
 `environment_constraints.effective_constraints(engine_text, base_manifest)`
 uses the verified base manifest's `replaces` set, not package-name prefixes.
 It removes every named engine requirement, including remove-only CUDA

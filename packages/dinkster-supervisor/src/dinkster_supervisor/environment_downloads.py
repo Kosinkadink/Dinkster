@@ -12,7 +12,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-__all__ = ["DownloadError", "fetch_artifact"]
+__all__ = ["DownloadError", "fetch_artifact", "read_metadata"]
 
 _DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 _CONTENT_RANGE_PATTERN = re.compile(r"bytes (\d+)-(\d+)/(\d+)\Z")
@@ -35,6 +35,30 @@ class _SafeRedirects(HTTPRedirectHandler):
     ) -> Request | None:
         _validate_remote_url(newurl, allow_query=True)
         return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def read_metadata(mirror: str, relative_path: str) -> bytes:
+    """Read a bounded channel or manifest without creating a local project/cache."""
+    _validate_path(relative_path)
+    maximum = 8 * 1024 * 1024
+    parsed = urlparse(mirror)
+    if parsed.scheme and not Path(mirror).is_absolute():
+        _validate_remote_url(mirror)
+        url = mirror.rstrip("/") + "/" + quote(relative_path, safe="/")
+        with build_opener(_SafeRedirects()).open(url, timeout=30) as response:
+            if response.status != 200:
+                raise DownloadError("unexpected metadata response status")
+            data = response.read(maximum + 1)
+    else:
+        root = Path(mirror).resolve(strict=True)
+        source = (root / relative_path).resolve(strict=True)
+        if not source.is_relative_to(root) or not source.is_file():
+            raise DownloadError("metadata is missing or escapes its mirror")
+        with source.open("rb") as handle:
+            data = handle.read(maximum + 1)
+    if len(data) > maximum:
+        raise DownloadError("metadata exceeds eight MiB")
+    return data
 
 
 def fetch_artifact(
@@ -99,6 +123,14 @@ def fetch_artifact(
 def _validate_request(mirrors: tuple[str, ...], relative_path: str, sha256: str, size: int) -> None:
     if not mirrors:
         raise DownloadError("artifact download requires at least one mirror")
+    _validate_path(relative_path)
+    if not _DIGEST_PATTERN.fullmatch(sha256):
+        raise DownloadError("artifact SHA-256 must be 64 lowercase hexadecimal characters")
+    if type(size) is not int or size < 0:
+        raise DownloadError("artifact size must be a non-negative integer")
+
+
+def _validate_path(relative_path: str) -> None:
     path = PurePosixPath(relative_path)
     if (
         not relative_path
@@ -109,10 +141,6 @@ def _validate_request(mirrors: tuple[str, ...], relative_path: str, sha256: str,
         or any(ord(character) < 32 for character in relative_path)
     ):
         raise DownloadError(f"unsafe artifact path {relative_path!r}")
-    if not _DIGEST_PATTERN.fullmatch(sha256):
-        raise DownloadError("artifact SHA-256 must be 64 lowercase hexadecimal characters")
-    if type(size) is not int or size < 0:
-        raise DownloadError("artifact size must be a non-negative integer")
 
 
 def _download_from_mirror(mirror: str, relative_path: str, partial: Path, size: int) -> str:
