@@ -173,7 +173,7 @@ assert [(item.id, item.default, item.advanced) for item in concat.inputs] == [
     ("codec", "auto", True),
     ("complete_audio", None, True),
 ]
-assert concat.inputs[0].widget.options == ("auto", "h264")
+assert concat.inputs[0].widget.options == ("auto", "h264", "av1")
 assert concat.inputs[1].type == TypeExpr.concrete(AUDIO_TYPE)
 assert [(item.id, item.type) for item in concat.outputs] == [
     ("video", TypeExpr.concrete(VIDEO_TYPE))

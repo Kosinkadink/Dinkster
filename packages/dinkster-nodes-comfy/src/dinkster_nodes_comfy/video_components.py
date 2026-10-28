@@ -196,7 +196,7 @@ class ConcatenateVideo(Node):
                     _COMBO,
                     default="auto",
                     advanced=True,
-                    widget=ComboWidget(options=("auto", "h264")),
+                    widget=ComboWidget(options=("auto", "h264", "av1")),
                 ),
                 InputSpec("complete_audio", _AUDIO, required=False, advanced=True),
             ),
