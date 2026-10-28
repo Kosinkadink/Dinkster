@@ -526,6 +526,7 @@ namespaces = [
     "GetVideoComponents",
     "ConditioningLoader",
     "SaveConditioning",
+    "SDPoseFaceBBoxes",
 ]
 
 [pack.sandbox]
