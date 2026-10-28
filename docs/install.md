@@ -12,7 +12,9 @@ prepare execution environments, build the pinned frontend, and launch the UI
 and backend on one loopback origin. Rerun after `git pull` to update them.
 
 The Desktop app installs an
-exact backend release from its wheel set and constraints file. Desktop builds
+exact backend release from its wheel set and constraints file; how prebuilt
+environments, updates, rollback, and pack dependencies fit together is in
+[environments-and-updates.md](environments-and-updates.md). Desktop builds
 are not yet available; see the
 [Desktop guide](https://github.com/Kosinkadink/Dinkster-Frontend/blob/main/docs/desktop.md)
 for the current platform boundaries.
