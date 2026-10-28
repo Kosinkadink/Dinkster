@@ -21,7 +21,14 @@ def test_public_ci_runs_the_fast_checks_without_private_inputs() -> None:
     assert fast["runs-on"] == "ubuntu-latest"
     assert "secrets." not in text and "vars." not in text
     assert all("if" not in step for step in fast["steps"])
-    assert fast["steps"][-1]["run"] == "bash scripts/ci-fast.sh"
+    assert any(step.get("run") == "bash scripts/ci-fast.sh" for step in fast["steps"])
+    export = next(
+        step for step in fast["steps"] if "DINKSTER_CATALOG_WIRE_OUTPUT" in step.get("env", {})
+    )
+    assert "test_default_catalog_publishes_only_owned_translation_carriers" in export["run"]
+    decode = fast["steps"][-1]
+    assert "tools/validate_default_catalog.mjs" in decode["run"]
+    assert decode["env"]["CATALOG"] == export["env"]["DINKSTER_CATALOG_WIRE_OUTPUT"]
     assert all("prepare-validation-inputs" not in step.get("uses", "") for step in fast["steps"])
 
 

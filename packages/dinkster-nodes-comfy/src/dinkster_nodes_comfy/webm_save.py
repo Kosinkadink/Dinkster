@@ -33,7 +33,7 @@ from dinkster_api.v1 import (
 )
 
 
-class _EncodedVideo(tempfile.SpooledTemporaryFile[bytes]):
+class EncodedVideoSpool(tempfile.SpooledTemporaryFile[bytes]):
     def __init__(self) -> None:
         super().__init__(max_size=512 * 1024, mode="w+b")
 
@@ -130,7 +130,7 @@ class SaveWEBM(Node):
             filename_prefix, mount, image_width=pixels.shape[2], image_height=pixels.shape[1]
         )
         save_alpha = pixels.shape[-1] == 4 and codec == "vp9"
-        with _EncodedVideo() as encoded:
+        with EncodedVideoSpool() as encoded:
             with av.open(encoded, "w", format="webm") as container:
                 submitted = current_export_snapshot()
                 if submitted is not None:

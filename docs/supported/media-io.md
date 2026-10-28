@@ -4,16 +4,20 @@
   without input copying or an encoded-file size cap. Unindexed selections
   must be scanned before VIDEO admission. Decode working-set and produced
   output limits still apply.
+- Shared editor values preserve plural pixel boxes with metadata, image-comparison
+  and compositor state, and nested tensor-layer documents including optional
+  masks, transforms, authored layer order, and canvas dimensions
 - Portable SAM3 track values preserve packed uint8 masks, empty object axes or
   absent masks, original dimensions, frame counts, optional scores, and structural
   metadata across worker boundaries
 - Portable camera embeddings, motion tracks with optional visibility, and complete
   audio-encoder outputs preserve tensor dtype, shape and bytes, ordered layer
   sequences, sample counts and structural metadata across execution hosts and caches
+- Portable `SVG` values retain immutable ordered raw byte streams, including empty
+  and duplicate members, across execution hosts and caches without XML rewriting;
+  consumers can open independent seekable streams without mutating cached bytes
 - Portable IC-LoRA parameter mappings preserve source fields, ordering, and
   structural extras across execution hosts and caches
-- Portable `LORA_MODEL` values preserve ordered state-dictionary keys and tensor
-  dtype, shape, and bytes across execution hosts and caches
 - Portable LOAD3D_CAMERA values preserve perspective and orthographic camera
   dictionaries, including position, target, zoom, camera type, optional camera
   controls, and structural extensions across execution hosts and caches
@@ -24,10 +28,14 @@
   receive normalized float32 values at invocation, while inputs that declare
   compact-storage support receive the retained dtype unchanged
 - Public bound-image component decoding returns first-frame RGB float32 pixels
-  and optional straight alpha through the existing openable asset capability,
+  or ordered frames with optional straight alpha under explicit source ownership,
   using the same PyAV precision, channel, alignment, and display-orientation
   handling as the ComfyUI reference without admitting still images as VIDEO;
-  PyAV's non-byte alignment graph rejects some small asymmetric inputs
+  source bytes, dimensions and estimated aligned conversion working sets are
+  admitted before conversion, with source length checked before opening the
+  decoder. FFmpeg probing is not a hard allocation sandbox. PyAV's non-byte
+  alignment graph rejects some small asymmetric inputs. Frame iteration does not
+  accumulate a batch; consumers admit the memory of frames they retain separately
 - Ordered animated and multipage image loading; pages with different dimensions
   from the first page are omitted from the batch
 - Ordered mounted image saving to PNG, JPEG, or WebP; Save Image defaults to a
@@ -73,13 +81,18 @@
   Component audio without proven sample coverage preserves finite VIDEO length
   and reports that shortest-audio trimming was not applied exactly.
   NVENC requests are refused until a hardware-encoder policy exists.
+- Opt-in unedited component-video encoding preserves source H.264/AV1
+  quantization, color signaling, CRF defaults, optional H.264 preset, and
+  thousandth-rounded encoded frame rates without changing component values.
+  Explicit codec failures propagate without FFV1 substitution or resizing.
+  Small AV1 inputs may succeed when the encoder supports them. Automatic
+  PyAV conversion threading can produce nondeterministic pixels on small
+  10-bit inputs; this path retains that source behavior.
 - Value-level video operations on IMAGE batches and VIDEO values: frame
   windowing with skip, stride, and cap controls; exact nearest-tick frame-rate
   resampling matching native video loading; deferred assembly with optional
   audio, 8/10-bit precision, sRGB, HLG, and HDR PQ; disassembly to frames,
   optional audio, fps, duration, bit depth, and color space
-- Native Sample Video Frame selects head or tail windows with audio retained,
-  or ordered uniform/random frames at the source frame rate without audio
 - Public `iter_video_pixels` yields edited, display-oriented float32 pixels
   with rational timestamps without accumulating the complete frame batch.
   Consumers that stop early close the iterator to release the decoder and
@@ -88,6 +101,13 @@
 - VIDEO values retain an encoded source or deferred components, rational
   source probe facts, and ordered lazy trim, crop, scale, and restricted
   identical-codec concat edits. Info and lazy edits do not decode frames.
+  Public `concatenate_video` accepts one to 100 ordered VIDEO values, encodes
+  component inputs to MKV, preserves compatible encoded inputs, and supports
+  one optional complete AUDIO soundtrack. Later trims select the matching
+  soundtrack window; explicit audio replaces nested inherited soundtracks
+  in both playback and serialized identity.
+  Native Concatenate Video accepts one to 100 ordered VIDEO list family
+  members with an advanced codec choice and optional complete AUDIO soundtrack.
   Decoded source trims select half-open stream-tick windows while retaining
   rational timeline bounds and independent audio sample windows.
   Encoded sources can be MP4, MKV, MOV, WebM, AVI, or GIF. Source-copy saves
@@ -122,7 +142,9 @@
   nonblocking value diagnostics, including isolated-worker execution
 - Asset-backed native audio loading to AUDIO (first audio stream of audio or
   video containers), including audio-only Opus/Vorbis WebM and AAC M4A uploads
-  classified from their track metadata; silent-audio construction with declared
+  classified from their track metadata; Record Audio decodes a canonical recorded
+  file identity to AUDIO through ordinary in-process and isolated hosts;
+  silent-audio construction with declared
   duration, sample rate, and channel count; and typed audio preview. Value discovery
   advertises versioned waveform PNG and bounded WAV window renditions with
   explicit batch selection, normalized selectors in cache identity, and
@@ -174,3 +196,17 @@
   nodes: `dinkster.splat` batches of activated world-space gaussians with
   binary little-endian PLY interchange byte-compatible with ComfyUI's
   splat PLY files
+- Native Create Video assembles IMAGE frames, rational frame rate and optional
+  AUDIO as a VIDEO, retaining component storage until explicit encoding.
+  Bit depth and sRGB/HLG/PQ color choices are retained; optional immediate
+  H.264 or AV1 encoding uses source quantization, color and encoder defaults,
+  rounding only the encoded frame rate to a thousandth. Get Video Components
+  extracts bounded frames, audio and presentation facts from component or
+  encoded VIDEO values through ordinary in-process and isolated hosts.
+- Native Save Video publishes a mounted MP4, MKV, or WebM asset while
+  returning its input VIDEO unchanged. Nested container, codec and CRF
+  controls select the public writer; component inputs use source encoding
+  defaults. Filename-prefix formatting, output mount selection and submitted
+  workflow metadata use the common mounted-output boundary. Encoded-input
+  re-encoding retains the canonical writer policy, not an export-equivalence
+  guarantee against the source encoder.

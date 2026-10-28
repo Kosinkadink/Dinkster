@@ -28,6 +28,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable, Generator, Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import partial
 from http.client import HTTPMessage
 from pathlib import Path
 from typing import Protocol, cast
@@ -263,6 +264,7 @@ def fetch_public_asset(
     headers: Mapping[str, str] | None = None,
     should_abort: Callable[[], bool] | None = None,
     on_progress: Callable[[int], None] | None = None,
+    before_publish: Callable[[int], None] | None = None,
 ) -> FetchResult:
     """Fetch through a pinned, credential-free public HTTPS redirect chain."""
     require_digest(digest)
@@ -327,7 +329,7 @@ def fetch_public_asset(
                     raise PublicFetchDenied(
                         "public HTTPS response size does not match its declaration"
                     )
-                path = writer.commit()
+                path = writer.commit(before_publish=before_publish)
             return FetchResult(
                 path,
                 digest,
@@ -355,6 +357,7 @@ def fetch_asset(
     headers_for: Callable[[str], Mapping[str, str]] | None = None,
     should_abort: Callable[[], bool] | None = None,
     on_progress: Callable[[int], None] | None = None,
+    before_publish: Callable[[str, int], None] | None = None,
 ) -> Path | None:
     """Fetch one identity from the first URL that yields verifying bytes.
 
@@ -369,11 +372,12 @@ def fetch_asset(
     ``should_abort`` is polled between chunks and before each candidate;
     when it trips, the in-progress writer rolls back and FetchAborted
     escapes - the one non-failure exit. ``on_progress`` observes the
-    running byte count of the current candidate."""
+    running byte count of the current candidate. ``before_publish`` receives
+    the winning URL and verified size before bytes land; metadata errors
+    escape as AssetPublicationError rather than trying another mirror."""
     require_digest(digest)
-    held = vault.resolve(digest)
-    if held is not None:
-        return held
+    with contextlib.suppress(AssetError, OSError):
+        return AssetRef(digest, "", 0, resolver=vault).local_path()
     for url in urls:
         if should_abort is not None and should_abort():
             raise FetchAborted(f"fetch of {digest} aborted")
@@ -396,7 +400,11 @@ def fetch_asset(
                     received += len(chunk)
                     if on_progress is not None:
                         on_progress(received)
-                return writer.commit()
+                return writer.commit(
+                    before_publish=(
+                        partial(before_publish, url) if before_publish is not None else None
+                    )
+                )
         except (
             OSError,
             urllib.error.URLError,

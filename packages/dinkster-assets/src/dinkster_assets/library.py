@@ -531,6 +531,7 @@ class LocalAssetLibrary:
     def ref(self, virtual_path: str) -> AssetRef:
         """Mint a resolver-bound AssetRef for a cataloged virtual path -
         the host-side entry point for feeding assets into graphs."""
+        self.refresh_writes()
         with self._lock:
             entry = self._catalog.get(virtual_path)
         if entry is None:

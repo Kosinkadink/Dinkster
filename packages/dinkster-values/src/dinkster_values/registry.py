@@ -1067,6 +1067,12 @@ def register_core_types(registry: TypeRegistry) -> None:
     # inline - absence has its own channel, never a smuggled null.
     for type_id in (CORE_INT, CORE_FLOAT, CORE_STRING):
         registry.register(type_id, inline=lambda obj: obj)
+    registry.register_rendition(
+        CORE_STRING,
+        "text",
+        mime="text/plain",
+        render=lambda obj: cast(str, obj).encode("utf-8"),
+    )
     registry.register(
         CORE_COMBO,
         coerce=_coerce_combo,

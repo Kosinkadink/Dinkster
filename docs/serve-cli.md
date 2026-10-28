@@ -703,6 +703,8 @@ Persistence root. When set, the following live under it:
 | Path | Contents |
 |------|----------|
 | `vault/` | Content-addressed uploaded bytes |
+| `imports/` | Visible import folder initialized by setup or serving with mount changes enabled |
+| `.imports-initialized` | Records one-time imports initialization so removed grants stay removed |
 | `library.sqlite` | Scoped library records |
 | `history.sqlite` | Persistent execution history |
 | `provenance.json` | Acquisition leads |
@@ -879,6 +881,23 @@ listings remain browsable without disclosing host paths or path-bearing errors
 to non-operators. Location listings and mutations require a human operator
 with `settings:write`, not just `assets:write`; delegated agents cannot grant
 filesystem authority.
+The location response includes `vault` when a library is configured. Optional
+`digest`, `scope` and `project` query fields add `locations` for that cataloged
+identity in the selected scope and project; this also requires `assets:read`.
+Only verified vault copies and observed files in live project folders are
+returned, with their actual `path` and `storage` type. Missing, changed,
+excluded and revoked copies are omitted. Responses use `Cache-Control: no-store`.
+Each observed filename is verified separately, so identical content at multiple
+names remains revealable without substituting the resolver's preferred alias.
+Vault paths must remain inside the canonical vault root, including after
+symlink resolution. A digest query with both a `vault` string and a `locations`
+array supports exact-file lookup; `locations: []` means no verified location.
+A host without a configured library omits `vault` and does not support that
+lookup, even if it returns an empty `locations` array. Missing fields on older
+hosts likewise do not advertise support. HTTP 400, 403, 404 and 5xx responses
+are errors or unavailable capability, never a successful empty lookup.
+This endpoint only reports locations; it neither downloads nor opens files in
+the desktop shell.
 
 ## Logging
 
