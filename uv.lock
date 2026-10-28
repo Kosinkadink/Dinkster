@@ -682,23 +682,27 @@ version = "0.0.1"
 source = { editable = "packages/dinkster-api" }
 dependencies = [
     { name = "dinkster-assets" },
+    { name = "dinkster-image-document" },
     { name = "dinkster-inference-wire" },
     { name = "dinkster-memory" },
     { name = "dinkster-protocol" },
     { name = "dinkster-schema" },
     { name = "dinkster-values" },
     { name = "dinkster-video" },
+    { name = "dinkster-workers" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "dinkster-assets", editable = "packages/dinkster-assets" },
+    { name = "dinkster-image-document", editable = "packages/dinkster-image-document" },
     { name = "dinkster-inference-wire", editable = "packages/dinkster-inference-wire" },
     { name = "dinkster-memory", editable = "packages/dinkster-memory" },
     { name = "dinkster-protocol", editable = "packages/dinkster-protocol" },
     { name = "dinkster-schema", editable = "packages/dinkster-schema" },
     { name = "dinkster-values", editable = "packages/dinkster-values" },
     { name = "dinkster-video", editable = "packages/dinkster-video" },
+    { name = "dinkster-workers", editable = "packages/dinkster-workers" },
 ]
 
 [[package]]
@@ -974,7 +978,6 @@ source = { editable = "packages/dinkster-nodes-image" }
 dependencies = [
     { name = "comfy-angle", marker = "platform_machine == 'arm64' or sys_platform != 'darwin'" },
     { name = "dinkster-api" },
-    { name = "dinkster-image-document" },
     { name = "numpy" },
     { name = "opencv-python-headless" },
     { name = "pillow" },
@@ -985,7 +988,6 @@ dependencies = [
 requires-dist = [
     { name = "comfy-angle", marker = "platform_machine == 'arm64' or sys_platform != 'darwin'", specifier = "==0.1.1" },
     { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-image-document", editable = "packages/dinkster-image-document" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "opencv-python-headless", specifier = ">=4.10" },
     { name = "pillow", specifier = ">=10" },
@@ -999,8 +1001,6 @@ source = { editable = "packages/dinkster-nodes-media-io" }
 dependencies = [
     { name = "av" },
     { name = "dinkster-api" },
-    { name = "dinkster-image-document" },
-    { name = "dinkster-video" },
     { name = "numpy" },
     { name = "pillow" },
     { name = "scipy" },
@@ -1010,8 +1010,6 @@ dependencies = [
 requires-dist = [
     { name = "av", specifier = "==18.1.0" },
     { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-image-document", editable = "packages/dinkster-image-document" },
-    { name = "dinkster-video", editable = "packages/dinkster-video" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "pillow", specifier = ">=10" },
     { name = "scipy", specifier = ">=1.11" },
@@ -1024,7 +1022,6 @@ source = { editable = "packages/dinkster-nodes-remote" }
 dependencies = [
     { name = "dinkster-api" },
     { name = "dinkster-nodes-media-io" },
-    { name = "dinkster-workers" },
     { name = "httpx" },
 ]
 
@@ -1032,7 +1029,6 @@ dependencies = [
 requires-dist = [
     { name = "dinkster-api", editable = "packages/dinkster-api" },
     { name = "dinkster-nodes-media-io", editable = "packages/dinkster-nodes-media-io" },
-    { name = "dinkster-workers", editable = "packages/dinkster-workers" },
     { name = "httpx", specifier = ">=0.28,<1" },
 ]
 

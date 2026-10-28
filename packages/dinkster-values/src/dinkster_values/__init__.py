@@ -100,6 +100,7 @@ from .builtin_types import (
     SIGMAS_TYPE,
     SPLAT_TYPE,
     STYLE_MODEL_TYPE,
+    SVG_TYPE,
     TIMESTEPS_RANGE_TYPE,
     TRACKS_TYPE,
     UPSCALE_MODEL_TYPE,
@@ -286,6 +287,16 @@ from .splat_codec import (
 )
 from .storage import array_storage_meta, audio_input, byte_storage_meta, image_input, storage_dtype
 from .streams import MediaChunk, MediaStream
+from .svg_codec import (
+    SVG_CODEC_MAGIC,
+    SVG_CODEC_VERSION,
+    decode_svg,
+    encode_svg,
+    materialize_svg,
+    svg_fingerprint,
+    svg_meta,
+    validate_svg_encoded,
+)
 from .tuples import TuplePayload, make_tuple_value, parse_tuple_type_id, tuple_type_id
 from .video_codec import (
     bind_video_sources,
@@ -418,6 +429,9 @@ __all__ = [
     "SPLAT_PLY_MIME",
     "SPLAT_TYPE",
     "STYLE_MODEL_TYPE",
+    "SVG_CODEC_MAGIC",
+    "SVG_CODEC_VERSION",
+    "SVG_TYPE",
     "Region",
     "ReadableImageSource",
     "Rendition",
@@ -499,6 +513,7 @@ __all__ = [
     "decode_model3d",
     "decode_model3d_file",
     "decode_splat",
+    "decode_svg",
     "decode_splat_file",
     "bind_video_sources",
     "coerce_video",
@@ -517,10 +532,12 @@ __all__ = [
     "encode_model3d",
     "encode_region",
     "encode_splat",
+    "encode_svg",
     "encode_video",
     "image_array_fingerprint",
     "image_array_meta",
     "image_input",
+    "materialize_svg",
     "annotate_image",
     "annotate_mask",
     "copy_media_semantics",
@@ -565,6 +582,8 @@ __all__ = [
     "runtime_type_atoms",
     "splat_fingerprint",
     "splat_meta",
+    "svg_fingerprint",
+    "svg_meta",
     "storage_dtype",
     "stable_hash",
     "stamp_resource_producer_arm",
@@ -573,6 +592,7 @@ __all__ = [
     "value_resource_refs",
     "validate_model3d_encoded",
     "validate_splat_encoded",
+    "validate_svg_encoded",
     "validate_video_encoded",
     "video_container",
     "video_fingerprint",

@@ -6,8 +6,6 @@ requires-python = ">=3.12"
 dependencies = [
     "av==18.1.0",
     "dinkster-api",
-    "dinkster-image-document",
-    "dinkster-video",
     "numpy>=1.26",
     "pillow>=10",
     "scipy>=1.11",
@@ -27,5 +25,3 @@ packages = ["src/dinkster_nodes_media_io"]
 
 [tool.uv.sources]
 dinkster-api = { workspace = true }
-dinkster-image-document = { workspace = true }
-dinkster-video = { workspace = true }
