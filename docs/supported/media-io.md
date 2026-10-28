@@ -100,6 +100,8 @@
   one optional complete AUDIO soundtrack. Later trims select the matching
   soundtrack window; explicit audio replaces nested inherited soundtracks
   in both playback and serialized identity.
+  Native Concatenate Video accepts one to 100 ordered VIDEO inputs with an
+  advanced codec choice and optional complete AUDIO soundtrack.
   Decoded source trims select half-open stream-tick windows while retaining
   rational timeline bounds and independent audio sample windows.
   Encoded sources can be MP4, MKV, MOV, WebM, AVI, or GIF. Source-copy saves

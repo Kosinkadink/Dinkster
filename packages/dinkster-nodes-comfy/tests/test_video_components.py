@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import av
+import dinkster_nodes_comfy.video_components as video_components
 import numpy as np
 import pytest
 from dinkster_api.v1 import (
@@ -32,7 +33,7 @@ from dinkster_api.v1 import (
     video_from_source,
 )
 from dinkster_graph import Graph, GraphNode, Link
-from dinkster_nodes_comfy.video_components import CreateVideo, GetVideoComponents
+from dinkster_nodes_comfy.video_components import ConcatenateVideo, CreateVideo, GetVideoComponents
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -109,7 +110,7 @@ import sys
 from pathlib import Path
 from dinkster_api.v1 import AUDIO_TYPE, CORE_COMBO, CORE_FLOAT, IMAGE_TYPE, VIDEO_TYPE, TypeExpr
 import dinkster_nodes_comfy.video_components as module
-from dinkster_nodes_comfy.video_components import CreateVideo, GetVideoComponents
+from dinkster_nodes_comfy.video_components import ConcatenateVideo, CreateVideo, GetVideoComponents
 
 assert Path(module.__file__).resolve() == Path(sys.argv[1])
 create = CreateVideo.schema()
@@ -151,6 +152,31 @@ assert [(item.id, item.type) for item in get.outputs] == [
     ("fps", TypeExpr.concrete(CORE_FLOAT)),
     ("bit_depth", TypeExpr.concrete(CORE_COMBO)),
     ("color_space", TypeExpr.concrete(CORE_COMBO)),
+]
+concat = ConcatenateVideo.schema()
+assert concat.node_type == "ConcatenateVideo"
+assert concat.display_name == "Concatenate Video"
+assert concat.category == "video"
+assert (
+    concat.description
+    == "Concatenates videos in order without decoding compatible encoded inputs."
+)
+assert len(concat.input_families) == 1
+videos = concat.input_families[0]
+assert videos.id == "videos"
+assert videos.member_prefix == "video"
+assert (videos.min_members, videos.max_members) == (1, 100)
+assert [(item.id, item.type, item.doc) for item in videos.template] == [
+    ("video", TypeExpr.concrete(VIDEO_TYPE), "Video segments to concatenate in input order.")
+]
+assert [(item.id, item.default, item.advanced) for item in concat.inputs] == [
+    ("codec", "auto", True),
+    ("complete_audio", None, True),
+]
+assert concat.inputs[0].widget.options == ("auto", "h264")
+assert concat.inputs[1].type == TypeExpr.concrete(AUDIO_TYPE)
+assert [(item.id, item.type) for item in concat.outputs] == [
+    ("video", TypeExpr.concrete(VIDEO_TYPE))
 ]
 assert "torch" not in sys.modules
 assert "torchvision" not in sys.modules
@@ -216,6 +242,46 @@ def test_create_and_get_components_preserve_inputs_without_encoding(
     )
     assert result["bit_depth"] == expected_depth
     assert result["color_space"] == color_space
+
+
+def test_concatenate_video_binds_family_members_in_input_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[object] = []
+
+    def bind(value: object, resolver: object) -> object:
+        calls.append(("bind", value, resolver))
+        return f"bound:{value}"
+
+    def concatenate(
+        videos: list[object], *, codec: str, complete_audio: object | None
+    ) -> dict[str, object]:
+        calls.append(("concatenate", videos, codec, complete_audio))
+        return {"video": videos}
+
+    resolver = object()
+    monkeypatch.setattr(video_components, "bind_video_value", bind)
+    monkeypatch.setattr(video_components, "concatenate_video", concatenate)
+    monkeypatch.setattr(video_components, "resolver_from_env", lambda: resolver)
+
+    result = ConcatenateVideo.execute(
+        videos={"video_2": ["third"], "video_1": ["first", "second"]},
+        codec="h264",
+        complete_audio={"waveform": "replacement"},
+    )
+
+    assert calls == [
+        ("bind", "third", resolver),
+        ("bind", "first", resolver),
+        ("bind", "second", resolver),
+        (
+            "concatenate",
+            ["bound:third", "bound:first", "bound:second"],
+            "h264",
+            {"waveform": "replacement"},
+        ),
+    ]
+    assert result == {"video": {"video": ["bound:third", "bound:first", "bound:second"]}}
 
 
 def test_create_and_get_components_allow_no_audio_without_mutating_images() -> None:
