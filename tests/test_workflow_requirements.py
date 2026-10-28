@@ -221,7 +221,10 @@ def test_variant_plan_uses_only_manifest_declarations_and_preserves_documents() 
     assert json.dumps(document) == before
 
 
-def test_public_plan_is_read_only_project_filtered_and_verified(tmp_path: Path) -> None:
+@pytest.mark.parametrize("engine_variant", [None, "linux-cpu", "win-nvidia"])
+def test_public_plan_is_read_only_project_filtered_and_verified(
+    tmp_path: Path, engine_variant: str | None
+) -> None:
     store = LibraryStore(tmp_path / "library.sqlite")
     vault = AssetVault(tmp_path / "vault")
     provenance = ProvenanceStore(tmp_path / "provenance.json")
@@ -248,6 +251,7 @@ def test_public_plan_is_read_only_project_filtered_and_verified(tmp_path: Path) 
         vault, store, resolver=ForbiddenFetchingResolver(), provenance=provenance
     )
     manifest = load_manifest(Path("packages/dinkster-nodes-image/dinkster-pack.toml"))
+    declared = {"tools-a": manifest, "tools-b": manifest}
     snapshot = (tmp_path / "snapshot.json").read_bytes()
 
     async def scenario() -> None:
@@ -269,10 +273,21 @@ def test_public_plan_is_read_only_project_filtered_and_verified(tmp_path: Path) 
         )
         add_mount_routes(app, mounts)
         add_workflow_requirement_routes(
-            app, manifests=lambda: {"tools-a": manifest, "tools-b": manifest}
+            app,
+            manifests=lambda: declared,
+            engine_variant=engine_variant,
         )
         async with TestClient(TestServer(app)) as client:
             body = {"workflows": [workflow()], "variant": "linux-cpu", "project": "excluded"}
+            response = await client.post(
+                "/api/workflows/plan", json={"workflows": [workflow()], "project": "included"}
+            )
+            if engine_variant is None:
+                assert response.status == 400
+                assert "engine variant is undeclared" in (await response.json())["error"]
+            else:
+                assert response.status == 200
+                assert await response.json() == {"packs": [], "assets": [], "errors": []}
             response = await client.post("/api/workflows/plan", json=body)
             assert response.status == 200
             assert response.headers["Cache-Control"] == "no-store"
@@ -330,6 +345,18 @@ def test_public_plan_is_read_only_project_filtered_and_verified(tmp_path: Path) 
             )
             assert response.status == 403
             assert (await response.json())["error"] == "local-operator-required"
+            declared["tools-a"] = replace(manifest, sandbox=PackSandboxNeeds(gpu=True))
+            response = await client.post("/api/workflows/plan", json={"workflows": [workflow()]})
+            if engine_variant is not None:
+                assert (await response.json())["errors"] == (
+                    ["pack tools-a: pack.sandbox.gpu requires a GPU"]
+                    if engine_variant == "linux-cpu"
+                    else []
+                )
+            response = await client.post(
+                "/api/workflows/plan", json={**body, "variant": "win-nvidia"}
+            )
+            assert (await response.json())["errors"] == []
 
     try:
         asyncio.run(scenario())

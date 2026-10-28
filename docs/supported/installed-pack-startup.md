@@ -37,3 +37,6 @@
   verify vault bytes or selected project mounts without fetching. Resolver leads
   are advisory, global host metadata, not scoped grants. Remote scoped callers
   are refused; the route installs and downloads nothing.
+- A server launched with `--engine-variant` supplies that declared target to
+  workflow-open plans that omit `variant`. Explicit request variants remain
+  available for read-only comparisons; no target is inferred from hardware.

@@ -64,7 +64,10 @@ def _asset_present(
 
 
 def add_workflow_requirement_routes(
-    app: web.Application, *, manifests: Callable[[], Mapping[str, PackManifest]]
+    app: web.Application,
+    *,
+    manifests: Callable[[], Mapping[str, PackManifest]],
+    engine_variant: str | None = None,
 ) -> None:
     async def handle_plan(request: web.Request) -> web.Response:
         principal = principal_for(request)
@@ -87,7 +90,11 @@ def add_workflow_requirement_routes(
             workflows = raw.get("workflows")
             if not isinstance(workflows, list) or not workflows:
                 raise RequirementError("workflows must be a non-empty list")
-            variant = raw.get("variant")
+            variant = raw.get("variant", engine_variant)
+            if variant is None:
+                raise RequirementError(
+                    "engine variant is undeclared; supply variant or launch with --engine-variant"
+                )
             if not isinstance(variant, str) or variant not in VARIANTS:
                 raise RequirementError(f"variant must be one of {', '.join(VARIANTS)}")
             project = raw.get("project")
