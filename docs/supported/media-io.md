@@ -13,6 +13,9 @@
 - Portable camera embeddings, motion tracks with optional visibility, and complete
   audio-encoder outputs preserve tensor dtype, shape and bytes, ordered layer
   sequences, sample counts and structural metadata across execution hosts and caches
+- Portable `SVG` values retain immutable ordered raw byte streams, including empty
+  and duplicate members, across execution hosts and caches without XML rewriting;
+  consumers can open independent seekable streams without mutating cached bytes
 - Portable IC-LoRA parameter mappings preserve source fields, ordering, and
   structural extras across execution hosts and caches
 - Portable LOAD3D_CAMERA values preserve perspective and orthographic camera
