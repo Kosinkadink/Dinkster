@@ -128,6 +128,7 @@ from .model_patch_loader import MODEL_PATCH_LOADER_NODES
 from .model_selections import MODEL_SELECTION_NODES
 from .model_specific_schedulers import MODEL_SPECIFIC_SCHEDULER_NODES
 from .moge import MoGeGeometryToFOV
+from .moge_inference import MoGeInference
 from .morphology import MORPHOLOGY_NODES
 from .moss_image import MOSSImageControl, MOSSImageLayoutPrompt, TextEncodeMOSSImageEdit
 from .noise import NOISE_NODES
@@ -417,6 +418,7 @@ COMFY_NODES = (
     CropByBBoxes,
     CameraAngle,
     Trellis2UpsampleStage,
+    MoGeInference,
     TripoSplatPreprocessImage,
     TripoSplatConditioning,
     LoadAudio,
