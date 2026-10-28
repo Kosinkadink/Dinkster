@@ -15,6 +15,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from dinkster_values import MEBIBYTE
 from packaging.utils import canonicalize_name
 
 from .boundary import PROTOCOL_VERSION
@@ -81,7 +82,7 @@ def fetch_wheel(wheel: LockedWheel, store: Path) -> Path:
     try:
         with os.fdopen(descriptor, "wb") as output, urllib.request.urlopen(wheel.url) as source:
             remaining = wheel.size
-            while block := source.read(min(1024 * 1024, remaining + 1)):
+            while block := source.read(min(MEBIBYTE, remaining + 1)):
                 remaining -= len(block)
                 if remaining < 0:
                     raise ProvisionError(f"wheel exceeds locked size: {wheel.filename}")
