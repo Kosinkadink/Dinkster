@@ -14,7 +14,7 @@ command line. Developers who change Dinkster itself work from a checkout
 | Term | Meaning | Where it lives |
 |---|---|---|
 | Engine release | Dinkster at one commit: the pure-Python wheels for every workspace package, the `dinkster-frontend` wheel, any third-party wheel the lock needs that the base does not carry, `constraints.txt`, `SHA256SUMS` | GitHub release of `Kosinkadink/Dinkster`, mirrored to R2 |
-| Lock | Dinkster's `uv.lock` at that commit, the single resolution every wheel hash comes from; `constraints.txt` is its export | `Kosinkadink/Dinkster` |
+| Lock | Dinkster's `uv.lock` at that commit, the single resolution every version comes from, including the base pins; `constraints.txt` is its export | `Kosinkadink/Dinkster` |
 | Variant | One hardware target: `win-nvidia`, `win-nvidia-cu126`, `win-cpu`, `linux-cpu` | a row in `Dinkster-Environments` |
 | Base bundle | A python-build-standalone interpreter plus the heavy locked wheels for one variant (torch, torchvision, numpy, the parts of the lock that change rarely), archived once and named by content hash, described by a base manifest | built by `Dinkster-Environments`, downloaded to the wheel store |
 | Wheel store | Local directory of downloaded wheels plus the uv cache, shared by every project on the same volume; the only package source for engine installs | `<data>/wheels/`, `<data>/uv-cache/` |
@@ -118,14 +118,43 @@ such a mirror refuses an unsigned or wrongly signed document.
 
 ## Base bundles and the environments repository
 
-`Dinkster-Environments` holds one definition per variant: the python
-version, the python-build-standalone release, the torch index and CUDA tag,
-and the list of lock entries that belong to the base rather than the engine.
-Its build workflow:
+### What the lock carries for the base
 
-1. Reads the lock from the Dinkster commit it is building for.
-2. Downloads the base wheels for the variant from their indexes into a
-   staging directory and verifies them against the lock hashes.
+No workspace package depends on torch or torchvision; the engine's packages
+declare numpy and opencv, and torch arrives with `dinkster-inference`, the
+sampling runtime. The base pins are nevertheless part of Dinkster's lock:
+the root `pyproject.toml` declares torch, torchvision, numpy and
+`opencv-contrib-python-headless` at the settled versions in a dependency
+group (alongside the existing `angle` and `dev` groups) that `uv sync` does
+not install by default, so the lock resolves and pins them while an
+ordinary developer or CI sync stays torch-free. The
+engine release's `constraints.txt` includes those pins, which is what makes
+a generation sync and a pack venv resolve against the same torch the base
+carries.
+
+The lock pins the base by version, not by per-variant wheel. torch and
+torchvision wheels differ per variant and come from the torch index for
+that variant's CUDA tag (or AMD's or Intel's index), not from PyPI, so the
+lock holds the version and the hashes of the PyPI wheels it resolved; the
+variant definition in `Dinkster-Environments` names the index, and the base
+manifest records the sha256 of every wheel the build actually downloaded
+from it. A client verifies base wheels against the base manifest and engine
+wheels against the engine release; the lock is the source of versions, the
+manifests are the source of hashes.
+
+### Build workflow
+
+`Dinkster-Environments` holds one definition per variant: the python
+version, the python-build-standalone release, the index and CUDA tag for
+torch, and the names of the lock entries that belong to the base rather
+than the engine. Its build workflow:
+
+1. Reads the lock from the Dinkster commit it is building for and takes
+   the version of every entry the variant definition names.
+2. Downloads those wheels for the variant's Python and platform from the
+   variant's index (torch, torchvision) or PyPI (numpy, opencv) into a
+   staging directory, verifies each against the hash its index publishes,
+   and against the lock hash where the lock has one for that wheel.
 3. Writes the base manifest: `format: dinkster.base/1`, variant, python
    version, every wheel with its filename, size, sha256 and source index,
    the `workerProtocol` the engine wheels in this lock declare, the minimum
@@ -137,9 +166,9 @@ Its build workflow:
    secrets are present, to `releases.dinkster.org/base/<variant>/<id>/`.
 
 The base is rebuilt only when its part of the lock changes. The workflow
-compares the base-relevant lock entries with the newest published base
-manifest and skips the build when they match, so a tag that only touches
-Dinkster code produces no new base.
+compares the versions of the lock entries the variant names with the
+newest published base manifest and skips the build when they match, so a
+tag that only touches Dinkster code produces no new base.
 
 A per-variant extras index lives next to the base: wheels such as attention
 kernels that are compiled against one exact torch, CUDA and Python triple
@@ -436,6 +465,10 @@ Settled:
 - Engine installs never resolve; they fetch artifacts named by hash on
   either channel. The one index read is rebuilding a base whose archive is
   no longer hosted, from its retained base manifest.
+- The base pins live in Dinkster's lock through a root dependency group
+  that `uv sync` does not install by default; the lock pins versions, the
+  base manifest holds the per-variant wheel hashes from the variant's
+  index.
 - Separate `Dinkster-Environments` repository; variants `win-nvidia`,
   `win-nvidia-cu126`, `win-cpu` and `linux-cpu`; a per-variant extras index
   for wheels compiled against one torch triple.
