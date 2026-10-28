@@ -96,6 +96,7 @@ from dinkster_schema import (
     schema_signature,
 )
 from dinkster_schema.media import media_diagnostics
+from dinkster_schema.reporting import EncodedPreviewArtifact
 from dinkster_values import (
     ABSENT_ORIGIN_META_KEY,
     ABSENT_REASON_META_KEY,
@@ -282,6 +283,10 @@ class ExecutionRuntime:
     known_types: Container[str] | None = None
     placement_worker: Callable[[str], str | None] | None = None
     """Run-local worker attribution for placed nodes without a dispatch selection."""
+    publish_preview_artifacts: (
+        Callable[[str, Sequence[EncodedPreviewArtifact]], Awaitable[tuple[SavedArtifact, ...]]]
+        | None
+    ) = None
 
     def __post_init__(self) -> None:
         if bool(self.graph_compiler_registry.contributions) != (
@@ -1952,6 +1957,23 @@ class Engine:
                     )
                 )
                 raise ExecutionError(NodeError(label, node.node_type, message))
+            if result.preview_artifacts:
+                publisher = self._runtime().publish_preview_artifacts
+                try:
+                    if publisher is None:
+                        raise RuntimeError("preview artifact publication has no host publisher")
+                    artifacts = await publisher(label, result.preview_artifacts)
+                except Exception as exc:
+                    self._emit(
+                        EngineEvent(
+                            "node_failed",
+                            run_id,
+                            label,
+                            self._execution_detail(label, selection, message=str(exc)),
+                        )
+                    )
+                    raise ExecutionError(NodeError(label, node.node_type, str(exc))) from exc
+                self._run_artifacts[run_id].extend(artifacts)
             self._run_artifacts[run_id].extend(result.artifacts)
             entry = CachedResult(result.outputs, result.expansion)
             if entry.expansion is not None:

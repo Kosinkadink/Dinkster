@@ -1654,7 +1654,12 @@ class BoundarySession:
             return InvocationResult(
                 error=NodeError(invocation.node_id, invocation.node_type, str(exc))
             )
-        return InvocationResult(outputs=outputs, artifacts=artifacts, expansion=decoded.expansion)
+        return InvocationResult(
+            outputs=outputs,
+            artifacts=artifacts,
+            expansion=decoded.expansion,
+            preview_artifacts=decoded.preview_artifacts,
+        )
 
     async def validate_admission(
         self,
