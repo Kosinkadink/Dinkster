@@ -1,6 +1,6 @@
 """Public interfaces for native model-sampling and model patches."""
 
-from dinkster_api.v1 import MODEL_TYPE, ComboWidget, NumberWidget, TypeExpr
+from dinkster_api.v1 import MODEL_TYPE, ComboOption, ComboWidget, NumberWidget, TypeExpr
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.device_routing import DEVICE_ROUTING_NODES
 from dinkster_nodes_comfy.model_advanced import MODEL_ADVANCED_NODES
@@ -38,9 +38,9 @@ def test_advanced_model_patch_interfaces() -> None:
     assert attention.outputs[0].display_name == "model"
     widget = attention.inputs[1].widget
     assert isinstance(widget, ComboWidget)
-    assert tuple(option.value for option in widget.options) == (
-        "pytorch attention",
-        "comfy kitchen attention",
+    assert widget.options == (
+        ComboOption("pytorch attention"),
+        ComboOption("comfy kitchen attention"),
     )
 
 
