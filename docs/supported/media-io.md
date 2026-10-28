@@ -213,6 +213,14 @@
   nodes: `dinkster.splat` batches of activated world-space gaussians with
   binary little-endian PLY interchange byte-compatible with ComfyUI's
   splat PLY files
+- Native ImageOnlyCheckpointSave exports model, vision encoder and VAE weights
+  to a selected writable mount, preserving checkpoint metadata and reserved
+  counter names. Controlled CPU weights exercise serialization; real-model
+  loading and GPU parity are not certified.
+- Native VOIDSampler supplies the node-defined alpha-space DDIM sampler for
+  the existing custom-sampling path, without ordinary KSampler noise scaling.
+  Controlled CPU schedules cover the numerical contract, not real-model or
+  GPU output parity.
 - Native VOID quadmask quantization and spatial dilation, inpainting
   conditioning with even temporal latent lengths, and precomputed warped
   noise sources. Controlled CPU encoders cover mask/video conditioning and

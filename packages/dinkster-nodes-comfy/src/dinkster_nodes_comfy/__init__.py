@@ -37,6 +37,7 @@ from .cache import CACHE_NODES
 from .camera_angle import CameraAngle
 from .cfg_guidance import CFG_GUIDANCE_NODES
 from .cfg_guiders import CFG_GUIDER_NODES
+from .checkpoint_save import ImageOnlyCheckpointSave
 from .chroma_options import ChromaRadianceOptions
 from .clip import CLIP_NODES
 from .clip_loaders import QuadrupleCLIPLoader, TripleCLIPLoader
@@ -198,6 +199,7 @@ from .void_conditioning import (
     VOIDQuadmaskPreprocess,
     VOIDWarpedNoiseSource,
 )
+from .void_sampler import VOIDSampler
 from .wan22_latent import Wan22ImageToVideoLatent
 from .wan_animate import WAN_ANIMATE_NODES
 from .wan_camera import WanCameraEmbedding
@@ -437,6 +439,8 @@ COMFY_NODES = (
     *YUE2_CONDITIONING_NODES,
     MoGeGeometryToFOV,
     UpscaleModelLoader,
+    ImageOnlyCheckpointSave,
+    VOIDSampler,
     VOIDQuadmaskPreprocess,
     VOIDInpaintConditioning,
     VOIDWarpedNoiseSource,
