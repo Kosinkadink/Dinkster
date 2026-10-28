@@ -1,10 +1,12 @@
 """Real checkpoint loading through the public interpolation node."""
 
 import asyncio
+import json
 import os
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 import torch
 from dinkster_api.v1 import (
@@ -26,6 +28,17 @@ from safetensors.torch import save_file
 
 from dinkster.compose import PackSpec, ServingComposer
 
+_FIXTURES = Path(__file__).parent / "fixtures/interpolation"
+
+
+def _reference_state(kind: str) -> dict[str, torch.Tensor]:
+    metadata = json.loads((_FIXTURES / "reference.json").read_text())
+    generator = torch.Generator().manual_seed(metadata["seed"])
+    return {
+        key: torch.randn(shape, generator=generator) * metadata["weight_scale"]
+        for key, shape in metadata["models"][kind]["shapes"].items()
+    }
+
 
 class _Resolver:
     def __init__(self, path: Path) -> None:
@@ -39,12 +52,9 @@ class _Resolver:
 def test_real_checkpoint_loads_exact_weights_and_configuration(tmp_path: Path, kind: str) -> None:
     initialize_inference_process()
     from dinkster_inference.model_patcher import CoreModelPatcher
-    from dinkster_nodes_comfy.interpolation_models import film_model, rife_model
 
-    source = film_model() if kind == "film" else rife_model(6, (8, 10, 12, 14, 16))
-    expected = {}
-    for index, (key, value) in enumerate(source.state_dict().items()):
-        expected[key] = torch.full_like(value, (index % 11 - 5) / 1024)
+    architecture = "film" if kind == "film" else "rife"
+    expected = _reference_state(architecture)
     stored = expected
     if kind == "raw-rife":
         stored = {
@@ -64,6 +74,10 @@ def test_real_checkpoint_loads_exact_weights_and_configuration(tmp_path: Path, k
     assert actual.keys() == expected.keys()
     for key in expected:
         torch.testing.assert_close(actual[key], expected[key], rtol=0, atol=0)
+    with np.load(_FIXTURES / "outputs.npz") as fixture, torch.inference_mode():
+        images = torch.from_numpy(fixture["images"])
+        output = result.model(images[:1].movedim(-1, 1), images[1:2].movedim(-1, 1), timestep=0.375)
+        torch.testing.assert_close(output, torch.from_numpy(fixture[architecture]), rtol=0, atol=0)
     assert digest_file(path) == digest
     if kind != "film":
         assert result.model.encode.cnn3.out_channels == 6
@@ -131,12 +145,8 @@ def test_mounted_checkpoint_crosses_ordinary_hosts_twice(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verified: bool, in_process: bool
 ) -> None:
     initialize_inference_process()
-    from dinkster_nodes_comfy.interpolation_models import rife_model
 
-    state = {
-        key: torch.zeros_like(value)
-        for key, value in rife_model(6, (8, 10, 12, 14, 16)).state_dict().items()
-    }
+    state = _reference_state("rife")
     state["encode.cnn0.weight"] = (
         torch.arange(432, dtype=torch.float32).reshape(16, 3, 3, 3) - 137
     ) / 1024

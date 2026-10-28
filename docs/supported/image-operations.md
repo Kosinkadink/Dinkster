@@ -5,6 +5,8 @@
   into the shared `UPSCALE_MODEL` value.
 - Native `FrameInterpolationModelLoader` loads granted FILM and five-block
   RIFE checkpoints into the shared resident `INTERP_MODEL` value.
+  Native `FrameInterpolate` inserts intermediate frames using that model,
+  retaining source frame order and dimensions.
 - Native `CurveEditor` passes canonical curves through the curve editor and
   displays an optional histogram without restricting its bin count.
 - Native `CameraAngle` produces an orbit-camera dictionary and shot description
