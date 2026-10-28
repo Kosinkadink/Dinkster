@@ -13,6 +13,9 @@
   and `dinkster_inference` for tensor operations.
 - Safetensors weights load from extensionless content-addressed vault paths
   as well as named model mounts. Weight format does not depend on the asset name.
+- Shared VOXEL values preserve dense occupancy or sparse coordinate tensors,
+  all voxel color channels, optional resolution and supported metadata without
+  converting geometry layouts.
 - The native catalog does not advertise schema-only generation nodes or
   translated import aliases. Unsupported imports report missing node IDs.
 - Fleet ingress exposes native job submission, not compatibility prompt routes,

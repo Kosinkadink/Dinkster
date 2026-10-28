@@ -25,6 +25,7 @@ from typing import Literal, Protocol, cast
 from dinkster_schema import NodeSchema, RunExecutionContext
 from dinkster_schema.reporting import EncodedPreviewArtifact
 from dinkster_values import Value
+from dinkster_values.asset_folders import AssetFolderContext
 
 from .attention import (
     ATTENTION_CAPABILITY_EVIDENCE_VERSION,
@@ -445,6 +446,8 @@ class Invocation:
     immutable snapshot itself remains on the catalog transport."""
     export_snapshot: ExportSnapshot | None = None
     """Opaque compat export payload, present only for output-node invocations."""
+    asset_folders: AssetFolderContext | None = None
+    """Pinned job folder preference; workers still check their live mount grants."""
     media_sources: tuple[MediaSourceAuthority, ...] = ()
     """Exact current-run media authorities. They are execution data only and
     deliberately do not participate in graph, schema, or cache identity."""
@@ -634,6 +637,7 @@ class LazyStatusInvocation:
     attention_policy: AttentionPolicy = "auto"
     attention_route_token: AttentionRouteToken | None = None
     extension_snapshot_digest: str | None = None
+    asset_folders: AssetFolderContext | None = None
 
     def __post_init__(self) -> None:
         if self.extension_snapshot_digest is not None and not is_extension_snapshot_digest(
@@ -782,6 +786,7 @@ from .result_algebra import (  # noqa: E402 - NodeError is the algebra's leaf er
 )
 
 __all__ = [
+    "AssetFolderContext",
     "ExportSnapshot",
     "current_export_snapshot",
     "use_export_snapshot",

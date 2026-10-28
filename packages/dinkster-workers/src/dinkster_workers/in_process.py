@@ -439,6 +439,7 @@ class InProcessWorker:
             attention_policy=invocation.attention_policy,
             attention_route_token=invocation.attention_route_token,
             extension_snapshot_digest=invocation.extension_snapshot_digest,
+            asset_folders=invocation.asset_folders,
         )
         outer_context = current_execution_context()
         execution = ExecutionContext(
@@ -460,6 +461,7 @@ class InProcessWorker:
             ),
             extension_snapshot_digest=invocation.extension_snapshot_digest,
             node_id=invocation.node_id,
+            asset_folders=invocation.asset_folders,
             cancelled=(outer_context.cancelled if outer_context is not None else lambda: False),
         )
         try:
@@ -606,6 +608,7 @@ class InProcessWorker:
                     preview_animation=invocation.preview_animation,
                     node_id=invocation.node_id,
                     export_snapshot=invocation.export_snapshot,
+                    asset_folders=invocation.asset_folders,
                     artifact_sink=capture_artifact,
                     started_at_ns=started_at_ns,
                 )
@@ -634,6 +637,7 @@ class InProcessWorker:
                     preview_animation=invocation.preview_animation,
                     node_id=invocation.node_id,
                     export_snapshot=invocation.export_snapshot,
+                    asset_folders=invocation.asset_folders,
                     cancelled=outer_context.cancelled,
                     materialize_source=outer_context.materialize_source,
                     artifact_sink=capture_artifact,

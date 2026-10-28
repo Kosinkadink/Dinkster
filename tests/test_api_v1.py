@@ -38,6 +38,7 @@ GOLDEN_V1_SURFACE = (
     "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
+    "materialize_voxel",
     "register_inference_types",
     "FrontendContribution",
     "FrontendModule",
@@ -639,6 +640,35 @@ except ResidentLookupError:
     pass
 else:
     raise AssertionError('foreign pool resolved a holding-pool value')
+assert sys.modules['torch'] is None
+assert sys.modules['dinkster_inference'] is None
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_voxel_registration_is_public_cold_and_preserves_first_authority() -> None:
+    script = """
+import sys
+sys.modules['torch'] = None
+sys.modules['dinkster_inference'] = None
+import dinkster_api.v1 as api
+from dinkster_inference_wire import materialize_voxel
+from dinkster_native.native import register_native_types
+assert materialize_voxel is api.materialize_voxel
+for registrations in ((api.register_inference_types, register_native_types),
+                      (register_native_types, api.register_inference_types)):
+    for preexisting in (True, False):
+        registry = api.TypeRegistry()
+        first = registry.register(api.VOXEL_TYPE) if preexisting else None
+        registrations[0](registry)
+        spec = registry.spec(api.VOXEL_TYPE)
+        registrations[1](registry)
+        registrations[0](registry)
+        assert registry.spec(api.VOXEL_TYPE) is spec
+        assert first is None or spec is first
 assert sys.modules['torch'] is None
 assert sys.modules['dinkster_inference'] is None
 """
