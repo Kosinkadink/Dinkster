@@ -2,18 +2,37 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import math
+import os
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
 import pytest
 import torch
-from dinkster_api.v1 import initialize_inference_process
+from dinkster_api.v1 import (
+    CORE_STRING,
+    IMAGE_TYPE,
+    MOGE_GEOMETRY_TYPE,
+    MOGE_MODEL_TYPE,
+    InputSpec,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+    initialize_inference_process,
+    materialize_image,
+    materialize_latent,
+)
+from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.moge_panorama import MoGePanoramaInference
 from dinkster_schema import use_reporter
 from dinkster_values import decode_image_array, encode_image_array
+
+from dinkster.compose import PackSpec, ServingComposer
 
 
 def controlled_runtime(monkeypatch: Any, mask_kind: str) -> Any:
@@ -66,6 +85,7 @@ class PanoramaModel:
     dtype = torch.float64
 
     def infer(self, images: Any, **options: Any) -> Any:
+        assert 0 < len(images) <= 5
         assert options == dict(
             resolution_level=6,
             fov_x=90.0,
@@ -210,3 +230,140 @@ def test_actual_cpu_split_and_merge_normalizes_constant_radial_depth(monkeypatch
     # a constant radial prediction gives zero gradients and log depth zero.
     torch.testing.assert_close(geometry["depth"], torch.ones(1, 32, 64))
     torch.testing.assert_close(geometry["points"].norm(dim=-1), torch.ones(1, 32, 64))
+
+
+class PanoramaSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "moge-panorama-fixture.source",
+            outputs=(
+                OutputSpec("model", TypeExpr.concrete(MOGE_MODEL_TYPE)),
+                OutputSpec("image", TypeExpr.concrete(IMAGE_TYPE)),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        image = torch.tensor([0.125, 0.25, 0.5, 0.875]).expand(1, 64, 96, 4).clone()
+        return cls.outputs(model=PanoramaModel(), image=image)
+
+
+class PanoramaObserver(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "moge-panorama-fixture.observer",
+            inputs=(
+                InputSpec("geometry", TypeExpr.concrete(MOGE_GEOMETRY_TYPE)),
+                InputSpec("source", TypeExpr.concrete(IMAGE_TYPE)),
+            ),
+            outputs=(OutputSpec("result", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, geometry: Any, source: Any) -> dict[str, object]:
+        value = materialize_latent(geometry)
+        original = materialize_image(source)
+        assert set(value) == {"image", "points", "depth", "mask"}
+        expected_source = torch.tensor([0.125, 0.25, 0.5, 0.875]).expand(1, 64, 96, 4)
+        torch.testing.assert_close(original, expected_source, rtol=0, atol=0)
+        torch.testing.assert_close(value["image"], expected_source[..., :3], rtol=0, atol=0)
+        expected_depth = (torch.arange(96.0) + 1).expand(1, 64, 96).clone()
+        expected_depth[:, :, 48:] = 230
+        expected_mask = torch.arange(96)[None, None, :].expand(1, 64, 96) < 48
+        torch.testing.assert_close(value["depth"], expected_depth, rtol=0, atol=0)
+        torch.testing.assert_close(value["mask"], expected_mask)
+        torch.testing.assert_close(value["points"].norm(dim=-1), expected_depth)
+        y, x = 13, 57
+        theta = (1 - (x + 0.5) / 96) * 2 * math.pi
+        phi = (y + 0.5) / 64 * math.pi
+        direction = torch.tensor(
+            [math.sin(phi) * math.cos(theta), math.sin(phi) * math.sin(theta), math.cos(phi)]
+        )
+        torch.testing.assert_close(value["points"][0, y, x], direction * 230)
+        return cls.outputs(result="panorama geometry and unchanged RGBA source")
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_ordinary_panorama_hosts_twice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool
+) -> None:
+    async def scenario() -> None:
+        native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+        # The parent restores overrides after in-process execution. A grouped
+        # worker installs its own controlled CPU helpers for its process lifetime.
+        if in_process:
+            controlled_runtime(monkeypatch, "mixed")
+        (tmp_path / "panorama_host_fixture.py").write_text(
+            "import pytest\n"
+            "from test_moge_panorama_torch import PanoramaSource, PanoramaObserver, "
+            "controlled_runtime\n"
+            "from dinkster_api.v1 import register_inference_types\n"
+            "NODES=(PanoramaSource,PanoramaObserver)\n"
+            + (
+                "overrides=pytest.MonkeyPatch()\ncontrolled_runtime(overrides, 'mixed')\n"
+                if not in_process
+                else ""
+            ),
+            encoding="ascii",
+        )
+        fixture = tmp_path / "fixture.toml"
+        fixture.write_text(
+            '[pack]\nname="moge-panorama-fixture"\npublisher="dinkster"\n'
+            'namespaces=["moge-panorama-fixture"]\n[pack.entry]\n'
+            'nodes="panorama_host_fixture:NODES"\n'
+            'types="panorama_host_fixture:register_inference_types"\n',
+            encoding="ascii",
+        )
+        composer = ServingComposer(
+            worker_env={
+                "PYTHONPATH": os.pathsep.join((str(tmp_path), str(Path(__file__).parent))),
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+            }
+        )
+        try:
+            for manifest in (native, fixture):
+                await composer.add_pack(
+                    PackSpec(manifest=manifest, in_process=True)
+                    if in_process
+                    else PackSpec(
+                        manifest=manifest,
+                        worker_group="moge-panorama",
+                        group_manifests=(native, fixture),
+                    )
+                )
+            engine = composer.composition.make_engine(lambda _event: None)
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("moge-panorama-fixture.source", {}),
+                    "infer": GraphNode(
+                        "MoGePanoramaInference",
+                        {
+                            "moge_model": Link("source", "model"),
+                            "image": Link("source", "image"),
+                            "resolution_level": 6,
+                            "split_resolution": 256,
+                            "batch_size": 5,
+                            "refine_steps": 2,
+                        },
+                    ),
+                    "observe": GraphNode(
+                        "moge-panorama-fixture.observer",
+                        {
+                            "geometry": Link("infer", "moge_geometry"),
+                            "source": Link("source", "image"),
+                        },
+                    ),
+                }
+            )
+            for _ in range(2):
+                result = await engine.run(graph, ["observe"])
+                assert result.outputs["observe"]["result"].resolve() == (
+                    "panorama geometry and unchanged RGBA source"
+                )
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
