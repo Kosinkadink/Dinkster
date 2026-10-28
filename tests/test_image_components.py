@@ -174,3 +174,57 @@ def test_decode_image_components_opens_source_once(tmp_path: Path) -> None:
     decode_image_components(source)
 
     assert source.opens == 1
+
+
+def test_decode_image_components_admission_boundaries(tmp_path: Path) -> None:
+    pixels = np.array(
+        [[[3, 17, 251], [44, 92, 10], [125, 231, 6]], [[29, 7, 33], [240, 80, 1], [9, 180, 63]]],
+        dtype=np.uint8,
+    )
+    path = tmp_path / "bounded.png"
+    Image.fromarray(pixels).save(path)
+    asset = _asset(path)
+    # Six pixels at 96 bytes each plus the fixed missing-alpha mask allowance.
+    result = decode_image_components(
+        asset, max_dimension=3, max_source_bytes=asset.size, max_working_set_bytes=33_344
+    )
+    np.testing.assert_array_equal(result.pixels, pixels.astype(np.float32) / 255)
+    assert result.alpha is None
+    with pytest.raises(ValueError, match="input byte limit"):
+        decode_image_components(asset, max_source_bytes=asset.size - 1)
+    with pytest.raises(ValueError, match="dimensions"):
+        decode_image_components(asset, max_dimension=2)
+    with pytest.raises(ValueError, match="working-set limit"):
+        decode_image_components(asset, max_working_set_bytes=33_343)
+
+
+def test_decode_image_components_source_admission_precedes_parser(tmp_path: Path) -> None:
+    path = tmp_path / "not-an-image"
+    path.write_bytes(b"invalid encoded image")
+
+    class Source:
+        handle: Any = None
+
+        def open(self):
+            self.handle = path.open("rb")
+            return self.handle
+
+    source = Source()
+    with pytest.raises(ValueError, match="input byte limit"):
+        decode_image_components(source, max_source_bytes=1)
+    assert source.handle.closed
+
+
+def test_decode_image_components_default_dimension_admission(tmp_path: Path) -> None:
+    path = tmp_path / "wide.png"
+    Image.new("RGB", (16_385, 1)).save(path)
+    with pytest.raises(ValueError, match="dimensions must be between 1 and 16384"):
+        decode_image_components(_asset(path))
+
+
+def test_decode_image_components_admits_alignment_working_set(tmp_path: Path) -> None:
+    path = tmp_path / "aligned.png"
+    Image.fromarray(np.arange(66, dtype=np.uint16).reshape(2, 33)).save(path)
+    # Unaligned pixels fit; the 64x32 conversion scratch does not.
+    with pytest.raises(ValueError, match="working-set limit"):
+        decode_image_components(_asset(path), max_working_set_bytes=200_000)
