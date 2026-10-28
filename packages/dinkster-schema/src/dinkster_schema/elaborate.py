@@ -101,6 +101,32 @@ def elaborate(
         stored_ids,
         choices,
     )
+    if schema.additional_inputs is not None:
+        declared = {spec.id for spec in inputs}
+        reserved = tuple(
+            entry.id for entry in schema.input_entries if not isinstance(entry, InputSpec)
+        )
+        seen = set(declared)
+        for input_id in stored_ids:
+            if input_id in seen:
+                continue
+            if not input_id or "\0" in input_id:
+                raise ElaborationError(
+                    "additional input names must be non-empty strings without NUL"
+                )
+            if any(input_id == root or input_id.startswith(root + ".") for root in reserved):
+                raise ElaborationError(
+                    f"{schema.node_type}: additional input '{input_id}' belongs to "
+                    "a declared dynamic construct"
+                )
+            inputs.append(
+                InputSpec(
+                    input_id,
+                    _scope_member_type(schema.additional_inputs, input_id),
+                    required=False,
+                )
+            )
+            seen.add(input_id)
     inputs = [
         replace(spec, widget=_materialize_family_options(spec.widget, inputs))
         if spec.widget is not None
@@ -205,6 +231,7 @@ def elaborate(
         input_families=(),
         output_families=(),
         output_descriptors=None,
+        additional_inputs=None,
         combos=(),
         slots=(),
         slot_choices=active_choices,
