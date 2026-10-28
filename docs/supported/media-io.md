@@ -27,7 +27,10 @@
   and optional straight alpha through the existing openable asset capability,
   using the same PyAV precision, channel, alignment, and display-orientation
   handling as the ComfyUI reference without admitting still images as VIDEO;
-  PyAV's non-byte alignment graph rejects some small asymmetric inputs
+  source bytes, dimensions and estimated aligned conversion working sets are
+  admitted before conversion, with source length checked before opening the
+  decoder. FFmpeg probing is not a hard allocation sandbox. PyAV's non-byte
+  alignment graph rejects some small asymmetric inputs
 - Ordered animated and multipage image loading; pages with different dimensions
   from the first page are omitted from the batch
 - Ordered mounted image saving to PNG, JPEG, or WebP; Save Image defaults to a
