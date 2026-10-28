@@ -28,12 +28,16 @@ from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import (
     AssetError,
     AssetVault,
+    AssetWriter,
     LibraryStore,
+    MountDef,
+    MountTable,
     StaleRevision,
     digest_bytes,
 )
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EventListener
+from dinkster_protocol import AssetFolderContext
 from dinkster_schema import (
     InputSpec,
     Node,
@@ -44,6 +48,7 @@ from dinkster_schema import (
     build_schemas,
 )
 from dinkster_server import ServerLibrary, create_app
+from dinkster_server.library import LIBRARY_KEY
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 from PIL import Image
@@ -369,6 +374,76 @@ def test_upload_and_fetch_roundtrip(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
+def test_named_model_upload_streams_to_folder_without_redirecting_workflows(tmp_path: Path) -> None:
+    header = json.dumps(
+        {"weights": {"dtype": "F32", "shape": [300_000], "data_offsets": [0, 1_200_000]}}
+    ).encode()
+    header += b" " * (-len(header) % 8)
+    data = len(header).to_bytes(8, "little") + header + bytes(1_200_000)
+
+    async def scenario() -> None:
+        root = tmp_path / "imports"
+        root.mkdir()
+        mounts = MountTable()
+        mounts.add(MountDef("imports", root, "readwrite"))
+        mounts.scan("imports")
+        client = await make_client(
+            tmp_path,
+            resolver=mounts,
+            upload_writer=AssetWriter(mounts),
+            project_folders_for=lambda _project: AssetFolderContext(("imports",)),
+        )
+        try:
+            for folder, expected in (
+                ("", "model.safetensors"),
+                ("", "model_00001.safetensors"),
+                ("checkpoints", "checkpoints/model.safetensors"),
+            ):
+
+                async def chunks():
+                    for start in range(0, len(data), 70_001):
+                        yield data[start : start + 70_001]
+
+                response = await client.post(
+                    "/api/assets",
+                    params={"scope": "local", "name": "model.safetensors", "folder": folder},
+                    data=chunks(),
+                    headers={"Content-Type": "application/octet-stream"},
+                )
+                assert response.status == 201, await response.text()
+                result = await response.json()
+                assert result["digest"] == digest_bytes(data)
+                assert result["asset"] == {
+                    "digest": digest_bytes(data),
+                    "name": Path(expected).name,
+                    "size": len(data),
+                    "mediaType": "application/octet-stream",
+                    "virtualPath": "mounts/imports/" + expected,
+                }
+                assert (root / expected).read_bytes() == data
+                response = await client.get("/api/assets/" + result["digest"])
+                assert response.status == 200
+                assert await response.read() == data
+            library = client.app[LIBRARY_KEY]
+            assert library.vault.digests() == []
+            assert library.store.media_grant("local", digest_bytes(data), "media/image") is None
+            assert library.store.media_grant("local", digest_bytes(data), "media/video") is None
+            assert not list(library.vault.root.glob(".media-upload-*"))
+            workflow = b'{"graphs":{"main":{"nodes":{}}}}'
+            response = await client.post(
+                "/api/assets", data=workflow, headers={"Content-Type": WORKFLOW_MEDIA_TYPE}
+            )
+            assert response.status == 201
+            assert await response.json() == {"digest": digest_bytes(workflow)}
+            workflow_path = library.vault.resolve(digest_bytes(workflow))
+            assert workflow_path is not None
+            assert workflow_path.read_bytes() == workflow
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
 def test_chunked_upload_reads_complete_png_body(tmp_path: Path) -> None:
     """A request read may return one buffered chunk before EOF.
 
@@ -455,31 +530,46 @@ def test_asset_get_falls_through_to_resolver(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
-def test_upload_declared_digest_and_limits(tmp_path: Path) -> None:
+@pytest.mark.parametrize("named", (False, True))
+def test_upload_declared_digest_and_limits(tmp_path: Path, named: bool) -> None:
     async def oversized_chunks():
         yield b"x" * 32
         await asyncio.sleep(0)
         yield b"x" * 33
 
     async def scenario() -> None:
-        client = await make_client(tmp_path, upload_limit=64)
+        root = tmp_path / "imports"
+        root.mkdir()
+        mounts = MountTable()
+        mounts.add(MountDef("imports", root, "readwrite"))
+        mounts.scan("imports")
+        client = await make_client(
+            tmp_path,
+            upload_limit=64,
+            resolver=mounts,
+            upload_writer=AssetWriter(mounts),
+            project_folders_for=lambda _project: AssetFolderContext(("imports",)),
+        )
+        path = "/api/assets?scope=local&name=source.bin" if named else "/api/assets"
         try:
             body = b'{"graphs": {}}'
-            # A declared digest gives end-to-end integrity: mismatch is a
-            # 400 and nothing lands.
-            resp = await client.post(
-                "/api/assets", data=body, headers={"X-Dinkster-Digest": DIGEST_B}
-            )
-            assert resp.status == 400
+            resp = await client.post(path, data=body, headers={"X-Dinkster-Digest": DIGEST_B})
+            assert resp.status == (409 if named else 400)
             assert (await client.get(f"/api/assets/{digest_bytes(body)}")).status == 404
             resp = await client.post(
-                "/api/assets", data=body, headers={"X-Dinkster-Digest": digest_bytes(body)}
+                path, data=body, headers={"X-Dinkster-Digest": digest_bytes(body)}
             )
             assert resp.status == 201
+            saved_files = sorted(entry.name for entry in root.iterdir())
 
-            assert (await client.post("/api/assets", data=b"x" * 65)).status == 413
-            assert (await client.post("/api/assets", data=oversized_chunks())).status == 413
-            assert (await client.post("/api/assets", data=b"")).status == 400
+            assert (await client.post(path, data=b"x" * 65)).status == 413
+            assert (await client.post(path, data=oversized_chunks())).status == 413
+            assert (await client.post(path, data=b"")).status == 400
+            if named:
+                assert (root / "source.bin").read_bytes() == body
+                assert sorted(entry.name for entry in root.iterdir()) == saved_files
+                assert client.app[LIBRARY_KEY].vault.digests() == []
+            assert not list(client.app[LIBRARY_KEY].vault.root.glob(".media-upload-*"))
         finally:
             await client.close()
 

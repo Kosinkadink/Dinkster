@@ -21,6 +21,10 @@ Surface (present only when create_app got a ServerLibrary):
                                          header verified against the bytes;
                                          413 over the limit; -> {"digest"}
                                          (201 new, 200 already-held)
+- POST   /api/assets?scope=&name=        named file import through a granted
+                                         project folder; optional project,
+                                         mount and relative folder;
+                                         -> {"digest", "asset"} (201)
 - POST   /api/assets/media               bounded classified media ingest with
                                          exact scoped immutable authority
 - GET    /api/assets/{digest}            bytes back, digest-immutable:
@@ -167,7 +171,7 @@ class ServerLibrary:
     #: Hits stream rather than buffer: a mount can hold model-sized files.
     resolver: AssetResolver | None = None
     project_folders_for: Callable[[str], AssetFolderContext] | None = None
-    #: Hosts with mount grants publish named media through the same writer as saves.
+    #: Hosts with mount grants publish named files through the same writer as saves.
     #: Vault-only embedding hosts retain digest-only media storage.
     upload_writer: AssetWriter | None = None
     import_mount: str = "imports"
@@ -318,10 +322,17 @@ def _string_labels(value: object) -> list[str] | None:
 
 
 async def handle_upload(request: web.Request) -> web.Response:
-    """Verified, idempotent ingest. The response digest is canonical
-    truth: a client that declared X-Dinkster-Digest gets integrity for free
-    (mismatch is 400, nothing lands); one that didn't learns the digest
-    the backend computed. Re-uploading held bytes is a cheap 200."""
+    """Named project import or anonymous idempotent digest transfer.
+
+    Both verify declared digests. Anonymous uploads deduplicate in the vault;
+    named imports preserve filenames and never overwrite an existing file.
+    """
+    if request.query:
+        query = _file_upload_query(request, classified=False)
+        if isinstance(query, web.Response):
+            return query
+        scope, _kind, name = query
+        return await _ingest_file_upload(request, scope, None, name)
     library = request.app[LIBRARY_KEY]
     if request.content_length is not None and request.content_length > library.upload_limit:
         return _json_error(413, f"upload exceeds {library.upload_limit} bytes")
@@ -350,30 +361,39 @@ async def handle_upload(request: web.Request) -> web.Response:
     return web.json_response({"digest": digest}, status=201 if stored else 200)
 
 
-def _media_query(request: web.Request) -> tuple[str, str, str] | web.Response:
-    expected = {"scope", "kind", "name"}
+def _file_upload_query(
+    request: web.Request, *, classified: bool
+) -> tuple[str, str | None, str] | web.Response:
+    error: Callable[[int, str, str], web.Response] = (
+        _media_error if classified else lambda status, _code, message: _json_error(status, message)
+    )
+    expected = {"scope", "name"}
+    if classified:
+        expected.add("kind")
     optional = {"project", "mount", "folder"}
     if (
         not expected.issubset(request.query)
         or set(request.query) - expected - optional
         or any(len(request.query.getall(field, [])) != 1 for field in request.query)
     ):
-        return _media_error(
+        return error(
             400,
             "invalid_query",
-            "exactly one scope, kind, and name query field is required",
+            "exactly one scope, kind, and name query field is required"
+            if classified
+            else "exactly one scope and name query field is required",
         )
     if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", request.query.get("project", "default")) is None:
-        return _media_error(400, "invalid_project", "project must be a lowercase project id")
+        return error(400, "invalid_project", "project must be a lowercase project id")
     scope = request.query["scope"]
-    kind = request.query["kind"]
+    kind = request.query.get("kind")
     name = request.query["name"]
     if not scope or scope != scope.strip() or any(character.isspace() for character in scope):
-        return _media_error(400, "invalid_scope", "scope must be non-empty and whitespace-free")
-    if kind not in _MEDIA_KINDS:
-        return _media_error(400, "invalid_kind", "kind is not a supported media kind")
+        return error(400, "invalid_scope", "scope must be non-empty and whitespace-free")
+    if classified and kind not in _MEDIA_KINDS:
+        return error(400, "invalid_kind", "kind is not a supported media kind")
     if not _safe_asset_name(name):
-        return _media_error(
+        return error(
             400,
             "invalid_name",
             "name must be a safe display basename of at most 255 characters",
@@ -526,22 +546,35 @@ async def handle_latent_upload(request: web.Request) -> web.Response:
 
 async def handle_media_upload(request: web.Request) -> web.Response:
     """Bounded byte-derived media ingest with exact scoped authority."""
-    query = _media_query(request)
+    query = _file_upload_query(request, classified=True)
     if isinstance(query, web.Response):
         return query
     scope, claimed_kind, name = query
+    assert claimed_kind is not None
+    return await _ingest_file_upload(request, scope, claimed_kind, name)
+
+
+async def _ingest_file_upload(
+    request: web.Request, scope: str, claimed_kind: str | None, name: str
+) -> web.Response:
+    error: Callable[[int, str, str], web.Response] = (
+        _media_error
+        if claimed_kind is not None
+        else lambda status, _code, message: _json_error(status, message)
+    )
+    upload_label = "media upload" if claimed_kind is not None else "upload"
     principal = principal_for(request)
     if principal is not LOCAL_PRINCIPAL and not principal.allows_in(scope, "assets:write"):
-        return _media_error(
+        return error(
             403,
             "scope_forbidden",
             f"scope {scope} does not grant assets:write",
         )
 
     raw_media_type = request.headers.get("Content-Type", "")
-    media_type = raw_media_type.split(";", 1)[0].strip().lower()
-    if media_type not in _MEDIA_TYPES:
-        return _media_error(
+    media_type = raw_media_type.split(";", 1)[0].strip().lower() or "application/octet-stream"
+    if claimed_kind is not None and media_type not in _MEDIA_TYPES:
+        return error(
             415,
             "unsupported_content_type",
             "Content-Type is not a supported media type",
@@ -549,18 +582,18 @@ async def handle_media_upload(request: web.Request) -> web.Response:
 
     declared = request.headers.get(DIGEST_HEADER)
     if declared is not None and not is_digest(declared):
-        return _media_error(
-            400, "invalid_digest", "X-Dinkster-Digest must be a canonical asset digest"
-        )
+        return error(400, "invalid_digest", "X-Dinkster-Digest must be a canonical asset digest")
 
     library = request.app[LIBRARY_KEY]
     project = request.query.get("project", "default")
     target: SaveTarget | None = None
-    if library.upload_writer is not None or {"mount", "folder", "project"}.intersection(
-        request.query
+    if (
+        claimed_kind is None
+        or library.upload_writer is not None
+        or {"mount", "folder", "project"}.intersection(request.query)
     ):
         if library.upload_writer is None or library.project_folders_for is None:
-            return _media_error(503, "destination_unavailable", "upload folders are not configured")
+            return error(503, "destination_unavailable", "upload folders are not configured")
         folder = request.query.get("folder", "")
         try:
             target = SaveTarget(
@@ -569,17 +602,19 @@ async def handle_media_upload(request: web.Request) -> web.Response:
             )
             context = library.project_folders_for(project)
         except (AssetError, ValueError):
-            return _media_error(400, "invalid_destination", "invalid project or upload folder")
+            return error(400, "invalid_destination", "invalid project or upload folder")
         if target.mount not in context.mounts:
-            return _media_error(
-                403, "destination_forbidden", "upload folder is not in this project"
-            )
+            return error(403, "destination_forbidden", "upload folder is not in this project")
     # The claimed kind is binding: classification later rejects any body
     # whose actual kind differs (kind_mismatch), so an oversized image
     # cannot ride in under a roomier video claim.
-    limit = library.media_upload_limits[claimed_kind]
+    limit = (
+        library.media_upload_limits[claimed_kind]
+        if claimed_kind is not None
+        else library.upload_limit
+    )
     if request.content_length is not None and request.content_length > limit:
-        return _media_error(413, "too_large", f"media upload exceeds {limit} bytes")
+        return error(413, "too_large", f"{upload_label} exceeds {limit} bytes")
     temporary = tempfile.NamedTemporaryFile(
         mode="w+b", prefix=".media-upload-", dir=library.vault.root, delete=False
     )
@@ -592,47 +627,49 @@ async def handle_media_upload(request: web.Request) -> web.Response:
             async for chunk in request.content.iter_chunked(_MEDIA_UPLOAD_CHUNK_SIZE):
                 received += len(chunk)
                 if received > limit:
-                    return _media_error(
+                    return error(
                         413,
                         "too_large",
-                        f"media upload exceeds {limit} bytes",
+                        f"{upload_label} exceeds {limit} bytes",
                     )
                 await _write_media_upload_chunk(temporary, hasher, chunk)
         except (ConnectionError, OSError, web.RequestPayloadError):
-            return _media_error(400, "interrupted", "media upload was interrupted")
+            return error(400, "interrupted", f"{upload_label} was interrupted")
         finally:
             temporary.close()
         if not received:
-            return _media_error(400, "empty", "media upload is empty")
+            return error(400, "empty", f"{upload_label} is empty")
 
         digest = "blake3:" + hasher.hexdigest()
         if declared is not None and declared != digest:
-            return _media_error(
+            return error(
                 409, "digest_mismatch", "X-Dinkster-Digest does not match the uploaded bytes"
             )
-        try:
-            classification = await asyncio.to_thread(classify_media_file, temporary_path)
-        except AssetError:
-            return _media_error(
-                415, "unsupported_media", "uploaded bytes are malformed or unsupported"
-            )
-        if claimed_kind != classification.kind:
-            return _media_error(409, "kind_mismatch", "kind does not match the uploaded bytes")
-        if media_type != classification.media_type:
-            return _media_error(
-                409,
-                "content_type_mismatch",
-                "Content-Type does not match the uploaded bytes",
-            )
+        grant: MediaGrant | None = None
+        if claimed_kind is not None:
+            try:
+                classification = await asyncio.to_thread(classify_media_file, temporary_path)
+            except AssetError:
+                return error(
+                    415, "unsupported_media", "uploaded bytes are malformed or unsupported"
+                )
+            if claimed_kind != classification.kind:
+                return error(409, "kind_mismatch", "kind does not match the uploaded bytes")
+            if media_type != classification.media_type:
+                return error(
+                    409,
+                    "content_type_mismatch",
+                    "Content-Type does not match the uploaded bytes",
+                )
 
-        grant = MediaGrant(
-            scope=scope,
-            digest=digest,
-            kind=classification.kind,
-            media_type=classification.media_type,
-            extension=classification.extension,
-            byte_size=received,
-        )
+            grant = MediaGrant(
+                scope=scope,
+                digest=digest,
+                kind=classification.kind,
+                media_type=classification.media_type,
+                extension=classification.extension,
+                byte_size=received,
+            )
 
         def publish() -> tuple[AssetRef, bool]:
             try:
@@ -645,17 +682,19 @@ async def handle_media_upload(request: web.Request) -> web.Response:
                         raise AssetError("upload folder was removed from this project")
                     with temporary_path.open("rb") as source:
                         ref = library.upload_writer.save_named_stream(
-                            target, source, media_type=classification.media_type, limit=limit
+                            target, source, media_type=media_type, limit=limit
                         )
-                    library.store.grant_media_result(grant, temporary_path)
+                    if grant is not None:
+                        library.store.grant_media_result(grant, temporary_path)
                     return ref, True
+                assert grant is not None
                 with library.vault.writer(digest) as writer, temporary_path.open("rb") as source:
                     while chunk := source.read(64 * 1024):
                         writer.write(chunk)
                     _path, bytes_created = writer.commit_with_result()
                 _stored, grant_created = library.store.grant_media_result(grant, temporary_path)
                 return AssetRef(
-                    digest, name, received, classification.media_type, ""
+                    digest, name, received, media_type, ""
                 ), bytes_created or grant_created
             finally:
                 temporary_path.unlink(missing_ok=True)
@@ -665,9 +704,19 @@ async def handle_media_upload(request: web.Request) -> web.Response:
                 library, publish, handoff=publication_handoff
             )
         except (AssetError, OSError, sqlite3.Error):
-            return _media_error(503, "storage_unavailable", "media storage is unavailable")
+            return error(
+                503,
+                "storage_unavailable",
+                "media storage is unavailable"
+                if claimed_kind is not None
+                else "upload storage is unavailable",
+            )
 
-        body = {"asset": ref.to_wire(), "kind": classification.kind}
+        body = (
+            {"asset": ref.to_wire(), "kind": grant.kind}
+            if grant is not None
+            else {"asset": ref.to_wire(), "digest": ref.digest}
+        )
         return web.json_response(body, status=201 if created else 200)
     finally:
         temporary.close()

@@ -1243,8 +1243,9 @@ def test_named_media_upload_uses_project_folder_without_vault_copy(
 @pytest.mark.parametrize(
     "condition", ("readonly", "offline", "revoked", "other-project", "traversal", "symlink")
 )
+@pytest.mark.parametrize("route", ("/api/assets/media", "/api/assets"))
 def test_named_media_upload_refuses_destination_without_fallback(
-    tmp_path: Path, condition: str
+    tmp_path: Path, condition: str, route: str
 ) -> None:
     async def scenario() -> None:
         root = tmp_path / "project"
@@ -1268,16 +1269,18 @@ def test_named_media_upload_refuses_destination_without_fallback(
             symlink_or_skip(root / "plates", outside, target_is_directory=True)
         client, library = await _media_client(tmp_path, mounts=mounts)
         try:
+            params = {
+                "scope": "local",
+                "name": "portrait.png",
+                "project": "other" if condition == "other-project" else "film",
+                "mount": "project",
+                "folder": "../outside" if condition == "traversal" else "plates",
+            }
+            if route == "/api/assets/media":
+                params["kind"] = "media/image"
             response = await client.post(
-                "/api/assets/media",
-                params={
-                    "scope": "local",
-                    "kind": "media/image",
-                    "name": "portrait.png",
-                    "project": "other" if condition == "other-project" else "film",
-                    "mount": "project",
-                    "folder": "../outside" if condition == "traversal" else "plates",
-                },
+                route,
+                params=params,
                 data=_png(),
                 headers=_media_headers("image/png"),
             )
@@ -1342,6 +1345,17 @@ def test_media_ingest_auth_scope_idempotence_and_canonical_response(
                     "message": "scope b does not grant assets:write",
                 }
             }
+            generic_wrong_scope = await client.post(
+                "/api/assets",
+                params={"scope": "b", "name": "model.safetensors"},
+                data=b"unclassified model bytes",
+                headers=_media_headers("application/octet-stream", "a"),
+            )
+            assert generic_wrong_scope.status == 403
+            assert await generic_wrong_scope.json() == {
+                "error": "scope b does not grant assets:write"
+            }
+            assert library.vault.digests() == []
 
             generic_get = await client.get("/api/assets/media")
             assert generic_get.status == 401

@@ -93,6 +93,12 @@ The main protocol routes include:
   Destinations are rechecked at publication; unavailable or revoked grants
   fail rather than redirecting. Vault-only embedding hosts keep digest storage
   and reject explicit folder requests.
+  `POST /api/assets?scope=&name=` imports an unclassified named file, including
+  model weights, through the same bounded streaming writer. It accepts the
+  same optional project destination fields and returns `{digest, asset}`;
+  it requires configured upload folders and does not create media authority.
+  Without query fields, `/api/assets` retains anonymous idempotent digest
+  storage for workflows and transfers and returns `{digest}`.
 - `POST /api/assets/latent?scope=&name=` streams and strictly validates native
   or supported ComfyUI latent safetensors under independent concurrency, size,
   idle-timeout, and disk-headroom limits

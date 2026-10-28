@@ -27,12 +27,16 @@
   grant remains effective across restarts and repeated setup.
   New default imports become available to existing projects without resetting
   folder order, exclusions, project-only grants or output selections.
-- Classified media uploads in the managed server use original filenames in
-  the configured imports folder, with collision-safe numbering and no durable
+- Named file and classified media uploads in the managed server use original
+  filenames in the configured imports folder, with collision-safe numbering and no durable
   vault duplicate. Requests can select another writable project folder and
   relative subfolder; the returned asset records the actual virtual path.
   Read-only, unavailable, revoked, escaping, or other-project destinations
   fail without silently redirecting the upload.
+  Named model/file uploads stream under the configured upload size limit
+  without buffering the whole file. Anonymous workflow and digest transfers
+  retain deduplicated vault storage; named generic imports do not grant
+  classified media authority.
 - Operators can persist project folder membership, independent display order,
   shared folders, and project output selections through the mount API.
   Removing a project association does not delete files or revoke the grant.
