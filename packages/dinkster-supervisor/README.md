@@ -131,6 +131,9 @@ management and Desktop. Full layout: [environments and updates](../../docs/envir
   The inventory covers owned interpreter/package files and constraints, not
   itself, runtime bytecode or pack venvs. Drift reports name missing, modified
   and unexpected files, even when installed distribution versions agree.
+  `inProcessPacks` is an optional array of pack ids, empty by default; these
+  packs retain their dependency locks but have no pack venv. Inventory is
+  finalized only after their dependencies are staged into a fresh generation.
 - `<root>/journal/<timestamp>.json`: `format: dinkster.journal/1`, `operation`,
   `previous` integer or null, `target` integer, `stage`, and optional `error`.
   Operations are setup/update/rollback/move/repair/gc. Stages are planned,
@@ -159,3 +162,13 @@ an ignored Range also restarts from zero. Final publication requires both
 the expected size and digest. Signed query redirects are allowed without
 logging their URLs; external non-TLS redirects and credential-bearing mirror
 URLs are rejected. Calls have a bounded per-socket network timeout.
+
+`environment_generations.build_generation` constructs a complete target from
+an already verified base under `bases/<hex>/python/` and effective hashed
+requirements. It runs uv offline with no indexes and binary wheels only,
+reading the store's wheels and uv cache. Linux attempts CoW interpreter clones
+and falls back to hardlinks when the filesystem cannot clone; Windows uses
+hardlinks. Package installation uses the matching uv link mode. The project
+and store must share a volume. A failed sync removes only its incomplete
+target; it never changes `current` or the existing generation. The generation
+interpreter, packages and retained constraints are hash-inventoried on success.

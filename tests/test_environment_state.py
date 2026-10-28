@@ -77,6 +77,21 @@ def test_doctor_detects_edits_missing_and_added_files_without_reporting_pack_fil
     )
 
 
+def test_generation_preserves_in_process_hosting_and_defaults_to_isolated(tmp_path: Path):
+    path = _generation(tmp_path, 1)
+    assert Generation.read(path).in_process_packs == ()
+    metadata = json.loads(path.read_text())
+    metadata["inProcessPacks"] = ["example_pack"]
+    path.write_text(json.dumps(metadata))
+    generation = Generation.read(path)
+    generation.write(path)
+    assert Generation.read(path).in_process_packs == ("example_pack",)
+    metadata["inProcessPacks"] = ["../escape"]
+    path.write_text(json.dumps(metadata))
+    with pytest.raises(EnvironmentError, match="array of pack ids"):
+        Generation.read(path)
+
+
 @pytest.mark.parametrize("name", ["../escape", "/absolute", "a/../b", "C:/escape", "a\\b"])
 def test_generation_refuses_file_hashes_outside_its_tree(tmp_path: Path, name: str):
     path = _generation(tmp_path, 1)

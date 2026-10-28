@@ -129,6 +129,7 @@ class Generation:
     variant: str
     worker_protocol: int
     files: tuple[tuple[str, str], ...]
+    in_process_packs: tuple[str, ...] = ()
 
     @classmethod
     def read(cls, path: Path) -> Generation:
@@ -157,6 +158,18 @@ class Generation:
         constraints = digest(value.get("constraints"))
         if hashes.get("constraints.txt") != constraints:
             raise EnvironmentError("constraints digest must match its recorded file hash")
+        hosting = value.get("inProcessPacks", [])
+        if not isinstance(hosting, list):
+            raise EnvironmentError("inProcessPacks must be an array of pack ids")
+        entries = cast("list[object]", hosting)
+        if any(
+            not isinstance(pack, str) or re.fullmatch(r"[a-z0-9][a-z0-9_-]*", pack) is None
+            for pack in entries
+        ):
+            raise EnvironmentError("inProcessPacks must be an array of pack ids")
+        packs = cast("list[str]", entries)
+        if len(set(packs)) != len(packs):
+            raise EnvironmentError("inProcessPacks must not repeat a pack")
         return cls(
             generation_number(value.get("generation")),
             digest(value.get("base")),
@@ -166,6 +179,7 @@ class Generation:
             variant,
             protocol,
             tuple(sorted((relative_file(name), digest(sha)) for name, sha in hashes.items())),
+            tuple(packs),
         )
 
     def write(self, path: Path) -> None:
@@ -180,6 +194,7 @@ class Generation:
                 "variant": self.variant,
                 "workerProtocol": self.worker_protocol,
                 "files": dict(self.files),
+                "inProcessPacks": list(self.in_process_packs),
             },
         )
 

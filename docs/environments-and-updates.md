@@ -87,6 +87,9 @@ the engine release's `constraints.txt` beside `generation.json`.
 - `engine`: object containing `version` and the `sha256:` release identifier.
 - `constraints`: `sha256:` digest of the retained constraints file.
 - `variant`: portable variant name; `workerProtocol`: positive integer.
+- `inProcessPacks`: optional array of pack ids, empty when omitted. These packs
+  have locks under `packs/<pack>/pack-lock.json` but no venv. Their dependencies
+  are staged into a fresh generation before its immutable file inventory.
 - `files`: object mapping portable generation-relative paths to `sha256:`
   file digests. It covers the interpreter, installed packages and constraints,
   not `generation.json` itself or the independently checked pack venvs.
