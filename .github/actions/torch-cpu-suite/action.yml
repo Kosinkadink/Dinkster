@@ -87,6 +87,7 @@ runs:
           tests/test_minimax_h3_multigpu_receipt.py \
           tests/test_multigpu_modes.py \
           tests/test_fork_attention.py \
+          tests/test_fork_loader_torch.py \
           tests/test_legacy_sources.py \
           tests/test_compose.py::test_full_free_releases_tensors_held_by_memory_execution_cache
         .venv-torch/bin/python -m pytest -v \
