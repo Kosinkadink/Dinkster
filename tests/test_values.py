@@ -492,9 +492,14 @@ def test_long_strings_do_not_inline() -> None:
     inline channel carries peeks, never documents."""
     registry = make_registry()
     at_cap = registry.wrap(CORE_STRING, "x" * INLINE_STRING_CAP)
-    over_cap = registry.wrap(CORE_STRING, "x" * (INLINE_STRING_CAP + 1))
+    text = "y" * (INLINE_STRING_CAP + 1) + "\u03a9\n"
+    over_cap = registry.wrap(CORE_STRING, text)
     assert registry.inline_of(at_cap) == "x" * INLINE_STRING_CAP
     assert registry.inline_of(over_cap) is None
+    rendered = registry.render(over_cap, "text")
+    assert rendered.mime == "text/plain"
+    assert rendered.data == text.encode("utf-8")
+    assert registry.render(at_cap).data == b"x" * INLINE_STRING_CAP
 
 
 def test_absence_does_not_inline() -> None:

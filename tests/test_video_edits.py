@@ -181,3 +181,11 @@ def test_ambiguous_unknown_and_recursive_edits_fail() -> None:
     cast("list[object]", clip["edits"]).append({"concat": [clip]})
     with pytest.raises(ValueError, match="nesting"):
         effective_video_facts(clip)
+
+
+def test_shared_clip_budget_allows_one_hundred_leaves_but_remains_bounded() -> None:
+    clips = [_clip() for _ in range(255)]
+    value = _clip({"concat": clips})
+    assert effective_video_facts(value)["frame_count"] == 256 * 240
+    with pytest.raises(ValueError, match="256 clips"):
+        effective_video_facts(_clip({"concat": [_clip() for _ in range(256)]}))

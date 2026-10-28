@@ -83,8 +83,59 @@ The main protocol routes include:
 - `GET /api/queue` and `POST /api/queue/pause`, `/resume`, or `/clear`
 - `/api/assets`, `/api/library`, and `/api/history` when their stores are composed.
   `POST /api/assets/media?scope=&kind=&name=` is the bounded authenticated media
-  ingest: it accepts only the closed image/audio/video Content-Types, derives
-  canonical facts from bytes, and creates exact scoped immutable authority
+  ingest: it accepts only the closed image/audio/video/model3d Content-Types,
+  derives canonical facts from bytes, and creates exact scoped immutable authority.
+  Hosts with an `upload_writer` publish named files to the configured
+  `import_mount` by default. Optional `project` (default `default`), `mount`,
+  and relative `folder` select a project-member writable destination.
+  Original filenames are preserved, collisions are numbered, and the response
+  carries the actual virtual path. No durable vault copy is created.
+  Destinations are rechecked at publication; unavailable or revoked grants
+  fail rather than redirecting. Vault-only embedding hosts keep digest storage
+  and reject explicit folder requests.
+  `POST /api/assets?scope=&name=` imports an unclassified named file, including
+  model weights, through the same bounded streaming writer. It accepts the
+  same optional project destination fields and returns `{digest, asset}`;
+  it requires configured upload folders and does not create media authority.
+  Without query fields, `/api/assets` retains anonymous idempotent digest
+  storage for workflows and transfers and returns `{digest}`.
+  `POST /api/assets/transfers?scope=&name=&project=` receives an explicit
+  digest transfer into the vault and returns `{digest, asset}`. It requires
+  `X-Dinkster-Digest` and `X-Dinkster-Source-Machine` headers, `assets:write`
+  in the receiving scope, and the existing generic upload size limit.
+  `project` defaults to `default`; mount/folder destinations are rejected.
+  The source-machine label is caller-reported advisory history, not a verified
+  machine identity or filesystem authority. Verified bytes and their scoped
+  transfer observation publish through the same recoverable streaming path
+  as named uploads; generic transfers create no classified media authority.
+- `GET /api/assets/catalog?scope=&project=` lists persistent upload observations,
+  grouped by digest, separately from workflow records. `q` searches original
+  and stored names and recorded origin details; `kind` and `origin` filter
+  exact values. `since`/`until` are inclusive observation times in Unix seconds.
+  `limit` and query-bound `cursor` page identities, retaining their aliases
+  and history. The route requires `assets:read` in the requested scope,
+  defaults to project `default`, and exposes virtual locations only.
+  It remains available when the optional federated catalog is enabled.
+  Consumers merge project observations and mount rows with federated candidates
+  by digest, retaining each source's names, locations and authority separately.
+  Observation kinds describe ingest, not model-loader compatibility: a generic
+  transfer or model upload is `asset/file`, even with a model-like filename.
+  Logical model kind, variant and compatibility must come from the resolution
+  catalog; a local copy does not make unknown runtime compatibility compatible.
+  Project observations are not copied into the project-unaware resolution store.
+- `GET /api/assets/availability?scope=&digest=&digest=` checks exact local
+  identities without acquisition, writes, grants or catalog recovery. It
+  returns `{assets: [{digest, status}]}` with `available` or `missing` and
+  `Cache-Control: no-store`, deduplicating digests in request order. It requires
+  `assets:read` in scope and returns no host paths. The managed server checks
+  its vault and current mount grants with the existing descriptor-bound read
+  verification. Embedding hosts must supply `ServerLibrary.local_resolver`
+  for their local-only mount checks and job preflight; the possibly fetching
+  `resolver` is used by neither presence check. An absent local resolver checks
+  the vault only. Corrupted vault bytes do not shadow a valid granted copy.
+  Job acquisition still requires digest-exact consent, including replacement
+  of corrupted vault content. Submission retries recover pending catalog
+  observations before preflight, without holding the upload lock during downloads.
 - `POST /api/assets/latent?scope=&name=` streams and strictly validates native
   or supported ComfyUI latent safetensors under independent concurrency, size,
   idle-timeout, and disk-headroom limits

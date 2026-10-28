@@ -6026,12 +6026,21 @@ def test_values_endpoint_serves_target_and_intermediate() -> None:
             assert data["descriptor"]["typeId"] == "STRING"
             assert data["descriptor"]["value"] == "HELLO"
             assert data["descriptor"]["fingerprint"]
-            assert data["renditions"] == []  # strings have no rich rendition
+            assert data["renditions"] == [
+                {"kind": "text", "mime": "text/plain", "default": True, "cacheKey": "text"}
+            ]
+            text = await client.get(values_url("s", rendition="text"))
+            assert text.status == 200
+            assert text.content_type == "text/plain"
+            assert await text.text() == "HELLO"
 
             resp = await client.get(values_url("e"))  # intermediate, retained
             data = await resp.json()
             assert (resp.status, data["available"]) == (200, True)
             assert data["descriptor"]["value"] == "hello"
+            text = await client.get(values_url("e", rendition="default"))
+            assert text.status == 200
+            assert await text.text() == "hello"
         finally:
             await client.close()
 

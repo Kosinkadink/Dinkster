@@ -211,17 +211,13 @@ def _sparse_latent_record(value: object) -> EncodedSparseLatent | None:
     return EncodedSparseLatent(latent.support, latent.features)
 
 
-def _encode_tree(value: object, *, preserve_mapping_order: bool = False) -> object:
+def _encode_tree(value: object) -> object:
     sparse_latent = _sparse_latent_record(value)
     if sparse_latent is not None:
         return {
             "$": "sparse-latent",
-            "features": _encode_tree(
-                sparse_latent.features, preserve_mapping_order=preserve_mapping_order
-            ),
-            "support": _encode_tree(
-                sparse_latent.support, preserve_mapping_order=preserve_mapping_order
-            ),
+            "features": _encode_tree(sparse_latent.features),
+            "support": _encode_tree(sparse_latent.support),
         }
     sparse_support = _sparse_support_record(value)
     if sparse_support is not None:
@@ -239,20 +235,12 @@ def _encode_tree(value: object, *, preserve_mapping_order: bool = False) -> obje
         _validate_encoded_sparse_support(authenticated)
         return {
             "$": "sparse-support",
-            "batch_counts": _encode_tree(
-                authenticated.batch_counts, preserve_mapping_order=preserve_mapping_order
-            ),
-            "coordinates": _encode_tree(
-                authenticated.coordinates, preserve_mapping_order=preserve_mapping_order
-            ),
-            "origin": _encode_tree(
-                authenticated.origin, preserve_mapping_order=preserve_mapping_order
-            ),
+            "batch_counts": _encode_tree(authenticated.batch_counts),
+            "coordinates": _encode_tree(authenticated.coordinates),
+            "origin": _encode_tree(authenticated.origin),
             "resolution": authenticated.resolution,
             "support_id": authenticated.support_id,
-            "voxel_size": _encode_tree(
-                authenticated.voxel_size, preserve_mapping_order=preserve_mapping_order
-            ),
+            "voxel_size": _encode_tree(authenticated.voxel_size),
         }
     tensor = tensor_record(value)
     if tensor is not None:
@@ -269,49 +257,34 @@ def _encode_tree(value: object, *, preserve_mapping_order: bool = False) -> obje
             raise ValueError("multi-stream latent roles must be unique nonempty strings")
         return {
             "$": "multi",
-            "streams": [
-                [role, _encode_tree(payload, preserve_mapping_order=preserve_mapping_order)]
-                for role, payload in pairs
-            ],
+            "streams": [[role, _encode_tree(payload)] for role, payload in pairs],
         }
     if value is None or type(value) in (bool, int, float, str):
         return value
     if isinstance(value, tuple):
         return {
             "$": "tuple",
-            "items": [
-                _encode_tree(item, preserve_mapping_order=preserve_mapping_order)
-                for item in cast("tuple[object, ...]", value)
-            ],
+            "items": [_encode_tree(item) for item in cast("tuple[object, ...]", value)],
         }
     if isinstance(value, list):
-        return [
-            _encode_tree(item, preserve_mapping_order=preserve_mapping_order)
-            for item in cast("list[object]", value)
-        ]
+        return [_encode_tree(item) for item in cast("list[object]", value)]
     if isinstance(value, Mapping):
         mapping = cast("Mapping[object, object]", value)
         if any(type(key) is not str for key in mapping):
             raise TypeError("latent mapping keys must be strings")
-        keys = (
-            tuple(mapping)
-            if preserve_mapping_order
-            else sorted(cast("Sequence[str]", tuple(mapping)))
-        )
-        items = [
-            [key, _encode_tree(mapping[key], preserve_mapping_order=preserve_mapping_order)]
-            for key in keys
-        ]
         return {
             "$": "map",
-            "items": items if preserve_mapping_order else {key: item for key, item in items},
+            "items": {
+                key: _encode_tree(mapping[key])
+                for key in sorted(cast("Sequence[str]", tuple(mapping)))
+            },
         }
     raise TypeError(f"unsupported latent metadata value: {type(value).__name__}")
 
 
-def encode_latent(value: object, *, preserve_mapping_order: bool = False) -> bytes:
+def encode_latent(value: object) -> bytes:
     body = json.dumps(
-        _encode_tree(value, preserve_mapping_order=preserve_mapping_order),
+        _encode_tree(value),
         sort_keys=True,
         separators=(",", ":"),
         allow_nan=False,
@@ -325,7 +298,6 @@ def _decode_tree(
     multi_stream_factory: MultiStreamFactory | None,
     sparse_support_factory: SparseSupportFactory | None,
     sparse_latent_factory: SparseLatentFactory | None,
-    preserve_mapping_order: bool,
 ) -> object:
     def decode(item: object) -> object:
         return _decode_tree(
@@ -334,7 +306,6 @@ def _decode_tree(
             multi_stream_factory,
             sparse_support_factory,
             sparse_latent_factory,
-            preserve_mapping_order,
         )
 
     if isinstance(value, list):
@@ -463,17 +434,6 @@ def _decode_tree(
         encoded_items = mapping["items"]
         if isinstance(encoded_items, Mapping):
             items = tuple(cast("Mapping[object, object]", encoded_items).items())
-        elif preserve_mapping_order and isinstance(encoded_items, list):
-            raw_items = cast("list[object]", encoded_items)
-            map_pairs: list[list[object]] = []
-            for item in raw_items:
-                if not isinstance(item, list):
-                    raise ValueError("latent frame contains an invalid mapping")
-                pair = cast("list[object]", item)
-                if len(pair) != 2:
-                    raise ValueError("latent frame contains an invalid mapping")
-                map_pairs.append(pair)
-            items = tuple((item[0], item[1]) for item in map_pairs)
         else:
             raise ValueError("latent frame contains an invalid mapping")
         if any(type(key) is not str for key, _ in items):
@@ -493,7 +453,6 @@ def decode_latent(
     sparse_support_factory: SparseSupportFactory | None = None,
     sparse_latent_factory: SparseLatentFactory | None = None,
     require_samples: bool = True,
-    preserve_mapping_order: bool = False,
 ) -> object:
     prefix_length = len(LATENT_CODEC_MAGIC)
     if not data.startswith(LATENT_CODEC_MAGIC) or len(data) <= prefix_length:
@@ -510,7 +469,6 @@ def decode_latent(
         multi_stream_factory,
         sparse_support_factory,
         sparse_latent_factory,
-        preserve_mapping_order,
     )
     if not isinstance(value, Mapping) or (require_samples and value and "samples" not in value):
         raise ValueError("latent frame must contain a samples mapping entry")
@@ -522,24 +480,20 @@ def validate_latent_encoded(
     meta: Mapping[str, object],
     *,
     require_samples: bool = True,
-    preserve_mapping_order: bool = False,
 ) -> None:
     del meta
     decode_latent(
         data,
         require_samples=require_samples,
-        preserve_mapping_order=preserve_mapping_order,
     )
 
 
-def latent_fingerprint(
-    type_id: str, *, preserve_mapping_order: bool = False
-) -> Callable[[object], str]:
+def latent_fingerprint(type_id: str) -> Callable[[object], str]:
     def fingerprint(value: object) -> str:
         return stable_hash(
             [
                 type_id.encode("utf-8"),
-                encode_latent(value, preserve_mapping_order=preserve_mapping_order),
+                encode_latent(value),
             ]
         )
 
