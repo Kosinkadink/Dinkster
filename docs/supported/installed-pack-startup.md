@@ -2,6 +2,9 @@
 
 - First-party pack inference dependencies install from a pinned source archive
   without requiring a Git executable.
+- The official pack artifact builder produces deterministic source archives and
+  an existing registry artifact lock from committed sources, preserving the
+  fifteen pack identities and node entry points without importing node code.
 - Packs may own exact node IDs with case, spaces and dots, without renaming
   them. Namespace and exact-node ownership reject overlapping owners through
   install, composition and reload. Pack and publisher identities remain
