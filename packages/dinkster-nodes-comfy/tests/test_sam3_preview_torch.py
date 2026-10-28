@@ -183,6 +183,16 @@ def test_real_mp4_has_all_frames_dimensions_and_fractional_rate() -> None:
     np.testing.assert_array_equal(frames[1], np.full((16, 24, 3), 255, dtype=np.uint8))
 
 
+@pytest.mark.parametrize("with_images", (False, True))
+def test_odd_dimensions_do_not_silently_resize_or_publish(with_images: bool) -> None:
+    tracks = {"packed_masks": None, "orig_size": (16, 15), "n_frames": 1}
+    images = torch.zeros(1, 15, 16, 3) if with_images else None
+    with capture_preview_artifacts() as artifacts:
+        with pytest.raises(av.error.ExternalError, match="libx264"):
+            SAM3_TrackPreview.execute(track_data=tracks, images=images)
+    assert artifacts == []
+
+
 class PreviewSource(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
