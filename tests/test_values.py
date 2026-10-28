@@ -127,12 +127,14 @@ def test_declared_type_can_activate_and_release_its_codec_and_providers() -> Non
     assert registry.wrap("mypack.thing", 23).payload.load() == 23
 
 
-def test_builtin_curve_owner_is_available_in_core_registry() -> None:
+def test_builtin_curve_owner_survives_pack_removal_in_core_registry() -> None:
     registry = make_registry()
     assert registry.owner_of(CURVE_TYPE) == "dinkster-nodes-foundation"
     assert CURVE_TYPE in registry
     with pytest.raises(ValueError, match="overlaps"):
         registry.claim_types("another-official", (CURVE_TYPE,))
+    registry.remove_pack_types("official-provider")
+    registry.remove_pack_types("dinkster-nodes-foundation")
     assert registry.type_owners()[CURVE_TYPE] == "dinkster-nodes-foundation"
     assert registry.wrap(CURVE_TYPE, {"points": [[2, 7]]}).resolve() == Curve(((2, 7),))
     assert registry.wrap(CORE_INT, 17).resolve() == 17
