@@ -26,6 +26,14 @@ def venv_python(directory: Path) -> Path:
     return directory / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 
 
+def _require_fresh_generation(generation: Path) -> None:
+    current = generation.parent.parent / "current"
+    if (generation / "generation.json").exists() or (
+        current.is_file() and current.read_text().strip() == generation.name
+    ):
+        raise ProvisionError("packs require a fresh, inactive target generation")
+
+
 def _run(command: list[str], cache: Path) -> str:
     environment = {**os.environ, "UV_CACHE_DIR": str(cache)}
     result = subprocess.run(command, capture_output=True, text=True, env=environment)
@@ -98,6 +106,7 @@ def provision_pack(
     in_process: bool = False,
 ) -> Path:
     """Recheck the plan and stage hashed wheels before recording the pack lock."""
+    _require_fresh_generation(packs.parent)
     plan.require_layering()
     current_plan = plan_pack(
         plan.lock,
@@ -113,13 +122,8 @@ def provision_pack(
         raise ProvisionError(f"pack venv already exists: {destination}; rebuild from its lock")
     if in_process:
         generation = packs.parent
-        current = generation.parent.parent / "current"
-        if (
-            not generation_python.resolve().is_relative_to((generation / "python").resolve())
-            or (generation / "generation.json").exists()
-            or (current.is_file() and current.read_text().strip() == generation.name)
-        ):
-            raise ProvisionError("in-process packs require a fresh, inactive target generation")
+        if not generation_python.resolve().is_relative_to((generation / "python").resolve()):
+            raise ProvisionError("in-process interpreter must belong to target generation/python")
     wheels = [fetch_wheel(wheel, wheel_store) for wheel in plan.wheels]
     try:
         if in_process:
@@ -282,10 +286,11 @@ def preflight_generation(
 def rebuild_generation(context: GenerationContext, plans: Sequence[PackPlan]) -> tuple[str, ...]:
     """Build every target pack before its owner starts or activates the generation."""
     context.validate()
+    _require_fresh_generation(context.generation)
     for plan in plans:
         plan.require_layering()
     packs = context.generation / "packs"
-    if any((packs / plan.lock.pack).exists() for plan in plans):
+    if packs.is_dir() and any(packs.iterdir()):
         raise ProvisionError("target already has pack venvs; rebuild into a fresh generation")
     created: list[Path] = []
     try:

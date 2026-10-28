@@ -305,6 +305,21 @@ def test_generation_adapter_preflights_rebuilds_and_reports_drift(
     assert plans[0].wheels == (extra,)
     assert not (target / "packs").exists()
     assert not context.wheel_store.exists()
+    sealed = target / "generation.json"
+    sealed.write_text("{}")
+    with pytest.raises(ProvisionError, match="fresh, inactive target"):
+        rebuild_generation(context, plans)
+    sealed.unlink()
+    current.write_text("2\n")
+    with pytest.raises(ProvisionError, match="fresh, inactive target"):
+        rebuild_generation(context, plans)
+    current.write_text("1\n")
+    unrelated = target / "packs/unrelated"
+    unrelated.mkdir(parents=True)
+    with pytest.raises(ProvisionError, match="already has pack venvs"):
+        rebuild_generation(context, plans)
+    unrelated.rmdir()
+    assert not context.wheel_store.exists()
     assert rebuild_generation(context, plans) == ("rebuilt pack example from its dependency lock",)
     assert doctor_generation(context) == ()
     assert current.read_text() == "1\n"
