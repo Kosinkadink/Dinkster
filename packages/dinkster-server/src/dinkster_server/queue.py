@@ -34,7 +34,7 @@ import secrets
 import time
 import traceback
 from collections import deque
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
@@ -98,6 +98,7 @@ class Job:
     compiled_graph: CompiledGraph | None = field(default=None, kw_only=True)
     """Immutable admission-compiled artifact, separate from submitted graph."""
     scope: str = "local"
+    project: str = field(default="default", kw_only=True)
     principal_id: str = "local"
     principal_kind: str = "human"
     source_document: str = ""
@@ -173,6 +174,7 @@ class JobQueue:
         debug_errors: bool = False,
         redactor: PathRedactor | None = None,
         store: QueuePersistence | None = None,
+        complete_result: Callable[[Job, RunResult], Awaitable[RunResult]] | None = None,
     ) -> None:
         if max_running_jobs < 1:
             raise ValueError("max_running_jobs must be >= 1")
@@ -188,6 +190,7 @@ class JobQueue:
         self._debug_errors = debug_errors
         self._redactor = redactor if redactor is not None else PathRedactor()
         self._store = store
+        self._complete_result = complete_result
         self._jobs: dict[JobKey, Job] = {}
         self._pending: list[Job] = []  # sorted by (-priority, seq) at dispatch
         self._seq = itertools.count()
@@ -243,6 +246,7 @@ class JobQueue:
         *,
         priority: int = 0,
         scope: str = "local",
+        project: str = "default",
         principal_id: str = "local",
         principal_kind: str = "human",
         source_document: str = "",
@@ -290,6 +294,8 @@ class JobQueue:
                 "priority": priority,
                 "sourceDocument": source_document,
             }
+            if project != "default":
+                fingerprint_payload["project"] = project
             if export_snapshot is not None:
                 fingerprint_payload["exportSnapshot"] = {
                     "prompt": export_snapshot.prompt,
@@ -332,6 +338,7 @@ class JobQueue:
             fingerprint=fingerprint,
             compiled_graph=compiled_graph,
             scope=scope,
+            project=project,
             principal_id=principal_id,
             principal_kind=principal_kind,
             source_document=source_document,
@@ -547,6 +554,8 @@ class JobQueue:
                     single_job_multi_gpu=job.single_job_multi_gpu,
                     cache_enabled=job.cache_enabled,
                 )
+            if self._complete_result is not None:
+                result = await self._complete_result(job, result)
             job.result = result
             self._finish(job, "completed")
         except asyncio.CancelledError:

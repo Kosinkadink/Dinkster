@@ -240,6 +240,7 @@ from dinkster_engine import (
     ExecutionRuntime,
     GraphCompileError,
     ProviderResolutionError,
+    RunResult,
 )
 from dinkster_graph import (
     Graph,
@@ -1266,6 +1267,7 @@ class ServerState:
         redactor: PathRedactor | None = None,
         execution_journal: ExecutionJournal | None = None,
         full_free: FullFree | None = None,
+        complete_result: Callable[[Job, RunResult], Awaitable[RunResult]] | None = None,
     ) -> None:
         # Outbound text (errors, pack failures, node-reported data) is
         # path-redacted through this instance; hosts that know their
@@ -1391,6 +1393,7 @@ class ServerState:
             debug_errors=debug_errors,
             redactor=self.redactor,
             store=history,
+            complete_result=complete_result,
         )
         default_budgets = {
             device: budget
@@ -3589,6 +3592,7 @@ async def handle_submit(request: web.Request) -> web.Response:
                 targets,
                 priority=priority,
                 scope=scope,
+                project=project,
                 principal_id=principal.principal_id,
                 principal_kind=principal.kind,
                 source_document=source_document,
@@ -4585,6 +4589,13 @@ def create_app(
     ``memory_headroom_changed`` is an optional composition-owned live-apply
     hook; embedders that do not host armed workers leave it unset.
     """
+
+    async def complete_result(job: Job, result: RunResult) -> RunResult:
+        if library is not None and result.artifacts:
+            record_outputs = library.record_saved_outputs
+            await run_media_publication(library, lambda: record_outputs(job, result))
+        return result
+
     state = ServerState(
         make_engine,
         schemas,
@@ -4613,6 +4624,7 @@ def create_app(
         redactor=redactor,
         execution_journal=execution_journal,
         full_free=full_free,
+        complete_result=complete_result if library is not None else None,
     )
     app = web.Application(client_max_size=ENGINE_JOB_SUBMISSION_LIMIT_BYTES)
     app[STATE_KEY] = state

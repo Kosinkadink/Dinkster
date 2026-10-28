@@ -21,6 +21,7 @@ import subprocess
 import sys
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
 
@@ -39,7 +40,13 @@ from dinkster_assets import (
 )
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EventListener
-from dinkster_protocol import AssetFolderContext
+from dinkster_protocol import (
+    AssetFolderContext,
+    Invocation,
+    InvocationResult,
+    OnInvocationEvent,
+    SavedArtifact,
+)
 from dinkster_schema import (
     InputSpec,
     Node,
@@ -339,6 +346,134 @@ async def make_client(tmp_path: Path, **library_overrides: object) -> TestClient
     client = TestClient(TestServer(app))
     await client.start_server()
     return client
+
+
+@pytest.mark.parametrize("failure", ["", "catalog", "revoked"])
+def test_completed_artifacts_are_cataloged_in_the_submitted_project(
+    tmp_path: Path, failure: str
+) -> None:
+    async def scenario() -> None:
+        root = tmp_path / "output"
+        root.mkdir()
+        mounts = MountTable()
+        mounts.add(MountDef("output", root, "readwrite"))
+        mounts.scan("output")
+        writer = AssetWriter(mounts)
+        data = b"saved by the worker, not an input copy"
+
+        class SavingWorker(InProcessWorker):
+            async def invoke(
+                self, invocation: Invocation, on_event: OnInvocationEvent | None = None
+            ) -> InvocationResult:
+                result = await super().invoke(invocation, on_event)
+                ref = writer.save_bytes(
+                    {"mount": "output", "prefix": "result"},
+                    data,
+                    suffix=".txt",
+                    media_type="text/plain",
+                )
+                if failure == "revoked":
+                    mounts.remove("output")
+                return replace(
+                    result,
+                    artifacts=(
+                        SavedArtifact(
+                            invocation.node_id,
+                            ref.digest,
+                            ref.name,
+                            ref.size,
+                            ref.media_type,
+                            ref.virtual_path,
+                        ),
+                    ),
+                )
+
+        def engine(on_event: EventListener) -> Engine:
+            registry = TypeRegistry()
+            register_core_types(registry)
+            return Engine(
+                schemas=SCHEMAS,
+                registry=registry,
+                worker=SavingWorker(build_node_types(NODES), registry),
+                cache=MemoryLRUCache(),
+                on_event=on_event,
+            )
+
+        database = tmp_path / "library.sqlite"
+        library = ServerLibrary(
+            vault=AssetVault(tmp_path / "vault"),
+            store=LibraryStore(database),
+            resolver=mounts,
+            upload_writer=writer,
+            project_folders_for=lambda project: AssetFolderContext(
+                ("output",) if project == "film" else ()
+            ),
+        )
+        if failure == "catalog":
+            with sqlite3.connect(database) as connection:
+                connection.execute(
+                    "CREATE TRIGGER fail_output BEFORE INSERT ON asset_observations "
+                    "BEGIN SELECT RAISE(ABORT, 'catalog offline'); END"
+                )
+        client = TestClient(TestServer(create_app(engine, SCHEMAS, library=library)))
+        await client.start_server()
+        try:
+            response = await client.post(
+                "/api/jobs",
+                json={
+                    "clientId": "client",
+                    "jobId": "save",
+                    "project": "film",
+                    "graph": {
+                        "nodes": {"save": {"nodeType": "test.echo", "inputs": {"text": "x"}}}
+                    },
+                    "targets": ["save"],
+                },
+            )
+            assert response.status == 202, await response.text()
+            submitted = await response.json()
+            async with asyncio.timeout(10):
+                while True:
+                    status = await (await client.get("/api/jobs/client/save")).json()
+                    if status["state"] in {"completed", "failed", "cancelled"}:
+                        break
+                    await asyncio.sleep(0.005)
+            assert status["state"] == ("failed" if failure else "completed"), status
+            records = library.store.query_assets("local", project="film", origin="produced")
+            assert len(records) == (0 if failure else 1)
+            assert library.store.query_assets("local") == []
+            assert library.store.query_assets("other", project="film") == []
+            assert library.vault.digests() == []
+            assert (root / "result_00001.txt").read_bytes() == data
+            if not failure:
+                (record,) = records[0]
+                assert record.asset.digest == digest_bytes(data)
+                assert record.asset.virtual_path == "mounts/output/result_00001.txt"
+                assert dict(record.origin) == {
+                    "kind": "produced",
+                    "job": submitted["jobRef"],
+                    "node": "save",
+                }
+        finally:
+            await client.close()
+        if failure == "catalog":
+            with sqlite3.connect(database) as connection:
+                connection.execute("DROP TRIGGER fail_output")
+        restarted = await make_client(
+            tmp_path,
+            resolver=mounts,
+            upload_writer=writer,
+            project_folders_for=library.project_folders_for,
+        )
+        try:
+            records = restarted.app[LIBRARY_KEY].store.query_assets("local", project="film")
+            assert len(records) == (0 if failure == "revoked" else 1)
+            journals = list(library.vault.root.glob(".upload-observations/*.json"))
+            assert len(journals) == (1 if failure == "revoked" else 0)
+        finally:
+            await restarted.close()
+
+    asyncio.run(scenario())
 
 
 def test_anonymous_vault_inventory_is_operator_only_and_does_not_grant_scope(

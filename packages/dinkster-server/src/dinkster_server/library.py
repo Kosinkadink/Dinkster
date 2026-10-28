@@ -71,7 +71,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, BinaryIO, TypeVar, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, TypeVar, cast
 from urllib.parse import urlsplit, urlunsplit
 
 from aiohttp import web
@@ -121,6 +121,11 @@ from dinkster_values import (
 from .asset_stream import open_verified_sized, stream_verified
 from .auth import LOCAL_PRINCIPAL, principal_for, resolve_scope
 from .paging import decode_cursor, encode_cursor
+
+if TYPE_CHECKING:
+    from dinkster_engine import RunResult
+
+    from .queue import Job
 
 __all__ = ["LIBRARY_KEY", "ServerLibrary", "add_library_routes"]
 
@@ -252,6 +257,39 @@ class ServerLibrary:
             except (AssetError, OSError):
                 continue
         return False
+
+    def record_saved_outputs(self, job: Job, result: RunResult) -> None:
+        """Record freshly saved files before the job can report completion."""
+        refs: dict[tuple[str, str], AssetRef] = {
+            (artifact.node_id, artifact.virtual_path): AssetRef(
+                artifact.digest,
+                artifact.name,
+                artifact.size,
+                artifact.media_type,
+                artifact.virtual_path,
+            )
+            for artifact in result.artifacts
+        }
+        for (node_id, _), ref in refs.items():
+            journal = self.vault.root / ".upload-observations" / f"{uuid.uuid4().hex}.json"
+            _write_asset_observation_journal(
+                journal,
+                {
+                    "scope": job.scope,
+                    "asset": ref.to_wire(),
+                    "originalName": ref.name,
+                    "kind": "asset/file",
+                    "extension": None,
+                    "project": job.project,
+                    "created": time.time(),
+                    "origin": {"kind": "produced", "job": job.run_id, "node": node_id},
+                },
+            )
+            recover_asset_observations(self, journals=(journal,))
+            if journal.exists():
+                raise AssetError(
+                    "saved output is unavailable or its catalog could not be committed"
+                )
 
 
 LIBRARY_KEY: web.AppKey[ServerLibrary] = web.AppKey("server_library")
