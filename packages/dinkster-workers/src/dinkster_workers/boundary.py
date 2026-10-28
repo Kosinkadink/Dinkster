@@ -44,6 +44,7 @@ from typing import Any, Protocol, cast
 
 from dinkster_assets import AssetError, digest_bytes
 from dinkster_protocol import (
+    AssetFolderContext,
     ErrorHint,
     ExportSnapshot,
     Invocation,
@@ -827,6 +828,8 @@ def encode_invocation(
         header["expectedExecutionIdentity"] = invocation.expected_execution_identity
     if invocation.extension_snapshot_digest is not None:
         header["extensionSnapshotDigest"] = invocation.extension_snapshot_digest
+    if invocation.asset_folders is not None:
+        header["assetFolders"] = invocation.asset_folders.to_wire()
     if invocation.connected_undemanded_inputs:
         header["connectedUndemandedInputs"] = list(invocation.connected_undemanded_inputs)
     if invocation.export_snapshot is not None:
@@ -935,6 +938,14 @@ def decode_invocation(
             "invocation extensionSnapshotDigest must be a sha256 digest when present"
         )
     export_snapshot_raw = header.get("exportSnapshot")
+    try:
+        asset_folders = (
+            AssetFolderContext.from_wire(header["assetFolders"])
+            if "assetFolders" in header
+            else None
+        )
+    except ValueError as exc:
+        raise BoundaryError(f"invalid invocation assetFolders: {exc}") from exc
     export_snapshot = None
     if "exportSnapshot" in header:
         if not isinstance(export_snapshot_raw, Mapping):
@@ -1061,6 +1072,7 @@ def decode_invocation(
             expected_execution_identity=identity_raw,
             extension_snapshot_digest=extension_digest_raw,
             export_snapshot=export_snapshot,
+            asset_folders=asset_folders,
             fp8_matmul=fp8_matmul_raw,
             diffusion_dtype=component_dtypes[0],
             text_dtype=component_dtypes[1],
