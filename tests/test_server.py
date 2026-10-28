@@ -6742,6 +6742,7 @@ def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
     )
     from dinkster_nodes_foundation import StringPrimitive
     from dinkster_nodes_media_io import SetSaveTargetPrefix, register_media_types
+    from dinkster_workers.saved_artifacts import SavedArtifactAuthority
 
     from dinkster.comfy_compose import register_comfy_host_types
 
@@ -6810,7 +6811,11 @@ def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
         return Engine(
             schemas=schemas,
             registry=registry,
-            worker=InProcessWorker(build_node_types(nodes), registry),
+            worker=InProcessWorker(
+                build_node_types(nodes),
+                registry,
+                artifact_authority=SavedArtifactAuthority(snapshot).capture,
+            ),
             cache=MemoryLRUCache(),
             on_event=on_event,
         )
