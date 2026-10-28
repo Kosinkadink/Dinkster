@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 from dinkster_api.v1 import AUDIO_TYPE, VIDEO_TYPE
 from dinkster_assets import AssetRef, digest_bytes
+from dinkster_nodes_comfy import register_inference_types
 from dinkster_values import (
     TypeRegistry,
     audio_fingerprint,
@@ -30,7 +31,6 @@ from dinkster_values import (
     video_rendition_mime,
 )
 
-from dinkster.comfy_compose import register_comfy_host_types
 from tests.test_video_probe import _encode
 
 
@@ -281,7 +281,7 @@ def test_audio_crosses_between_compat_torch_and_torch_free_forms(
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
 
     host = TypeRegistry()
-    register_comfy_host_types(host)
+    register_inference_types(host)
     worker = TypeRegistry()
     register_audio_type(worker, AUDIO_TYPE)
     waveform = np.linspace(-1.0, 1.0, 8, dtype=np.float32).reshape(1, 2, 4)
@@ -365,7 +365,7 @@ def test_video_crosses_between_upstream_family_and_torch_free_form(
     monkeypatch.setitem(sys.modules, "comfy_api.input_impl", input_impl)
 
     host = TypeRegistry()
-    register_comfy_host_types(host)
+    register_inference_types(host)
     worker = TypeRegistry()
     register_video_type(worker, VIDEO_TYPE)
     assert worker.spec(VIDEO_TYPE).validate_encoded_buffer is validate_video_encoded
@@ -405,7 +405,7 @@ def test_av_registration_wiring_covers_host_and_translation() -> None:
     from dinkster_compat_comfy.translate import CompatTranslation
 
     host = TypeRegistry()
-    register_comfy_host_types(host)
+    register_inference_types(host)
     assert host.spec(AUDIO_TYPE).declared_codec
     assert host.spec(VIDEO_TYPE).declared_codec
     assert host.spec(VIDEO_TYPE).validate_encoded_buffer is validate_video_encoded
