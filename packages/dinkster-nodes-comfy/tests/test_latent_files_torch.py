@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -17,6 +18,7 @@ from dinkster_api.v1 import (
     LATENT_TYPE,
     VAE_TYPE,
     AssetRef,
+    ExportSnapshot,
     InputSpec,
     Node,
     NodeSchema,
@@ -273,3 +275,108 @@ def test_latent_and_encoder_exports_write_exact_files_through_native_hosts(
                 torch.testing.assert_close(handle.get_tensor(key), tensor, rtol=0, atol=0)
                 assert handle.metadata() == {"format": "pt", "prompt": ""}
     assert not (output / "clip").exists() and not (alternate / "vae").exists()
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("disabled", (False, True))
+@pytest.mark.parametrize("prompt", ({"load": {"inputs": {"seed": 67}}}, {}, None))
+def test_latent_export_consumes_submission_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    in_process: bool,
+    disabled: bool,
+    prompt: dict | None,
+) -> None:
+    from dinkster_api.v1 import initialize_inference_process
+
+    initialize_inference_process()
+    from dinkster_inference.cli_args import args
+
+    monkeypatch.setattr(args, "disable_metadata", disabled)
+    source, output = tmp_path / "input", tmp_path / "output"
+    source.mkdir()
+    output.mkdir()
+    tensor = torch.tensor([[[[1.125, -3.5, 0.25], [8.0, -0.75, 2.0]]]])
+    save_file(
+        {"latent_tensor": tensor, "latent_format_version_0": torch.tensor([])},
+        source / "selected.latent",
+    )
+    mounts = tmp_path / "mounts.json"
+    table = MountTable(mounts, index_root=tmp_path / "index")
+    table.add(MountDef("input", source), kind="data/latent")
+    table.add(MountDef("output", output, mode="readwrite"))
+    table.scan("input")
+    table.scan("output")
+    table.select_output_mount("output")
+    asset = table.bind_name("selected.latent", "data/latent")
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(mounts))
+    extra = {"workflow": {"nodes": [{"id": 37, "title": "latent: caf\u00e9"}]}, "seed": 139}
+
+    async def scenario():
+        native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+        module = f"latent_metadata_fixture_{tmp_path.name.replace('-', '_')}"
+        (tmp_path / f"{module}.py").write_text(
+            "from test_latent_files_torch import HOST_NODES\n"
+            "from dinkster_nodes_comfy import register_inference_types\n"
+            "from dinkster_api.v1 import initialize_inference_process\n"
+            "initialize_inference_process()\n"
+            "from dinkster_inference.cli_args import args\n"
+            f"args.disable_metadata = {disabled!r}\n",
+            encoding="ascii",
+        )
+        fixture = tmp_path / "dinkster-pack.toml"
+        fixture.write_text(
+            '[pack]\nname="latent-metadata-fixture"\npublisher="dinkster"\n'
+            'namespaces=["file-export-fixture"]\n[pack.entry]\n'
+            f'nodes="{module}:HOST_NODES"\ntypes="{module}:register_inference_types"\n',
+            encoding="ascii",
+        )
+        paths = (str(tmp_path), str(Path(__file__).parent), *(p for p in sys.path if p))
+        composer = ServingComposer(
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "DINKSTER_MOUNTS_SNAPSHOT": str(mounts),
+                "PYTHONPATH": os.pathsep.join(paths),
+            }
+        )
+        try:
+            manifests = (native, fixture)
+            for manifest in manifests:
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=manifest,
+                        in_process=in_process,
+                        worker_group=None if in_process else "latent-metadata-fixture",
+                        group_manifests=() if in_process else manifests,
+                    )
+                )
+            engine = composer.composition.make_engine(lambda _event: None)
+            await engine.run(
+                Graph(
+                    nodes={
+                        "load": GraphNode("LoadLatent", {"latent": asset.to_wire()}),
+                        "save": GraphNode("SaveLatent", {"samples": Link("load", "LATENT")}),
+                    }
+                ),
+                ["save"],
+                export_snapshot=ExportSnapshot(prompt=prompt, extra_pnginfo=extra),
+            )
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+    paths = list(output.rglob("*.latent"))
+    assert len(paths) == 1
+    with safe_open(paths[0], framework="pt", device="cpu") as handle:
+        expected = (
+            None
+            if disabled
+            else {
+                "prompt": json.dumps(prompt) if prompt is not None else "",
+                **{key: json.dumps(value) for key, value in extra.items()},
+            }
+        )
+        assert handle.metadata() == expected
+        torch.testing.assert_close(handle.get_tensor("latent_tensor"), tensor, rtol=0, atol=0)
+        assert handle.get_tensor("latent_format_version_0").numel() == 0

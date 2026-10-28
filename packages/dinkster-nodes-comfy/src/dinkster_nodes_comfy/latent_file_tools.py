@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 from collections.abc import Mapping
 from typing import Any
@@ -24,6 +25,8 @@ from dinkster_api.v1 import (
     OutputSpec,
     SourceFilenameSpec,
     TypeExpr,
+    current_export_snapshot,
+    initialize_inference_process,
     materialize_latent,
 )
 
@@ -95,12 +98,25 @@ class SaveLatent(Node):
     ) -> Mapping[str, object]:
         latent = materialize_latent(samples)
         torch = importlib.import_module("torch")
+        initialize_inference_process()
+        metadata = None
+        if not importlib.import_module("dinkster_inference.cli_args").args.disable_metadata:
+            submitted = current_export_snapshot()
+            metadata = {
+                "prompt": json.dumps(dict(submitted.prompt))
+                if submitted is not None and submitted.prompt is not None
+                else ""
+            }
+            if submitted is not None and submitted.extra_pnginfo is not None:
+                metadata.update(
+                    {key: json.dumps(value) for key, value in submitted.extra_pnginfo.items()}
+                )
         data = importlib.import_module("safetensors.torch").save(
             {
                 "latent_tensor": latent["samples"].contiguous(),
                 "latent_format_version_0": torch.tensor([]),
             },
-            metadata={"prompt": ""},
+            metadata=metadata,
         )
         snapshot = os.environ.get("DINKSTER_MOUNTS_SNAPSHOT", "")
         if not snapshot:
