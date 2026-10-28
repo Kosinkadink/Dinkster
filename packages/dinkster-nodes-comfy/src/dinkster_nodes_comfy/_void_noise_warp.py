@@ -8,12 +8,6 @@ import importlib
 import logging
 from typing import Any, cast
 
-torch = importlib.import_module("torch")
-functional = importlib.import_module("torch.nn.functional")
-rearrange = importlib.import_module("einops").rearrange
-model_management = importlib.import_module("dinkster_inference.model_management")
-
-
 # ---------------------------------------------------------------------------
 # Low-level torch image helpers (drop-in replacements for rp.torch_* primitives)
 # ---------------------------------------------------------------------------
@@ -29,6 +23,7 @@ def _torch_resize_chw(
     the requested size matches the input, returns the input tensor as is
     (faster but callers must not mutate the result).
     """
+    functional = importlib.import_module("torch.nn.functional")
     if image.ndim != 3:
         raise ValueError(
             f"_torch_resize_chw expects a 3D CHW tensor, got shape {tuple(image.shape)}"
@@ -56,6 +51,8 @@ def _torch_remap_relative(image: Any, dx: Any, dy: Any, interp: str = "bilinear"
     Equivalent to ``rp.torch_remap_image(image, dx, dy, relative=True, interp=interp)``
     for ``interp`` in {"bilinear", "nearest"}.  Out-of-bounds samples are 0.
     """
+    torch = importlib.import_module("torch")
+    functional = importlib.import_module("torch.nn.functional")
     if image.ndim != 3:
         raise ValueError(
             f"_torch_remap_relative expects a 3D CHW tensor, got shape {tuple(image.shape)}"
@@ -86,6 +83,8 @@ def _torch_scatter_add_relative(image: Any, dx: Any, dy: Any) -> Any:
     Equivalent to ``rp.torch_scatter_add_image(image, dx, dy, relative=True,
     interp='floor')``.  Out-of-bounds targets are dropped.
     """
+    torch = importlib.import_module("torch")
+    rearrange = importlib.import_module("einops").rearrange
     if image.ndim != 3:
         raise ValueError(
             f"_torch_scatter_add_relative expects a 3D CHW tensor, got shape {tuple(image.shape)}"
@@ -120,6 +119,8 @@ def unique_pixels(image: Any) -> tuple[Any, Any, Any]:
     Returns ``(unique_colors [U, C], counts [U], index_matrix [H, W])`` where
     ``index_matrix[i, j]`` is the index of the unique color at that pixel.
     """
+    torch = importlib.import_module("torch")
+    rearrange = importlib.import_module("einops").rearrange
     _, h, w = image.shape
     flat = rearrange(image, "c h w -> (h w) c")
     unique_colors, inverse_indices, counts = torch.unique(
@@ -135,6 +136,8 @@ def unique_pixels(image: Any) -> tuple[Any, Any, Any]:
 
 def sum_indexed_values(image: Any, index_matrix: Any) -> Any:
     """For each unique index, sum the CHW image values at its pixels."""
+    torch = importlib.import_module("torch")
+    rearrange = importlib.import_module("einops").rearrange
     u = int(index_matrix.max().item()) + 1
     flat = rearrange(image, "c h w -> (h w) c")
     out = torch.zeros((u, flat.shape[1]), dtype=flat.dtype, device=flat.device)
@@ -144,6 +147,7 @@ def sum_indexed_values(image: Any, index_matrix: Any) -> Any:
 
 def indexed_to_image(index_matrix: Any, unique_colors: Any) -> Any:
     """Build a CHW image from an index matrix and a (U, C) color table."""
+    rearrange = importlib.import_module("einops").rearrange
     h, w = index_matrix.shape
     flat = unique_colors[index_matrix.view(-1)]
     return rearrange(flat, "(h w) c -> c h w", h=h, w=w)
@@ -157,6 +161,8 @@ def regaussianize(noise: Any) -> tuple[Any, Any]:
     foreign noise within each group and scales by ``1/sqrt(count)`` so the
     output is unit-variance gaussian again.
     """
+    torch = importlib.import_module("torch")
+    rearrange = importlib.import_module("einops").rearrange
     _, counts, index_matrix = unique_pixels(noise[:1])
 
     foreign_noise = torch.randn_like(noise)
@@ -172,6 +178,7 @@ def regaussianize(noise: Any) -> tuple[Any, Any]:
 
 def xy_meshgrid_like_image(image: Any) -> Any:
     """Return a (2, H, W) tensor of (x, y) pixel coordinates matching ``image``."""
+    torch = importlib.import_module("torch")
     _, h, w = image.shape
     y, x = torch.meshgrid(
         torch.arange(h, device=image.device, dtype=image.dtype),
@@ -183,6 +190,7 @@ def xy_meshgrid_like_image(image: Any) -> Any:
 
 def noise_to_state(noise: Any) -> Any:
     """Pack a (C, H, W) noise tensor into [dx, dy, weight, noise]."""
+    torch = importlib.import_module("torch")
     zeros = torch.zeros_like(noise[:1])
     ones = torch.ones_like(noise[:1])
     return torch.cat([zeros, zeros, ones, noise])
@@ -199,6 +207,7 @@ def warp_state(state: Any, flow: Any) -> Any:
     ``state`` has shape ``(3+c, h, w)`` (= dx, dy, weight, c noise channels).
     ``flow`` has shape ``(2, h, w)`` (= dx, dy).
     """
+    torch = importlib.import_module("torch")
     if flow.device != state.device:
         raise ValueError(
             f"warp_state: flow and state must be on the same device, "
@@ -291,7 +300,10 @@ class NoiseWarper:
     ``warp_kwargs`` are all dropped since VOIDWarpedNoise always uses defaults.
     """
 
-    def __init__(self, c: int, h: int, w: int, device: Any, dtype: Any = torch.float32) -> None:
+    def __init__(self, c: int, h: int, w: int, device: Any, dtype: Any = None) -> None:
+        torch = importlib.import_module("torch")
+        if dtype is None:
+            dtype = torch.float32
         if c <= 0 or h <= 0 or w <= 0:
             raise ValueError(f"NoiseWarper: c/h/w must all be positive, got c={c} h={h} w={w}")
         self.c = c
@@ -313,6 +325,7 @@ class NoiseWarper:
         return n * weights / (weights**2).sqrt()
 
     def __call__(self, dx: Any, dy: Any) -> "NoiseWarper":
+        torch = importlib.import_module("torch")
         if dx.shape != dy.shape:
             raise ValueError(
                 f"NoiseWarper: dx and dy must match, got {tuple(dx.shape)} vs {tuple(dy.shape)}"
@@ -348,7 +361,9 @@ class RaftOpticalFlow:
     """
 
     def __init__(self, model: Any, device: Any = None) -> None:
+        torch = importlib.import_module("torch")
         if device is None:
+            model_management = importlib.import_module("dinkster_inference.model_management")
             device = model_management.get_torch_device()
         device = torch.device(device) if not isinstance(device, torch.device) else device
 
@@ -358,6 +373,7 @@ class RaftOpticalFlow:
         self.model = model
 
     def _preprocess(self, image_chw: Any) -> Any:
+        torch = importlib.import_module("torch")
         image = image_chw.to(self.device, torch.float32)
         _, h, w = image.shape
         new_h = (h // 8) * 8
@@ -368,6 +384,7 @@ class RaftOpticalFlow:
 
     def __call__(self, from_image: Any, to_image: Any) -> Any:
         """``from_image``, ``to_image``: CHW float tensors in [0, 1]."""
+        torch = importlib.import_module("torch")
         if from_image.shape != to_image.shape:
             raise ValueError(
                 f"RaftOpticalFlow: from_image and to_image must match, "
@@ -416,6 +433,8 @@ def get_noise_from_video(
     Returns:
         ``(T, H', W', noise_channels)`` float32 noise tensor on ``device``.
     """
+    torch = importlib.import_module("torch")
+    functional = importlib.import_module("torch.nn.functional")
     if not isinstance(resize_flow, int) or resize_flow < 1:
         raise ValueError(
             f"get_noise_from_video: resize_flow must be a positive int, got {resize_flow!r}"
@@ -432,6 +451,7 @@ def get_noise_from_video(
         )
 
     if device is None:
+        model_management = importlib.import_module("dinkster_inference.model_management")
         device = model_management.get_torch_device()
     device = torch.device(device) if not isinstance(device, torch.device) else device
 
