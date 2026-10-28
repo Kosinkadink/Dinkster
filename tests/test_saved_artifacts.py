@@ -18,6 +18,7 @@ from dinkster_api.v1 import attach_saved_artifact
 from dinkster_assets import (
     AssetError,
     AssetWriter,
+    LocalAssetLibrary,
     MountSnapshotWriter,
     SaveTarget,
     digest_bytes,
@@ -398,7 +399,10 @@ def test_native_save_attachment_requires_open_context_and_snapshots_claim() -> N
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("fault", ("revoked", "readonly", "digest", "size", "unpublished", "stale"))
+@pytest.mark.parametrize(
+    "fault",
+    ("revoked", "readonly", "digest", "size", "unpublished", "stale", "hardlink", "symlink"),
+)
 def test_native_save_authority_rejects_invalid_or_revoked_publication(
     tmp_path: Path, fault: str
 ) -> None:
@@ -427,8 +431,134 @@ def test_native_save_authority_rejects_invalid_or_revoked_publication(
         published = load_write_records(root)["nested/" + ref.name]["publishedAtNs"]
         assert type(published) is int
         started = published + 1
+    elif fault == "hardlink":
+        try:
+            os.link(root / "nested" / ref.name, tmp_path / "second-link.txt")
+        except OSError as exc:
+            pytest.skip(f"hard links are unavailable: {exc}")
+    elif fault == "symlink":
+        original = root / "nested" / ref.name
+        outside = tmp_path / "outside.txt"
+        original.rename(outside)
+        symlink_or_skip(original, outside)
     with pytest.raises(AssetError):
         SavedArtifactAuthority(snapshot).capture_mounted((claim,), "save", started)
+
+
+@pytest.mark.parametrize(
+    "updates",
+    (
+        {"size": True},
+        {"size": -1},
+        {"size": MAX_SAVED_ARTIFACT_BYTES + 1},
+        {"digest": "blake3:" + "G" * 64},
+        {"virtualPath": "mounts/custom/../x.txt"},
+        {"virtualPath": "mounts/custom/other.txt"},
+        {"extra": "not allowed"},
+    ),
+)
+def test_native_save_attachment_rejects_malformed_claims(updates: dict[str, object]) -> None:
+    claim: dict[str, object] = {
+        "digest": digest_bytes(b"x"),
+        "name": "x.txt",
+        "size": 1,
+        "mediaType": "text/plain",
+        "virtualPath": "mounts/custom/x.txt",
+    }
+    with capture_saved_artifacts() as claims:
+        with pytest.raises(ValueError):
+            attach_saved_artifact({**claim, **updates})
+    assert claims == []
+
+
+@pytest.mark.parametrize("persist_index", (True, False))
+def test_native_save_attachment_survives_scan_without_refreshing_publication(
+    tmp_path: Path,
+    persist_index: bool,
+) -> None:
+    root = tmp_path / "custom"
+    root.mkdir()
+    index = tmp_path / "host-index.json"
+    if not persist_index:
+        index.mkdir()
+    snapshot = tmp_path / "mounts.json"
+    snapshot.write_text(
+        json.dumps(
+            {
+                "mounts": [
+                    {"id": "custom", "root": str(root), "mode": "readwrite", "index": str(index)}
+                ]
+            }
+        ),
+        "ascii",
+    )
+    ref = AssetWriter(MountSnapshotWriter(snapshot)).save_bytes(
+        SaveTarget("custom", "report"), b"scan-safe text", suffix=".txt", media_type="text/plain"
+    )
+    publication = load_write_records(root)[ref.name]["publishedAtNs"]
+    assert type(publication) is int
+    library = LocalAssetLibrary(root, index_path=index)
+    authority = SavedArtifactAuthority(snapshot)
+    for _ in range(2):
+        library.scan()
+        if persist_index:
+            assert load_write_records(root) == {}
+            assert json.loads(index.read_text("ascii"))[ref.name]["publishedAtNs"] == publication
+        else:
+            assert load_write_records(root)[ref.name]["publishedAtNs"] == publication
+        (artifact,) = authority.capture_mounted((ref.to_wire(),), "save", publication)
+        assert artifact.digest == digest_bytes(b"scan-safe text")
+        assert artifact.virtual_path == f"mounts/custom/{ref.name}"
+        with pytest.raises(AssetError, match="fresh writer publication"):
+            authority.capture_mounted((ref.to_wire(),), "save", publication + 1)
+    (root / ref.name).write_bytes(b"new scan bytes")
+    library.scan()
+    with pytest.raises(AssetError):
+        authority.capture_mounted((ref.to_wire(),), "save", publication)
+
+
+def test_native_save_published_after_scan_snapshot_keeps_its_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_assets import library as library_module
+
+    root = tmp_path / "custom"
+    root.mkdir()
+    snapshot = tmp_path / "mounts.json"
+    snapshot.write_text(
+        json.dumps({"mounts": [{"id": "custom", "root": str(root), "mode": "readwrite"}]}), "ascii"
+    )
+    writer = AssetWriter(MountSnapshotWriter(snapshot))
+    real_load = library_module.load_write_records
+    published: list[dict[str, object]] = []
+    publication: list[int] = []
+
+    def load_then_publish(path: Path) -> dict[str, dict[str, object]]:
+        records = real_load(path)
+        if not published:
+            ref = writer.save_bytes(
+                SaveTarget("custom", "during-scan"),
+                b"racing save",
+                suffix=".txt",
+                media_type="text/plain",
+            )
+            published.append(ref.to_wire())
+            timestamp = real_load(root)[ref.name]["publishedAtNs"]
+            assert type(timestamp) is int
+            publication.append(timestamp)
+        return records
+
+    monkeypatch.setattr(library_module, "load_write_records", load_then_publish)
+    library = LocalAssetLibrary(root)
+    library.scan()
+    authority = SavedArtifactAuthority(snapshot)
+    (artifact,) = authority.capture_mounted(published, "save", publication[0])
+    assert artifact.digest == digest_bytes(b"racing save")
+    assert artifact.virtual_path == "mounts/custom/during-scan_00001.txt"
+    library.scan()
+    assert authority.capture_mounted(published, "save", publication[0]) == (artifact,)
+    with pytest.raises(AssetError, match="fresh writer publication"):
+        authority.capture_mounted(published, "save", publication[0] + 1)
 
 
 @pytest.mark.parametrize("in_process", (True, False))

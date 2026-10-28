@@ -19,7 +19,6 @@ from dinkster_assets import (
     AssetRef,
     MountSnapshotWriter,
     classify_media_handle,
-    load_write_records,
 )
 from dinkster_assets.identity import new_hasher
 from dinkster_assets.integrity import verification_record
@@ -156,7 +155,7 @@ class SavedArtifactAuthority:
             _, mount_id, relative = ref.virtual_path.split("/", 2)
             parts = tuple(relative.split("/"))
             root = writer.writable_root(mount_id).resolve(strict=True)
-            record = load_write_records(root).get(relative)
+            record = writer.publication_record(mount_id, relative)
             if (
                 record is None
                 or record.get("digest") != ref.digest
