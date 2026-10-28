@@ -130,6 +130,11 @@ class Principal:
         """Authorize a route when any scope grants the capability."""
         return any(capability in capabilities for capabilities in self.grants.values())
 
+    @property
+    def is_operator(self) -> bool:
+        """Only a nondelegated human with settings authority can manage local storage."""
+        return self.kind == "human" and self.delegation_id is None and self.allows("settings:write")
+
     def allows_in(self, scope: str, capability: str) -> bool:
         """Authorize one capability against one resource scope."""
         if self.local:

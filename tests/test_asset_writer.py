@@ -160,6 +160,141 @@ def test_snapshot_writer_sees_live_grant_and_revoke(tmp_path: Path) -> None:
     assert again.name == "a_00002.bin"
 
 
+@pytest.mark.parametrize(
+    ("name", "collision_name"),
+    [
+        ("hero image.png", "hero image_00001.png"),
+        ("weights.safetensors", "weights_00001.safetensors"),
+        ("README", "README_00001"),
+        (".env", ".env_00001"),
+    ],
+)
+def test_named_import_preserves_name_and_never_overwrites(
+    tmp_path: Path, name: str, collision_name: str
+) -> None:
+    root = tmp_path / "imports"
+    root.mkdir()
+    LocalAssetLibrary(root, namespace="mounts/out").scan()
+    snapshot = one_mount_snapshot(tmp_path, root)
+    writer = AssetWriter(MountSnapshotWriter(snapshot))
+    target = {"mount": "out", "prefix": f"project/{name}"}
+    first = writer.save_named_stream(target, io.BytesIO(b"first bytes"), limit=11)
+    assert first.name == name
+    assert first.virtual_path == f"mounts/out/project/{name}"
+    assert (root / "project" / name).read_bytes() == b"first bytes"
+    second = writer.save_named_stream(target, io.BytesIO(b"other"), limit=5)
+    assert second.name == collision_name
+    assert (root / "project" / second.name).read_bytes() == b"other"
+    assert (root / "project" / first.name).read_bytes() == b"first bytes"
+    resolver = IndexedAssetResolver(root)
+    assert resolver.resolve(first.digest) == root / "project" / name
+    assert resolver.resolve(second.digest) == root / "project" / second.name
+    assert (first.digest, second.digest) == (digest_bytes(b"first bytes"), digest_bytes(b"other"))
+    assert not list(root.rglob(".dinkster-save-*"))
+
+
+def test_named_import_concurrent_collisions_keep_every_payload(tmp_path: Path) -> None:
+    root = tmp_path / "imports"
+    root.mkdir()
+    snapshot = one_mount_snapshot(tmp_path, root)
+    writer = AssetWriter(MountSnapshotWriter(snapshot))
+    payloads = [f"input {index}".encode() for index in range(7)]
+
+    def upload(payload: bytes):
+        return writer.save_named_stream(
+            {"mount": "out", "prefix": "original.png"},
+            io.BytesIO(payload),
+            limit=len(payload),
+        )
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        refs = list(executor.map(upload, payloads))
+    assert {ref.name for ref in refs} == {"original.png"} | {
+        f"original_{index:05d}.png" for index in range(1, 7)
+    }
+    for ref, payload in zip(refs, payloads, strict=True):
+        assert (root / ref.name).read_bytes() == payload
+        assert ref.digest == digest_bytes(payload)
+
+
+def test_named_import_refuses_failed_or_unsafe_destinations(tmp_path: Path) -> None:
+    root = tmp_path / "imports"
+    root.mkdir()
+    snapshot = one_mount_snapshot(tmp_path, root)
+    writer = AssetWriter(MountSnapshotWriter(snapshot))
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    symlink_or_skip(root / "escape", outside, target_is_directory=True)
+    target = {"mount": "out", "prefix": "escape/hero.png"}
+    with pytest.raises(AssetError, match="escapes"):
+        writer.save_named_stream(target, io.BytesIO(b"unchanged"), limit=9)
+    assert list(outside.iterdir()) == []
+    target["prefix"] = "hero.png"
+    with pytest.raises(AssetError, match="exceeds limit"):
+        writer.save_named_stream(target, io.BytesIO(b"too big"), limit=6)
+    assert not (root / "hero.png").exists()
+    assert not list(root.rglob(".dinkster-save-*"))
+    one_mount_snapshot(tmp_path, root, mode="read")
+    with pytest.raises(AssetError, match="read-only"):
+        writer.save_named_stream(target, io.BytesIO(b"read only"), limit=9)
+    one_mount_snapshot(tmp_path, root)
+    detached = tmp_path / "detached"
+    root.rename(detached)
+    with pytest.raises(AssetError, match="unavailable"):
+        writer.save_named_stream(target, io.BytesIO(b"offline"), limit=7)
+    assert not root.exists()
+    detached.rename(root)
+    snapshot.write_text('{"mounts": []}', "utf-8")
+    with pytest.raises(AssetError, match="no ready mount"):
+        writer.save_named_stream(target, io.BytesIO(b"revoked"), limit=7)
+    assert not (root / "hero.png").exists()
+
+
+def test_named_import_rechecks_grant_before_publication(tmp_path: Path) -> None:
+    root = tmp_path / "imports"
+    root.mkdir()
+    snapshot = one_mount_snapshot(tmp_path, root)
+    writer = AssetWriter(MountSnapshotWriter(snapshot))
+
+    class RevokingStream(io.BytesIO):
+        def read(self, size: int | None = -1) -> bytes:
+            data = super().read(size)
+            if not data:
+                snapshot.write_text('{"mounts": []}', "utf-8")
+            return data
+
+    with pytest.raises(AssetError, match="no ready mount"):
+        writer.save_named_stream(
+            {"mount": "out", "prefix": "hero.png"}, RevokingStream(b"received"), limit=8
+        )
+    assert not (root / "hero.png").exists()
+    assert not list(root.glob(".dinkster-save-*"))
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "../hero.png",
+        "/hero.png",
+        "x\\hero.png",
+        "CON.png",
+        "a/NUL",
+        "a/hero.",
+        "a ",
+        "a:b.png",
+        ".dinkster-asset-index.json",
+        "sub/.dinkster-asset-writer.lock",
+    ],
+)
+def test_named_import_rejects_nonportable_paths(tmp_path: Path, name: str) -> None:
+    root = tmp_path / "imports"
+    root.mkdir()
+    writer = AssetWriter(MountSnapshotWriter(one_mount_snapshot(tmp_path, root)))
+    with pytest.raises(AssetError):
+        writer.save_named_stream({"mount": "out", "prefix": name}, io.BytesIO(b"x"), limit=1)
+    assert list(root.iterdir()) == []
+
+
 def test_project_output_overrides_default_without_granting_writes(tmp_path: Path) -> None:
     snapshot = tmp_path / "snapshot.json"
     table = MountTable(snapshot)
