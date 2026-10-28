@@ -861,10 +861,11 @@ and `shared` (default `false`): a new grant belongs only to that project unless
 Shared is explicitly requested. `PUT /api/mounts/projects/<project-id>` accepts
 `{"mounts": ["first", "second"], "outputMount": "second"}` to replace the
 project's order and membership without revoking any grants. The output must be
-a writable folder in that list, or null for no project output. Excluding a
-derived folder does not alter its source installation. Existing grants are
-initialized as shared in priority order when project settings are first
-created. Project settings persist in `<library-root>/project-folders.json`;
+a writable folder in that list. Null is allowed only when the project has no
+selected output; an existing output requires a replacement before removal.
+Excluding a derived folder does not alter its source installation. Existing
+grants are initialized as shared in priority order when project settings are
+first created. Project settings persist in `<library-root>/project-folders.json`;
 mount priorities are unchanged.
 Job submissions and selection-options requests accept `project` (default
 `default`). Each accepted job pins its folder order and output selection for

@@ -621,6 +621,8 @@ async def handle_project_update(request: web.Request) -> web.Response:
         if mount is None or mount.mode != "readwrite":
             return _json_error(400, "outputMount must name a writable grant or be null")
     try:
+        if output is None and service.project_response(project)["outputMount"] is not None:
+            return _json_error(409, "select a replacement output folder for the project")
         service.projects.update(
             project, body["mounts"], available=service.mount_ids(settings=True), output=output
         )

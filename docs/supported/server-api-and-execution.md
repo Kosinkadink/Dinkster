@@ -23,6 +23,8 @@
 - Operators can persist project folder membership, independent display order,
   shared folders, and project output selections through the mount API.
   Removing a project association does not delete files or revoke the grant.
+  A selected project output requires a writable replacement before removal;
+  projects without an output can remain without one.
   Failed mounts can be explicitly rescanned after reconnecting a drive.
   Saving to a missing output root fails without recreating that root or
   redirecting the output to another folder.

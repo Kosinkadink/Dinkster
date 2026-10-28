@@ -1830,12 +1830,27 @@ def test_project_folders_persist_order_membership_and_derived_exclusions(tmp_pat
             assert (await client.delete("/api/mounts/common")).status == 409
             assert table.get("derived") is not None
             assert all(mount.id != "derived" for mount in load_mounts(config))
+            saved = config.with_name("project-folders.json").read_bytes()
+            for mounts in ([], ["first"], ["common", "first"]):
+                response = await client.put(
+                    "/api/mounts/projects/project-b",
+                    json={"mounts": mounts, "outputMount": None},
+                )
+                assert response.status == 409
+                assert config.with_name("project-folders.json").read_bytes() == saved
+                current = await (await client.get("/api/mounts?project=project-b")).json()
+                assert current["outputMount"] == "common"
+                assert current["activeOutputMount"] == "common"
+                assert [row["id"] for row in current["mounts"]] == ["common", "first"]
             response = await client.put(
                 "/api/mounts/projects/project-b",
-                json={
-                    "mounts": [],
-                    "outputMount": None,
-                },
+                json={"mounts": ["first"], "outputMount": "first"},
+            )
+            assert response.status == 200
+            assert (await response.json())["outputMount"] == "first"
+            response = await client.put(
+                "/api/mounts/projects/without-output",
+                json={"mounts": [], "outputMount": None},
             )
             assert response.status == 200
             assert (await response.json())["outputMount"] is None
@@ -1855,7 +1870,12 @@ def test_project_folders_persist_order_membership_and_derived_exclusions(tmp_pat
         "first",
         "common",
     ]
-    assert restarted.project_response("project-b")["mounts"] == []
+    project_b = restarted.project_response("project-b")
+    assert [row["id"] for row in cast(list[dict[str, object]], project_b["mounts"])] == ["first"]
+    assert project_b["outputMount"] == "first"
+    assert restarted.project_response("project-a")["outputMount"] == "common"
+    assert restarted.project_response("without-output")["mounts"] == []
+    assert restarted.project_response("without-output")["outputMount"] is None
     new_project = cast(list[dict[str, object]], restarted.project_response("new-project")["mounts"])
     assert [row["id"] for row in new_project] == [
         "derived",
@@ -2021,6 +2041,12 @@ def test_sandbox_folder_edits_preserve_live_grants_until_restart(tmp_path: Path)
             assert added["state"] == "restart-required"
             assert added["restartRequired"] is True
             assert (await client.get("/api/mounts/next/list")).status == 404
+            response = await client.put(
+                "/api/mounts/projects/default",
+                json={"mounts": ["next"], "outputMount": None},
+            )
+            assert response.status == 409
+            assert snapshot.read_bytes() == original_snapshot
             assert (await client.delete("/api/mounts/old")).status == 409
             assert (await client.put("/api/mounts/output", json={"id": "next"})).status == 200
             response = await client.delete("/api/mounts/old")
