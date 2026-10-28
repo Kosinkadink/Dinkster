@@ -292,6 +292,13 @@ previous pointer and running assignments, stops only authenticated candidate
 processes and discards newly built failed targets. A retained rollback target
 is never discarded. Process identity ambiguity leaves the journal incomplete.
 
+Initial setup records `previous: null` and the requested initial binding before
+construction. It uses the same health-before-pointer activation path. Recovery
+stops the candidate, removes any published target pointer and incomplete target,
+and retains a rolled-back journal without selecting a nonexistent predecessor.
+Every managed engine receives its explicit absolute `--generation` path, so
+candidate startup and rollback do not follow the current pointer for sources.
+
 Per-instance process receipts are private runtime state under
 `runtime/<generation>/<name>.process/<sha256 of instance>/state.json`, containing
 the instance, lifecycle state and supervisor PID. A launch guard holds the

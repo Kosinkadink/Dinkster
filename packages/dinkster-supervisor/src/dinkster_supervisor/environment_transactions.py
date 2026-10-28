@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import socket
 import time
@@ -16,8 +17,33 @@ from .environment_runtime import (
     require_idle,
     start_engine,
     stop_engine,
+    validate_assignment,
 )
 from .environment_state import EnvironmentError, Generation, Journal, read_current, set_current
+
+
+def begin_setup(
+    root: Path, target: int, port: int, gpus: tuple[str, ...] = (), *, name: str = "main"
+) -> Path:
+    """Record the initial binding before construction; caller holds the writer lock."""
+    if read_current(root) is not None:
+        raise EnvironmentError("project already has an active generation")
+    if any(Journal.read(path).incomplete for path in (root / "journal").glob("*.json")):
+        raise EnvironmentError("incomplete environment operation requires recovery first")
+    if (root / "generations" / str(target)).exists():
+        raise EnvironmentError("new generation target already exists")
+    validate_assignment(target, name, port, gpus)
+    require_idle(root)
+    binding: dict[str, object] = {
+        "name": name,
+        "port": port,
+        "targetPort": port,
+        "gpus": list(gpus),
+        "running": True,
+    }
+    path = root / "journal" / f"{time.time_ns()}.json"
+    Journal("setup", None, target, "planned", bindings=(binding,)).write(path)
+    return path
 
 
 def begin_activation(root: Path, target: int, operation: str) -> Path:
@@ -56,7 +82,7 @@ def begin_activation(root: Path, target: int, operation: str) -> Path:
 def activate(root: Path, path: Path, *, revalidate: Callable[[], None]) -> None:
     """Health-check every candidate before switching; preserve the old tree on failure."""
     journal = Journal.read(path)
-    if not journal.incomplete or journal.operation not in {"update", "rollback", "repair"}:
+    if not journal.incomplete or journal.operation not in {"setup", "update", "rollback", "repair"}:
         raise EnvironmentError("journal does not describe a pending generation activation")
     if read_current(root) != journal.previous:
         raise EnvironmentError("current changed after activation was planned")
@@ -90,7 +116,7 @@ def activate(root: Path, path: Path, *, revalidate: Callable[[], None]) -> None:
         journal.write(path)
         set_current(root, journal.target)
         for binding in journal.bindings:
-            if binding["running"]:
+            if binding["running"] and journal.previous is not None:
                 stop_engine(root, cast("str", binding["name"]), generation=journal.previous)
         replace(journal, stage="complete").write(path)
     except Exception as exc:
@@ -104,15 +130,26 @@ def recover_activation(root: Path, path: Path) -> None:
     journal = Journal.read(path)
     if not journal.incomplete:
         return
-    if journal.operation not in {"update", "rollback", "repair"} or journal.previous is None:
+    if journal.operation not in {"setup", "update", "rollback", "repair"}:
         raise EnvironmentError("journal operation does not support activation recovery")
+    if (journal.previous is None) != (journal.operation == "setup"):
+        raise EnvironmentError("journal previous generation does not match its operation")
     if read_current(root) not in {journal.previous, journal.target}:
         raise EnvironmentError("current does not match interrupted activation")
     for binding in journal.bindings:
         stop_engine(root, cast("str", binding["name"]), generation=journal.target)
-    set_current(root, journal.previous)
+    if journal.previous is None:
+        (root / "current").unlink(missing_ok=True)
+        if os.name != "nt":
+            directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+    else:
+        set_current(root, journal.previous)
     for binding in journal.bindings:
-        if binding["running"]:
+        if binding["running"] and journal.previous is not None:
             start_engine(
                 root,
                 journal.previous,

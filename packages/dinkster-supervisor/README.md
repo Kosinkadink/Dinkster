@@ -253,6 +253,9 @@ but its file is never removed. Apply rechecks project/current under lock and
 recovers incomplete activation journals before performing another mutation.
 
 Runtime launches the generation interpreter through the independent supervisor.
+The engine receives `--generation <absolute-generation-root>` explicitly,
+including before the pointer switch and when reactivating a retained tree.
+Source selection never follows the working directory or the current pointer.
 Public engine rows contain `name`, `generation`, `state` and `url`; private
 `runtime/<generation>/<name>.json` records retain process identity and shutdown
 credentials. This permits old and candidate same-name bindings to coexist;
@@ -277,6 +280,12 @@ target processes, restores the previous pointer and running assignments, removes
 only a newly constructed failed target, and marks the journal `rolled-back`.
 A rollback target is retained even if its activation fails. Ambiguous process
 identity leaves the journal incomplete rather than killing an unrelated process.
+
+Initial activation uses the same journal with operation `setup` and previous
+`null`. `begin_setup` records only the requested binding, port and devices before
+construction. Activation publishes `current` only after target health succeeds.
+Interrupted setup stops its candidate, removes any target pointer and incomplete
+tree, and retains the rolled-back journal; it does not invent a prior generation.
 
 Managed supervisors also use a private per-instance lifecycle directory at
 `runtime/<generation>/<name>.process/<sha256 of instance>/`. Its persistent

@@ -99,6 +99,8 @@ def start_engine(
         str(python),
         "-m",
         "dinkster.serve",
+        "--generation",
+        str(target),
     ]
     log_path = _runtime_path(root, name, generation).with_suffix(".log")
     with log_path.open("ab") as log:

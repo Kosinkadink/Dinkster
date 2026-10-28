@@ -28,6 +28,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 parser = argparse.ArgumentParser()
 parser.add_argument('--host', required=True)
 parser.add_argument('--port', type=int, required=True)
+parser.add_argument('--generation', required=True)
 args = parser.parse_args()
 
 class Handler(BaseHTTPRequestHandler):
@@ -39,6 +40,8 @@ class Handler(BaseHTTPRequestHandler):
                 body = json.load(source)
         elif self.path == '/api/cuda':
             body = {'cuda': os.environ.get('CUDA_VISIBLE_DEVICES')}
+        elif self.path == '/api/generation':
+            body = {'generation': args.generation}
         else:
             self.send_error(404)
             return
@@ -110,6 +113,8 @@ def test_start_status_idempotence_and_stop(tmp_path: Path, monkeypatch: pytest.M
         }
         with urlopen(f"http://127.0.0.1:{port}/api/cuda") as response:  # noqa: S310
             assert json.loads(response.read()) == {"cuda": "0,GPU-aB12"}
+        with urlopen(f"http://127.0.0.1:{port}/api/generation") as response:  # noqa: S310
+            assert json.loads(response.read()) == {"generation": str(tmp_path / "generations/1")}
         assert engine_status(tmp_path) == (row,)
         assert start_engine(tmp_path, 1, "main", port, ("0", "GPU-aB12")) == row
         with pytest.raises(EnvironmentError, match="stop it first"):

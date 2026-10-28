@@ -9,6 +9,7 @@ import sys
 from contextlib import suppress
 from dataclasses import replace
 from pathlib import Path
+from urllib.request import urlopen
 
 import pytest
 from dinkster_supervisor.environment_runtime import engine_status, start_engine, stop_engine
@@ -23,6 +24,7 @@ from dinkster_supervisor.environment_state import (
 from dinkster_supervisor.environment_transactions import (
     activate,
     begin_activation,
+    begin_setup,
     recover_activation,
 )
 from test_environment_cli import _run
@@ -49,6 +51,80 @@ def _target(root: Path, number: int) -> Path:
     return target
 
 
+@pytest.mark.parametrize("interruption", [None, "before-switch", "after-switch"])
+def test_first_setup_publishes_only_a_healthy_engine_and_recovers_without_previous_generation(
+    tmp_path: Path, interruption: str | None
+) -> None:
+    port = free_port()
+    path = begin_setup(tmp_path, 1, port, ("GPU-aB12",), name="compute")
+    assert read_current(tmp_path) is None
+    assert Journal.read(path).previous is None
+    _target(tmp_path, 1)
+    (tmp_path / "current").unlink()
+    script = """
+import os
+import sys
+from pathlib import Path
+from dinkster_supervisor import environment_transactions as transactions
+root, journal = Path(sys.argv[1]), Path(sys.argv[2])
+def interrupted():
+    os._exit(71)
+if sys.argv[3] == 'after-switch':
+    original = transactions.set_current
+    def switch_then_interrupt(root, number):
+        original(root, number)
+        interrupted()
+    transactions.set_current = switch_then_interrupt
+    transactions.activate(root, journal, revalidate=lambda: None)
+else:
+    transactions.activate(root, journal, revalidate=interrupted)
+"""
+    try:
+        if interruption is None:
+            activate(tmp_path, path, revalidate=lambda: None)
+            assert read_current(tmp_path) == 1
+            assert engine_status(tmp_path) == (
+                {
+                    "name": "compute",
+                    "generation": 1,
+                    "state": "ready",
+                    "url": f"http://127.0.0.1:{port}",
+                },
+            )
+            with urlopen(f"http://127.0.0.1:{port}/api/cuda") as response:  # noqa: S310
+                assert json.loads(response.read()) == {"cuda": "GPU-aB12"}
+            assert Journal.read(path).stage == "complete"
+            with pytest.raises(EnvironmentError, match="already has an active"):
+                begin_setup(tmp_path, 2, free_port())
+        else:
+            exited = subprocess.run(
+                [sys.executable, "-c", script, str(tmp_path), str(path), interruption],
+                capture_output=True,
+                text=True,
+                timeout=45,
+            )
+            assert exited.returncode == 71, exited.stderr
+            assert Journal.read(path).incomplete
+            recover_activation(tmp_path, path)
+            assert read_current(tmp_path) is None
+            assert engine_status(tmp_path) == (
+                {
+                    "name": "compute",
+                    "generation": 1,
+                    "state": "stopped",
+                    "url": f"http://127.0.0.1:{port}",
+                },
+            )
+            assert not (tmp_path / "generations/1").exists()
+            assert Journal.read(path).stage == "rolled-back"
+            recover_activation(tmp_path, path)
+            next_path = begin_setup(tmp_path, 1, port)
+            assert Journal.read(next_path).incomplete
+            recover_activation(tmp_path, next_path)
+    finally:
+        stop_engine(tmp_path, "compute", generation=1)
+
+
 def test_update_and_rollback_reactivate_retained_tree_without_rebuild(tmp_path: Path) -> None:
     retained = _target(tmp_path, 1)
     before = (retained / "generation.json").read_bytes()
@@ -72,8 +148,15 @@ def test_update_and_rollback_reactivate_retained_tree_without_rebuild(tmp_path: 
     parked_path.write_bytes(stale_parked)
     path = begin_activation(tmp_path, 2, "update")
     _target(tmp_path, 2)
+
+    def revalidate() -> None:
+        assert read_current(tmp_path) == 1
+        binding = next(row for row in Journal.read(path).bindings if row["name"] == "main")
+        with urlopen(f"http://127.0.0.1:{binding['targetPort']}/api/generation") as response:  # noqa: S310
+            assert json.loads(response.read()) == {"generation": str(tmp_path / "generations/2")}
+
     try:
-        activate(tmp_path, path, revalidate=lambda: None)
+        activate(tmp_path, path, revalidate=revalidate)
         assert read_current(tmp_path) == 2
         assert engine_status(tmp_path)[0]["state"] == "ready"
         assert engine_status(tmp_path)[0]["generation"] == 2
@@ -90,6 +173,8 @@ def test_update_and_rollback_reactivate_retained_tree_without_rebuild(tmp_path: 
         assert read_current(tmp_path) == 1
         assert engine_status(tmp_path)[0]["state"] == "ready"
         assert engine_status(tmp_path)[1]["state"] == "stopped"
+        with urlopen(str(applied["engines"][0]["url"]) + "/api/generation") as response:  # noqa: S310
+            assert json.loads(response.read()) == {"generation": str(tmp_path / "generations/1")}
         assert (retained / "generation.json").read_bytes() == before
         after = interpreter(retained).stat()
         assert (after.st_ino, after.st_size, after.st_mtime_ns) == (
