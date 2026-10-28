@@ -17,6 +17,7 @@ from scripts.build_release import (
     build_source_archive,
     development_version,
     release_version,
+    stage_external_wheels,
     versioned_sources,
     workspace_projects,
     write_constraints,
@@ -395,6 +396,98 @@ def test_engine_constraints_include_the_locked_base_but_not_the_dev_tools(tmp_pa
     assert "pytest==" not in constraints
     assert "pyright==" not in constraints
     assert "--index-url" not in constraints
+
+
+def test_external_payload_omits_only_exact_members_shared_by_all_target_bases(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "candidates"
+    source.mkdir()
+    wheels = []
+    records = []
+    for name in ("common", "transitive", "cpu_only", "changed_hash", "changed_size"):
+        wheel = source / f"{name}-1.0-py3-none-any.whl"
+        wheel.write_bytes(name.encode())
+        wheels.append(wheel)
+        records.append(
+            {
+                "name": name,
+                "version": "1.0",
+                "filename": wheel.name,
+                "size": wheel.stat().st_size,
+                "sha256": hashlib.sha256(wheel.read_bytes()).hexdigest(),
+                "index": "https://pypi.org/simple",
+                "url": f"https://example.invalid/{wheel.name}",
+            }
+        )
+    (tmp_path / "uv.lock").write_text(
+        "[[package]]\nname = 'fixture'\nversion = '1.0'\nwheels = [\n"
+        + "\n".join(
+            f"{{url = '{row['url']}', size = {row['size']}, hash = 'sha256:{row['sha256']}'}},"
+            for row in records
+        )
+        + "\n{url = 'https://example.invalid/unsized.whl', hash = 'sha256:"
+        + "0" * 64
+        + "'},"
+        + "\n]\n"
+    )
+    manifests = []
+    for variant in ("cpu", "cuda"):
+        members = [dict(row) for row in records]
+        if variant == "cuda":
+            members = [row for row in members if row["name"] != "cpu_only"]
+            next(row for row in members if row["name"] == "changed_hash")["sha256"] = "0" * 64
+            next(row for row in members if row["name"] == "changed_size")["size"] += 1
+        manifest = {
+            "format": "dinkster.base/1",
+            "variant": variant,
+            "platform": {"os": "linux", "arch": "x86_64"},
+            "python": "3.14.0",
+            "interpreter": {},
+            "wheels": members,
+            "workerProtocol": 1,
+            "nvidia": None,
+        }
+        manifest["id"] = (
+            "sha256:"
+            + hashlib.sha256(
+                json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("ascii")
+            ).hexdigest()
+        )
+        manifest["parts"] = []
+        manifest["signature"] = None
+        path = tmp_path / f"{variant}.json"
+        path.write_text(json.dumps(manifest))
+        manifests.append(path)
+
+    for label, bases, targets, expected in (
+        ("shared", manifests, {"cpu", "cuda"}, {wheel.name for wheel in wheels[2:]}),
+        ("none", [], {"cpu", "cuda"}, {wheel.name for wheel in wheels}),
+        ("partial", manifests[:1], {"cpu", "cuda"}, {wheel.name for wheel in wheels}),
+    ):
+        output = tmp_path / label
+        output.mkdir()
+        staged = stage_external_wheels(tmp_path, output, wheels, bases, targets)
+        assert {wheel.name for wheel in staged} == expected
+        assert {wheel.name for wheel in output.iterdir()} == expected
+        assert all(wheel.read_bytes() == (source / wheel.name).read_bytes() for wheel in staged)
+
+    with pytest.raises(ValueError, match="unexpected or duplicate base variant"):
+        stage_external_wheels(tmp_path, tmp_path, [], manifests, {"cpu"})
+    with pytest.raises(ValueError, match="unexpected or duplicate base variant"):
+        stage_external_wheels(tmp_path, tmp_path, [], manifests[:1] * 2, {"cpu"})
+    damaged = json.loads(manifests[0].read_text())
+    damaged["python"] = "3.14.1"
+    manifests[0].write_text(json.dumps(damaged))
+    with pytest.raises(ValueError, match="id does not match"):
+        stage_external_wheels(tmp_path, tmp_path, [], manifests[:1], {"cpu"})
+    damaged["format"] = "another.base/1"
+    manifests[0].write_text(json.dumps(damaged))
+    with pytest.raises(ValueError, match="unsupported base manifest format"):
+        stage_external_wheels(tmp_path, tmp_path, [], manifests[:1], {"cpu"})
+    wheels[0].write_bytes(b"tampered")
+    with pytest.raises(ValueError, match="does not match a locked artifact"):
+        stage_external_wheels(tmp_path, tmp_path, wheels[:1], [], set())
 
 
 def test_main_release_retention_preserves_stable_drafts_and_newest_fifty(

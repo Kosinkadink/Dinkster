@@ -16,6 +16,7 @@ import zipfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 TAG_PATTERN = re.compile(r"v(?P<version>[0-9]+\.[0-9]+\.[0-9]+)")
 
@@ -213,6 +214,70 @@ def write_constraints(root: Path, output: Path, wheels: list[Path], uv: str) -> 
     return constraints
 
 
+def stage_external_wheels(
+    root: Path,
+    output: Path,
+    candidates: list[Path],
+    base_manifests: list[Path],
+    target_variants: set[str],
+) -> list[Path]:
+    """Omit only locked artifacts proven present in every selected target base."""
+    bases: dict[str, set[tuple[str, int, str]]] = {}
+    identity_fields = (
+        "format",
+        "variant",
+        "platform",
+        "python",
+        "interpreter",
+        "wheels",
+        "workerProtocol",
+        "nvidia",
+    )
+    for path in base_manifests:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        if manifest.get("format") != "dinkster.base/1":
+            raise ValueError(f"unsupported base manifest format: {path}")
+        variant = manifest.get("variant")
+        if variant not in target_variants or variant in bases:
+            raise ValueError(f"unexpected or duplicate base variant {variant!r}: {path}")
+        payload = {key: manifest[key] for key in identity_fields}
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("ascii")
+        if manifest.get("id") != "sha256:" + hashlib.sha256(canonical).hexdigest():
+            raise ValueError(f"base manifest id does not match its payload: {path}")
+        bases[variant] = {
+            (wheel["filename"], wheel["size"], wheel["sha256"]) for wheel in manifest["wheels"]
+        }
+
+    lock = tomllib.loads((root / "uv.lock").read_text(encoding="utf-8"))
+    locked = {
+        (
+            unquote(urlsplit(wheel["url"]).path).rsplit("/", 1)[-1],
+            wheel["size"],
+            wheel["hash"].removeprefix("sha256:"),
+        )
+        for package in lock["package"]
+        for wheel in package.get("wheels", [])
+        if "size" in wheel and wheel["hash"].startswith("sha256:")
+    }
+    staged = []
+    for candidate in candidates:
+        identity = (candidate.name, candidate.stat().st_size, sha256(candidate))
+        if candidate.suffix != ".whl" or identity not in locked:
+            raise ValueError(f"external wheel does not match a locked artifact: {candidate}")
+        if (
+            bases
+            and bases.keys() == target_variants
+            and all(identity in members for members in bases.values())
+        ):
+            continue
+        target = output / candidate.name
+        if target.exists():
+            raise ValueError(f"duplicate release artifact: {candidate.name}")
+        shutil.copyfile(candidate, target)
+        staged.append(target)
+    return staged
+
+
 def build(
     root: Path,
     output: Path,
@@ -221,6 +286,9 @@ def build(
     frontend_dist: Path,
     *,
     uv: str = "uv",
+    external_wheels: list[Path] | None = None,
+    base_manifests: list[Path] | None = None,
+    target_variants: set[str] | None = None,
 ) -> dict[str, object]:
     version = release_version(root, tag) if tag else development_version(root)
     sources = json.loads((root / "scripts/release_sources.json").read_text(encoding="utf-8"))
@@ -242,8 +310,11 @@ def build(
         extra = sorted(actual - expected)
         raise ValueError(f"wheel set mismatch: missing={missing}, extra={extra}")
     constraints = write_constraints(root, output, wheels, uv)
+    external = stage_external_wheels(
+        root, output, external_wheels or [], base_manifests or [], target_variants or set()
+    )
     source = build_source_archive(root, version, output)
-    artifacts = sorted([*wheels, constraints, source], key=lambda path: path.name)
+    artifacts = sorted([*wheels, *external, constraints, source], key=lambda path: path.name)
     boundary = (root / "packages/dinkster-workers/src/dinkster_workers/boundary.py").read_text()
     protocol = re.search(r"(?m)^PROTOCOL_VERSION = ([0-9]+)$", boundary)
     if protocol is None:
@@ -277,6 +348,9 @@ if __name__ == "__main__":
     parser.add_argument("--frontend-dist", type=Path, required=True)
     parser.add_argument("--output", type=Path, default=Path("dist"))
     parser.add_argument("--uv", default="uv")
+    parser.add_argument("--external-wheel", type=Path, action="append", default=[])
+    parser.add_argument("--base-manifest", type=Path, action="append", default=[])
+    parser.add_argument("--target-variant", action="append", default=[])
     args = parser.parse_args()
     build(
         Path(__file__).resolve().parent.parent,
@@ -285,4 +359,7 @@ if __name__ == "__main__":
         args.frontend_root.resolve(),
         args.frontend_dist.resolve(),
         uv=args.uv,
+        external_wheels=args.external_wheel,
+        base_manifests=args.base_manifest,
+        target_variants=set(args.target_variant),
     )

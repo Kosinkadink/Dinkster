@@ -385,6 +385,17 @@ not itself or `SHA256SUMS`, avoiding a circular digest. Artifact names are
 basenames relative to the release directory. Clients verify the manifest
 against the channel id before trusting its artifact hashes.
 
+The builder accepts repeated `--external-wheel PATH` candidates and checks
+each filename, size and SHA-256 against `uv.lock` before staging it. External
+wheels are release payloads, not entries in `workspaceWheels` for PyPI upload.
+Repeated `--base-manifest PATH` inputs use the existing `dinkster.base/1`
+manifest, including its canonical id, and `--target-variant NAME` identifies
+the selected targets. Only an exact filename/size/SHA-256 member present in
+every selected base can be omitted from a shared release. An unexpected or
+duplicate variant fails; incomplete or absent base coverage retains all
+candidates. The base's full transitive `wheels` list is authoritative, not a
+union of package names or a list of closure seeds.
+
 The non-default `engine-base` dependency group carries torch 2.14.1,
 torchvision 0.29.1, numpy 2.5.1 and contrib-headless OpenCV 5.0.0.93 in
 `uv.lock`. Ordinary `uv sync --locked --all-packages` does not install
