@@ -123,6 +123,7 @@ from dinkster_protocol import (
     ReplicaId,
     ReplicaRecipeId,
     SamplerRegistrySnapshot,
+    SavedArtifact,
     SemanticSlot,
     SingleJobMultiGpuConfig,
     SingleJobMultiGpuExecution,
@@ -243,6 +244,7 @@ from dinkster_workers.catalog import (
 from dinkster_workers.host import load_pack as load_host_pack
 from dinkster_workers.manifest import validate_registration_claims
 from dinkster_workers.preview_artifacts import PreviewArtifactPublisher
+from dinkster_workers.saved_artifacts import SavedArtifactAuthority
 from dinkster_workers.session import WorkerDied
 
 from .extension_assets import read_module, resolve_frontend_modules
@@ -2471,6 +2473,10 @@ class ServingComposer:
         self._preview_artifacts = PreviewArtifactPublisher(
             AssetVault(vault_root) if vault_root else None
         )
+        mounts_snapshot = self._worker_env.get("DINKSTER_MOUNTS_SNAPSHOT") or os.environ.get(
+            "DINKSTER_MOUNTS_SNAPSHOT"
+        )
+        self._saved_artifacts = SavedArtifactAuthority(mounts_snapshot) if mounts_snapshot else None
         # The asset base URL composed remote workers offer their daemons
         # as a staging source (pull-over-HTTP asset endpoint URL
         # shape), plus the bearer credential for it when this engine
@@ -2563,6 +2569,7 @@ class ServingComposer:
         empty_runtime = ExecutionRuntime(
             worker=self._routing,
             publish_preview_artifacts=self._preview_artifacts,
+            validate_saved_artifacts=self._validate_saved_artifacts,
             plan_execution=plan_core,
             owner_alive=self._owner_alive,
             extension_snapshot=ExtensionSnapshot(frontend_api=FRONTEND_API_VERSION),
@@ -2592,6 +2599,15 @@ class ServingComposer:
             _isolated=[],
             dev=dev,
             explain_misses=explain_misses,
+        )
+
+    async def _validate_saved_artifacts(
+        self, node_id: str, claims: Sequence[Mapping[str, object]], started_at_ns: int
+    ) -> tuple[SavedArtifact, ...]:
+        if self._saved_artifacts is None:
+            raise CompositionError("saved artifact attachment requires a host mounts snapshot")
+        return await asyncio.to_thread(
+            self._saved_artifacts.capture_mounted, claims, node_id, started_at_ns
         )
 
     def spawn_empty(
@@ -3844,6 +3860,7 @@ class ServingComposer:
             ExecutionRuntime(
                 worker=worker,
                 publish_preview_artifacts=self._preview_artifacts,
+                validate_saved_artifacts=self._validate_saved_artifacts,
                 plan_execution=plan_execution,
                 resolve_providers=resolve_providers,
                 preflight_provider_assets=preflight_provider_assets,
@@ -5157,9 +5174,6 @@ class ServingComposer:
         staged_registry = composition._registry.copy()
         worker: Any = None
         if spec.in_process:
-            mounts_snapshot = self._worker_environment(spec, (manifest,)).get(
-                "DINKSTER_MOUNTS_SNAPSHOT"
-            ) or os.environ.get("DINKSTER_MOUNTS_SNAPSHOT")
             pack_tenant_registry = (
                 reused_in_process.tenant_registrations
                 if reused_in_process is not None
@@ -5181,7 +5195,6 @@ class ServingComposer:
                     pack_context=pack_context,
                     import_from_pack_root=True,
                     registry=current_registry,
-                    mounts_snapshot=mounts_snapshot,
                 )
                 loaded.append(loaded_worker)
                 self._validate_body_arms(manifest, loaded_worker)
@@ -5205,7 +5218,6 @@ class ServingComposer:
                         pack_context=pack_context,
                         import_from_pack_root=True,
                         registry=staged_registry,
-                        mounts_snapshot=mounts_snapshot,
                     )
             except BaseException:
                 if tenant_proxy is not None:

@@ -19,8 +19,6 @@ from dataclasses import replace
 from types import MappingProxyType
 from typing import cast
 
-from dinkster_assets import AssetError
-from dinkster_assets.writer import capture_saved_assets
 from dinkster_memory import FullReleaseConsumer, Shedder
 from dinkster_memory.resident import ResidentPool
 from dinkster_protocol import (
@@ -49,7 +47,6 @@ from dinkster_protocol import (
     NodeError,
     OnInvocationEvent,
     PresentOutput,
-    SavedArtifact,
     SavedArtifactCandidate,
     canonical_attention_route_token_bytes,
     derive_attention_route_token,
@@ -88,7 +85,11 @@ from dinkster_schema import (
     use_reporter,
 )
 from dinkster_schema.media import media_diagnostics
-from dinkster_schema.reporting import capture_preview_artifacts, capture_value_diagnostics
+from dinkster_schema.reporting import (
+    capture_preview_artifacts,
+    capture_saved_artifacts,
+    capture_value_diagnostics,
+)
 from dinkster_values import (
     TypeRegistry,
     UnresolvablePayload,
@@ -215,14 +216,9 @@ class InProcessWorker:
         lazy_choices: Mapping[str, Callable[[], Sequence[str]]] | None = None,
         memory_consumers: Mapping[str, Shedder] | None = None,
         registered_types: tuple[str, ...] = (),
-        artifact_authority: Callable[
-            [Sequence[SavedArtifactCandidate], str, int], tuple[SavedArtifact, ...]
-        ]
-        | None = None,
     ) -> None:
         self._node_types = dict(node_types)
         self._registry = registry
-        self._artifact_authority = artifact_authority
         self.registered_types = registered_types
         self._pack_context = pack_context or contextlib.nullcontext
         if attention_route_token is not None and not isinstance(
@@ -657,7 +653,7 @@ class InProcessWorker:
                 capture,
                 capture_value_diagnostics() as pack_diagnostics,
                 capture_preview_artifacts() as preview_artifacts,
-                capture_saved_assets() as saved_assets,
+                capture_saved_artifacts() as saved_artifact_claims,
             ):
                 if inspect.iscoroutinefunction(cls.execute):
                     raw = await cls.execute(**kwargs)
@@ -703,33 +699,10 @@ class InProcessWorker:
                     )
                 result = replace(
                     result,
-                    artifact_candidates=tuple(artifact_candidates)
-                    + tuple(
-                        SavedArtifactCandidate(
-                            invocation.node_id,
-                            ref.name,
-                            ref.virtual_path.split("/", 2)[2].rpartition("/")[0],
-                            "output",
-                            ref.to_wire(),
-                        )
-                        for ref in saved_assets
-                    ),
+                    artifact_candidates=tuple(artifact_candidates),
                     preview_artifacts=tuple(preview_artifacts),
+                    saved_artifact_claims=tuple(saved_artifact_claims),
                 )
-                if result.artifact_candidates and self._artifact_authority is not None:
-                    try:
-                        artifacts = await asyncio.to_thread(
-                            self._artifact_authority,
-                            result.artifact_candidates,
-                            invocation.node_id,
-                            started_at_ns,
-                        )
-                    except (AssetError, OSError) as exc:
-                        result = InvocationResult(
-                            error=NodeError(invocation.node_id, invocation.node_type, str(exc))
-                        )
-                    else:
-                        result = replace(result, artifacts=artifacts, artifact_candidates=())
         finally:
             if close_reporter is not None:
                 await close_reporter()

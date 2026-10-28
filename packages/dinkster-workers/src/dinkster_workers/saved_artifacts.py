@@ -1,11 +1,11 @@
-"""Host authority for untrusted mounted saved-file reports."""
+"""Host authority for untrusted ComfyUI saved-output reports."""
 
 from __future__ import annotations
 
 import contextlib
 import os
 import stat
-from collections.abc import Callable, Generator, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import BinaryIO
@@ -18,13 +18,13 @@ from dinkster_assets import (
     AssetError,
     AssetRef,
     MountSnapshotWriter,
-    SaveTarget,
     classify_media_handle,
 )
 from dinkster_assets.identity import new_hasher
 from dinkster_assets.integrity import verification_record
 from dinkster_assets.library import append_write_record
 from dinkster_protocol import SavedArtifact, SavedArtifactCandidate
+from dinkster_schema.reporting import attach_saved_artifact, capture_saved_artifacts
 from dinkster_values import MEBIBYTE, SAVED_ARTIFACT_LIMIT_BYTES
 
 MAX_SAVED_ARTIFACTS = 64
@@ -83,29 +83,6 @@ def validate_candidate(candidate: SavedArtifactCandidate) -> tuple[str, tuple[st
     parts = tuple(subfolder.split("/")) if subfolder else ()
     if any(part in ("", ".", "..") for part in parts):
         raise AssetError("saved artifact subfolder contains an unsafe path segment")
-    if candidate.asset is not None:
-        wire = candidate.asset
-        if set(wire) != {
-            "digest",
-            "name",
-            "size",
-            "mediaType",
-            "virtualPath",
-        }:
-            raise AssetError("saved asset must be an exact asset reference")
-        _bounded_text(wire["digest"], "digest", 71)
-        _bounded_text(wire["name"], "name", MAX_ARTIFACT_FILENAME)
-        _bounded_text(wire["mediaType"], "mediaType", 255)
-        path = _bounded_text(wire["virtualPath"], "virtualPath", 2048)
-        if type(wire["size"]) is not int or not 0 <= wire["size"] <= MAX_SAVED_ARTIFACT_BYTES:
-            raise AssetError("saved asset size is invalid")
-        ref = AssetRef.from_wire(wire)
-        path_parts = path.split("/", 2)
-        if len(path_parts) != 3 or path_parts[0] != MOUNT_NAMESPACE:
-            raise AssetError("saved asset requires a mounted path")
-        SaveTarget(path_parts[1], path_parts[2])
-        if ref.name != filename or path_parts[2] != "/".join((*parts, filename)):
-            raise AssetError("saved asset does not match the reported filename")
     return filename, parts
 
 
@@ -164,6 +141,54 @@ class SavedArtifactAuthority:
     def __init__(self, mounts_snapshot: Path | str) -> None:
         self._snapshot = Path(mounts_snapshot)
 
+    def capture_mounted(
+        self, claims: Sequence[Mapping[str, object]], node_id: str, started_at_ns: int
+    ) -> tuple[SavedArtifact, ...]:
+        """Validate explicit native Save attachments, never ordinary ASSET outputs."""
+        with capture_saved_artifacts() as validated:
+            for claim in claims:
+                attach_saved_artifact(claim)
+        artifacts: dict[str, SavedArtifact] = {}
+        writer = MountSnapshotWriter(self._snapshot)
+        for claim in validated:
+            ref = AssetRef.from_wire(claim)
+            _, mount_id, relative = ref.virtual_path.split("/", 2)
+            parts = tuple(relative.split("/"))
+            root = writer.writable_root(mount_id).resolve(strict=True)
+            record = writer.publication_record(mount_id, relative)
+            if (
+                record is None
+                or record.get("digest") != ref.digest
+                or record.get("size") != ref.size
+            ):
+                raise AssetError("saved artifact has no matching writer publication record")
+            published = record.get("publishedAtNs")
+            if type(published) is not int or published < started_at_ns:
+                raise AssetError("saved artifact has no fresh writer publication")
+            try:
+                with _open_candidate(root, parts[:-1], parts[-1]) as (handle, restat_path):
+                    before = os.fstat(handle.fileno())
+                    if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+                        raise AssetError("saved artifact must be a regular nonlinked file")
+                    if before.st_size != ref.size or before.st_mtime_ns != record.get("mtimeNs"):
+                        raise AssetError("saved artifact differs from writer publication")
+                    if _digest_handle(handle) != ref.digest:
+                        raise AssetError("saved artifact digest does not match file bytes")
+                    after = os.fstat(handle.fileno())
+                    path_stat = restat_path()
+            except OSError as exc:
+                raise AssetError(f"saved artifact could not be opened safely: {exc}") from exc
+            if any(getattr(before, key) != getattr(after, key) for key in _HANDLE_STABLE_FIELDS):
+                raise AssetError("saved artifact changed while it was being validated")
+            if any(getattr(after, key) != getattr(path_stat, key) for key in _PATH_STABLE_FIELDS):
+                raise AssetError("saved artifact path changed while it was being validated")
+            if writer.writable_root(mount_id).resolve(strict=True) != root:
+                raise AssetError("saved artifact mount changed during validation")
+            artifacts[ref.virtual_path] = SavedArtifact(
+                node_id, ref.digest, ref.name, ref.size, ref.media_type, ref.virtual_path
+            )
+        return tuple(artifacts.values())
+
     def capture(
         self,
         candidates: Sequence[SavedArtifactCandidate],
@@ -172,19 +197,18 @@ class SavedArtifactAuthority:
     ) -> tuple[SavedArtifact, ...]:
         if len(candidates) > MAX_SAVED_ARTIFACTS:
             raise AssetError(f"saved artifact candidate count exceeds {MAX_SAVED_ARTIFACTS}")
-        authority = MountSnapshotWriter(self._snapshot)
+        root = (
+            MountSnapshotWriter(self._snapshot).writable_root("comfy-output").resolve(strict=True)
+        )
         artifacts: list[SavedArtifact] = []
         seen: set[tuple[str, str]] = set()
         for candidate in candidates:
             if candidate.node_id != node_id:
                 raise AssetError("saved artifact nodeId does not match the invocation")
             filename, parts = validate_candidate(candidate)
-            ref = AssetRef.from_wire(candidate.asset) if candidate.asset is not None else None
-            mount = ref.virtual_path.split("/", 2)[1] if ref is not None else "comfy-output"
-            root = authority.writable_root(mount).resolve(strict=True)
             relative = Path(*parts, filename)
             relative_text = relative.as_posix()
-            identity = (candidate.node_id, f"{mount}/{relative_text}")
+            identity = (candidate.node_id, relative_text)
             if identity in seen:
                 continue
             try:
@@ -194,23 +218,16 @@ class SavedArtifactAuthority:
                         raise AssetError("saved artifact is not a regular file")
                     if before.st_nlink != 1:
                         raise AssetError("saved artifact must not be a hard link")
-                    if ref is None and before.st_size <= 0:
+                    if before.st_size <= 0:
                         raise AssetError("saved artifact is empty")
                     if before.st_size > MAX_SAVED_ARTIFACT_BYTES:
                         raise AssetError("saved artifact exceeds the 1 GiB limit")
                     if before.st_mtime_ns < started_at_ns:
                         raise AssetError("saved artifact is stale")
-                    if ref is None:
-                        classification = classify_media_handle(handle)
-                        if classification.kind not in _SUPPORTED_KINDS:
-                            raise AssetError("saved artifact is not supported media")
-                        media_type = classification.media_type
-                    else:
-                        # Generic saves retain writer metadata, not a classified-media grant.
-                        media_type = ref.media_type
+                    classification = classify_media_handle(handle)
+                    if classification.kind not in _SUPPORTED_KINDS:
+                        raise AssetError("saved artifact is not supported media")
                     digest = _digest_handle(handle)
-                    if ref is not None and (digest != ref.digest or before.st_size != ref.size):
-                        raise AssetError("saved asset bytes do not match the writer reference")
                     after = os.fstat(handle.fileno())
                     path_stat = restat_path()
             except AssetError:
@@ -225,8 +242,6 @@ class SavedArtifactAuthority:
                 getattr(after, field) != getattr(path_stat, field) for field in _PATH_STABLE_FIELDS
             ):
                 raise AssetError("saved artifact path changed while it was being indexed")
-            if authority.writable_root(mount).resolve(strict=True) != root:
-                raise AssetError("saved artifact mount changed its root")
             append_write_record(
                 root,
                 relative_text,
@@ -241,8 +256,8 @@ class SavedArtifactAuthority:
                     digest=digest,
                     name=filename,
                     size=before.st_size,
-                    media_type=media_type,
-                    virtual_path=f"{MOUNT_NAMESPACE}/{mount}/{relative_text}",
+                    media_type=classification.media_type,
+                    virtual_path=f"{MOUNT_NAMESPACE}/comfy-output/{relative_text}",
                 )
             )
             seen.add(identity)

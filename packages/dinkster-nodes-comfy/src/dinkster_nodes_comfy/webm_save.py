@@ -28,12 +28,13 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
+    attach_saved_artifact,
     current_export_snapshot,
     image_input,
 )
 
 
-class _EncodedVideo(tempfile.SpooledTemporaryFile[bytes]):
+class EncodedVideoSpool(tempfile.SpooledTemporaryFile[bytes]):
     def __init__(self) -> None:
         super().__init__(max_size=512 * 1024, mode="w+b")
 
@@ -130,7 +131,7 @@ class SaveWEBM(Node):
             filename_prefix, mount, image_width=pixels.shape[2], image_height=pixels.shape[1]
         )
         save_alpha = pixels.shape[-1] == 4 and codec == "vp9"
-        with _EncodedVideo() as encoded:
+        with EncodedVideoSpool() as encoded:
             with av.open(encoded, "w", format="webm") as container:
                 submitted = current_export_snapshot()
                 if submitted is not None:
@@ -161,11 +162,12 @@ class SaveWEBM(Node):
                         container.mux(packet)
                 container.mux(stream.encode())
             encoded.seek(0)
-            writer.save_stream(
+            ref = writer.save_stream(
                 target,
                 cast(BinaryIO, encoded),
                 suffix=".webm",
                 media_type="video/webm",
                 limit=ENCODED_MEDIA_LIMIT_BYTES,
             )
+            attach_saved_artifact(ref.to_wire())
         return cls.outputs(images=images)

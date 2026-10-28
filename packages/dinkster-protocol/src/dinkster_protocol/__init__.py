@@ -569,17 +569,12 @@ class SavedArtifact:
 
 @dataclass(frozen=True)
 class SavedArtifactCandidate:
-    """An untrusted saved-file report, optionally bound to exact writer bytes."""
+    """An untrusted worker report naming one ComfyUI saved output."""
 
     node_id: str
     filename: str
     subfolder: str
     folder_type: str
-    asset: Mapping[str, object] | None = None
-
-    def __post_init__(self) -> None:
-        if self.asset is not None:
-            object.__setattr__(self, "asset", MappingProxyType(dict(self.asset)))
 
 
 @dataclass(frozen=True)
@@ -590,6 +585,7 @@ class InvocationResult:
     artifact_candidates: tuple[SavedArtifactCandidate, ...] = ()
     expansion: ExpandedReturn | None = None
     preview_artifacts: tuple[EncodedPreviewArtifact, ...] = ()
+    saved_artifact_claims: tuple[Mapping[str, object], ...] = ()
 
     def __post_init__(self) -> None:
         if self.expansion is None:

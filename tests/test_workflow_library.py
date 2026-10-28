@@ -19,7 +19,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from io import BytesIO
@@ -39,7 +39,7 @@ from dinkster_assets import (
     digest_bytes,
 )
 from dinkster_caches import MemoryLRUCache
-from dinkster_engine import Engine, EventListener
+from dinkster_engine import Engine, EventListener, ExecutionRuntime
 from dinkster_protocol import (
     AssetFolderContext,
     Invocation,
@@ -400,17 +400,21 @@ def test_native_media_saves_complete_into_kind_filtered_project_catalog(
 
     schemas = build_schemas([NativeSave])
 
+    async def validate_saved(
+        node_id: str, claims: Sequence[Mapping[str, object]], started_at_ns: int
+    ) -> tuple[SavedArtifact, ...]:
+        return SavedArtifactAuthority(snapshot).capture_mounted(claims, node_id, started_at_ns)
+
     def engine(on_event: EventListener) -> Engine:
         registry = TypeRegistry()
         register_core_types(registry)
+        worker = InProcessWorker(build_node_types([NativeSave]), registry)
+        runtime = ExecutionRuntime(worker=worker, validate_saved_artifacts=validate_saved)
         return Engine(
             schemas=schemas,
             registry=registry,
-            worker=InProcessWorker(
-                build_node_types([NativeSave]),
-                registry,
-                artifact_authority=SavedArtifactAuthority(snapshot).capture,
-            ),
+            worker=worker,
+            pin_execution=lambda: runtime,
             cache=MemoryLRUCache(),
             on_event=on_event,
         )

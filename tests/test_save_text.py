@@ -25,6 +25,8 @@ from dinkster_server import ServerLibrary, create_app
 
 from dinkster.compose import PackSpec, ServingComposer
 
+pytestmark = pytest.mark.usefixtures("saved_artifact_context")
+
 
 def test_save_text_schema_preserves_core_contract_and_appends_mount() -> None:
     schema = SaveText.schema()

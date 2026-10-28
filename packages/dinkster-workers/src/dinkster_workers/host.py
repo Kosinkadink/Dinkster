@@ -125,6 +125,7 @@ from .aimdo_bootstrap import bootstrap_aimdo
 from .blobs import BlobTransfer, attribute_moved_wire
 from .boundary import (
     DEFAULT_SHM_THRESHOLD,
+    PROTOCOL_VERSION,
     BoundaryError,
     ValueCodec,
     ValueStore,
@@ -355,18 +356,12 @@ def load_pack(
     pack_context: Callable[[], contextlib.AbstractContextManager[None]] | None = None,
     import_from_pack_root: bool = False,
     registry: TypeRegistry | None = None,
-    mounts_snapshot: Path | str | None = None,
 ) -> tuple[
     InProcessWorker,
     TypeRegistry,
     list[type[Node]],
     dict[str, InProcessWorker],
 ]:
-    from .saved_artifacts import SavedArtifactAuthority
-
-    artifact_authority = (
-        SavedArtifactAuthority(mounts_snapshot).capture if mounts_snapshot is not None else None
-    )
     validate_registration_claims(manifest)
     has_native_arm = any(arm == "native" for arm, _node_types in manifest.arms)
     attention_runtime, attention_capabilities, attention_route_token = (
@@ -465,7 +460,6 @@ def load_pack(
             build_node_types(node_classes),
             registry,
             pack_context=worker_context,
-            artifact_authority=artifact_authority,
             attention_capabilities=attention_capabilities,
             attention_route_token=attention_route_token,
             attention_runtime=attention_runtime,
@@ -544,7 +538,6 @@ def load_pack(
                     node_types,
                     registry,
                     pack_context=worker_context,
-                    artifact_authority=artifact_authority,
                     attention_capabilities=attention_capabilities,
                     attention_route_token=attention_route_token,
                     attention_runtime=attention_runtime,
@@ -1186,6 +1179,7 @@ async def serve_connection(
 
     hello: dict[str, object] = {
         "type": "hello",
+        "protocol": PROTOCOL_VERSION,
         "pack": pack_name,
         "schemas": {t: schema_to_wire(s) for t, s in schemas.items()},
         "registeredTypes": list(worker.registered_types),
@@ -1583,6 +1577,7 @@ async def serve_connection(
                     artifact_candidates=result.artifact_candidates,
                     expansion=result.expansion,
                     preview_artifacts=result.preview_artifacts,
+                    saved_artifact_claims=result.saved_artifact_claims,
                 )
             if blob_transfer is not None:
                 await result_transfer_lock.acquire()

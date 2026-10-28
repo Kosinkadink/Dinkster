@@ -24,7 +24,7 @@ from .audio_combine import AUDIO_COMBINE_NODES
 from .audio_effects import AUDIO_EFFECT_NODES
 from .audio_encoder import AUDIO_ENCODER_NODES
 from .audio_generators import AUDIO_GENERATOR_NODES
-from .audio_io import LoadAudio, PreviewAudio
+from .audio_io import LoadAudio, PreviewAudio, RecordAudio
 from .audio_latent import AUDIO_LATENT_NODES, GetAudioLatentSize
 from .audio_music_conditioning import AUDIO_MUSIC_CONDITIONING_NODES
 from .audio_save import SaveAudio, SaveAudioAdvanced, SaveAudioMP3, SaveAudioOpus
@@ -75,6 +75,7 @@ from .image_core import IMAGE_CORE_NODES
 from .image_crop import ImageCropV2, PrimitiveBoundingBox
 from .image_dimensions import IMAGE_DIMENSION_NODES
 from .image_filters import IMAGE_FILTER_NODES
+from .image_layers import AddLayer
 from .image_tiles import ImageMergeTileList, SplitImageToTileList
 from .image_transform import IMAGE_TRANSFORM_NODES
 from .inpaint import INPAINT_NODES
@@ -126,6 +127,8 @@ from .model_merging_specific import MODEL_SPECIFIC_MERGE_NODES
 from .model_patch_loader import MODEL_PATCH_LOADER_NODES
 from .model_selections import MODEL_SELECTION_NODES
 from .model_specific_schedulers import MODEL_SPECIFIC_SCHEDULER_NODES
+from .moge import MoGeGeometryToFOV
+from .moge_inference import MoGeInference
 from .morphology import MORPHOLOGY_NODES
 from .moss_image import MOSSImageControl, MOSSImageLayoutPrompt, TextEncodeMOSSImageEdit
 from .noise import NOISE_NODES
@@ -160,6 +163,7 @@ from .save_text import SaveText
 from .scail_masks import SCAIL2ColoredMask
 from .sd_upscale_conditioning import SD_UPSCALE_CONDITIONING_NODES
 from .sdpose import SDPoseDrawKeypoints, SDPoseFaceBBoxes
+from .sdpose_extract import SDPoseKeypointExtractor
 from .seedvr_conditioning import SeedVR2Conditioning
 from .seedvr_postprocess import SeedVR2PostProcessing
 from .seedvr_preprocess import SeedVR2Preprocess
@@ -182,11 +186,18 @@ from .triposplat import TripoSplatConditioning, TripoSplatPreprocessImage
 from .upscale_model_loader import UpscaleModelLoader
 from .utilities import ComfyNumberConvert, PreviewAny, SeedNode
 from .vae import VAE_NODES
-from .video_components import CreateVideo, GetVideoComponents
+from .video_components import ConcatenateVideo, CreateVideo, GetVideoComponents
 from .video_conditioning import VIDEO_CONDITIONING_NODES
+from .video_edits import VideoCrop, VideoSlice, VideoTrim
 from .video_guidance import VIDEO_GUIDANCE_NODES
 from .video_latent import VIDEO_LATENT_NODES
 from .video_latent_ops import VIDEO_LATENT_OPERATION_NODES
+from .video_save import SaveVideo
+from .void_conditioning import (
+    VOIDInpaintConditioning,
+    VOIDQuadmaskPreprocess,
+    VOIDWarpedNoiseSource,
+)
 from .wan22_latent import Wan22ImageToVideoLatent
 from .wan_animate import WAN_ANIMATE_NODES
 from .wan_camera import WanCameraEmbedding
@@ -201,6 +212,7 @@ from .wan_scail_conditioning import WanSCAILToVideo
 from .wan_sound import WanHuMoImageToVideo, WanSoundImageToVideo, WanSoundImageToVideoExtend
 from .wan_track_conditioning import WanTrackToVideo
 from .wan_uni3c import WanUni3CControlnetApply
+from .wandancer_audio import WanDancerEncodeAudio
 from .wandancer_keyframes import WANDANCER_KEYFRAME_NODES
 from .webm_save import SaveWEBM
 from .yue2_conditioning import YUE2_CONDITIONING_NODES
@@ -401,29 +413,43 @@ COMFY_NODES = (
     *SAM3_TRACKING_NODES,
     SAM3_Detect,
     SAM3_TrackPreview,
+    VideoSlice,
+    VideoTrim,
+    VideoCrop,
+    SaveVideo,
     *MODEL_FILE_LOADER_NODES,
     *LORA_FILE_LOADER_NODES,
     CropByBBoxes,
     CameraAngle,
     Trellis2UpsampleStage,
+    MoGeInference,
     TripoSplatPreprocessImage,
     TripoSplatConditioning,
     LoadAudio,
+    RecordAudio,
     PreviewAudio,
     SaveAudio,
     SaveAudioMP3,
     SaveAudioOpus,
     SaveAudioAdvanced,
     SaveWEBM,
+    WanDancerEncodeAudio,
     *YUE2_CONDITIONING_NODES,
+    MoGeGeometryToFOV,
     UpscaleModelLoader,
+    VOIDQuadmaskPreprocess,
+    VOIDInpaintConditioning,
+    VOIDWarpedNoiseSource,
     CurveEditor,
     CreateVideo,
+    ConcatenateVideo,
     GetVideoComponents,
     ConditioningLoader,
     SaveConditioning,
     SDPoseFaceBBoxes,
     SDPoseDrawKeypoints,
+    SDPoseKeypointExtractor,
+    AddLayer,
 )
 
 

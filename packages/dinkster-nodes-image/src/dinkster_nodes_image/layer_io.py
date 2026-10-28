@@ -8,12 +8,14 @@ from collections.abc import Mapping
 from dinkster_api.v1 import (
     ASSET_TYPE,
     CORE_COMBO,
+    IMAGE_DOCUMENT_MEDIA_TYPE,
     LAYERS_TYPE,
     SAVE_TARGET_TYPE,
     AssetRef,
     AssetWidget,
     AssetWriter,
     ComboWidget,
+    ImageDocument,
     InputSpec,
     MountSnapshotWriter,
     Node,
@@ -21,10 +23,11 @@ from dinkster_api.v1 import (
     OutputSpec,
     SaveTargetWidget,
     TypeExpr,
+    attach_saved_artifact,
+    export_ora,
+    export_psd,
+    load_document,
 )
-from dinkster_image_document import IMAGE_DOCUMENT_MEDIA_TYPE
-from dinkster_image_document.document import ImageDocument
-from dinkster_image_document.interchange import export_ora, export_psd, load_document
 
 LAYERS = TypeExpr.concrete(LAYERS_TYPE)
 ASSET = TypeExpr.concrete(ASSET_TYPE)
@@ -101,4 +104,5 @@ class SaveLayers(Node):
             suffix=suffix,
             media_type=media_type,
         )
+        attach_saved_artifact(reference.to_wire())
         return cls.outputs(document=reference)

@@ -8,14 +8,20 @@
   retaining source frame order and dimensions.
 - Native `CurveEditor` passes canonical curves through the curve editor and
   displays an optional histogram without restricting its bin count.
+- Native `AddLayer` appends image and mask batches to a layer document with
+  placement, rotation, opacity, blend mode, and stacking metadata.
 - Native `CameraAngle` produces an orbit-camera dictionary and shot description
   from horizontal angle, elevation, and zoom.
+- Native `MoGeGeometryToFOV` derives horizontal, vertical, or diagonal field of
+  view and focal length in pixels from MoGe geometry intrinsics.
 - Native `TripoSplatPreprocessImage` erodes alpha, crops foreground to a padded
   square, resizes with Lanczos, and composites the image over black.
 - Native `TripoSplatConditioning` combines normalized vision tokens and VAE
   reference latents with zero negative conditioning and fixed shape/camera noise targets.
 - Native `Trellis2UpsampleStage` cascades sparse shape latents through a VAE
   and prepares second-pass conditioning, projection features, and padded sparse latents.
+- Native `MoGeInference` predicts optional depth, points, camera intrinsics,
+  masks, and normals from image batches with configurable chunking and camera hints.
 - Color strings, ordered color palettes, bounding boxes, and optional
   resolution-preview metadata pass between node packs without rewriting their values.
 - Native `PrimitiveBoundingBox` constructs pixel bounding boxes; `ImageCropV2`
@@ -26,6 +32,8 @@
   pixel boxes with area scaling and optional square expansion for cropping.
 - Native `SDPoseDrawKeypoints` renders body, head, hand, foot and face keypoints
   as pose images with confidence thresholds and adjustable marker widths.
+- Native `SDPoseKeypointExtractor` extracts OpenPose-format body, foot, face and
+  hand keypoints from SDPose models, with batched images or per-person crop boxes.
 - Native `RTDETR_detect` returns per-frame pixel bounding boxes filtered by
   confidence and COCO class, ordered by score and limited per frame.
   `DrawBBoxes` overlays boxes and labels on images or a black canvas.

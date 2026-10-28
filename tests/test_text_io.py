@@ -12,6 +12,8 @@ from dinkster_nodes_media_io import SaveText
 from dinkster_nodes_media_io import text as text_module
 from dinkster_nodes_media_io.text import MAX_TEXT_BYTES, render_text
 
+pytestmark = pytest.mark.usefixtures("saved_artifact_context")
+
 
 def _mount(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root = tmp_path / "out"

@@ -93,6 +93,7 @@ from dinkster_workers import (
 from dinkster_workers import host as host_module
 from dinkster_workers.boundary import (
     DEFAULT_SHM_THRESHOLD,
+    PROTOCOL_VERSION,
     ValueCodec,
     encode_invocation,
     read_frame,
@@ -543,6 +544,59 @@ async def stop_test_host(
     await server.wait_closed()
 
 
+@pytest.mark.parametrize("worker_protocol", (PROTOCOL_VERSION, PROTOCOL_VERSION + 1))
+def test_separately_shipped_worker_negotiates_protocol(
+    monkeypatch: pytest.MonkeyPatch, worker_protocol: int
+) -> None:
+    monkeypatch.setattr(host_module, "PROTOCOL_VERSION", worker_protocol)
+
+    async def scenario() -> None:
+        registry = core_registry()
+        accepted: asyncio.Future[asyncio.Task[None]] = asyncio.get_running_loop().create_future()
+
+        async def accept(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            task = asyncio.current_task()
+            assert task is not None
+            accepted.set_result(task)
+            await host_module.serve_connection(
+                reader,
+                writer,
+                pack_name="own-environment",
+                worker=InProcessWorker({}, registry),
+                schemas={},
+                planner=None,
+                consumers={},
+                codec=ValueCodec(registry),
+            )
+
+        server = await asyncio.start_server(accept, "127.0.0.1", 0)
+        address = server.sockets[0].getsockname()
+        reader, writer = await asyncio.open_connection(address[0], address[1])
+        host_task = await accepted
+        session = BoundarySession(
+            registry,
+            role="isolated worker",
+            pack="own-environment",
+            codec=ValueCodec(registry),
+        )
+        try:
+            if worker_protocol == PROTOCOL_VERSION:
+                await session.begin(reader, writer, timeout=2)
+                assert session.alive
+                await session.send({"type": "shutdown"}, [])
+            else:
+                with pytest.raises(RuntimeError, match="protocol mismatch"):
+                    await session.begin(reader, writer, timeout=2)
+                assert not session.alive
+        finally:
+            await session.close()
+            await asyncio.wait_for(host_task, 2)
+            server.close()
+            await server.wait_closed()
+
+    asyncio.run(scenario())
+
+
 def test_boundary_session_strictly_authenticates_attention_hello_evidence() -> None:
     async def negotiate(
         raw_token: object | None, raw_capabilities: object | None = None
@@ -553,6 +607,7 @@ def test_boundary_session_strictly_authenticates_attention_hello_evidence() -> N
             accepted.set_result(writer)
             hello: dict[str, object] = {
                 "type": "hello",
+                "protocol": PROTOCOL_VERSION,
                 "pack": "attention-test",
                 "schemas": {},
             }

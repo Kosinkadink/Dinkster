@@ -4,8 +4,9 @@ import asyncio
 import hashlib
 import io
 import json
+import os
 import zipfile
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -15,7 +16,7 @@ import numpy as np
 import pytest
 from dinkster_api.v1 import Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_caches import MemoryLRUCache
-from dinkster_engine import Engine
+from dinkster_engine import Engine, ExecutionRuntime
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral
 from dinkster_image_document.compat import from_comfy_layers, register_comfy_layers
 from dinkster_image_document.document import (
@@ -54,7 +55,7 @@ from dinkster_nodes_image import (
     register_image_types,
 )
 from dinkster_nodes_media_io import register_media_types
-from dinkster_protocol import InvocationResult
+from dinkster_protocol import InvocationResult, SavedArtifact
 from dinkster_schema import build_node_types, build_schemas
 from dinkster_values import (
     TypeRegistry,
@@ -65,7 +66,10 @@ from dinkster_values import (
 )
 from dinkster_workers import GroupIsolatedWorker, InProcessWorker
 from dinkster_workers.boundary import ValueCodec, decode_result_outputs, encode_result
+from dinkster_workers.saved_artifacts import SavedArtifactAuthority
 from PIL import Image
+
+pytestmark = pytest.mark.usefixtures("saved_artifact_context")
 
 
 def document() -> ImageDocument:
@@ -113,10 +117,21 @@ def execute_graph_node(node: type[Node], inputs: dict[str, object]) -> dict[str,
     register_media_types(registry)
     register_image_types(registry)
     nodes = [node]
+    worker = InProcessWorker(build_node_types(nodes), registry)
+
+    async def validate_saved(
+        node_id: str, claims: Sequence[Mapping[str, object]], started_at_ns: int
+    ) -> tuple[SavedArtifact, ...]:
+        return SavedArtifactAuthority(os.environ["DINKSTER_MOUNTS_SNAPSHOT"]).capture_mounted(
+            claims, node_id, started_at_ns
+        )
+
+    runtime = ExecutionRuntime(worker=worker, validate_saved_artifacts=validate_saved)
     engine = Engine(
         schemas=build_schemas(nodes),
         registry=registry,
-        worker=InProcessWorker(build_node_types(nodes), registry),
+        worker=worker,
+        pin_execution=lambda: runtime,
         cache=MemoryLRUCache(),
     )
 
