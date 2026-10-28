@@ -9,6 +9,7 @@ on:
     paths:
       - .github/workflows/release.yml
       - scripts/build_release.py
+      - scripts/prune_engine_prereleases.py
       - scripts/release_sources.json
       - scripts/verify_release_install.py
       - tests/test_release_install.py
@@ -139,9 +140,14 @@ jobs:
     needs: install
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    outputs:
+      pypi-ready: ${{ steps.projects.outputs.ready }}
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
           name: wheel-release
@@ -169,10 +175,41 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: dist/*
+      - name: Keep the newest main prereleases
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/prune_engine_prereleases.py
+      - name: Check that workspace projects have been bootstrapped on PyPI
+        id: projects
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.error
+          import urllib.request
+          from pathlib import Path
+          manifest = json.loads(Path('dist/release-manifest.json').read_text())
+          missing = []
+          for filename in manifest['workspaceWheels']:
+              project = filename.split('-', 1)[0].replace('_', '-')
+              try:
+                  with urllib.request.urlopen(f'https://pypi.org/pypi/{project}/json', timeout=30):
+                      pass
+              except urllib.error.HTTPError as error:
+                  if error.code != 404:
+                      raise
+                  missing.append(project)
+          if missing:
+              print('::notice::User bootstrap upload required for: ' + ', '.join(missing))
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('ready=' + str(not missing).lower() + '\n')
+          PY
 
   publish:
     needs: release
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.release.outputs.pypi-ready == 'true'
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -199,3 +236,4 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: publish/
+          skip-existing: true

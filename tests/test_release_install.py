@@ -37,11 +37,17 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert workflow["jobs"]["install"]["needs"] == "build"
     assert workflow["jobs"]["release"]["needs"] == "install"
     assert workflow["jobs"]["release"]["permissions"] == {"contents": "write"}
-    preflight = workflow["jobs"]["release"]["steps"][-2]
+    preflight = next(
+        step for step in workflow["jobs"]["release"]["steps"] if step.get("id") == "identity"
+    )
     assert preflight["uses"] == "actions/github-script@v7"
     assert "getReleaseByTag" in preflight["with"]["script"]
     assert "Refusing to overwrite an existing release" in preflight["with"]["script"]
-    assert workflow["jobs"]["release"]["steps"][-1] == {
+    assert next(
+        step
+        for step in workflow["jobs"]["release"]["steps"]
+        if step.get("uses") == "softprops/action-gh-release@v2"
+    ) == {
         "uses": "softprops/action-gh-release@v2",
         "with": {
             "tag_name": "${{ steps.identity.outputs.tag }}",
@@ -60,17 +66,59 @@ def test_release_publication_is_tag_only_and_uses_trusted_publishing() -> None:
     assert workflow["jobs"]["release"]["if"] == "github.event_name == 'push'"
     publish = workflow["jobs"]["publish"]
     assert publish["needs"] == "release"
-    assert publish["if"] == ("github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')")
+    assert publish["if"] == (
+        "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') "
+        "&& needs.release.outputs.pypi-ready == 'true'"
+    )
     assert publish["permissions"] == {"id-token": "write"}
     assert publish["environment"]["name"] == "pypi"
     action = publish["steps"][-1]
     assert action["uses"] == "pypa/gh-action-pypi-publish@release/v1"
-    assert action["with"] == {"packages-dir": "publish/"}
+    assert action["with"] == {"packages-dir": "publish/", "skip-existing": True}
     assert "secrets." not in json.dumps(publish)
     assert all(
         "latest" in row["runner"]
         for row in workflow["jobs"]["install"]["strategy"]["matrix"]["include"]
     )
+
+
+@pytest.mark.parametrize("status", [200, 404, 403])
+def test_pypi_bootstrap_gate_skips_missing_projects_and_refuses_other_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    import urllib.error
+    import urllib.request
+    from contextlib import nullcontext
+    from email.message import Message
+
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+    step = next(
+        step for step in workflow["jobs"]["release"]["steps"] if step.get("id") == "projects"
+    )
+    assert step["if"] == "startsWith(github.ref, 'refs/tags/v')"
+    script = step["run"].split("python3 - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    (tmp_path / "dist").mkdir()
+    (tmp_path / "dist/release-manifest.json").write_text(
+        json.dumps({"workspaceWheels": ["dinkster_api-0.0.1-py3-none-any.whl"]})
+    )
+    output = tmp_path / "output"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+
+    def open_project(url: str, *, timeout: int) -> nullcontext[None]:
+        assert url == "https://pypi.org/pypi/dinkster-api/json"
+        if status != 200:
+            raise urllib.error.HTTPError(url, status, "test index response", Message(), None)
+        return nullcontext()
+
+    monkeypatch.setattr(urllib.request, "urlopen", open_project)
+    if status == 403:
+        with pytest.raises(urllib.error.HTTPError):
+            exec(compile(script, "pypi bootstrap workflow", "exec"), {})
+        assert not output.exists()
+    else:
+        exec(compile(script, "pypi bootstrap workflow", "exec"), {})
+        assert output.read_text() == ("ready=true\n" if status == 200 else "ready=false\n")
 
 
 def test_release_workflow_builds_all_wheels_and_checks_tag_metadata() -> None:
@@ -347,6 +395,50 @@ def test_engine_constraints_include_the_locked_base_but_not_the_dev_tools(tmp_pa
     assert "pytest==" not in constraints
     assert "pyright==" not in constraints
     assert "--index-url" not in constraints
+
+
+def test_main_release_retention_preserves_stable_drafts_and_newest_fifty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.prune_engine_prereleases import prune
+
+    releases = {
+        number: {
+            "id": number,
+            "tag_name": f"main-{number:040x}",
+            "published_at": f"2026-10-28T00:00:{number:02d}Z",
+            "prerelease": True,
+            "draft": False,
+        }
+        for number in range(1, 54)
+    }
+    for number, fields in (
+        (101, {"prerelease": False}),
+        (102, {"draft": True}),
+        (103, {"tag_name": "other-prerelease"}),
+    ):
+        releases[number] = {**releases[1], "id": number, **fields}
+
+    def read_api(command: list[str], *, text: bool) -> str:
+        if "--paginate" in command:
+            rows = list(releases.values())
+            return json.dumps([rows[:20], rows[20:]])
+        number = int(command[-1].rsplit("/", 1)[1])
+        if number == 1:
+            releases[number]["prerelease"] = False
+        return json.dumps(releases[number])
+
+    def delete_api(command: list[str], *, check: bool) -> subprocess.CompletedProcess[str]:
+        assert command[:4] == ["gh", "api", "--method", "DELETE"]
+        number = int(command[-1].rsplit("/", 1)[1])
+        del releases[number]
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(subprocess, "check_output", read_api)
+    monkeypatch.setattr(subprocess, "run", delete_api)
+    assert set(prune("Kosinkadink/Dinkster")) == {2, 3}
+    assert set(releases) == {1, *range(4, 54), 101, 102, 103}
+    assert releases[1]["prerelease"] is False
 
 
 def test_maintainer_source_archive_excludes_non_release_material(tmp_path: Path) -> None:

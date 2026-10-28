@@ -407,6 +407,12 @@ checks without creating a GitHub release or invoking PyPI. Tag publication
 waits for all clean-install checks, attaches the checked assets to GitHub,
 then uploads only `workspaceWheels` to PyPI through OIDC trusted publishing
 in the protected `pypi` environment. No PyPI API token is stored.
+If any workspace project is absent from PyPI, the publication job is
+skipped without blocking the checked GitHub release or build artifact.
+The repository owner bootstraps the entire wheel set once from an approved
+artifact on their own machine, using a short-lived PyPI token that is
+revoked afterwards, then adds trusted publishers to the existing projects.
+Subsequent tag uploads skip versions already uploaded out of band.
 
 The tag workflow uploads every workspace wheel and the frontend wheel to
 PyPI with trusted publishing, so `pip install dinkster` and the `stable`
@@ -463,8 +469,10 @@ newest ids per variant; every base manifest is kept forever. A client that
 needs a base whose archive is gone rebuilds it locally from the base
 manifest: it fetches each listed wheel by hash from the source index the
 manifest names and the interpreter from python-build-standalone, which is
-the one case where an engine install reads a package index. Engine releases
-are small and are kept indefinitely. A region-specific mirror is one more
+the one case where an engine install reads a package index. Stable engine
+releases are kept indefinitely. The workflow retains the newest 50
+commit-named main prereleases; stable releases, drafts and other prerelease
+tags are never removed by this cleanup. A region-specific mirror is one more
 entry in the client's mirror list and, when Dinkster does not operate it,
 serves only signed documents.
 
