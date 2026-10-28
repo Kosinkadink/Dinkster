@@ -12,6 +12,10 @@
   ASSET, AUDIO_RECORD, CURVE, REGION, DETECTION, RESOURCE and VIDEO_DOCUMENT. Schemas,
   codecs and generators share their canonical spelling module. The internal
   core.absent execution envelope is not a socket type.
+- Packs can use the canonical `INTERP_MODEL` socket for process-resident
+  interpolation models. Values retain their holding-process identity across
+  ordinary worker transport; other processes cannot resolve model contents.
+  This shared type does not itself provide a model loader or interpolation node.
 - Non-dinkster publishers' node schemas and type claims require the pack-name
   prefix at loading and catalog preparation. Declared type claims remain
   exclusive even when the pack has no codec callback. Dependent packs can
