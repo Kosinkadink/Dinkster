@@ -52,8 +52,14 @@ def core_registry() -> TypeRegistry:
 
 
 @asynccontextmanager
-async def hosted_pool(pool: ResidentPool, guard: ReleaseGuard) -> AsyncIterator[BoundarySession]:
+async def hosted_pool(
+    pool: ResidentPool,
+    guard: ReleaseGuard,
+    *,
+    node_types: Mapping[str, type[Node]] | None = None,
+) -> AsyncIterator[BoundarySession]:
     registry = core_registry()
+    worker = InProcessWorker(node_types or {}, registry)
     accepted: asyncio.Future[asyncio.Task[None]] = asyncio.get_running_loop().create_future()
 
     async def accept(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -64,8 +70,8 @@ async def hosted_pool(pool: ResidentPool, guard: ReleaseGuard) -> AsyncIterator[
             reader,
             writer,
             pack_name="pool",
-            worker=InProcessWorker({}, registry),
-            schemas={},
+            worker=worker,
+            schemas=worker.schemas,
             planner=None,
             consumers={"pool": pool},
             codec=ValueCodec(registry),
@@ -132,11 +138,17 @@ def observe_memory_reports(
 ) -> asyncio.Queue[None]:
     reports: asyncio.Queue[None] = asyncio.Queue()
     original = worker._session._apply_measured
+    initial_report = True
 
     def apply_measured(header: Mapping[str, Any]) -> None:
+        nonlocal initial_report
         original(header)
         if header.get("type") == "memoryReport":
-            reports.put_nowait(None)
+            # The report after memoryDevices, not the one after hello, completes startup.
+            if initial_report:
+                initial_report = False
+            else:
+                reports.put_nowait(None)
 
     monkeypatch.setattr(worker._session, "_apply_measured", apply_measured)
     return reports
@@ -408,6 +420,70 @@ def test_full_release_visits_all_consumers_and_preserves_worker(
             assert all(result["status"] == "complete" for result in repeated.consumers)
         finally:
             await worker.close()
+
+    asyncio.run(scenario())
+
+
+def test_full_release_after_invocation_report_does_not_wait_for_report_drain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class DoneNode(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                node_type="test.done",
+                outputs=(OutputSpec("result", TypeExpr.concrete("STRING")),),
+            )
+
+        @classmethod
+        def execute(cls) -> Mapping[str, object]:
+            return cls.outputs(result="done")
+
+    async def scenario() -> None:
+        armed = asyncio.Event()
+        reported = asyncio.Event()
+        drain = asyncio.Event()
+
+        async def delayed_report(writer, header, blobs) -> None:
+            await write_frame(writer, header, blobs)
+            if armed.is_set() and header.get("type") == "memoryReport":
+                reported.set()
+                await drain.wait()
+
+        async def release_drain_on_query(reader):
+            frame = await read_frame(reader)
+            if frame is not None and frame[0].get("type") == "memoryFreeQuery":
+                # Let the query task observe activity before the report resumes.
+                asyncio.get_running_loop().call_soon(drain.set)
+            return frame
+
+        monkeypatch.setattr("dinkster_workers.host.write_frame", delayed_report)
+        monkeypatch.setattr("dinkster_workers.host.read_frame", release_drain_on_query)
+        pool = ResidentPool(cost_of=lambda _: {"ram": 0})
+        pool.rid_for(bytearray(8))
+        try:
+            async with asyncio.timeout(8):
+                async with hosted_pool(
+                    pool,
+                    ReleaseGuard(ResourcePins(), ()),
+                    node_types={"test.done": DoneNode},
+                ) as session:
+                    armed.set()
+                    invocation = await session.invoke(
+                        Invocation("done", "done", "test.done", {}, DoneNode.define_schema())
+                    )
+                    assert invocation.error is None
+                    assert invocation.outputs is not None
+                    assert invocation.outputs["result"].resolve() == "done"
+                    await reported.wait()
+                    token = session.instance_token
+                    assert token is not None
+                    result = await session.full_release("maintenance", token)
+                    assert result.status == "complete"
+                    assert result.consumers == ({"consumer": "pool", "status": "complete"},)
+                    assert pool.propose_full_release() == []
+        finally:
+            drain.set()
 
     asyncio.run(scenario())
 

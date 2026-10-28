@@ -15,6 +15,7 @@ from dinkster_inference_wire import register_inference_types
 from dinkster_inference_wire.hook_values import normalize_clip_hook_owners
 from dinkster_schema import Node
 from dinkster_values import (
+    AUDIO_RECORD_TYPE,
     AUDIO_TYPE,
     CLIP_TYPE,
     IMAGE_TYPE,
@@ -129,6 +130,8 @@ def register_native_types(registry: TypeRegistry) -> None:
     """Register the wire and resident types used by native execution."""
     if ASSET_TYPE not in registry:
         register_asset_type(registry, resolver_from_env())
+    if AUDIO_RECORD_TYPE not in registry:
+        register_asset_type(registry, resolver_from_env(), type_id=AUDIO_RECORD_TYPE)
     if SAVE_TARGET_TYPE not in registry:
         register_save_target_type(registry)
 

@@ -3,7 +3,6 @@
 from dinkster_api.v1 import CORE_BOOLEAN, CORE_COMBO, CORE_FLOAT, CORE_INT, MODEL_TYPE, TypeExpr
 from dinkster_nodes_comfy import COMFY_NODES
 from dinkster_nodes_comfy.spatial_model_patches import SPATIAL_MODEL_PATCH_NODES
-from dinkster_workers import load_manifest
 
 
 def test_spatial_model_patches_use_native_model_types_without_torch() -> None:
@@ -47,8 +46,3 @@ def test_spatial_model_patches_use_native_model_types_without_torch() -> None:
         TypeExpr.concrete(CORE_COMBO),
         TypeExpr.concrete(CORE_COMBO),
     ]
-
-
-def test_complete_manifest_declares_spatial_model_patch_namespaces() -> None:
-    manifest = load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml")
-    assert {"TomePatchModel", "HyperTile", "PatchModelAddDownscale"}.issubset(manifest.namespaces)

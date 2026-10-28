@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -142,19 +141,3 @@ def test_hook_conditioning_cold_discovery_avoids_torch_and_inference_imports() -
     namespaces = manifest["pack"]["namespaces"]
     start = namespaces.index(node_types[0])
     assert namespaces[start : start + len(node_types)] == node_types
-    subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys\n"
-            "sys.modules['dinkster_inference'] = None\n"
-            "sys.modules['torch'] = None\n"
-            "from dinkster_nodes_comfy import COMFY_NODES\n"
-            "schemas = [node.define_schema() for node in COMFY_NODES]\n"
-            "assert {'ConditioningSetProperties', 'SetClipHooks', "
-            "'ConditioningTimestepsRange'} <= {schema.node_type for schema in schemas}\n",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )

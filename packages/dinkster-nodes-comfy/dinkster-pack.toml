@@ -532,6 +532,7 @@ namespaces = [
     "CameraAngle",
     "MakeTrainingDataset",
     "MoGeRender",
+    "Trellis2UpsampleStage",
     "TripoSplatPreprocessImage",
     "TripoSplatConditioning",
     "LoadTrainingDataset",
@@ -546,6 +547,7 @@ namespaces = [
     "LoadImageDataSetFromFolder",
     "LoadImageTextDataSetFromFolder",
     "UpscaleModelLoader",
+    "LossGraphNode",
 ]
 
 [pack.sandbox]
