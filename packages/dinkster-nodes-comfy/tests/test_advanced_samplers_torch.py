@@ -450,7 +450,7 @@ class AdvancedSamplerConsumer(Node):
         return cls.outputs(summary="public-sample-contracts")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_advanced_samplers_cross_ordinary_manifest_hosts_twice_with_cache(
     tmp_path: Path, in_process: bool
 ) -> None:

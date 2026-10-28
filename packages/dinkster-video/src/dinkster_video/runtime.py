@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import heapq
 import io
+import itertools
 import math
-from collections.abc import Callable, Generator, Iterator, Mapping
+from collections.abc import Callable, Generator, Iterator, Mapping, Sequence
 from contextlib import ExitStack, closing
 from dataclasses import dataclass, replace
 from fractions import Fraction
@@ -111,6 +112,65 @@ def assemble_video(
             "edits": [],
         }
     )
+
+
+def concatenate_video(
+    videos: Sequence[object], *, codec: str = "auto", complete_audio: object = None
+) -> dict[str, object]:
+    """Join one to one hundred clips without changing encoded clip compatibility rules."""
+    supplied = list(videos)
+    if not 1 <= len(supplied) <= 100:
+        raise ValueError("concatenate_video requires between 1 and 100 videos")
+
+    def encoded(value: object) -> dict[str, object]:
+        clip = coerce_video(value)
+        if "components" not in clip:
+            return clip
+        output = io.BytesIO()
+        save_video_stream(clip, output, container="mkv", codec="h264" if codec == "auto" else codec)
+        from dinkster_values import video_from_source
+
+        return video_from_source(output.getvalue())
+
+    inherited: object = None
+
+    def flatten(value: dict[str, object]) -> list[dict[str, object]]:
+        nonlocal inherited
+        root = dict(value)
+        soundtrack = root.pop("complete_audio", None)
+        edits: list[object] = []
+        for raw in cast("list[object]", root["edits"]):
+            edit = dict(mapping(raw, "VIDEO edit"))
+            if "concat" in edit:
+                edit["concat"] = [
+                    leaf
+                    for child in cast("list[object]", edit["concat"])
+                    for leaf in flatten(cast(dict[str, object], child))
+                ]
+            edits.append(edit)
+        root["edits"] = edits
+        if soundtrack is not None:
+            inherited = soundtrack
+        if len(edits) == 1 and "concat" in mapping(edits[0], "VIDEO edit"):
+            root["edits"] = []
+            return [
+                root,
+                *cast("list[dict[str, object]]", mapping(edits[0], "VIDEO edit")["concat"]),
+            ]
+        return [root]
+
+    clips: list[dict[str, object]] = []
+    for raw in supplied:
+        clips.extend(flatten(encoded(raw)))
+    root = dict(clips[0])
+    root["edits"] = [
+        *cast("list[object]", root["edits"]),
+        *([{"concat": clips[1:]}] if len(clips) > 1 else []),
+    ]
+    soundtrack = coerce_audio(complete_audio) if complete_audio is not None else inherited
+    if soundtrack is not None:
+        root["complete_audio"] = soundtrack
+    return coerce_video(root)
 
 
 @dataclass(frozen=True)
@@ -482,13 +542,45 @@ def _audio_frames(segments: list[_Segment], index: int) -> Generator[tuple[Fract
             offset += segment.duration
 
 
+def _complete_audio_frames(audio: object) -> Generator[tuple[Fraction, Any]]:
+    import av
+    import numpy as np
+
+    value = coerce_audio(audio)
+    facts = effective_audio_facts(value)
+    with AudioWindowReader(value) as reader:
+        start = 0
+        while facts["frames"] is None or start < facts["frames"]:
+            count = 1024 if facts["frames"] is None else min(1024, facts["frames"] - start)
+            waveform = reader.read(start, count, batch_index=0)["waveform"][0]
+            if not waveform.shape[1]:
+                break
+            frame = av.AudioFrame.from_ndarray(
+                np.ascontiguousarray(waveform), format="fltp", layout=facts["layout"]
+            )
+            frame.sample_rate = facts["sample_rate"]
+            yield Fraction(start, facts["sample_rate"]), frame
+            start += waveform.shape[1]
+
+
 def _audio_count(value: Mapping[str, object]) -> int:
     if "components" in value:
         return int(mapping(value["components"], "components").get("audio") is not None)
     return len(cast(list[object], mapping(value["probe"], "probe")["audio"]))
 
 
-def _extract_audio(segments: list[_Segment], measured_end: Fraction) -> object:
+def _extract_audio(
+    segments: list[_Segment], measured_end: Fraction, complete_audio: object = None
+) -> object:
+    if complete_audio is not None:
+        facts = effective_audio_facts(complete_audio)
+        frames = facts["frames"]
+        count = round(measured_end * facts["sample_rate"])
+        if frames is not None:
+            count = min(count, frames)
+        return append_audio_edit(
+            complete_audio, {"trim": {"start_sample": 0, "sample_count": count}}
+        )
     selected: list[object] = []
     for segment in segments:
         value = segment.value
@@ -540,7 +632,7 @@ def iter_export_frames(value: Mapping[str, object], depth: int) -> Generator[tup
     """Yield RGB frames for image-only exporters through the shared edit/decoder plan."""
     import numpy as np
 
-    if _audio_count(value):
+    if value.get("complete_audio") is not None or _audio_count(value):
         raise ValueError(
             "animated images and PNG sequences cannot contain audio; detach it explicitly"
         )
@@ -581,7 +673,16 @@ def iter_video_pixels(obj: object) -> Generator[tuple[Fraction, Any]]:
 
 def iter_video_audio(obj: object, index: int = 0) -> Generator[tuple[Fraction, Any]]:
     """Yield edited audio frames without accumulating the complete waveform."""
-    with closing(_audio_frames(_plan(coerce_video(obj)), index)) as frames:
+    value = coerce_video(obj)
+    if value.get("complete_audio") is not None:
+        if index != 0:
+            raise ValueError("complete_audio has one audio stream")
+        with closing(_complete_audio_frames(value["complete_audio"])) as frames:
+            yield from _fit_audio(
+                frames, cast(Fraction | None, effective_video_facts(value)["duration"]), pad=False
+            )
+        return
+    with closing(_audio_frames(_plan(value), index)) as frames:
         yield from frames
 
 
@@ -591,7 +692,7 @@ def disassemble_video(obj: object) -> dict[str, object]:
     value = coerce_video(obj)
     probe = mapping(value["probe"], "probe")
     plan = _plan(value)
-    _validate_concat(plan)
+    _validate_concat(plan, video_only=value.get("complete_audio") is not None)
     arrays: list[np.ndarray] = []
     size = 0
     measured_end = Fraction(0)
@@ -631,7 +732,7 @@ def disassemble_video(obj: object) -> dict[str, object]:
         color["bit_depth"] = probe["bit_depth"]
     return {
         "images": annotate_image(images, color=color),
-        "audio": _extract_audio(plan, measured_end),
+        "audio": _extract_audio(plan, measured_end, value.get("complete_audio")),
         "frame_count": len(arrays),
         "fps": float(rate),
         "duration": float(duration),
@@ -640,10 +741,10 @@ def disassemble_video(obj: object) -> dict[str, object]:
     }
 
 
-def _templates(container: Any) -> tuple[object, ...]:
+def _templates(container: Any, *, video_only: bool = False) -> tuple[object, ...]:
     result: list[object] = []
     for stream in container.streams:
-        if stream.type not in ("video", "audio"):
+        if stream.type not in (("video",) if video_only else ("video", "audio")):
             continue
         context = stream.codec_context
         common = (
@@ -673,7 +774,7 @@ def _templates(container: Any) -> tuple[object, ...]:
     return tuple(result)
 
 
-def _validate_concat(segments: list[_Segment]) -> None:
+def _validate_concat(segments: list[_Segment], *, video_only: bool = False) -> None:
     import av
 
     if len(segments) < 2:
@@ -684,7 +785,7 @@ def _validate_concat(segments: list[_Segment]) -> None:
             raise ValueError("identical-codec concat requires encoded source clips")
         probe = mapping(segment.value["probe"], "probe")
         with open_video_source(video_source(segment.value)) as handle, av.open(handle) as opened:
-            actual = (_templates(opened), probe["rotation"], probe["alpha"])
+            actual = (_templates(opened, video_only=video_only), probe["rotation"], probe["alpha"])
         if template is None:
             template = actual
         elif template != actual:
@@ -719,12 +820,13 @@ def _independent_packet(packet: Any) -> bool:
     return idr and offset == len(data)
 
 
-def _copy_preflight(segments: list[_Segment]) -> bool:
+def _copy_preflight(segments: list[_Segment], *, video_only: bool = False) -> bool:
     """Prove exact closed cuts; a keyframe flag alone never establishes safety."""
     import av
 
     safe = True
     offset = Fraction(0)
+    kinds = ("video",) if video_only else ("video", "audio")
     for segment in segments:
         value = segment.value
         if "source" not in value:
@@ -739,12 +841,12 @@ def _copy_preflight(segments: list[_Segment]) -> bool:
             if any(
                 s.time_base is None or ((offset - start - origin) / s.time_base).denominator != 1
                 for s in source.streams
-                if s.type in ("video", "audio")
+                if s.type in kinds
             ):
                 return False
             spans: dict[int, tuple[Fraction, Fraction]] = {}
             for packet in source.demux():
-                if packet.stream.type not in ("video", "audio") or not packet.size:
+                if packet.stream.type not in kinds or not packet.size:
                     continue
                 if packet.pts is None or packet.dts is None or not packet.duration:
                     safe = False
@@ -765,14 +867,16 @@ def _copy_preflight(segments: list[_Segment]) -> bool:
                     if t != previous[1]:
                         safe = False
                     spans[index] = (previous[0], stop)
-            indexes = {s.index for s in source.streams if s.type in ("video", "audio")}
+            indexes = {s.index for s in source.streams if s.type in kinds}
             if set(spans) != indexes or any(span != (start, end) for span in spans.values()):
                 safe = False
         offset += segment.duration
     return safe
 
 
-def _copy_segments(segments: list[_Segment], output: Any, tags: Mapping[str, str]) -> None:
+def _copy_packets(
+    segments: list[_Segment], output: Any, tags: Mapping[str, str], *, video_only: bool = False
+) -> Generator[tuple[Fraction, Any]]:
     import av
 
     streams: list[Any] = []
@@ -783,7 +887,11 @@ def _copy_segments(segments: list[_Segment], output: Any, tags: Mapping[str, str
         assert segment.duration is not None
         with open_video_source(video_source(segment.value)) as handle, av.open(handle) as opened:
             source = cast(Any, opened)
-            incoming = [s for s in source.streams if s.type in ("video", "audio")]
+            incoming = [
+                s
+                for s in source.streams
+                if s.type in (("video",) if video_only else ("video", "audio"))
+            ]
             if not streams:
                 output.metadata.update(source.metadata)
                 output.metadata.update(tags)
@@ -803,8 +911,14 @@ def _copy_segments(segments: list[_Segment], output: Any, tags: Mapping[str, str
                 packet.pts += int(shift)
                 packet.dts += int(shift)
                 packet.stream = destinations[packet.stream.index]
-                output.mux(packet)
+                yield t + offset - segment.start, packet
         offset += segment.duration
+
+
+def _copy_segments(segments: list[_Segment], output: Any, tags: Mapping[str, str]) -> None:
+    with closing(_copy_packets(segments, output, tags)) as packets:
+        for _timestamp, packet in packets:
+            output.mux(packet)
 
 
 def _fit_audio(
@@ -886,12 +1000,14 @@ def save_video_stream(
     *,
     container: str = "auto",
     codec: str = "auto",
-    crf: int | None = None,
+    crf: int | float | None = None,
     metadata: Mapping[str, object] | None = None,
     profile: str = "auto",
     audio_layout: str = "preserve",
     trim_to_audio: bool = False,
     on_diagnostic: Callable[[Mapping[str, object]], None] | None = None,
+    source_components: bool = False,
+    preset: str | None = None,
 ) -> tuple[str, str]:
     """Write one container; the caller owns bounded spooling and atomic publication."""
     import av
@@ -902,6 +1018,10 @@ def save_video_stream(
     from .formats import metadata_tags
 
     value = coerce_video(obj)
+    if source_components and ("components" not in value or value["edits"]):
+        raise ValueError("source component encoding requires an unedited component VIDEO")
+    if preset is not None and not source_components:
+        raise ValueError("preset requires source component encoding")
     timeline_stream: tuple[dict[str, object], Iterator[Any], Iterator[Any]] | None = None
     if "timeline" in value:
         from dinkster_values.timeline_video import TimelineVideo
@@ -923,6 +1043,10 @@ def save_video_stream(
         else codec
     )
     name = "hevc" if name == "h265" else name
+    if source_components and (kind not in ("mp4", "mkv", "webm") or name not in ("h264", "av1")):
+        raise ValueError("source component encoding requires MP4/MKV/WebM and H.264/AV1")
+    if source_components and kind == "webm" and name != "av1":
+        raise ValueError("WebM output requires the AV1 codec")
     from dinkster_values.video_codec import VIDEO_CONTAINERS, video_rendition_mime
 
     from .formats import format_diagnostic, save_video_frames
@@ -946,7 +1070,14 @@ def save_video_stream(
         profile = "auto"
     if name not in (*_ENCODERS, "prores", "ffv1", "gif", "mjpeg", "png", "rawvideo"):
         name = "ffv1"
-    audio_count = int(bool(probe["audio"])) if timeline_stream else _audio_count(value)
+    complete_audio = value.get("complete_audio")
+    audio_count = (
+        1
+        if complete_audio is not None
+        else int(bool(probe["audio"]))
+        if timeline_stream
+        else _audio_count(value)
+    )
     if kind == "gif":
         if alpha or depth > 8 or audio_count or probe["transfer"] in (16, 18):
             kind, name = "mkv", "ffv1"
@@ -966,7 +1097,7 @@ def save_video_stream(
         kind = "mkv"
     if kind == "webm" and name not in ("av1", "vp9", "vp8"):
         kind = "mkv"
-    if (
+    if not source_components and (
         alpha
         and name not in ("vp9", "prores", "ffv1", "png", "rawvideo")
         or alpha
@@ -984,7 +1115,7 @@ def save_video_stream(
     mime = video_rendition_mime({"container": kind})
     mux_options = {"movflags": "use_metadata_tags"} if kind in ("mp4", "mov") else {}
     plan = [] if timeline_stream is not None else _plan(value)
-    _validate_concat(plan)
+    _validate_concat(plan, video_only=complete_audio is not None)
     facts = effective_video_facts(value)
     unchanged = (
         len(plan) == 1
@@ -1002,6 +1133,7 @@ def save_video_stream(
     )
     if (
         "source" in value
+        and complete_audio is None
         and unchanged
         and audio_aligned
         and name == probe["video_codec"]
@@ -1031,8 +1163,11 @@ def save_video_stream(
                         packet.stream = streams[packet.stream.index]
                         outgoing.mux(packet)
                 return "." + kind, mime
-    copy_safe = timeline_stream is None and _copy_preflight(plan)
-    if copy_safe and name == probe["video_codec"] and copy_requested:
+    copy_safe = timeline_stream is None and _copy_preflight(
+        plan, video_only=complete_audio is not None
+    )
+    copy_video = copy_safe and name == probe["video_codec"] and copy_requested
+    if complete_audio is None and copy_safe and name == probe["video_codec"] and copy_requested:
         with av.open(
             destination, "w", format=_CONTAINERS.get(kind, kind), options=mux_options
         ) as opened:
@@ -1041,6 +1176,8 @@ def save_video_stream(
         return "." + kind, mime
     uncertain_audio_end = False
     for segment in plan:
+        if complete_audio is not None:
+            break
         if "components" in segment.value:
             component = mapping(segment.value["components"], "components").get("audio")
             tracks = [effective_audio_facts(component)] if component is not None else []
@@ -1066,6 +1203,10 @@ def save_video_stream(
                     "PyAV cannot safely encode this discrete audio layout; preserve the "
                     "source bytes or apply an explicit canonical AUDIO channel_map matrix"
                 ) from error
+    if complete_audio is not None:
+        layout_name = str(effective_audio_facts(complete_audio)["layout"])
+        if layout_name.endswith("c") and layout_name[:-1].isdigit():
+            raise ValueError("PyAV cannot safely encode this discrete audio layout")
     if uncertain_audio_end:
         if facts["duration"] is None:
             raise ValueError(
@@ -1084,7 +1225,9 @@ def save_video_stream(
         formats = {item.name for item in av.Codec(encoder, "w").video_formats or ()}
     except UnknownCodecError:
         formats = set()
-    pixel_format = "yuva420p" if alpha else "yuv420p10le" if depth > 8 else "yuv420p"
+    pixel_format = (
+        "yuva420p" if alpha and not source_components else "yuv420p10le" if depth > 8 else "yuv420p"
+    )
     if name == "prores":
         profile = ("4444" if alpha else "hq") if profile == "auto" else profile
         pixel_format = (
@@ -1108,7 +1251,7 @@ def save_video_stream(
         pixel_format = source_format
     pixel = av.VideoFormat(pixel_format)
     width, height = cast(int, facts["width"]), cast(int, facts["height"])
-    if (
+    if not source_components and (
         pixel_format not in formats
         or max((component.bits for component in pixel.components), default=0) < depth
         or (alpha and not any(component.is_alpha for component in pixel.components))
@@ -1133,11 +1276,21 @@ def save_video_stream(
     if crf is not None and name not in _ENCODERS:
         format_diagnostic({"crf": crf}, {"crf": None, "codec": name}, on_diagnostic)
         crf = None
-    if crf is not None and (type(crf) is not int or not 0 <= crf <= limit):
-        raise ValueError(f"crf must be an integer in 0..{limit}")
+    if crf is not None and (
+        type(crf) not in (int, float) or not 0 <= crf <= limit or not math.isfinite(crf)
+    ):
+        raise ValueError(f"crf must be a finite number in 0..{limit}")
     rate = cast("Fraction | None", facts["fps"])
     if rate is None:
         raise ValueError("encoding requires a known frame rate")
+    if source_components:
+        rate = Fraction(round(rate * 1000), 1000)
+    audio_plan = plan
+    audio_duration = cast("Fraction | None", facts["duration"])
+    if source_components:
+        components = mapping(value["components"], "components")
+        audio_duration = Fraction(len(cast(np.ndarray, components["images"])), rate)
+        audio_plan = [replace(plan[0], duration=audio_duration)]
     color = {key: probe[key] for key in _COLOR_KEYS}
     if pixel.is_rgb:
         color.update(matrix=0, range=2)
@@ -1153,65 +1306,89 @@ def save_video_stream(
     ):
         output = cast(Any, opened)
         output.metadata.update(tags)
-        video = output.add_stream(encoder, rate=rate)
-        video.width, video.height = facts["width"], facts["height"]
-        video.pix_fmt = pixel_format
-        video.codec_context.thread_count = 1
-        video.codec_context.max_b_frames = 0
-        video.codec_context.time_base = Fraction(1, 1_000_000)
-        for key, attr in zip(
-            _COLOR_KEYS, ("color_primaries", "color_trc", "colorspace", "color_range"), strict=True
-        ):
-            setattr(video.codec_context, attr, color[key])
-        if pixel.is_rgb:
-            video.codec_context.colorspace, video.codec_context.color_range = 0, 2
-        video.options = {"crf": str(crf if crf is not None else 23)} if name in _ENCODERS else {}
-        if name == "h264":
-            video.options.update({"preset": "fast", "tune": "zerolatency"})
-        elif name == "hevc":
-            video.codec_context.codec_tag = "hvc1"
-            video.options.update(
-                {
-                    "preset": "medium",
-                    "tune": "zerolatency",
-                    "x265-params": "pools=none:frame-threads=1:log-level=error",
+        if copy_video:
+            packets = readers.enter_context(
+                closing(_copy_packets(plan, output, tags, video_only=True))
+            )
+            first_packet = next(packets)
+            video = first_packet[1].stream
+            video_items = itertools.chain([first_packet], packets)
+        else:
+            video = output.add_stream(encoder, rate=rate)
+            video.width, video.height = facts["width"], facts["height"]
+            video.pix_fmt = pixel_format
+            if not source_components:
+                video.codec_context.thread_count = 1
+                video.codec_context.max_b_frames = 0
+                video.codec_context.time_base = Fraction(1, 1_000_000)
+            for key, attr in zip(
+                _COLOR_KEYS,
+                ("color_primaries", "color_trc", "colorspace", "color_range"),
+                strict=True,
+            ):
+                setattr(video.codec_context, attr, color[key])
+            if pixel.is_rgb:
+                video.codec_context.colorspace, video.codec_context.color_range = 0, 2
+            default_crf = (24 if name == "av1" else 18) if source_components else 23
+            video.options = (
+                {"crf": str(crf if crf is not None else default_crf)} if name in _ENCODERS else {}
+            )
+            if source_components:
+                if name == "h264" and preset is not None:
+                    video.options["preset"] = preset
+                if name == "av1" and crf == 0:
+                    video.options = {"svtav1-params": "lossless=1"}
+            elif name == "h264":
+                video.options.update({"preset": "fast", "tune": "zerolatency"})
+            elif name == "hevc":
+                video.codec_context.codec_tag = "hvc1"
+                video.options.update(
+                    {
+                        "preset": "medium",
+                        "tune": "zerolatency",
+                        "x265-params": "pools=none:frame-threads=1:log-level=error",
+                    }
+                )
+            elif name == "prores":
+                video.options = {"profile": profile, "alpha_bits": "16"}
+            elif name == "ffv1":
+                video.options = {
+                    "level": "3",
+                    "coder": "1",
+                    "context": "0",
+                    "slicecrc": "1",
+                    "slices": "4",
                 }
-            )
-        elif name == "prores":
-            video.options = {"profile": profile, "alpha_bits": "16"}
-        elif name == "ffv1":
-            video.options = {
-                "level": "3",
-                "coder": "1",
-                "context": "0",
-                "slicecrc": "1",
-                "slices": "4",
-            }
-            video.gop_size = 1
-        elif name in ("vp8", "vp9"):
-            video.options["lag-in-frames"] = "0"
-        elif name == "av1":
-            parameters = "lp=1:pred-struct=1:lookahead=0:enable-tf=0" + (
-                ":crf=0" if crf == 0 else ""
-            )
-            video.options.update({"preset": "8", "svtav1-params": parameters})
-        streams = [video]
-        iterators: list[Iterator[tuple[Fraction, object]]] = [
-            readers.enter_context(
+                video.gop_size = 1
+            elif name in ("vp8", "vp9"):
+                video.options["lag-in-frames"] = "0"
+            elif name == "av1":
+                parameters = "lp=1:pred-struct=1:lookahead=0:enable-tf=0" + (
+                    ":crf=0" if crf == 0 else ""
+                )
+                video.options.update({"preset": "8", "svtav1-params": parameters})
+            video_items = readers.enter_context(
                 closing(timeline_stream[1] if timeline_stream else _video_frames(plan))
             )
-        ]
+        streams = [video]
+        iterators: list[Iterator[tuple[Fraction, object]]] = [video_items]
         resamplers: list[Any] = [None]
         for index in range(audio_count):
             decoded_audio = readers.enter_context(
-                closing(timeline_stream[2] if timeline_stream else _audio_frames(plan, index))
+                closing(
+                    _complete_audio_frames(complete_audio)
+                    if complete_audio is not None
+                    else timeline_stream[2]
+                    if timeline_stream
+                    else _audio_frames(audio_plan, index)
+                )
             )
             iterator = readers.enter_context(
                 closing(
                     _fit_audio(
                         decoded_audio,
-                        cast(Fraction | None, facts["duration"]),
-                        pad=not trim_to_audio,
+                        audio_duration,
+                        pad=not trim_to_audio and not source_components,
                     )
                 )
             )
@@ -1221,11 +1398,9 @@ def save_video_stream(
                 if trim_to_audio:
                     raise ValueError("audio selection contains no samples") from None
                 continue
-            import itertools
-
             frame = first[1]
             layout = frame.layout.name if audio_layout == "preserve" else audio_layout
-            if audio_layout == "preserve" and "source" in value:
+            if audio_layout == "preserve" and complete_audio is None and "source" in value:
                 layout = cast(
                     str, mapping(cast(list[object], probe["audio"])[index], "audio")["layout"]
                 )
@@ -1251,6 +1426,8 @@ def save_video_stream(
                 candidate_audio.format = audio_formats[0]
                 candidate_audio.open()
             except (ValueError, FFmpegError):
+                if source_components:
+                    raise
                 format_diagnostic(
                     {
                         "container": kind,
@@ -1283,7 +1460,8 @@ def save_video_stream(
                 rate=48_000 if kind == "webm" else frame.sample_rate,
             )
             audio.layout = layout
-            audio.codec_context.thread_count = 1
+            if not source_components:
+                audio.codec_context.thread_count = 1
             streams.append(audio)
             iterators.append(itertools.chain([first], iterator))
             resamplers.append(
@@ -1306,19 +1484,45 @@ def save_video_stream(
                 continue
             if index == 0:
                 video_frames += 1
-            frame = (
-                _encoder_frame(cast(np.ndarray, item), depth)
-                if isinstance(item, np.ndarray)
-                else cast(Any, item)
-            )
-            if index == 0:
+            if index == 0 and copy_video:
+                output.mux(item)
+                following = next(iterators[index], None)
+                if following is not None:
+                    heapq.heappush(queue, (following[0], index, following[1]))
+                continue
+            if index == 0 and source_components:
+                samples = cast(np.ndarray, item)
+                if not np.issubdtype(samples.dtype, np.floating):
+                    samples = cast(np.ndarray, image_input(samples))
+                if depth > 8:
+                    pixels = np.clip(samples.astype(np.float32) * 65535, 0, 65535).astype("<u2")
+                    frame = av.VideoFrame.from_ndarray(pixels, format="rgb48le")
+                else:
+                    pixels = np.clip(samples * 255, 0, 255).astype(np.uint8)
+                    frame = av.VideoFrame.from_ndarray(pixels, format="rgb24")
+                frame = frame.reformat(
+                    format=pixel_format, dst_colorspace=cast(int, destination_matrix)
+                )
+                for key, attr in zip(
+                    _COLOR_KEYS,
+                    ("color_primaries", "color_trc", "colorspace", "color_range"),
+                    strict=True,
+                ):
+                    setattr(frame, attr, color[key])
+            else:
+                frame = (
+                    _encoder_frame(cast(np.ndarray, item), depth)
+                    if isinstance(item, np.ndarray)
+                    else cast(Any, item)
+                )
+            if index == 0 and not source_components:
                 coverage = _alpha_pixels(frame) if alpha and pixel.is_planar else None
                 frame = frame.reformat(
                     format=pixel_format,
                     src_colorspace=frame.colorspace if frame.colorspace not in (0, 2) else 5,
-                    dst_colorspace=destination_matrix,
+                    dst_colorspace=cast(int, destination_matrix),
                     src_color_range=2 if frame.format.is_rgb else frame.color_range or 1,
-                    dst_color_range=destination_range,
+                    dst_color_range=cast(int, destination_range),
                 )
                 if coverage is not None:
                     component = next(c for c in pixel.components if c.is_alpha)
@@ -1327,10 +1531,12 @@ def save_video_stream(
                     samples = np.zeros((plane.height, plane.line_size // dtype.itemsize), dtype)
                     samples[:, : frame.width] = np.rint(coverage * (2**component.bits - 1))
                     plane.update(samples.tobytes())
-            frame.time_base = (
-                Fraction(1, 1_000_000) if index == 0 else Fraction(1, frame.sample_rate)
-            )
-            frame.pts = round(t / frame.time_base)
+            frame = cast(Any, frame)
+            if index or not source_components:
+                frame.time_base = (
+                    Fraction(1, 1_000_000) if index == 0 else Fraction(1, frame.sample_rate)
+                )
+                frame.pts = round(t / frame.time_base)
             frames = [frame] if index == 0 else resamplers[index].resample(frame)
             for converted in frames:
                 for packet in streams[index].encode(converted):
@@ -1344,6 +1550,8 @@ def save_video_stream(
         if not video_frames:
             raise ValueError("video selection contains no frames")
         for index, stream in enumerate(streams):
+            if index == 0 and copy_video:
+                continue
             if index:
                 for frame in resamplers[index].resample(None):
                     for packet in stream.encode(frame):

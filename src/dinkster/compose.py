@@ -58,6 +58,7 @@ from typing import Any, Literal, TypeVar, cast
 
 from dinkster_assets import (
     ASSET_TYPE,
+    AssetVault,
     DeclaredAsset,
     PackAssetCatalog,
     register_asset_type,
@@ -185,6 +186,7 @@ from dinkster_server import (
     validate_comfy_args,
 )
 from dinkster_values import (
+    AUDIO_RECORD_TYPE,
     MEBIBYTE,
     RESOURCE_ID_META_KEY,
     RESOURCES_META_KEY,
@@ -240,6 +242,7 @@ from dinkster_workers.catalog import (
 )
 from dinkster_workers.host import load_pack as load_host_pack
 from dinkster_workers.manifest import validate_registration_claims
+from dinkster_workers.preview_artifacts import PreviewArtifactPublisher
 from dinkster_workers.session import WorkerDied
 
 from .extension_assets import read_module, resolve_frontend_modules
@@ -2464,6 +2467,10 @@ class ServingComposer:
 
             self._diagnostic_listener = fan_out
         self._worker_env = dict(worker_env or {})
+        vault_root = os.environ.get("DINKSTER_ASSET_VAULT")
+        self._preview_artifacts = PreviewArtifactPublisher(
+            AssetVault(vault_root) if vault_root else None
+        )
         # The asset base URL composed remote workers offer their daemons
         # as a staging source (pull-over-HTTP asset endpoint URL
         # shape), plus the bearer credential for it when this engine
@@ -2555,6 +2562,7 @@ class ServingComposer:
 
         empty_runtime = ExecutionRuntime(
             worker=self._routing,
+            publish_preview_artifacts=self._preview_artifacts,
             plan_execution=plan_core,
             owner_alive=self._owner_alive,
             extension_snapshot=ExtensionSnapshot(frontend_api=FRONTEND_API_VERSION),
@@ -3835,6 +3843,7 @@ class ServingComposer:
         self._runtime_seat.publish(
             ExecutionRuntime(
                 worker=worker,
+                publish_preview_artifacts=self._preview_artifacts,
                 plan_execution=plan_execution,
                 resolve_providers=resolve_providers,
                 preflight_provider_assets=preflight_provider_assets,
@@ -7590,6 +7599,8 @@ class ServingComposer:
             raise CompositionError(str(exc)) from exc
         if ASSET_TYPE in type_ids and ASSET_TYPE not in registry:
             register_asset_type(registry, resolver_from_env())
+        if AUDIO_RECORD_TYPE in type_ids and AUDIO_RECORD_TYPE not in registry:
+            register_asset_type(registry, resolver_from_env(), type_id=AUDIO_RECORD_TYPE)
 
     @staticmethod
     def _register_worker_renditions(registry: TypeRegistry, owner: str, worker: Any) -> None:

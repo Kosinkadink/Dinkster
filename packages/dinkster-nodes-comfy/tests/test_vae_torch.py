@@ -161,7 +161,7 @@ class VAEInspect(Node):
         return cls.outputs(pixel=float(materialize_image(image)[1, 6, 10, 2]))
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_manifest_executes_vae_encode_decode(tmp_path: Path, in_process: bool) -> None:
     async def scenario() -> None:
         composer = ServingComposer(

@@ -1,5 +1,9 @@
 ## Media I/O
 
+- Indexed video file selections remain references to their granted files,
+  without input copying or an encoded-file size cap. Unindexed selections
+  must be scanned before VIDEO admission. Decode working-set and produced
+  output limits still apply.
 - Portable SAM3 track values preserve packed uint8 masks, empty object axes or
   absent masks, original dimensions, frame counts, optional scores, and structural
   metadata across worker boundaries
@@ -7,13 +11,28 @@
   audio-encoder outputs preserve tensor dtype, shape and bytes, ordered layer
   sequences, sample counts and structural metadata across execution hosts and caches
 - Portable `SVG` values retain immutable ordered raw byte streams, including empty
-  and duplicate members, across execution hosts and caches without XML rewriting
+  and duplicate members, across execution hosts and caches without XML rewriting;
+  consumers can open independent seekable streams without mutating cached bytes
+- Portable IC-LoRA parameter mappings preserve source fields, ordering, and
+  structural extras across execution hosts and caches
+- Portable LOAD3D_CAMERA values preserve perspective and orthographic camera
+  dictionaries, including position, target, zoom, camera type, optional camera
+  controls, and structural extensions across execution hosts and caches
 - Typed PNG, JPEG, and WebP image loading with EXIF orientation, ICC-to-sRGB
   conversion, alpha masks, bounded metadata inspection, and input- or
   output-category asset selection. Media outputs retain compact pixel or PCM
   storage with actual host-RAM byte accounting; ordinary typed consumers
   receive normalized float32 values at invocation, while inputs that declare
   compact-storage support receive the retained dtype unchanged
+- Public bound-image component decoding returns first-frame RGB float32 pixels
+  or ordered frames with optional straight alpha under explicit source ownership,
+  using the same PyAV precision, channel, alignment, and display-orientation
+  handling as the ComfyUI reference without admitting still images as VIDEO;
+  source bytes, dimensions and estimated aligned conversion working sets are
+  admitted before conversion, with source length checked before opening the
+  decoder. FFmpeg probing is not a hard allocation sandbox. PyAV's non-byte
+  alignment graph rejects some small asymmetric inputs. Frame iteration does not
+  accumulate a batch; consumers admit the memory of frames they retain separately
 - Ordered animated and multipage image loading; pages with different dimensions
   from the first page are omitted from the batch
 - Ordered mounted image saving to PNG, JPEG, or WebP; Save Image defaults to a
@@ -52,12 +71,20 @@
   AAC audio for MP4, Opus for WebM, PCM for ProRes, and FLAC for FFV1.
   Save Video accepts VIDEO with container, codec, ProRes profile, declared
   audio-layout preservation or explicit mono/stereo downmix, trim-to-audio
-  or silence padding, optional CRF, and JSON metadata controls. It outputs the unchanged VIDEO
+  or silence padding, optional finite integer or fractional CRF within the
+  codec's range without rounding, and JSON metadata controls. It outputs the unchanged VIDEO
   plus the saved asset. Persisted frame-input savers migrate through deferred
   assembly while preserving codec settings and saved-asset output links.
   Component audio without proven sample coverage preserves finite VIDEO length
   and reports that shortest-audio trimming was not applied exactly.
   NVENC requests are refused until a hardware-encoder policy exists.
+- Opt-in unedited component-video encoding preserves source H.264/AV1
+  quantization, color signaling, CRF defaults, optional H.264 preset, and
+  thousandth-rounded encoded frame rates without changing component values.
+  Explicit codec failures propagate without FFV1 substitution or resizing.
+  Small AV1 inputs may succeed when the encoder supports them. Automatic
+  PyAV conversion threading can produce nondeterministic pixels on small
+  10-bit inputs; this path retains that source behavior.
 - Value-level video operations on IMAGE batches and VIDEO values: frame
   windowing with skip, stride, and cap controls; exact nearest-tick frame-rate
   resampling matching native video loading; deferred assembly with optional
@@ -71,6 +98,11 @@
 - VIDEO values retain an encoded source or deferred components, rational
   source probe facts, and ordered lazy trim, crop, scale, and restricted
   identical-codec concat edits. Info and lazy edits do not decode frames.
+  Public `concatenate_video` accepts one to 100 ordered VIDEO values, encodes
+  component inputs to MKV, preserves compatible encoded inputs, and supports
+  one optional complete AUDIO soundtrack. Later trims select the matching
+  soundtrack window; explicit audio replaces nested inherited soundtracks
+  in both playback and serialized identity.
   Decoded source trims select half-open stream-tick windows while retaining
   rational timeline bounds and independent audio sample windows.
   Encoded sources can be MP4, MKV, MOV, WebM, AVI, or GIF. Source-copy saves
@@ -82,7 +114,8 @@
 - Source-only video timeline documents with lazy `VIDEO` rendering,
   lossless OTIO JSON import/export, declared asset bindings, clip-level
   VIDEO_EDIT preservation, track composition, transitions, retiming, bounded
-  audio mixing, CURVE parameters, and deterministic CPU text effects
+  audio mixing, CURVE parameters available in core-only registries, and
+  deterministic CPU text effects
 - Streamed media uploads and video encoding with explicit upload, decoded
   frame, decoded audio, and encoded output limits
 - Native Comfy packs exchange portable VIDEO and VIDEO_EDIT values without
@@ -94,6 +127,12 @@
   WebP, 8/16-bit APNG with alpha, and ZIP PNG sequences; variable frame
   durations, animation loops, workflow metadata, and declared-count checks
 - PNG/APNG workflow metadata readable by ordinary image metadata readers
+- Native optical-flow loading from granted RAFT-large checkpoint assets, with
+  safe state-dict loading, float32 evaluation and ordinary resident model transport;
+  controlled CPU loader coverage does not certify real-model optical-flow quality
+- Native Save WEBM exports IMAGE sequences as VP9 or 10-bit AV1, retaining
+  VP9 RGBA transparency, fractional frame rates and submitted workflow metadata,
+  with default or selected writable output mounts and unchanged image output
 - Native saver format fallback reports requested/effective choices through
   nonblocking value diagnostics, including isolated-worker execution
 - Asset-backed native audio loading to AUDIO (first audio stream of audio or
@@ -150,3 +189,10 @@
   nodes: `dinkster.splat` batches of activated world-space gaussians with
   binary little-endian PLY interchange byte-compatible with ComfyUI's
   splat PLY files
+- Native Create Video assembles IMAGE frames, rational frame rate and optional
+  AUDIO as a VIDEO, retaining component storage until explicit encoding.
+  Bit depth and sRGB/HLG/PQ color choices are retained; optional immediate
+  H.264 or AV1 encoding uses source quantization, color and encoder defaults,
+  rounding only the encoded frame rate to a thousandth. Get Video Components
+  extracts bounded frames, audio and presentation facts from component or
+  encoded VIDEO values through ordinary in-process and isolated hosts.

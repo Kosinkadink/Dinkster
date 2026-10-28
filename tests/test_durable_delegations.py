@@ -9,10 +9,12 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import UUID
 
 import aiohttp
-from aiohttp import WSMsgType
+import pytest
+from aiohttp import WSMsgType, web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_collab import SessionService, SessionStore, add_session_routes
 from dinkster_server.app import create_app
@@ -246,8 +248,20 @@ def test_delegation_and_revocation_survive_restart(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
-def test_freshness_suspends_http_and_both_sockets_then_resumes(tmp_path: Path) -> None:
+def test_freshness_suspends_http_and_both_sockets_then_resumes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import dinkster_server.auth as auth_module
+
+    freshness_time = 100.0
+    monkeypatch.setattr(
+        auth_module,
+        "time",
+        SimpleNamespace(monotonic=lambda: freshness_time, time=time.time),
+    )
+
     async def scenario() -> None:
+        nonlocal freshness_time
         async with identity() as (key, url), server(tmp_path, url, freshness=2) as client:
             human = human_headers(key)
             issued = await mint(client, human)
@@ -263,7 +277,7 @@ def test_freshness_suspends_http_and_both_sockets_then_resumes(tmp_path: Path) -
                 ticket = await (await client.post("/api/auth/ws-ticket", headers=agent)).json()
                 sockets.append(await client.ws_connect(route + "?ticket=" + ticket["ticket"]))
             await sockets[1].receive_json()
-            await asyncio.sleep(2.05)
+            freshness_time += 2.05
             for route in ("/api/jobs", path, path + "/ops?after=0", path + "/snapshot"):
                 response = await client.get(route, headers=agent)
                 assert response.status == 403
@@ -301,7 +315,7 @@ def test_freshness_suspends_http_and_both_sockets_then_resumes(tmp_path: Path) -
             assert (await client.get("/api/jobs", headers=agent)).status == 200
             async with client.ws_connect(path + "/events", headers=agent) as socket:
                 assert (await socket.receive_json())["type"] == "session"
-            await asyncio.sleep(2.05)
+            freshness_time += 2.05
             assert (await client.get("/api/jobs", headers=agent)).status == 403
             async with client.ws_connect("/api/events", headers=human):
                 assert (await client.get("/api/jobs", headers=agent)).status == 200
@@ -398,17 +412,50 @@ def test_persisted_unrevoked_delegation_caps(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
-def test_auth_off_agents_do_not_need_a_fresh_jwt(tmp_path: Path) -> None:
+def test_auth_off_agents_do_not_need_a_fresh_jwt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import dinkster_server.app as app_module
+    import dinkster_server.auth as auth_module
+
+    freshness_time = 100.0
+    monkeypatch.setattr(
+        auth_module,
+        "time",
+        SimpleNamespace(monotonic=lambda: freshness_time, time=time.time),
+    )
+    monkeypatch.setattr(app_module, "_EVENT_AUTHORITY_RECHECK_SECONDS", 0.001)
+
     async def scenario() -> None:
+        nonlocal freshness_time
+        rechecked = asyncio.Event()
+
+        def observe_recheck(request: web.Request) -> Principal:
+            principal = principal_for(request)
+            if request.path == "/api/events" and freshness_time > 101:
+                rechecked.set()
+            return principal
+
+        monkeypatch.setattr(app_module, "principal_for", observe_recheck)
         async with server(tmp_path, None, freshness=0.01) as client:
-            await asyncio.sleep(0.02)
+            freshness_time += 0.02
             agent = {"X-Dinkster-Actor-Kind": "agent"}
             assert (await client.get("/api/jobs", headers=agent)).status == 200
             response = await client.post("/api/auth/ws-ticket", headers=agent)
             assert response.status == 200
             ticket = (await response.json())["ticket"]
             async with client.ws_connect("/api/events?ticket=" + ticket) as socket:
-                await asyncio.sleep(1.1)
+                freshness_time += 1.1
+                await asyncio.wait_for(rechecked.wait(), 2)
                 assert not socket.closed
+                response = await client.post(
+                    "/api/jobs",
+                    headers=agent,
+                    json=submit_body(echo_graph(), ["s"], jobId="after-expiry"),
+                )
+                assert response.status == 202
+                event = await asyncio.wait_for(socket.receive_json(), 2)
+                assert event["type"] == "job_state"
+                assert event["jobId"] == "after-expiry"
 
     asyncio.run(scenario())

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 from collections.abc import Callable, Mapping
 from typing import cast
 
@@ -13,6 +14,7 @@ __all__ = [
     "SVG_CODEC_VERSION",
     "decode_svg",
     "encode_svg",
+    "materialize_svg",
     "svg_fingerprint",
     "svg_meta",
     "validate_svg_encoded",
@@ -40,6 +42,11 @@ def _streams(value: object) -> tuple[bytes, ...]:
         if total > ENCODED_MEDIA_LIMIT_BYTES:
             raise ValueError("SVG value exceeds the encoded media size limit")
     return cast("tuple[bytes, ...]", streams)
+
+
+def materialize_svg(value: object) -> tuple[io.BytesIO, ...]:
+    """Open independent seekable streams without changing the portable value."""
+    return tuple(io.BytesIO(stream) for stream in _streams(value))
 
 
 def encode_svg(value: object) -> bytes:

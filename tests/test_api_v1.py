@@ -38,6 +38,8 @@ GOLDEN_V1_SURFACE = (
     "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
+    "materialize_svg",
+    "materialize_voxel",
     "register_inference_types",
     "FrontendContribution",
     "FrontendModule",
@@ -71,6 +73,8 @@ GOLDEN_V1_SURFACE = (
     "extension_behavior_hash",
     # -- training session boundary values (dinkster-protocol)
     "TrainingSessionHandle",
+    "ExportSnapshot",
+    "current_export_snapshot",
     "MirrorSpec",
     "MirrorTolerance",
     "SourceFilenameSpec",
@@ -148,6 +152,7 @@ GOLDEN_V1_SURFACE = (
     "PREVIEW_EVENT",
     "PROGRESS_EVENT",
     "pack_logger",
+    "publish_preview_artifact",
     "report_event",
     "report_log",
     "report_preview",
@@ -160,6 +165,7 @@ GOLDEN_V1_SURFACE = (
     "CORE_INT",
     "CORE_STRING",
     "ARRAY_TYPE",
+    "AUDIO_RECORD_TYPE",
     "AUDIO_ENCODER_OUTPUT_TYPE",
     "AUDIO_ENCODER_TYPE",
     "AUDIO_TYPE",
@@ -178,18 +184,22 @@ GOLDEN_V1_SURFACE = (
     "DICT_TYPE",
     "FLOATS_TYPE",
     "GLIGEN_TYPE",
+    "HISTOGRAM_TYPE",
     "PHOTOMAKER_TYPE",
     "GUIDER_TYPE",
     "HOOK_KEYFRAMES_TYPE",
     "HOOKS_TYPE",
+    "IC_LORA_PARAMETERS_TYPE",
     "IMAGE_TYPE",
     "IMPACT_BASIC_PIPE_TYPE",
     "INFERENCE_LATENT_OPERATION_TYPE",
     "INPAINT_CONDITIONING_TYPE",
+    "INTERP_MODEL_TYPE",
     "LATENT_OPERATION_TYPE",
     "LATENT_TYPE",
     "LATENT_UPSCALE_MODEL_TYPE",
     "LAYERS_TYPE",
+    "LOAD3D_CAMERA_TYPE",
     "MASK_TYPE",
     "MESH_TYPE",
     "MODEL3D_TYPE",
@@ -198,6 +208,8 @@ GOLDEN_V1_SURFACE = (
     "MOGE_GEOMETRY_TYPE",
     "MOGE_MODEL_TYPE",
     "NOISE_TYPE",
+    "OPTICAL_FLOW_TYPE",
+    "POSE_KEYPOINT_TYPE",
     "POSE_TYPE",
     "RESOLUTION_PREVIEW_TYPE",
     "RESOURCE_HANDLE_TYPE",
@@ -211,6 +223,7 @@ GOLDEN_V1_SURFACE = (
     "SVG_TYPE",
     "TIMESTEPS_RANGE_TYPE",
     "TRACKS_TYPE",
+    "UPSCALE_MODEL_TYPE",
     "WAN_CAMERA_EMBEDDING_TYPE",
     "VAE_TYPE",
     "VECTOR_TYPE",
@@ -266,7 +279,11 @@ GOLDEN_V1_SURFACE = (
     # same way dev.image and the compat surface do.
     "IMAGE_BATCH_MERGER_ID",
     "PNG_CONTAINER_VERSION",
+    "ImageComponents",
+    "ReadableImageSource",
     "decode_image_array",
+    "decode_image_components",
+    "open_image_components",
     "encode_image_array",
     "image_array_fingerprint",
     "image_array_meta",
@@ -354,6 +371,9 @@ GOLDEN_V1_SURFACE = (
     "digest_file",
     "is_digest",
     "mount_roots_for_kind",
+    "asset_selection_names",
+    "asset_selection_options",
+    "resolve_asset_selection",
     "register_asset_type",
     "resolver_from_env",
     # -- mounted saves (dinkster-assets + current dinkster-schema widgets)
@@ -374,6 +394,7 @@ GOLDEN_V1_SURFACE = (
     "read_video_metadata",
     "save_video_frames",
     "assemble_video",
+    "concatenate_video",
     "disassemble_video",
     "iter_video_pixels",
     "save_frame_records",
@@ -507,6 +528,39 @@ assert "torch" not in sys.modules
     assert result.returncode == 0, result.stderr
 
 
+def test_upscale_model_registration_preserves_resident_identity_without_torch() -> None:
+    script = """
+import sys
+from dinkster_api.v1 import UPSCALE_MODEL_TYPE, TypeRegistry, register_inference_types
+from dinkster_memory.resident import default_pool
+from dinkster_values import RESOURCE_ID_META_KEY, ResidentLookupError
+
+assert UPSCALE_MODEL_TYPE == "UPSCALE_MODEL"
+registry = TypeRegistry()
+register_inference_types(registry)
+spec = registry.spec(UPSCALE_MODEL_TYPE)
+register_inference_types(registry)
+assert registry.spec(UPSCALE_MODEL_TYPE) is spec
+descriptor = object()
+encoded = spec.encode(descriptor)
+assert spec.decode(encoded) is descriptor
+assert spec.fingerprint(descriptor) == spec.fingerprint(spec.decode(encoded))
+assert spec.meta(descriptor)[RESOURCE_ID_META_KEY].startswith("resident:")
+assert default_pool().release_resident(descriptor)
+try:
+    spec.decode(encoded)
+except ResidentLookupError:
+    pass
+else:
+    raise AssertionError("released upscale descriptor remained resolvable")
+assert "torch" not in sys.modules
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 0, result.stderr
+
+
 @pytest.mark.parametrize("native_first", (True, False))
 @pytest.mark.parametrize("type_name", ("GLIGEN", "PHOTOMAKER"))
 def test_model_registration_preserves_resident_identity_without_torch(
@@ -546,6 +600,181 @@ except ResidentLookupError:
 else:
     raise AssertionError("released {type_name} remained resolvable")
 assert "torch" not in sys.modules
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("type_name", ("OPTICAL_FLOW", "INTERP_MODEL"))
+@pytest.mark.parametrize("native_first", (True, False))
+def test_model_registration_uses_shared_holding_pool_without_torch(
+    type_name: str, native_first: bool
+) -> None:
+    script = f"""
+import json
+import subprocess
+import sys
+sys.modules['torch'] = None
+sys.modules['dinkster_inference'] = None
+from dinkster_api.v1 import {type_name}_TYPE as model_type, TypeRegistry, register_inference_types
+from dinkster_memory.resident import ResidentPool, default_pool
+from dinkster_native.native import register_native_types
+from dinkster_values import ResidentLookupError, register_resident_type
+from dinkster_values.builtin_types import {type_name}_TYPE as builtin_type, BUILTIN_TYPE_IDS
+from dinkster_values import {type_name}_TYPE as values_type
+from dinkster_workers.boundary import ValueCodec
+
+assert model_type == values_type == builtin_type == {type_name!r}
+assert model_type in BUILTIN_TYPE_IDS
+holding_pool = default_pool()
+registry = TypeRegistry()
+registrations = (register_native_types, register_inference_types)
+if not {native_first!r}:
+    registrations = registrations[::-1]
+registrations[0](registry)
+spec = registry.spec(model_type)
+for registration in (*registrations, *registrations):
+    registration(registry)
+    assert registry.spec(model_type) is spec
+assert holding_pool in registry.resident_tables
+assert 'comfy.' + model_type not in registry
+model_patcher = object()
+encoded = spec.encode(model_patcher)
+assert spec.decode(encoded) is model_patcher
+value = registry.wrap(model_type, model_patcher)
+assert value.resolve() is model_patcher
+assert value.fingerprint == registry.wrap(model_type, model_patcher).fingerprint
+codec = ValueCodec(registry)
+blobs = []
+wire, _ = codec.encode(value, blobs, [])
+foreign_script = '''
+import json
+import sys
+sys.modules['torch'] = None
+sys.modules['dinkster_inference'] = None
+from dinkster_api.v1 import TypeRegistry, register_inference_types
+from dinkster_values import ResidentLookupError
+from dinkster_workers.boundary import ValueCodec
+registry = TypeRegistry()
+register_inference_types(registry)
+wire, blob_hex = json.loads(sys.stdin.read())
+codec = ValueCodec(registry)
+value, _ = codec.decode(wire, [bytes.fromhex(blob) for blob in blob_hex], [])
+try:
+    value.resolve()
+except ResidentLookupError:
+    pass
+else:
+    raise AssertionError('foreign process resolved a holding-pool value')
+blobs = []
+wire, _ = codec.encode(value, blobs, [])
+print(json.dumps([wire, [blob.hex() for blob in blobs]]))
+assert sys.modules['torch'] is None
+assert sys.modules['dinkster_inference'] is None
+'''
+relay = subprocess.run([sys.executable, '-c', foreign_script],
+                       input=json.dumps([wire, [blob.hex() for blob in blobs]]),
+                       capture_output=True, text=True, timeout=15)
+assert relay.returncode == 0, relay.stderr
+wire, blob_hex = json.loads(relay.stdout)
+returned, _ = codec.decode(wire, [bytes.fromhex(blob) for blob in blob_hex], [])
+assert returned.type_id == value.type_id
+assert returned.fingerprint == value.fingerprint
+assert returned.meta == value.meta
+assert returned.resolve() is model_patcher
+
+foreign_pool = ResidentPool()
+foreign = TypeRegistry()
+first_authority = register_resident_type(foreign, model_type, table=foreign_pool)
+for registration in (*registrations, *registrations):
+    registration(foreign)
+    assert foreign.spec(model_type) is first_authority
+try:
+    first_authority.decode(encoded)
+except ResidentLookupError:
+    pass
+else:
+    raise AssertionError('foreign pool resolved a holding-pool value')
+assert holding_pool.release_resident(model_patcher)
+try:
+    spec.decode(encoded)
+except ResidentLookupError:
+    pass
+else:
+    raise AssertionError('released model remained resolvable')
+assert sys.modules['torch'] is None
+assert sys.modules['dinkster_inference'] is None
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_voxel_registration_is_public_cold_and_preserves_first_authority() -> None:
+    script = """
+import sys
+sys.modules['torch'] = None
+sys.modules['dinkster_inference'] = None
+import dinkster_api.v1 as api
+from dinkster_inference_wire import materialize_voxel
+from dinkster_native.native import register_native_types
+assert materialize_voxel is api.materialize_voxel
+for registrations in ((api.register_inference_types, register_native_types),
+                      (register_native_types, api.register_inference_types)):
+    for preexisting in (True, False):
+        registry = api.TypeRegistry()
+        first = registry.register(api.VOXEL_TYPE) if preexisting else None
+        registrations[0](registry)
+        spec = registry.spec(api.VOXEL_TYPE)
+        registrations[1](registry)
+        registrations[0](registry)
+        assert registry.spec(api.VOXEL_TYPE) is spec
+        assert first is None or spec is first
+assert sys.modules['torch'] is None
+assert sys.modules['dinkster_inference'] is None
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_bounding_box_registration_is_shared_cold_and_preserves_first_authority() -> None:
+    script = """
+import sys
+sys.modules['torch'] = None
+sys.modules['dinkster_inference'] = None
+from dinkster_api.v1 import BOUNDING_BOX_TYPE, TypeRegistry, register_inference_types
+from dinkster_nodes_comfy import register_inference_types as register_pack_types
+
+# Hand-derived plain JSON values: an optional default, one frame, and
+# multiple frames including an empty frame must retain structure and order.
+values = (
+    {'x': 0, 'y': 0, 'width': 512, 'height': 512},
+    [{'x': 7, 'y': 3, 'width': 11, 'height': 5}],
+    [[], [{'x': 7, 'y': 3, 'width': 11, 'height': 5, 'score': 0.75}]],
+)
+for registrations in (
+    (register_inference_types, register_pack_types),
+    (register_pack_types, register_inference_types),
+):
+    for preexisting in (False, True):
+        registry = TypeRegistry()
+        first = registry.register(BOUNDING_BOX_TYPE) if preexisting else None
+        registrations[0](registry)
+        spec = registry.spec(BOUNDING_BOX_TYPE)
+        assert first is None or spec is first
+        registrations[1](registry)
+        register_inference_types(registry)
+        register_pack_types(registry)
+        assert registry.spec(BOUNDING_BOX_TYPE) is spec
+        for value in values:
+            assert spec.decode(spec.encode(value)) == value
+assert sys.modules['torch'] is None
+assert sys.modules['dinkster_inference'] is None
 """
     result = subprocess.run(
         [sys.executable, "-c", script], capture_output=True, text=True, timeout=30

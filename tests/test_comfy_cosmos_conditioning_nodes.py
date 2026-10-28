@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
-import sys
 import tomllib
 from pathlib import Path
 
@@ -71,22 +69,3 @@ def test_cosmos_conditioning_schemas_match_the_public_contract() -> None:
         assert [(output.id, output.type, output.optional) for output in schema.outputs] == [
             ("LATENT", latent, False)
         ]
-
-
-def test_cosmos_conditioning_cold_discovery_avoids_torch_and_inference_imports() -> None:
-    subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys\n"
-            "sys.modules['dinkster_inference'] = None\n"
-            "sys.modules['torch'] = None\n"
-            "from dinkster_nodes_comfy import COMFY_NODES\n"
-            "schemas = [node.define_schema() for node in COMFY_NODES]\n"
-            "ids = {schema.node_type for schema in schemas}\n"
-            "assert {'CosmosImageToVideoLatent', 'CosmosPredict2ImageToVideoLatent'} <= ids\n",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )

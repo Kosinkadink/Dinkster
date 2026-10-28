@@ -1,13 +1,53 @@
 ## Image operations
 
-- Color strings, ordered color palettes, and optional resolution-preview
-  metadata pass between node packs without rewriting their values.
+- Native `UpscaleModelLoader` loads granted single-image upscale checkpoints
+  into the shared `UPSCALE_MODEL` value.
+- Native `FrameInterpolationModelLoader` loads granted FILM and five-block
+  RIFE checkpoints into the shared resident `INTERP_MODEL` value.
+  Native `FrameInterpolate` inserts intermediate frames using that model,
+  retaining source frame order and dimensions.
+- Native `CurveEditor` passes canonical curves through the curve editor and
+  displays an optional histogram without restricting its bin count.
+- Native `CameraAngle` produces an orbit-camera dictionary and shot description
+  from horizontal angle, elevation, and zoom.
+- Native `TripoSplatPreprocessImage` erodes alpha, crops foreground to a padded
+  square, resizes with Lanczos, and composites the image over black.
+- Native `TripoSplatConditioning` combines normalized vision tokens and VAE
+  reference latents with zero negative conditioning and fixed shape/camera noise targets.
+- Native `Trellis2UpsampleStage` cascades sparse shape latents through a VAE
+  and prepares second-pass conditioning, projection features, and padded sparse latents.
+- Color strings, ordered color palettes, bounding boxes, and optional
+  resolution-preview metadata pass between node packs without rewriting their values.
 - Native `PrimitiveBoundingBox` constructs pixel bounding boxes; `ImageCropV2`
   crops each image in a batch to that box and reports a PNG preview.
+- Native `CropByBBoxes` crops each frame to its bounding-box union and resizes
+  with stretching or aspect-preserving black padding.
+- Native `SDPoseFaceBBoxes` converts canonical pose face keypoints into per-frame
+  pixel boxes with area scaling and optional square expansion for cropping.
+- Native `SDPoseDrawKeypoints` renders body, head, hand, foot and face keypoints
+  as pose images with confidence thresholds and adjustable marker widths.
+- Native `RTDETR_detect` returns per-frame pixel bounding boxes filtered by
+  confidence and COCO class, ordered by score and limited per frame.
+  `DrawBBoxes` overlays boxes and labels on images or a black canvas.
+- Native `SAM3_VideoTrack` tracks initial masks or text-prompted objects across
+  video frames. `SAM3_TrackToMask` selects tracked objects and resizes their union
+  to the original frame dimensions using the portable packed-track value.
+- Native `SAM3_TrackPreview` publishes an MP4 preview of packed tracks with
+  colored overlays, object numbers and confidence labels, optionally over images.
+  Its H264 `yuv420p` encoding requires even width and height; odd dimensions
+  retain the [reference encoding failure](../comfyui-issues/sam3-preview-odd-dimensions.md).
+- Native `SAM3_Detect` segments text, box or point prompts with optional mask
+  refinement, returning per-object or union masks and scored text detections.
 - Native `ColorToRGBInt` preserves RGB letter casing and separates optional alpha;
   `ResolutionSelector` rounds aspect-ratio and megapixel dimensions to a chosen multiple.
 - Marigold V2 decoded predictions convert to per-image normalized depth,
   unit surface normals, or sRGB albedo.
+- Native list construction preserves member order and nested values across
+  independently typed elements; indexed selection supports positive and negative
+  indices and retains the selected element's type.
+- Native image tile lists split batches with overlap and merge tiles using
+  feathered weights; mask previews retain their mask output, and arbitrary
+  values can be inspected as text.
 - Native `Canny` edge detection with low/high hysteresis thresholds and RGB output
 - Native Stable Cascade stage C/B latent creation, stage C VAE encoding,
   stage B prior conditioning, and super-resolution control inputs
@@ -55,8 +95,6 @@
   paired comparison previews accept either, both, or neither image
 - ComfyUI ResizeImageMaskNode, BatchImagesNode, BatchMasksNode, BatchLatentsNode,
   and ColorTransfer native nodes
-- ComfyUI dataset image transforms for shorter/longer-edge resize, center/random
-  crop, normalization, brightness, and contrast adjustment
 - Alpha premultiply/unpremultiply and mask polarity conversion are native-only
   operations without fabricated ComfyUI aliases
 - Image operations declare alpha preservation, required alpha, creation, or
@@ -78,8 +116,6 @@
 - Image and mask batch range, repeat, reverse, shuffle, ping-pong loop, count
   expansion, concatenation, insertion, and replacement; image batch/list
   conversion and rebatching
-- Dataset image and image-text pair shuffling, perceptual-hash deduplication,
-  row-major image grids, and deprecated text-list merging
 - Row-major image grid composition and decomposition; image stitching; split
   and merge with overlapping tiles
 - Image transitions between inputs, within a batch, or while joining batches,

@@ -20,6 +20,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     TypeExpr,
     TypeRegistry,
+    materialize_svg,
     register_inference_types,
 )
 from dinkster_graph import Graph, GraphNode, Link
@@ -56,14 +57,22 @@ def test_svg_round_trip_preserves_order_duplicates_empty_and_non_text_bytes() ->
     assert fingerprint(value) != fingerprint(value[:-1])
 
 
-def test_svg_uses_complete_stream_bytes_without_changing_source_cursors() -> None:
-    sources = [io.BytesIO(b"first"), io.BytesIO(b"second")]
-    sources[0].seek(2)
-    sources[1].seek(4)
-    value = tuple(source.getvalue() for source in sources)
-    assert encode_svg(value)
-    assert value == (b"first", b"second")
-    assert tuple(source.tell() for source in sources) == (2, 4)
+def test_svg_materialization_keeps_cached_bytes_and_consumer_cursors_independent() -> None:
+    value = (b"first", b"", b"first", b"\xff\x00last")
+    encoded = encode_svg(value)
+    streams = materialize_svg(decode_svg(encoded))
+    assert all(isinstance(stream, io.BytesIO) for stream in streams)
+    assert tuple(stream.read() for stream in streams) == value
+    streams[0].seek(1)
+    streams[0].write(b"CHANGED")
+    streams[1].close()
+    streams[2].seek(2)
+    assert streams[2].read() == b"rst"
+    reopened = materialize_svg(value)
+    assert tuple(stream.tell() for stream in reopened) == (0, 0, 0, 0)
+    assert tuple(stream.read() for stream in reopened) == value
+    assert encode_svg(value) == encoded
+    assert materialize_svg(()) == ()
 
 
 @pytest.mark.parametrize(
@@ -78,6 +87,8 @@ def test_svg_uses_complete_stream_bytes_without_changing_source_cursors() -> Non
 def test_svg_rejects_mutable_or_non_byte_runtime_values(value: object) -> None:
     with pytest.raises(TypeError):
         encode_svg(value)
+    with pytest.raises(TypeError):
+        materialize_svg(value)
 
 
 def test_svg_rejects_malformed_frames_and_metadata() -> None:
@@ -117,7 +128,7 @@ def test_svg_registration_preserves_the_first_authority() -> None:
 def test_svg_public_type_registers_in_two_fresh_python_processes() -> None:
     script = """
 import sys
-from dinkster_api.v1 import SVG_TYPE, TypeRegistry, register_inference_types
+from dinkster_api.v1 import SVG_TYPE, TypeRegistry, materialize_svg, register_inference_types
 from dinkster_values.builtin_types import SVG_TYPE as canonical
 
 assert SVG_TYPE is canonical
@@ -129,6 +140,7 @@ value = (b'<svg/>', b'', b'\\xff')
 encoded = spec.encode(value)
 assert spec.decode(encoded) == value
 assert spec.fingerprint(value) == spec.fingerprint(spec.decode(encoded))
+assert tuple(stream.read() for stream in materialize_svg(spec.decode(encoded))) == value
 assert not any(name == 'torch' or name.startswith('torch.') for name in sys.modules)
 """
     for _ in range(2):
@@ -165,6 +177,10 @@ class SvgConsumer(Node):
         assert type(svg) is tuple
         assert svg == SVG_STREAMS
         assert svg_fingerprint(SVG_TYPE)(svg) == svg_fingerprint(SVG_TYPE)(SVG_STREAMS)
+        streams = materialize_svg(svg)
+        assert tuple(stream.read() for stream in streams) == SVG_STREAMS
+        streams[0].close()
+        assert tuple(stream.read() for stream in materialize_svg(svg)) == SVG_STREAMS
         return cls.outputs(result="svg")
 
 

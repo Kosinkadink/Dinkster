@@ -16,11 +16,12 @@ import asyncio
 import mmap
 import multiprocessing
 import os
-import time
+import threading
 from collections.abc import Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
+from types import SimpleNamespace
 
 import dinkster_workers.boundary as boundary_module
 import pytest
@@ -443,11 +444,13 @@ def test_cas_adopt_file_rejects_mismatched_bytes(tmp_path: Path) -> None:
 def test_budgeted_cas_evicts_least_recently_used(tmp_path: Path) -> None:
     cas = BudgetedDiskCAS(tmp_path / "cas", max_bytes=1000)
     first = cas.put(b"a" * 400)
-    time.sleep(0.02)
     second = cas.put(b"b" * 400)
-    time.sleep(0.02)
+    first_path = cas.resolve(first)
+    second_path = cas.resolve(second)
+    assert first_path is not None and second_path is not None
+    os.utime(first_path, (10, 10))
+    os.utime(second_path, (20, 20))
     assert cas.has(first)  # a hit refreshes recency
-    time.sleep(0.02)
     third = cas.put(b"c" * 400)  # busts the budget; the LRU blob goes
     assert not cas.has(second)
     assert cas.has(first)
@@ -614,14 +617,17 @@ def test_encoded_validator_failure_is_counted_as_disk_cache_miss(tmp_path: Path)
     asyncio.run(scenario())
 
 
-def test_core_combo_encoded_validation_is_enforced_by_disk_cache(tmp_path: Path) -> None:
+@pytest.mark.parametrize("encoded", [b"json:null", b"json:9007199254740993"])
+def test_core_combo_encoded_validation_is_enforced_by_disk_cache(
+    tmp_path: Path, encoded: bytes
+) -> None:
     async def scenario() -> None:
         registry = make_registry()
         value = Value(
             type_id=CORE_COMBO,
             fingerprint="untrusted-fingerprint",
             meta=ValueMeta(),
-            payload=EncodedPayload(CORE_COMBO, b"json:1", None),
+            payload=EncodedPayload(CORE_COMBO, encoded, None),
         )
         store = DiskCacheStore(tmp_path, registry)
         await store.put("invalid-combo", {"out": value})
@@ -724,11 +730,14 @@ def test_disk_cache_hit_refreshes_lru_across_store_instances(tmp_path: Path) -> 
         registry.register("test.bulk")
         store = DiskCacheStore(tmp_path, registry, max_bytes=40 * 1024)
         await store.put("key-a", {"out": registry.wrap("test.bulk", os.urandom(16 * 1024))})
-        time.sleep(0.02)
+        first_manifest = next((tmp_path / "entries").glob("*.json"))
         await store.put("key-b", {"out": registry.wrap("test.bulk", os.urandom(16 * 1024))})
-        time.sleep(0.02)
+        second_manifest = next(
+            path for path in (tmp_path / "entries").glob("*.json") if path != first_manifest
+        )
+        os.utime(first_manifest, (10, 10))
+        os.utime(second_manifest, (20, 20))
         assert await DiskCacheStore(tmp_path, registry, max_bytes=40 * 1024).get("key-a")
-        time.sleep(0.02)
         await store.put("key-c", {"out": registry.wrap("test.bulk", os.urandom(16 * 1024))})
 
         reopened = DiskCacheStore(tmp_path, registry, max_bytes=40 * 1024)
@@ -762,7 +771,43 @@ def test_disk_cache_shared_root_concurrent_writes_are_complete(tmp_path: Path) -
     asyncio.run(scenario())
 
 
-def test_disk_cache_process_lock_waits_for_another_instance(tmp_path: Path) -> None:
+def test_disk_cache_process_lock_waits_for_another_instance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    blocked = threading.Event()
+    retry = threading.Event()
+    if os.name == "nt":
+        import dinkster_caches.disk as disk_module
+
+        retries = 0
+
+        def retry_sleep(interval: float) -> None:
+            nonlocal retries
+            assert interval == 0.05
+            retries += 1
+            # Drive 10.55 seconds of retries while the real OS lock remains held.
+            if retries >= 211:
+                blocked.set()
+                assert retry.wait(15)
+
+        monkeypatch.setattr(disk_module, "time", SimpleNamespace(sleep=retry_sleep))
+    else:
+        import fcntl
+
+        original_flock = fcntl.flock
+
+        def observe_flock(fd: int, operation: int) -> None:
+            if operation == fcntl.LOCK_EX:
+                try:
+                    original_flock(fd, operation | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    blocked.set()
+                else:
+                    return
+            original_flock(fd, operation)
+
+        monkeypatch.setattr(fcntl, "flock", observe_flock)
+
     context = multiprocessing.get_context("spawn")
     ready = context.Event()
     release = context.Event()
@@ -776,9 +821,12 @@ def test_disk_cache_process_lock_waits_for_another_instance(tmp_path: Path) -> N
         registry = make_registry()
         with ThreadPoolExecutor(max_workers=1) as pool:
             waiting = pool.submit(DiskCacheStore, tmp_path, registry)
-            time.sleep(10.5 if os.name == "nt" else 0.2)
-            assert not waiting.done()
-            release.set()
+            try:
+                assert blocked.wait(15)
+                assert not waiting.done()
+            finally:
+                release.set()
+                retry.set()
             store = waiting.result(timeout=15)
         asyncio.run(store.put("after-lock", {"out": registry.wrap("INT", 7)}))
         assert asyncio.run(store.get("after-lock")) is not None

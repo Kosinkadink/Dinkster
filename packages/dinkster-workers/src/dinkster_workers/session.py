@@ -1654,7 +1654,12 @@ class BoundarySession:
             return InvocationResult(
                 error=NodeError(invocation.node_id, invocation.node_type, str(exc))
             )
-        return InvocationResult(outputs=outputs, artifacts=artifacts, expansion=decoded.expansion)
+        return InvocationResult(
+            outputs=outputs,
+            artifacts=artifacts,
+            expansion=decoded.expansion,
+            preview_artifacts=decoded.preview_artifacts,
+        )
 
     async def validate_admission(
         self,
@@ -1743,6 +1748,7 @@ class BoundarySession:
             attention_policy=invocation.attention_policy,
             attention_route_token=invocation.attention_route_token,
             extension_snapshot_digest=invocation.extension_snapshot_digest,
+            asset_folders=invocation.asset_folders,
         )
         future: asyncio.Future[tuple[dict[str, Any], list[bytes]]] = (
             asyncio.get_running_loop().create_future()

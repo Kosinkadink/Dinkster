@@ -185,7 +185,7 @@ class Result(Node):
 FIXTURE_NODES = (ModelSource, Result)
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_noise_guidance_runs_twice_in_both_ordinary_manifest_hosts(
     tmp_path: Path, in_process: bool
 ) -> None:

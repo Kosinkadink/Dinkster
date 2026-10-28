@@ -27,7 +27,7 @@ from dinkster_nodes_vision.hed import (
 from dinkster_schema import ComboWidget, schema_signature
 from dinkster_workers import load_manifest
 
-from dinkster.compose import compose_serving
+from dinkster.compose import compose_serving, default_pack_spec
 
 ROOT = Path(__file__).parent.parent
 PACKAGE = ROOT / "packages" / "dinkster-nodes-vision"
@@ -96,7 +96,15 @@ def test_hed_wheel_contains_pack_runtime_and_manifest() -> None:
 
 def test_hed_provider_populates_owner_choice_and_scopes_its_model() -> None:
     async def scenario() -> None:
-        composition = await compose_serving()
+        composition = await compose_serving(
+            [
+                default_pack_spec("dinkster-nodes-foundation"),
+                default_pack_spec("dinkster-nodes-media-io"),
+                default_pack_spec("dinkster-nodes-image"),
+                default_pack_spec("dinkster-vision-hed"),
+            ],
+            include_default_packs=False,
+        )
         try:
             for choice in MODEL_EDGE_PROVIDER_CHOICES:
                 assert composition.choices[choice] == ("dinkster-vision-hed",)

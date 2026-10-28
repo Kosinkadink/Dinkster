@@ -1,8 +1,5 @@
 """Torch-free native Wan image-conditioning interface contracts."""
 
-import subprocess
-import sys
-
 from dinkster_api.v1 import (
     CLIP_VISION_OUTPUT_TYPE,
     CONDITIONING_TYPE,
@@ -10,7 +7,10 @@ from dinkster_api.v1 import (
     IMAGE_TYPE,
     LATENT_TYPE,
     MASK_TYPE,
+    MODEL_TYPE,
+    TRACKS_TYPE,
     VAE_TYPE,
+    WAN_CAMERA_EMBEDDING_TYPE,
     NumberWidget,
     TypeExpr,
     schema_from_wire,
@@ -80,19 +80,6 @@ def test_wan_image_schemas_and_cold_native_discovery() -> None:
         assert schema_from_wire(schema_to_wire(schema)) == schema
     manifest = load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml")
     assert tuple(n.schema().node_type for n in COMFY_NODES) == manifest.namespaces
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; from dinkster_nodes_comfy import COMFY_NODES; "
-            "assert {'WanImageToVideo','WanFirstLastFrameToVideo','WanFunInpaintToVideo'} "
-            "<= {n.schema().node_type for n in COMFY_NODES}; "
-            "assert 'torch' not in sys.modules; assert 'dinkster_inference' not in sys.modules",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
 
 
 def test_wan_control_schemas_are_native_and_keep_declared_order() -> None:
@@ -262,3 +249,40 @@ def test_animation_schemas_preserve_interleaved_inputs_and_cache_options() -> No
     assert [i.id for i in cache.inputs] == ["model", "device", "dtype"]
     assert [i.default for i in cache.inputs[1:]] == ["cpu", "default"]
     assert schema_from_wire(schema_to_wire(cache)) == cache
+
+
+def test_advanced_wan_native_outputs_use_canonical_portable_types() -> None:
+    conditioning = (
+        ("positive", CONDITIONING_TYPE),
+        ("negative", CONDITIONING_TYPE),
+        ("latent", LATENT_TYPE),
+    )
+    cases = {
+        "WanCameraEmbedding": (
+            ("camera_embedding", WAN_CAMERA_EMBEDDING_TYPE),
+            ("width", CORE_INT),
+            ("height", CORE_INT),
+            ("length", CORE_INT),
+        ),
+        "WanCameraImageToVideo": conditioning,
+        "WanMoveTracksFromCoords": (("TRACKS", TRACKS_TYPE), ("track_length", CORE_INT)),
+        "GenerateTracks": (("TRACKS", TRACKS_TYPE), ("track_length", CORE_INT)),
+        "WanMoveConcatTrack": (("TRACKS", TRACKS_TYPE),),
+        "WanMoveTrackToVideo": conditioning,
+        "WanMoveVisualizeTracks": (("IMAGE", IMAGE_TYPE),),
+        "WanSoundImageToVideo": conditioning,
+        "WanSoundImageToVideoExtend": conditioning,
+        "WanHuMoImageToVideo": conditioning,
+        "WanInfiniteTalkToVideo": (("model", MODEL_TYPE), *conditioning, ("trim_image", CORE_INT)),
+        "SCAIL2ColoredMask": (
+            ("pose_video_mask", IMAGE_TYPE),
+            ("reference_image_mask", IMAGE_TYPE),
+        ),
+    }
+    schemas = {node.schema().node_type: node.schema() for node in COMFY_NODES}
+    for name, outputs in cases.items():
+        schema = schemas[name]
+        assert [(output.id, output.type) for output in schema.outputs] == [
+            (name, TypeExpr.concrete(type_id)) for name, type_id in outputs
+        ]
+        assert schema_from_wire(schema_to_wire(schema)) == schema

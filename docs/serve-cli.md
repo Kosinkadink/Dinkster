@@ -407,8 +407,14 @@ configured as `readwrite`; all other configured mounts remain read-only.
 Every jailed worker has an unshared network namespace, including workers with
 granted egress. Allowed HTTPS connections cross a per-worker Unix-socket proxy;
 the worker never receives host or raw network access.
-`--allow-mount-changes` cannot be combined with this flag because a running
-mount namespace cannot add or revoke bind grants.
+With `--allow-mount-changes`, folder grants are saved for the next controlled
+server restart. Responses report `restartRequired` and `pendingRemovals`;
+new folders have state `restart-required`. Running workers retain their
+original grants and output selection because a running mount namespace cannot
+add or revoke bind grants. Listings distinguish saved `outputMount` from
+`activeOutputMount`; operator locations include `activeMounts` so pending
+removals do not hide the paths still granted. Changing a project preference
+does not rebind it.
 
 ### --sandbox-grant-gpu
 
@@ -825,6 +831,22 @@ filesystem mounts while running (the desktop-shell folder-picker
 flow). Granted mounts persist to `<library-root>/mounts.toml`. Off by
 default: runtime mount mutation is a filesystem capability grant and
 stays operator-only. Requires `--library-root`.
+With `--sandbox-packs`, grant additions/removals and the global output selection
+are persisted but do not change live authority until the server restarts.
+No restart is triggered by a folder API request.
+
+Mount entries and `POST /api/mounts` accept an optional `kind` purpose such as
+`model/vae`, `model/vae-approx`, `model/diffusers`, `directory/input` or
+`directory/dataset`. The purpose persists with the grant and is an exact match,
+not a path convention or prefix permission. Omitting it leaves an untyped
+mount; an untyped mount does not supply selection roots. Read-only grants use
+`mode = "read"` (the default). For example:
+
+```toml
+[mounts.datasets]
+path = "/data/training-datasets"
+kind = "directory/dataset"
+```
 
 Mount scans store their indexes in `<library-root>/asset-indexes`, never in
 the mounted directory. If a mount still contains the former
@@ -832,6 +854,31 @@ the mounted directory. If a mount still contains the former
 the library index exists, the mount copy is ignored. `GET /api/mounts` reports
 scan progress as files, bytes, and elapsed seconds while unchanged size and
 mtime rows are reused.
+
+`GET /api/mounts?project=<project-id>` returns the project's ordered folders
+and selected output. `POST /api/mounts` accepts `project` (default `default`)
+and `shared` (default `false`): a new grant belongs only to that project unless
+Shared is explicitly requested. `PUT /api/mounts/projects/<project-id>` accepts
+`{"mounts": ["first", "second"], "outputMount": "second"}` to replace the
+project's order and membership without revoking any grants. The output must be
+a writable folder in that list. Null is allowed only when the project has no
+selected output; an existing output requires a replacement before removal.
+Excluding a derived folder does not alter its source installation. Existing
+grants are initialized as shared in priority order when project settings are
+first created. Project settings persist in `<library-root>/project-folders.json`;
+mount priorities are unchanged.
+Job submissions and selection-options requests accept `project` (default
+`default`). Each accepted job pins its folder order and output selection for
+both in-process and isolated workers. Folder preferences restrict name and
+directory lookup, not digest identity; saved digest references still resolve
+through live grants, and revocation remains authoritative. Cached computations
+are separated by the pinned folder context.
+`POST /api/mounts/<id>/retry` queues a rescan of an unavailable folder.
+`GET /api/mounts/locations` exposes operator location details. Other mount
+listings remain browsable without disclosing host paths or path-bearing errors
+to non-operators. Location listings and mutations require a human operator
+with `settings:write`, not just `assets:write`; delegated agents cannot grant
+filesystem authority.
 
 ## Logging
 

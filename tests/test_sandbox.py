@@ -1012,6 +1012,91 @@ def test_multi_gpu_sandbox_lanes_share_pack_scratch(
     ),
 )
 class TestLiveJail:
+    def test_asset_selections_read_granted_members_without_write_or_parent_access(
+        self, tmp_path: Path
+    ) -> None:
+        from dinkster_assets import MountDef, MountTable
+
+        state = tmp_path / "state"
+        state.mkdir()
+        snapshot = state / "snapshot.json"
+        roots = {
+            "model/vae-approx": {
+                "taesd_encoder.safetensors": b"encoder",
+                "taesd_decoder.safetensors": b"decoder",
+            },
+            "model/diffusers": {"model/model_index.json": b"{}", "model/weights.bin": b"weights"},
+            "directory/input": {"pictures/caption.txt": b"caption"},
+            "directory/dataset": {"training/metadata.json": b"{}"},
+        }
+        table = MountTable(snapshot)
+        granted = []
+        for kind, files in roots.items():
+            root = tmp_path / kind.replace("/", "-")
+            for relative, data in files.items():
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
+            mount_id = kind.replace("/", "-")
+            table.add(MountDef(id=mount_id, path=root, kind=kind))
+            table.scan(mount_id)
+            granted.append(str(root))
+        hidden = tmp_path / "ungranted.txt"
+        hidden.write_text("not granted")
+        script = f"""
+from pathlib import Path
+from dinkster_api.v1 import AssetError, resolve_asset_selection
+pair = resolve_asset_selection('model/vae', 'taesd')
+assert [member.read_bytes() for member in pair] == [b'encoder', b'decoder']
+try:
+    pair[0].local_path().write_bytes(b'no')
+except OSError:
+    pass
+else:
+    raise AssertionError('selected pair member became writable')
+assert resolve_asset_selection('model/vae', 'pixel_space') is None
+for kind, name, member, content in (
+    ('model/diffusers', 'model', 'weights.bin', b'weights'),
+    ('directory/input', 'pictures', 'caption.txt', b'caption'),
+    ('directory/dataset', 'training', 'metadata.json', b'{{}}'),
+):
+    path = resolve_asset_selection(kind, name)
+    assert (path / member).read_bytes() == content
+    try:
+        (path / 'forbidden.txt').write_text('no')
+    except OSError:
+        pass
+    else:
+        raise AssertionError('selected subtree became writable')
+    try:
+        resolve_asset_selection(kind, '../ungranted.txt')
+    except AssetError:
+        pass
+    else:
+        raise AssertionError('selection escaped its grant')
+assert not Path({str(hidden)!r}).exists()
+"""
+
+        async def scenario() -> None:
+            launcher = BubblewrapLauncher(
+                SandboxPolicy(ro_binds=(str(REPO_ROOT), str(state), *granted))
+            )
+            process = await launcher.launch(
+                make_spec(
+                    tmp_path,
+                    command=(sys.executable, "-c", script),
+                    env={"DINKSTER_MOUNTS_SNAPSHOT": str(snapshot)},
+                )
+            )
+            try:
+                assert await asyncio.wait_for(process.wait(), timeout=15) == 0
+            finally:
+                if process.returncode is None:
+                    process.terminate()
+                    await process.wait()
+
+        asyncio.run(scenario())
+
     def test_public_embedding_roots_remain_read_only_and_scoped(self, tmp_path: Path) -> None:
         from dinkster_assets import MountDef, MountTable
 
