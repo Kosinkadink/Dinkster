@@ -199,3 +199,10 @@
   rounding only the encoded frame rate to a thousandth. Get Video Components
   extracts bounded frames, audio and presentation facts from component or
   encoded VIDEO values through ordinary in-process and isolated hosts.
+- Native Save Video publishes a mounted MP4, MKV, or WebM asset while
+  returning its input VIDEO unchanged. Nested container, codec and CRF
+  controls select the public writer; component inputs use source encoding
+  defaults. Filename-prefix formatting, output mount selection and submitted
+  workflow metadata use the common mounted-output boundary. Encoded-input
+  re-encoding retains the canonical writer policy, not an export-equivalence
+  guarantee against the source encoder.
