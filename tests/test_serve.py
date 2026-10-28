@@ -3587,7 +3587,13 @@ def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
     grant a directory over the API, watch it scan to ready, browse its
     catalog, stream a mounted file by digest, and revoke it - the desktop
     folder-picker flow end to end, with mounts.toml as the durable record."""
+    from dinkster.project_folders import ProjectFolders
+
     library_root = tmp_path / "library"
+    library_root.mkdir()
+    projects = ProjectFolders(library_root / "project-folders.json")
+    projects.initialize(())
+    projects.update("film", [], available=(), output=None)
     granted = tmp_path / "granted"
     granted.mkdir(parents=True)
     payload = b"mounted-bytes"
@@ -3626,7 +3632,67 @@ def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
                         pass
                     await asyncio.sleep(0.05)
             async with session.get(base + "/api/mounts") as resp:
-                assert (await resp.json())["mounts"] == []
+                (imports,) = (await resp.json())["mounts"]
+                assert imports["id"] == "imports"
+                assert imports["path"] == str(library_root / "imports")
+                assert imports["mode"] == "readwrite"
+            async with session.get(base + "/api/mounts", params={"project": "film"}) as resp:
+                (project_imports,) = (await resp.json())["mounts"]
+                assert project_imports["id"] == "imports"
+            assert (library_root / "imports").is_dir()
+            async with asyncio.timeout(60):
+                while imports["state"] != "ready":
+                    await asyncio.sleep(0.05)
+                    async with session.get(base + "/api/mounts") as resp:
+                        (imports,) = (await resp.json())["mounts"]
+            from io import BytesIO
+
+            from PIL import Image
+
+            image = BytesIO()
+            Image.new("RGB", (2, 1), (17, 42, 93)).save(image, format="PNG")
+            async with session.post(
+                base + "/api/assets/media",
+                params={
+                    "scope": "local",
+                    "kind": "media/image",
+                    "name": "dropped.png",
+                    "project": "film",
+                },
+                data=image.getvalue(),
+                headers={"Content-Type": "image/png"},
+            ) as resp:
+                assert resp.status == 201, await resp.text()
+                imported = (await resp.json())["asset"]
+            async with session.get(
+                base + "/api/mounts/locations",
+                params={"scope": "local", "project": "film", "digest": imported["digest"]},
+            ) as resp:
+                assert resp.status == 200
+                assert (await resp.json())["locations"] == [
+                    {
+                        "storage": "mount",
+                        "mount": "imports",
+                        "virtualPath": "mounts/imports/dropped.png",
+                        "path": str(library_root / "imports" / "dropped.png"),
+                    }
+                ]
+            assert imported["virtualPath"] == "mounts/imports/dropped.png"
+            assert (library_root / "imports" / "dropped.png").read_bytes() == image.getvalue()
+            from dinkster_assets import AssetVault
+
+            assert not AssetVault(library_root / "vault").has(imported["digest"])
+            async with session.get(base + "/api/assets/" + imported["digest"]) as resp:
+                assert resp.status == 200
+                assert await resp.read() == image.getvalue()
+            async with session.get(
+                base + "/api/assets/availability",
+                params={"scope": "local", "digest": imported["digest"]},
+            ) as resp:
+                assert resp.status == 200
+                assert await resp.json() == {
+                    "assets": [{"digest": imported["digest"], "status": "available"}]
+                }
             async with session.post(
                 base + "/api/mounts", json={"id": "shots", "path": str(granted)}
             ) as resp:
@@ -3638,7 +3704,9 @@ def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
             async with asyncio.timeout(60):
                 while True:
                     async with session.get(base + "/api/mounts") as resp:
-                        (row,) = (await resp.json())["mounts"]
+                        rows = {row["id"]: row for row in (await resp.json())["mounts"]}
+                        assert set(rows) == {"imports", "shots"}
+                        row = rows["shots"]
                     if row["state"] == "ready":
                         break
                     await asyncio.sleep(0.05)
@@ -3653,9 +3721,18 @@ def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
             async with session.delete(base + "/api/mounts/shots") as resp:
                 assert resp.status == 200
             async with session.get(base + "/api/mounts") as resp:
-                assert (await resp.json())["mounts"] == []
+                (imports,) = (await resp.json())["mounts"]
+                assert imports["id"] == "imports"
             async with session.get(base + "/api/assets/" + entry["digest"]) as resp:
                 assert resp.status == 404
+            async with session.get(
+                base + "/api/assets/availability",
+                params={"scope": "local", "digest": entry["digest"]},
+            ) as resp:
+                assert resp.status == 200
+                assert await resp.json() == {
+                    "assets": [{"digest": entry["digest"], "status": "missing"}]
+                }
             assert "shots" not in (library_root / "mounts.toml").read_text("utf-8")
 
     try:
@@ -3815,7 +3892,9 @@ serve.main()
             async with asyncio.timeout(60):
                 while True:
                     async with session.get(base + "/api/mounts") as resp:
-                        (row,) = (await resp.json())["mounts"]
+                        rows = {row["id"]: row for row in (await resp.json())["mounts"]}
+                        assert set(rows) == {"imports", "renders"}
+                        row = rows["renders"]
                     if row["state"] == "ready":
                         break
                     await asyncio.sleep(0.05)

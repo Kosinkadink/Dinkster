@@ -1,7 +1,9 @@
-"""Decode one bound image source into its RGB and straight-alpha components."""
+"""Decode bound image frames into RGB and straight-alpha components."""
 
 from __future__ import annotations
 
+from collections.abc import Generator, Iterator
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, BinaryIO, Protocol, cast
 
@@ -108,12 +110,33 @@ def decode_image_components(
     max_working_set_bytes: int = IMAGE_WORKING_SET_LIMIT_BYTES,
     max_source_bytes: int = IMAGE_WORKING_SET_LIMIT_BYTES,
 ) -> ImageComponents:
-    """Decode bounded first-frame RGB/alpha components from a seekable asset.
+    """Decode only the first frame, closing the source before returning."""
+    with open_image_components(
+        source,
+        max_dimension=max_dimension,
+        max_working_set_bytes=max_working_set_bytes,
+        max_source_bytes=max_source_bytes,
+    ) as frames:
+        return next(frames)
+
+
+@contextmanager
+def open_image_components(
+    source: ReadableImageSource,
+    *,
+    max_dimension: int = 16_384,
+    max_working_set_bytes: int = IMAGE_WORKING_SET_LIMIT_BYTES,
+    max_source_bytes: int = IMAGE_WORKING_SET_LIMIT_BYTES,
+) -> Generator[Iterator[ImageComponents]]:
+    """Own a bounded, demand-driven frame iterator until context exit.
 
     Source length is checked before FFmpeg opens the asset. Stream dimensions
-    are checked before explicit decoding; frame dimensions and aligned scratch
-    are checked before conversion. FFmpeg probing is not an allocation sandbox.
+    are checked before explicit decoding; each frame's dimensions and aligned
+    scratch are checked before conversion. Retained frames require a separate
+    caller budget. FFmpeg probing is not an allocation sandbox.
     """
+    import av
+
     for name, limit in (
         ("max_dimension", max_dimension),
         ("max_working_set_bytes", max_working_set_bytes),
@@ -124,7 +147,7 @@ def decode_image_components(
     opener = getattr(source, "open", None)
     if not callable(opener):
         raise TypeError(
-            f"decode_image_components expects an asset with open(), got {type(source).__name__}"
+            f"open_image_components expects an asset with open(), got {type(source).__name__}"
         )
     with cast(Any, opener()) as handle:
         position = handle.tell()
@@ -132,29 +155,31 @@ def decode_image_components(
         handle.seek(position)
         if source_size > max_source_bytes:
             raise ValueError("image asset exceeds the input byte limit")
-        return _decode_components(handle, max_dimension, max_working_set_bytes)
+        with av.open(handle, mode="r") as opened:
+            container = cast(Any, opened)
+            stream = next((s for s in container.streams if s.type == "video"), None)
+            if stream is None:
+                raise ValueError("image source has no decodable video stream")
+            _check_dimensions(
+                stream.codec_context.width,
+                stream.codec_context.height,
+                max_dimension,
+                max_working_set_bytes,
+            )
+            with closing(
+                _iter_components(container, stream, max_dimension, max_working_set_bytes)
+            ) as frames:
+                yield frames
 
 
-def _decode_components(
-    handle: BinaryIO, max_dimension: int, max_working_set_bytes: int
-) -> ImageComponents:
-    import av
+def _iter_components(
+    container: Any, stream: Any, max_dimension: int, max_working_set_bytes: int
+) -> Generator[ImageComponents]:
     import numpy as np
 
-    with av.open(handle, mode="r") as opened:
-        container = cast(Any, opened)
-        stream = next((stream for stream in container.streams if stream.type == "video"), None)
-        if stream is None:
-            raise ValueError("image source has no decodable video stream")
-        _check_dimensions(
-            stream.codec_context.width,
-            stream.codec_context.height,
-            max_dimension,
-            max_working_set_bytes,
-        )
-        frame = cast(Any, next(container.decode(stream), None))
-        if frame is None:
-            raise ValueError("image source contains no decodable frame")
+    found_frame = False
+    for frame in container.decode(stream):
+        found_frame = True
         _check_dimensions(frame.width, frame.height, max_dimension, max_working_set_bytes)
         alpha = (
             any(component.is_alpha for component in frame.format.components)
@@ -189,4 +214,6 @@ def _decode_components(
         quadrant = _rotation_quadrant(frame)
         if quadrant:
             image = np.rot90(image, k=quadrant, axes=(0, 1)).copy()
-    return ImageComponents(image[..., :3], image[..., -1:] if alpha else None)
+        yield ImageComponents(image[..., :3], image[..., -1:] if alpha else None)
+    if not found_frame:
+        raise ValueError("image source contains no decodable frame")

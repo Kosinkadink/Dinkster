@@ -14,6 +14,7 @@ import pytest
 from dinkster_api.v1 import (
     CORE_STRING,
     LATENT_TYPE,
+    LAYERS_TYPE,
     VOXEL_TYPE,
     InputSpec,
     Node,
@@ -29,6 +30,7 @@ from dinkster_values import (
     EncodedMultiStreamLatent,
     decode_latent,
     encode_latent,
+    latent_fingerprint,
     validate_latent_encoded,
 )
 from dinkster_values.latent_codec import _copy_address
@@ -475,6 +477,14 @@ def test_structural_latent_codec_is_deterministic_and_round_trips_streams() -> N
     assert decoded["metadata"] == {"enabled": True, "name": "value"}
 
 
+def test_default_latent_keeps_existing_identity() -> None:
+    value = {"samples": EncodedLatentTensor("float32", (1,), b"\x00\x00\x80?")}
+    encoded = encode_latent(value)
+
+    assert encode_latent(decode_latent(encoded)) == encoded
+    assert latent_fingerprint(LATENT_TYPE)(value) == "ab5ebb24357a9feccebd5d0e2f3717711d2b6ddf"
+
+
 @pytest.mark.parametrize("reserved", ("tensor", "multi", "tuple", "map", "user"))
 def test_latent_codec_escapes_reserved_mapping_keys(reserved: str) -> None:
     value = {
@@ -497,6 +507,9 @@ def test_latent_codec_validator_rejects_old_and_corrupt_frames() -> None:
     malformed = {"$": "map", "items": {}, "extra": True}
     with pytest.raises(ValueError, match="mapping"):
         validate_latent_encoded(prefix + json.dumps(malformed).encode(), {})
+    ordered_mapping = {"$": "map", "items": [["samples", None]]}
+    with pytest.raises(ValueError, match="invalid mapping"):
+        validate_latent_encoded(prefix + json.dumps(ordered_mapping).encode(), {})
 
 
 @pytest.mark.parametrize("perspective,normals", ((False, False), (True, False), (True, True)))
@@ -550,6 +563,226 @@ def test_registered_moge_geometry_rejects_malformed_tensor_records(corruption: s
     prefix = LATENT_CODEC_MAGIC + b"\x01"
     tree = json.loads(encoded[len(prefix) :])
     record = tree["items"]["depth"]
+    if corruption == "buffer":
+        record["data"] = "AA=="
+    elif corruption == "shape":
+        record["shape"] = [1, -2, 3]
+    else:
+        record["dtype"] = "float99"
+    malformed = prefix + json.dumps(tree).encode()
+    assert spec.validate_encoded is not None
+    with pytest.raises(ValueError, match="tensor"):
+        spec.validate_encoded(malformed, {})
+    with pytest.raises(ValueError, match="tensor"):
+        spec.decode(malformed)
+
+
+def test_registered_layers_preserve_nested_tensors_state_and_identity() -> None:
+    from dinkster_api.v1 import LAYERS_TYPE, TypeRegistry, register_inference_types
+
+    registry = TypeRegistry()
+    register_inference_types(registry)
+    spec = registry.spec(LAYERS_TYPE)
+    image = _tensor(fill=3, shape=(1, 2, 5, 3))
+    mask = EncodedLatentTensor("bool", (1, 2, 5), bytes((0, 1, 1, 0, 1)) * 2)
+    document = {
+        "version": 1,
+        "canvas": (19, 7),
+        "layers": [
+            {
+                "type": "raster",
+                "image": image,
+                "mask": mask,
+                "x": -3,
+                "y": 7,
+                "z_index": 9,
+                "name": "front",
+                "opacity": 0.375,
+                "blend_mode": "multiply",
+                "visible": False,
+                "flip_h": True,
+                "flip_v": False,
+                "rotation": 31.5,
+                "w": 13,
+                "h": 5,
+            },
+            {"type": "raster", "image": _tensor(fill=7, shape=(2, 3, 1, 4)), "z_index": 2},
+        ],
+        "metadata": {"labels": ("front", "back"), "enabled": True},
+    }
+    encoded = spec.encode(document)
+    assert spec.decode(encoded) == document
+    assert spec.validate_encoded is not None
+    spec.validate_encoded(encoded, {})
+    assert spec.encode(spec.decode(encoded)) == encoded
+    assert spec.fingerprint is not None
+    reordered = dict(reversed(tuple(document.items())))
+    assert spec.encode(reordered) == encoded
+    assert spec.fingerprint(reordered) == spec.fingerprint(document)
+    assert spec.fingerprint({**document, "layers": list(reversed(document["layers"]))}) != (
+        spec.fingerprint(document)
+    )
+    assert spec.fingerprint({**document, "canvas": (7, 19)}) != spec.fingerprint(document)
+    changed_image = {**document["layers"][0], "image": _tensor(fill=4, shape=image.shape)}
+    assert spec.fingerprint(
+        {**document, "layers": [changed_image, document["layers"][1]]}
+    ) != spec.fingerprint(document)
+    latent = registry.spec(LATENT_TYPE)
+    assert latent.fingerprint is not None
+    assert spec.fingerprint(document) != latent.fingerprint(document)
+    minimal = {"version": 1, "layers": []}
+    assert spec.decode(spec.encode(minimal)) == minimal
+
+
+def test_registered_layers_materialize_encoded_tensors_and_preserve_live_storage() -> None:
+    torch = pytest.importorskip("torch")
+    from dinkster_api.v1 import TypeRegistry, register_inference_types
+
+    registry = TypeRegistry()
+    register_inference_types(registry)
+    spec = registry.spec(LAYERS_TYPE)
+    image = torch.arange(30, dtype=torch.float64).reshape(1, 2, 5, 3)
+    mask = torch.tensor([[[False, True, True, False, True], [True, False, False, True, False]]])
+    document = {"canvas": (19, 7), "layers": [{"image": image, "mask": mask, "x": -3}]}
+    live = materialize_latent(document)
+    assert live is document
+    assert live["layers"][0]["image"] is image
+    assert live["layers"][0]["mask"] is mask
+    assert live["layers"][0]["image"].data_ptr() == image.data_ptr()
+    decoded = materialize_latent(spec.decode(spec.encode(document)))
+    assert decoded["canvas"] == (19, 7)
+    assert decoded["layers"][0]["x"] == -3
+    for name, expected in (("image", image), ("mask", mask)):
+        actual = decoded["layers"][0][name]
+        assert actual.dtype == expected.dtype
+        assert actual.device == expected.device
+        assert actual.shape == expected.shape
+        assert torch.equal(actual, expected)
+
+
+class LayerDocumentSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="layer-fixture.source",
+            outputs=(OutputSpec("layers", TypeExpr.concrete(LAYERS_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls) -> Mapping[str, object]:
+        return cls.outputs(
+            layers={
+                "canvas": (19, 7),
+                "layers": [
+                    {"image": _tensor(fill=3, shape=(1, 2, 5, 3)), "x": -3},
+                    {"mask": EncodedLatentTensor("bool", (1, 2, 3), b"\x00\x01\x01\x00\x01\x00")},
+                ],
+            }
+        )
+
+
+class LayerDocumentInspect(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="layer-fixture.inspect",
+            inputs=(InputSpec("layers", TypeExpr.concrete(LAYERS_TYPE)),),
+            outputs=(OutputSpec("summary", TypeExpr.concrete(CORE_STRING)),),
+        )
+
+    @classmethod
+    def execute(cls, *, layers: dict[str, object]) -> Mapping[str, object]:
+        assert layers == {
+            "canvas": (19, 7),
+            "layers": [
+                {
+                    "image": EncodedLatentTensor("float32", (1, 2, 5, 3), b"\x03\x00\x00\x00" * 30),
+                    "x": -3,
+                },
+                {"mask": EncodedLatentTensor("bool", (1, 2, 3), b"\x00\x01\x01\x00\x01\x00")},
+            ],
+        }
+        return cls.outputs(summary="two asymmetric layers")
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_registered_layers_cross_hosts_and_persistent_cache(
+    tmp_path: Path, in_process: bool
+) -> None:
+    async def scenario() -> None:
+        (tmp_path / "layer_fixture.py").write_text(
+            "from tests.test_latent_codec import LayerDocumentSource, LayerDocumentInspect\n"
+            "from dinkster_api.v1 import register_inference_types\n"
+            "NODES = (LayerDocumentSource, LayerDocumentInspect)\n",
+            encoding="ascii",
+        )
+        manifest = tmp_path / "dinkster-pack.toml"
+        manifest.write_text(
+            '[pack]\nname = "layer-fixture"\npublisher = "dinkster"\n'
+            'namespaces = ["layer-fixture"]\n'
+            '[pack.contracts]\nhost = "dinkster-pack-host/1"\napi = "dinkster-api/v1"\n'
+            '[pack.entry]\nnodes = "layer_fixture:NODES"\n'
+            'types = "layer_fixture:register_inference_types"\n',
+            encoding="ascii",
+        )
+        graph = Graph(
+            nodes={
+                "source": GraphNode("layer-fixture.source"),
+                "inspect": GraphNode("layer-fixture.inspect", {"layers": Link("source", "layers")}),
+            }
+        )
+        for restart in range(2):
+            composer = ServingComposer(
+                cache_mode="layered",
+                cache_dir=tmp_path / "cache",
+                worker_env={
+                    "PYTHONPATH": os.pathsep.join(
+                        (str(tmp_path), str(Path(__file__).resolve().parents[1]))
+                    )
+                },
+            )
+            try:
+                await composer.add_pack(
+                    PackSpec(manifest, in_process=in_process, trust_reserved=True)
+                )
+                events = []
+                engine = composer.composition.make_engine(events.append)
+                if not restart:
+                    for _ in range(2):
+                        result = await engine.run(graph, ["inspect"], cache_enabled=False)
+                        assert set(result.executed) == {"source", "inspect"}
+                        assert (
+                            result.outputs["inspect"]["summary"].resolve()
+                            == "two asymmetric layers"
+                        )
+                for repeat in range(2):
+                    events.clear()
+                    result = await engine.run(graph, ["source", "inspect"])
+                    assert result.outputs["inspect"]["summary"].resolve() == "two asymmetric layers"
+                    if restart or repeat:
+                        assert set(result.cached) == {"source", "inspect"}
+                        assert {
+                            e.detail["cacheLayer"] for e in events if e.kind == "node_cached"
+                        } == {"disk" if restart and not repeat else "memory"}
+                    else:
+                        assert set(result.executed) == {"source", "inspect"}
+            finally:
+                await composer.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("corruption", ("buffer", "shape", "dtype"))
+def test_registered_layers_reject_malformed_nested_tensor_records(corruption: str) -> None:
+    from dinkster_api.v1 import LAYERS_TYPE, TypeRegistry, register_inference_types
+
+    registry = TypeRegistry()
+    register_inference_types(registry)
+    spec = registry.spec(LAYERS_TYPE)
+    encoded = spec.encode({"version": 1, "layers": [{"image": _tensor(fill=1, shape=(1, 2, 3))}]})
+    prefix = LATENT_CODEC_MAGIC + b"\x01"
+    tree = json.loads(encoded[len(prefix) :])
+    record = tree["items"]["layers"][0]["items"]["image"]
     if corruption == "buffer":
         record["data"] = "AA=="
     elif corruption == "shape":
