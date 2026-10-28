@@ -11,6 +11,8 @@ dependencies = [
     "dinkster-memory",
     "dinkster-assets",
     "dinkster-video",
+    "dinkster-image-document",
+    "dinkster-workers",
 ]
 
 [build-system]

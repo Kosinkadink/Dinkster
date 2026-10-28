@@ -13,6 +13,9 @@
 - Portable camera embeddings, motion tracks with optional visibility, and complete
   audio-encoder outputs preserve tensor dtype, shape and bytes, ordered layer
   sequences, sample counts and structural metadata across execution hosts and caches
+- Portable `SVG` values retain immutable ordered raw byte streams, including empty
+  and duplicate members, across execution hosts and caches without XML rewriting;
+  consumers can open independent seekable streams without mutating cached bytes
 - Portable IC-LoRA parameter mappings preserve source fields, ordering, and
   structural extras across execution hosts and caches
 - Portable LOAD3D_CAMERA values preserve perspective and orthographic camera
@@ -200,3 +203,10 @@
   rounding only the encoded frame rate to a thousandth. Get Video Components
   extracts bounded frames, audio and presentation facts from component or
   encoded VIDEO values through ordinary in-process and isolated hosts.
+- Native Save Video publishes a mounted MP4, MKV, or WebM asset while
+  returning its input VIDEO unchanged. Nested container, codec and CRF
+  controls select the public writer; component inputs use source encoding
+  defaults. Filename-prefix formatting, output mount selection and submitted
+  workflow metadata use the common mounted-output boundary. Encoded-input
+  re-encoding retains the canonical writer policy, not an export-equivalence
+  guarantee against the source encoder.
