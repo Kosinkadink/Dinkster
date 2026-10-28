@@ -190,137 +190,6 @@ class _SchemaOnlyNode(Node):
         raise RuntimeError(f"{cls.schema().node_type} requires an execution provider")
 
 
-_USDU_REDRAW_MODES = ("Linear", "Chess", "None")
-_USDU_SEAM_MODES = ("None", "Band Pass", "Half Tile", "Half Tile + Intersections")
-
-
-def _usdu_combo(input_id: str, options: tuple[str, ...], default: str) -> InputSpec:
-    return InputSpec(
-        input_id,
-        COMBO,
-        default=default,
-        widget=ComboWidget(options=tuple(ComboOption(value=value) for value in options)),
-    )
-
-
-def _usdu_number(
-    input_id: str,
-    input_type: TypeExpr,
-    default: int | float,
-    *,
-    minimum: int | float,
-    maximum: int | float,
-    step: int | float,
-) -> InputSpec:
-    return InputSpec(
-        input_id,
-        input_type,
-        default=default,
-        widget=NumberWidget(min=minimum, max=maximum, step=step),
-    )
-
-
-def _usdu_inputs(*, include_upscale: bool) -> tuple[InputSpec, ...]:
-    image_id = "image" if include_upscale else "upscaled_image"
-    inputs: list[InputSpec] = [
-        InputSpec(image_id, IMAGE),
-        InputSpec("model", MODEL),
-        InputSpec("positive", CONDITIONING),
-        InputSpec("negative", CONDITIONING),
-        InputSpec("vae", VAE),
-    ]
-    if include_upscale:
-        inputs.append(_usdu_number("upscale_by", FLOAT, 2.0, minimum=0.05, maximum=4.0, step=0.05))
-    inputs.extend(
-        (
-            _usdu_number("seed", INT, 0, minimum=0, maximum=2**53 - 1, step=1),
-            _usdu_number("steps", INT, 20, minimum=1, maximum=10_000, step=1),
-            _usdu_number("cfg", FLOAT, 8.0, minimum=0.0, maximum=100.0, step=0.1),
-            _usdu_combo("sampler_name", ("euler",), "euler"),
-            _usdu_combo("scheduler", ("simple",), "simple"),
-            _usdu_number("denoise", FLOAT, 0.2, minimum=0.0, maximum=1.0, step=0.01),
-        )
-    )
-    if include_upscale:
-        inputs.append(InputSpec("upscale_model", ASSET))
-    inputs.extend(
-        (
-            _usdu_combo("mode_type", _USDU_REDRAW_MODES, "Linear"),
-            _usdu_number("tile_width", INT, 512, minimum=64, maximum=8192, step=8),
-            _usdu_number("tile_height", INT, 512, minimum=64, maximum=8192, step=8),
-            _usdu_number("mask_blur", INT, 8, minimum=0, maximum=64, step=1),
-            _usdu_number("tile_padding", INT, 32, minimum=0, maximum=8192, step=8),
-            _usdu_combo("seam_fix_mode", _USDU_SEAM_MODES, "None"),
-            _usdu_number("seam_fix_denoise", FLOAT, 1.0, minimum=0.0, maximum=1.0, step=0.01),
-            _usdu_number("seam_fix_width", INT, 64, minimum=0, maximum=8192, step=8),
-            _usdu_number("seam_fix_mask_blur", INT, 8, minimum=0, maximum=64, step=1),
-            _usdu_number("seam_fix_padding", INT, 16, minimum=0, maximum=8192, step=8),
-            InputSpec("force_uniform_tiles", BOOLEAN, default=True),
-            InputSpec("tiled_decode", BOOLEAN, default=False),
-            _usdu_number("batch_size", INT, 1, minimum=1, maximum=4096, step=1),
-        )
-    )
-    return tuple(inputs)
-
-
-class UltimateSDUpscaleOwner(_SchemaOnlyNode):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="dinkster.compat.ultimate_sd_upscale",
-            display_name="Ultimate SD Upscale Compatibility Carrier",
-            category="compatibility/comfyui",
-            inputs=_usdu_inputs(include_upscale=True),
-            outputs=(OutputSpec("image", IMAGE),),
-            aliases=("UltimateSDUpscale",),
-            search_visibility="hidden",
-        )
-
-
-class UltimateSDUpscaleNoUpscaleOwner(_SchemaOnlyNode):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="dinkster.compat.ultimate_sd_upscale_no_upscale",
-            display_name="Ultimate SD Upscale No-Upscale Compatibility Carrier",
-            category="compatibility/comfyui",
-            inputs=_usdu_inputs(include_upscale=False),
-            outputs=(OutputSpec("image", IMAGE),),
-            aliases=("UltimateSDUpscaleNoUpscale",),
-            search_visibility="hidden",
-        )
-
-
-class UpscaleModelLoaderOwner(_SchemaOnlyNode):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="dinkster.compat.upscale_model_loader",
-            display_name="Upscale Model Loader Compatibility Carrier",
-            category="compatibility/comfyui",
-            inputs=(
-                InputSpec(
-                    "model_name",
-                    ASSET,
-                    widget=AssetWidget(
-                        accept=("application/octet-stream",),
-                        kind="model/upscaler",
-                    ),
-                ),
-            ),
-            outputs=(OutputSpec("upscale_model", ASSET),),
-            aliases=("UpscaleModelLoader",),
-            search_visibility="hidden",
-        )
-
-
-GENERATION_COMPAT_CARRIER_NODES: tuple[type[Node], ...] = (
-    UltimateSDUpscaleOwner,
-    UltimateSDUpscaleNoUpscaleOwner,
-    UpscaleModelLoaderOwner,
-)
-
-
 class LoadCheckpoint(_SchemaOnlyNode):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -6070,9 +5939,6 @@ GENERATION_NODES: tuple[type[Node], ...] = (
 )
 
 GENERATION_NODE_IDS = tuple(node.schema().node_type for node in GENERATION_NODES)
-GENERATION_COMPAT_CARRIER_NODE_IDS = tuple(
-    node.schema().node_type for node in GENERATION_COMPAT_CARRIER_NODES
-)
 _SUPPORTED_SCHEMA_NODE_IDS = frozenset(
     {
         "dinkster.load_checkpoint",
@@ -6111,8 +5977,6 @@ GENERATION_SCHEMA_NODES = tuple(
 GENERATION_SCHEMA_NODE_IDS = tuple(node.schema().node_type for node in GENERATION_SCHEMA_NODES)
 
 __all__ = [
-    "GENERATION_COMPAT_CARRIER_NODE_IDS",
-    "GENERATION_COMPAT_CARRIER_NODES",
     "GENERATION_NODE_IDS",
     "GENERATION_NODES",
     "GENERATION_SCHEMA_NODE_IDS",
