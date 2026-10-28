@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
+import tomllib
 import unicodedata
 import zipfile
 from pathlib import Path
@@ -22,6 +24,7 @@ from dinkster.pack_archive import (
     _enforce_limit,
     build_pack_archive,
 )
+from scripts.build_official_packs import build as build_official_packs
 from tests.platform_support import symlink_or_skip
 
 MANIFEST = '[pack]\nname = "archive-test"\n\n[pack.entry]\nnodes = "nodes:NODES"\n'
@@ -214,3 +217,68 @@ def test_cli_writes_archive_and_prints_written_digest(
     manager.main()
     printed = capsys.readouterr().out.strip()
     assert printed == f"blake3:{blake3(output.read_bytes()).hexdigest()}"
+
+
+def test_official_artifacts_preserve_sources_and_existing_pack_identities(tmp_path: Path) -> None:
+    from dinkster_registry import Lockfile, unpack_artifact
+    from dinkster_workers import load_manifest
+
+    root = Path(__file__).resolve().parents[1]
+    version = "0.0.2.dev20261028"
+    first = build_official_packs(root, tmp_path / "first", version=version)
+    second = build_official_packs(root, tmp_path / "second", version=version)
+    assert [path.name for path in first] == [path.name for path in second]
+    assert [path.read_bytes() for path in first] == [path.read_bytes() for path in second]
+    lock = Lockfile.from_record_json(first[-1].read_text())
+    expected = {
+        "dinkster-nodes-comfy",
+        "dinkster-nodes-foundation",
+        "dinkster-nodes-image",
+        "dinkster-nodes-media-io",
+        "dinkster-nodes-remote",
+        "dinkster-nodes-generation",
+        "dinkster-vision-birefnet",
+        "dinkster-vision-depth-anything-v2",
+        "dinkster-vision-depth-anything-v3",
+        "dinkster-vision-detr",
+        "dinkster-vision-efficient-sam",
+        "dinkster-vision-hed",
+        "dinkster-vision-rtdetr",
+        "dinkster-vision-sam31",
+        "dinkster-vision-upscale",
+    }
+    assert {pack.pack for pack in lock.packs} == expected
+    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    for pack in lock.packs:
+        assert pack.version == version
+        assert pack.publisher == "dinkster"
+        assert pack.source == f"git:Kosinkadink/Dinkster@{commit}"
+        archive = first[0].parent / f"{pack.pack}-{version}.zip"
+        extracted = unpack_artifact(
+            archive, tmp_path / "unpacked" / pack.pack, pack.artifact_digest
+        )
+        manifest = load_manifest(extracted / "dinkster-pack.toml")
+        assert manifest.name == pack.pack
+        module = manifest.nodes_entry.partition(":")[0]
+        relative = Path(*module.split(".")) / "__init__.py"
+        if pack.pack.startswith("dinkster-vision-"):
+            original = Path("packages/dinkster-nodes-vision/src") / relative
+        else:
+            original = Path("packages") / pack.pack / "src" / relative
+        expected_source = subprocess.check_output(
+            ["git", "show", f"HEAD:{original.as_posix()}"], cwd=root
+        )
+        assert (extracted / relative).read_bytes() == expected_source
+        declared_templates = tomllib.loads((extracted / "dinkster-pack.toml").read_text())[
+            "pack"
+        ].get("templates", [])
+        assert len(manifest.templates) == len(declared_templates)
+        for template in manifest.templates:
+            assert template.path.is_file()
+
+
+@pytest.mark.parametrize("version", ["0.0.2.dev1+gabc", "../../escape"])
+def test_official_artifacts_require_public_pack_versions(tmp_path: Path, version: str) -> None:
+    with pytest.raises(ValueError, match="pack version"):
+        build_official_packs(Path(__file__).resolve().parents[1], tmp_path, version=version)
+    assert not list(tmp_path.iterdir())
