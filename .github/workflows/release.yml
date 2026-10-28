@@ -8,10 +8,12 @@ on:
     paths:
       - .github/workflows/release.yml
       - scripts/build_release.py
+      - scripts/download_frontend.py
       - scripts/verify_release_install.py
       - scripts/release_sources.json
       - src/dinkster/frontend.py
       - tests/test_release_install.py
+      - tests/test_frontend_artifact.py
 
 permissions:
   contents: read
@@ -26,6 +28,9 @@ jobs:
 
   build:
     needs: validation
+    permissions:
+      actions: read
+      contents: read
     runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
     timeout-minutes: 30
     steps:
@@ -33,35 +38,15 @@ jobs:
         with:
           clean: true
           persist-credentials: false
-      - name: Select the pinned frontend source
-        id: frontend
-        run: |
-          echo "ref=$(python3 -c 'import json; print(json.load(open("scripts/release_sources.json"))["commit"])')" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
-        with:
-          clean: true
-          repository: Kosinkadink/Dinkster-Frontend
-          ref: ${{ steps.frontend.outputs.ref }}
-          path: .release/frontend
-          persist-credentials: false
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10.31.0
-          dest: ${{ runner.tool_cache }}/setup-pnpm
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: .release/frontend/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
-        working-directory: .release/frontend
-      - run: pnpm --filter @dinkster/app build
-        working-directory: .release/frontend
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: uv.lock
+      - name: Download the pinned frontend bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run --no-project --python 3.12 scripts/download_frontend.py --output .release/frontend.zip
       - name: Build the complete release contract
         env:
           RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
@@ -69,10 +54,9 @@ jobs:
           if [ -z "$RELEASE_TAG" ]; then
             RELEASE_TAG="v$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
           fi
-          uv run --no-project --python 3.12 scripts/build_release.py \
+          uv run --no-project --python 3.12 -m scripts.build_release \
             --tag "$RELEASE_TAG" \
-            --frontend-root .release/frontend \
-            --frontend-dist .release/frontend/packages/app/dist
+            --frontend-artifact .release/frontend.zip
           uvx twine check dist/*.whl
       - uses: actions/upload-artifact@v4
         with:
