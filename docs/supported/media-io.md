@@ -1,5 +1,8 @@
 ## Media I/O
 
+- Shared editor values preserve plural pixel boxes with metadata, image-comparison
+  and compositor state, and nested tensor-layer documents including optional
+  masks, transforms, authored layer order, and canvas dimensions
 - Portable SAM3 track values preserve packed uint8 masks, empty object axes or
   absent masks, original dimensions, frame counts, optional scores, and structural
   metadata across worker boundaries

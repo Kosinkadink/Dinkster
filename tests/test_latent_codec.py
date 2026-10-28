@@ -241,3 +241,81 @@ def test_latent_codec_validator_rejects_old_and_corrupt_frames() -> None:
     malformed = {"$": "map", "items": {}, "extra": True}
     with pytest.raises(ValueError, match="mapping"):
         validate_latent_encoded(prefix + json.dumps(malformed).encode(), {})
+
+
+def test_registered_layers_preserve_nested_tensors_state_and_identity() -> None:
+    from dinkster_api.v1 import LAYERS_TYPE, TypeRegistry, register_inference_types
+
+    registry = TypeRegistry()
+    register_inference_types(registry)
+    spec = registry.spec(LAYERS_TYPE)
+    image = _tensor(fill=3, shape=(1, 2, 5, 3))
+    mask = EncodedLatentTensor("bool", (1, 2, 5), bytes((0, 1, 1, 0, 1)) * 2)
+    document = {
+        "version": 1,
+        "canvas": (19, 7),
+        "layers": [
+            {
+                "type": "raster",
+                "image": image,
+                "mask": mask,
+                "x": -3,
+                "y": 7,
+                "z_index": 9,
+                "name": "front",
+                "opacity": 0.375,
+                "blend_mode": "multiply",
+                "visible": False,
+                "flip_h": True,
+                "flip_v": False,
+                "rotation": 31.5,
+                "w": 13,
+                "h": 5,
+            },
+            {"type": "raster", "image": _tensor(fill=7, shape=(2, 3, 1, 4)), "z_index": 2},
+        ],
+        "metadata": {"labels": ("front", "back"), "enabled": True},
+    }
+    encoded = spec.encode(document)
+    assert spec.decode(encoded) == document
+    assert spec.validate_encoded is not None
+    spec.validate_encoded(encoded, {})
+    assert spec.encode(spec.decode(encoded)) == encoded
+    assert spec.fingerprint is not None
+    reordered = dict(reversed(tuple(document.items())))
+    assert spec.encode(reordered) == encoded
+    assert spec.fingerprint(reordered) == spec.fingerprint(document)
+    assert spec.fingerprint({**document, "layers": list(reversed(document["layers"]))}) != (
+        spec.fingerprint(document)
+    )
+    assert spec.fingerprint({**document, "canvas": (7, 19)}) != spec.fingerprint(document)
+    latent = registry.spec(LATENT_TYPE)
+    assert latent.fingerprint is not None
+    assert spec.fingerprint(document) != latent.fingerprint(document)
+    minimal = {"version": 1, "layers": []}
+    assert spec.decode(spec.encode(minimal)) == minimal
+
+
+@pytest.mark.parametrize("corruption", ("buffer", "shape", "dtype"))
+def test_registered_layers_reject_malformed_nested_tensor_records(corruption: str) -> None:
+    from dinkster_api.v1 import LAYERS_TYPE, TypeRegistry, register_inference_types
+
+    registry = TypeRegistry()
+    register_inference_types(registry)
+    spec = registry.spec(LAYERS_TYPE)
+    encoded = spec.encode({"version": 1, "layers": [{"image": _tensor(fill=1, shape=(1, 2, 3))}]})
+    prefix = LATENT_CODEC_MAGIC + b"\x01"
+    tree = json.loads(encoded[len(prefix) :])
+    record = tree["items"]["layers"][0]["items"]["image"]
+    if corruption == "buffer":
+        record["data"] = "AA=="
+    elif corruption == "shape":
+        record["shape"] = [1, -2, 3]
+    else:
+        record["dtype"] = "float99"
+    malformed = prefix + json.dumps(tree).encode()
+    assert spec.validate_encoded is not None
+    with pytest.raises(ValueError, match="tensor"):
+        spec.validate_encoded(malformed, {})
+    with pytest.raises(ValueError, match="tensor"):
+        spec.decode(malformed)

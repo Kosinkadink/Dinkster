@@ -14,6 +14,16 @@ framing and structural validation that does not import Torch or inference;
 expired or foreign-worker identities raise the existing residency error.
 The package does not contain a model runtime or an inference registry.
 
+`BOUNDING_BOXES`, `IMAGECOMPARE`, and `COMPOSITOR` retain ordinary structured
+state, including pixel coordinates, metadata, and authored list order. `LAYERS`
+uses the structural tensor codec without requiring `samples`: nested raster
+images and masks, layer order, canvas tuples, optional transforms, and supported
+extra metadata round-trip without geometry conversion or invented defaults.
+`materialize_latent` reconstructs nested tensors at the consuming node; live
+tensors retain their storage, dtype, and device. Registration is runtime-free
+and preserves an existing authority. This tensor-layer document is distinct
+from asset-backed video and image editing documents.
+
 This package is a uv workspace member. From the repository root:
 
 ```sh
