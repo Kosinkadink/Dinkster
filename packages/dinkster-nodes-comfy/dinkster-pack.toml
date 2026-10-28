@@ -545,6 +545,7 @@ namespaces = [
     "SDPoseKeypointExtractor",
     "AddLayer",
     "VOIDWarpedNoise",
+    "LoadVideo",
 ]
 
 [pack.sandbox]
