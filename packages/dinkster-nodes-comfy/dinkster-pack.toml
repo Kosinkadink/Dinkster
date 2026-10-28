@@ -546,6 +546,7 @@ namespaces = [
     "LoadImageDataSetFromFolder",
     "LoadImageTextDataSetFromFolder",
     "UpscaleModelLoader",
+    "TextOverlay",
 ]
 
 [pack.sandbox]
