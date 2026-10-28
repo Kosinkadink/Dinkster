@@ -9,11 +9,51 @@ from pathlib import Path
 from dinkster_assets import MountDef, dump_mounts, load_mounts, load_output_mount
 
 from .installer import Installer
+from .project_folders import ProjectFolders
 
 
 def default_roots() -> tuple[Path, Path]:
     home = Path(os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster")).expanduser()
     return home / "library", home / "packs"
+
+
+def ensure_import_mount(library_root: Path) -> None:
+    """Initialize visible imports without widening or replacing an existing grant."""
+    initialized = library_root / ".imports-initialized"
+    if initialized.exists():
+        return
+    mounts_path = library_root / "mounts.toml"
+    mounts = load_mounts(mounts_path)
+    imports_root = library_root / "imports"
+    existing = next((mount for mount in mounts if mount.id == "imports"), None)
+    if existing is None:
+        existing = next((mount for mount in mounts if mount.path == imports_root), None)
+    project_path = library_root / "project-folders.json"
+    projects = ProjectFolders(project_path) if project_path.exists() else None
+    if existing is not None:
+        if projects is not None:
+            projects.initialize(tuple(mount.id for mount in mounts), shared_defaults=(existing.id,))
+        initialized.touch()
+        return
+    imports_root.mkdir(parents=True, exist_ok=True)
+    text = dump_mounts(
+        (*mounts, MountDef(id="imports", path=imports_root, mode="readwrite")),
+        output_mount=load_output_mount(mounts_path),
+    )
+    temporary = mounts_path.with_name(f"{mounts_path.name}.tmp-{os.getpid()}")
+    try:
+        with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, mounts_path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    if projects is not None:
+        projects.initialize(
+            tuple(mount.id for mount in mounts) + ("imports",), shared_defaults=("imports",)
+        )
+    initialized.touch()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -51,6 +91,7 @@ def main(argv: list[str] | None = None) -> int:
     default_output_mount = mounts[default_output_index].id
     output_mount = load_output_mount(mounts_path) or default_output_mount
     mounts_path.write_text(dump_mounts(mounts, output_mount=output_mount), "utf-8")
+    ensure_import_mount(library_root)
     Installer(install_root)
     print(f"Library: {library_root}")
     print(f"Packs: {install_root}")

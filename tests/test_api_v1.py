@@ -38,6 +38,7 @@ GOLDEN_V1_SURFACE = (
     "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
+    "materialize_svg",
     "materialize_voxel",
     "register_inference_types",
     "FrontendContribution",
@@ -170,6 +171,7 @@ GOLDEN_V1_SURFACE = (
     "AUDIO_TYPE",
     "BACKGROUND_REMOVAL_TYPE",
     "BOUNDING_BOX_TYPE",
+    "BOUNDING_BOXES_TYPE",
     "CLIP_TYPE",
     "CLIP_VISION_OUTPUT_TYPE",
     "CLIP_VISION_TYPE",
@@ -190,6 +192,7 @@ GOLDEN_V1_SURFACE = (
     "HOOKS_TYPE",
     "IC_LORA_PARAMETERS_TYPE",
     "IMAGE_TYPE",
+    "IMAGECOMPARE_TYPE",
     "IMPACT_BASIC_PIPE_TYPE",
     "INFERENCE_LATENT_OPERATION_TYPE",
     "INPAINT_CONDITIONING_TYPE",
@@ -219,6 +222,7 @@ GOLDEN_V1_SURFACE = (
     "SIGMAS_TYPE",
     "SPLAT_TYPE",
     "STYLE_MODEL_TYPE",
+    "SVG_TYPE",
     "TIMESTEPS_RANGE_TYPE",
     "TRACKS_TYPE",
     "UPSCALE_MODEL_TYPE",
@@ -771,6 +775,54 @@ for registrations in (
         assert registry.spec(BOUNDING_BOX_TYPE) is spec
         for value in values:
             assert spec.decode(spec.encode(value)) == value
+assert sys.modules['torch'] is None
+assert sys.modules['dinkster_inference'] is None
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_editor_value_registration_is_public_cold_and_preserves_first_authority() -> None:
+    script = """
+import sys
+sys.modules['torch'] = None
+sys.modules['dinkster_inference'] = None
+import dinkster_api.v1 as api
+import dinkster_values as values
+from dinkster_values import builtin_types
+from dinkster_native.native import register_native_types
+
+payloads = {
+    'BOUNDING_BOXES': [{'x': 13, 'y': 7, 'width': 29, 'height': 11,
+                        'metadata': {'label': 'left', 'score': 0.75}},
+                       {'x': -2, 'y': 5, 'width': 3, 'height': 17, 'metadata': {}}],
+    'IMAGECOMPARE': {'selected': 1, 'divider': 0.375, 'labels': ['right', 'left']},
+    'COMPOSITOR': {'version': 1, 'canvas': {'width': 19, 'height': 7},
+                   'order': [4, 1], 'layers': [{'id': 4, 'opacity': 0.25}],
+                   'extension': {'enabled': False}},
+    'LAYERS': {'version': 1, 'canvas': (19, 7), 'layers': []},
+}
+for type_id in payloads:
+    name = type_id + '_TYPE'
+    assert getattr(api, name) == getattr(values, name) == getattr(builtin_types, name) == type_id
+    assert type_id in builtin_types.BUILTIN_TYPE_IDS
+for registrations in ((api.register_inference_types, register_native_types),
+                      (register_native_types, api.register_inference_types)):
+    for preexisting in (False, True):
+        registry = api.TypeRegistry()
+        first = {t: registry.register(t) for t in payloads} if preexisting else {}
+        registrations[0](registry)
+        specs = {t: registry.spec(t) for t in payloads}
+        registrations[1](registry)
+        registrations[0](registry)
+        for type_id, value in payloads.items():
+            spec = registry.spec(type_id)
+            assert spec is specs[type_id]
+            assert not preexisting or spec is first[type_id]
+            if not preexisting:
+                assert spec.decode(spec.encode(value)) == value
 assert sys.modules['torch'] is None
 assert sys.modules['dinkster_inference'] is None
 """

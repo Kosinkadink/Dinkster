@@ -4,12 +4,18 @@
   without input copying or an encoded-file size cap. Unindexed selections
   must be scanned before VIDEO admission. Decode working-set and produced
   output limits still apply.
+- Shared editor values preserve plural pixel boxes with metadata, image-comparison
+  and compositor state, and nested tensor-layer documents including optional
+  masks, transforms, authored layer order, and canvas dimensions
 - Portable SAM3 track values preserve packed uint8 masks, empty object axes or
   absent masks, original dimensions, frame counts, optional scores, and structural
   metadata across worker boundaries
 - Portable camera embeddings, motion tracks with optional visibility, and complete
   audio-encoder outputs preserve tensor dtype, shape and bytes, ordered layer
   sequences, sample counts and structural metadata across execution hosts and caches
+- Portable `SVG` values retain immutable ordered raw byte streams, including empty
+  and duplicate members, across execution hosts and caches without XML rewriting;
+  consumers can open independent seekable streams without mutating cached bytes
 - Portable IC-LoRA parameter mappings preserve source fields, ordering, and
   structural extras across execution hosts and caches
 - Portable LOAD3D_CAMERA values preserve perspective and orthographic camera
