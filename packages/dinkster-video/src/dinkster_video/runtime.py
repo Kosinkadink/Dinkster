@@ -892,6 +892,8 @@ def save_video_stream(
     audio_layout: str = "preserve",
     trim_to_audio: bool = False,
     on_diagnostic: Callable[[Mapping[str, object]], None] | None = None,
+    source_components: bool = False,
+    preset: str | None = None,
 ) -> tuple[str, str]:
     """Write one container; the caller owns bounded spooling and atomic publication."""
     import av
@@ -902,6 +904,10 @@ def save_video_stream(
     from .formats import metadata_tags
 
     value = coerce_video(obj)
+    if source_components and ("components" not in value or value["edits"]):
+        raise ValueError("source component encoding requires an unedited component VIDEO")
+    if preset is not None and not source_components:
+        raise ValueError("preset requires source component encoding")
     timeline_stream: tuple[dict[str, object], Iterator[Any], Iterator[Any]] | None = None
     if "timeline" in value:
         from dinkster_values.timeline_video import TimelineVideo
@@ -923,6 +929,10 @@ def save_video_stream(
         else codec
     )
     name = "hevc" if name == "h265" else name
+    if source_components and (kind not in ("mp4", "mkv", "webm") or name not in ("h264", "av1")):
+        raise ValueError("source component encoding requires MP4/MKV/WebM and H.264/AV1")
+    if source_components and kind == "webm" and name != "av1":
+        raise ValueError("WebM output requires the AV1 codec")
     from dinkster_values.video_codec import VIDEO_CONTAINERS, video_rendition_mime
 
     from .formats import format_diagnostic, save_video_frames
@@ -966,7 +976,7 @@ def save_video_stream(
         kind = "mkv"
     if kind == "webm" and name not in ("av1", "vp9", "vp8"):
         kind = "mkv"
-    if (
+    if not source_components and (
         alpha
         and name not in ("vp9", "prores", "ffv1", "png", "rawvideo")
         or alpha
@@ -1084,7 +1094,9 @@ def save_video_stream(
         formats = {item.name for item in av.Codec(encoder, "w").video_formats or ()}
     except UnknownCodecError:
         formats = set()
-    pixel_format = "yuva420p" if alpha else "yuv420p10le" if depth > 8 else "yuv420p"
+    pixel_format = (
+        "yuva420p" if alpha and not source_components else "yuv420p10le" if depth > 8 else "yuv420p"
+    )
     if name == "prores":
         profile = ("4444" if alpha else "hq") if profile == "auto" else profile
         pixel_format = (
@@ -1108,7 +1120,7 @@ def save_video_stream(
         pixel_format = source_format
     pixel = av.VideoFormat(pixel_format)
     width, height = cast(int, facts["width"]), cast(int, facts["height"])
-    if (
+    if not source_components and (
         pixel_format not in formats
         or max((component.bits for component in pixel.components), default=0) < depth
         or (alpha and not any(component.is_alpha for component in pixel.components))
@@ -1140,6 +1152,14 @@ def save_video_stream(
     rate = cast("Fraction | None", facts["fps"])
     if rate is None:
         raise ValueError("encoding requires a known frame rate")
+    if source_components:
+        rate = Fraction(round(rate * 1000), 1000)
+    audio_plan = plan
+    audio_duration = cast("Fraction | None", facts["duration"])
+    if source_components:
+        components = mapping(value["components"], "components")
+        audio_duration = Fraction(len(cast(np.ndarray, components["images"])), rate)
+        audio_plan = [replace(plan[0], duration=audio_duration)]
     color = {key: probe[key] for key in _COLOR_KEYS}
     if pixel.is_rgb:
         color.update(matrix=0, range=2)
@@ -1158,17 +1178,26 @@ def save_video_stream(
         video = output.add_stream(encoder, rate=rate)
         video.width, video.height = facts["width"], facts["height"]
         video.pix_fmt = pixel_format
-        video.codec_context.thread_count = 1
-        video.codec_context.max_b_frames = 0
-        video.codec_context.time_base = Fraction(1, 1_000_000)
+        if not source_components:
+            video.codec_context.thread_count = 1
+            video.codec_context.max_b_frames = 0
+            video.codec_context.time_base = Fraction(1, 1_000_000)
         for key, attr in zip(
             _COLOR_KEYS, ("color_primaries", "color_trc", "colorspace", "color_range"), strict=True
         ):
             setattr(video.codec_context, attr, color[key])
         if pixel.is_rgb:
             video.codec_context.colorspace, video.codec_context.color_range = 0, 2
-        video.options = {"crf": str(crf if crf is not None else 23)} if name in _ENCODERS else {}
-        if name == "h264":
+        default_crf = (24 if name == "av1" else 18) if source_components else 23
+        video.options = (
+            {"crf": str(crf if crf is not None else default_crf)} if name in _ENCODERS else {}
+        )
+        if source_components:
+            if name == "h264" and preset is not None:
+                video.options["preset"] = preset
+            if name == "av1" and crf == 0:
+                video.options = {"svtav1-params": "lossless=1"}
+        elif name == "h264":
             video.options.update({"preset": "fast", "tune": "zerolatency"})
         elif name == "hevc":
             video.codec_context.codec_tag = "hvc1"
@@ -1206,14 +1235,14 @@ def save_video_stream(
         resamplers: list[Any] = [None]
         for index in range(audio_count):
             decoded_audio = readers.enter_context(
-                closing(timeline_stream[2] if timeline_stream else _audio_frames(plan, index))
+                closing(timeline_stream[2] if timeline_stream else _audio_frames(audio_plan, index))
             )
             iterator = readers.enter_context(
                 closing(
                     _fit_audio(
                         decoded_audio,
-                        cast(Fraction | None, facts["duration"]),
-                        pad=not trim_to_audio,
+                        audio_duration,
+                        pad=not trim_to_audio and not source_components,
                     )
                 )
             )
@@ -1253,6 +1282,8 @@ def save_video_stream(
                 candidate_audio.format = audio_formats[0]
                 candidate_audio.open()
             except (ValueError, FFmpegError):
+                if source_components:
+                    raise
                 format_diagnostic(
                     {
                         "container": kind,
@@ -1285,7 +1316,8 @@ def save_video_stream(
                 rate=48_000 if kind == "webm" else frame.sample_rate,
             )
             audio.layout = layout
-            audio.codec_context.thread_count = 1
+            if not source_components:
+                audio.codec_context.thread_count = 1
             streams.append(audio)
             iterators.append(itertools.chain([first], iterator))
             resamplers.append(
@@ -1308,19 +1340,39 @@ def save_video_stream(
                 continue
             if index == 0:
                 video_frames += 1
-            frame = (
-                _encoder_frame(cast(np.ndarray, item), depth)
-                if isinstance(item, np.ndarray)
-                else cast(Any, item)
-            )
-            if index == 0:
+            if index == 0 and source_components:
+                samples = cast(np.ndarray, item)
+                if not np.issubdtype(samples.dtype, np.floating):
+                    samples = cast(np.ndarray, image_input(samples))
+                if depth > 8:
+                    pixels = np.clip(samples.astype(np.float32) * 65535, 0, 65535).astype("<u2")
+                    frame = av.VideoFrame.from_ndarray(pixels, format="rgb48le")
+                else:
+                    pixels = np.clip(samples * 255, 0, 255).astype(np.uint8)
+                    frame = av.VideoFrame.from_ndarray(pixels, format="rgb24")
+                frame = frame.reformat(
+                    format=pixel_format, dst_colorspace=cast(int, destination_matrix)
+                )
+                for key, attr in zip(
+                    _COLOR_KEYS,
+                    ("color_primaries", "color_trc", "colorspace", "color_range"),
+                    strict=True,
+                ):
+                    setattr(frame, attr, color[key])
+            else:
+                frame = (
+                    _encoder_frame(cast(np.ndarray, item), depth)
+                    if isinstance(item, np.ndarray)
+                    else cast(Any, item)
+                )
+            if index == 0 and not source_components:
                 coverage = _alpha_pixels(frame) if alpha and pixel.is_planar else None
                 frame = frame.reformat(
                     format=pixel_format,
                     src_colorspace=frame.colorspace if frame.colorspace not in (0, 2) else 5,
-                    dst_colorspace=destination_matrix,
+                    dst_colorspace=cast(int, destination_matrix),
                     src_color_range=2 if frame.format.is_rgb else frame.color_range or 1,
-                    dst_color_range=destination_range,
+                    dst_color_range=cast(int, destination_range),
                 )
                 if coverage is not None:
                     component = next(c for c in pixel.components if c.is_alpha)
@@ -1329,10 +1381,12 @@ def save_video_stream(
                     samples = np.zeros((plane.height, plane.line_size // dtype.itemsize), dtype)
                     samples[:, : frame.width] = np.rint(coverage * (2**component.bits - 1))
                     plane.update(samples.tobytes())
-            frame.time_base = (
-                Fraction(1, 1_000_000) if index == 0 else Fraction(1, frame.sample_rate)
-            )
-            frame.pts = round(t / frame.time_base)
+            frame = cast(Any, frame)
+            if index or not source_components:
+                frame.time_base = (
+                    Fraction(1, 1_000_000) if index == 0 else Fraction(1, frame.sample_rate)
+                )
+                frame.pts = round(t / frame.time_base)
             frames = [frame] if index == 0 else resamplers[index].resample(frame)
             for converted in frames:
                 for packet in streams[index].encode(converted):
