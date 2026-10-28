@@ -133,13 +133,6 @@ from .benchmark import (
     instrument_engine_factory,
     write_record,
 )
-from .comfy_compose import (
-    RETIRED_EXECUTION_PYTHON_ENV,
-    RETIRED_EXECUTION_PYTHON_ENV_MESSAGE,
-    RETIRED_EXECUTION_PYTHON_FLAG_MESSAGE,
-    comfy_compat_specs,
-    comfy_model_roots,
-)
 from .compose import (
     CompositionError,
     PackDelta,
@@ -455,18 +448,6 @@ print(json.dumps(result, sort_keys=True))
         raise RuntimeError("native runtime package versions are malformed")
     return raw
 
-
-#: Derived compat mounts: when --comfy-root is configured, the install's
-#: own directories become conventional, well-known mounts so imported
-#: workflows have a stable target ("comfy-input" is where a legacy
-#: LoadImage filename resolves; "comfy-output" is where a legacy
-#: filename_prefix lands). Derived per boot, never persisted to
-#: mounts.toml, and skipped when the operator configured the id herself
-#: (explicit beats derived).
-_COMFY_MOUNTS: tuple[tuple[str, str, str], ...] = (
-    ("comfy-input", "input", "read"),
-    ("comfy-output", "output", "readwrite"),
-)
 
 _OPENAI_API_KEY_ENV = "DINKSTER_OPENAI_API_KEY"
 _OPENAI_BASE_URL_ENV = "DINKSTER_OPENAI_BASE_URL"
@@ -877,19 +858,11 @@ def main(argv: list[str] | None = None) -> None:
         "(default: $DINKSTER_INSTALL_ROOT)",
     )
     parser.add_argument(
-        "--comfy-root",
-        default=os.environ.get("DINKSTER_COMFYUI_ROOT", ""),
-        metavar="PATH",
-        help="optional ComfyUI install for untranslated core and legacy packs; "
-        "native execution and import schemas need no checkout "
-        "(default: $DINKSTER_COMFYUI_ROOT)",
-    )
-    parser.add_argument(
         "--execution-python",
         default="",
         metavar="PATH",
-        help="interpreter for native or compat execution "
-        "(default: $DINKSTER_EXECUTION_PYTHON, the optional ComfyUI venv, or current Python)",
+        help="interpreter for native execution "
+        "(default: $DINKSTER_EXECUTION_PYTHON or current Python)",
     )
     parser.add_argument(
         "--openai-base-url",
@@ -1035,17 +1008,6 @@ def main(argv: list[str] | None = None) -> None:
         metavar="BYTES",
         help="physical accelerator headroom in bytes with an optional "
         "binary K/M/G/T suffix (default: 256M)",
-    )
-    parser.add_argument(
-        "--legacy-pack",
-        action="append",
-        default=[],
-        type=_resolve_pack_argument,
-        metavar="PATH",
-        help="unmodified ComfyUI custom node pack (directory or single .py), "
-        "repeatable; relative paths resolve from the launch directory; loads "
-        "in the legacy quarantine worker and attributes as 'comfy.<pack>' "
-        "(requires --comfy-root)",
     )
     parser.add_argument(
         "--strict-packs",
@@ -1315,9 +1277,9 @@ def main(argv: list[str] | None = None) -> None:
     )
     argv_tokens = list(argv) if argv is not None else sys.argv[1:]
     if any(arg == "--comfy-python" or arg.startswith("--comfy-python=") for arg in argv_tokens):
-        parser.error(RETIRED_EXECUTION_PYTHON_FLAG_MESSAGE)
-    if RETIRED_EXECUTION_PYTHON_ENV in os.environ:
-        parser.error(RETIRED_EXECUTION_PYTHON_ENV_MESSAGE)
+        parser.error("--comfy-python is retired; pass --execution-python instead")
+    if "DINKSTER_COMFYUI_PYTHON" in os.environ:
+        parser.error("DINKSTER_COMFYUI_PYTHON is retired; set DINKSTER_EXECUTION_PYTHON instead")
     args = parser.parse_args(argv)
     if (args.official_resolver_url or args.official_resolver_provider_id) and not args.library_root:
         parser.error("official resolver bootstrap requires --library-root")
@@ -1594,8 +1556,6 @@ def main(argv: list[str] | None = None) -> None:
         features=features,
     )
 
-    if args.legacy_pack and not args.comfy_root:
-        parser.error("--legacy-pack requires --comfy-root (or $DINKSTER_COMFYUI_ROOT)")
     if args.allow_mount_changes and not args.library_root:
         parser.error(
             "--allow-mount-changes requires a library root "
@@ -1628,23 +1588,8 @@ def main(argv: list[str] | None = None) -> None:
     redaction_roots: list[tuple[str, Path]] = []
     if args.install_root:
         redaction_roots.append(("<install>", Path(args.install_root)))
-    if args.comfy_root:
-        redaction_roots.append(("<comfy>", Path(args.comfy_root)))
     if args.library_root:
         redaction_roots.append(("<library>", Path(args.library_root)))
-
-    model_roots = ()
-    comfy_requirements_checked = False
-    if args.library_root and args.comfy_root:
-        try:
-            model_roots = comfy_model_roots(
-                args.comfy_root,
-                python=args.execution_python or None,
-                comfy_args=effective_comfy_args,
-            )
-            comfy_requirements_checked = True
-        except CompositionError as exc:
-            raise SystemExit(str(exc)) from exc
 
     # Filesystem mounts: a LIVE table with mounts.toml as the durable
     # record underneath. Config parse errors are fatal (a typo'd grant
@@ -1669,39 +1614,10 @@ def main(argv: list[str] | None = None) -> None:
                 redaction_roots.append((f"<mount:{mount.id}>", mount.path))
         except MountsError as exc:
             raise SystemExit(str(exc)) from exc
-        if args.comfy_root:
-            comfy_root = Path(args.comfy_root)
-            for mount_id, subdir, mode in _COMFY_MOUNTS:
-                directory = comfy_root / subdir
-                if mount_table.get(mount_id) is not None:
-                    continue  # explicit config wins over derivation
-                if not directory.is_dir():
-                    continue
-                mount = MountDef(id=mount_id, path=directory, mode=mode)
-                mount_table.add(mount, source="derived")
-                sandbox_mounts.append(mount)
-                redaction_roots.append((f"<mount:{mount_id}>", directory))
-            for model_root in model_roots:
-                if mount_table.get(model_root.mount_id) is not None:
-                    raise SystemExit(
-                        f"configured mount id {model_root.mount_id!r} collides "
-                        "with a derived ComfyUI model root"
-                    )
-                mount = MountDef(id=model_root.mount_id, path=model_root.path)
-                mount_table.add(
-                    mount,
-                    source="derived",
-                    kind=model_root.kind,
-                )
-                sandbox_mounts.append(mount)
-                redaction_roots.append((f"<mount:{model_root.mount_id}>", model_root.path))
         if mount_table.output_mount is None:
             output_mount = mount_table.get("output")
-            comfy_output_mount = mount_table.get("comfy-output")
             if output_mount is not None and output_mount.mode == "readwrite":
                 mount_table.select_output_mount("output")
-            elif comfy_output_mount is not None and comfy_output_mount.mode == "readwrite":
-                mount_table.select_output_mount("comfy-output", require_config=False)
         mount_service = MountService(
             mount_table,
             mounts_config,
@@ -1743,24 +1659,7 @@ def main(argv: list[str] | None = None) -> None:
     if not args.no_default_packs:
         specs.extend(model_pack_specs())
     try:
-        if args.comfy_root:
-            specs.extend(
-                comfy_compat_specs(
-                    args.comfy_root,
-                    python=args.execution_python or None,
-                    _requirements_checked=comfy_requirements_checked,
-                    legacy_packs=args.legacy_pack,
-                    asset_vault=(Path(args.library_root) / "vault" if args.library_root else None),
-                    mounts_snapshot=mounts_snapshot,
-                    aimdo=aimdo,
-                    memory_budgets=memory_budgets,
-                    reserve_vram=reserve_vram,
-                    comfy_args=effective_comfy_args,
-                    multi_device_cuda_indices=args.multi_gpu_devices,
-                    single_job_multi_gpu=single_job_multi_gpu,
-                )
-            )
-        elif not args.no_default_packs:
+        if not args.no_default_packs:
             specs.append(
                 replace(
                     native_execution_spec(

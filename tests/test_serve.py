@@ -728,23 +728,17 @@ def test_serve_official_bootstrap_requires_persistent_library(
     assert "official resolver bootstrap requires --library-root" in capsys.readouterr().err
 
 
-def test_comfy_compat_composition_failure_exits_with_one_message(
-    tmp_path: Path,
+def test_native_composition_failure_exits_with_one_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dinkster import serve
 
-    comfy_root = tmp_path / "ComfyUI"
-    comfy_root.mkdir()
-    message = (
-        "ComfyUI requirement module 'einops' is unavailable in interpreter "
-        "'/selected/python' selected by --execution-python"
-    )
+    message = "native execution environment is unavailable"
 
     def fail_specs(*_args: object, **_kwargs: object) -> None:
         raise serve.CompositionError(message)
 
-    monkeypatch.setattr(serve, "comfy_compat_specs", fail_specs)
+    monkeypatch.setattr(serve, "native_execution_spec", fail_specs)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -752,9 +746,6 @@ def test_comfy_compat_composition_failure_exits_with_one_message(
             "dinkster-serve",
             "--library-root",
             "",
-            "--no-default-packs",
-            "--comfy-root",
-            str(comfy_root),
             "--execution-python",
             "/selected/python",
         ],
@@ -1271,8 +1262,9 @@ def test_sandbox_protects_configured_auth_outside_library(
     assert str(auth) in captured[0].protected_roots
 
 
-def test_read_only_output_mount_is_not_selected_as_the_save_default(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("mode", ("read", "readwrite"))
+def test_only_writable_configured_output_mount_is_selected_as_the_save_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
 ) -> None:
     from dinkster import serve
 
@@ -1281,13 +1273,14 @@ def test_read_only_output_mount_is_not_selected_as_the_save_default(
     library.mkdir()
     output.mkdir()
     (library / "mounts.toml").write_text(
-        f"[mounts.output]\npath = {json.dumps(str(output))}\n",
+        f"[mounts.output]\npath = {json.dumps(str(output))}\nmode = {json.dumps(mode)}\n",
         encoding="utf-8",
     )
 
     def fake_run_app(awaitable: object, **_kwargs: object) -> None:
         awaitable.close()  # type: ignore[attr-defined]
 
+    monkeypatch.setenv("DINKSTER_COMFYUI_ROOT", str(tmp_path / "unconfigured-comfy"))
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     monkeypatch.setattr(
         sys,
@@ -1301,6 +1294,9 @@ def test_read_only_output_mount_is_not_selected_as_the_save_default(
     )
 
     serve.main()
+
+    snapshot = json.loads((library / "worker-state" / "mounts-snapshot.json").read_text("utf-8"))
+    assert snapshot["outputMount"] == ("output" if mode == "readwrite" else None)
 
 
 def test_auth_file_malformed_refuses_serve_startup(
@@ -1686,7 +1682,7 @@ def test_ordinary_serve_passes_no_federated_routes(monkeypatch: pytest.MonkeyPat
 
 
 @pytest.mark.parametrize("devices", (None, "0,1"))
-def test_serve_without_comfy_mounts_native_provider(
+def test_serve_ignores_retired_root_environment(
     monkeypatch: pytest.MonkeyPatch,
     devices: str | None,
 ) -> None:
@@ -1708,7 +1704,7 @@ def test_serve_without_comfy_mounts_native_provider(
     if devices:
         argv.extend(("--single-job-multi-gpu-devices", devices))
     monkeypatch.setattr(sys, "argv", argv)
-    monkeypatch.delenv("DINKSTER_COMFYUI_ROOT", raising=False)
+    monkeypatch.setenv("DINKSTER_COMFYUI_ROOT", "/unused/comfy")
 
     serve.main()
     assert len(calls) == 1
@@ -1721,61 +1717,14 @@ def test_serve_without_comfy_mounts_native_provider(
         assert options["single_job_multi_gpu"] is None
 
 
-def test_serve_resolves_legacy_pack_from_launch_directory(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from dinkster import serve
-
-    launch_directory = tmp_path / "launch"
-    legacy_pack = launch_directory / "packs" / "legacy"
-    legacy_pack.mkdir(parents=True)
-    comfy_root = tmp_path / "ComfyUI"
-    comfy_root.mkdir()
-    captured: list[Path] = []
-
-    def capture_specs(_root: str, **kwargs: object) -> list[object]:
-        captured.extend(kwargs["legacy_packs"])  # type: ignore[arg-type]
-        return []
-
-    def fake_run_app(awaitable: object, **_kwargs: object) -> None:
-        awaitable.close()  # type: ignore[attr-defined]
-
-    monkeypatch.chdir(launch_directory)
-    monkeypatch.setattr(serve, "comfy_compat_specs", capture_specs)
-    monkeypatch.setattr(serve.web, "run_app", fake_run_app)
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "dinkster-serve",
-            "--library-root",
-            "",
-            "--comfy-root",
-            str(comfy_root),
-            "--legacy-pack",
-            str(legacy_pack.relative_to(launch_directory)),
-        ],
-    )
-
-    serve.main()
-
-    assert captured == [legacy_pack.resolve()]
-
-
-def test_comfy_root_defaults_include_compat_specs_in_ordering(
+def test_defaults_include_native_execution_spec_in_ordering(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dinkster import serve
     from dinkster.compose import PackSpec
 
-    comfy_root = tmp_path / "ComfyUI"
-    comfy_root.mkdir()
-    compat = (
-        PackSpec(manifest=tmp_path / "generation"),
-        PackSpec(manifest=tmp_path / "compat"),
-    )
+    native = PackSpec(manifest=tmp_path / "native")
     captured: list[tuple[int, int]] = []
 
     def capture_ordering(
@@ -1793,7 +1742,7 @@ def test_comfy_root_defaults_include_compat_specs_in_ordering(
 
     monkeypatch.setattr(serve, "default_pack_ids", lambda: ())
     monkeypatch.setattr(serve, "model_pack_specs", lambda: ())
-    monkeypatch.setattr(serve, "comfy_compat_specs", lambda *_args, **_kwargs: compat)
+    monkeypatch.setattr(serve, "native_execution_spec", lambda **_kwargs: native)
     monkeypatch.setattr(serve, "_order_default_pack_specs", capture_ordering)
     monkeypatch.setattr(serve.web, "run_app", run_app)
     monkeypatch.setattr(
@@ -1803,45 +1752,40 @@ def test_comfy_root_defaults_include_compat_specs_in_ordering(
             "dinkster-serve",
             "--library-root",
             "",
-            "--comfy-root",
-            str(comfy_root),
         ],
     )
 
     serve.main()
 
-    assert captured == [(2, 2)]
+    assert captured == [(1, 1)]
 
 
 @pytest.mark.parametrize("mode", [None, "auto", "on", "off"])
-def test_serve_aimdo_cli_defaults_and_reaches_compat_specs(
+def test_serve_aimdo_cli_defaults_and_reaches_native_spec(
     mode: str | None,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dinkster import serve
 
-    comfy_root = tmp_path / "ComfyUI"
-    comfy_root.mkdir()
     captured: list[dict[str, object]] = []
+    native_execution_spec = serve.native_execution_spec
 
-    def fake_specs(_root: str, **kwargs: object) -> list[object]:
+    def native_spec(**kwargs: object) -> serve.PackSpec:
         captured.append(dict(kwargs))
-        return []
+        return native_execution_spec(**kwargs)  # type: ignore[arg-type]
 
     def fake_run_app(awaitable: object, **_kwargs: object) -> None:
         awaitable.close()  # type: ignore[attr-defined]
 
     argv = [
         "dinkster-serve",
-        "--comfy-root",
-        str(comfy_root),
         "--library-root",
         "",
     ]
     if mode is not None:
         argv.extend(("--aimdo", mode))
-    monkeypatch.setattr(serve, "comfy_compat_specs", fake_specs)
+    monkeypatch.setattr(serve, "native_execution_spec", native_spec)
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     monkeypatch.setattr(sys, "argv", argv)
 
@@ -1853,20 +1797,19 @@ def test_serve_aimdo_cli_defaults_and_reaches_compat_specs(
     assert captured[0]["memory_budgets"] == {}
 
 
-def test_serve_multi_gpu_cli_reaches_compat_worker(
+def test_serve_multi_gpu_cli_reaches_native_worker(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dinkster import serve
 
-    comfy_root = tmp_path / "ComfyUI"
-    comfy_root.mkdir()
     captured: list[dict[str, object]] = []
     captured_running: list[int] = []
+    native_execution_spec = serve.native_execution_spec
 
-    def fake_specs(_root: str, **kwargs: object) -> list[object]:
+    def native_spec(**kwargs: object) -> serve.PackSpec:
         captured.append(dict(kwargs))
-        return []
+        return native_execution_spec(**kwargs)  # type: ignore[arg-type]
 
     def fake_run_app(awaitable: object, **_kwargs: object) -> None:
         frame = awaitable.cr_frame  # type: ignore[attr-defined]
@@ -1874,15 +1817,13 @@ def test_serve_multi_gpu_cli_reaches_compat_worker(
         captured_running.append(frame.f_locals["max_running_jobs"])
         awaitable.close()  # type: ignore[attr-defined]
 
-    monkeypatch.setattr(serve, "comfy_compat_specs", fake_specs)
+    monkeypatch.setattr(serve, "native_execution_spec", native_spec)
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     monkeypatch.setattr(
         sys,
         "argv",
         [
             "dinkster-serve",
-            "--comfy-root",
-            str(comfy_root),
             "--library-root",
             "",
             "--multi-gpu-devices",
@@ -1915,12 +1856,11 @@ def test_serve_single_job_multi_gpu_preserves_logical_rank_order(
 
     captured: list[object] = []
 
-    def compat_specs(*args: object, **kwargs: object) -> list[object]:
-        del args
+    def native_spec(**kwargs: object) -> serve.PackSpec:
         captured.append(kwargs["single_job_multi_gpu"])
         raise RuntimeError("captured")
 
-    monkeypatch.setattr(serve, "comfy_compat_specs", compat_specs)
+    monkeypatch.setattr(serve, "native_execution_spec", native_spec)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -1928,8 +1868,6 @@ def test_serve_single_job_multi_gpu_preserves_logical_rank_order(
             "dinkster-serve",
             "--library-root",
             "",
-            "--comfy-root",
-            str(tmp_path),
             "--single-job-multi-gpu-devices",
             devices,
             "--single-job-multi-gpu-mode",
@@ -1957,11 +1895,25 @@ def test_serve_rejects_removed_single_job_mode(monkeypatch: pytest.MonkeyPatch, 
         serve.main()
 
 
-@pytest.mark.parametrize("argument", ["--dev", "--development-pack"])
-def test_serve_rejects_removed_dev_argument(monkeypatch: pytest.MonkeyPatch, argument: str) -> None:
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ("--dev",),
+        ("--development-pack",),
+        ("--comfy-root", "/unused/comfy"),
+        ("--legacy-pack", "/unused/pack"),
+    ],
+)
+def test_serve_rejects_removed_dev_argument(
+    monkeypatch: pytest.MonkeyPatch, arguments: tuple[str, ...]
+) -> None:
     from dinkster import serve
 
-    monkeypatch.setattr(sys, "argv", ["dinkster-serve", argument])
+    def run_app(awaitable: object, **_kwargs: object) -> None:
+        awaitable.close()  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(serve.web, "run_app", run_app)
+    monkeypatch.setattr(sys, "argv", ["dinkster-serve", "--library-root", "", *arguments])
     with pytest.raises(SystemExit) as exc:
         serve.main()
     assert exc.value.code == 2
@@ -1988,33 +1940,29 @@ def test_serve_single_job_and_replica_multi_gpu_are_mutually_exclusive(
     assert exc.value.code == 2
 
 
-def test_serve_headroom_cli_reaches_compat_specs(
+def test_serve_headroom_cli_reaches_native_spec(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dinkster import serve
 
-    comfy_root = tmp_path / "ComfyUI"
-    comfy_root.mkdir()
     captured: list[dict[str, object]] = []
+    native_execution_spec = serve.native_execution_spec
 
-    def fake_specs(_root: str, **kwargs: object) -> list[object]:
+    def native_spec(**kwargs: object) -> serve.PackSpec:
         captured.append(dict(kwargs))
-        return []
+        return native_execution_spec(**kwargs)  # type: ignore[arg-type]
 
     def fake_run_app(awaitable: object, **_kwargs: object) -> None:
         awaitable.close()  # type: ignore[attr-defined]
 
-    monkeypatch.setattr(serve, "comfy_compat_specs", fake_specs)
-    monkeypatch.setattr(serve, "comfy_model_roots", lambda *_args, **_kwargs: ())
+    monkeypatch.setattr(serve, "native_execution_spec", native_spec)
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     monkeypatch.setattr(
         sys,
         "argv",
         [
             "dinkster-serve",
-            "--comfy-root",
-            str(comfy_root),
             "--library-root",
             "",
             "--reserve-vram",
@@ -2041,32 +1989,28 @@ def test_serve_comfy_arg_cli_beats_persisted_settings(
 ) -> None:
     from dinkster import serve
 
-    comfy_root = tmp_path / "ComfyUI"
-    comfy_root.mkdir()
     library_root = tmp_path / "library"
     library_root.mkdir()
     (library_root / "settings.json").write_text(
         '{"worker-comfy-args":["--preview-size","111"]}\n', "utf-8"
     )
     captured: list[dict[str, object]] = []
+    native_execution_spec = serve.native_execution_spec
 
-    def fake_specs(_root: str, **kwargs: object) -> list[object]:
+    def native_spec(**kwargs: object) -> serve.PackSpec:
         captured.append(dict(kwargs))
-        return []
+        return native_execution_spec(**kwargs)  # type: ignore[arg-type]
 
     def fake_run_app(awaitable: object, **_kwargs: object) -> None:
         awaitable.close()  # type: ignore[attr-defined]
 
-    monkeypatch.setattr(serve, "comfy_compat_specs", fake_specs)
-    monkeypatch.setattr(serve, "comfy_model_roots", lambda *_args, **_kwargs: ())
+    monkeypatch.setattr(serve, "native_execution_spec", native_spec)
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     monkeypatch.setattr(
         sys,
         "argv",
         [
             "dinkster-serve",
-            "--comfy-root",
-            str(comfy_root),
             "--library-root",
             str(library_root),
             "--comfy-arg=--preview-size",
@@ -2085,32 +2029,28 @@ def test_serve_bare_comfy_arg_clears_persisted_settings(
 ) -> None:
     from dinkster import serve
 
-    comfy_root = tmp_path / "ComfyUI"
-    comfy_root.mkdir()
     library_root = tmp_path / "library"
     library_root.mkdir()
     (library_root / "settings.json").write_text(
         '{"worker-comfy-args":["--preview-size","111"]}\n', "utf-8"
     )
     captured: list[dict[str, object]] = []
+    native_execution_spec = serve.native_execution_spec
 
-    def fake_specs(_root: str, **kwargs: object) -> list[object]:
+    def native_spec(**kwargs: object) -> serve.PackSpec:
         captured.append(dict(kwargs))
-        return []
+        return native_execution_spec(**kwargs)  # type: ignore[arg-type]
 
     def fake_run_app(awaitable: object, **_kwargs: object) -> None:
         awaitable.close()  # type: ignore[attr-defined]
 
-    monkeypatch.setattr(serve, "comfy_compat_specs", fake_specs)
-    monkeypatch.setattr(serve, "comfy_model_roots", lambda *_args, **_kwargs: ())
+    monkeypatch.setattr(serve, "native_execution_spec", native_spec)
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     monkeypatch.setattr(
         sys,
         "argv",
         [
             "dinkster-serve",
-            "--comfy-root",
-            str(comfy_root),
             "--library-root",
             str(library_root),
             "--comfy-arg",
@@ -2122,32 +2062,30 @@ def test_serve_bare_comfy_arg_clears_persisted_settings(
     assert captured[0]["comfy_args"] == ()
 
 
-def test_serve_component_dtype_flags_reach_compat_workers(
+def test_serve_component_dtype_flags_reach_native_worker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from dinkster import serve
 
-    comfy_root = tmp_path / "ComfyUI"
-    comfy_root.mkdir()
     captured: list[dict[str, object]] = []
+    native_execution_spec = serve.native_execution_spec
 
-    def fake_specs(_root: str, **kwargs: object) -> list[object]:
+    def native_spec(**kwargs: object) -> serve.PackSpec:
         captured.append(dict(kwargs))
-        return []
+        return native_execution_spec(**kwargs)  # type: ignore[arg-type]
 
     def fake_run_app(awaitable: object, **_kwargs: object) -> None:
         awaitable.close()  # type: ignore[attr-defined]
 
-    monkeypatch.setattr(serve, "comfy_compat_specs", fake_specs)
-    monkeypatch.setattr(serve, "comfy_model_roots", lambda *_args, **_kwargs: ())
+    monkeypatch.setattr(serve, "native_execution_spec", native_spec)
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     monkeypatch.setattr(
         sys,
         "argv",
         [
             "dinkster-serve",
-            "--comfy-root",
-            str(comfy_root),
+            "--library-root",
+            "",
             "--diffusion-dtype",
             "bfloat16",
             "--text-encoder-dtype",

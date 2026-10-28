@@ -6,8 +6,8 @@
 - Source checkouts can prepare and launch the browser UI without Desktop using
   `run.sh` on Linux/macOS or `run.ps1` on Windows. The scripts select the native
   execution environment and preserve local model mounts and outputs on reruns.
-- Without a ComfyUI root, the server advertises the native core node pack's
-  executable class IDs directly. Workflows require every referenced node to be
+- The server advertises the native core node pack's executable class IDs
+  directly. Workflows require every referenced node to be
   present; missing native nodes are not replaced with translated carriers.
   Set `DINKSTER_EXECUTION_PYTHON` to the Python environment containing PyTorch
   and `dinkster_inference` for tensor operations.
@@ -23,5 +23,6 @@
 - Same-host NVIDIA single-job execution supports guidance-lane splitting and
   explicit two- or four-rank H3 Ulysses sequence sharding. Automatic sequence
   selection remains two-rank.
-- Unmodified legacy custom packs still require a ComfyUI installation and
-  run in the compatibility quarantine.
+- The server accepts native packs, not ComfyUI installations or unmodified
+  custom node packs. `--comfy-root` and `--legacy-pack` are rejected. Model and
+  output locations come from configured mounts, not an inferred ComfyUI tree.
