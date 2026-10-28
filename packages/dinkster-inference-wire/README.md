@@ -14,6 +14,13 @@ framing and structural validation that does not import Torch or inference;
 expired or foreign-worker identities raise the existing residency error.
 The package does not contain a model runtime or an inference registry.
 
+`MOGE_MODEL` uses that same holding-process resident pool. `MOGE_GEOMETRY`
+uses the structural latent codec without requiring a `samples` entry. Geometry
+tensor fields (`points`, `depth`, `intrinsics`, `mask`, `normal`, and `image`)
+retain their shapes, dtypes, bytes, and optional-key presence. Supported extra
+metadata also round-trips; mapping insertion order does not affect identity.
+The fingerprint includes the geometry type, and encoded tensor records are
+validated without loading Torch. Existing registration authority is preserved.
 `BOUNDING_BOXES`, `IMAGECOMPARE`, and `COMPOSITOR` retain ordinary structured
 state, including pixel coordinates, metadata, and authored list order. `LAYERS`
 uses the structural tensor codec without requiring `samples`: nested raster

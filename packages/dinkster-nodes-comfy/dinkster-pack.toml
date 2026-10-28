@@ -546,6 +546,7 @@ namespaces = [
     "LoadImageDataSetFromFolder",
     "LoadImageTextDataSetFromFolder",
     "UpscaleModelLoader",
+    "LossGraphNode",
 ]
 
 [pack.sandbox]

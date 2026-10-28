@@ -31,7 +31,10 @@ from dinkster_values import (
     LORA_MODEL_TYPE,
     MODEL_PATCH_TYPE,
     MODEL_TYPE,
+    MOGE_GEOMETRY_TYPE,
+    MOGE_MODEL_TYPE,
     NOISE_TYPE,
+    OPTICAL_FLOW_TYPE,
     PHOTOMAKER_TYPE,
     RESOLUTION_PREVIEW_TYPE,
     SAM3_TRACK_DATA_TYPE,
@@ -90,7 +93,9 @@ NOISE_TYPE_ID = NOISE_TYPE
 _RESIDENT_TYPE_IDS = (
     AUDIO_ENCODER_TYPE,
     MODEL_TYPE_ID,
+    MOGE_MODEL_TYPE,
     MODEL_PATCH_TYPE,
+    OPTICAL_FLOW_TYPE,
     CLIP_TYPE_ID,
     CLIP_VISION_TYPE_ID,
     VAE_TYPE_ID,
@@ -195,6 +200,15 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
             ),
         )
     registered.append(registry.spec(LORA_MODEL_TYPE))
+    if MOGE_GEOMETRY_TYPE not in registry:
+        registry.register(
+            MOGE_GEOMETRY_TYPE,
+            encode=encode_latent,
+            decode=partial(decode_latent, require_samples=False),
+            fingerprint=latent_fingerprint(MOGE_GEOMETRY_TYPE),
+            validate_encoded=partial(validate_latent_encoded, require_samples=False),
+        )
+    registered.append(registry.spec(MOGE_GEOMETRY_TYPE))
     if LAYERS_TYPE not in registry:
         registry.register(
             LAYERS_TYPE,
