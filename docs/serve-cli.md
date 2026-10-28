@@ -2,8 +2,8 @@
 
 `dinkster-serve` runs the native protocol server. It binds a healthy zero-node
 diagnostic host, then composes the installed default packs with their exact
-artifact provenance, each configured pack, and an optional ComfyUI
-compatibility surface. First-party packs may run in-process in the shared
+artifact provenance and each configured native pack.
+First-party packs may run in-process in the shared
 Dinkster environment; each `--pack` runs in its own worker process by default.
 The default SD 1.5 workflow runs without a ComfyUI checkout. Its execution
 interpreter must contain PyTorch and the pinned `dinkster_inference` package.
@@ -199,60 +199,33 @@ and later run `dinkster-pack --root /path/to/install-root apply plan.json`.
 `DINKSTER_INSTALL_ROOT` can replace `--root`; pass that root to `dinkster-serve` or
 set the same environment variable when serving.
 
-### --comfy-root
-
-Syntax: `--comfy-root PATH`.
-
-Default: `$DINKSTER_COMFYUI_ROOT` (empty if unset).
-
-ComfyUI install directory. Adds the translated core surface as the
-`comfy` pack, served on that install's interpreter. Also derives
-conventional `comfy-input` and `comfy-output` mounts unless the operator
-already configured those ids. With `--library-root`, it also probes
-ComfyUI's initialized `folder_paths` table and derives one read-only mount
-per ordered root of every approved model-file category. Those mounts use
-collision-safe `comfy-model-<category>-<index>` ids and semantic
-`model/...` metadata; their real host paths stay off the API surface.
-
-Without this option, the provider uses native implementations.
-The executable catalog is served at `/api/nodes`; compiled native graphs
-are submitted through `/api/jobs`. ComfyUI workflows are imported by the
-frontend, not translated by a separate HTTP submission endpoint. The single-job
-multi-GPU options also work without a ComfyUI install. Legacy quarantine
-still requires this option.
-
 ### --execution-python
 
 Syntax: `--execution-python PATH`.
 
-Default: `$DINKSTER_EXECUTION_PYTHON`, then `<comfy-root>/venv/bin/python`,
-then the serving process's interpreter.
+Default: `$DINKSTER_EXECUTION_PYTHON`, then the serving process's interpreter.
 
-Interpreter for native or compat execution. The resolution chain is: CLI value,
-then the `DINKSTER_EXECUTION_PYTHON` environment variable, then the install's
-own venv when `--comfy-root` is set, then the current Python.
+Interpreter for native execution. The resolution chain is: CLI value,
+then the `DINKSTER_EXECUTION_PYTHON` environment variable, then the current Python.
 
 The earlier names `--comfy-python` and `DINKSTER_COMFYUI_PYTHON` are retired
 with no aliases: `dinkster-serve`, `dinkster-port` and composition refuse them
 with a message pointing at this flag and variable.
 
-When `--comfy-root` is set, this is also the interpreter used to import the
-compatibility layer. Composition checks the imports named by the install's
-`requirements.txt` before starting any compatibility worker. A failure names
-the first unavailable module, the selected interpreter, and the resolution
-step that selected it.
+`--comfy-root` and `--legacy-pack` are not supported. The server never derives
+model or output mounts from `DINKSTER_COMFYUI_ROOT`; configure those locations
+through the mount settings.
 
 ### CPU and Apple Silicon workers
 
 Workers select from their own PyTorch capabilities: CUDA/ROCm, XPU, MPS,
-then CPU. A GPU-less worker automatically enables ComfyUI's CPU memory
-policy before importing its nodes. The server interpreter remains torch-free.
+then CPU. The server interpreter remains torch-free.
 
 To force CPU execution, including on a GPU-equipped machine:
 
 ```sh
-DINKSTER_ACCELERATOR=cpu dinkster-serve --comfy-root /path/to/ComfyUI \
-  --execution-python /path/to/ComfyUI/.venv/bin/python
+DINKSTER_ACCELERATOR=cpu dinkster-serve \
+  --execution-python /path/to/dinkster/.venv-torch/bin/python
 ```
 
 On Apple Silicon, install native arm64 PyTorch in the worker environment.
@@ -261,8 +234,8 @@ requires it and refuses an unavailable backend rather than silently using CPU.
 `scripts/setup_envs.sh` prepares the repository's macOS test environments and
 runs the MPS capability smoke check without a system-wide install.
 
-`DINKSTER_ACCELERATOR` applies to the process and its children, including native
-inference and compatibility workers. Set it on each remote worker service or
+`DINKSTER_ACCELERATOR` applies to the process and its native workers.
+Set it on each remote worker service or
 cloud worker independently; the engine's hardware does not select a remote
 worker's device. Device selection does not change shared-memory or network
 value transport. Restart workers to change the selection. Raw `--cpu` remains
@@ -274,7 +247,7 @@ Syntax: `--comfy-arg=ARG` (repeatable), or bare `--comfy-arg` to clear.
 
 Default: the persisted `worker-comfy-args` setting, else no arguments.
 
-Adds one ComfyUI startup argument to every compat worker. Use the equals
+Adds one inference startup argument to every native execution worker. Use the equals
 form when the argument begins with `--`, and repeat the option for values:
 
 ```
@@ -287,17 +260,7 @@ empty tuple and cannot be combined with argument values. The complete
 ordered array travels only through child argv. Dinkster
 rejects server-owned and memory/aimdo-owned flags listed in
 [settings-api.md](settings-api.md); every other argument is validated by
-the installed ComfyUI parser when the worker starts.
-
-### --legacy-pack
-
-Syntax: `--legacy-pack PATH` (repeatable).
-
-Default: none.
-
-Unmodified ComfyUI custom node pack (directory or single `.py`). Loads
-in the legacy quarantine worker and attributes as `comfy.<pack>`.
-Requires `--comfy-root` (or `$DINKSTER_COMFYUI_ROOT`).
+the pinned inference parser when the worker starts.
 
 ### --strict-packs
 

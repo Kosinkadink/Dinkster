@@ -961,16 +961,10 @@ via its `schemaVersion` field.
 
 ## Legacy ComfyUI packs
 
-Unported ComfyUI packs load through the compat layer
-(`dinkster-serve --comfy-root <install> --legacy-pack <dir>`), quarantined in
-one worker and attributed as `comfy.<pack>`. A legacy pack directory can
-ship (or a user can drop in) a `dinkster-pack.toml` containing only
-`[pack.presentation]` and/or `[[pack.blueprints]]` to get its own
-badge/icon and starter workflows without being a loadable Dinkster pack (a
-legacy blueprint references `comfy.<pack>.*` node types, which resolve
-only while the compat worker has the pack loaded). Compat is a migration
-on-ramp, best-effort by design (hazard H11); porting to a native pack is
-the endorsed destination.
+Unmodified ComfyUI packs are not server inputs. A pack must provide native
+nodes through `dinkster-pack.toml`; a presentation-only manifest does not make
+legacy node implementations executable. Port the behavior into native nodes
+before serving the pack.
 
 ## Porting a legacy pack (`dinkster-port`)
 
