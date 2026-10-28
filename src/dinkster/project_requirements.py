@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import cast
 
 from dinkster_assets import (
@@ -18,6 +19,7 @@ from dinkster_assets import (
     ProvenanceStore,
     RemoteSource,
 )
+from dinkster_registry.artifact import unpack_artifact
 from dinkster_registry.install import Lockfile
 from dinkster_schema import canonical_name
 from dinkster_workers import PackManifest, load_manifest
@@ -121,12 +123,13 @@ def plan_project_requirements(
     *,
     variant: str,
     source_generation: Path | None = None,
-    catalog: Path | None = None,
+    catalog_lock: Path | None = None,
+    artifacts: Path | None = None,
 ) -> dict[str, object]:
     """Plan from operator-supplied, already admitted release metadata.
 
-    Environment acquisition verifies the catalog and staged source artifacts.
-    This boundary reads them, never downloads or grants trust to workflow leads.
+    Environment acquisition admits the catalog's exact artifact identities.
+    This boundary verifies cached archives, never downloads or trusts workflow leads.
     Only this project's verified vault bytes count as locally materialized.
     """
     if variant not in ("linux-cpu", "win-cpu", "win-nvidia", "win-nvidia-cu126"):
@@ -137,20 +140,29 @@ def plan_project_requirements(
         if source_generation is not None
         else Lockfile()
     )
-    if requirements.packs and catalog is None:
-        raise RequirementError("trusted target pack catalog is unavailable; supply --catalog")
+    if requirements.packs and catalog_lock is None:
+        raise RequirementError("trusted target pack catalog is unavailable; supply --catalog-lock")
     target = (
-        Lockfile.from_record_json(catalog.read_text("utf-8")) if catalog is not None else Lockfile()
+        Lockfile.from_record_json(catalog_lock.read_text("utf-8"))
+        if catalog_lock is not None
+        else Lockfile()
     )
+    if target.packs and artifacts is None:
+        raise RequirementError("trusted target artifact cache is unavailable; supply --artifacts")
     manifests: dict[str, PackManifest] = {}
-    if catalog is not None:
-        sources = catalog.parent / "pack-sources"
-        for pack in target.packs:
-            path = sources / pack.pack / "dinkster-pack.toml"
-            manifest = load_manifest(path)
-            if canonical_name(manifest.name) != pack.pack:
-                raise RequirementError(f"target manifest identity does not match pack {pack.pack}")
-            manifests[pack.pack] = manifest
+    if artifacts is not None:
+        with TemporaryDirectory(prefix="dinkster-workflow-plan-") as scratch:
+            for pack in target.packs:
+                archive = artifacts / f"{pack.artifact_digest.split(':', 1)[1]}.zip"
+                extracted = unpack_artifact(
+                    archive, Path(scratch) / pack.pack, pack.artifact_digest
+                )
+                manifest = load_manifest(extracted / "dinkster-pack.toml")
+                if canonical_name(manifest.name) != pack.pack:
+                    raise RequirementError(
+                        f"target manifest identity does not match pack {pack.pack}"
+                    )
+                manifests[pack.pack] = manifest
     declared = PackAssetCatalog()
     declared.replace_all((pack, None, manifest.assets) for pack, manifest in manifests.items())
     library = root / "library"

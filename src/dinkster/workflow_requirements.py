@@ -250,10 +250,12 @@ def main(argv: list[str] | None = None) -> int:
     import urllib.error
     import urllib.request
     from pathlib import Path
+    from zipfile import BadZipFile
 
     arguments = list(sys.argv[1:] if argv is None else argv)
     if arguments[:1] == ["project-plan"]:
         from dinkster_assets import AssetError
+        from dinkster_registry.artifact import ArtifactError
         from dinkster_registry.install import InstallError
         from dinkster_workers import ManifestError
 
@@ -263,30 +265,42 @@ def main(argv: list[str] | None = None) -> int:
         parser.add_argument("--project-root", required=True, type=Path)
         parser.add_argument("--source-generation", type=Path)
         parser.add_argument("--generation", type=Path)
-        parser.add_argument("--catalog", type=Path)
+        parser.add_argument("--catalog-lock", type=Path)
+        parser.add_argument("--artifacts", type=Path)
         parser.add_argument("--variant", required=True)
         parser.add_argument("--json", action="store_true", required=True)
         args = parser.parse_args(arguments[1:])
         try:
-            for path in (args.project_root, args.source_generation, args.generation, args.catalog):
+            for path in (
+                args.project_root,
+                args.source_generation,
+                args.generation,
+                args.catalog_lock,
+                args.artifacts,
+            ):
                 if path is not None and not path.is_absolute():
                     raise RequirementError("project and generation/catalog paths must be absolute")
-            if args.generation is not None and not args.generation.is_dir():
-                raise RequirementError(
-                    "target generation is unavailable; planning never creates it"
-                )
             result = plan_project_requirements(
                 args.project_root,
                 variant=args.variant,
                 source_generation=args.source_generation,
-                catalog=args.catalog,
+                catalog_lock=args.catalog_lock,
+                artifacts=args.artifacts,
             )
             print(json.dumps(result))
             plan = cast("dict[str, object]", result["plan"])
             if plan["errors"]:
                 print("project requirement plan has blocking errors", file=sys.stderr)
             return int(bool(plan["errors"]))
-        except (OSError, ValueError, AssetError, InstallError, ManifestError) as exc:
+        except (
+            OSError,
+            ValueError,
+            AssetError,
+            ArtifactError,
+            InstallError,
+            ManifestError,
+            BadZipFile,
+        ) as exc:
             print(f"project plan failed: {exc}", file=sys.stderr)
             return 1
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import os
 import subprocess
 import sys
 from dataclasses import replace
@@ -27,6 +28,7 @@ from dinkster_assets import (
 )
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
+from dinkster_registry.artifact import build_artifact
 from dinkster_registry.install import LockedPack, Lockfile
 from dinkster_server import PackInfo, ServerLibrary, create_app
 from dinkster_values import TypeRegistry
@@ -369,7 +371,10 @@ def test_public_plan_is_read_only_project_filtered_and_verified(
         store.close()
 
 
-def test_project_registered_records_are_scoped_verified_and_read_only(tmp_path: Path) -> None:
+def test_project_registered_records_are_scoped_verified_and_read_only(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    scratch = tmp_path_factory.mktemp("workflow-plan-scratch")
     library = tmp_path / "library"
     vault = AssetVault(library / "vault")
     store = LibraryStore(library / "library.sqlite")
@@ -415,19 +420,35 @@ def test_project_registered_records_are_scoped_verified_and_read_only(tmp_path: 
     source.mkdir()
     staging = tmp_path / "staged-release"
     staging.mkdir()
-    target_packs = [
-        LockedPack(pack, version, digest_bytes(pack.encode()), "author", ())
-        for pack, version in (("tools-a", "1.2.3"), ("tools-b", "4.5.6"), ("user-added", "7.0.0"))
-    ]
+    artifacts = staging / "artifacts"
+    artifacts.mkdir()
     catalog = staging / "official-packs.lock"
-    catalog.write_text(Lockfile.of(target_packs).record_json())
-    for pack in target_packs:
-        manifest = staging / "pack-sources" / pack.pack / "dinkster-pack.toml"
-        manifest.parent.mkdir(parents=True)
-        name = "user_added" if pack.pack == "user-added" else pack.pack
-        manifest.write_text(
-            f'[pack]\nname = "{name}"\n[pack.entry]\nnodes = "never_import:NODES"\n'
-        )
+
+    def stage_artifacts(*, gpu: bool = False) -> list[LockedPack]:
+        packs: list[LockedPack] = []
+        for pack, version in (("tools-a", "1.2.3"), ("tools-b", "4.5.6"), ("user-added", "7.0.0")):
+            manifest = tmp_path / "fixture-packs" / pack / "dinkster-pack.toml"
+            manifest.parent.mkdir(parents=True, exist_ok=True)
+            name = "user_added" if pack == "user-added" else pack
+            manifest.write_text(
+                f'[pack]\nname = "{name}"\n[pack.entry]\nnodes = "never_import:NODES"\n'
+                + ("\n[pack.sandbox]\ngpu = true\n" if gpu and pack == "tools-a" else "")
+                + (
+                    '\n[[pack.assets]]\nid = "first"\nname = "First asset"\n'
+                    f'digest = "{digest_bytes(b"first")}"\n'
+                    'urls = ["https://models.example.test/first.bin"]\n'
+                    if pack == "tools-a"
+                    else ""
+                )
+            )
+            archive = artifacts / "building.zip"
+            digest = build_artifact(manifest.parent, archive)
+            archive.replace(artifacts / f"{digest.split(':')[1]}.zip")
+            packs.append(LockedPack(pack, version, digest, "author", ()))
+        catalog.write_text(Lockfile.of(packs).record_json())
+        return packs
+
+    target_packs = stage_artifacts()
     inventory = source / "dinkster.lock"
     inventory.write_text(
         Lockfile.of(
@@ -449,8 +470,10 @@ def test_project_registered_records_are_scoped_verified_and_read_only(tmp_path: 
                 str(tmp_path),
                 "--source-generation",
                 str(source),
-                "--catalog",
+                "--catalog-lock",
                 str(catalog),
+                "--artifacts",
+                str(artifacts),
                 "--variant",
                 variant,
                 "--json",
@@ -460,8 +483,11 @@ def test_project_registered_records_are_scoped_verified_and_read_only(tmp_path: 
             text=True,
             check=False,
             timeout=30,
+            env={**os.environ, "TMPDIR": str(scratch)},
         )
 
+    catalog_bytes = catalog.read_bytes()
+    cached_bytes = {path.name: path.read_bytes() for path in artifacts.iterdir()}
     cpu = run_plan("linux-cpu")
     nvidia = run_plan("win-nvidia")
     assert cpu.returncode == nvidia.returncode == 0, (cpu.stderr, nvidia.stderr)
@@ -474,6 +500,11 @@ def test_project_registered_records_are_scoped_verified_and_read_only(tmp_path: 
         digest_bytes(b"first"),
         digest_bytes(b"second"),
     }
+    assert next(row for row in result["plan"]["assets"] if row["digest"] == digest_bytes(b"first"))[
+        "sources"
+    ] == ["https://models.example.test/first.bin"]
+    assert catalog.read_bytes() == catalog_bytes
+    assert {path.name: path.read_bytes() for path in artifacts.iterdir()} == cached_bytes
 
     for content in (b"first", b"second"):
         with vault.writer(digest_bytes(content)) as writer:
@@ -483,8 +514,36 @@ def test_project_registered_records_are_scoped_verified_and_read_only(tmp_path: 
     present = run_plan("win-nvidia")
     assert present.returncode == 0, present.stderr
     assert json.loads(present.stdout)["plan"] == {"packs": [], "assets": [], "errors": []}
-    gpu_manifest = staging / "pack-sources/tools-a/dinkster-pack.toml"
-    gpu_manifest.write_text(gpu_manifest.read_text() + "\n[pack.sandbox]\ngpu = true\n")
+    archive = artifacts / f"{target_packs[0].artifact_digest.split(':')[1]}.zip"
+    original = archive.read_bytes()
+    archive.unlink()
+    missing_archive = run_plan("win-nvidia")
+    assert missing_archive.returncode == 1 and archive.name in missing_archive.stderr
+    archive.write_bytes(original + b"changed")
+    corrupted = run_plan("win-nvidia")
+    assert corrupted.returncode == 1 and "digest mismatch" in corrupted.stderr
+    assert corrupted.stdout == ""
+    archive.write_bytes(original)
+    manifest = tmp_path / "fixture-packs/tools-a/dinkster-pack.toml"
+    manifest.write_text(manifest.read_text().replace('name = "tools-a"', 'name = "impostor"'))
+    wrong_archive = artifacts / "building.zip"
+    wrong_digest = build_artifact(manifest.parent, wrong_archive)
+    wrong_archive.replace(artifacts / f"{wrong_digest.split(':')[1]}.zip")
+    catalog.write_text(
+        Lockfile.of(
+            [
+                replace(pack, artifact_digest=wrong_digest) if pack.pack == "tools-a" else pack
+                for pack in target_packs
+            ]
+        ).record_json()
+    )
+    wrong_identity = run_plan("win-nvidia")
+    assert (
+        wrong_identity.returncode == 1
+        and "identity does not match pack tools-a" in wrong_identity.stderr
+    )
+    assert wrong_identity.stdout == ""
+    target_packs = stage_artifacts(gpu=True)
     refused = run_plan("linux-cpu")
     assert refused.returncode == 1
     assert json.loads(refused.stdout)["plan"]["errors"] == [
@@ -494,7 +553,7 @@ def test_project_registered_records_are_scoped_verified_and_read_only(tmp_path: 
     assert run_plan("win-nvidia").returncode == 0
     absent_target = tmp_path / "not-created"
     absent = run_plan("win-nvidia", "--generation", str(absent_target))
-    assert absent.returncode == 1 and "planning never creates it" in absent.stderr
+    assert absent.returncode == 0 and absent.stdout == run_plan("win-nvidia").stdout
     assert not absent_target.exists()
     catalog.write_text(
         Lockfile.of(
@@ -511,6 +570,7 @@ def test_project_registered_records_are_scoped_verified_and_read_only(tmp_path: 
     ]
     inventory.unlink()
     assert run_plan("win-nvidia").returncode == 1
+    assert list(scratch.iterdir()) == []
     assert (library / "library.sqlite").read_bytes() == database
     assert path.read_bytes() == before
     assert blob.read_bytes() == data

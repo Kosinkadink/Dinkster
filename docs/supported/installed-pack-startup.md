@@ -42,15 +42,18 @@
   available for read-only comparisons; no target is inferred from hardware.
 - Local environment operators can run `python -m dinkster.workflow_requirements
   project-plan --project-root /absolute/project --source-generation /absolute/source
-  --catalog /absolute/release/official-packs.lock --variant linux-cpu --json`.
+  --catalog-lock /absolute/release/official-packs.lock --artifacts /absolute/cache
+  --variant linux-cpu --json`.
   This reads registered scoped workflow records and explicit additions from
-  project.json, the source generation's dinkster.lock, and already admitted
-  target pack manifests beside the supplied catalog. It returns requirements,
+  project.json, the source generation's dinkster.lock, and an admitted target
+  registry lock. Cached `<artifact-digest-hex>.zip` archives are hash-verified
+  before their manifests are read in disposable scratch. It returns requirements,
   a missing-item plan and input revision/digest snapshots without creating a
   generation, fetching content or changing workflow/library bytes. Only verified
   project-vault assets count as materialized; resolver leads remain advisory.
   Exact saved versions must be present in the selected release, even for packs
   already installed. Blocking errors produce nonzero status. First setup omits
-  source generation; empty inputs need no catalog. Confirmed apply may supply
-  `--generation` for an existing target. Artifact admission, dependency preflight,
-  provisioning and activation remain environment-owned operations.
+  source generation; empty inputs need no catalog or archives. The optional
+  `--generation` context does not require or create a target directory. Artifact
+  admission, dependency preflight, provisioning and activation remain
+  environment-owned operations.
