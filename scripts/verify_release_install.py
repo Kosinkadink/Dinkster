@@ -16,6 +16,7 @@ import urllib.request
 from collections.abc import Callable
 from contextlib import ExitStack
 from datetime import UTC, datetime, timedelta
+from html.parser import HTMLParser
 from pathlib import Path
 
 import psutil
@@ -68,9 +69,23 @@ def stop(process: subprocess.Popen[str]) -> None:
         raise RuntimeError("owned release verification descendants survived teardown")
 
 
-def verify_launch(state: Path, python: Path) -> None:
+def verify_launch(state: Path, python: Path, *, require_frontend: bool = False) -> None:
     state.mkdir(parents=True)
     url = f"http://127.0.0.1:{available_port()}"
+    frontend_args: list[str] = []
+    if require_frontend:
+        bundle = subprocess.check_output(
+            [
+                str(python.absolute()),
+                "-c",
+                "from dinkster.frontend import discover_frontend_bundle; "
+                "bundle = discover_frontend_bundle(); "
+                "assert bundle is not None, 'installed frontend bundle not found'; print(bundle)",
+            ],
+            cwd=state,
+            text=True,
+        ).strip()
+        frontend_args = ["--frontend-root", bundle]
     with (state / "backend.log").open("w") as log:
         backend = subprocess.Popen(
             [
@@ -86,6 +101,7 @@ def verify_launch(state: Path, python: Path) -> None:
                 "--install-root",
                 str(state / "packs"),
                 "--no-default-packs",
+                *frontend_args,
             ],
             cwd=state,
             stdout=log,
@@ -96,6 +112,23 @@ def verify_launch(state: Path, python: Path) -> None:
             composition = wait_for(url + "/api/composition", backend)
             nodes = wait_for(url + "/api/nodes", backend)
             assert nodes["schemaVersion"] == 1 and nodes["nodes"] == {}, nodes
+            if require_frontend:
+                with urllib.request.urlopen(url + "/", timeout=5) as response:
+                    assert response.status == 200, response.status
+                    assert response.headers.get_content_type() == "text/html", response.headers
+                    document = response.read().decode("utf-8")
+                parser = HTMLParser()
+                roots: list[str] = []
+
+                def find_root(tag: str, attrs: list[tuple[str, str | None]]) -> None:
+                    if tag == "div" and ("id", "root") in attrs:
+                        roots.append(tag)
+
+                parser.handle_starttag = find_root
+                parser.feed(document)
+                assert roots, "GET / did not contain the frontend application root"
+                (state / "index.html").write_text(document, encoding="utf-8")
+                print("Installed frontend GET / passed: HTTP 200, text/html, div#root")
             (state / "composition.json").write_text(json.dumps(composition, indent=2) + "\n")
             (state / "nodes.json").write_text(json.dumps(nodes, indent=2) + "\n")
         finally:
@@ -370,6 +403,7 @@ if __name__ == "__main__":
     parser.add_argument("--state", type=Path)
     parser.add_argument("--registry-command", type=Path)
     parser.add_argument("--python", type=Path)
+    parser.add_argument("--require-frontend", action="store_true")
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="dinkster-release-") as directory:
         state = args.state.resolve() if args.state else Path(directory) / "state"
@@ -380,7 +414,7 @@ if __name__ == "__main__":
                 python = args.python or args.root / ".venv" / (
                     "Scripts/python.exe" if os.name == "nt" else "bin/python"
                 )
-                verify_launch(state, python)
+                verify_launch(state, python, require_frontend=args.require_frontend)
         except Exception:
             print_log_tails(state)
             raise

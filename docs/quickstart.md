@@ -6,7 +6,7 @@ source-checkout steps work on Windows x64, Linux x64, and macOS Apple Silicon.
 
 ## Install
 
-Install [Node.js 22 or newer](https://nodejs.org/), including npm, and
+Install [Node.js 26.12 or newer within 26.x](https://nodejs.org/), including npm, and
 [Git](https://git-scm.com/downloads). Clone Dinkster, then run one command:
 
 ```sh

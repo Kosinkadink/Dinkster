@@ -296,7 +296,13 @@ def test_loader_crosses_ordinary_hosts_twice_with_resident_optical_flow(
             "OPTICAL_FLOW_SIZE": str(checkpoint.stat().st_size),
             "OPTICAL_FLOW_FIXTURE_INSTALL_FACTORY": "0" if in_process else "1",
             "PYTHONPATH": os.pathsep.join(
-                (str(tmp_path), str(Path(__file__).parent), os.environ["PYTHONPATH"])
+                (
+                    str(tmp_path),
+                    str(Path(__file__).parent),
+                    str(root.parents[1] / "src"),
+                    *(str(path) for path in sorted(root.parents[1].glob("packages/*/src"))),
+                    *(path for path in sys.path if path),
+                )
             ),
         }
         composer = ServingComposer(worker_env=environment)
