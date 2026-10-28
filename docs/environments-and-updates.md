@@ -402,6 +402,26 @@ duplicate variant fails; incomplete or absent base coverage retains all
 candidates. The base's full transitive `wheels` list is authoritative, not a
 union of package names or a list of closure seeds.
 
+`python -m scripts.acquire_engine_bases --tag base-<variant>-<id-hex>`
+accepts repeated exact tags from `Kosinkadink/Dinkster-Environments` and
+writes the original documents to `engine-base-manifests/<variant>/manifest.json`.
+The output directory must be new; a failed selection leaves no partial set.
+Acquisition requires a published release, complete archive parts with verified
+sizes/hashes, canonical manifest identity and compatibility with the engine's
+Python, platform, worker protocol and locked pins. Torch variant wheels match
+the lock's public version and the variant index; other same-name wheels must
+match locked artifact hashes. GitHub asset digests verify parts when available;
+otherwise acquisition streams and hashes the part bytes. The adjacent extras
+index must match the selected base and variant; its downloaded size and any
+GitHub asset digest are checked, without inventing an extras hash field in the
+base manifest. Published tags follow the producer's no-reupload convention;
+GitHub's immutable-release setting is not required, since old parts are pruned.
+The helper does not
+publish, resolve, select latest or turn planning/build-run artifacts into durable
+channel locations. The channel writer consumes these qualified documents, not
+a second base-id list. A compatible published base set is still required before
+channel publication.
+
 The non-default `engine-base` dependency group carries torch 2.14.1,
 torchvision 0.29.1, numpy 2.5.1 and contrib-headless OpenCV 5.0.0.93 in
 `uv.lock`. The release export explicitly includes the group; mandatory

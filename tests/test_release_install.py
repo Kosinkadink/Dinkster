@@ -776,6 +776,224 @@ def test_main_release_retention_preserves_stable_drafts_and_newest_fifty(
     assert releases[1]["prerelease"] is False
 
 
+def test_selected_published_bases_are_qualified_and_preserved_atomically(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from copy import deepcopy
+
+    from scripts.acquire_engine_bases import acquire
+
+    boundary = tmp_path / "packages/dinkster-workers/src/dinkster_workers/boundary.py"
+    boundary.parent.mkdir(parents=True)
+    boundary.write_text("PROTOCOL_VERSION = 11\n")
+    pins = {"torch": "2.14.1", "torchvision": "0.29.1", "numpy": "2.5.1"}
+    (tmp_path / "pyproject.toml").write_text(
+        "[dependency-groups]\nengine-base = "
+        + json.dumps([f"{name}=={version}" for name, version in pins.items()])
+    )
+    lock = []
+    wheels = []
+    for name, version in pins.items():
+        torch = name in {"torch", "torchvision"}
+        filename = f"{name}-{version}{'+cpu' if torch else ''}-cp314-cp314-win_amd64.whl"
+        digest = hashlib.sha256(name.encode()).hexdigest()
+        url = f"https://example.invalid/{filename}"
+        wheels.append(
+            dict(
+                name=name,
+                version=version + ("+cpu" if torch else ""),
+                filename=filename,
+                size=17,
+                sha256=digest,
+                url=url,
+                index="https://download.pytorch.org/whl/cpu"
+                if torch
+                else "https://pypi.org/simple",
+                verification="index" if torch else "lock",
+                lockedVersion=version,
+            )
+        )
+        lock.append(
+            f"[[package]]\nname = '{name}'\nversion = '{version}'\n"
+            f"wheels = [{{url = '{url}', size = 17, hash = 'sha256:{digest}'}}]\n"
+        )
+    (tmp_path / "uv.lock").write_text("\n".join(lock))
+    original: dict = dict(
+        format="dinkster.base/1",
+        variant="win-cpu",
+        platform=dict(os="windows", arch="x86_64"),
+        python="3.14.10",
+        interpreter=dict(
+            filename="cpython-3.14.10+20261026-x86_64-pc-windows-msvc-install_only_stripped.tar.gz",
+            release="20261026",
+            executable="python/python.exe",
+            size=23,
+            sha256="a" * 64,
+            url="https://github.com/astral-sh/python-build-standalone/releases/download/20261026/"
+            "cpython-3.14.10%2B20261026-x86_64-pc-windows-msvc-install_only_stripped.tar.gz",
+        ),
+        wheels=wheels,
+        replaces=list(pins),
+        workerProtocol=11,
+        nvidia=None,
+    )
+    part_digest = hashlib.sha256(b"archive part").hexdigest()
+    mutation = "valid"
+    payload = b""
+    extras_payload = b""
+    requested = ""
+
+    def prepare(change: str) -> str:
+        nonlocal payload, extras_payload, mutation, requested
+        mutation = change
+        manifest = deepcopy(original)
+        if change == "version":
+            manifest["wheels"][-1]["version"] = "2.5.0"
+            manifest["wheels"][-1]["filename"] = "numpy-2.5.0-cp314-cp314-win_amd64.whl"
+        elif change == "wheel-hash":
+            manifest["wheels"][-1]["sha256"] = "0" * 64
+        elif change == "torch-index":
+            manifest["wheels"][0]["index"] = "https://download.pytorch.org/whl/cu132"
+        elif change == "protocol":
+            manifest["workerProtocol"] = 10
+        elif change == "python":
+            manifest["python"] = "3.14.9"
+        elif change == "interpreter":
+            manifest["interpreter"]["executable"] = "python/bin/python3"
+        elif change == "wheel-platform":
+            manifest["wheels"][0]["filename"] = (
+                "torch-2.14.1+cpu-cp314-cp314-manylinux_2_28_x86_64.whl"
+            )
+        elif change == "missing-pin":
+            manifest["wheels"] = manifest["wheels"][:-1]
+        identity = hashlib.sha256(
+            json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("ascii")
+        ).hexdigest()
+        manifest["id"] = "sha256:" + identity
+        manifest["parts"] = (
+            [] if change == "plan" else [dict(filename="base.7z.001", size=12, sha256=part_digest)]
+        )
+        manifest["signature"] = None
+        requested = f"base-win-cpu-{identity}"
+        if change == "identity":
+            manifest["workerProtocol"] = 12
+        payload = (json.dumps(manifest, indent=3) + "\n").encode()
+        extras = dict(format="dinkster.extras/1", base=manifest["id"], variant="win-cpu", wheels=[])
+        if change == "extras-base":
+            extras["base"] = "sha256:" + "0" * 64
+        elif change == "extras-variant":
+            extras["variant"] = "linux-cpu"
+        elif change == "extras-format":
+            extras["format"] = "dinkster.extras/2"
+        extras_payload = b"{" if change == "extras-json" else json.dumps(extras).encode()
+        return requested
+
+    def transport(command: list[str]) -> bytes:
+        if "/releases/tags/" not in command[-1]:
+            return extras_payload if command[-1].endswith("/2") else payload
+        if mutation == "missing-release":
+            raise subprocess.CalledProcessError(1, command)
+        assets: list[dict] = [
+            dict(name="manifest.json", id=1, size=len(payload), state="uploaded"),
+            dict(
+                name="extras.json",
+                id=2,
+                size=len(extras_payload) + (mutation == "extras-size"),
+                state="uploaded",
+                digest=None
+                if mutation == "stream"
+                else "sha256:"
+                + (
+                    "0" * 64
+                    if mutation == "extras-hash"
+                    else hashlib.sha256(extras_payload).hexdigest()
+                ),
+            ),
+        ]
+        if mutation != "missing-part":
+            assets.append(
+                dict(
+                    name="base.7z.001",
+                    id=3,
+                    size=12,
+                    state="uploaded",
+                    digest=None
+                    if mutation.startswith("stream")
+                    else "sha256:" + ("0" * 64 if mutation == "part-hash" else part_digest),
+                )
+            )
+        return json.dumps(
+            dict(
+                tag_name=requested,
+                draft=mutation == "draft",
+                published_at="2026-10-28T00:00:00Z",
+                assets=assets,
+            )
+        ).encode()
+
+    monkeypatch.setattr(subprocess, "check_output", transport)
+    popen = subprocess.Popen
+
+    def stream_part(command: list[str], **kwargs):
+        data = b"short" if mutation == "stream-short" else b"archive part"
+        if mutation == "stream-corrupt":
+            data = b"archive port"
+        return popen(
+            [
+                sys.executable,
+                "-c",
+                f"import sys; sys.stdout.buffer.write({data!r}); "
+                f"sys.exit({1 if mutation == 'stream-error' else 0})",
+            ],
+            **kwargs,
+        )
+
+    monkeypatch.setattr(subprocess, "Popen", stream_part)
+    output = tmp_path / "engine-base-manifests"
+    paths = acquire(tmp_path, [prepare("valid")], output)
+    assert paths == [output / "win-cpu/manifest.json"]
+    assert paths[0].read_bytes() == payload
+    streamed = acquire(tmp_path, [prepare("stream")], tmp_path / "streamed")
+    assert streamed[0].read_bytes() == payload
+    for change in (
+        "version",
+        "wheel-hash",
+        "torch-index",
+        "protocol",
+        "python",
+        "interpreter",
+        "wheel-platform",
+        "missing-pin",
+        "plan",
+        "identity",
+        "missing-release",
+        "missing-part",
+        "part-hash",
+        "draft",
+        "extras-base",
+        "extras-variant",
+        "extras-format",
+        "extras-json",
+        "extras-size",
+        "extras-hash",
+        "stream-corrupt",
+        "stream-short",
+        "stream-error",
+    ):
+        destination = tmp_path / change
+        with pytest.raises((ValueError, subprocess.CalledProcessError)):
+            acquire(tmp_path, [prepare(change)], destination)
+        assert not destination.exists()
+    duplicate = tmp_path / "duplicate"
+    tag = prepare("valid")
+    with pytest.raises(FileExistsError):
+        acquire(tmp_path, [tag, tag], duplicate)
+    assert not duplicate.exists()
+    with pytest.raises(ValueError, match="exact variant/id"):
+        acquire(tmp_path, ["latest"], tmp_path / "latest")
+    assert not list(tmp_path.glob("dinkster-base-selection-*"))
+
+
 def test_maintainer_source_archive_excludes_non_release_material(tmp_path: Path) -> None:
     root = tmp_path / "source"
     root.mkdir()

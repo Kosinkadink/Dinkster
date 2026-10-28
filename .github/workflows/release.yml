@@ -9,6 +9,7 @@ on:
     paths:
       - .github/workflows/release.yml
       - scripts/build_release.py
+      - scripts/acquire_engine_bases.py
       - scripts/prune_engine_prereleases.py
       - scripts/download_frontend.py
       - scripts/release_sources.json

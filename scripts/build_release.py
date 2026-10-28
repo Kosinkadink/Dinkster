@@ -317,15 +317,10 @@ def download_external_wheels(root: Path, output: Path, uv: str) -> list[Path]:
     return paths
 
 
-def stage_external_wheels(
-    root: Path,
-    output: Path,
-    candidates: list[Path],
-    base_manifests: list[Path],
-    target_variants: set[str],
-) -> list[Path]:
-    """Omit only locked artifacts proven present in every selected target base."""
-    bases: dict[str, set[tuple[str, int, str]]] = {}
+def read_base_manifest(path: Path) -> dict:
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    if manifest.get("format") != "dinkster.base/1":
+        raise ValueError(f"unsupported base manifest format: {path}")
     identity_fields = (
         "format",
         "variant",
@@ -337,17 +332,27 @@ def stage_external_wheels(
         "workerProtocol",
         "nvidia",
     )
+    payload = {key: manifest[key] for key in identity_fields}
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("ascii")
+    if manifest.get("id") != "sha256:" + hashlib.sha256(canonical).hexdigest():
+        raise ValueError(f"base manifest id does not match its payload: {path}")
+    return manifest
+
+
+def stage_external_wheels(
+    root: Path,
+    output: Path,
+    candidates: list[Path],
+    base_manifests: list[Path],
+    target_variants: set[str],
+) -> list[Path]:
+    """Omit only locked artifacts proven present in every selected target base."""
+    bases: dict[str, set[tuple[str, int, str]]] = {}
     for path in base_manifests:
-        manifest = json.loads(path.read_text(encoding="utf-8"))
-        if manifest.get("format") != "dinkster.base/1":
-            raise ValueError(f"unsupported base manifest format: {path}")
+        manifest = read_base_manifest(path)
         variant = manifest.get("variant")
         if variant not in target_variants or variant in bases:
             raise ValueError(f"unexpected or duplicate base variant {variant!r}: {path}")
-        payload = {key: manifest[key] for key in identity_fields}
-        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("ascii")
-        if manifest.get("id") != "sha256:" + hashlib.sha256(canonical).hexdigest():
-            raise ValueError(f"base manifest id does not match its payload: {path}")
         bases[variant] = (
             {(wheel["filename"], wheel["size"], wheel["sha256"]) for wheel in manifest["wheels"]}
             if manifest.get("parts")
