@@ -113,13 +113,6 @@ def verify(root: Path, state: Path, registry_command: Path, python: Path | None 
     registry_database = "sqlite:///" + (state / "registry.db").as_posix()
     registry_objects = str(state / "registry-objects")
     packs = str(state / "packs")
-    registry_url = f"http://127.0.0.1:{available_port()}"
-    backend_url = f"http://127.0.0.1:{available_port()}"
-    registry_environment = {
-        **os.environ,
-        "DINKSTER_OBJECT_STORE_ROOT": registry_objects,
-        "DINKSTER_PUBLIC_BASE_URL": registry_url,
-    }
 
     def run(module: str, *args: str, log_name: str, env: dict[str, str] | None = None) -> str:
         result = subprocess.run(
@@ -158,6 +151,17 @@ def verify(root: Path, state: Path, registry_command: Path, python: Path | None 
         (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
     ).strip()
     with ExitStack() as stack:
+        registry_listener = stack.enter_context(socket.socket())
+        backend_listener = stack.enter_context(socket.socket())
+        registry_listener.bind(("127.0.0.1", 0))
+        backend_listener.bind(("127.0.0.1", 0))
+        registry_url = f"http://127.0.0.1:{registry_listener.getsockname()[1]}"
+        backend_url = f"http://127.0.0.1:{backend_listener.getsockname()[1]}"
+        registry_environment = {
+            **os.environ,
+            "DINKSTER_OBJECT_STORE_ROOT": registry_objects,
+            "DINKSTER_PUBLIC_BASE_URL": registry_url,
+        }
 
         def service(
             name: str, *command: str, env: dict[str, str] | None = None
@@ -174,6 +178,7 @@ def verify(root: Path, state: Path, registry_command: Path, python: Path | None 
             stack.callback(stop, process)
             return process
 
+        registry_listener.close()
         registry_process = service(
             "registry",
             str(registry_command),
@@ -268,6 +273,7 @@ def verify(root: Path, state: Path, registry_command: Path, python: Path | None 
             "prepare-catalogs",
             log_name="catalog-preparation.log",
         )
+        backend_listener.close()
         backend = service(
             "backend",
             str(python),
