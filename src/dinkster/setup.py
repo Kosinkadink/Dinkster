@@ -16,6 +16,29 @@ def default_roots() -> tuple[Path, Path]:
     return home / "library", home / "packs"
 
 
+def ensure_import_mount(library_root: Path) -> None:
+    """Initialize visible imports without widening or replacing an existing grant."""
+    mounts_path = library_root / "mounts.toml"
+    mounts = load_mounts(mounts_path)
+    imports_root = library_root / "imports"
+    if any(mount.id == "imports" or mount.path == imports_root for mount in mounts):
+        return
+    imports_root.mkdir(parents=True, exist_ok=True)
+    text = dump_mounts(
+        (*mounts, MountDef(id="imports", path=imports_root, mode="readwrite")),
+        output_mount=load_output_mount(mounts_path),
+    )
+    temporary = mounts_path.with_name(f"{mounts_path.name}.tmp-{os.getpid()}")
+    try:
+        with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, mounts_path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="dinkster setup",
@@ -51,6 +74,7 @@ def main(argv: list[str] | None = None) -> int:
     default_output_mount = mounts[default_output_index].id
     output_mount = load_output_mount(mounts_path) or default_output_mount
     mounts_path.write_text(dump_mounts(mounts, output_mount=output_mount), "utf-8")
+    ensure_import_mount(library_root)
     Installer(install_root)
     print(f"Library: {library_root}")
     print(f"Packs: {install_root}")

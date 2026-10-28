@@ -3626,7 +3626,11 @@ def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
                         pass
                     await asyncio.sleep(0.05)
             async with session.get(base + "/api/mounts") as resp:
-                assert (await resp.json())["mounts"] == []
+                (imports,) = (await resp.json())["mounts"]
+                assert imports["id"] == "imports"
+                assert imports["path"] == str(library_root / "imports")
+                assert imports["mode"] == "readwrite"
+            assert (library_root / "imports").is_dir()
             async with session.post(
                 base + "/api/mounts", json={"id": "shots", "path": str(granted)}
             ) as resp:
@@ -3638,7 +3642,9 @@ def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
             async with asyncio.timeout(60):
                 while True:
                     async with session.get(base + "/api/mounts") as resp:
-                        (row,) = (await resp.json())["mounts"]
+                        imports, row = (await resp.json())["mounts"]
+                        assert imports["id"] == "imports"
+                        assert row["id"] == "shots"
                     if row["state"] == "ready":
                         break
                     await asyncio.sleep(0.05)
@@ -3653,7 +3659,8 @@ def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
             async with session.delete(base + "/api/mounts/shots") as resp:
                 assert resp.status == 200
             async with session.get(base + "/api/mounts") as resp:
-                assert (await resp.json())["mounts"] == []
+                (imports,) = (await resp.json())["mounts"]
+                assert imports["id"] == "imports"
             async with session.get(base + "/api/assets/" + entry["digest"]) as resp:
                 assert resp.status == 404
             assert "shots" not in (library_root / "mounts.toml").read_text("utf-8")

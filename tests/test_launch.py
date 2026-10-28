@@ -6,6 +6,7 @@ import urllib.error
 from pathlib import Path
 from unittest.mock import Mock
 
+import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import MountDef, dump_mounts, load_mounts, load_output_mount
@@ -23,7 +24,9 @@ def test_setup_creates_the_default_launch_roots(tmp_path: Path, monkeypatch, cap
     library, packs = setup.default_roots()
     assert library.is_dir()
     assert (library / "output").is_dir()
+    assert (library / "imports").is_dir()
     assert load_mounts(library / "mounts.toml") == (
+        MountDef(id="imports", path=library / "imports", mode="readwrite"),
         MountDef(id="output", path=library / "output", mode="readwrite"),
     )
     assert load_output_mount(library / "mounts.toml") == "output"
@@ -58,8 +61,33 @@ def test_setup_reuses_an_existing_mount_for_the_default_output_path(
 
     assert load_mounts(library / "mounts.toml") == (
         MountDef("existing-output", library / "output", "readwrite"),
+        MountDef("imports", library / "imports", "readwrite"),
     )
     assert load_output_mount(library / "mounts.toml") == "existing-output"
+
+
+@pytest.mark.parametrize("custom_id", [False, True])
+def test_setup_preserves_existing_import_grants(
+    tmp_path: Path, monkeypatch, custom_id: bool
+) -> None:
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "state"))
+    library, _ = setup.default_roots()
+    library.mkdir(parents=True)
+    root = library / "imports" if custom_id else tmp_path / "offline-network-imports"
+    existing = MountDef("plates" if custom_id else "imports", root, "read", priority=7)
+    config = library / "mounts.toml"
+    config.write_text(dump_mounts((existing,)), "utf-8")
+
+    setup.main([])
+    saved = config.read_bytes()
+    setup.main([])
+
+    assert config.read_bytes() == saved
+    assert existing in load_mounts(config)
+    assert len(load_mounts(config)) == 2
+    assert not root.exists()
+    assert not (library / "imports").exists()
+    assert load_output_mount(config) == "output"
 
 
 def test_bare_cli_launches_one_origin_and_opens_browser(

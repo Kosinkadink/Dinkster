@@ -703,6 +703,7 @@ Persistence root. When set, the following live under it:
 | Path | Contents |
 |------|----------|
 | `vault/` | Content-addressed uploaded bytes |
+| `imports/` | Visible import folder initialized by setup or serving with mount changes enabled |
 | `library.sqlite` | Scoped library records |
 | `history.sqlite` | Persistent execution history |
 | `provenance.json` | Acquisition leads |
