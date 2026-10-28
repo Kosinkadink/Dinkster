@@ -76,7 +76,7 @@ def test_release_resolves_the_public_token_verifier() -> None:
     server = tomllib.loads(
         (ROOT / "packages/dinkster-server/pyproject.toml").read_text(encoding="utf-8")
     )
-    verifier = "dinkster-token-verifier==0.1.1"
+    verifier = "dinkster-token-verifier==0.1.2"
     assert verifier in server["project"]["dependencies"]
     assert "dinkster-identity" not in server["tool"]["uv"]["sources"]
 

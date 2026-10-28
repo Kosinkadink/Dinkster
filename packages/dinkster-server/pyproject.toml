@@ -5,7 +5,7 @@ description = "Dinkster server: job queue (policy above the engine), native prot
 requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.10",
-    "dinkster-token-verifier==0.1.1",
+    "dinkster-token-verifier==0.1.2",
     "dinkster-schema",
     "dinkster-values",
     "dinkster-graph",

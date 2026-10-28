@@ -269,14 +269,14 @@ def test_server_uses_the_published_token_verifier_wheel() -> None:
     server_project = tomllib.loads(
         (REPO_ROOT / "packages/dinkster-server/pyproject.toml").read_text(encoding="utf-8")
     )
-    assert "dinkster-token-verifier==0.1.1" in server_project["project"]["dependencies"]
+    assert "dinkster-token-verifier==0.1.2" in server_project["project"]["dependencies"]
     assert "dinkster-token-verifier" not in server_project["tool"]["uv"]["sources"]
     assert "dinkster-identity" not in server_project["tool"]["uv"]["sources"]
 
     locked = tomllib.loads((REPO_ROOT / "uv.lock").read_text(encoding="utf-8"))
     packages = {package["name"]: package for package in locked["package"]}
     verifier = packages["dinkster-token-verifier"]
-    assert verifier["version"] == "0.1.1"
+    assert verifier["version"] == "0.1.2"
     assert verifier["source"] == {"registry": "https://pypi.org/simple"}
     assert verifier["wheels"]
     assert all(wheel["hash"].startswith("sha256:") for wheel in verifier["wheels"])
