@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from dinkster_supervisor.environment_state import (
+    Channel,
     EnvironmentError,
     Generation,
     Journal,
@@ -97,3 +98,25 @@ def test_journal_records_recovery_state_and_retains_failure_diagnostics(tmp_path
     assert not recovered.incomplete
     assert recovered.error == "target failed health check"
     assert json.loads(path.read_text())["format"] == "dinkster.journal/1"
+
+
+def test_channel_selects_an_exact_base_and_never_falls_back_to_cpu(tmp_path: Path):
+    path = tmp_path / "main.json"
+    path.write_text(
+        json.dumps(
+            {
+                "format": "dinkster.channel/1",
+                "engine": {"version": "0.4.0.dev1", "release": "sha256:" + "a" * 64},
+                "base": {"win-cpu": "sha256:" + "b" * 64, "linux-cpu": "sha256:" + "c" * 64},
+                "minimumDesktopVersion": "0.2.0",
+                "signature": None,
+            }
+        )
+    )
+    channel = Channel.read(path)
+    assert channel.engine_version == "0.4.0.dev1"
+    assert channel.engine_release == "sha256:" + "a" * 64
+    assert channel.base_for("linux-cpu") == "sha256:" + "c" * 64
+    assert channel.base_for("win-cpu") == "sha256:" + "b" * 64
+    with pytest.raises(EnvironmentError, match="does not provide variant win-nvidia"):
+        channel.base_for("win-nvidia")

@@ -83,6 +83,43 @@ def generation_number(value: object) -> int:
 
 
 @dataclass(frozen=True)
+class Channel:
+    engine_version: str
+    engine_release: str
+    bases: tuple[tuple[str, str], ...]
+    minimum_desktop_version: str
+
+    @classmethod
+    def read(cls, path: Path) -> Channel:
+        value = read_document(path)
+        if value.get("format") != "dinkster.channel/1":
+            raise EnvironmentError("unsupported channel format")
+        engine, bases = value.get("engine"), value.get("base")
+        minimum = value.get("minimumDesktopVersion")
+        if not isinstance(engine, dict) or not isinstance(bases, dict) or not bases:
+            raise EnvironmentError("channel must name an engine and at least one base")
+        engine = cast("dict[str, object]", engine)
+        bases = cast("dict[str, object]", bases)
+        version = engine.get("version")
+        if not isinstance(version, str) or not version:
+            raise EnvironmentError("channel engine version must be a nonempty string")
+        if not isinstance(minimum, str) or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", minimum) is None:
+            raise EnvironmentError("minimumDesktopVersion must be X.Y.Z")
+        return cls(
+            version,
+            digest(engine.get("release")),
+            tuple(sorted((relative_file(name), digest(sha)) for name, sha in bases.items())),
+            minimum,
+        )
+
+    def base_for(self, variant: str) -> str:
+        for name, sha in self.bases:
+            if name == variant:
+                return sha
+        raise EnvironmentError(f"channel does not provide variant {variant}; choose explicitly")
+
+
+@dataclass(frozen=True)
 class Generation:
     number: int
     base: str
