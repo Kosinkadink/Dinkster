@@ -51,6 +51,8 @@
   filenames in the configured imports folder, with collision-safe numbering and no durable
   vault duplicate. Requests can select another writable project folder and
   relative subfolder; the returned asset records the actual virtual path.
+  Operator location details identify the exact default import mount independently
+  of output selection, including custom mount IDs and unavailable defaults.
   Read-only, unavailable, revoked, escaping, or other-project destinations
   fail without silently redirecting the upload.
   Named model/file uploads stream under the configured upload size limit

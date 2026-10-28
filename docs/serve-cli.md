@@ -883,8 +883,16 @@ listings remain browsable without disclosing host paths or path-bearing errors
 to non-operators. Location listings and mutations require a human operator
 with `settings:write`, not just `assets:write`; delegated agents cannot grant
 filesystem authority.
-The location response includes `vault` when a library is configured. Optional
-`digest`, `scope` and `project` query fields add `locations` for that cataloged
+The location response includes `vault` when a library is configured.
+`importMount` identifies the active default target used when a named upload
+omits `mount`; use its `activeMounts` row for the real directory and state.
+It is independent of the selected output folder and may have any mount ID.
+It is null when the host has no named-folder writer/project configuration.
+A revoked default remains identified but has no active row; it is not replaced
+by another destination. An absent field on older hosts means unknown, not an
+implicit `imports` mount. Project membership and live write authority still
+govern the upload; a location response does not grant access.
+Optional `digest`, `scope` and `project` query fields add `locations` for that cataloged
 identity in the selected scope and project; this also requires `assets:read`.
 Only verified vault copies and observed files in live project folders are
 returned, with their actual `path` and `storage` type. Missing, changed,

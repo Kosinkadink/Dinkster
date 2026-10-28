@@ -334,10 +334,12 @@ async def handle_mount_locations(request: web.Request) -> web.Response:
         len(request.query.getall(field, [])) != 1 for field in request.query
     ):
         return _json_error(400, "unknown or repeated location query field")
-    body: dict[str, object] = {}
+    body: dict[str, object] = {"importMount": None}
     library = request.app.get(LIBRARY_KEY)
     if library is not None:
         body["vault"] = str(library.vault.root.resolve())
+        if library.upload_writer is not None and library.project_folders_for is not None:
+            body["importMount"] = library.import_mount
     if "digest" in request.query:
         scope = resolve_scope(principal_for(request), "assets:read", request.query.get("scope"))
         project = request.query.get("project", "default")
