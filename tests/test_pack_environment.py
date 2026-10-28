@@ -205,6 +205,75 @@ def test_opencv_alias_preserves_constraint_and_marker(name: str, extra: str) -> 
     )
 
 
+def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
+    tmp_path: Path,
+) -> None:
+    from dinkster_registry import Lockfile, unpack_artifact
+    from dinkster_workers import load_manifest
+
+    from scripts.build_official_packs import build
+
+    wheels = tmp_path / "wheels"
+    wheels.mkdir()
+    pinned = _wheel(wheels, "fixture-extra", "1.2", "fixture_extra", "value = 13\n")
+    _wheel(wheels, "fixture-extra", "2.0", "fixture_extra", "value = 99\n")
+    source = tmp_path / "source"
+    source.mkdir()
+    for family in ("comfy", "foundation", "image", "media-io", "remote", "generation"):
+        root = source / "packages" / f"dinkster-nodes-{family}"
+        root.mkdir(parents=True)
+        (root / "dinkster-pack.toml").write_text(
+            f'[pack]\nname="dinkster-nodes-{family}"\npublisher="dinkster"\n'
+            'requires = ["fixture-extra<3"]\n'
+            '[pack.dependencies]\ndinkster-nodes-foundation=">=0.0.1"\n'
+            '[pack.entry]\nnodes="nodes:NODES"\n'
+        )
+        (root / "nodes.py").write_text("raise AssertionError('node bodies must not load')\n")
+        (root / "pyproject.toml").write_text(
+            '[project]\nrequires-python=">=3.12"\n'
+            'dependencies=["fixture-extra>=1", "dinkster-nodes-foundation>=0.0.1"]\n'
+        )
+    subprocess.run(["git", "init", "--quiet", str(source)], check=True)
+    subprocess.run(["git", "-C", str(source), "add", "."], check=True)
+    tree = subprocess.check_output(["git", "-C", str(source), "write-tree"], text=True).strip()
+    (source / ".git/HEAD").write_text(tree + "\n")
+    (source / "packages/dinkster-nodes-comfy/pyproject.toml").write_text("dirty = true\n")
+    constraints = tmp_path / "constraints.txt"
+    constraints.write_text("fixture-extra==1.2\n")
+    output = tmp_path / "payloads"
+    payloads = build(
+        source,
+        output,
+        version="1.2.3",
+        variant="linux-cpu",
+        python=Path(sys.executable),
+        constraints=constraints,
+        find_links=[wheels],
+    )
+    assert len(payloads) == 13
+    inventory = Lockfile.from_record_json((output / "official-packs.lock").read_text())
+    for entry in inventory.packs:
+        assert entry.version == "1.2.3"
+        lock_path = output / f"{entry.pack}-1.2.3-linux-cpu.pack-lock.json"
+        lock = PackLock.read(lock_path)
+        assert lock.pack == entry.pack
+        assert lock.variant == "linux-cpu"
+        assert lock.requires_python == ">=3.12"
+        assert set(lock.requirements) == {"fixture-extra<3", "fixture-extra>=1"}
+        assert [(package.name, package.version) for package in lock.packages] == [
+            ("fixture-extra", "1.2")
+        ]
+        assert lock.packages[0].wheels == (pinned,)
+        extracted = unpack_artifact(
+            output / f"{entry.pack}-1.2.3.zip",
+            tmp_path / "unpacked" / entry.pack,
+            entry.artifact_digest,
+        )
+        manifest = load_manifest(extracted / "dinkster-pack.toml")
+        assert set(manifest.requires) == set(lock.requirements)
+        assert manifest.dependencies[0].pack == "dinkster-nodes-foundation"
+
+
 def test_local_resolution_uses_constraints_and_provision_rejects_bad_hash(tmp_path: Path) -> None:
     extra = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "value = 13\n")
     _wheel(tmp_path, "fixture-extra", "2.0", "fixture_extra", "value = 99\n")

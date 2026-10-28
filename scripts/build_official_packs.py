@@ -4,24 +4,49 @@ from __future__ import annotations
 
 import argparse
 import io
+import json
 import re
 import shutil
 import subprocess
 import tarfile
 import tempfile
+import tomllib
+from collections.abc import Sequence
 from pathlib import Path
 
 from dinkster_registry import LockedPack, Lockfile, build_artifact
 from dinkster_registry.model import validate_version
 from dinkster_schema import canonical_claim
 from dinkster_workers import load_manifest
+from dinkster_workers.pack_lock import resolve_pack_lock
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
 
 
-def build(root: Path, output: Path, *, version: str) -> tuple[Path, ...]:
+def build(
+    root: Path,
+    output: Path,
+    *,
+    version: str,
+    variant: str | None = None,
+    python: Path | None = None,
+    constraints: Path | None = None,
+    indexes: Sequence[str] = (),
+    find_links: Sequence[Path] = (),
+    accelerator: str | None = None,
+    uv: str = "uv",
+) -> tuple[Path, ...]:
     """Build only committed pack sources, without importing node implementations."""
     problem = validate_version(version)
     if problem is not None:
         raise ValueError(f"pack version {version!r} {problem}")
+    if variant is not None:
+        if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", variant) is None:
+            raise ValueError("variant must be a portable variant name")
+        if python is None or constraints is None:
+            raise ValueError("dependency locks require variant, python and constraints together")
+    elif python is not None or constraints is not None or indexes or find_links or accelerator:
+        raise ValueError("dependency locks require variant, python and constraints together")
     commit = subprocess.check_output(
         ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
     ).strip()
@@ -48,6 +73,32 @@ def build(root: Path, output: Path, *, version: str) -> tuple[Path, ...]:
             roots.append(pack_root)
         for pack_root in roots:
             manifest_path = pack_root / "dinkster-pack.toml"
+            manifest = load_manifest(manifest_path)
+            project_path = (
+                vision / "pyproject.toml"
+                if pack_root.parent == vision
+                else pack_root / "pyproject.toml"
+            )
+            project = tomllib.loads(project_path.read_text(encoding="utf-8"))["project"]
+            pack_dependencies = {dependency.pack for dependency in manifest.dependencies}
+            requirements = list(manifest.requires)
+            for requirement in project.get("dependencies", []):
+                name = canonicalize_name(Requirement(requirement).name)
+                if name not in pack_dependencies and requirement not in requirements:
+                    requirements.append(requirement)
+            if tuple(requirements) != manifest.requires:
+                text = manifest_path.read_text(encoding="utf-8")
+                text = re.sub(
+                    r"(?ms)^requires[ \t]*=[ \t]*\[.*?\][ \t]*(?:#[^\n]*)?\n", "", text, count=1
+                )
+                declaration = (
+                    "requires = [\n"
+                    + "".join(f"    {json.dumps(requirement)},\n" for requirement in requirements)
+                    + "]\n"
+                )
+                manifest_path.write_text(
+                    text.replace("[pack]\n", "[pack]\n" + declaration, 1), encoding="utf-8"
+                )
             source = pack_root / "src"
             if source.is_dir():
                 # Pack workers import from the artifact root, not workspace src/.
@@ -78,6 +129,32 @@ def build(root: Path, output: Path, *, version: str) -> tuple[Path, ...]:
                 )
             )
             payloads.append(payload)
+            if variant is not None:
+                assert python is not None and constraints is not None
+                dependency_lock = resolve_pack_lock(
+                    pack=manifest.name,
+                    variant=variant,
+                    requirements=(
+                        manifest.requires_for(accelerator) if accelerator else manifest.requires
+                    ),
+                    python=python,
+                    constraints=constraints,
+                    indexes=indexes,
+                    find_links=find_links,
+                    requires_python=project.get("requires-python", ">=3.12"),
+                    uv=uv,
+                )
+                missing = [
+                    package.name for package in dependency_lock.packages if not package.wheels
+                ]
+                if missing:
+                    raise ValueError(
+                        f"pack {manifest.name} has no published dependency wheels for: "
+                        + ", ".join(missing)
+                    )
+                dependency_payload = output / f"{manifest.name}-{version}-{variant}.pack-lock.json"
+                dependency_lock.write(dependency_payload)
+                payloads.append(dependency_payload)
     lock = output / "official-packs.lock"
     lock.write_text(Lockfile.of(locked).record_json() + "\n", encoding="utf-8")
     return (*payloads, lock)
@@ -87,8 +164,24 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", required=True, help="Normalized public PEP 440 pack version")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--variant")
+    parser.add_argument("--generation-python", type=Path)
+    parser.add_argument("--constraints", type=Path)
+    parser.add_argument("--index", action="append", default=[])
+    parser.add_argument("--find-links", type=Path, action="append", default=[])
+    parser.add_argument("--accelerator")
+    parser.add_argument("--uv", default="uv")
     args = parser.parse_args()
     for payload in build(
-        Path(__file__).resolve().parents[1], args.output.resolve(), version=args.version
+        Path(__file__).resolve().parents[1],
+        args.output.resolve(),
+        version=args.version,
+        variant=args.variant,
+        python=args.generation_python,
+        constraints=args.constraints,
+        indexes=args.index,
+        find_links=args.find_links,
+        accelerator=args.accelerator,
+        uv=args.uv,
     ):
         print(payload)
