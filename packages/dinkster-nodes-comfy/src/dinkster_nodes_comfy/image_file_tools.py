@@ -36,6 +36,7 @@ from dinkster_api.v1 import (
     StringWidget,
     TypeExpr,
     materialize_image,
+    open_image_components,
     render_image_png,
 )
 
@@ -84,6 +85,57 @@ def _image_batch(images: Any) -> Any:
 def _load_image(asset: AssetRef) -> tuple[Any, Any]:
     if asset.size > IMAGE_WORKING_SET_LIMIT_BYTES:
         raise ValueError("image asset exceeds the input byte limit")
+    with asset.open() as handle:
+        if os.fstat(handle.fileno()).st_size > IMAGE_WORKING_SET_LIMIT_BYTES:
+            raise ValueError("image asset exceeds the input byte limit")
+        header = handle.read(12)
+        animated_webp = False
+        if header[:4] == b"RIFF" and header[8:12] == b"WEBP":
+            image_module = importlib.import_module("PIL.Image")
+            handle.seek(0)
+            with image_module.open(handle) as source:
+                _check_dimensions(*source.size)
+                animated_webp = getattr(source, "n_frames", 1) > 1
+    # FFmpeg exposes animated WebP as a zero-dimension stream. Select the
+    # fixed-source fallback before decoder admission, without catching refusals.
+    if animated_webp:
+        return _load_webp(asset)
+    torch = importlib.import_module("torch")
+    images: list[Any] = []
+    masks: list[Any] = []
+    decoded_bytes = 0
+    # Retained outputs use at most half the budget, leaving the other half
+    # for the next shared decoder frame and its conversion scratch.
+    with open_image_components(
+        asset,
+        max_dimension=_MAX_IMAGE_DIMENSION,
+        max_source_bytes=IMAGE_WORKING_SET_LIMIT_BYTES,
+        max_working_set_bytes=IMAGE_WORKING_SET_LIMIT_BYTES // 2,
+    ) as frames:
+        for components in frames:
+            if len(images) >= _MAX_IMAGE_FRAMES:
+                raise ValueError("image asset exceeds the frame limit")
+            height, width = components.pixels.shape[:2]
+            frame_pixels = width * height
+            # RGB may retain its RGBA backing array; include that alpha storage
+            # as well as the separately inverted output mask without copying RGB.
+            frame_bytes = components.pixels.nbytes + (
+                components.alpha.nbytes * 2 if components.alpha is not None else 64 * 64 * 4
+            )
+            peak_bytes = 2 * (decoded_bytes + frame_bytes) + frame_pixels * 64 + 32_768
+            if peak_bytes > IMAGE_WORKING_SET_LIMIT_BYTES:
+                raise ValueError("decoded image batch exceeds the image working-set limit")
+            decoded_bytes += frame_bytes
+            images.append(torch.from_numpy(components.pixels))
+            masks.append(
+                1.0 - torch.from_numpy(components.alpha[..., 0])
+                if components.alpha is not None
+                else torch.zeros((64, 64), dtype=torch.float32)
+            )
+    return torch.stack(images), torch.stack(masks)
+
+
+def _load_webp(asset: AssetRef) -> tuple[Any, Any]:
     image_module = importlib.import_module("PIL.Image")
     image_ops = importlib.import_module("PIL.ImageOps")
     image_sequence = importlib.import_module("PIL.ImageSequence")
@@ -95,35 +147,32 @@ def _load_image(asset: AssetRef) -> tuple[Any, Any]:
     with asset.open() as handle:
         if os.fstat(handle.fileno()).st_size > IMAGE_WORKING_SET_LIMIT_BYTES:
             raise ValueError("image asset exceeds the input byte limit")
-        source = image_module.open(handle)
-        _check_dimensions(*source.size)
-        if getattr(source, "n_frames", 1) > _MAX_IMAGE_FRAMES:
-            raise ValueError("image asset exceeds the frame limit")
-        width = height = None
-        for frame in image_sequence.Iterator(source):
-            _check_dimensions(*frame.size)
-            has_alpha = "A" in frame.getbands() or "transparency" in frame.info
-            frame_pixels = frame.width * frame.height
-            frame_bytes = frame_pixels * 12 + (frame_pixels if has_alpha else 64 * 64) * 4
-            peak_bytes = 2 * (decoded_bytes + frame_bytes) + frame_pixels * 64
-            if peak_bytes > IMAGE_WORKING_SET_LIMIT_BYTES:
-                raise ValueError("decoded image batch exceeds the image working-set limit")
-            frame = image_ops.exif_transpose(frame)
-            if width is None:
-                width, height = frame.size
-            if frame.size != (width, height):
-                continue
-            decoded_bytes += frame_bytes
-            rgb = frame.convert("RGB")
-            images.append(torch.from_numpy(numpy.asarray(rgb, dtype=numpy.float32) / 255.0))
-            if has_alpha:
-                alpha = (
-                    numpy.asarray(frame.convert("RGBA").getchannel("A"), dtype=numpy.float32)
-                    / 255.0
-                )
-                masks.append(1.0 - torch.from_numpy(alpha))
-            else:
-                masks.append(torch.zeros((64, 64), dtype=torch.float32))
+        with image_module.open(handle) as source:
+            _check_dimensions(*source.size)
+            if getattr(source, "n_frames", 1) > _MAX_IMAGE_FRAMES:
+                raise ValueError("image asset exceeds the frame limit")
+            width = height = None
+            for frame in image_sequence.Iterator(source):
+                _check_dimensions(*frame.size)
+                has_alpha = "A" in frame.getbands()
+                frame_pixels = frame.width * frame.height
+                frame_bytes = frame_pixels * 12 + (frame_pixels if has_alpha else 64 * 64) * 4
+                peak_bytes = 2 * (decoded_bytes + frame_bytes) + frame_pixels * 64
+                if peak_bytes > IMAGE_WORKING_SET_LIMIT_BYTES:
+                    raise ValueError("decoded image batch exceeds the image working-set limit")
+                frame = image_ops.exif_transpose(frame)
+                if width is None:
+                    width, height = frame.size
+                if frame.size != (width, height):
+                    continue
+                decoded_bytes += frame_bytes
+                rgb = frame.convert("RGB")
+                images.append(torch.from_numpy(numpy.asarray(rgb, dtype=numpy.float32) / 255.0))
+                if has_alpha:
+                    alpha = numpy.asarray(frame.getchannel("A"), dtype=numpy.float32) / 255.0
+                    masks.append(1.0 - torch.from_numpy(alpha))
+                else:
+                    masks.append(torch.zeros((64, 64), dtype=torch.float32))
     if not images:
         raise ValueError("image contains no readable frames")
     return torch.stack(images), torch.stack(masks)

@@ -41,6 +41,42 @@ from PIL import Image
 from dinkster.compose import PackSpec, ServingComposer
 
 
+def test_image_loader_preserves_sixteen_bit_samples(tmp_path: Path) -> None:
+    samples = np.linspace(0, 65535, 64, dtype=np.uint16)[None]
+    path = tmp_path / "sixteen-bit.png"
+    Image.fromarray(samples).save(path)
+    asset = AssetRef(
+        digest_file(path),
+        path.name,
+        path.stat().st_size,
+        resolver=SimpleNamespace(resolve=lambda _digest: path),
+    )
+    loaded = LoadImage.execute(image=asset)
+    expected = np.repeat(samples[None, ..., None], 3, axis=-1).astype(np.float32) / 65535
+    np.testing.assert_allclose(loaded["IMAGE"].numpy(), expected, rtol=0, atol=2 / 65535)
+    assert torch.equal(loaded["MASK"], torch.zeros((1, 64, 64)))
+
+
+@pytest.mark.parametrize("format_name", ("PNG", "WEBP"))
+def test_image_loader_retains_animation_frames_and_alpha(tmp_path: Path, format_name: str) -> None:
+    arrays = [
+        np.full((2, 3, 4), color, np.uint8) for color in ((17, 83, 211, 61), (233, 29, 71, 197))
+    ]
+    frames = [Image.fromarray(array) for array in arrays]
+    path = tmp_path / f"frames.{format_name.lower()}"
+    frames[0].save(path, save_all=True, append_images=frames[1:], duration=70, lossless=True)
+    asset = AssetRef(
+        digest_file(path),
+        path.name,
+        path.stat().st_size,
+        resolver=SimpleNamespace(resolve=lambda _digest: path),
+    )
+    loaded = LoadImage.execute(image=asset)
+    expected = np.stack(arrays).astype(np.float32) / 255
+    np.testing.assert_array_equal(loaded["IMAGE"].numpy(), expected[..., :3])
+    np.testing.assert_array_equal(loaded["MASK"].numpy(), 1 - expected[..., 3])
+
+
 @pytest.mark.parametrize("format_name", ("PNG", "GIF"))
 def test_load_palette_image_preserves_transparency_mask(tmp_path: Path, format_name: str) -> None:
     path = tmp_path / f"palette.{format_name.lower()}"
@@ -101,10 +137,9 @@ def test_image_savers_reject_oversized_batches_before_materialization(node, shap
 def test_image_loader_checks_input_size_and_cumulative_decoded_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    path = tmp_path / "frames.gif"
-    first = Image.new("RGBA", (3, 2), (17, 83, 211, 255))
-    second = Image.new("RGBA", (3, 2), (233, 29, 71, 255))
-    first.save(path, save_all=True, append_images=[second], transparency=0)
+    path = tmp_path / "frames.png"
+    frames = [Image.new("RGBA", (32, 2), (index, 83, 211, 127)) for index in range(64)]
+    frames[0].save(path, save_all=True, append_images=frames[1:])
     asset = AssetRef(
         digest_file(path),
         path.name,
@@ -114,10 +149,10 @@ def test_image_loader_checks_input_size_and_cumulative_decoded_bytes(
     monkeypatch.setattr(image_file_tools, "IMAGE_WORKING_SET_LIMIT_BYTES", asset.size - 1)
     with pytest.raises(ValueError, match="input byte limit"):
         LoadImage.execute(image=asset)
-    # Two 96-byte outputs, their stack copies and 384 bytes of per-frame scratch coexist.
-    monkeypatch.setattr(image_file_tools, "IMAGE_WORKING_SET_LIMIT_BYTES", 768)
-    assert LoadImage.execute(image=asset)["IMAGE"].shape == (2, 2, 3, 3)
-    monkeypatch.setattr(image_file_tools, "IMAGE_WORKING_SET_LIMIT_BYTES", 767)
+    # RGBA backing arrays, inverted masks and stack copies, scratch and decoder allowance.
+    monkeypatch.setattr(image_file_tools, "IMAGE_WORKING_SET_LIMIT_BYTES", 200_704)
+    assert LoadImage.execute(image=asset)["IMAGE"].shape == (64, 2, 32, 3)
+    monkeypatch.setattr(image_file_tools, "IMAGE_WORKING_SET_LIMIT_BYTES", 200_703)
     with pytest.raises(ValueError, match="decoded image batch"):
         LoadImage.execute(image=asset)
 
