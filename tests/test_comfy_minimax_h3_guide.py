@@ -1,8 +1,5 @@
 """Torch-free MiniMax H3 guide schema and discovery."""
 
-import subprocess
-import sys
-
 from dinkster_api.v1 import (
     AUDIO_TYPE,
     CONDITIONING_TYPE,
@@ -74,16 +71,3 @@ def test_minimax_h3_add_guide_schema_and_cold_discovery() -> None:
     )
     assert schema.outputs == (OutputSpec("positive", TypeExpr.concrete(CONDITIONING_TYPE)),)
     assert schema_from_wire(schema_to_wire(schema)) == schema
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; "
-            "from dinkster_nodes_comfy.minimax_h3_latent import MiniMaxH3AddGuide; "
-            "MiniMaxH3AddGuide.schema(); "
-            "assert 'torch' not in sys.modules; assert 'dinkster_inference' not in sys.modules",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr

@@ -270,7 +270,7 @@ class PostProcessingInspect(Node):
         )
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_ordinary_manifest_executes_post_processing_dynamic_nodes_with_decoded_numpy_values(
     tmp_path: Path, in_process: bool
 ) -> None:

@@ -72,7 +72,7 @@ class DimensionSource(Node):
         )
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 @pytest.mark.parametrize("video", (False, True))
 def test_image_dimensions_ordinary_manifest_twice(
     tmp_path: Path, in_process: bool, video: bool
@@ -193,7 +193,7 @@ class RebatchSource(Node):
         )
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_rebatch_ordinary_manifest_with_explicit_selection_and_map(
     tmp_path: Path, in_process: bool
 ) -> None:

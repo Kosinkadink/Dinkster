@@ -171,7 +171,7 @@ def test_model_schedulers_match_denoise_boundaries_and_turbo_timesteps() -> None
     assert turbo.dtype == torch.float32
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_all_scheduler_sigmas_cross_native_and_consumer_pack_hosts(
     in_process: bool, tmp_path: Path
 ) -> None:

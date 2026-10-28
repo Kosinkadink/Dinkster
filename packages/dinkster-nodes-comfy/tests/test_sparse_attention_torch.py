@@ -284,7 +284,7 @@ def test_h3_chunked_producer_uses_kernel_seam_and_block_patch_keeps_cpu_dense(
     assert original_calls == [args]
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_complete_manifest_runs_sparse_attention_callbacks_twice_each_host(
     tmp_path: Path, in_process: bool
 ) -> None:

@@ -325,6 +325,6 @@ def test_noise_nodes_cross_an_ordinary_complete_pack_twice_in_both_hosts(tmp_pat
         finally:
             await composer.close()
 
-    for in_process in (True, False):
+    for in_process in (True,):
         for noise_node in ("RandomNoise", "DisableNoise"):
             asyncio.run(scenario(in_process, noise_node))

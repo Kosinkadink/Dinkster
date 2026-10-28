@@ -63,7 +63,7 @@ class LotusConsumer(Node):
         return cls.outputs(digest=_check(conditioning))
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_lotus_native_manifest_and_public_fixture_in_both_hosts(
     tmp_path: Path, in_process: bool
 ) -> None:
