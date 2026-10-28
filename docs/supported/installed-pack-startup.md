@@ -28,6 +28,10 @@
   configured shared-process groups.
 - Pack install, update, and doctor refresh the persisted schema catalog.
   Serving fails before binding when an installed catalog is missing or stale.
+- An explicit generation serves only its locked pack sources, exact versions
+  and recorded in-process or isolated hosting. Retained generations keep their
+  own pack selection for rollback. Missing interpreters or changed source
+  artifacts fail startup rather than falling back to installed distributions.
 - The default local launcher prepares missing or stale catalogs before binding,
   then serves the browser application and engine API from one loopback origin.
 - Released engines discover the installed frontend wheel without a frontend
