@@ -3642,9 +3642,9 @@ def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
             async with asyncio.timeout(60):
                 while True:
                     async with session.get(base + "/api/mounts") as resp:
-                        imports, row = (await resp.json())["mounts"]
-                        assert imports["id"] == "imports"
-                        assert row["id"] == "shots"
+                        rows = {row["id"]: row for row in (await resp.json())["mounts"]}
+                        assert set(rows) == {"imports", "shots"}
+                        row = rows["shots"]
                     if row["state"] == "ready":
                         break
                     await asyncio.sleep(0.05)
@@ -3822,7 +3822,9 @@ serve.main()
             async with asyncio.timeout(60):
                 while True:
                     async with session.get(base + "/api/mounts") as resp:
-                        (row,) = (await resp.json())["mounts"]
+                        rows = {row["id"]: row for row in (await resp.json())["mounts"]}
+                        assert set(rows) == {"imports", "renders"}
+                        row = rows["renders"]
                     if row["state"] == "ready":
                         break
                     await asyncio.sleep(0.05)
