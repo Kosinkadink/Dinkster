@@ -30,6 +30,9 @@
   text files. The host verifies the current writable mount, safe file location,
   content digest and byte size before exposing the descriptor. Returning an
   existing asset without writing it does not report a new saved file.
+  Saved images, audio and video are classified from verified bytes for scoped
+  media authority and kind-filtered browsing. Text and unrecognized files stay
+  generic; a worker-provided media type alone never grants media authority.
   Required encoded result attachments published into the vault are retained
   as collision-safe named files in the project's selected output folder before
   completion. Their result descriptors name the visible files; the catalog

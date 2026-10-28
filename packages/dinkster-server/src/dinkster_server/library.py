@@ -1050,6 +1050,16 @@ def recover_asset_observations(
                             continue
             if path is None:
                 continue
+            origin = payload.get("origin")
+            if isinstance(origin, dict) and origin.get("kind") == "produced":
+                try:
+                    classification = classify_media_file(path)
+                except AssetError:
+                    classification = None
+                if classification is not None:
+                    ref = replace(ref, media_type=classification.media_type)
+                    payload["kind"] = classification.kind
+                    payload["extension"] = classification.extension
             if payload["extension"] is not None:
                 library.store.grant_media_result(
                     MediaGrant(
