@@ -153,17 +153,18 @@ such a mirror refuses an unsigned or wrongly signed document.
 
 ### What the lock carries for the base
 
-No workspace package depends on torch or torchvision; the engine's packages
-declare numpy and opencv, and torch arrives with `dinkster-inference`, the
-sampling runtime. The base pins are nevertheless part of Dinkster's lock:
-the root `pyproject.toml` declares torch, torchvision, numpy and
+No workspace package declares torch or torchvision directly; the engine's
+packages declare numpy and opencv, and torch arrives as a transitive
+dependency of `dinkster-inference`, the sampling runtime that
+`dinkster-native` depends on, so an ordinary `uv sync` installs torch at
+whatever version resolution picks. The base pins fix that version: the root
+`pyproject.toml` declares torch, torchvision, numpy and
 `opencv-contrib-python-headless` at the settled versions in a dependency
-group (alongside the existing `angle` and `dev` groups) that `uv sync` does
-not install by default, so the lock resolves and pins them while an
-ordinary developer or CI sync stays torch-free. The
-engine release's `constraints.txt` includes those pins, which is what makes
-a generation sync and a pack venv resolve against the same torch the base
-carries.
+group (alongside the existing `angle` and `dev` groups). The group's job is
+to pin, not to install; the lock resolves every workspace package against
+those exact versions, and the engine release's `constraints.txt` carries
+them, which is what makes a generation sync and a pack venv resolve against
+the same torch the base carries.
 
 The lock pins the base by version, not by per-variant wheel. torch and
 torchvision wheels differ per variant and come from the torch index for
@@ -513,9 +514,9 @@ Settled:
   either channel. The one index read is rebuilding a base whose archive is
   no longer hosted, from its retained base manifest.
 - The base pins live in Dinkster's lock through a root dependency group
-  that `uv sync` does not install by default; the lock pins versions, the
-  base manifest holds the per-variant wheel hashes from the variant's
-  index.
+  whose job is to pin versions, not to install; torch reaches the default
+  sync through `dinkster-inference`; the base manifest holds the
+  per-variant wheel hashes from the variant's index.
 - A generation's effective constraints take base-owned distributions from
   the selected base manifest and everything else from the engine
   `constraints.txt`; versions must agree or the assembler fails closed.
