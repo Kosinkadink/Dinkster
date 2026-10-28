@@ -203,6 +203,7 @@ from .wan_scail_conditioning import WanSCAILToVideo
 from .wan_sound import WanHuMoImageToVideo, WanSoundImageToVideo, WanSoundImageToVideoExtend
 from .wan_track_conditioning import WanTrackToVideo
 from .wan_uni3c import WanUni3CControlnetApply
+from .wandancer_audio import WanDancerEncodeAudio
 from .wandancer_keyframes import WANDANCER_KEYFRAME_NODES
 from .webm_save import SaveWEBM
 from .yue2_conditioning import YUE2_CONDITIONING_NODES
@@ -419,6 +420,7 @@ COMFY_NODES = (
     SaveAudioOpus,
     SaveAudioAdvanced,
     SaveWEBM,
+    WanDancerEncodeAudio,
     *YUE2_CONDITIONING_NODES,
     UpscaleModelLoader,
     CurveEditor,
