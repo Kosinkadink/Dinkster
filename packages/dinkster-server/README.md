@@ -99,6 +99,13 @@ The main protocol routes include:
   it requires configured upload folders and does not create media authority.
   Without query fields, `/api/assets` retains anonymous idempotent digest
   storage for workflows and transfers and returns `{digest}`.
+- `GET /api/assets/catalog?scope=&project=` lists persistent upload observations,
+  grouped by digest, separately from workflow records. `q` searches original
+  and stored names and recorded origin details; `kind` and `origin` filter
+  exact values. `since`/`until` are inclusive observation times in Unix seconds.
+  `limit` and query-bound `cursor` page identities, retaining their aliases
+  and history. The route requires `assets:read` in the requested scope,
+  defaults to project `default`, and exposes virtual locations only.
 - `POST /api/assets/latent?scope=&name=` streams and strictly validates native
   or supported ComfyUI latent safetensors under independent concurrency, size,
   idle-timeout, and disk-headroom limits

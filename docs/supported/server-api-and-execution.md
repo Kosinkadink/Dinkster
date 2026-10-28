@@ -37,6 +37,11 @@
   without buffering the whole file. Anonymous workflow and digest transfers
   retain deduplicated vault storage; named generic imports do not grant
   classified media authority.
+- Named and classified-media uploads retain their original names, observed
+  virtual locations and upload history across server restarts. The scoped
+  asset catalog groups aliases by digest, supports name/kind/origin/date
+  filters and paged queries, and keeps workflow records separate. Catalog
+  locations do not grant filesystem access or expose physical paths.
 - Operators can persist project folder membership, independent display order,
   shared folders, and project output selections through the mount API.
   Removing a project association does not delete files or revoke the grant.

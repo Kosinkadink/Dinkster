@@ -136,6 +136,15 @@ records. Record CRUD remains stdlib SQLite. The initial revision creates
 only when its schema matches; an incompatible schema fails without changing
 its records or recording a version. Back up the catalog before upgrading.
 
+Asset observations share this database but are separate from mutable workflow
+records. `LibraryStore.record_asset` records an original basename, observed
+AssetRef, kind, project, time and origin event in one transaction. Observed
+virtual locations are not filesystem authority. Download origin URLs omit
+userinfo, query strings and fragments. `query_assets` pages digest identities
+within one scope/project and retains all their aliases and origin events even
+when only one event matches the name, kind, origin or date filter. Dates are
+observation times, not claims about a file's original creation time.
+
 From the repository root:
 
 ```sh

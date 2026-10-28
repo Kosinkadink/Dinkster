@@ -1234,6 +1234,22 @@ def test_named_media_upload_uses_project_folder_without_vault_copy(
             assert not list(library.vault.root.glob(".media-upload-*"))
             assert library.store.media_grant("local", digest_bytes(data), kind) is not None
             assert library.store.media_grant("other", digest_bytes(data), kind) is None
+            response = await client.get(
+                "/api/assets/catalog",
+                params={"scope": "local", "project": "film", "kind": kind, "origin": "upload"},
+            )
+            assert response.status == 200
+            catalog = await response.json()
+            assert len(catalog["assets"]) == 1
+            asset = catalog["assets"][0]
+            assert asset["asset"]["digest"] == digest_bytes(data)
+            assert asset["aliases"] == ["portrait.png", "portrait_00001.png"]
+            assert [item["asset"]["virtualPath"] for item in asset["observations"]] == [
+                "mounts/imports/portrait.png",
+                "mounts/imports/portrait_00001.png",
+                "mounts/project/plates/portrait.png",
+            ]
+            assert str(tmp_path) not in json.dumps(catalog)
         finally:
             await client.close()
 
@@ -1307,7 +1323,7 @@ def test_media_ingest_auth_scope_idempotence_and_canonical_response(
         auth = _Tokens(
             {
                 "none": Principal("none", {"a": frozenset()}),
-                "a": Principal("alice", {"a": frozenset({"assets:write"})}),
+                "a": Principal("alice", {"a": frozenset({"assets:read", "assets:write"})}),
                 "both": Principal(
                     "alice",
                     {
@@ -1356,6 +1372,10 @@ def test_media_ingest_auth_scope_idempotence_and_canonical_response(
                 "error": "scope b does not grant assets:write"
             }
             assert library.vault.digests() == []
+            catalog_wrong_scope = await client.get(
+                "/api/assets/catalog?scope=b", headers={"Authorization": "Bearer a"}
+            )
+            assert catalog_wrong_scope.status == 403
 
             generic_get = await client.get("/api/assets/media")
             assert generic_get.status == 401

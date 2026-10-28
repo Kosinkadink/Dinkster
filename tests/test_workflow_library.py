@@ -27,6 +27,7 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import (
     AssetError,
+    AssetRef,
     AssetVault,
     AssetWriter,
     LibraryStore,
@@ -94,13 +95,18 @@ def test_catalog_concurrent_initialization_keeps_stores_independent(tmp_path: Pa
             store.close()
 
 
-@pytest.mark.parametrize("legacy", [False, True])
-def test_catalog_alembic_head_preserves_records(tmp_path: Path, legacy: bool) -> None:
+@pytest.mark.parametrize("catalog", ["fresh", "unversioned", "versioned"])
+def test_catalog_alembic_head_preserves_records(tmp_path: Path, catalog: str) -> None:
     path = tmp_path / "library.sqlite"
     before: dict[str, list[tuple[object, ...]]] = {}
-    if legacy:
+    if catalog != "fresh":
         shutil.copyfile(Path(__file__).parent / "fixtures/asset-catalog-previous-main.sqlite", path)
         with sqlite3.connect(path) as connection:
+            if catalog == "versioned":
+                connection.executescript(
+                    "CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL PRIMARY KEY);"
+                    "INSERT INTO alembic_version VALUES ('0001_asset_records');"
+                )
             for table in ("records", "media_grants", "asset_dependencies", "asset_derivations"):
                 before[table] = connection.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall()
                 assert len(before[table]) == 2
@@ -140,7 +146,7 @@ def test_catalog_alembic_head_preserves_records(tmp_path: Path, legacy: bool) ->
         f"catalog={path}",
     ]
     current = subprocess.run([*args, "current"], text=True, capture_output=True, check=True)
-    assert "0001_asset_records (head)" in current.stdout
+    assert "0002_asset_observations (head)" in current.stdout
     checked = subprocess.run([*args, "check"], text=True, capture_output=True, check=True)
     assert "No new upgrade operations detected" in checked.stdout
     LibraryStore(path).close()
@@ -442,6 +448,157 @@ def test_named_model_upload_streams_to_folder_without_redirecting_workflows(tmp_
             await client.close()
 
     asyncio.run(scenario())
+
+
+def test_asset_catalog_persists_aliases_and_pages_identities(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        root = tmp_path / "imports"
+        root.mkdir()
+        mounts = MountTable()
+        mounts.add(MountDef("imports", root, "readwrite"))
+        mounts.scan("imports")
+        client = await make_client(
+            tmp_path,
+            resolver=mounts,
+            upload_writer=AssetWriter(mounts),
+            project_folders_for=lambda _project: AssetFolderContext(("imports",)),
+        )
+        bodies = (b"alpha", b"beta", b"alpha", b"gamma")
+        names = ("first.bin", "second.bin", "alias.bin", "last.bin")
+        try:
+            for name, body in zip(names, bodies, strict=True):
+                response = await client.post(
+                    "/api/assets",
+                    params={"scope": "local", "name": name},
+                    data=body,
+                )
+                assert response.status == 201, await response.text()
+            response = await client.get("/api/assets/catalog?scope=local")
+            assert response.status == 200, await response.text()
+            before = await response.json()
+            assert [item["asset"]["digest"] for item in before["assets"]] == [
+                digest_bytes(b"gamma"),
+                digest_bytes(b"alpha"),
+                digest_bytes(b"beta"),
+            ]
+            assert before["assets"][1]["aliases"] == ["first.bin", "alias.bin"]
+            assert [item["origin"] for item in before["assets"][1]["observations"]] == [
+                {"kind": "upload"},
+                {"kind": "upload"},
+            ]
+            assert str(root) not in json.dumps(before)
+            assert client.app[LIBRARY_KEY].vault.digests() == []
+            assert await (await client.get("/api/library?scope=local")).json() == {"records": []}
+        finally:
+            await client.close()
+
+        client = await make_client(
+            tmp_path,
+            resolver=mounts,
+            upload_writer=AssetWriter(mounts),
+            project_folders_for=lambda _project: AssetFolderContext(("imports",)),
+        )
+        try:
+            assert await (await client.get("/api/assets/catalog?scope=local")).json() == before
+            seen = []
+            cursor = None
+            for _page in range(3):
+                params = {"scope": "local", "limit": "1"}
+                if cursor:
+                    params["cursor"] = cursor
+                response = await client.get("/api/assets/catalog", params=params)
+                assert response.status == 200
+                page = await response.json()
+                seen.extend(page["assets"])
+                cursor = page.get("cursor")
+                if _page == 0:
+                    mismatch = await client.get(
+                        "/api/assets/catalog", params={**params, "cursor": cursor, "q": "alias"}
+                    )
+                    assert mismatch.status == 400
+            assert seen == before["assets"]
+            assert cursor is None
+            middle = before["assets"][1]["observations"][-1]["created"]
+            for query, expected in (
+                (
+                    {"q": "ALIAS", "kind": "asset/file", "origin": "upload"},
+                    [digest_bytes(b"alpha")],
+                ),
+                ({"since": str(middle), "until": str(middle)}, [digest_bytes(b"alpha")]),
+                ({"kind": "media/image"}, []),
+                ({"origin": "download"}, []),
+                ({"project": "other"}, []),
+                ({"scope": "other"}, []),
+            ):
+                response = await client.get(
+                    "/api/assets/catalog", params={"scope": "local", **query}
+                )
+                assert response.status == 200
+                assert [
+                    item["asset"]["digest"] for item in (await response.json())["assets"]
+                ] == expected
+            for query in ({"since": "nan"}, {"until": "inf"}, {"since": "2", "until": "1"}):
+                response = await client.get(
+                    "/api/assets/catalog", params={"scope": "local", **query}
+                )
+                assert response.status == 400
+            for body in (b"alpha", b"beta", b"gamma"):
+                response = await client.get("/api/assets/" + digest_bytes(body))
+                assert response.status == 200
+                assert await response.read() == body
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_asset_catalog_retains_scoped_origin_events_and_redacts_download_leads(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "library.sqlite"
+    ref = AssetRef(digest_bytes(b"weights"), "weights.bin", 7)
+    store = LibraryStore(path)
+    try:
+        for name, origin in (
+            (
+                "download.bin",
+                {
+                    "kind": "download",
+                    "url": "https://user:password@assets.example/weights?signature=secret#part",
+                },
+            ),
+            ("remote.bin", {"kind": "transfer", "machine": "workstation"}),
+            ("render.bin", {"kind": "produced", "job": "job-7", "node": "Save"}),
+        ):
+            store.record_asset("a", ref, original_name=name, kind="asset/file", origin=origin)
+        store.record_asset(
+            "b", ref, original_name="private.bin", kind="asset/file", origin={"kind": "upload"}
+        )
+    finally:
+        store.close()
+    store = LibraryStore(path)
+    try:
+        observations = store.query_assets("a", text="ASSETS.EXAMPLE", origin="download")
+        assert len(observations) == 1
+        assert [item.original_name for item in observations[0]] == [
+            "download.bin",
+            "remote.bin",
+            "render.bin",
+        ]
+        assert [dict(item.origin) for item in observations[0]] == [
+            {"kind": "download", "url": "https://assets.example/weights"},
+            {"kind": "transfer", "machine": "workstation"},
+            {"kind": "produced", "job": "job-7", "node": "Save"},
+        ]
+        assert store.query_assets("b", origin="download") == []
+        assert store.query_assets("a", text="private") == []
+        for field in ("/home/user/private.bin", "C:\\Users\\user\\private.bin"):
+            with pytest.raises(AssetError, match="basenames"):
+                store.record_asset(
+                    "a", ref, original_name=field, kind="asset/file", origin={"kind": "upload"}
+                )
+    finally:
+        store.close()
 
 
 def test_chunked_upload_reads_complete_png_body(tmp_path: Path) -> None:

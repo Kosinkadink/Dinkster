@@ -59,6 +59,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import re
 import shutil
@@ -111,7 +112,7 @@ from dinkster_values import (
 )
 
 from .asset_stream import open_verified_sized, stream_verified
-from .auth import LOCAL_PRINCIPAL, principal_for
+from .auth import LOCAL_PRINCIPAL, principal_for, resolve_scope
 from .paging import decode_cursor, encode_cursor
 
 __all__ = ["LIBRARY_KEY", "ServerLibrary", "add_library_routes"]
@@ -686,6 +687,14 @@ async def _ingest_file_upload(
                         )
                     if grant is not None:
                         library.store.grant_media_result(grant, temporary_path)
+                    library.store.record_asset(
+                        scope,
+                        ref,
+                        original_name=name,
+                        kind=grant.kind if grant is not None else "asset/file",
+                        origin={"kind": "upload"},
+                        project=project,
+                    )
                     return ref, True
                 assert grant is not None
                 with library.vault.writer(digest) as writer, temporary_path.open("rb") as source:
@@ -693,9 +702,16 @@ async def _ingest_file_upload(
                         writer.write(chunk)
                     _path, bytes_created = writer.commit_with_result()
                 _stored, grant_created = library.store.grant_media_result(grant, temporary_path)
-                return AssetRef(
-                    digest, name, received, media_type, ""
-                ), bytes_created or grant_created
+                ref = AssetRef(digest, name, received, media_type, "")
+                library.store.record_asset(
+                    scope,
+                    ref,
+                    original_name=name,
+                    kind=grant.kind,
+                    origin={"kind": "upload"},
+                    project=project,
+                )
+                return ref, bytes_created or grant_created
             finally:
                 temporary_path.unlink(missing_ok=True)
 
@@ -751,6 +767,69 @@ async def run_media_publication(
     finally:
         if not handed_off:
             library.media_ingest_lock.release()
+
+
+async def handle_asset_catalog(request: web.Request) -> web.Response:
+    scope = resolve_scope(principal_for(request), "assets:read", request.query.get("scope"))
+    allowed = {"scope", "project", "q", "kind", "origin", "since", "until", "limit", "cursor"}
+    if set(request.query) - allowed or any(
+        len(request.query.getall(field, [])) != 1 for field in request.query
+    ):
+        return _json_error(400, "unknown or repeated catalog query field")
+    project = request.query.get("project", "default")
+    if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", project) is None:
+        return _json_error(400, "project must be a lowercase project id")
+    try:
+        limit = min(200, max(1, int(request.query.get("limit", "50"))))
+        since = float(request.query["since"]) if "since" in request.query else None
+        until = float(request.query["until"]) if "until" in request.query else None
+        if any(value is not None and not math.isfinite(value) for value in (since, until)):
+            raise ValueError
+        if since is not None and until is not None and since > until:
+            raise ValueError
+    except ValueError:
+        return _json_error(400, "invalid catalog limit or date range")
+    bound = {
+        field: request.query.get(field, "") for field in ("q", "kind", "origin", "since", "until")
+    }
+    bound.update(scope=scope, project=project)
+    cursor = request.query.get("cursor")
+    after = decode_cursor(cursor, bound) if cursor else None
+    try:
+        groups = await asyncio.to_thread(
+            request.app[LIBRARY_KEY].store.query_assets,
+            scope,
+            project=project,
+            text=bound["q"],
+            kind=bound["kind"],
+            origin=bound["origin"],
+            since=since,
+            until=until,
+            limit=limit + 1,
+            after=after,
+        )
+    except AssetError:
+        return _json_error(400, "invalid asset kind")
+    assets: list[dict[str, object]] = []
+    for observations in groups[:limit]:
+        assets.append(
+            {
+                "asset": observations[-1].asset.to_wire(),
+                "aliases": list(
+                    dict.fromkeys(
+                        name
+                        for item in observations
+                        for name in (item.original_name, item.asset.name)
+                    )
+                ),
+                "observations": [item.to_wire() for item in observations],
+            }
+        )
+    body: dict[str, object] = {"assets": assets}
+    if len(groups) > limit:
+        last = groups[limit - 1][-1]
+        body["cursor"] = encode_cursor(bound, (last.created, last.asset.digest))
+    return web.json_response(body, headers={"Cache-Control": "no-store"})
 
 
 async def handle_asset_get(request: web.Request) -> web.StreamResponse:
@@ -1130,6 +1209,7 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
     app.router.add_post("/api/assets/media", handle_media_upload)
     app.router.add_post("/api/assets/latent", handle_latent_upload)
     app.router.add_post("/api/assets/image-document", handle_image_document)
+    app.router.add_get("/api/assets/catalog", handle_asset_catalog)
     app.router.add_get("/api/assets/{digest}", handle_asset_get)
     app.router.add_get("/api/assets/{digest}/dependencies", handle_dependencies)
     app.router.add_post("/api/assets/{digest}/render", handle_render)
