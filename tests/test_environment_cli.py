@@ -137,7 +137,7 @@ def test_runtime_confirmation_assignment_and_stop_first_through_cli(tmp_path: Pa
         assert result["url"] == f"http://127.0.0.1:{port}"
         with urlopen(result["url"] + "/api/cuda", timeout=5) as response:  # noqa: S310
             assert json.loads(response.read()) == {"cuda": "0,GPU-aB12"}
-        record_path = tmp_path / "runtime/main.json"
+        record_path = tmp_path / "runtime/1/main.json"
         original = record_path.read_bytes()
         code, repeated = _run(tmp_path, *arguments, "--yes")
         assert code == 0
@@ -172,7 +172,7 @@ def test_cpu_assignment_masks_inherited_gpu_selection(
         assert _run(tmp_path, "stop", "--yes")[0] == 0
 
 
-def test_runtime_apply_refuses_writer_contention_and_incomplete_journal(tmp_path: Path):
+def test_runtime_apply_refuses_writer_contention_and_recovers_incomplete_journal(tmp_path: Path):
     _runtime_project(tmp_path)
     with writer_lock(tmp_path):
         code, refused = _run(tmp_path, "start", "--yes")
@@ -180,10 +180,14 @@ def test_runtime_apply_refuses_writer_contention_and_incomplete_journal(tmp_path
     assert "another environment writer" in refused["error"]
     assert not (tmp_path / "runtime").exists()
     Journal("update", 1, 2, "building").write(tmp_path / "journal/interrupted.json")
-    code, refused = _run(tmp_path, "start", "--yes")
-    assert code == 1
-    assert "recovery first" in refused["error"]
-    assert not (tmp_path / "runtime").exists()
+    code, recovered = _run(tmp_path, "start", "--yes")
+    try:
+        assert code == 0
+        assert recovered["engines"][0]["state"] == "ready"
+        assert Journal.read(tmp_path / "journal/interrupted.json").stage == "rolled-back"
+        assert (tmp_path / "current").read_bytes() == b"1\n"
+    finally:
+        assert _run(tmp_path, "stop", "--yes")[0] == 0
 
 
 def test_named_engine_requires_port_and_invalid_assignment_does_not_mutate(tmp_path: Path):

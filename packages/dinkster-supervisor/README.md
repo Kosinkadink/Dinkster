@@ -250,12 +250,30 @@ Runtime writers serialize through the project's persistent `.lock` file using
 an OS-held nonblocking lock. The same primitive serializes shared-store writes;
 callers needing both acquire project then store. Process exit releases the lock,
 but its file is never removed. Apply rechecks project/current under lock and
-refuses incomplete lifecycle journals until recovery.
+recovers incomplete activation journals before performing another mutation.
 
 Runtime launches the generation interpreter through the independent supervisor.
 Public engine rows contain `name`, `generation`, `state` and `url`; private
-`runtime/<name>.json` records retain process identity and shutdown credentials.
+`runtime/<generation>/<name>.json` records retain process identity and shutdown
+credentials. This permits old and candidate same-name bindings to coexist;
+status displays the generation selected by `current`, while idle checks inspect
+every persisted generation's engines.
 Graceful shutdown requires both the live instance identity and its private
 token. An unreachable or ambiguous supervisor cannot establish an idle engine;
 queue checks refuse mutation unless every observed engine is safely idle.
 Supervisor and engine output goes to private runtime logs, not CLI JSON stdout.
+
+`rollback [--plan | --yes] --json` selects the previous generation from the
+latest successful activation journal, starts its retained interpreter on new
+ports, waits for health, replaces `current`, then stops the newer processes.
+It does not sync or rebuild either tree. Apply revalidates project bytes and
+current under the writer lock; unconfirmed rollback does not write anything.
+
+Activation journals retain `bindings`: objects containing `name`, `port`,
+`gpus` (device-id strings), `running` (boolean), and `targetPort`. The prior
+assignments and new ports are durable before construction or process launch.
+Stopped bindings remain stopped across activation. Recovery stops authenticated
+target processes, restores the previous pointer and running assignments, removes
+only a newly constructed failed target, and marks the journal `rolled-back`.
+A rollback target is retained even if its activation fails. Ambiguous process
+identity leaves the journal incomplete rather than killing an unrelated process.

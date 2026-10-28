@@ -10,7 +10,13 @@ from typing import cast
 
 from .environment_artifacts import discover
 from .environment_generations import pack_operation
-from .environment_runtime import engine_status, start_engine, stop_engine, validate_assignment
+from .environment_runtime import (
+    engine_assignments,
+    engine_status,
+    start_engine,
+    stop_engine,
+    validate_assignment,
+)
 from .environment_state import (
     EnvironmentError,
     Generation,
@@ -19,6 +25,7 @@ from .environment_state import (
     read_document,
     writer_lock,
 )
+from .environment_transactions import activate, begin_activation, recover_activation
 
 
 def _settings(root: Path) -> dict[str, object] | None:
@@ -93,6 +100,54 @@ def _query(args: argparse.Namespace, result: dict[str, object]) -> int:
     return 0
 
 
+def _confirmed(args: argparse.Namespace, plan: list[str]) -> bool:
+    if args.yes:
+        return True
+    if not args.plan and not args.json and sys.stdin.isatty():
+        print("\n".join(plan), file=sys.stderr)
+        return input("Apply this plan? [y/N] ").strip().lower() in {"y", "yes"}
+    return False
+
+
+def _recover_pending(root: Path) -> None:
+    for path in sorted((root / "journal").glob("*.json")):
+        if Journal.read(path).incomplete:
+            recover_activation(root, path)
+
+
+def _rollback(args: argparse.Namespace, result: dict[str, object]) -> int:
+    root = Path(args.root)
+    current = read_current(root)
+    settings = _settings(root)
+    if current is None or settings is None:
+        raise EnvironmentError("project has no active generation")
+    snapshot = (root / "project.json").read_bytes()
+    target = None
+    for path in sorted((root / "journal").glob("*.json"), reverse=True):
+        journal = Journal.read(path)
+        if journal.stage == "complete" and journal.target == current and journal.previous:
+            target = journal.previous
+            break
+    if target is None:
+        raise EnvironmentError("project has no previous successful generation")
+    plan = [f"reactivate retained generation {target} without rebuilding generation {current}"]
+    result.update(current=current, plan=plan, status="planned")
+    if not _confirmed(args, plan):
+        return 0
+
+    def revalidate() -> None:
+        if read_current(root) != current or (root / "project.json").read_bytes() != snapshot:
+            raise EnvironmentError("project changed after planning; request a new plan")
+
+    with writer_lock(root):
+        _recover_pending(root)
+        revalidate()
+        path = begin_activation(root, target, "rollback")
+        activate(root, path, revalidate=revalidate)
+        result.update(current=target, status="applied", engines=list(engine_status(root)))
+    return 0
+
+
 def _runtime(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root)
     settings = _settings(root)
@@ -109,29 +164,28 @@ def _runtime(args: argparse.Namespace, result: dict[str, object]) -> int:
         if args.operation == "start" and args.engine != "main":
             raise EnvironmentError("an additional engine binding requires --port")
         port = cast("int", settings["port"])
+        if args.operation == "start":
+            for binding in engine_assignments(root, current):
+                if binding["name"] == args.engine:
+                    port = cast("int", binding["port"])
+                    break
     gpus = tuple(args.gpu) if args.operation == "start" else ()
     validate_assignment(current, args.engine, port, gpus)
     plan = [f"{args.operation} engine {args.engine} in generation {current}"]
     if args.operation == "start":
         plan.append(f"listen on 127.0.0.1:{port}; CUDA_VISIBLE_DEVICES={','.join(gpus)}")
     result.update(plan=plan, engines=list(engine_status(root)))
-    apply = args.yes
-    if not apply and not args.plan and not args.json and sys.stdin.isatty():
-        print("\n".join(plan), file=sys.stderr)
-        apply = input("Apply this plan? [y/N] ").strip().lower() in {"y", "yes"}
-    if not apply:
+    if not _confirmed(args, plan):
         result["status"] = "planned"
         return 0
     with writer_lock(root):
+        _recover_pending(root)
         if (
             read_current(root) != current
             or (root / "project.json").read_bytes() != snapshot
             or _settings(root) != settings
         ):
             raise EnvironmentError("project changed after planning; request a new plan")
-        for path in sorted((root / "journal").glob("*.json")):
-            if Journal.read(path).incomplete:
-                raise EnvironmentError("incomplete environment operation requires recovery first")
         if args.operation == "start":
             row = start_engine(root, current, args.engine, port, gpus)
             result["url"] = row["url"]
@@ -158,12 +212,14 @@ def main() -> None:
     start.add_argument("--port", type=int)
     start.add_argument("--gpu", action="append", default=[])
     stop = commands.add_parser("stop", help="stop one identity-checked supervisor and engine")
+    rollback = commands.add_parser("rollback", help="reactivate the previous successful generation")
     for command in (start, stop):
         command.add_argument("--engine", default="main")
+    for command in (start, stop, rollback):
         confirmation = command.add_mutually_exclusive_group()
         confirmation.add_argument("--yes", action="store_true", help="apply the printed plan")
         confirmation.add_argument("--plan", action="store_true", help="inspect without mutation")
-    for command in (catalog, status, doctor, start, stop):
+    for command in (catalog, status, doctor, start, stop, rollback):
         command.add_argument("--json", action="store_true", help="emit exactly one result object")
     args = parser.parse_args()
     if not args.root.is_absolute():
@@ -177,9 +233,12 @@ def main() -> None:
         "status": "clean",
     }
     try:
-        code = (
-            _runtime(args, result) if args.operation in {"start", "stop"} else _query(args, result)
-        )
+        if args.operation == "rollback":
+            code = _rollback(args, result)
+        elif args.operation in {"start", "stop"}:
+            code = _runtime(args, result)
+        else:
+            code = _query(args, result)
     except (OSError, ValueError) as exc:
         code = 1
         result.update(status="error", error=str(exc))

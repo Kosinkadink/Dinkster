@@ -281,6 +281,17 @@ or null), `target` (positive integer), and `stage`. Stages are `planned`,
 an `error` string, retained after rollback. A malformed record is an error,
 not permission to ignore a possibly interrupted operation.
 
+Activation records also retain `bindings`, an array of objects with `name`,
+`port`, `gpus` (device-id strings), `running` (boolean) and `targetPort`.
+These preserve previous assignments and candidate ports before construction
+or startup. Private process records live at
+`runtime/<generation>/<name>.json`; old and new same-name bindings can coexist
+without overwriting either process identity. Status follows `current`, but
+mutation safety checks inspect all recorded engines. Recovery restores the
+previous pointer and running assignments, stops only authenticated candidate
+processes and discards newly built failed targets. A retained rollback target
+is never discarded. Process identity ambiguity leaves the journal incomplete.
+
 ### Shipping code before it is public
 
 For a release that must exist before an announcement, the engine wheels are

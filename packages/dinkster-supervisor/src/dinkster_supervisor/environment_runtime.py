@@ -14,9 +14,17 @@ from typing import Any, cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from .environment_state import EnvironmentError, Generation, atomic_write, interpreter
+from .environment_state import EnvironmentError, Generation, atomic_write, interpreter, read_current
 
-__all__ = ["engine_status", "require_idle", "start_engine", "stop_engine", "validate_assignment"]
+__all__ = [
+    "engine_assignments",
+    "engine_status",
+    "preserve_stopped_engine",
+    "require_idle",
+    "start_engine",
+    "stop_engine",
+    "validate_assignment",
+]
 
 _ENGINE_NAME = re.compile(r"[a-z0-9][a-z0-9-]*\Z")
 _GPU_ID = re.compile(r"(?:[0-9]+|GPU-[0-9A-Fa-f-]+)\Z")
@@ -41,7 +49,7 @@ def start_engine(
     if not python.is_file():
         raise EnvironmentError(f"generation {generation} has no interpreter: {python}")
 
-    previous = _load_record(root, name)
+    previous = _load_record(root, name, generation)
     if previous is not None:
         existing = _inspect(previous)
         if existing["state"] == "ready":
@@ -85,11 +93,16 @@ def start_engine(
         "-m",
         "dinkster.serve",
     ]
-    log_path = _runtime_path(root, name).with_suffix(".log")
+    log_path = _runtime_path(root, name, generation).with_suffix(".log")
     with log_path.open("ab") as log:
         if os.name != "nt":
             log_path.chmod(0o600)
-        process = subprocess.Popen(command, cwd=root, env=environment, stdout=log, stderr=log)
+        try:
+            process = subprocess.Popen(command, cwd=root, env=environment, stdout=log, stderr=log)
+        except OSError:
+            record["state"] = "stopped"
+            _write_record(root, name, record)
+            raise
     record["pid"] = process.pid
     _write_record(root, name, record)
     deadline = time.monotonic() + _STARTUP_TIMEOUT
@@ -105,11 +118,14 @@ def start_engine(
     raise EnvironmentError(f"engine {name} did not become ready")
 
 
-def stop_engine(root: Path, name: str) -> None:
+def stop_engine(root: Path, name: str, *, generation: int | None = None) -> None:
     """Stop only the supervisor whose live status proves its recorded identity."""
     _validate_name(name)
     root = Path(root)
-    record = _load_record(root, name)
+    selected = generation if generation is not None else read_current(root)
+    if selected is None:
+        raise EnvironmentError("project has no active generation")
+    record = _load_record(root, name, selected)
     if record is None:
         return
     inspected = _inspect(record)
@@ -131,6 +147,7 @@ def stop_engine(root: Path, name: str) -> None:
     while time.monotonic() < deadline:
         if not _process_alive(inspected):
             inspected["state"] = "stopped"
+            inspected["pid"] = 0
             _write_record(root, name, inspected)
             return
         time.sleep(_POLL_INTERVAL)
@@ -138,14 +155,55 @@ def stop_engine(root: Path, name: str) -> None:
 
 
 def engine_status(root: Path) -> tuple[dict[str, object], ...]:
-    """Return every persisted engine record without trusting a reused PID."""
+    """Return the selected generation's engines without trusting a reused PID."""
     runtime = Path(root) / "runtime"
     if not runtime.is_dir():
         return ()
     rows: list[dict[str, object]] = []
-    for path in sorted(runtime.glob("*.json")):
+    selected = read_current(Path(root))
+    paths = (
+        runtime.glob("*/*.json") if selected is None else (runtime / str(selected)).glob("*.json")
+    )
+    for path in sorted(paths):
         rows.append(_public_row(_inspect(_parse_record(path))))
     return tuple(rows)
+
+
+def engine_assignments(root: Path, generation: int) -> list[dict[str, object]]:
+    """Snapshot the assignments that a generation transaction must preserve."""
+    rows: list[dict[str, object]] = []
+    for path in sorted((root / "runtime" / str(generation)).glob("*.json")):
+        record = _inspect(_parse_record(path))
+        if record["state"] not in {"ready", "stopped"}:
+            raise EnvironmentError("cannot preserve an ambiguous engine assignment")
+        rows.append(
+            {key: record[key] for key in ("name", "port", "gpus")}
+            | {
+                "running": record["state"] == "ready",
+            }
+        )
+    return rows
+
+
+def preserve_stopped_engine(root: Path, name: str, previous: int, target: int, port: int) -> None:
+    """Carry a stopped binding forward without launching it during activation."""
+    record = _load_record(root, name, previous)
+    existing = _load_record(root, name, target)
+    if record is None or _inspect(record)["state"] != "stopped":
+        raise EnvironmentError("previous binding is not safely stopped")
+    if existing is not None and _inspect(existing)["state"] != "stopped":
+        raise EnvironmentError("target binding is not safely stopped")
+    _write_record(
+        root,
+        name,
+        record
+        | {
+            "generation": target,
+            "port": port,
+            "url": f"http://127.0.0.1:{port}",
+            "pid": 0,
+        },
+    )
 
 
 def require_idle(root: Path) -> None:
@@ -153,7 +211,7 @@ def require_idle(root: Path) -> None:
     runtime = Path(root) / "runtime"
     if not runtime.is_dir():
         return
-    for path in sorted(runtime.glob("*.json")):
+    for path in sorted(runtime.glob("*/*.json")):
         record = _parse_record(path)
         inspected = _inspect(record)
         if inspected["state"] == "stopped":
@@ -189,12 +247,12 @@ def _validate_name(name: str) -> None:
         raise EnvironmentError("engine name must be a portable engine id")
 
 
-def _runtime_path(root: Path, name: str) -> Path:
-    return root / "runtime" / f"{name}.json"
+def _runtime_path(root: Path, name: str, generation: int) -> Path:
+    return root / "runtime" / str(generation) / f"{name}.json"
 
 
-def _load_record(root: Path, name: str) -> dict[str, object] | None:
-    path = _runtime_path(root, name)
+def _load_record(root: Path, name: str, generation: int) -> dict[str, object] | None:
+    path = _runtime_path(root, name, generation)
     return None if not path.is_file() else _parse_record(path)
 
 
@@ -228,6 +286,8 @@ def _parse_record(path: Path) -> dict[str, object]:
         raise EnvironmentError(f"runtime record {path.name} is invalid")
     gpu_ids = tuple(cast("str", gpu) for gpu in gpu_values)
     validate_assignment(generation, name, port, gpu_ids)
+    if path.stem != name or path.parent.name != str(generation):
+        raise EnvironmentError(f"runtime record {path.name} does not match its assignment")
     if (
         not isinstance(instance, str)
         or not instance
@@ -244,7 +304,7 @@ def _parse_record(path: Path) -> dict[str, object]:
 
 
 def _write_record(root: Path, name: str, record: dict[str, object]) -> None:
-    path = _runtime_path(root, name)
+    path = _runtime_path(root, name, cast("int", record["generation"]))
     persisted = {key: value for key, value in record.items() if not key.startswith("_")}
     atomic_write(path, json.dumps(persisted, sort_keys=True, ensure_ascii=True) + "\n")
     if os.name != "nt":

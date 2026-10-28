@@ -1,5 +1,10 @@
 ## Implemented capabilities with limited or specialized exposure
 
+- Environment management can inspect local metadata, start and stop named
+  supervised bindings, and reactivate a retained previous generation on explicit
+  confirmation. Activation journals preserve running and stopped assignments
+  across recovery; ambiguous process identities refuse mutation. End-to-end
+  setup, update and relocation are not supported install paths yet.
 - Experimental on-demand execution supports static data-only nodes with
   scalars, images, masks, latents, and recursive lists through a caller-supplied
   dispatch and object store. Only local execution is validated.

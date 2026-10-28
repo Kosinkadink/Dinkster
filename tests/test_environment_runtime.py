@@ -10,6 +10,7 @@ from urllib.request import urlopen
 
 import pytest
 from dinkster_supervisor.environment_runtime import (
+    engine_assignments,
     engine_status,
     require_idle,
     start_engine,
@@ -84,10 +85,12 @@ def make_generation(root: Path, number: int = 1) -> None:
     )
     (generation / "constraints.txt").write_text("test\n")
     package = root / "dinkster"
-    package.mkdir()
+    package.mkdir(exist_ok=True)
     (package / "__init__.py").write_text("")
     (package / "serve.py").write_text(SERVE)
     (root / "queue.json").write_text('{"running": [], "queued": []}')
+    if not (root / "current").exists():
+        (root / "current").write_text(f"{number}\n")
 
 
 def test_start_status_idempotence_and_stop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -120,7 +123,7 @@ def test_stop_refuses_wrong_instance(tmp_path: Path) -> None:
     make_generation(tmp_path)
     port = free_port()
     start_engine(tmp_path, 1, "main", port)
-    record_path = tmp_path / "runtime" / "main.json"
+    record_path = tmp_path / "runtime" / "1" / "main.json"
     original = json.loads(record_path.read_text())
     record = dict(original)
     record["instance"] = "not-the-supervisor"
@@ -134,8 +137,8 @@ def test_stop_refuses_wrong_instance(tmp_path: Path) -> None:
 
 
 def test_status_rejects_malformed_record_without_mutating(tmp_path: Path) -> None:
-    record_path = tmp_path / "runtime" / "main.json"
-    record_path.parent.mkdir()
+    record_path = tmp_path / "runtime" / "1" / "main.json"
+    record_path.parent.mkdir(parents=True)
     record_path.write_text("{}")
 
     with pytest.raises(EnvironmentError, match="runtime record"):
@@ -149,8 +152,8 @@ def test_unverified_supervisor_exit_does_not_prove_idle(tmp_path: Path, live: bo
     make_generation(tmp_path)
     with subprocess.Popen([sys.executable, "-c", "pass"]) as exited:
         assert exited.wait(timeout=10) == 0
-    runtime = tmp_path / "runtime"
-    runtime.mkdir()
+    runtime = tmp_path / "runtime" / "1"
+    runtime.mkdir(parents=True)
     record = {
         "name": "main",
         "generation": 1,
@@ -174,7 +177,7 @@ def test_zero_pid_recovers_identity_for_authenticated_stop(tmp_path: Path) -> No
     make_generation(tmp_path)
     port = free_port()
     start_engine(tmp_path, 1, "main", port)
-    record_path = tmp_path / "runtime" / "main.json"
+    record_path = tmp_path / "runtime" / "1" / "main.json"
     record = json.loads(record_path.read_text())
     record["pid"] = 0
     record_path.write_text(json.dumps(record))
@@ -198,3 +201,29 @@ def test_require_idle_refuses_running_or_malformed_queue(tmp_path: Path) -> None
             require_idle(tmp_path)
     finally:
         stop_engine(tmp_path, "main")
+
+
+def test_same_name_generations_coexist_and_current_selects_status(tmp_path: Path) -> None:
+    make_generation(tmp_path, 1)
+    make_generation(tmp_path, 2)
+    first_port, second_port = free_port(), free_port()
+    first = start_engine(tmp_path, 1, "main", first_port)
+    try:
+        second = start_engine(tmp_path, 2, "main", second_port, ("GPU-aB12",))
+        try:
+            assert engine_status(tmp_path) == (first,)
+            assert engine_assignments(tmp_path, 2) == [
+                {"name": "main", "port": second_port, "gpus": ["GPU-aB12"], "running": True}
+            ]
+            require_idle(tmp_path)
+            (tmp_path / "current").write_text("2\n")
+            assert engine_status(tmp_path) == (second,)
+            stop_engine(tmp_path, "main", generation=1)
+            assert engine_status(tmp_path) == (second,)
+            assert engine_assignments(tmp_path, 1) == [
+                {"name": "main", "port": first_port, "gpus": [], "running": False}
+            ]
+        finally:
+            stop_engine(tmp_path, "main", generation=2)
+    finally:
+        stop_engine(tmp_path, "main", generation=1)

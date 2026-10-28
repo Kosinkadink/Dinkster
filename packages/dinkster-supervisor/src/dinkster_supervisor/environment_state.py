@@ -346,6 +346,7 @@ class Journal:
     target: int
     stage: str
     error: str | None = None
+    bindings: tuple[dict[str, object], ...] = ()
 
     @classmethod
     def read(cls, path: Path) -> Journal:
@@ -373,13 +374,55 @@ class Journal:
             raise EnvironmentError("unsupported journal stage")
         if error is not None and not isinstance(error, str):
             raise EnvironmentError("journal error must be a string")
+        bindings = value.get("bindings", [])
+        if not isinstance(bindings, list):
+            raise EnvironmentError("journal bindings must be an array")
+        checked: list[dict[str, object]] = []
+        names: set[str] = set()
+        ports: set[int] = set()
+        for entry in cast("list[object]", bindings):
+            if not isinstance(entry, dict):
+                raise EnvironmentError("journal binding must be an object")
+            binding = cast("dict[str, object]", entry)
+            name, port, target_port, gpus, running = (
+                binding.get("name"),
+                binding.get("port"),
+                binding.get("targetPort"),
+                binding.get("gpus"),
+                binding.get("running"),
+            )
+            if (
+                not isinstance(name, str)
+                or re.fullmatch(r"[a-z0-9][a-z0-9-]*", name) is None
+                or name in names
+                or type(port) is not int
+                or not 1 <= port <= 65535
+                or type(target_port) is not int
+                or not 1 <= target_port <= 65535
+                or target_port in ports
+                or not isinstance(gpus, list)
+                or type(running) is not bool
+            ):
+                raise EnvironmentError("invalid journal binding")
+            if any(
+                not isinstance(gpu, str)
+                or re.fullmatch(r"(?:[0-9]+|GPU-[0-9A-Fa-f-]+)", gpu) is None
+                for gpu in cast("list[object]", gpus)
+            ):
+                raise EnvironmentError("invalid journal GPU assignment")
+            names.add(name)
+            ports.add(target_port)
+            checked.append(binding)
         previous = value.get("previous")
+        if previous == value.get("target") and operation in {"update", "rollback", "repair"}:
+            raise EnvironmentError("activation journal must name distinct generations")
         return cls(
             operation,
             None if previous is None else generation_number(previous),
             generation_number(value.get("target")),
             stage,
             error,
+            tuple(checked),
         )
 
     @property
@@ -396,4 +439,6 @@ class Journal:
         }
         if self.error is not None:
             value["error"] = self.error
+        if self.bindings:
+            value["bindings"] = list(self.bindings)
         write_document(path, value)
