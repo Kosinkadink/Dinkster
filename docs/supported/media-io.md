@@ -1,5 +1,9 @@
 ## Media I/O
 
+- Indexed video file selections remain references to their granted files,
+  without input copying or an encoded-file size cap. Unindexed selections
+  must be scanned before VIDEO admission. Decode working-set and produced
+  output limits still apply.
 - Portable SAM3 track values preserve packed uint8 masks, empty object axes or
   absent masks, original dimensions, frame counts, optional scores, and structural
   metadata across worker boundaries
@@ -95,7 +99,8 @@
 - Source-only video timeline documents with lazy `VIDEO` rendering,
   lossless OTIO JSON import/export, declared asset bindings, clip-level
   VIDEO_EDIT preservation, track composition, transitions, retiming, bounded
-  audio mixing, CURVE parameters, and deterministic CPU text effects
+  audio mixing, CURVE parameters available in core-only registries, and
+  deterministic CPU text effects
 - Streamed media uploads and video encoding with explicit upload, decoded
   frame, decoded audio, and encoded output limits
 - Native Comfy packs exchange portable VIDEO and VIDEO_EDIT values without
