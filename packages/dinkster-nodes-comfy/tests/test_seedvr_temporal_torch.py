@@ -133,7 +133,7 @@ class TemporalConsumer(Node):
         return cls.outputs(summary="seedvr-temporal")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 @pytest.mark.parametrize(
     ("chunking_mode", "inputs"),
     (

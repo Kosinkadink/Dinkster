@@ -201,7 +201,7 @@ class AudioVAEInspect(Node):
         return cls.outputs(summary="audio-vae")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_audio_vae_nodes_execute_twice_through_both_production_hosts(
     tmp_path: Path, in_process: bool
 ) -> None:

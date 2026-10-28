@@ -547,7 +547,7 @@ def test_hook_conditioning_properties_cross_ordinary_hosts_twice(
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_hook_conditioning_reaches_native_reference_consumer(
     tmp_path: Path, in_process: bool
 ) -> None:

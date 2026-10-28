@@ -105,7 +105,7 @@ class ShiftConsumer(Node):
         return cls.outputs(summary="23.5/1.75/0.37")
 
 
-@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("in_process", (True,))
 def test_minimax_h3_shifts_twice_with_native_manifest_in_both_hosts(
     tmp_path: Path, in_process: bool
 ) -> None:

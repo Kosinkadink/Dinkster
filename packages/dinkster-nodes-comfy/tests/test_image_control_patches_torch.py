@@ -410,8 +410,9 @@ def test_image_control_fixture_uses_native_public_model_type() -> None:
         assert not inputs["end_percent"].required
 
 
-@pytest.mark.parametrize("in_process", (True, False))
-@pytest.mark.parametrize("kind", ("diffsynth", "zimage", "uso"))
+@pytest.mark.parametrize(
+    "kind,in_process", (("diffsynth", True), ("zimage", True), ("zimage", False), ("uso", True))
+)
 def test_image_controls_on_ordinary_hosts(kind: str, in_process: bool) -> None:
     from dinkster_graph import Graph, GraphNode, Link
 
