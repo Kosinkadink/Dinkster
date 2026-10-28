@@ -759,6 +759,8 @@ def test_mount_roots_do_not_infer_unconfigured_authority(
 def test_public_mount_roots_in_ordinary_hosts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated: bool
 ) -> None:
+    late_text = "late embedding" * 20
+    first_text = "preferred embedding" * 20
     pack = tmp_path / "pack"
     pack.mkdir()
     manifest_path = pack / "dinkster-pack.toml"
@@ -801,9 +803,9 @@ def test_public_mount_roots_in_ordinary_hosts(
         try:
             expected: list[list[str]] = []
             for name, priority, kind, text in (
-                ("late", 4, "model/embedding", "late embedding"),
+                ("late", 4, "model/embedding", late_text),
                 ("unrelated", -9, "model/checkpoint", "not an embedding"),
-                ("first", -1, "model/embedding", "preferred embedding"),
+                ("first", -1, "model/embedding", first_text),
             ):
                 seed(tmp_path / name, {"sentinel.txt": text.encode()})
                 table.add(MountDef(id=name, path=tmp_path / name, priority=priority), kind=kind)
@@ -840,12 +842,12 @@ def test_public_mount_roots_in_ordinary_hosts(
                 for result in results
             ] == [
                 [
-                    [str(tmp_path / "late"), "late embedding"],
-                    [str(tmp_path / "first"), "preferred embedding"],
+                    [str(tmp_path / "late"), late_text],
+                    [str(tmp_path / "first"), first_text],
                 ],
                 [
-                    [str(tmp_path / "first"), "preferred embedding"],
-                    [str(tmp_path / "late"), "late embedding"],
+                    [str(tmp_path / "first"), first_text],
+                    [str(tmp_path / "late"), late_text],
                 ],
                 [],
             ]
@@ -892,15 +894,21 @@ def test_public_mount_roots_in_ordinary_hosts(
                     )
                     assert response.status == 202, await response.text()
                 async with asyncio.timeout(10):
-                    for project, first_name in (("project-a", "late"), ("project-b", "first")):
+                    for project, roots in (("project-a", expected[::-1]), ("project-b", expected)):
                         while True:
                             status = await (
                                 await client.get(f"/api/jobs/projects/{project}")
                             ).json()
                             assert status["state"] != "failed", status
                             if status["state"] == "completed":
-                                actual = json.loads(status["outputs"]["read"]["roots"]["value"])
-                                assert actual[0][0] == str(tmp_path / first_name)
+                                descriptor = status["outputs"]["read"]["roots"]
+                                assert descriptor["typeId"] == "STRING"
+                                # Long results omit inline values; identity still covers every byte.
+                                assert "value" not in descriptor
+                                assert (
+                                    descriptor["fingerprint"]
+                                    == registry.wrap("STRING", json.dumps(roots)).fingerprint
+                                )
                                 break
                 response = await client.post(
                     "/api/jobs",
@@ -925,7 +933,7 @@ def test_public_mount_roots_in_ordinary_hosts(
                 cache_enabled=False,
             )
             assert json.loads(cast(str, result.outputs["read"]["roots"].resolve())) == [
-                [str(tmp_path / "first"), "preferred embedding"]
+                [str(tmp_path / "first"), first_text]
             ]
         finally:
             await worker.close()
