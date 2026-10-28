@@ -14,6 +14,9 @@
   library root is configured, including classified bounded latent upload
 - The node catalog and native job submission use `/api/nodes` and `/api/jobs`.
   There is no separate ComfyUI schema catalog or prompt submission endpoint.
+- String outputs have a lossless UTF-8 `text` rendition through `/api/values`.
+  Long paths and documents can be read in full without the status descriptor's
+  256-character inline preview limit. Retrieval retains job/scope authority.
 - Asset record catalogs upgrade automatically with versioned migrations.
   Matching unversioned catalogs retain scoped records, verified media grants,
   dependency manifests, and derivations; incompatible schemas are refused.
