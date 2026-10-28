@@ -30,6 +30,12 @@
   text files. The host verifies the current writable mount, safe file location,
   content digest and byte size before exposing the descriptor. Returning an
   existing asset without writing it does not report a new saved file.
+  Required encoded result attachments published into the vault are retained
+  as collision-safe named files in the project's selected output folder before
+  completion. Their result descriptors name the visible files; the catalog
+  records both mounted and vault locations with job/node provenance. Transient
+  preview events are not retained. A missing writable destination fails the job
+  instead of silently redirecting the output.
 - Filesystem mount scans report file, byte, and elapsed progress; publish
   indexed assets before the scan finishes; reuse unchanged-file indexes; and
   keep per-mount indexes under the configured library root

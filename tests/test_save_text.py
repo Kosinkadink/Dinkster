@@ -8,10 +8,20 @@ import os
 from pathlib import Path
 
 import pytest
+from aiohttp.test_utils import TestClient, TestServer
 from dinkster_api.v1 import ComboWidget, StringWidget
-from dinkster_assets import AssetError, digest_bytes
-from dinkster_graph import Graph, GraphNode
+from dinkster_assets import (
+    AssetError,
+    AssetVault,
+    AssetWriter,
+    LibraryStore,
+    MountSnapshotWriter,
+    digest_bytes,
+)
+from dinkster_graph import Graph, GraphNode, graph_to_wire
 from dinkster_nodes_comfy.save_text import SaveText
+from dinkster_protocol import AssetFolderContext
+from dinkster_server import ServerLibrary, create_app
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -172,6 +182,58 @@ def test_save_text_executes_through_the_ordinary_manifest(
             assert result.artifacts[0].virtual_path == "mounts/alternate/empty_00001.txt"
             assert result.artifacts[0].digest == digest_bytes(b"")
             assert result.artifacts[0].size == 0
+            library = ServerLibrary(
+                vault=AssetVault(tmp_path / "vault"),
+                store=LibraryStore(tmp_path / "library.sqlite"),
+                upload_writer=AssetWriter(MountSnapshotWriter(roots["snapshot"])),
+                project_folders_for=lambda _project: AssetFolderContext(
+                    ("default", "alternate"), "default"
+                ),
+            )
+            app = create_app(
+                lambda on_event: composer.composition.make_engine(on_event),
+                composer.composition.schemas,
+                library=library,
+            )
+            client = TestClient(TestServer(app))
+            await client.start_server()
+            try:
+                response = await client.post(
+                    "/api/jobs",
+                    json={
+                        "clientId": "save-client",
+                        "jobId": "native-save",
+                        "project": "film",
+                        "graph": graph_to_wire(graph),
+                        "targets": ["save"],
+                    },
+                )
+                assert response.status == 202
+                submitted = await response.json()
+                async with asyncio.timeout(10):
+                    while True:
+                        status = await (
+                            await client.get("/api/jobs/save-client/native-save")
+                        ).json()
+                        if status["state"] in {"completed", "failed", "cancelled"}:
+                            break
+                        await asyncio.sleep(0)
+                assert status["state"] == "completed", status
+                assert (
+                    status["artifacts"][0]["virtualPath"] == "mounts/default/manifest/1x1_00003.txt"
+                )
+                (record,) = library.store.query_assets("local", project="film")[0]
+                assert record.asset.digest == digest_bytes(b"manifest\n")
+                assert record.asset.virtual_path == "mounts/default/manifest/1x1_00003.txt"
+                assert dict(record.origin) == {
+                    "kind": "produced",
+                    "job": submitted["jobRef"],
+                    "node": "save",
+                }
+                assert library.vault.digests() == []
+                assert library.store.query_assets("local", project="another") == []
+            finally:
+                await client.close()
         finally:
             await composer.close()
 

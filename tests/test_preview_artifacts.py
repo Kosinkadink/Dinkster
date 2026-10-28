@@ -4,8 +4,10 @@ import asyncio
 import base64
 import io
 import os
+import sqlite3
 import threading
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import av
@@ -13,12 +15,23 @@ import numpy as np
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_api.v1 import publish_preview_artifact
-from dinkster_assets import AssetError, AssetVault, digest_bytes
+from dinkster_assets import (
+    AssetError,
+    AssetVault,
+    AssetWriter,
+    LibraryStore,
+    MountDef,
+    MountTable,
+    digest_bytes,
+)
 from dinkster_assets.vault import VaultWriter
-from dinkster_engine import ExecutionError
+from dinkster_engine import ExecutionError, RunResult
 from dinkster_graph import Graph, GraphNode, graph_to_wire
+from dinkster_protocol import AssetFolderContext
 from dinkster_schema.reporting import EncodedPreviewArtifact, capture_preview_artifacts
-from dinkster_server import create_app
+from dinkster_server import ServerLibrary, create_app
+from dinkster_server.library import recover_asset_observations
+from dinkster_server.queue import Job, JobKey
 from dinkster_workers.boundary import BoundaryError, _decode_preview_artifacts
 from dinkster_workers.preview_artifacts import PreviewArtifactPublisher
 
@@ -50,7 +63,8 @@ def mp4() -> bytes:
 def _write_preview_pack(tmp_path: Path, data: bytes) -> Path:
     payload = base64.b64encode(data).decode("ascii")
     failed_payload = base64.b64encode(_tiny_mp4(99)).decode("ascii")
-    (tmp_path / "preview_fixture.py").write_text(
+    module = "preview_fixture_" + digest_bytes(str(tmp_path).encode())[7:19]
+    (tmp_path / f"{module}.py").write_text(
         "from __future__ import annotations\n"
         "import base64\n"
         "from collections.abc import Mapping\n"
@@ -81,21 +95,40 @@ def _write_preview_pack(tmp_path: Path, data: bytes) -> Path:
         "publisher = 'dinkster'\n"
         "namespaces = ['preview-fixture']\n"
         "[pack.entry]\n"
-        "nodes = 'preview_fixture:NODES'\n"
-        "types = 'preview_fixture:register_types'\n",
+        f"nodes = '{module}:NODES'\n"
+        f"types = '{module}:register_types'\n",
         encoding="ascii",
     )
     return manifest
 
 
 @pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("retained", (True, False))
 def test_composed_hosts_publish_encoded_preview_to_result_and_asset_route(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, mp4: bytes
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, retained: bool, mp4: bytes
 ) -> None:
     manifest = _write_preview_pack(tmp_path, mp4)
     vault = AssetVault(tmp_path / "vault")
     monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(vault.root))
     worker_env = {"PYTHONPATH": os.pathsep.join((str(tmp_path), str(Path.cwd())))}
+    output = tmp_path / "selected-output"
+    output.mkdir()
+    mounts = MountTable()
+    mounts.add(MountDef("renders", output, "readwrite"))
+    mounts.scan("renders")
+    (output / "preview.mp4").write_bytes(b"existing file must not be overwritten")
+    library = (
+        ServerLibrary(
+            vault=vault,
+            store=LibraryStore(tmp_path / "library.sqlite"),
+            resolver=mounts,
+            local_resolver=mounts,
+            upload_writer=AssetWriter(mounts),
+            project_folders_for=lambda _project: AssetFolderContext(("renders",), "renders"),
+        )
+        if retained
+        else None
+    )
 
     async def scenario() -> None:
         composer = ServingComposer(worker_env=worker_env)
@@ -105,6 +138,7 @@ def test_composed_hosts_publish_encoded_preview_to_result_and_asset_route(
                 lambda on_event: composer.composition.make_engine(on_event),
                 composer.composition.schemas,
                 asset_export=vault,
+                library=library,
             )
             client = TestClient(TestServer(app))
             await client.start_server()
@@ -115,6 +149,7 @@ def test_composed_hosts_publish_encoded_preview_to_result_and_asset_route(
                     json={
                         "clientId": "preview-client",
                         "jobId": "preview-job",
+                        "project": "film",
                         "graph": graph_to_wire(graph),
                         "targets": ["preview"],
                     },
@@ -132,9 +167,27 @@ def test_composed_hosts_publish_encoded_preview_to_result_and_asset_route(
                 artifact = status["artifacts"][0]
                 assert artifact["nodeId"] == "preview"
                 assert artifact["digest"] == digest_bytes(mp4)
-                assert artifact["name"] == "preview.mp4"
+                assert artifact["name"] == ("preview_00001.mp4" if retained else "preview.mp4")
                 assert artifact["mediaType"] == "video/mp4"
                 assert artifact["size"] == len(mp4)
+                if retained:
+                    assert artifact["virtualPath"] == "mounts/renders/preview_00001.mp4"
+                    assert (output / "preview_00001.mp4").read_bytes() == mp4
+                    assert (
+                        output / "preview.mp4"
+                    ).read_bytes() == b"existing file must not be overwritten"
+                    catalog = await (
+                        await client.get("/api/assets/catalog?scope=local&project=film")
+                    ).json()
+                    assert len(catalog["assets"]) == 1
+                    assert library is not None
+                    observations = library.store.query_assets("local", project="film")[0]
+                    assert {record.asset.virtual_path for record in observations} == {
+                        "",
+                        "mounts/renders/preview_00001.mp4",
+                    }
+                    assert all(record.origin["node"] == "preview" for record in observations)
+                    assert library.store.query_assets("local", project="another") == []
                 asset = await client.get(f"/assets/{artifact['digest']}")
                 assert asset.status == 200
                 assert await asset.read() == mp4
@@ -154,6 +207,96 @@ def test_composed_hosts_publish_encoded_preview_to_result_and_asset_route(
             await composer.close()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("failure", ("", "revoked", "offline", "unselected", "corrupt", "catalog"))
+def test_encoded_retention_requires_live_output_and_recovers_catalog(
+    tmp_path: Path, mp4: bytes, failure: str
+) -> None:
+    output = tmp_path / "output"
+    output.mkdir()
+    mounts = MountTable()
+    mounts.add(MountDef("renders", output, "readwrite"))
+    mounts.scan("renders")
+    vault = AssetVault(tmp_path / "vault")
+    database = tmp_path / "library.sqlite"
+    library = ServerLibrary(
+        vault=vault,
+        store=LibraryStore(database),
+        resolver=mounts,
+        upload_writer=AssetWriter(mounts),
+        project_folders_for=lambda _project: AssetFolderContext(
+            ("renders",), None if failure == "unselected" else "renders"
+        ),
+    )
+    artifacts = asyncio.run(
+        PreviewArtifactPublisher(vault)(
+            "nested/encode", (EncodedPreviewArtifact(mp4, "movie.mp4", "video/mp4"),)
+        )
+    )
+    job = Job(
+        JobKey("client", "job"), Graph(nodes={}), (), 0, "run-7", "fingerprint", project="film"
+    )
+    result = RunResult("run-7", {}, (), (), (), artifacts=artifacts)
+    if failure == "revoked":
+        mounts.remove("renders")
+    elif failure == "offline":
+        output.rename(tmp_path / "disconnected-output")
+    elif failure == "corrupt":
+        path = vault.resolve(digest_bytes(mp4))
+        assert path is not None
+        path.write_bytes(b"corrupt")
+    elif failure == "catalog":
+        with sqlite3.connect(database) as connection:
+            connection.execute(
+                "CREATE TRIGGER fail_retention BEFORE INSERT ON asset_observations "
+                "BEGIN SELECT RAISE(ABORT, 'catalog offline'); END"
+            )
+    if failure:
+        with pytest.raises((AssetError, OSError)):
+            library.record_saved_outputs(job, result)
+        assert library.store.query_assets("local", project="film") == []
+        assert list(output.glob("*.mp4")) == (
+            [output / "movie.mp4"] if failure == "catalog" else []
+        )
+        if failure != "catalog":
+            assert not list(vault.root.glob(".upload-observations/*.json"))
+            return
+        with sqlite3.connect(database) as connection:
+            connection.execute("DROP TRIGGER fail_retention")
+    else:
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            completed = list(
+                pool.map(lambda _index: library.record_saved_outputs(job, result), range(3))
+            )
+        assert {item.artifacts[0].virtual_path for item in completed} == {
+            "mounts/renders/movie.mp4",
+            "mounts/renders/movie_00001.mp4",
+            "mounts/renders/movie_00002.mp4",
+        }
+        assert all(path.read_bytes() == mp4 for path in output.glob("*.mp4"))
+    library.store.close()
+    restarted = ServerLibrary(
+        vault=AssetVault(vault.root),
+        store=LibraryStore(database),
+        resolver=mounts,
+        upload_writer=AssetWriter(mounts),
+        project_folders_for=library.project_folders_for,
+    )
+    recover_asset_observations(restarted)
+    observations = restarted.store.query_assets("local", project="film")[0]
+    assert any(record.asset.virtual_path == "mounts/renders/movie.mp4" for record in observations)
+    assert all(
+        dict(record.origin) == {"kind": "produced", "job": "run-7", "node": "nested/encode"}
+        for record in observations
+    )
+    assert not list(vault.root.glob(".upload-observations/*.json"))
+    # A kept file has its own mounted bytes, not just a cache or vault residency.
+    path = vault.resolve(digest_bytes(mp4))
+    assert path is not None
+    path.unlink()
+    assert (output / "movie.mp4").read_bytes() == mp4
+    assert mounts.resolve(digest_bytes(mp4)) is not None
 
 
 def test_preview_api_requires_an_open_invocation_context(mp4: bytes) -> None:

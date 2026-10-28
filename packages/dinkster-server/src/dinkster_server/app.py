@@ -4593,7 +4593,7 @@ def create_app(
     async def complete_result(job: Job, result: RunResult) -> RunResult:
         if library is not None and result.artifacts:
             record_outputs = library.record_saved_outputs
-            await run_media_publication(library, lambda: record_outputs(job, result))
+            return await run_media_publication(library, lambda: record_outputs(job, result))
         return result
 
     state = ServerState(
