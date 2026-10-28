@@ -16,6 +16,7 @@ from dinkster_api.v1 import (
     VIDEO_TYPE,
     ComboOption,
     ComboWidget,
+    InputFamilySpec,
     InputSpec,
     Node,
     NodeSchema,
@@ -24,6 +25,7 @@ from dinkster_api.v1 import (
     TypeExpr,
     assemble_video,
     bind_video_value,
+    concatenate_video,
     copy_media_semantics,
     disassemble_video,
     resolver_from_env,
@@ -164,4 +166,56 @@ class GetVideoComponents(Node):
             fps=float(components["fps"]),
             bit_depth=components["bit_depth"],
             color_space=components["color_space"],
+        )
+
+
+class ConcatenateVideo(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="ConcatenateVideo",
+            display_name="Concatenate Video",
+            category="video",
+            description="Concatenates videos in order without decoding compatible encoded inputs.",
+            input_families=(
+                InputFamilySpec(
+                    "videos",
+                    (
+                        InputSpec(
+                            "video",
+                            TypeExpr.list_of(_VIDEO),
+                            doc="VIDEO lists to concatenate in input order.",
+                        ),
+                    ),
+                    min_members=1,
+                    max_members=100,
+                    member_prefix="video",
+                ),
+            ),
+            inputs=(
+                InputSpec(
+                    "codec",
+                    _COMBO,
+                    default="auto",
+                    advanced=True,
+                    widget=ComboWidget(options=("auto", "h264", "av1")),
+                ),
+                InputSpec("complete_audio", _AUDIO, required=False, advanced=True),
+            ),
+            outputs=(OutputSpec("video", _VIDEO),),
+            input_order=("videos", "codec", "complete_audio"),
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        videos: Mapping[str, list[object]],
+        codec: str = "auto",
+        complete_audio: object | None = None,
+    ) -> Mapping[str, object]:
+        resolver = resolver_from_env()
+        bound = [bind_video_value(video, resolver) for group in videos.values() for video in group]
+        return cls.outputs(
+            video=concatenate_video(bound, codec=codec, complete_audio=complete_audio)
         )

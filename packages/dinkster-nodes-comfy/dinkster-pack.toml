@@ -526,6 +526,7 @@ namespaces = [
     "UpscaleModelLoader",
     "CurveEditor",
     "CreateVideo",
+    "ConcatenateVideo",
     "GetVideoComponents",
     "ConditioningLoader",
     "SaveConditioning",
