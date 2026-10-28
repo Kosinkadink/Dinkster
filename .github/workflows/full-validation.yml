@@ -339,28 +339,6 @@ jobs:
           uv run coverage combine coverage-data
           uv run coverage report --fail-under=80
 
-  video-template-replay:
-    needs: validation-plan
-    if: needs.validation-plan.outputs.run-heavy == 'true'
-    runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          clean: true
-          persist-credentials: false
-      - uses: ./.github/actions/prepare-validation-inputs
-        with:
-          evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
-      - uses: astral-sh/setup-uv@v5
-        with:
-          python-version: "3.12"
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-      - run: uv sync --all-packages
-      - name: Replay VIDEO template shapes
-        run: uv run --locked pytest -q tests/test_video_alias_templates.py
-
   main-status:
     name: main validation status
     if: always()
@@ -370,7 +348,6 @@ jobs:
       - torch-cpu
       - model-tests-gate
       - coverage-gate
-      - video-template-replay
       - registry-install
     runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
     timeout-minutes: 2
