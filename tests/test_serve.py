@@ -3672,6 +3672,14 @@ def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
             async with session.get(base + "/api/assets/" + imported["digest"]) as resp:
                 assert resp.status == 200
                 assert await resp.read() == image.getvalue()
+            async with session.get(
+                base + "/api/assets/availability",
+                params={"scope": "local", "digest": imported["digest"]},
+            ) as resp:
+                assert resp.status == 200
+                assert await resp.json() == {
+                    "assets": [{"digest": imported["digest"], "status": "available"}]
+                }
             async with session.post(
                 base + "/api/mounts", json={"id": "shots", "path": str(granted)}
             ) as resp:
@@ -3704,6 +3712,14 @@ def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
                 assert imports["id"] == "imports"
             async with session.get(base + "/api/assets/" + entry["digest"]) as resp:
                 assert resp.status == 404
+            async with session.get(
+                base + "/api/assets/availability",
+                params={"scope": "local", "digest": entry["digest"]},
+            ) as resp:
+                assert resp.status == 200
+                assert await resp.json() == {
+                    "assets": [{"digest": entry["digest"], "status": "missing"}]
+                }
             assert "shots" not in (library_root / "mounts.toml").read_text("utf-8")
 
     try:

@@ -106,6 +106,15 @@ The main protocol routes include:
   `limit` and query-bound `cursor` page identities, retaining their aliases
   and history. The route requires `assets:read` in the requested scope,
   defaults to project `default`, and exposes virtual locations only.
+- `GET /api/assets/availability?scope=&digest=&digest=` checks exact local
+  identities without acquisition, writes, grants or catalog recovery. It
+  returns `{assets: [{digest, status}]}` with `available` or `missing` and
+  `Cache-Control: no-store`, deduplicating digests in request order. It requires
+  `assets:read` in scope and returns no host paths. The managed server checks
+  its vault and current mount grants with the existing descriptor-bound read
+  verification. Embedding hosts must supply `ServerLibrary.local_resolver`
+  for their local-only mount checks; the possibly fetching `resolver` is never
+  used by this route. An absent local resolver checks the vault only.
 - `POST /api/assets/latent?scope=&name=` streams and strictly validates native
   or supported ComfyUI latent safetensors under independent concurrency, size,
   idle-timeout, and disk-headroom limits

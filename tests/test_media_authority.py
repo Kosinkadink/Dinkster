@@ -1376,6 +1376,21 @@ def test_media_ingest_auth_scope_idempotence_and_canonical_response(
                 "/api/assets/catalog?scope=b", headers={"Authorization": "Bearer a"}
             )
             assert catalog_wrong_scope.status == 403
+            availability_wrong_scope = await client.get(
+                "/api/assets/availability",
+                params={"scope": "b", "digest": digest_bytes(_png())},
+                headers={"Authorization": "Bearer a"},
+            )
+            assert availability_wrong_scope.status == 403
+            availability_read = await client.get(
+                "/api/assets/availability",
+                params={"scope": "a", "digest": digest_bytes(_png())},
+                headers={"Authorization": "Bearer a"},
+            )
+            assert availability_read.status == 200
+            assert await availability_read.json() == {
+                "assets": [{"digest": digest_bytes(_png()), "status": "missing"}]
+            }
 
             generic_get = await client.get("/api/assets/media")
             assert generic_get.status == 401

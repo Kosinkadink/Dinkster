@@ -45,6 +45,11 @@
   Interrupted publication recovers completed files on restart or the next
   catalog query, after checking their bytes and current folder authority.
   Unpublished, changed, unavailable or revoked files are not restored or granted.
+- Read-only asset availability checks distinguish held vault/granted-folder
+  identities from missing ones without downloading, saving, granting or
+  cataloging bytes. Replaced, missing and revoked files are unavailable;
+  the same digest at a different granted location remains usable. Results
+  are scope-authorized, uncached and do not expose physical paths.
 - Operators can persist project folder membership, independent display order,
   shared folders, and project output selections through the mount API.
   Removing a project association does not delete files or revoke the grant.

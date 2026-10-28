@@ -1956,6 +1956,7 @@ def main(argv: list[str] | None = None) -> None:
                 # Digest GETs fall through to ready mounts so a browsed
                 # file previews without ever being copied into the vault.
                 resolver=(mount_service.table if mount_service is not None else None),
+                local_resolver=(mount_service.table if mount_service is not None else None),
                 project_folders_for=(mount_service.project_context if mount_service else None),
                 upload_writer=AssetWriter(mount_service.table) if mount_service else None,
                 import_mount=import_mount,

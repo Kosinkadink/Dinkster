@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import random
 import shutil
 import sqlite3
@@ -622,6 +623,97 @@ asyncio.run(upload())
                 response = await client.get("/api/assets/" + digest_bytes(body))
                 assert response.status == 200 and await response.read() == body
                 assert client.app[LIBRARY_KEY].vault.digests() == []
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_asset_availability_is_read_only_and_checks_local_identity(tmp_path: Path) -> None:
+    class FetchOnResolve:
+        def resolve(self, _digest: str) -> Path | None:
+            raise AssertionError("availability must not call the acquisition resolver")
+
+    async def scenario() -> None:
+        root = tmp_path / "source"
+        root.mkdir()
+        mounted_body = b"mounted original"
+        mounted = root / "same-name.bin"
+        mounted.write_bytes(mounted_body)
+        mounts = MountTable()
+        mounts.add(MountDef("source", root, "read"))
+        mounts.scan("source")
+        client = await make_client(tmp_path, resolver=FetchOnResolve(), local_resolver=mounts)
+        vault_body = b"vault original"
+        missing_body = b"same name is not identity"
+        digests = [digest_bytes(body) for body in (mounted_body, missing_body, vault_body)]
+        try:
+            upload = await client.post("/api/assets", data=vault_body)
+            assert upload.status == 201
+            vault = client.app[LIBRARY_KEY].vault
+            before = sorted(path.relative_to(tmp_path).as_posix() for path in tmp_path.rglob("*"))
+            for step, expected in enumerate(
+                (
+                    ["available", "missing", "available"],
+                    ["missing", "missing", "available"],
+                    ["available", "missing", "available"],
+                    ["missing", "missing", "missing"],
+                )
+            ):
+                response = await client.get(
+                    "/api/assets/availability",
+                    params=[
+                        ("scope", "local"),
+                        *[("digest", digest) for digest in digests],
+                        ("digest", digests[0]),
+                    ],
+                )
+                assert response.status == 200, await response.text()
+                assert response.headers["Cache-Control"] == "no-store"
+                result = await response.json()
+                assert result == {
+                    "assets": [
+                        {"digest": digest, "status": status}
+                        for digest, status in zip(digests, expected, strict=True)
+                    ]
+                }
+                assert str(tmp_path) not in json.dumps(result)
+                if step == 0:
+                    assert (
+                        sorted(
+                            path.relative_to(tmp_path).as_posix() for path in tmp_path.rglob("*")
+                        )
+                        == before
+                    )
+                    # Same filename, size and mtime still cannot substitute different bytes.
+                    previous = mounted.stat()
+                    replacement = root / "replacement.bin"
+                    replacement.write_bytes(b"mounted replaced")
+                    os.utime(replacement, ns=(previous.st_atime_ns, previous.st_mtime_ns))
+                    replacement.replace(mounted)
+                elif step == 1:
+                    (root / "renamed.bin").write_bytes(mounted_body)
+                    mounts.scan("source")
+                elif step == 2:
+                    mounts.remove("source")
+                    assert not vault.has(digests[0]) and not vault.has(digests[1])
+                    path = vault.resolve(digests[-1])
+                    assert path is not None
+                    path.write_bytes(b"vault replaced")
+
+            for query in (
+                [("scope", "local")],
+                [("digest", "not-a-digest")],
+                [("digest", digests[0]), ("acquireAssets", digests[0])],
+                [("digest", digests[0]), ("scope", "local"), ("scope", "other")],
+            ):
+                response = await client.get("/api/assets/availability", params=query)
+                assert response.status == 400
+            assert await (await client.get("/api/assets/catalog?scope=local")).json() == {
+                "assets": []
+            }
+            assert not list(vault.root.glob(".ingest-*"))
+            assert not (vault.root / ".upload-observations").exists()
         finally:
             await client.close()
 

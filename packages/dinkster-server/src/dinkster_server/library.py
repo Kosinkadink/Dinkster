@@ -173,6 +173,9 @@ class ServerLibrary:
     #: Optional read fallback for digest GETs (e.g. filesystem mounts).
     #: Hits stream rather than buffer: a mount can hold model-sized files.
     resolver: AssetResolver | None = None
+    #: Local-only presence checks must never call a fetching resolver.
+    #: Embedding hosts explicitly provide their granted local resolver here.
+    local_resolver: AssetResolver | None = None
     project_folders_for: Callable[[str], AssetFolderContext] | None = None
     #: Hosts with mount grants publish named files through the same writer as saves.
     #: Vault-only embedding hosts retain digest-only media storage.
@@ -230,6 +233,17 @@ class ServerLibrary:
         if path is None and self.resolver is not None:
             path = self.resolver.resolve(digest)
         return path
+
+    def asset_available(self, digest: str) -> bool:
+        """Check local bytes with read authority, never acquisition or catalog recovery."""
+        resolver = self.vault if self.vault.has(digest) else self.local_resolver
+        if resolver is None:
+            return False
+        try:
+            with AssetRef(digest, "", 0, resolver=resolver).open():
+                return True
+        except (AssetError, OSError):
+            return False
 
 
 LIBRARY_KEY: web.AppKey[ServerLibrary] = web.AppKey("server_library")
@@ -868,6 +882,33 @@ def _recover_upload_observations(library: ServerLibrary) -> None:
             continue
 
 
+async def handle_asset_availability(request: web.Request) -> web.Response:
+    resolve_scope(principal_for(request), "assets:read", request.query.get("scope"))
+    if (
+        set(request.query) - {"scope", "digest"}
+        or len(request.query.getall("scope", [])) > 1
+        or not request.query.getall("digest", [])
+    ):
+        return _json_error(400, "availability requires digest query fields and optional scope")
+    digests = list(dict.fromkeys(request.query.getall("digest")))
+    if any(not is_digest(digest) for digest in digests):
+        return _json_error(400, "availability requires canonical asset digests")
+    library = request.app[LIBRARY_KEY]
+
+    def check() -> list[dict[str, str]]:
+        return [
+            {
+                "digest": digest,
+                "status": "available" if library.asset_available(digest) else "missing",
+            }
+            for digest in digests
+        ]
+
+    return web.json_response(
+        {"assets": await asyncio.to_thread(check)}, headers={"Cache-Control": "no-store"}
+    )
+
+
 async def handle_asset_catalog(request: web.Request) -> web.Response:
     scope = resolve_scope(principal_for(request), "assets:read", request.query.get("scope"))
     allowed = {"scope", "project", "q", "kind", "origin", "since", "until", "limit", "cursor"}
@@ -1311,6 +1352,7 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
     app.router.add_post("/api/assets/latent", handle_latent_upload)
     app.router.add_post("/api/assets/image-document", handle_image_document)
     app.router.add_get("/api/assets/catalog", handle_asset_catalog)
+    app.router.add_get("/api/assets/availability", handle_asset_availability)
     app.router.add_get("/api/assets/{digest}", handle_asset_get)
     app.router.add_get("/api/assets/{digest}/dependencies", handle_dependencies)
     app.router.add_post("/api/assets/{digest}/render", handle_render)
