@@ -8,7 +8,7 @@ from dinkster_api.v1 import (
     TypeRegistry,
     register_asset_type,
     register_audio_value_type,
-    register_video_edit_type,
+    register_curve_type,
     register_video_value_type,
     resolver_from_env,
 )
@@ -24,7 +24,7 @@ from .audio_combine import AUDIO_COMBINE_NODES
 from .audio_effects import AUDIO_EFFECT_NODES
 from .audio_encoder import AUDIO_ENCODER_NODES
 from .audio_generators import AUDIO_GENERATOR_NODES
-from .audio_io import LoadAudio, PreviewAudio
+from .audio_io import LoadAudio, PreviewAudio, RecordAudio
 from .audio_latent import AUDIO_LATENT_NODES, GetAudioLatentSize
 from .audio_music_conditioning import AUDIO_MUSIC_CONDITIONING_NODES
 from .audio_save import SaveAudio, SaveAudioAdvanced, SaveAudioMP3, SaveAudioOpus
@@ -37,6 +37,7 @@ from .cache import CACHE_NODES
 from .camera_angle import CameraAngle
 from .cfg_guidance import CFG_GUIDANCE_NODES
 from .cfg_guiders import CFG_GUIDER_NODES
+from .checkpoint_save import ImageOnlyCheckpointSave
 from .chroma_options import ChromaRadianceOptions
 from .clip import CLIP_NODES
 from .clip_loaders import QuadrupleCLIPLoader, TripleCLIPLoader
@@ -47,17 +48,12 @@ from .color_resolution import COLOR_RESOLUTION_NODES
 from .compile import COMPILE_NODES
 from .compositing import COMPOSITING_NODES
 from .conditioning import CONDITIONING_NODES
+from .conditioning_files import ConditioningLoader, SaveConditioning
 from .context_windows import CONTEXT_WINDOW_NODES
 from .controlnet import CONTROLNET_NODES
 from .cosmos_conditioning import COSMOS_CONDITIONING_NODES
+from .curve_editor import CurveEditor
 from .custom_sampling import CUSTOM_SAMPLING_NODES
-from .dataset_collections import DATASET_COLLECTION_NODES
-from .dataset_folders import FOLDER_DATASET_NODES
-from .dataset_groups import DATASET_GROUP_NODES, MakeTrainingDataset
-from .dataset_images import DATASET_IMAGE_NODES
-from .dataset_shards import LoadTrainingDataset
-from .dataset_text import DATASET_TEXT_NODES
-from .dataset_video import DATASET_VIDEO_NODES
 from .device_routing import DEVICE_ROUTING_NODES
 from .fibo2_encoders import TextEncodeFibo2
 from .flux_conditioning import FLUX_CONDITIONING_NODES
@@ -80,9 +76,12 @@ from .image_core import IMAGE_CORE_NODES
 from .image_crop import ImageCropV2, PrimitiveBoundingBox
 from .image_dimensions import IMAGE_DIMENSION_NODES
 from .image_filters import IMAGE_FILTER_NODES
+from .image_layers import AddLayer
 from .image_tiles import ImageMergeTileList, SplitImageToTileList
 from .image_transform import IMAGE_TRANSFORM_NODES
 from .inpaint import INPAINT_NODES
+from .interpolation import FrameInterpolate
+from .interpolation_loader import FrameInterpolationModelLoader
 from .joyimage_encoders import TextEncodeJoyImageEdit
 from .json_prompt import BuildJsonPromptIdeogram
 from .kandinsky_video import Kandinsky5ImageToVideo
@@ -96,7 +95,6 @@ from .list_utilities import LIST_UTILITY_NODES
 from .logic import LOGIC_NODES
 from .loops import LOOP_NODES
 from .lora_file_loaders import LORA_FILE_LOADER_NODES
-from .loss_graph import LossGraphNode
 from .lotus import LotusConditioning
 from .ltx_audio import LTX_AUDIO_NODES
 from .ltx_av_latent import LTX_AV_LATENT_NODES
@@ -130,11 +128,14 @@ from .model_merging_specific import MODEL_SPECIFIC_MERGE_NODES
 from .model_patch_loader import MODEL_PATCH_LOADER_NODES
 from .model_selections import MODEL_SELECTION_NODES
 from .model_specific_schedulers import MODEL_SPECIFIC_SCHEDULER_NODES
+from .moge import MoGeGeometryToFOV
+from .moge_inference import MoGeInference
 from .moge_panorama import MoGePanoramaInference
 from .morphology import MORPHOLOGY_NODES
 from .moss_image import MOSSImageControl, MOSSImageLayoutPrompt, TextEncodeMOSSImageEdit
 from .noise import NOISE_NODES
 from .noise_guidance import NOISE_GUIDANCE_NODES
+from .optical_flow import OpticalFlowLoader
 from .perpneg import PERPNEG_NODES
 from .photomaker import PhotoMakerEncode, PhotoMakerLoader
 from .pid_conditioning import PiDConditioning
@@ -158,10 +159,13 @@ from .rope_and_mask import ROPE_AND_MASK_NODES
 from .rtdetr import RTDETR_NODES
 from .sam3 import SAM3_TRACKING_NODES
 from .sam3_detection import SAM3_Detect
+from .sam3_preview import SAM3_TrackPreview
 from .sampler_factories import SAMPLER_FACTORY_NODES
 from .save_text import SaveText
 from .scail_masks import SCAIL2ColoredMask
 from .sd_upscale_conditioning import SD_UPSCALE_CONDITIONING_NODES
+from .sdpose import SDPoseDrawKeypoints, SDPoseFaceBBoxes
+from .sdpose_extract import SDPoseKeypointExtractor
 from .seedvr_conditioning import SeedVR2Conditioning
 from .seedvr_postprocess import SeedVR2PostProcessing
 from .seedvr_preprocess import SeedVR2Preprocess
@@ -184,11 +188,21 @@ from .triposplat import TripoSplatConditioning, TripoSplatPreprocessImage
 from .upscale_model_loader import UpscaleModelLoader
 from .utilities import ComfyNumberConvert, PreviewAny, SeedNode
 from .vae import VAE_NODES
+from .video_components import ConcatenateVideo, CreateVideo, GetVideoComponents
 from .video_conditioning import VIDEO_CONDITIONING_NODES
-from .video_frame_sample import VideoFrameSample
+from .video_edits import VideoCrop, VideoSlice, VideoTrim
 from .video_guidance import VIDEO_GUIDANCE_NODES
 from .video_latent import VIDEO_LATENT_NODES
 from .video_latent_ops import VIDEO_LATENT_OPERATION_NODES
+from .video_load import LoadVideo
+from .video_save import SaveVideo
+from .void_conditioning import (
+    VOIDInpaintConditioning,
+    VOIDQuadmaskPreprocess,
+    VOIDWarpedNoiseSource,
+)
+from .void_sampler import VOIDSampler
+from .void_warped_noise import VOIDWarpedNoise
 from .wan22_latent import Wan22ImageToVideoLatent
 from .wan_animate import WAN_ANIMATE_NODES
 from .wan_camera import WanCameraEmbedding
@@ -203,16 +217,16 @@ from .wan_scail_conditioning import WanSCAILToVideo
 from .wan_sound import WanHuMoImageToVideo, WanSoundImageToVideo, WanSoundImageToVideoExtend
 from .wan_track_conditioning import WanTrackToVideo
 from .wan_uni3c import WanUni3CControlnetApply
+from .wandancer_audio import WanDancerEncodeAudio
 from .wandancer_keyframes import WANDANCER_KEYFRAME_NODES
+from .webm_save import SaveWEBM
 from .yue2_conditioning import YUE2_CONDITIONING_NODES
 from .zimage_encoders import TextEncodeZImageOmni
 
 COMFY_NODES = (
     *AUDIO_ENCODER_NODES,
     *TEXT_NODES,
-    *DATASET_TEXT_NODES,
     SaveText,
-    *DATASET_COLLECTION_NODES,
     PrimitiveString,
     PrimitiveStringMultiline,
     PrimitiveInt,
@@ -265,6 +279,9 @@ COMFY_NODES = (
     *LATENT_OPERATION_NODES,
     *LATENT_UPSCALE_NODES,
     *LATENT_UPSCALE_LOADER_NODES,
+    OpticalFlowLoader,
+    FrameInterpolationModelLoader,
+    FrameInterpolate,
     *MODEL_LATENT_NODES,
     *CLIP_NODES,
     *STYLE_MODEL_NODES,
@@ -320,7 +337,6 @@ COMFY_NODES = (
     *AUDIO_EFFECT_NODES,
     *AUDIO_GENERATOR_NODES,
     *AUDIO_LATENT_NODES,
-    *DATASET_GROUP_NODES,
     *ACE_TEXT_CONDITIONING_NODES,
     *AUDIO_MUSIC_CONDITIONING_NODES,
     *AUDIO_TRANSFORM_NODES,
@@ -330,7 +346,6 @@ COMFY_NODES = (
     *LTX_AV_LATENT_NODES,
     *LTX_VIDEO_PREPROCESS_NODES,
     *LTX_SAMPLING_NODES,
-    *DATASET_IMAGE_NODES,
     *SIGMA_SCHEDULER_NODES,
     *SAMPLER_FACTORY_NODES,
     *ADVANCED_SAMPLER_NODES,
@@ -352,7 +367,6 @@ COMFY_NODES = (
     MiniMaxH3AddGuide,
     MiniMaxH3ReferenceToVideo,
     MiniMaxH3FunControlNetApply,
-    *DATASET_VIDEO_NODES,
     *LIST_UTILITY_NODES,
     SplitImageToTileList,
     ImageMergeTileList,
@@ -403,27 +417,49 @@ COMFY_NODES = (
     *MODEL_SELECTION_NODES,
     *SAM3_TRACKING_NODES,
     SAM3_Detect,
-    VideoFrameSample,
+    SAM3_TrackPreview,
+    VideoSlice,
+    VideoTrim,
+    VideoCrop,
+    SaveVideo,
     *MODEL_FILE_LOADER_NODES,
     *LORA_FILE_LOADER_NODES,
     CropByBBoxes,
     CameraAngle,
-    MakeTrainingDataset,
     Trellis2UpsampleStage,
     MoGePanoramaInference,
+    MoGeInference,
     TripoSplatPreprocessImage,
     TripoSplatConditioning,
-    LoadTrainingDataset,
     LoadAudio,
+    RecordAudio,
     PreviewAudio,
     SaveAudio,
     SaveAudioMP3,
     SaveAudioOpus,
     SaveAudioAdvanced,
+    SaveWEBM,
+    WanDancerEncodeAudio,
     *YUE2_CONDITIONING_NODES,
-    *FOLDER_DATASET_NODES,
+    MoGeGeometryToFOV,
     UpscaleModelLoader,
-    LossGraphNode,
+    ImageOnlyCheckpointSave,
+    VOIDSampler,
+    VOIDQuadmaskPreprocess,
+    VOIDInpaintConditioning,
+    VOIDWarpedNoiseSource,
+    CurveEditor,
+    CreateVideo,
+    ConcatenateVideo,
+    GetVideoComponents,
+    ConditioningLoader,
+    SaveConditioning,
+    SDPoseFaceBBoxes,
+    SDPoseDrawKeypoints,
+    SDPoseKeypointExtractor,
+    AddLayer,
+    VOIDWarpedNoise,
+    LoadVideo,
 )
 
 
@@ -436,7 +472,7 @@ def register_inference_types(registry: TypeRegistry) -> None:
         register_audio_value_type(registry, AUDIO_TYPE, resolver_from_env())
     if VIDEO_TYPE not in registry:
         register_video_value_type(registry, VIDEO_TYPE, resolver_from_env())
-    register_video_edit_type(registry)
+    register_curve_type(registry)
     _register_inference_types(registry)
 
 

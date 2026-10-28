@@ -47,3 +47,38 @@ jobs:
       - name: Verify pinned inference APIs
         run: uv run --no-sync python tools/verify_pinned_inference.py
       - run: bash scripts/ci-fast.sh
+      - name: Export the published default catalog
+        run: uv run --locked pytest -q tests/test_serve.py::test_default_catalog_publishes_only_owned_translation_carriers
+        env:
+          CUDA_VISIBLE_DEVICES: ""
+          DINKSTER_CATALOG_WIRE_OUTPUT: ${{ runner.temp }}/default-catalog.json
+      - name: Read the pinned frontend revision
+        id: frontend
+        run: |
+          uv run --no-sync python - <<'PY' >> "$GITHUB_OUTPUT"
+          from pathlib import Path
+          import yaml
+
+          workflow = yaml.safe_load(Path('.github/workflows/full-validation.yml').read_text())
+          print(f"ref={workflow['env']['FRONTEND_REF']}")
+          PY
+      - uses: actions/checkout@v4
+        with:
+          repository: Kosinkadink/Dinkster-Frontend
+          ref: ${{ steps.frontend.outputs.ref }}
+          path: .frontend-validation
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26.12.1
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: .frontend-validation/package.json
+          dest: ${{ runner.tool_cache }}/setup-pnpm
+      - name: Decode the default catalog with the pinned frontend
+        working-directory: .frontend-validation
+        run: |
+          pnpm install --frozen-lockfile --filter @dinkster/core... --filter .
+          pnpm exec tsx ../tools/validate_default_catalog.mjs "$CATALOG" .
+        env:
+          CATALOG: ${{ runner.temp }}/default-catalog.json

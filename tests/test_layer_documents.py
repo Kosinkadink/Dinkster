@@ -646,10 +646,11 @@ def test_comfy_missing_canvas_and_zero_dimensions_use_source_size() -> None:
 
 
 def large_document() -> ImageDocument:
-    value = empty_document(4096, 4096)
+    value = empty_document(64, 64)
+    rng = np.random.default_rng(0)
     for index in range(50):
         output = io.BytesIO()
-        Image.new("RGB", (4096, 4096), (index, 34, 56)).save(output, "PNG")
+        Image.fromarray(rng.integers(0, 256, (64, 64, 3), dtype=np.uint8)).save(output, "PNG")
         raster = output.getvalue()
         assert len(raster) > INLINE_RESOURCE_LIMIT
         value = append_raster(value, raster, name=f"Layer {index}")
@@ -663,7 +664,7 @@ def large_document() -> ImageDocument:
     assert all("inline" not in resource for resource in value.to_record()["resources"].values())
     assert b"/tmp" not in value.data
     assert len(value.to_record()["resources"]) == 50
-    print(f"50x4096x4096 document plus metadata: {size} bytes")
+    print(f"50x64x64 document plus metadata: {size} bytes")
     return value
 
 

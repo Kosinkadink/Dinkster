@@ -125,6 +125,7 @@ from .aimdo_bootstrap import bootstrap_aimdo
 from .blobs import BlobTransfer, attribute_moved_wire
 from .boundary import (
     DEFAULT_SHM_THRESHOLD,
+    PROTOCOL_VERSION,
     BoundaryError,
     ValueCodec,
     ValueStore,
@@ -1178,6 +1179,7 @@ async def serve_connection(
 
     hello: dict[str, object] = {
         "type": "hello",
+        "protocol": PROTOCOL_VERSION,
         "pack": pack_name,
         "schemas": {t: schema_to_wire(s) for t, s in schemas.items()},
         "registeredTypes": list(worker.registered_types),
@@ -1535,6 +1537,7 @@ async def serve_connection(
                     ),
                     node_id=invocation.node_id,
                     export_snapshot=invocation.export_snapshot,
+                    asset_folders=invocation.asset_folders,
                     materialize_source=(materialize_source if source_staging is not None else None),
                 )
             ):
@@ -1573,6 +1576,8 @@ async def serve_connection(
                     },
                     artifact_candidates=result.artifact_candidates,
                     expansion=result.expansion,
+                    preview_artifacts=result.preview_artifacts,
+                    saved_artifact_claims=result.saved_artifact_claims,
                 )
             if blob_transfer is not None:
                 await result_transfer_lock.acquire()
@@ -1816,6 +1821,7 @@ async def serve_connection(
                 attention_policy=ordinary.attention_policy,
                 attention_route_token=ordinary.attention_route_token,
                 extension_snapshot_digest=ordinary.extension_snapshot_digest,
+                asset_folders=ordinary.asset_folders,
             )
             if invocation.arm is not None:
                 raise ValueError("lazy-dispatch-unsupported: alternate body arm")
