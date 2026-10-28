@@ -51,6 +51,10 @@
   Workflow records remain document-kind entries; existing project observations
   do not acquire default-project membership, and anonymous bytes do not acquire
   membership in any user's scope through this backfill.
+  Human operators can separately inventory verified, unrecorded vault blobs
+  by digest. This view excludes bytes recorded in any scope, reports unknown
+  names and history without guessing them, and creates no records or grants.
+  Agents, delegated users and ordinary asset readers cannot access it.
 - Read-only asset availability checks distinguish held vault/granted-folder
   identities from missing ones without downloading, saving, granting or
   cataloging bytes. Replaced, missing and revoked files are unavailable;

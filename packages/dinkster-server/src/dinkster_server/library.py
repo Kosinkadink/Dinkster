@@ -983,8 +983,25 @@ async def handle_asset_availability(request: web.Request) -> web.Response:
 
 
 async def handle_asset_catalog(request: web.Request) -> web.Response:
-    scope = resolve_scope(principal_for(request), "assets:read", request.query.get("scope"))
-    allowed = {"scope", "project", "q", "kind", "origin", "since", "until", "limit", "cursor"}
+    principal = principal_for(request)
+    scope = resolve_scope(principal, "assets:read", request.query.get("scope"))
+    source = request.query.get("source", "scoped")
+    if source not in {"scoped", "unrecorded"}:
+        return _json_error(400, "unknown catalog source")
+    if source == "unrecorded" and not principal.is_operator:
+        return _json_error(403, "operator-required")
+    allowed = {
+        "scope",
+        "project",
+        "q",
+        "kind",
+        "origin",
+        "since",
+        "until",
+        "limit",
+        "cursor",
+        "source",
+    }
     if set(request.query) - allowed or any(
         len(request.query.getall(field, [])) != 1 for field in request.query
     ):
@@ -992,6 +1009,12 @@ async def handle_asset_catalog(request: web.Request) -> web.Response:
     project = request.query.get("project", "default")
     if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", project) is None:
         return _json_error(400, "project must be a lowercase project id")
+    if source == "unrecorded" and scope != "local":
+        return _json_error(400, "unrecorded bytes belong only in the local operator inventory")
+    if source == "unrecorded" and (
+        project != "default" or set(request.query) & {"kind", "origin", "since", "until"}
+    ):
+        return _json_error(400, "unrecorded bytes have no project, kind, origin or date")
     try:
         limit = min(200, max(1, int(request.query.get("limit", "50"))))
         since = float(request.query["since"]) if "since" in request.query else None
@@ -1005,10 +1028,28 @@ async def handle_asset_catalog(request: web.Request) -> web.Response:
     bound = {
         field: request.query.get(field, "") for field in ("q", "kind", "origin", "since", "until")
     }
-    bound.update(scope=scope, project=project)
+    bound.update(scope=scope, project=project, source=source)
     cursor = request.query.get("cursor")
     after = decode_cursor(cursor, bound) if cursor else None
     library = request.app[LIBRARY_KEY]
+    if source == "unrecorded":
+        refs = await asyncio.to_thread(
+            library.store.unrecorded_vault_assets,
+            library.vault,
+            text=bound["q"],
+            limit=limit + 1,
+            after=after[1] if after else None,
+        )
+        body: dict[str, object] = {
+            "source": source,
+            "assets": [
+                {"asset": ref.to_wire(), "aliases": [ref.name], "observations": []}
+                for ref in refs[:limit]
+            ],
+        }
+        if len(refs) > limit:
+            body["cursor"] = encode_cursor(bound, (0, refs[limit - 1].digest))
+        return web.json_response(body, headers={"Cache-Control": "no-store"})
     await run_media_publication(library, lambda: recover_asset_observations(library))
     try:
         groups = await asyncio.to_thread(
@@ -1040,7 +1081,7 @@ async def handle_asset_catalog(request: web.Request) -> web.Response:
                 "observations": [item.to_wire() for item in observations],
             }
         )
-    body: dict[str, object] = {"assets": assets}
+    body = {"assets": assets}
     if len(groups) > limit:
         last = groups[limit - 1][-1]
         body["cursor"] = encode_cursor(bound, (last.created, last.asset.digest))

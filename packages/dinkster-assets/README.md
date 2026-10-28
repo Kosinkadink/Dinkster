@@ -152,6 +152,15 @@ to the default project. Historical media without a recorded name uses its digest
 as a label and Unknown origin, not an invented filename or download URL.
 Workflow records stay document-kind observations; neither backfill nor an
 anonymous blob on disk creates new media or filesystem authority.
+`unrecorded_vault_assets` inventories verified vault digests with no records,
+media grants or observations in any scope. It returns digest labels and byte
+sizes without fabricating names, kinds or dates, and writes no catalog state.
+The server exposes it only to human, nondelegated storage operators through
+`GET /api/assets/catalog?source=unrecorded`. The response has
+`source: "unrecorded"`, ordinary five-field asset refs and empty observations.
+Digest text search and descending digest cursor pagination are supported;
+project, kind, origin and date filtering are not applicable. This is a local
+operator inventory, not a tenant asset source or a federated catalog.
 
 Named imports can prepare metadata with `before_publish` before the writer's
 atomic link. The server journals upload observations in the private vault's

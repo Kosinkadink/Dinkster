@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import sqlite3
 import threading
@@ -420,6 +421,46 @@ class LibraryStore:
                 )
             except (AssetError, OSError):
                 continue
+
+    def unrecorded_vault_assets(
+        self,
+        vault: AssetVault,
+        *,
+        text: str = "",
+        limit: int = 50,
+        after: str | None = None,
+    ) -> list[AssetRef]:
+        """Operator inventory only: no scoped membership or fabricated ingest history."""
+        assets: list[AssetRef] = []
+        root = vault.root.resolve()
+        with self._lock:
+            known = {
+                row["digest"]
+                for row in self._conn.execute(
+                    "SELECT digest FROM records UNION SELECT digest FROM media_grants "
+                    "UNION SELECT digest FROM asset_observations"
+                ).fetchall()
+            }
+        for digest in sorted(set(vault.digests()), reverse=True):
+            if (
+                digest in known
+                or (after is not None and digest >= after)
+                or text.lower() not in digest
+            ):
+                continue
+            ref = AssetRef(digest, digest.split(":", 1)[1], 0, resolver=vault)
+            try:
+                path = vault.resolve(digest)
+                if path is None or not path.resolve().is_relative_to(root):
+                    continue
+                with ref.open() as handle:
+                    size = os.fstat(handle.fileno()).st_size
+            except (AssetError, OSError):
+                continue
+            assets.append(AssetRef(digest, ref.name, size))
+            if len(assets) >= max(1, limit):
+                break
+        return assets
 
     def query_assets(
         self,

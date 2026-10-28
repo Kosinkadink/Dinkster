@@ -664,12 +664,7 @@ async def handle_output_mount_update(request: web.Request) -> web.Response:
 
 
 def _is_operator(request: web.Request) -> bool:
-    principal = principal_for(request)
-    return (
-        principal.kind == "human"
-        and principal.delegation_id is None
-        and principal.allows("settings:write")
-    )
+    return principal_for(request).is_operator
 
 
 def _require_operator(request: web.Request) -> None:

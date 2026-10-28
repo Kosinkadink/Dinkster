@@ -341,6 +341,144 @@ async def make_client(tmp_path: Path, **library_overrides: object) -> TestClient
     return client
 
 
+def test_anonymous_vault_inventory_is_operator_only_and_does_not_grant_scope(
+    tmp_path: Path,
+) -> None:
+    from dinkster_assets import MediaGrant
+    from dinkster_server.auth import Principal, StaticBearerAuthenticator
+
+    vault = AssetVault(tmp_path / "vault")
+    anonymous = (b"first unknown bytes", b"second unknown content", b"third unknown")
+    workflow = b'{"graphs": {"main": {}}}'
+    observed = b"other project private content"
+    corrupt = b"damaged anonymous content"
+    for data in (*anonymous, workflow, observed, corrupt):
+        with vault.writer(digest_bytes(data)) as writer:
+            writer.write(data)
+            writer.commit()
+    path = vault.resolve(digest_bytes(corrupt))
+    assert path is not None
+    path.write_bytes(b"wrong bytes")
+    store = LibraryStore(tmp_path / "library.sqlite")
+    store.create("other", "Private workflow", digest_bytes(workflow), WORKFLOW_MEDIA_TYPE)
+    store.record_asset(
+        "other",
+        AssetRef(digest_bytes(observed), "private.bin", len(observed)),
+        original_name="private.bin",
+        kind="asset/file",
+        project="film",
+        origin={"kind": "unknown"},
+    )
+    store.close()
+    capabilities = {
+        "local": frozenset({"assets:read", "settings:write"}),
+        "other": frozenset({"assets:read"}),
+    }
+    authenticator = StaticBearerAuthenticator(
+        {
+            "operator": Principal("operator", capabilities),
+            "reader": Principal("reader", {"local": frozenset({"assets:read"})}),
+            "agent": Principal("agent", capabilities, kind="agent"),
+            "delegated": Principal("delegated", capabilities, delegation_id="delegation"),
+        }
+    )
+
+    async def scenario() -> None:
+        for _ in range(2):
+            library = ServerLibrary(vault=vault, store=LibraryStore(tmp_path / "library.sqlite"))
+            app = create_app(make_engine, SCHEMAS, library=library, authenticator=authenticator)
+            client = TestClient(TestServer(app))
+            await client.start_server()
+            image = BytesIO()
+            Image.new("RGB", (3, 2), "green").save(image, format="PNG")
+            image_bytes = image.getvalue()
+            with vault.writer(digest_bytes(image_bytes)) as writer:
+                writer.write(image_bytes)
+                writer.commit()
+            library.store.grant_media(
+                MediaGrant(
+                    "other",
+                    digest_bytes(image_bytes),
+                    "media/image",
+                    "image/png",
+                    "png",
+                    len(image_bytes),
+                ),
+                image_bytes,
+            )
+            headers = {"Authorization": "Bearer operator"}
+            params = {"source": "unrecorded", "scope": "local", "limit": "1"}
+            try:
+                for token in ("reader", "agent", "delegated"):
+                    response = await client.get(
+                        "/api/assets/catalog",
+                        params=params,
+                        headers={"Authorization": f"Bearer {token}"},
+                    )
+                    assert response.status == 403
+                found = []
+                cursor = None
+                for _page in range(len(anonymous) + 1):
+                    query = {**params, **({"cursor": cursor} if cursor else {})}
+                    response = await client.get(
+                        "/api/assets/catalog", params=query, headers=headers
+                    )
+                    assert response.status == 200
+                    assert response.headers["Cache-Control"] == "no-store"
+                    body = await response.json()
+                    assert body["source"] == "unrecorded"
+                    assert len(body["assets"]) == 1
+                    item = body["assets"][0]
+                    found.append(item["asset"]["digest"])
+                    data = next(data for data in anonymous if digest_bytes(data) == found[-1])
+                    assert item == {
+                        "asset": AssetRef(found[-1], found[-1].split(":")[1], len(data)).to_wire(),
+                        "aliases": [found[-1].split(":")[1]],
+                        "observations": [],
+                    }
+                    assert str(tmp_path) not in json.dumps(body)
+                    cursor = body.get("cursor")
+                    if cursor is None:
+                        break
+                    for changed in ({"source": "scoped"}, {"q": "different"}):
+                        response = await client.get(
+                            "/api/assets/catalog",
+                            params={**params, "cursor": cursor, **changed},
+                            headers=headers,
+                        )
+                        assert response.status == 400
+                assert cursor is None
+                assert found == sorted((digest_bytes(data) for data in anonymous), reverse=True)
+                response = await client.get(
+                    "/api/assets/catalog", params={**params, "q": found[1]}, headers=headers
+                )
+                assert [item["asset"]["digest"] for item in (await response.json())["assets"]] == [
+                    found[1]
+                ]
+                for changed in (
+                    {"scope": "other"},
+                    {"project": "film"},
+                    {"since": "0"},
+                    {"kind": "asset/file"},
+                    {"origin": "unknown"},
+                    {"source": "invalid"},
+                ):
+                    response = await client.get(
+                        "/api/assets/catalog", params={**params, **changed}, headers=headers
+                    )
+                    assert response.status == 400
+                response = await client.get("/api/assets/catalog?scope=local", headers=headers)
+                assert (await response.json())["assets"] == []
+                assert library.store.query("local") == []
+                assert library.store.query_assets("local") == []
+                for digest in found:
+                    assert library.store.media_grant("local", digest, "media/image") is None
+            finally:
+                await client.close()
+
+    asyncio.run(scenario())
+
+
 def test_catalog_backfills_known_scopes_without_claiming_anonymous_bytes(tmp_path: Path) -> None:
     from dinkster_assets import MediaGrant
 
