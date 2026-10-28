@@ -7,18 +7,19 @@ from collections.abc import Mapping
 from dinkster_api.v1 import (
     ASSET_TYPE,
     CORE_STRING,
+    IMAGE_DOCUMENT_MEDIA_TYPE,
     IMAGE_TYPE,
     AssetRef,
     AssetWidget,
+    ImageDocument,
     InputSpec,
     Node,
     NodeSchema,
     OutputSpec,
     StringWidget,
     TypeExpr,
+    flatten,
 )
-from dinkster_image_document import IMAGE_DOCUMENT_MEDIA_TYPE
-from dinkster_image_document.document import ImageDocument, flatten
 
 IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 ASSET = TypeExpr.concrete(ASSET_TYPE)

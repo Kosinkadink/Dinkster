@@ -160,6 +160,7 @@ from .save_text import SaveText
 from .scail_masks import SCAIL2ColoredMask
 from .sd_upscale_conditioning import SD_UPSCALE_CONDITIONING_NODES
 from .sdpose import SDPoseDrawKeypoints, SDPoseFaceBBoxes
+from .sdpose_extract import SDPoseKeypointExtractor
 from .seedvr_conditioning import SeedVR2Conditioning
 from .seedvr_postprocess import SeedVR2PostProcessing
 from .seedvr_preprocess import SeedVR2Preprocess
@@ -187,6 +188,7 @@ from .video_conditioning import VIDEO_CONDITIONING_NODES
 from .video_guidance import VIDEO_GUIDANCE_NODES
 from .video_latent import VIDEO_LATENT_NODES
 from .video_latent_ops import VIDEO_LATENT_OPERATION_NODES
+from .video_save import SaveVideo
 from .wan22_latent import Wan22ImageToVideoLatent
 from .wan_animate import WAN_ANIMATE_NODES
 from .wan_camera import WanCameraEmbedding
@@ -401,6 +403,7 @@ COMFY_NODES = (
     *SAM3_TRACKING_NODES,
     SAM3_Detect,
     SAM3_TrackPreview,
+    SaveVideo,
     *MODEL_FILE_LOADER_NODES,
     *LORA_FILE_LOADER_NODES,
     CropByBBoxes,
@@ -425,6 +428,7 @@ COMFY_NODES = (
     SaveConditioning,
     SDPoseFaceBBoxes,
     SDPoseDrawKeypoints,
+    SDPoseKeypointExtractor,
 )
 
 
