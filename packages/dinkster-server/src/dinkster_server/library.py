@@ -742,6 +742,10 @@ async def _ingest_file_upload(
                 "origin": origin,
             }
             _write_asset_observation_journal(journal, payload)
+            if target is not None:
+                assert library.project_folders_for is not None
+                if target.mount not in library.project_folders_for(project).mounts:
+                    raise AssetError("upload folder was removed from this project")
 
         def publish() -> tuple[AssetRef, bool]:
             try:

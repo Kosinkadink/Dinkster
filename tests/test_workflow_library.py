@@ -822,6 +822,52 @@ def test_named_model_upload_streams_to_folder_without_redirecting_workflows(tmp_
     asyncio.run(scenario())
 
 
+def test_named_upload_refuses_project_exclusion_before_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_server import library as library_module
+
+    async def scenario() -> None:
+        root = tmp_path / "imports"
+        root.mkdir()
+        mounts = MountTable()
+        mounts.add(MountDef("imports", root, "readwrite"))
+        mounts.scan("imports")
+        context = [AssetFolderContext(("imports",))]
+        client = await make_client(
+            tmp_path,
+            resolver=mounts,
+            upload_writer=AssetWriter(mounts),
+            project_folders_for=lambda _project: context[0],
+        )
+        original = library_module._write_asset_observation_journal
+
+        def exclude(journal: Path, payload: Mapping[str, object]) -> None:
+            original(journal, payload)
+            context[0] = AssetFolderContext(())
+
+        try:
+            with monkeypatch.context() as patch:
+                patch.setattr(library_module, "_write_asset_observation_journal", exclude)
+                response = await client.post(
+                    "/api/assets?scope=local&project=film&name=model.bin", data=b"model bytes"
+                )
+            assert response.status == 503
+            assert not (root / "model.bin").exists()
+            assert client.app[LIBRARY_KEY].vault.digests() == []
+            assert not list(root.rglob(".dinkster-save-*"))
+            for selected in (AssetFolderContext(()), AssetFolderContext(("imports",))):
+                context[0] = selected
+                response = await client.get("/api/assets/catalog?scope=local&project=film")
+                assert response.status == 200
+                assert (await response.json())["assets"] == []
+                assert not (root / "model.bin").exists()
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("failure", ("before-observation", "after-observation"))
 @pytest.mark.parametrize("mounted", (False, True))
 def test_upload_catalog_recovers_failed_publication(
