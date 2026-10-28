@@ -198,6 +198,7 @@ namespaces = [
     "HunyuanVideo15LatentUpscaleWithModel",
     "LTXVLatentUpsampler",
     "LatentUpscaleModelLoader",
+    "OpticalFlowLoader",
     "EmptySD3LatentImage",
     "EmptyFlux2LatentImage",
     "EmptyChromaRadianceLatentImage",
