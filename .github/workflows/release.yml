@@ -9,6 +9,7 @@ on:
     paths:
       - .github/workflows/release.yml
       - scripts/build_release.py
+      - scripts/build_official_packs.py
       - scripts/acquire_engine_bases.py
       - scripts/prune_engine_prereleases.py
       - scripts/download_frontend.py
@@ -54,9 +55,22 @@ jobs:
       - name: Build the complete release contract
         env:
           RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+          UV_PROJECT_ENVIRONMENT: .release/pack-builder
         run: |
           arguments=()
           if [ -n "$RELEASE_TAG" ]; then arguments+=(--tag "$RELEASE_TAG"); fi
+          uv sync --locked --no-dev --package dinkster-registry --package dinkster-workers
+          "$UV_PROJECT_ENVIRONMENT/bin/python" - <<'PY'
+          import os
+          from pathlib import Path
+          from scripts.build_official_packs import build
+          from scripts.build_release import development_version, release_version
+          root = Path.cwd()
+          tag = os.environ['RELEASE_TAG']
+          version = release_version(root, tag) if tag else development_version(root)
+          build(root, root / '.release/official-packs', version=version.split('+', 1)[0])
+          PY
+          for payload in .release/official-packs/*; do arguments+=(--artifact "$payload"); done
           uv run --no-project --python 3.12 --with packaging==26.2 -m scripts.build_release \
             "${arguments[@]}" \
             --download-external-wheels \

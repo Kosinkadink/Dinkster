@@ -176,6 +176,12 @@ def test_release_workflow_builds_all_wheels_and_checks_tag_metadata() -> None:
     assert "uvx twine check dist/*.whl" in commands
     assert "scripts/download_frontend.py" in commands
     assert "--frontend-artifact .release/frontend.zip" in commands
+    assert "from scripts.build_official_packs import build" in commands
+    assert 'arguments+=(--artifact "$payload")' in commands
+    assert (
+        "uv sync --locked --no-dev --package dinkster-registry --package dinkster-workers"
+        in commands
+    )
     assert "pnpm" not in commands
     assert "node" not in commands
     assert all(

@@ -379,6 +379,13 @@ directory is the build artifact used by installation checks and publication:
 | `SHA256SUMS` | One lowercase SHA-256, two spaces, asset basename and LF per line; covers every asset except itself, including the manifest; verifiable with `sha256sum -c SHA256SUMS` |
 | `dinkster-source-<version>.zip` | Maintainer source archive; never an installation requirement |
 
+The workflow also builds the official pack source ZIPs and `official-packs.lock`
+with `scripts/build_official_packs.py` and admits them through repeated
+`--artifact` inputs. Pack versions use the engine's public version (without
+the local `+g<commit>` segment); the existing pack lock retains the full source
+commit. These payloads have the same artifact hashes and checksums as other
+release assets but are not `workspaceWheels` and are never uploaded to PyPI.
+
 The engine release id used by channels is `sha256:` followed by the SHA-256
 of the exact `release-manifest.json` bytes. The manifest lists payload assets,
 not itself or `SHA256SUMS`, avoiding a circular digest. Artifact names are
