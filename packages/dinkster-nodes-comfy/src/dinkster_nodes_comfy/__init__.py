@@ -126,6 +126,7 @@ from .model_merging_specific import MODEL_SPECIFIC_MERGE_NODES
 from .model_patch_loader import MODEL_PATCH_LOADER_NODES
 from .model_selections import MODEL_SELECTION_NODES
 from .model_specific_schedulers import MODEL_SPECIFIC_SCHEDULER_NODES
+from .moge import MoGeGeometryToFOV
 from .morphology import MORPHOLOGY_NODES
 from .moss_image import MOSSImageControl, MOSSImageLayoutPrompt, TextEncodeMOSSImageEdit
 from .noise import NOISE_NODES
@@ -427,6 +428,7 @@ COMFY_NODES = (
     SaveWEBM,
     WanDancerEncodeAudio,
     *YUE2_CONDITIONING_NODES,
+    MoGeGeometryToFOV,
     UpscaleModelLoader,
     VOIDQuadmaskPreprocess,
     VOIDInpaintConditioning,

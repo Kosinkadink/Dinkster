@@ -523,6 +523,7 @@ namespaces = [
     "WanDancerEncodeAudio",
     "YuE2GenerateABC",
     "YuE2GenerateMusic",
+    "MoGeGeometryToFOV",
     "UpscaleModelLoader",
     "VOIDQuadmaskPreprocess",
     "VOIDInpaintConditioning",
