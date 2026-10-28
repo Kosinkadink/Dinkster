@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from functools import partial
 from typing import cast
@@ -15,6 +16,10 @@ from dinkster_values import (
     decode_latent,
     encode_latent,
     stable_hash,
+)
+
+_AUDIO_ENCODER_LEGACY_FIELDS = frozenset(
+    {"encoded_audio", "encoded_audio_all_layers", "audio_samples"}
 )
 
 
@@ -38,16 +43,29 @@ def _decode(data: bytes, *, type_id: str) -> object:
         ):
             raise ValueError("TRACKS track_visibility must be a tensor when present")
     else:
-        if not isinstance(mapping.get("encoded_audio"), EncodedLatentTensor):
-            raise ValueError("AUDIO_ENCODER_OUTPUT encoded_audio must be a tensor")
-        layers = mapping.get("encoded_audio_all_layers")
-        if not isinstance(layers, (tuple, list)) or any(
-            not isinstance(layer, EncodedLatentTensor)
-            for layer in cast("list[object] | tuple[object, ...]", layers)
-        ):
-            raise ValueError("AUDIO_ENCODER_OUTPUT layers must be an ordered tensor sequence")
-        if type(mapping.get("audio_samples")) is not int:
-            raise ValueError("AUDIO_ENCODER_OUTPUT audio_samples must be an integer")
+        if _AUDIO_ENCODER_LEGACY_FIELDS.intersection(mapping):
+            if not isinstance(mapping.get("encoded_audio"), EncodedLatentTensor):
+                raise ValueError("AUDIO_ENCODER_OUTPUT encoded_audio must be a tensor")
+            layers = mapping.get("encoded_audio_all_layers")
+            if not isinstance(layers, (tuple, list)) or any(
+                not isinstance(layer, EncodedLatentTensor)
+                for layer in cast("list[object] | tuple[object, ...]", layers)
+            ):
+                raise ValueError("AUDIO_ENCODER_OUTPUT layers must be an ordered tensor sequence")
+            if type(mapping.get("audio_samples")) is not int:
+                raise ValueError("AUDIO_ENCODER_OUTPUT audio_samples must be an integer")
+        else:
+            if not isinstance(mapping.get("audio_feature"), EncodedLatentTensor):
+                raise ValueError("AUDIO_ENCODER_OUTPUT audio_feature must be a tensor")
+            fps = mapping.get("fps")
+            if type(fps) is not float or not math.isfinite(fps):
+                raise ValueError("AUDIO_ENCODER_OUTPUT fps must be a finite float")
+            if "audio_inject_scale" in mapping:
+                scale = mapping["audio_inject_scale"]
+                if type(scale) is not float or not math.isfinite(scale):
+                    raise ValueError(
+                        "AUDIO_ENCODER_OUTPUT audio_inject_scale must be a finite float"
+                    )
     return mapping
 
 
