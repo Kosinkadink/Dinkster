@@ -2,15 +2,29 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import torch
-from dinkster_api.v1 import initialize_inference_process
+from dinkster_api.v1 import (
+    CLIP_TYPE,
+    MODEL_TYPE,
+    VAE_TYPE,
+    Node,
+    NodeSchema,
+    OutputSpec,
+    TypeExpr,
+    initialize_inference_process,
+)
+from dinkster_assets import MountDef, MountTable
+from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.model_file_savers import CheckpointSave, CLIPSave, ModelSave, VAESave
 from safetensors import safe_open
+
+from dinkster.compose import PackSpec, ServingComposer
 
 
 class _Clip:
@@ -190,3 +204,164 @@ def test_checkpoint_exports_preserve_metadata_counters_and_tensors(
     assert len(list(folder.glob("*.safetensors"))) == 3
     assert not list((output if checkpoint else alternate).rglob("*.safetensors"))
     assert not list(folder.glob(".dinkster-save-*"))
+
+
+class CheckpointSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="checkpoint-save-fixture.source",
+            outputs=(
+                OutputSpec("model", TypeExpr.concrete(MODEL_TYPE)),
+                OutputSpec("clip", TypeExpr.concrete(CLIP_TYPE)),
+                OutputSpec("vae", TypeExpr.concrete(VAE_TYPE)),
+            ),
+        )
+
+    @classmethod
+    def execute(cls) -> dict[str, object]:
+        initialize_inference_process()
+        from dinkster_inference import model_base
+        from dinkster_inference.model_patcher import ModelPatcher
+        from dinkster_inference.sd import CLIP, VAE
+
+        class TinyModel(model_base.SDXL):
+            def __init__(self):
+                torch.nn.Module.__init__(self)
+                self.diffusion_model = torch.nn.Linear(3, 2, bias=False, dtype=torch.float64)
+                self.diffusion_model.weight.data.copy_(
+                    torch.tensor([[1.25, -3.5, 9.75], [-0.5, 7.0, 2.0]])
+                )
+                self.model_type = model_base.ModelType.EPS
+                self.model_sampling = SimpleNamespace()
+
+            def get_dtype(self):
+                return torch.float64
+
+            def state_dict_for_saving(
+                self,
+                unet_state_dict,
+                clip_state_dict=None,
+                vae_state_dict=None,
+                clip_vision_state_dict=None,
+            ):
+                assert clip_vision_state_dict is None
+                state = {f"model.{key}": value for key, value in unet_state_dict.items()}
+                state.update(
+                    {f"clip.{key}": value for key, value in (clip_state_dict or {}).items()}
+                )
+                state.update({f"vae.{key}": value for key, value in (vae_state_dict or {}).items()})
+                return state
+
+        device = torch.device("cpu")
+        encoder = torch.nn.Linear(2, 1, bias=False)
+        encoder.weight.data.copy_(torch.tensor([[-7.0, 1.5]]))
+        clip = CLIP(no_init=True)
+        clip.patcher = ModelPatcher(encoder, device, device)
+        clip.cond_stage_model = encoder
+        clip.tokenizer = SimpleNamespace(state_dict=lambda: {})
+        clip.layer_idx = None
+        clip.tokenizer_options = {}
+        clip.use_clip_schedule = True
+        clip.apply_hooks_to_conds = None
+        vae = object.__new__(VAE)
+        vae.first_stage_model = torch.nn.Linear(1, 2, bias=False, dtype=torch.float64)
+        vae.first_stage_model.weight.data.copy_(torch.tensor([[0.125], [-2.5]]))
+        return cls.outputs(model=ModelPatcher(TinyModel(), device, device), clip=clip, vae=vae)
+
+
+def test_checkpoint_exports_write_exact_files_through_native_manifest(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("DINKSTER_ACCELERATOR", "cpu")
+    output, alternate = tmp_path / "output", tmp_path / "alternate"
+    output.mkdir()
+    alternate.mkdir()
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot, index_root=tmp_path / "index")
+    for name, root in (("output", output), ("alternate", alternate)):
+        table.add(MountDef(name, root, mode="readwrite"))
+        table.scan(name)
+    table.select_output_mount("output")
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+
+    async def scenario():
+        package = Path(__file__).resolve().parents[1]
+        module = f"checkpoint_fixture_{tmp_path.name.replace('-', '_')}"
+        (tmp_path / f"{module}.py").write_text(
+            "from test_model_file_savers_torch import CheckpointSource\n"
+            "from dinkster_nodes_comfy import register_inference_types\n"
+            "NODES = (CheckpointSource,)\n",
+            encoding="ascii",
+        )
+        fixture = tmp_path / "dinkster-pack.toml"
+        fixture.write_text(
+            '[pack]\nname="checkpoint-save-fixture"\npublisher="dinkster"\n'
+            'namespaces=["checkpoint-save-fixture"]\n[pack.entry]\n'
+            f'nodes="{module}:NODES"\ntypes="{module}:register_inference_types"\n',
+            encoding="ascii",
+        )
+        composer = ServingComposer()
+        try:
+            for manifest in (package / "dinkster-pack.toml", fixture):
+                await composer.add_pack(PackSpec(manifest=manifest, in_process=True))
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("checkpoint-save-fixture.source"),
+                    "model": GraphNode("ModelSave", {"model": Link("source", "model")}),
+                    "checkpoint": GraphNode(
+                        "CheckpointSave",
+                        {
+                            "model": Link("source", "model"),
+                            "clip": Link("source", "clip"),
+                            "vae": Link("source", "vae"),
+                            "mount": "alternate",
+                        },
+                    ),
+                }
+            )
+            engine = composer.composition.make_engine(lambda _event: None)
+            for attempt in range(2):
+                result = await engine.run(graph, ["model", "checkpoint"])
+                if attempt:
+                    assert "source" in result.cached
+                    assert not {"model", "checkpoint"} & set(result.cached)
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+    for checkpoint, root, prefix in (
+        (False, output, "diffusion_models/ComfyUI"),
+        (True, alternate, "checkpoints/ComfyUI"),
+    ):
+        expected = {
+            "model.weight": torch.tensor(
+                [[1.25, -3.5, 9.75], [-0.5, 7.0, 2.0]],
+                dtype=torch.float64,
+            )
+        }
+        if checkpoint:
+            expected.update(
+                {
+                    "clip.weight": torch.tensor([[-7.0, 1.5]]),
+                    "vae.weight": torch.tensor([[0.125], [-2.5]], dtype=torch.float64),
+                }
+            )
+        files = sorted(root.glob(f"{prefix}_*.safetensors"))
+        assert len(files) == 2
+        for counter, path in enumerate(files, 1):
+            assert path.name == f"ComfyUI_{counter:05d}_.safetensors"
+            with safe_open(path, framework="pt") as saved:
+                assert saved.metadata() == {
+                    "modelspec.architecture": "stable-diffusion-xl-v1-base",
+                    "modelspec.sai_model_spec": "1.0.0",
+                    "modelspec.implementation": "sgm",
+                    "modelspec.title": f"ComfyUI {counter}",
+                    "modelspec.predict_key": "epsilon",
+                    "prompt": "",
+                }
+                assert set(saved.keys()) == set(expected)
+                for key, tensor in expected.items():
+                    actual = saved.get_tensor(key)
+                    assert actual.dtype == tensor.dtype
+                    torch.testing.assert_close(actual, tensor, rtol=0, atol=0)
+    assert not list(output.glob("checkpoints/*"))
+    assert not list(alternate.glob("diffusion_models/*"))
