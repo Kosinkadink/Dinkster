@@ -1129,3 +1129,118 @@ def test_advanced_image_exports_consume_submission_metadata(
                         for key, value in (str(item).split(":", 1) for item in exif.values())
                     }
             assert metadata == expected
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("disabled", (False, True))
+@pytest.mark.parametrize("prompt", ({"source": {"inputs": {"seed": 59}}}, {}, None))
+def test_image_savers_consume_submission_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    in_process: bool,
+    disabled: bool,
+    prompt: dict | None,
+) -> None:
+    from dinkster_inference.cli_args import args
+
+    monkeypatch.setattr(args, "disable_metadata", disabled)
+    output = tmp_path / "output"
+    output.mkdir()
+    mounts = tmp_path / "mounts.json"
+    table = MountTable(mounts, index_root=tmp_path / "index")
+    table.add(MountDef("output", output, mode="readwrite"))
+    table.scan("output")
+    table.select_output_mount("output")
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(mounts))
+    extra = {"workflow": {"nodes": [{"id": 31, "title": "source: caf\u00e9"}]}, "seed": 127}
+
+    async def scenario():
+        native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+        module = f"image_metadata_fixture_{tmp_path.name.replace('-', '_')}"
+        (tmp_path / f"{module}.py").write_text(
+            "from test_save_image_torch import _AdvancedAVIFHostSource\n"
+            "from dinkster_nodes_comfy import register_inference_types\n"
+            "from dinkster_api.v1 import initialize_inference_process\n"
+            "initialize_inference_process()\n"
+            "from dinkster_inference.cli_args import args\n"
+            f"args.disable_metadata = {disabled!r}\n"
+            "NODES = (_AdvancedAVIFHostSource,)\n",
+            encoding="ascii",
+        )
+        fixture = tmp_path / "dinkster-pack.toml"
+        fixture.write_text(
+            '[pack]\nname="image-metadata-fixture"\npublisher="dinkster"\n'
+            'namespaces=["advanced-avif-fixture"]\n[pack.entry]\n'
+            f'nodes="{module}:NODES"\ntypes="{module}:register_inference_types"\n',
+            encoding="ascii",
+        )
+        paths = (str(tmp_path), str(Path(__file__).parent), *(p for p in sys.path if p))
+        composer = ServingComposer(
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "DINKSTER_MOUNTS_SNAPSHOT": str(mounts),
+                "PYTHONPATH": os.pathsep.join(paths),
+            }
+        )
+        try:
+            manifests = (native, fixture)
+            for manifest in manifests:
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=manifest,
+                        in_process=in_process,
+                        worker_group=None if in_process else "image-metadata-fixture",
+                        group_manifests=() if in_process else manifests,
+                    )
+                )
+            nodes = {"source": GraphNode("advanced-avif-fixture.source")}
+            for kind, node_type, options in (
+                ("png", "SaveImage", {}),
+                ("apng", "SaveAnimatedPNG", {}),
+                ("webp", "SaveAnimatedWEBP", {"method": "fastest"}),
+            ):
+                nodes[kind] = GraphNode(
+                    node_type,
+                    {"images": Link("source", "images"), "filename_prefix": kind, **options},
+                )
+            engine = composer.composition.make_engine(lambda _event: None)
+            await engine.run(
+                Graph(nodes=nodes),
+                ["png", "apng", "webp"],
+                export_snapshot=ExportSnapshot(prompt=prompt, extra_pnginfo=extra),
+            )
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+    for kind in ("png", "apng", "webp"):
+        expected = {} if disabled else dict(extra)
+        if not disabled and prompt is not None and (kind != "apng" or prompt):
+            expected["prompt"] = prompt
+        files = sorted(output.glob(f"{kind}_*.{'webp' if kind == 'webp' else 'png'}"))
+        assert len(files) == (2 if kind == "png" else 1)
+        for path in files:
+            with Image.open(path) as image:
+                assert image.n_frames == (1 if kind == "png" else 2)
+                if kind == "png":
+                    metadata = {key: json.loads(value) for key, value in image.text.items()}
+                elif kind == "webp":
+                    metadata = {
+                        key: json.loads(value)
+                        for key, value in (
+                            str(item).split(":", 1) for item in image.getexif().values()
+                        )
+                    }
+                else:
+                    encoded, pos, metadata, seen_idat = path.read_bytes(), 8, {}, False
+                    while pos < len(encoded):
+                        size = struct.unpack_from(">I", encoded, pos)[0]
+                        chunk_type = encoded[pos + 4 : pos + 8]
+                        seen_idat |= chunk_type == b"IDAT"
+                        if chunk_type == b"comf":
+                            assert seen_idat
+                            key, value = encoded[pos + 8 : pos + 8 + size].split(b"\0", 1)
+                            metadata[key.decode("latin-1")] = json.loads(value.decode("latin-1"))
+                        pos += size + 12
+            assert metadata == expected

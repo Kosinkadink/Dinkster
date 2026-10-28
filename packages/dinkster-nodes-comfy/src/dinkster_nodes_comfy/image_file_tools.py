@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import tempfile
 from collections.abc import Iterator, Mapping
@@ -35,10 +36,14 @@ from dinkster_api.v1 import (
     SourceFilenameSpec,
     StringWidget,
     TypeExpr,
+    current_export_snapshot,
+    initialize_inference_process,
     materialize_image,
     open_image_components,
     render_image_png,
 )
+
+from .advanced_image_encoding import inject_png_metadata
 
 _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 _ASSET = TypeExpr.concrete(ASSET_TYPE)
@@ -199,8 +204,37 @@ def _save_animation(
     batch = image_batch(images)
     pixels = torch.floor(torch.clamp(batch, 0, 1) * 255).to(torch.uint8).cpu().numpy()
     frames = [image_module.fromarray(frame) for frame in pixels]
+    initialize_inference_process()
+    submitted = (
+        None
+        if importlib.import_module("dinkster_inference.cli_args").args.disable_metadata
+        else current_export_snapshot()
+    )
     if format_name == "WEBP":
-        options = {**options, "exif": frames[0].getexif()}
+        exif = frames[0].getexif()
+        if submitted is not None:
+            if submitted.prompt is not None:
+                exif[0x0110] = f"prompt:{json.dumps(dict(submitted.prompt))}"
+            for index, (key, value) in enumerate((submitted.extra_pnginfo or {}).items()):
+                exif[0x010F - index] = f"{key}:{json.dumps(value)}"
+        options = {**options, "exif": exif}
+    elif submitted is not None:
+        metadata = importlib.import_module("PIL.PngImagePlugin").PngInfo()
+        if submitted.prompt:
+            metadata.add(
+                b"comf",
+                b"prompt\0" + json.dumps(dict(submitted.prompt)).encode("latin-1", "strict"),
+                after_idat=True,
+            )
+        for key, value in (submitted.extra_pnginfo or {}).items():
+            metadata.add(
+                b"comf",
+                key.encode("latin-1", "strict")
+                + b"\0"
+                + json.dumps(value).encode("latin-1", "strict"),
+                after_idat=True,
+            )
+        options = {**options, "pnginfo": metadata}
     writer = image_writer()
     suffix, media_type = (".webp", "image/webp") if format_name == "WEBP" else (".png", "image/png")
     with tempfile.TemporaryFile() as buffer:
@@ -268,6 +302,12 @@ class SaveImage(Node):
         cls, *, images: Any, filename_prefix: str = "ComfyUI", mount: str | None = None
     ) -> Mapping[str, object]:
         batch = image_batch(images)
+        initialize_inference_process()
+        submitted = (
+            None
+            if importlib.import_module("dinkster_inference.cli_args").args.disable_metadata
+            else current_export_snapshot()
+        )
         writer = image_writer()
         torch = importlib.import_module("torch")
         target = writer.output_target(
@@ -281,6 +321,14 @@ class SaveImage(Node):
             for index in range(batch.shape[0]):
                 image = torch.floor(torch.clamp(batch[index : index + 1], 0, 1) * 255.0) / 255.0
                 encoded = render_image_png(image)
+                if submitted is not None:
+                    encoded = inject_png_metadata(
+                        encoded,
+                        dict(submitted.prompt) if submitted.prompt is not None else None,
+                        dict(submitted.extra_pnginfo)
+                        if submitted.extra_pnginfo is not None
+                        else None,
+                    )
                 if len(encoded) > ENCODED_MEDIA_LIMIT_BYTES:
                     raise ValueError("encoded image exceeds the output byte limit")
                 with BytesIO(encoded) as stream:
