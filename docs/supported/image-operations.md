@@ -25,6 +25,10 @@
 - Native `SAM3_VideoTrack` tracks initial masks or text-prompted objects across
   video frames. `SAM3_TrackToMask` selects tracked objects and resizes their union
   to the original frame dimensions using the portable packed-track value.
+- Native `SAM3_TrackPreview` publishes an MP4 preview of packed tracks with
+  colored overlays, object numbers and confidence labels, optionally over images.
+  Its H264 `yuv420p` encoding requires even width and height; odd dimensions
+  retain the [reference encoding failure](../comfyui-issues/sam3-preview-odd-dimensions.md).
 - Native `SAM3_Detect` segments text, box or point prompts with optional mask
   refinement, returning per-object or union masks and scored text detections.
 - Native `ColorToRGBInt` preserves RGB letter casing and separates optional alpha;
