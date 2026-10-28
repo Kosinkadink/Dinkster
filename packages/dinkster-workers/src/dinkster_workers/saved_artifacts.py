@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 import os
 import stat
-from collections.abc import Callable, Generator, Mapping, Sequence
+from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import BinaryIO
@@ -85,7 +85,7 @@ def validate_candidate(candidate: SavedArtifactCandidate) -> tuple[str, tuple[st
         raise AssetError("saved artifact subfolder contains an unsafe path segment")
     if candidate.asset is not None:
         wire = candidate.asset
-        if not isinstance(wire, Mapping) or set(wire) != {
+        if set(wire) != {
             "digest",
             "name",
             "size",
