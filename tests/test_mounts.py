@@ -58,7 +58,7 @@ from dinkster_schema import (
     build_schemas,
 )
 from dinkster_server import ServerLibrary, create_app
-from dinkster_values import TypeRegistry, register_core_types
+from dinkster_values import INLINE_STRING_CAP, TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker, IsolatedWorker, load_manifest
 from dinkster_workers.host import load_pack
 
@@ -759,10 +759,9 @@ def test_mount_roots_do_not_infer_unconfigured_authority(
 def test_public_mount_roots_in_ordinary_hosts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated: bool
 ) -> None:
-    late_text = "late embedding"
-    first_text = "preferred embedding"
-    mounts_root = tmp_path.joinpath(*(["project-assets-" * 5] * 4))
-    assert len(str(mounts_root / "first")) > 256
+    late_text = "late embedding " * 24
+    first_text = "preferred embedding " * 20
+    mounts_root = tmp_path
     pack = tmp_path / "pack"
     pack.mkdir()
     manifest_path = pack / "dinkster-pack.toml"
@@ -897,6 +896,7 @@ def test_public_mount_roots_in_ordinary_hosts(
                     assert response.status == 202, await response.text()
                 async with asyncio.timeout(10):
                     for project, roots in (("project-a", expected[::-1]), ("project-b", expected)):
+                        assert len(json.dumps(roots)) > INLINE_STRING_CAP
                         while True:
                             status = await (
                                 await client.get(f"/api/jobs/projects/{project}")
