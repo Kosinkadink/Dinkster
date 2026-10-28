@@ -5,6 +5,8 @@
   into the shared `UPSCALE_MODEL` value.
 - Native `CurveEditor` passes canonical curves through the curve editor and
   displays an optional histogram without restricting its bin count.
+- Native `AddLayer` appends image and mask batches to a layer document with
+  placement, rotation, opacity, blend mode, and stacking metadata.
 - Native `CameraAngle` produces an orbit-camera dictionary and shot description
   from horizontal angle, elevation, and zoom.
 - Native `TripoSplatPreprocessImage` erodes alpha, crops foreground to a padded

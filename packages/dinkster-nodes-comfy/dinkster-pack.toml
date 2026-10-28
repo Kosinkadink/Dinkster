@@ -549,6 +549,7 @@ namespaces = [
     "UpscaleModelLoader",
     "LossGraphNode",
     "CurveEditor",
+    "AddLayer",
 ]
 
 [pack.sandbox]
