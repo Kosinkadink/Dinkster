@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 import struct
@@ -10,10 +11,11 @@ import subprocess
 import sys
 import sysconfig
 import zipfile
+from functools import partial
 from pathlib import Path
 
 import pytest
-from dinkster_supervisor.environment_generations import build_generation
+from dinkster_supervisor.environment_generations import build_generation, pack_operation
 from dinkster_supervisor.environment_state import (
     EnvironmentError,
     interpreter,
@@ -125,7 +127,6 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
             constraints=constraints,
             variant="win-cpu" if os.name == "nt" else "linux-cpu",
             worker_protocol=1,
-            in_process_packs=("example_pack",),
             prepare_packs=prepare_packs,
         )
 
@@ -152,7 +153,6 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
     _assert_shared(interpreter(first_dir), interpreter(second_dir))
     assert first.drift(first_dir) == ()
     assert second.drift(second_dir) == ()
-    assert first.in_process_packs == ("example_pack",)
     assert any(name.endswith("in_process_fixture.py") for name, _ in first.files)
     set_current(root, 2)
     set_current(root, 1)
@@ -172,3 +172,66 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
     assert (
         subprocess.check_output([str(interpreter(first_dir)), "-B", "-c", script]).strip() == b"53"
     )
+
+
+@pytest.mark.parametrize(
+    ("operation", "output", "code", "message"),
+    [
+        ("preflight", '{"packs": [], "changes": []}', 0, None),
+        ("preflight", "not-json", 0, "invalid provisioner result"),
+        ("preflight", '{"packs": [], "changes": []}\n{}', 0, "invalid provisioner result"),
+        ("preflight", '{"packs": [], "changes": ["missing lock"]}', 1, "missing lock"),
+        ("doctor", '{"packs": [], "changes": ["example: missing venv"]}', 0, "missing venv"),
+        (
+            "preflight",
+            json.dumps(
+                {
+                    "packs": [
+                        {
+                            "pack": "example",
+                            "conflicts": ["torch version mismatch"],
+                            "downloadBytes": 12,
+                            "ownEnvironmentBytes": 34,
+                        }
+                    ],
+                    "changes": [],
+                }
+            ),
+            0,
+            "torch version mismatch",
+        ),
+        (
+            "preflight",
+            '{"packs": [{"pack": "example", "conflicts": [], '
+            '"downloadBytes": true, "ownEnvironmentBytes": 34}], "changes": []}',
+            0,
+            "nonnegative integer",
+        ),
+    ],
+)
+def test_pack_result_must_be_one_valid_object_without_conflicts_or_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    output: str,
+    code: int,
+    message: str | None,
+) -> None:
+    # Treat the provisioner's stdout as an external wire boundary, including incorrect exit codes.
+    monkeypatch.setattr(
+        subprocess, "run", lambda *args, **kwargs: subprocess.CompletedProcess([], code, output, "")
+    )
+    invoke = partial(
+        pack_operation,
+        operation,
+        generation=tmp_path / "generations/2",
+        store=tmp_path / "store",
+        variant="linux-cpu",
+        worker_protocol=11,
+        own_environment_size=34,
+    )
+    if message is None:
+        assert invoke() == {"packs": [], "changes": []}
+    else:
+        with pytest.raises(EnvironmentError, match=message):
+            invoke()

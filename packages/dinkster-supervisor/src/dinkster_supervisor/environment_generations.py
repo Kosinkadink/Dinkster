@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import errno
+import json
 import os
 import shutil
 import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 from .environment_state import (
     EnvironmentError,
@@ -39,6 +41,100 @@ def _link_file(source: str, destination: str) -> str:
     return destination
 
 
+def pack_operation(
+    operation: str,
+    *,
+    generation: Path,
+    store: Path,
+    variant: str,
+    worker_protocol: int,
+    own_environment_size: int,
+    source_generation: Path | None = None,
+    locks: tuple[Path, ...] = (),
+    in_process_packs: tuple[str, ...] = (),
+    uv: str = "uv",
+) -> dict[str, object]:
+    """Invoke the generation-owned provisioner without importing engine packages."""
+    if operation not in {"preflight", "rebuild", "doctor"}:
+        raise EnvironmentError(f"unsupported pack lifecycle operation: {operation}")
+    command = [
+        str(interpreter(generation)),
+        "-B",
+        "-m",
+        "dinkster_workers.pack_environment",
+        operation,
+        "--generation",
+        str(generation),
+        "--generation-python",
+        str(interpreter(generation)),
+        "--constraints",
+        str(generation / "constraints.txt"),
+        "--variant",
+        variant,
+        "--worker-protocol",
+        str(worker_protocol),
+        "--wheel-store",
+        str(store / "wheels"),
+        "--uv-cache",
+        str(store / "uv-cache"),
+        "--own-environment-size",
+        str(own_environment_size),
+        "--uv",
+        uv,
+    ]
+    if source_generation is not None:
+        command.extend(["--source-generation", str(source_generation)])
+    for lock in locks:
+        command.extend(["--lock", str(lock)])
+    for pack in in_process_packs:
+        command.extend(["--in-process-pack", pack])
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+    )
+    try:
+        raw: object = json.loads(result.stdout)
+        if not isinstance(raw, dict):
+            raise ValueError("expected an object")
+        document = cast("dict[str, object]", raw)
+        packs, changes = document.get("packs"), document.get("changes")
+        if not isinstance(packs, list) or not isinstance(changes, list):
+            raise ValueError("packs and changes must be arrays")
+        messages = cast("list[object]", changes)
+        if any(not isinstance(message, str) for message in messages):
+            raise ValueError("changes must contain strings")
+        errors = list(cast("list[str]", messages)) if operation == "doctor" else []
+        names: set[str] = set()
+        for raw_pack in cast("list[object]", packs):
+            if not isinstance(raw_pack, dict):
+                raise ValueError("pack summary must be an object")
+            row = cast("dict[str, object]", raw_pack)
+            name, conflicts = row.get("pack"), row.get("conflicts")
+            if not isinstance(name, str) or not name or name in names:
+                raise ValueError("pack summaries must have distinct nonempty ids")
+            names.add(name)
+            if not isinstance(conflicts, list):
+                raise ValueError("pack conflicts must be an array")
+            conflicts = cast("list[object]", conflicts)
+            if any(not isinstance(conflict, str) for conflict in conflicts):
+                raise ValueError("pack conflicts must contain strings")
+            for key in ("downloadBytes", "ownEnvironmentBytes"):
+                size = row.get(key)
+                if type(size) is not int or size < 0:
+                    raise ValueError(f"{key} must be a nonnegative integer")
+            errors.extend(f"{name}: {conflict}" for conflict in conflicts)
+    except ValueError as exc:
+        raise EnvironmentError(f"pack {operation}: invalid provisioner result: {exc}") from exc
+    if result.returncode or errors:
+        details = errors or cast("list[str]", messages)
+        raise EnvironmentError(
+            f"pack {operation} refused: {'; '.join(details) or 'provisioner failed'}"
+        )
+    return document
+
+
 def build_generation(
     *,
     root: Path,
@@ -51,6 +147,9 @@ def build_generation(
     variant: str,
     worker_protocol: int,
     in_process_packs: tuple[str, ...] = (),
+    source_generation: Path | None = None,
+    pack_locks: tuple[Path, ...] = (),
+    own_environment_size: int | None = None,
     prepare_packs: Callable[[Path], None] | None = None,
     uv: str = "uv",
 ) -> Generation:
@@ -59,8 +158,8 @@ def build_generation(
     The caller has already verified/extracted the base and fetched the engine
     artifacts, and holds the project/store writer locks. ``constraints`` is
     the effective hashed requirements assembled for the selected base variant.
-    Pack preflight and staging run through ``prepare_packs`` before inventory;
-    an exception removes the incomplete target just like a failed sync.
+    Pack preflight, rebuild and doctor run before inventory. Additional staging
+    may run through ``prepare_packs``; any failure removes the incomplete target.
     """
     generation_number(number)
     digest(base)
@@ -116,6 +215,22 @@ def build_generation(
         result = subprocess.run(command, env=environment, capture_output=True, text=True)
         if result.returncode:
             raise EnvironmentError(f"offline generation sync failed: {result.stderr.strip()}")
+        if source_generation is not None or pack_locks or in_process_packs:
+            if own_environment_size is None:
+                raise EnvironmentError("pack planning requires the measured own-environment size")
+            for operation in ("preflight", "rebuild", "doctor"):
+                pack_operation(
+                    operation,
+                    generation=destination,
+                    store=store,
+                    variant=variant,
+                    worker_protocol=worker_protocol,
+                    own_environment_size=own_environment_size,
+                    source_generation=source_generation if operation != "doctor" else None,
+                    locks=pack_locks if operation != "doctor" else (),
+                    in_process_packs=in_process_packs,
+                    uv=uv,
+                )
         if prepare_packs is not None:
             prepare_packs(destination)
         files = tuple(

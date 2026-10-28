@@ -172,3 +172,13 @@ hardlinks. Package installation uses the matching uv link mode. The project
 and store must share a volume. A failed sync removes only its incomplete
 target; it never changes `current` or the existing generation. The generation
 interpreter, packages and retained constraints are hash-inventoried on success.
+
+When a source generation, explicit pack locks or in-process hosting ids are
+supplied, construction invokes the target interpreter's
+`dinkster_workers.pack_environment` subprocess in preflight, rebuild and doctor
+order before final inventory. All source locks remain mandatory unless explicitly
+replaced by `--lock`; the adapter owns lock parsing and provisioning. The caller
+supplies variant, worker protocol, measured own-environment size and shared store
+paths explicitly. A nonzero exit, conflicting pack, doctor drift or malformed
+single-object JSON result fails construction and removes the target. Supervisor
+never imports the engine's worker packages to perform these operations.
