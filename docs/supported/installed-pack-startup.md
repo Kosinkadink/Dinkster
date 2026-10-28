@@ -2,6 +2,11 @@
 
 - First-party pack inference dependencies install from a pinned source archive
   without requiring a Git executable.
+- Pack dependency provisioning can consume per-variant hashed locks, reject
+  shared-package conflicts and layer only extra wheels over an engine
+  interpreter without copying torch or opencv into the pack venv.
+- In-process pack dependencies stage only into a fresh, inactive generation;
+  their terminals use scratch venvs and doctor reports dependency drift.
 - The official pack artifact builder produces deterministic source archives and
   an existing registry artifact lock from committed sources, preserving the
   fifteen pack identities and node entry points without importing node code.
