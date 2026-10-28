@@ -12,6 +12,7 @@ import pytest
 import torch
 from dinkster_api.v1 import initialize_inference_process
 from dinkster_nodes_comfy.moge_panorama import MoGePanoramaInference
+from dinkster_schema import use_reporter
 from dinkster_values import decode_image_array, encode_image_array
 
 
@@ -138,6 +139,51 @@ def test_panorama_geometry_and_source_preservation(
 def test_panorama_rejects_batched_source_before_model_access() -> None:
     with pytest.raises(ValueError, match=r"takes a single image \(got batch of 2\)"):
         MoGePanoramaInference.execute(moge_model=SimpleNamespace(), image=torch.zeros(2, 8, 12, 3))
+
+
+def test_recursive_merge_reports_weighted_progress_to_completion(monkeypatch: Any) -> None:
+    panorama = controlled_runtime(monkeypatch, "all")
+    monkeypatch.setattr(
+        panorama,
+        "split_panorama_image",
+        lambda *args: torch.arange(1.0, 13.0)[:, None, None, None].expand(12, 3, 2, 3),
+    )
+
+    def merge(width: int, height: int, *args: Any, **callbacks: Any) -> Any:
+        assert (width, height) == (1024, 512)
+        # The pinned merge recurses before handling the current resolution.
+        for w, h in ((256, 128), (512, 256), (1024, 512)):
+            for _ in range(12):
+                callbacks["on_view"]()
+            callbacks["on_solve_start"](w, h)
+            callbacks["on_solve_end"](w, h)
+        return np.ones((height, width), np.float32), np.ones((height, width), bool)
+
+    monkeypatch.setattr(panorama, "merge_panorama_depth", merge)
+    reports: list[dict[str, Any]] = []
+    with use_reporter(lambda name, data, blob: reports.append(dict(data))):
+        MoGePanoramaInference.execute(
+            moge_model=PanoramaModel(),
+            image=torch.ones(1, 512, 1024, 3),
+            resolution_level=6,
+            batch_size=5,
+            refine_steps=2,
+        )
+
+    # Twelve inferred views, twelve views at each of three merge levels,
+    # then solve weights 1 + 4 + 16 give 69 total units.
+    assert {report["total"] for report in reports} == {69}
+    steps = [report["step"] for report in reports]
+    assert steps == sorted(steps)
+    assert steps[:3] == [5, 10, 12]
+    solves = [(index, report) for index, report in enumerate(reports) if "text" in report]
+    assert [(report["step"], report["text"]) for _, report in solves] == [
+        (24, "MoGe panorama merge: solving 256x128"),
+        (37, "MoGe panorama merge: solving 512x256"),
+        (53, "MoGe panorama merge: solving 1024x512"),
+    ]
+    assert [reports[index + 1]["step"] - report["step"] for index, report in solves] == [1, 4, 16]
+    assert steps[-1] == 69
 
 
 def test_actual_cpu_split_and_merge_normalizes_constant_radial_depth(monkeypatch: Any) -> None:
