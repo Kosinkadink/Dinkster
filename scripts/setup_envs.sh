@@ -36,8 +36,6 @@ else
     echo "==> dinkster-evidence not found - skipping optional dinkster-acceptance"
 fi
 
-dinkster_inference_requirement="dinkster-inference @ https://github.com/Kosinkadink/dinkster-inference/archive/9a9d0fd74ede9dea3058a0a63b2c5e9a8b00cb1c.zip"
-
 FORCE=0
 for arg in "$@"; do
     case "$arg" in
@@ -82,7 +80,7 @@ uv pip install --python .venv-torch/bin/python pytest packaging "numpy>=1.26" "s
     "simpleeval==1.0.8" \
     "onnxruntime==1.29.0" "opencv-python-headless==5.0.0.93" "pillow==12.0.0" \
     "safetensors==0.8.0" "sentencepiece==0.2.1" "tokenizers==0.23.1" \
-    "transformers==5.16.1" "$dinkster_inference_requirement" \
+    "transformers==5.16.1" \
     -e packages/dinkster-api \
     -e packages/dinkster-schema \
     -e packages/dinkster-values \
@@ -178,7 +176,6 @@ if [ "${CUDA_VISIBLE_DEVICES-unset}" != "" ] && [ "${CUDA_VISIBLE_DEVICES-unset}
         pytest numpy scipy torchsde tqdm pillow packaging \
         "safetensors==0.8.0" "sentencepiece==0.2.1" "tokenizers==0.23.1" \
         comfy-kitchen==0.2.40 comfy-aimdo==0.6.0 \
-        "$dinkster_inference_requirement" \
         -e packages/dinkster-api \
         -e packages/dinkster-schema \
         -e packages/dinkster-values \
