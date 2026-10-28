@@ -551,6 +551,8 @@ namespaces = [
     "UpscaleModelLoader",
     "LossGraphNode",
     "CurveEditor",
+    "CreateVideo",
+    "GetVideoComponents",
 ]
 
 [pack.sandbox]
