@@ -51,6 +51,7 @@ from typing import Any, cast
 from aiohttp import web
 from dinkster_assets import (
     AssetVault,
+    AssetWriter,
     LibraryStore,
     MountDef,
     MountsError,
@@ -161,6 +162,7 @@ from .reload_api import add_reload_routes, apply_reload
 from .remote_reconnect import RemoteReconnectSupervisor
 from .remotes import RemotesError, RemoteSpec, load_remotes
 from .resolver_api import add_resolver_index_routes
+from .setup import ensure_import_mount
 from .storelock import hold_lock
 from .watch import PackWatcher
 
@@ -1654,6 +1656,8 @@ def main(argv: list[str] | None = None) -> None:
     sandbox_mounts: list[MountDef] = []
     if args.library_root:
         library_root = Path(args.library_root)
+        if args.allow_mount_changes:
+            ensure_import_mount(library_root)
         mounts_config = library_root / "mounts.toml"
         mounts_snapshot = library_root / "worker-state" / "mounts-snapshot.json"
         mount_table = MountTable(
@@ -1938,13 +1942,24 @@ def main(argv: list[str] | None = None) -> None:
                 provenance,
                 region=args.resolver_region,
             )
+            import_mount = "imports"
+            if mount_service is not None:
+                configured = mount_service.table.config_defs()
+                if not any(mount.id == "imports" for mount in configured):
+                    import_mount = next(
+                        (mount.id for mount in configured if mount.path == root / "imports"),
+                        "imports",
+                    )
             library = ServerLibrary(
                 vault=vault,
                 store=LibraryStore(root / "library.sqlite"),
                 # Digest GETs fall through to ready mounts so a browsed
                 # file previews without ever being copied into the vault.
                 resolver=(mount_service.table if mount_service is not None else None),
+                local_resolver=(mount_service.table if mount_service is not None else None),
                 project_folders_for=(mount_service.project_context if mount_service else None),
+                upload_writer=AssetWriter(mount_service.table) if mount_service else None,
+                import_mount=import_mount,
                 # Acquisition leads (templates/asset distribution): where
                 # bytes for a digest can be obtained. Leads, never
                 # authorities - fetched bytes verify or land nowhere.

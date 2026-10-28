@@ -54,11 +54,15 @@ from dinkster_assets import (
     dump_mounts,
     is_asset_kind,
 )
+from dinkster_assets.identity import require_digest
+from dinkster_assets.integrity import verified_local_path
+from dinkster_assets.model import AssetRef
 from dinkster_assets.resolution import MountMaterialization, ResolutionStore
 from dinkster_protocol import AssetFolderContext
 from dinkster_schema import core_logger
 from dinkster_server import STATE_KEY, decode_cursor, encode_cursor
-from dinkster_server.auth import principal_for
+from dinkster_server.auth import principal_for, resolve_scope
+from dinkster_server.library import LIBRARY_KEY
 
 from .project_folders import ProjectFolders
 
@@ -325,6 +329,83 @@ async def handle_mounts_list(request: web.Request) -> web.Response:
 async def handle_mount_locations(request: web.Request) -> web.Response:
     _require_operator(request)
     service = request.app[MOUNTS_KEY]
+    allowed = {"scope", "project", "digest"}
+    if set(request.query) - allowed or any(
+        len(request.query.getall(field, [])) != 1 for field in request.query
+    ):
+        return _json_error(400, "unknown or repeated location query field")
+    body: dict[str, object] = {}
+    library = request.app.get(LIBRARY_KEY)
+    if library is not None:
+        body["vault"] = str(library.vault.root.resolve())
+    if "digest" in request.query:
+        scope = resolve_scope(principal_for(request), "assets:read", request.query.get("scope"))
+        project = request.query.get("project", "default")
+        try:
+            digest = require_digest(request.query["digest"])
+            context = service.project_context(project)
+            groups = (
+                await asyncio.to_thread(
+                    library.store.query_assets,
+                    scope,
+                    project=project,
+                    digest=digest,
+                    limit=1,
+                )
+                if library is not None
+                else []
+            )
+        except (AssetError, MountsError):
+            return _json_error(400, "invalid project or asset digest")
+        locations: list[dict[str, object]] = []
+        if groups and library is not None:
+            asset = groups[0][-1].asset
+            try:
+                root = library.vault.root.resolve()
+                path = library.vault.resolve(asset.digest)
+                if path is not None and path.resolve().is_relative_to(root):
+                    path = await asyncio.to_thread(
+                        AssetRef(
+                            asset.digest, asset.name, asset.size, resolver=library.vault
+                        ).local_path
+                    )
+                    path = path.resolve()
+                    if path.is_relative_to(root):
+                        locations.append({"storage": "vault", "path": str(path)})
+            except (AssetError, OSError):
+                pass
+            for virtual_path in dict.fromkeys(item.asset.virtual_path for item in groups[0]):
+                parts = virtual_path.split("/", 2)
+                if len(parts) != 3 or parts[0] != "mounts" or parts[1] not in context.mounts:
+                    continue
+                try:
+                    ref = await asyncio.to_thread(service.table.ref, virtual_path)
+                    if ref.digest != asset.digest:
+                        continue
+                    mount = service.table.get(parts[1])
+                    if mount is None:
+                        continue
+                    root = mount.path.resolve()
+                    path = (root / parts[2]).resolve()
+                    if not path.is_relative_to(root):
+                        continue
+                    path = await asyncio.to_thread(verified_local_path, path, asset.digest)
+                    if (
+                        service.table.get(parts[1]) != mount
+                        or parts[1] not in service.project_context(project).mounts
+                        or not path.resolve().is_relative_to(root)
+                    ):
+                        continue
+                except (AssetError, OSError):
+                    continue
+                location: dict[str, object] = {
+                    "storage": "mount",
+                    "mount": parts[1],
+                    "virtualPath": virtual_path,
+                    "path": str(path),
+                }
+                locations.append(location)
+        body["locations"] = locations
     table = service.settings_table
     rows = service.settings_descriptors()
     for row in rows:
@@ -336,9 +417,8 @@ async def handle_mount_locations(request: web.Request) -> web.Response:
         mount = service.table.get(str(row["id"]))
         if mount is not None:
             row["path"] = str(mount.path)
-    return web.json_response(
-        {"mounts": rows, "activeMounts": active_rows, **service.pending_changes()}
-    )
+    body.update(mounts=rows, activeMounts=active_rows, **service.pending_changes())
+    return web.json_response(body, headers={"Cache-Control": "no-store"})
 
 
 async def handle_mount_folder(request: web.Request) -> web.Response:
@@ -588,12 +668,7 @@ async def handle_output_mount_update(request: web.Request) -> web.Response:
 
 
 def _is_operator(request: web.Request) -> bool:
-    principal = principal_for(request)
-    return (
-        principal.kind == "human"
-        and principal.delegation_id is None
-        and principal.allows("settings:write")
-    )
+    return principal_for(request).is_operator
 
 
 def _require_operator(request: web.Request) -> None:
