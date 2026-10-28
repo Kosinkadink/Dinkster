@@ -230,6 +230,7 @@ def stage_external_wheels(
         "python",
         "interpreter",
         "wheels",
+        "replaces",
         "workerProtocol",
         "nvidia",
     )
@@ -244,9 +245,11 @@ def stage_external_wheels(
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("ascii")
         if manifest.get("id") != "sha256:" + hashlib.sha256(canonical).hexdigest():
             raise ValueError(f"base manifest id does not match its payload: {path}")
-        bases[variant] = {
-            (wheel["filename"], wheel["size"], wheel["sha256"]) for wheel in manifest["wheels"]
-        }
+        bases[variant] = (
+            {(wheel["filename"], wheel["size"], wheel["sha256"]) for wheel in manifest["wheels"]}
+            if manifest.get("parts")
+            else set()
+        )
 
     lock = tomllib.loads((root / "uv.lock").read_text(encoding="utf-8"))
     locked = {

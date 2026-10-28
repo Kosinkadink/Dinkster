@@ -505,6 +505,7 @@ def test_external_payload_omits_only_exact_members_shared_by_all_target_bases(
             "python": "3.14.0",
             "interpreter": {},
             "wheels": members,
+            "replaces": [row["name"] for row in members],
             "workerProtocol": 1,
             "nvidia": None,
         }
@@ -514,7 +515,7 @@ def test_external_payload_omits_only_exact_members_shared_by_all_target_bases(
                 json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("ascii")
             ).hexdigest()
         )
-        manifest["parts"] = []
+        manifest["parts"] = [{"filename": "base.7z.001", "size": 1, "sha256": "0" * 64}]
         manifest["signature"] = None
         path = tmp_path / f"{variant}.json"
         path.write_text(json.dumps(manifest))
@@ -531,6 +532,20 @@ def test_external_payload_omits_only_exact_members_shared_by_all_target_bases(
         assert {wheel.name for wheel in staged} == expected
         assert {wheel.name for wheel in output.iterdir()} == expected
         assert all(wheel.read_bytes() == (source / wheel.name).read_bytes() for wheel in staged)
+
+    plans = []
+    for path in manifests:
+        manifest = json.loads(path.read_text())
+        manifest["parts"] = []
+        plan = tmp_path / f"plan-{path.name}"
+        plan.write_text(json.dumps(manifest))
+        plans.append(plan)
+    output = tmp_path / "plans"
+    output.mkdir()
+    assert {
+        path.name
+        for path in stage_external_wheels(tmp_path, output, wheels, plans, {"cpu", "cuda"})
+    } == {wheel.name for wheel in wheels}
 
     with pytest.raises(ValueError, match="unexpected or duplicate base variant"):
         stage_external_wheels(tmp_path, tmp_path, [], manifests, {"cpu"})
