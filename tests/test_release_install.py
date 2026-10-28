@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -12,15 +13,22 @@ from pathlib import Path
 import pytest
 import yaml
 
-from scripts.build_release import build_source_archive, release_version, workspace_projects
+from scripts.build_release import (
+    build_source_archive,
+    development_version,
+    release_version,
+    versioned_sources,
+    workspace_projects,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_release_workflow_validates_tag_before_building_and_publishing() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
-    assert workflow[True] == {"push": {"tags": ["v*.*.*"]}}
-    assert set(workflow["jobs"]) == {"validation", "build", "install", "release"}
+    assert workflow[True]["push"] == {"branches": ["main"], "tags": ["v*.*.*"]}
+    assert ".github/workflows/release.yml" in workflow[True]["pull_request"]["paths"]
+    assert set(workflow["jobs"]) == {"validation", "build", "install", "release", "publish"}
     assert workflow["jobs"]["validation"] == {
         "uses": "./.github/workflows/ci.yml",
     }
@@ -35,6 +43,10 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert workflow["jobs"]["release"]["steps"][-1] == {
         "uses": "softprops/action-gh-release@v2",
         "with": {
+            "tag_name": "${{ steps.identity.outputs.tag }}",
+            "target_commitish": "${{ github.sha }}",
+            "prerelease": "${{ github.ref == 'refs/heads/main' }}",
+            "make_latest": "${{ github.ref != 'refs/heads/main' }}",
             "generate_release_notes": True,
             "fail_on_unmatched_files": True,
             "files": "dist/*",
@@ -42,12 +54,31 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     }
 
 
+def test_release_publication_is_tag_only_and_uses_trusted_publishing() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+    assert workflow["jobs"]["release"]["if"] == "github.event_name == 'push'"
+    publish = workflow["jobs"]["publish"]
+    assert publish["needs"] == "release"
+    assert publish["if"] == ("github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')")
+    assert publish["permissions"] == {"id-token": "write"}
+    assert publish["environment"]["name"] == "pypi"
+    action = publish["steps"][-1]
+    assert action["uses"] == "pypa/gh-action-pypi-publish@release/v1"
+    assert action["with"] == {"packages-dir": "publish/"}
+    assert "secrets." not in json.dumps(publish)
+    assert all(
+        "latest" in row["runner"]
+        for row in workflow["jobs"]["install"]["strategy"]["matrix"]["include"]
+    )
+
+
 def test_release_workflow_builds_all_wheels_and_checks_tag_metadata() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
     build = workflow["jobs"]["build"]
     commands = "\n".join(step.get("run", "") for step in build["steps"])
     assert "scripts/build_release.py" in commands
-    assert '--tag "$GITHUB_REF_NAME"' in commands
+    assert '--tag "$RELEASE_TAG"' in commands
+    assert "sha256sum -c SHA256SUMS" in commands
     assert "--identity-root" not in commands
     assert "uvx twine check dist/*.whl" in commands
     assert "pnpm --filter @dinkster/app build" in commands
@@ -90,9 +121,9 @@ def test_release_install_matrix_covers_supported_desktop_platforms() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
     assert workflow["jobs"]["install"]["strategy"]["matrix"] == {
         "include": [
-            {"os": "linux", "runner": "linux"},
-            {"os": "windows", "runner": "windows"},
-            {"os": "macos", "runner": "macos"},
+            {"os": "linux", "runner": "ubuntu-latest"},
+            {"os": "windows", "runner": "windows-latest"},
+            {"os": "macos", "runner": "macos-latest"},
         ]
     }
     bootstrap = workflow["jobs"]["install"]["steps"][0]
@@ -107,7 +138,8 @@ def test_release_install_matrix_covers_supported_desktop_platforms() -> None:
         for step in workflow["jobs"]["install"]["steps"]
         if step.get("name") == "Install and launch from wheels"
     )
-    assert "--no-deps" in command
+    assert '"$python" -m pip install' in command
+    assert '"$python" -m pip check' in command
     assert "--require-hashes" in command
     assert "--find-links" in command
     assert "--requirement" in command
@@ -269,6 +301,33 @@ def test_repository_versions_match_first_release_tag() -> None:
     assert frontend["repository"] == "Kosinkadink/Dinkster-Frontend"
     assert len(frontend["commit"]) == 40
     assert set(frontend) == {"repository", "commit"}
+
+
+def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock(
+    tmp_path: Path,
+) -> None:
+    version = development_version(ROOT)
+    assert version.startswith("0.0.2.dev")
+    assert version.endswith(
+        "+g" + subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    )
+    original_lock = hashlib.sha256((ROOT / "uv.lock").read_bytes()).hexdigest()
+    output = tmp_path / "wheels"
+    with versioned_sources(ROOT, version) as staged:
+        subprocess.run(
+            ["uv", "build", "--wheel", "--package", "dinkster", "--out-dir", str(output)],
+            cwd=staged,
+            check=True,
+        )
+    [wheel] = output.glob("*.whl")
+    with zipfile.ZipFile(wheel) as archive:
+        [name] = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
+        metadata = archive.read(name).decode()
+    assert f"Version: {version}\n" in metadata
+    assert f"Requires-Dist: dinkster-api=={version}\n" in metadata
+    assert f"Requires-Dist: dinkster-frontend=={version}\n" in metadata
+    assert "Requires-Dist: aiohttp>=3.10\n" in metadata
+    assert hashlib.sha256((ROOT / "uv.lock").read_bytes()).hexdigest() == original_lock
 
 
 def test_maintainer_source_archive_excludes_non_release_material(tmp_path: Path) -> None:

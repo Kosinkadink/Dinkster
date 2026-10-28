@@ -2,8 +2,16 @@ name: Versioned wheel release
 
 on:
   push:
+    branches: [main]
     tags:
       - "v*.*.*"
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - scripts/build_release.py
+      - scripts/release_sources.json
+      - scripts/verify_release_install.py
+      - tests/test_release_install.py
 
 permissions:
   contents: read
@@ -18,12 +26,13 @@ jobs:
 
   build:
     needs: validation
-    runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
           clean: true
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Select the pinned frontend source
         id: frontend
@@ -55,12 +64,17 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
       - name: Build the complete release contract
+        env:
+          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
         run: |
+          arguments=()
+          if [ -n "$RELEASE_TAG" ]; then arguments+=(--tag "$RELEASE_TAG"); fi
           uv run --no-project --python 3.12 scripts/build_release.py \
-            --tag "$GITHUB_REF_NAME" \
+            "${arguments[@]}" \
             --frontend-root .release/frontend \
             --frontend-dist .release/frontend/packages/app/dist
           uvx twine check dist/*.whl
+          (cd dist && sha256sum -c SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
           name: wheel-release
@@ -69,18 +83,18 @@ jobs:
 
   install:
     needs: build
-    runs-on: ${{ fromJSON(vars.CI_RUNNERS)[matrix.runner] }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: linux
-            runner: linux
+            runner: ubuntu-latest
           - os: windows
-            runner: windows
+            runner: windows-latest
           - os: macos
-            runner: macos
+            runner: macos-latest
     steps:
       - name: Expose Git Bash on Windows
         if: runner.os == 'Windows'
@@ -107,23 +121,24 @@ jobs:
       - name: Install and launch from wheels
         shell: bash
         run: |
-          uv venv --python 3.12 "$RUNNER_TEMP/dinkster-release-venv"
+          uv venv --seed --python 3.12 "$RUNNER_TEMP/dinkster-release-venv"
           python="$RUNNER_TEMP/dinkster-release-venv/bin/python"
           if [ "$RUNNER_OS" = Windows ]; then
             python="$RUNNER_TEMP/dinkster-release-venv/Scripts/python.exe"
           fi
-          uv pip install --python "$python" \
-            --no-deps \
+          "$python" -m pip install \
             --require-hashes \
             --find-links "$RUNNER_TEMP/dinkster-release" \
             --requirement "$RUNNER_TEMP/dinkster-release/constraints.txt"
+          "$python" -m pip check
           "$python" -m dinkster.cli --help
           "$python" -c "from dinkster_frontend import bundle_path; assert bundle_path().joinpath('index.html').is_file()"
           "$python" scripts/verify_release_install.py "$GITHUB_WORKSPACE" --python "$python"
 
   release:
     needs: install
-    runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
@@ -132,16 +147,55 @@ jobs:
           name: wheel-release
           path: dist
       - uses: actions/github-script@v7
+        id: identity
         with:
           script: |
+            const fs = require('fs');
+            const manifest = JSON.parse(fs.readFileSync('dist/release-manifest.json', 'utf8'));
+            if (manifest.commit !== context.sha) throw new Error('Release commit mismatch');
+            core.setOutput('tag', manifest.tag);
             try {
-              await github.rest.repos.getReleaseByTag({ ...context.repo, tag: context.ref.replace('refs/tags/', '') });
+              await github.rest.repos.getReleaseByTag({ ...context.repo, tag: manifest.tag });
               core.setFailed('Refusing to overwrite an existing release');
             } catch (error) {
               if (error.status !== 404) throw error;
             }
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.identity.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          prerelease: ${{ github.ref == 'refs/heads/main' }}
+          make_latest: ${{ github.ref != 'refs/heads/main' }}
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: dist/*
+
+  publish:
+    needs: release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/dinkster/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-release
+          path: dist
+      - name: Select the built workspace and frontend wheels
+        run: |
+          mkdir publish
+          python3 - <<'PY'
+          import json
+          import shutil
+          from pathlib import Path
+          manifest = json.loads(Path('dist/release-manifest.json').read_text())
+          for name in manifest['workspaceWheels']:
+              shutil.copy2(Path('dist') / name, 'publish')
+          PY
+      - name: Publish the release wheels with PyPI trusted publishing
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: publish/

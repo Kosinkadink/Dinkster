@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import re
 import shutil
 import subprocess
+import tarfile
 import tempfile
 import tomllib
 import zipfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 TAG_PATTERN = re.compile(r"v(?P<version>[0-9]+\.[0-9]+\.[0-9]+)")
@@ -53,6 +57,46 @@ def release_version(root: Path, tag: str) -> str:
     return version
 
 
+def development_version(root: Path) -> str:
+    _, version = project_metadata(root / "pyproject.toml")
+    major, minor, patch = (int(part) for part in version.split("."))
+    timestamp = subprocess.check_output(
+        ["git", "-C", str(root), "show", "-s", "--format=%ct", "HEAD"], text=True
+    ).strip()
+    return f"{major}.{minor}.{patch + 1}.dev{timestamp}+g{git_head(root)}"
+
+
+@contextmanager
+def versioned_sources(root: Path, version: str) -> Iterator[Path]:
+    """Build exact workspace dependencies without changing the checkout or lock."""
+    with tempfile.TemporaryDirectory(prefix="dinkster-wheel-source-") as directory:
+        staged = Path(directory)
+        archive = subprocess.check_output(
+            ["git", "-C", str(root), "archive", "--format=tar", "HEAD"]
+        )
+        with tarfile.open(fileobj=io.BytesIO(archive)) as source:
+            source.extractall(staged, filter="data")
+        projects = workspace_projects(staged)
+        for path in projects.values():
+            text = path.read_text(encoding="utf-8")
+            text = re.sub(r'(?m)^version = "[^"]+"$', f'version = "{version}"', text, count=1)
+            project = tomllib.loads(text)["project"]
+            dependencies = list(project.get("dependencies", []))
+            for optional in project.get("optional-dependencies", {}).values():
+                dependencies.extend(optional)
+            for dependency in dependencies:
+                match = re.fullmatch(r"([A-Za-z0-9_-]+)(\[[^]]+\])?[^;]*(;.*)?", dependency)
+                if match is not None and match[1] in projects:
+                    pinned = f"{match[1]}{match[2] or ''}=={version}{match[3] or ''}"
+                    text = text.replace(json.dumps(dependency), json.dumps(pinned))
+            if path == staged / "pyproject.toml":
+                text = text.replace(
+                    "dependencies = [", f'dependencies = [\n    "dinkster-frontend=={version}",', 1
+                )
+            path.write_text(text, encoding="utf-8")
+        yield staged
+
+
 def sha256(path: Path) -> str:
     with path.open("rb") as handle:
         return hashlib.file_digest(handle, "sha256").hexdigest()
@@ -81,9 +125,6 @@ def build_frontend_wheel(
 ) -> Path:
     if git_head(frontend_root) != expected_commit:
         raise ValueError("frontend source does not match its pinned release commit")
-    package = json.loads((frontend_root / "package.json").read_text(encoding="utf-8"))
-    if package.get("version") != version:
-        raise ValueError("frontend package version does not match the release tag")
     if not (frontend_dist / "index.html").is_file():
         raise ValueError("frontend distribution must contain index.html")
     with tempfile.TemporaryDirectory(prefix="dinkster-frontend-wheel-") as directory:
@@ -149,8 +190,7 @@ def write_constraints(root: Path, output: Path, wheels: list[Path], uv: str) -> 
                 uv,
                 "export",
                 "--locked",
-                "--package",
-                "dinkster",
+                "--all-packages",
                 "--no-dev",
                 "--no-emit-project",
                 "--no-emit-workspace",
@@ -174,20 +214,23 @@ def write_constraints(root: Path, output: Path, wheels: list[Path], uv: str) -> 
 def build(
     root: Path,
     output: Path,
-    tag: str,
+    tag: str | None,
     frontend_root: Path,
     frontend_dist: Path,
     *,
     uv: str = "uv",
 ) -> dict[str, object]:
-    version = release_version(root, tag)
+    version = release_version(root, tag) if tag else development_version(root)
     sources = json.loads((root / "scripts/release_sources.json").read_text(encoding="utf-8"))
+    if output.exists() and any(output.iterdir()):
+        raise ValueError("release output directory must be empty")
     output.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        [uv, "build", "--all-packages", "--wheel", "--out-dir", str(output)],
-        cwd=root,
-        check=True,
-    )
+    with versioned_sources(root, version) as staged:
+        subprocess.run(
+            [uv, "build", "--all-packages", "--wheel", "--out-dir", str(output)],
+            cwd=staged,
+            check=True,
+        )
     build_frontend_wheel(frontend_root, frontend_dist, version, sources["commit"], output, uv)
     wheels = sorted(output.glob("*.whl"))
     expected = set(workspace_projects(root)) | {"dinkster-frontend"}
@@ -199,10 +242,18 @@ def build(
     constraints = write_constraints(root, output, wheels, uv)
     source = build_source_archive(root, version, output)
     artifacts = sorted([*wheels, constraints, source], key=lambda path: path.name)
+    boundary = (root / "packages/dinkster-workers/src/dinkster_workers/boundary.py").read_text()
+    protocol = re.search(r"(?m)^PROTOCOL_VERSION = ([0-9]+)$", boundary)
+    if protocol is None:
+        raise ValueError("worker boundary must declare PROTOCOL_VERSION")
     manifest: dict[str, object] = {
+        "format": "dinkster.engine/1",
         "repository": "Kosinkadink/Dinkster",
-        "tag": tag,
+        "tag": tag or f"main-{git_head(root)}",
+        "commit": git_head(root),
         "version": version,
+        "workerProtocol": int(protocol[1]),
+        "workspaceWheels": [wheel.name for wheel in wheels],
         "artifacts": [
             {"name": path.name, "sha256": sha256(path), "size": path.stat().st_size}
             for path in artifacts
@@ -219,7 +270,7 @@ def build(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--tag", required=True)
+    parser.add_argument("--tag", help="vX.Y.Z; omit for a commit-identified development build")
     parser.add_argument("--frontend-root", type=Path, required=True)
     parser.add_argument("--frontend-dist", type=Path, required=True)
     parser.add_argument("--output", type=Path, default=Path("dist"))
