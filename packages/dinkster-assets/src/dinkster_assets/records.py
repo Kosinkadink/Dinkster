@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import json
 import math
+import os
+import re
 import sqlite3
 import threading
 import time
@@ -38,7 +40,9 @@ import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import cast
+from urllib.parse import urlsplit, urlunsplit
 
 import sqlalchemy as sa
 from alembic import command
@@ -46,8 +50,11 @@ from sqlalchemy.pool import StaticPool
 
 from .catalog import validate_virtual_path
 from .identity import AssetError, digest_bytes, digest_file, require_digest
+from .kind import require_asset_kind
 from .media import MediaClassification, classify_media, classify_media_file
+from .model import AssetRef
 from .schema import migration_config
+from .vault import AssetVault
 
 DEFAULT_SCOPE = "local"
 
@@ -170,6 +177,34 @@ class MediaGrant:
         object.__setattr__(self, "byte_size", _clean_byte_size(self.byte_size))
 
 
+@dataclass(frozen=True)
+class AssetObservation:
+    """Scoped ingest history, not authority to resolve its observed location."""
+
+    id: str
+    scope: str
+    asset: AssetRef
+    original_name: str
+    kind: str
+    origin: Mapping[str, str]
+    project: str
+    created: float
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "origin", MappingProxyType(dict(self.origin)))
+
+    def to_wire(self) -> dict[str, object]:
+        return {
+            "id": self.id,
+            "asset": self.asset.to_wire(),
+            "originalName": self.original_name,
+            "kind": self.kind,
+            "origin": dict(self.origin),
+            "project": self.project,
+            "created": self.created,
+        }
+
+
 class LibraryStore:
     """SQLite-backed scoped record store. Thread-safe: handlers call it
     via asyncio.to_thread, so one connection crosses threads behind a
@@ -215,6 +250,313 @@ class LibraryStore:
         with self._lock:
             self._database.close()
             self._engine.dispose()
+
+    def record_asset(
+        self,
+        scope: str,
+        asset: AssetRef,
+        *,
+        original_name: str,
+        kind: str,
+        origin: Mapping[str, str],
+        project: str = "default",
+        observation_id: str | None = None,
+        created: float | None = None,
+    ) -> AssetObservation:
+        scope = _clean_scope(scope)
+        if not original_name.strip():
+            raise AssetError("asset name must be a non-empty string")
+        original_name = original_name.strip()
+        require_asset_kind(kind)
+        if any(
+            not name or name in {".", ".."} or "/" in name or "\\" in name
+            for name in (original_name, asset.name)
+        ):
+            raise AssetError("asset names must be basenames")
+        if type(asset.size) is not int or asset.size < 0:
+            raise AssetError("asset byte size must be a nonnegative integer")
+        if asset.virtual_path:
+            validate_virtual_path(asset.virtual_path)
+        if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", project) is None:
+            raise AssetError("project must be a lowercase project id")
+        details = dict(origin)
+        fields = {
+            "upload": set[str](),
+            "download": {"url"},
+            "transfer": {"machine"},
+            "produced": {"job", "node"},
+            "unknown": set[str](),
+        }.get(details.get("kind", ""))
+        if (
+            fields is None
+            or set(details) != fields | {"kind"}
+            or any(not value.strip() for value in details.values())
+        ):
+            raise AssetError("invalid asset origin")
+        if details["kind"] == "download":
+            url = urlsplit(details["url"])
+            if url.scheme not in {"https", "http"} or not url.hostname:
+                raise AssetError("download origin requires an HTTP URL")
+            details["url"] = urlunsplit(
+                (url.scheme, url.netloc.rsplit("@", 1)[-1], url.path, "", "")
+            )
+        if observation_id is not None and re.fullmatch(r"[0-9a-f]{32}", observation_id) is None:
+            raise AssetError("invalid observation id")
+        if created is not None and (not math.isfinite(created) or created < 0):
+            raise AssetError("invalid observation time")
+        observation = AssetObservation(
+            observation_id or uuid.uuid4().hex,
+            scope,
+            asset,
+            original_name,
+            kind,
+            details,
+            project,
+            time.time() if created is None else created,
+        )
+        with self._lock, self._conn:
+            existing = self._conn.execute(
+                "SELECT * FROM asset_observations WHERE id = ?", (observation.id,)
+            ).fetchone()
+            if existing is not None:
+                if (
+                    existing["scope"] != scope
+                    or existing["digest"] != asset.digest
+                    or existing["original_name"] != original_name
+                    or existing["stored_name"] != asset.name
+                    or existing["kind"] != kind
+                    or existing["media_type"] != asset.media_type
+                    or existing["byte_size"] != asset.size
+                    or existing["virtual_path"] != asset.virtual_path
+                    or json.loads(existing["origin"]) != details
+                    or existing["project"] != project
+                    or existing["created"] != observation.created
+                ):
+                    raise AssetError("observation id already describes another publication")
+                return observation
+            self._conn.execute(
+                "INSERT INTO asset_observations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    observation.id,
+                    scope,
+                    asset.digest,
+                    original_name,
+                    asset.name,
+                    kind,
+                    asset.media_type,
+                    asset.size,
+                    asset.virtual_path,
+                    json.dumps(details),
+                    project,
+                    observation.created,
+                ),
+            )
+        return observation
+
+    def backfill_asset_observations(self, vault: AssetVault) -> None:
+        """Recover known scoped membership, never assign anonymous bytes to a scope."""
+        with self._lock:
+            grants = self._conn.execute(
+                "SELECT * FROM media_grants WHERE NOT EXISTS "
+                "(SELECT 1 FROM asset_observations WHERE "
+                "asset_observations.scope = media_grants.scope AND "
+                "asset_observations.digest = media_grants.digest)"
+            ).fetchall()
+            records = self._conn.execute(
+                "SELECT * FROM records WHERE NOT EXISTS "
+                "(SELECT 1 FROM asset_observations WHERE "
+                "asset_observations.scope = records.scope AND "
+                "asset_observations.digest = records.digest)"
+            ).fetchall()
+        candidates: list[tuple[str, AssetRef, str, str, float | None]] = []
+        for row in grants:
+            grant = _media_grant_from_row(row)
+            name = grant.digest.split(":", 1)[1]
+            candidates.append(
+                (
+                    grant.scope,
+                    AssetRef(grant.digest, name, grant.byte_size, grant.media_type),
+                    grant.kind,
+                    f"media:{grant.scope}:{grant.digest}:{grant.kind}",
+                    None,
+                )
+            )
+        for row in records:
+            name = row["name"]
+            if not name.strip() or name in {".", ".."} or "/" in name or "\\" in name:
+                name = row["digest"].split(":", 1)[1]
+            candidates.append(
+                (
+                    row["scope"],
+                    AssetRef(row["digest"], name, 0, row["media_type"]),
+                    "document/workflow"
+                    if row["media_type"] == "application/x-dinkster-workflow+json"
+                    else "document/file",
+                    f"record:{row['id']}:{row['digest']}",
+                    row["created"],
+                )
+            )
+        for scope, ref, kind, identity, created in candidates:
+            try:
+                with AssetRef(
+                    ref.digest, ref.name, ref.size, ref.media_type, resolver=vault
+                ).open() as handle:
+                    size = handle.seek(0, 2)
+                if identity.startswith("media:") and size != ref.size:
+                    continue
+                observation_id = uuid.uuid5(uuid.NAMESPACE_URL, identity).hex
+                with self._lock:
+                    if self._conn.execute(
+                        "SELECT 1 FROM asset_observations WHERE id = ?", (observation_id,)
+                    ).fetchone():
+                        continue
+                self.record_asset(
+                    scope,
+                    AssetRef(ref.digest, ref.name, size, ref.media_type),
+                    original_name=ref.name,
+                    kind=kind,
+                    origin={"kind": "unknown"},
+                    observation_id=observation_id,
+                    created=created,
+                )
+            except (AssetError, OSError):
+                continue
+
+    def unrecorded_vault_assets(
+        self,
+        vault: AssetVault,
+        *,
+        text: str = "",
+        limit: int = 50,
+        after: str | None = None,
+    ) -> list[AssetRef]:
+        """Operator inventory only: no scoped membership or fabricated ingest history."""
+        assets: list[AssetRef] = []
+        root = vault.root.resolve()
+        with self._lock:
+            known = {
+                row["digest"]
+                for row in self._conn.execute(
+                    "SELECT digest FROM records UNION SELECT digest FROM media_grants "
+                    "UNION SELECT digest FROM asset_observations"
+                ).fetchall()
+            }
+        for digest in sorted(set(vault.digests()), reverse=True):
+            if (
+                digest in known
+                or (after is not None and digest >= after)
+                or text.lower() not in digest
+            ):
+                continue
+            ref = AssetRef(digest, digest.split(":", 1)[1], 0, resolver=vault)
+            try:
+                path = vault.resolve(digest)
+                if path is None or not path.resolve().is_relative_to(root):
+                    continue
+                with ref.open() as handle:
+                    size = os.fstat(handle.fileno()).st_size
+            except (AssetError, OSError):
+                continue
+            assets.append(AssetRef(digest, ref.name, size))
+            if len(assets) >= max(1, limit):
+                break
+        return assets
+
+    def query_assets(
+        self,
+        scope: str,
+        *,
+        project: str = "default",
+        digest: str = "",
+        text: str = "",
+        kind: str = "",
+        origin: str = "",
+        since: float | None = None,
+        until: float | None = None,
+        limit: int = 50,
+        after: tuple[float, str] | None = None,
+    ) -> list[tuple[AssetObservation, ...]]:
+        """Page content identities while retaining every matching project's alias/origin."""
+        scope = _clean_scope(scope)
+        clauses = ["scope = ?", "project = ?"]
+        parameters: list[object] = [scope, project]
+        if digest:
+            clauses.append("digest = ?")
+            parameters.append(require_digest(digest))
+        matching = [
+            "matched.scope = asset_observations.scope",
+            "matched.project = asset_observations.project",
+            "matched.digest = asset_observations.digest",
+        ]
+        if text:
+            matching.append(
+                "(instr(lower(matched.original_name), lower(?)) > 0 OR "
+                "instr(lower(matched.stored_name), lower(?)) > 0 OR "
+                "EXISTS (SELECT 1 FROM json_each(matched.origin) "
+                "WHERE instr(lower(json_each.value), lower(?)) > 0))"
+            )
+            parameters.extend((text, text, text))
+        if kind:
+            matching.append("matched.kind = ?")
+            parameters.append(require_asset_kind(kind))
+        if origin:
+            matching.append("json_extract(matched.origin, '$.kind') = ?")
+            parameters.append(origin)
+        if since is not None:
+            matching.append("matched.created >= ?")
+            parameters.append(since)
+        if until is not None:
+            matching.append("matched.created <= ?")
+            parameters.append(until)
+        clauses.append(
+            "EXISTS (SELECT 1 FROM asset_observations matched WHERE " + " AND ".join(matching) + ")"
+        )
+        having = ""
+        if after is not None:
+            having = " HAVING (MAX(created) < ? OR (MAX(created) = ? AND digest < ?))"
+            parameters.extend((after[0], after[0], after[1]))
+        parameters.append(max(1, limit))
+        with self._lock, self._conn:
+            self._conn.execute("BEGIN")
+            selected = self._conn.execute(
+                "SELECT digest, MAX(created) AS latest FROM asset_observations WHERE "
+                + " AND ".join(clauses)
+                + " GROUP BY digest"
+                + having
+                + " ORDER BY latest DESC, digest DESC LIMIT ?",
+                parameters,
+            ).fetchall()
+            if not selected:
+                return []
+            digests = [row["digest"] for row in selected]
+            rows = self._conn.execute(
+                "SELECT * FROM asset_observations WHERE scope = ? AND project = ? AND digest IN ("
+                + ",".join("?" for _ in digests)
+                + ") ORDER BY created, id",
+                [scope, project, *digests],
+            ).fetchall()
+        grouped: dict[str, list[AssetObservation]] = {digest: [] for digest in digests}
+        for row in rows:
+            asset = AssetRef(
+                row["digest"],
+                row["stored_name"],
+                row["byte_size"],
+                row["media_type"],
+                row["virtual_path"],
+            )
+            grouped[asset.digest].append(
+                AssetObservation(
+                    row["id"],
+                    row["scope"],
+                    asset,
+                    row["original_name"],
+                    row["kind"],
+                    json.loads(row["origin"]),
+                    row["project"],
+                    row["created"],
+                )
+            )
+        return [tuple(grouped[digest]) for digest in digests]
 
     def put_dependencies(self, digest: str, dependencies: Sequence[Mapping[str, object]]) -> bool:
         """Persist one immutable, content-derived dependency manifest."""

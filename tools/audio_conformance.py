@@ -108,7 +108,11 @@ def measure(path: Path) -> dict[str, object]:
         "source_bytes": path.stat().st_size,
         "saved_bytes": saved.size,
     }
-    if report["rss_growth_bytes"] >= 64 * 1024 * 1024 or facts["frames"] != 480000:
+    if (
+        report["rss_growth_bytes"] >= 64 * 1024 * 1024
+        or facts["frames"] != 480000
+        or source_facts["frames"] != 345600000
+    ):
         raise AssertionError(report)
     return report
 
