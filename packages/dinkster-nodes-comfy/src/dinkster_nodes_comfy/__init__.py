@@ -134,6 +134,7 @@ from .morphology import MORPHOLOGY_NODES
 from .moss_image import MOSSImageControl, MOSSImageLayoutPrompt, TextEncodeMOSSImageEdit
 from .noise import NOISE_NODES
 from .noise_guidance import NOISE_GUIDANCE_NODES
+from .optical_flow import OpticalFlowLoader
 from .perpneg import PERPNEG_NODES
 from .photomaker import PhotoMakerEncode, PhotoMakerLoader
 from .pid_conditioning import PiDConditioning
@@ -264,6 +265,7 @@ COMFY_NODES = (
     *LATENT_OPERATION_NODES,
     *LATENT_UPSCALE_NODES,
     *LATENT_UPSCALE_LOADER_NODES,
+    OpticalFlowLoader,
     *MODEL_LATENT_NODES,
     *CLIP_NODES,
     *STYLE_MODEL_NODES,

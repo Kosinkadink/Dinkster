@@ -108,6 +108,9 @@
   WebP, 8/16-bit APNG with alpha, and ZIP PNG sequences; variable frame
   durations, animation loops, workflow metadata, and declared-count checks
 - PNG/APNG workflow metadata readable by ordinary image metadata readers
+- Native optical-flow loading from granted RAFT-large checkpoint assets, with
+  safe state-dict loading, float32 evaluation and ordinary resident model transport;
+  controlled CPU loader coverage does not certify real-model optical-flow quality
 - Native saver format fallback reports requested/effective choices through
   nonblocking value diagnostics, including isolated-worker execution
 - Asset-backed native audio loading to AUDIO (first audio stream of audio or
