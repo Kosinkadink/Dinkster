@@ -1924,7 +1924,7 @@ def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(tmp_pa
 
     claims = tuple(node.schema().node_type for node in COMFY_NODES)
     manifest = TESTS_DIR.parent / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
-    assert load_manifest(manifest).namespaces == claims
+    assert load_manifest(manifest).namespaces == ("devices", *claims)
     other_manifest = tmp_path / "dinkster-pack.toml"
     other_manifest.write_text(
         '[pack]\nname = "other-owner"\npublisher = "dinkster"\n'

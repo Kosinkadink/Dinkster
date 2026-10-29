@@ -80,6 +80,50 @@ def test_environment_options_remain_conditional_without_hiding_static_drift(
     assert result["conditional_options"] == {name: {parameter: declaration}}
 
 
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        [{"value": "cpu", "condition": "anything"}],
+        [{"pattern": ".*", "condition": "anything"}],
+        ["bad"],
+    ],
+)
+def test_conditional_metadata_cannot_remove_static_choices(declaration: object) -> None:
+    from tools.compare_nodes import compare_registry
+
+    result = compare_registry(
+        {
+            "nodes": [
+                {
+                    "class_name": "SelectModelDevice",
+                    "input_types": {
+                        "required": {
+                            "device": [["default", "cpu"], {"conditional_options": declaration}]
+                        }
+                    },
+                }
+            ]
+        },
+        {
+            "nodes": {
+                "SelectModelDevice": {
+                    "nodeType": "SelectModelDevice",
+                    "interface": [
+                        {
+                            "role": "input",
+                            "id": "device",
+                            "type": {"kind": "concrete", "types": ["COMBO"]},
+                            "widget": {"type": "COMBO", "options": ["default"]},
+                        }
+                    ],
+                }
+            }
+        },
+    )
+    assert not result["passed"]
+    assert "invalid conditional option declaration" in result["rows"][0]["differences"]
+
+
 def test_failed_reference_import_cannot_pass_an_incomplete_census() -> None:
     from tools.compare_nodes import compare_registry
 

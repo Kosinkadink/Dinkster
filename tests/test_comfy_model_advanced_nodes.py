@@ -150,14 +150,18 @@ def test_device_selector_options_follow_available_devices(
         schema = node.define_schema()
         widget = schema.inputs[1].widget
         assert isinstance(widget, ComboWidget)
+        provider = device_routing.device_choices()[
+            widget.remote_route.removeprefix("/api/choices/")
+        ]
         expected = (
             options
             if schema.node_type != "SelectVAEDevice"
             else [option for option in options if option != "cpu"]
         )
+        assert list(provider()) == expected
         assert [
             option.value if isinstance(option, ComboOption) else option for option in widget.options
-        ] == expected
+        ] == (["default"] if schema.node_type == "SelectVAEDevice" else ["default", "cpu"])
 
 
 _COLD_ATTENTION = """
@@ -171,8 +175,12 @@ class NoTensorRuntime(importlib.abc.MetaPathFinder):
 
 sys.meta_path.insert(0, NoTensorRuntime())
 from dinkster_nodes_comfy.model_advanced import ModelAttentionBackend
+from dinkster_nodes_comfy.device_routing import DEVICE_ROUTING_NODES, device_choices
 from dinkster_schema import schema_to_wire
 
+for node in DEVICE_ROUTING_NODES:
+    assert node.define_schema()
+assert all(callable(provider) for provider in device_choices().values())
 schema = schema_to_wire(ModelAttentionBackend.schema())
 assert schema
 widget = ModelAttentionBackend.schema().inputs[1].widget

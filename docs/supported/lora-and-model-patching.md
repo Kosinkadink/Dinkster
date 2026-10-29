@@ -22,8 +22,8 @@ or median blending while preserving the image edges.
 `SelectModelDevice`, `SelectCLIPDevice`, and `SelectVAEDevice` route their
 resident values to the selected default, CPU, or portable `gpu:N` device where
 supported. Unavailable devices leave the value unchanged; VAE routing does not
-offer CPU. Device choices include `gpu:N` for every visible device when more
-than one device is available in the inference environment.
+offer CPU. Device choices are fetched from the owning inference worker and include
+`gpu:N` for every visible device when more than one device is available there.
 
 `HypernetworkLoader` loads a bound hypernetwork asset and applies its key/value
 networks to self- and cross-attention on a cloned model, with adjustable strength.

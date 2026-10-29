@@ -318,6 +318,29 @@ def compare(row: dict[str, Any], schema: dict[str, Any]) -> list[str]:
     if any(item.get("role") not in INPUT_ROLES | {"output"} for item in schema["interface"]):
         return ["native interface contains an unsupported role or a variable output family"]
     expected = _reference_inputs(row["input_types"], bool(row.get("input_is_list")))
+    for item in expected:
+        if "conditional_options" not in item:
+            continue
+        allowed = None
+        if row["class_name"] == "ModelAttentionBackend" and item["name"] == "attention":
+            allowed = [
+                {
+                    "value": "comfy kitchen attention",
+                    "condition": "comfy_kitchen.int8_attention_is_available()",
+                }
+            ]
+        elif (
+            row["class_name"] in ("SelectModelDevice", "SelectCLIPDevice", "SelectVAEDevice")
+            and item["name"] == "device"
+        ):
+            allowed = [
+                {
+                    "pattern": r"gpu:[0-9]+",
+                    "condition": "len(comfy.model_management.get_all_torch_devices()) > 1",
+                }
+            ]
+        if allowed is None or item["conditional_options"] != allowed:
+            return [f"{item['name']}: invalid conditional option declaration"]
     if row.get("is_v3") or "v3_inputs" in row:
         declarations = row.get("v3_inputs")
         if not isinstance(declarations, list) or any(

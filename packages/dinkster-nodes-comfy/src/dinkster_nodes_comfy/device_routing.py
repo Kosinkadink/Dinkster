@@ -42,25 +42,28 @@ def _multigpu() -> Any:
     return importlib.import_module("dinkster_inference.multigpu")
 
 
-def _device_input(options: tuple[str, ...]) -> InputSpec:
+def _device_input(options: tuple[str, ...], choice_id: str) -> InputSpec:
     return InputSpec(
         "device",
         _COMBO,
         default="default",
-        widget=ComboWidget(tuple(ComboOption(option) for option in options)),
+        widget=ComboWidget(
+            tuple(ComboOption(option) for option in options),
+            remote_route=f"/api/choices/{choice_id}",
+        ),
     )
 
 
 def _device_options(*, include_cpu: bool = True) -> tuple[str, ...]:
-    try:
-        management = _model_management()
-    except ModuleNotFoundError as error:
-        if error.name not in {"torch", "dinkster_inference"}:
-            raise
-        # Host-only discovery has no inference environment to enumerate.
-        return ("default", "cpu") if include_cpu else ("default",)
-    options = management.get_gpu_device_options()
+    options = _model_management().get_gpu_device_options()
     return tuple(option for option in options if include_cpu or option != "cpu")
+
+
+def device_choices() -> Mapping[str, Any]:
+    return {
+        "devices.gpu": _device_options,
+        "devices.vae": lambda: _device_options(include_cpu=False),
+    }
 
 
 def _force_supported_compute_dtype(patcher: Any, device: object) -> None:
@@ -171,7 +174,10 @@ class SelectModelDevice(Node):
             node_type="SelectModelDevice",
             display_name="Select Model Device",
             category="advanced/multigpu",
-            inputs=(InputSpec("model", _MODEL), _device_input(_device_options())),
+            inputs=(
+                InputSpec("model", _MODEL),
+                _device_input(("default", "cpu"), "devices.gpu"),
+            ),
             outputs=(OutputSpec("MODEL", _MODEL),),
             occupies=("gpu",),
         )
@@ -207,7 +213,10 @@ class SelectCLIPDevice(Node):
             node_type="SelectCLIPDevice",
             display_name="Select CLIP Device",
             category="advanced/multigpu",
-            inputs=(InputSpec("clip", _CLIP), _device_input(_device_options())),
+            inputs=(
+                InputSpec("clip", _CLIP),
+                _device_input(("default", "cpu"), "devices.gpu"),
+            ),
             outputs=(OutputSpec("CLIP", _CLIP),),
             occupies=("gpu",),
         )
@@ -239,7 +248,10 @@ class SelectVAEDevice(Node):
             node_type="SelectVAEDevice",
             display_name="Select VAE Device",
             category="advanced/multigpu",
-            inputs=(InputSpec("vae", _VAE), _device_input(_device_options(include_cpu=False))),
+            inputs=(
+                InputSpec("vae", _VAE),
+                _device_input(("default",), "devices.vae"),
+            ),
             outputs=(OutputSpec("VAE", _VAE),),
             occupies=("gpu",),
         )
