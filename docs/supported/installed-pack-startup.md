@@ -92,8 +92,12 @@
   registry lock. Cached `<artifact-digest-hex>.zip` archives are hash-verified
   before their manifests are read in disposable scratch. It returns requirements,
   a missing-item plan and input revision/digest snapshots without creating a
-  generation, fetching content or changing workflow/library bytes. Only verified
-  project-vault assets count as materialized; resolver leads remain advisory.
+  generation, fetching content or changing project/vault bytes or logical library
+  records/revisions. SQLite may create or touch its ordinary WAL/shared-memory
+  coordination files. A concurrent committed workflow edit either refuses the
+  in-flight snapshot or is visible in the next plan. SQLite open or recovery
+  errors are reported without an unsafe fallback. Only verified project-vault
+  assets count as materialized; resolver leads remain advisory.
   Exact saved versions must be present in the selected release, even for packs
   already installed. Blocking errors produce nonzero status. First setup omits
   source generation; empty inputs need no catalog or archives. The optional

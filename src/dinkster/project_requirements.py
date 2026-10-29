@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -84,8 +85,9 @@ def load_project_requirements(
     if not (library / "vault").is_dir():
         raise RequirementError("project workflow vault is unavailable")
     vault = AssetVault(library / "vault")
-    store = LibraryStore(library / "library.sqlite", read_only=True)
+    store = None
     try:
+        store = LibraryStore(library / "library.sqlite", read_only=True)
         records: list[LibraryRecord] = []
         documents: list[object] = []
         for scope, record_id in sorted(selected):
@@ -114,8 +116,14 @@ def load_project_requirements(
             }
             for record in records
         )
+    except sqlite3.Error as exc:
+        raise RequirementError(
+            f"cannot open library read-only: {exc}; SQLite coordination files "
+            "must be accessible and WAL recovery must complete before planning"
+        ) from exc
     finally:
-        store.close()
+        if store is not None:
+            store.close()
 
 
 def plan_project_requirements(

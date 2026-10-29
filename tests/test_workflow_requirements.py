@@ -8,6 +8,8 @@ import json
 import os
 import subprocess
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 
@@ -35,7 +37,7 @@ from dinkster_values import TypeRegistry
 from dinkster_workers import InProcessWorker, PackSandboxNeeds, VisionProvider, load_manifest
 
 from dinkster.mounts_api import MountService, add_mount_routes
-from dinkster.project_requirements import load_project_requirements
+from dinkster.project_requirements import load_project_requirements, plan_project_requirements
 from dinkster.workflow_requirements import (
     PackRequirement,
     RequirementError,
@@ -587,6 +589,114 @@ def test_project_registered_records_are_scoped_verified_and_read_only(
     blob.write_bytes(b"x" * len(data))
     with pytest.raises(AssetError):
         load_project_requirements(tmp_path)
+
+
+def test_project_plan_observes_live_commits_and_reports_read_only_open_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from dinkster.workflow_requirements import main
+
+    library = tmp_path / "library"
+    vault = AssetVault(library / "vault")
+    documents = []
+    for content in (b"old asset", b"new asset"):
+        asset = AssetRef(digest_bytes(content), "model.bin", len(content)).to_wire()
+        document = {
+            "format": "dinkster-workflow",
+            "formatVersion": 1,
+            "graphs": {"main": {"nodes": {}, "valueSources": {"model": {"value": asset}}}},
+        }
+        data = json.dumps(document).encode()
+        identity = digest_bytes(data)
+        with vault.writer(identity) as writer:
+            writer.write(data)
+            writer.commit()
+        documents.append((identity, asset))
+    database = library / "library.sqlite"
+    store = LibraryStore(database)
+    record = store.create(
+        "local", "Workflow", documents[0][0], "application/x-dinkster-workflow+json"
+    )
+    store.close()
+    project = tmp_path / "project.json"
+    project.write_text(
+        json.dumps(
+            {"format": "dinkster.project/1", "workflows": [{"scope": "local", "id": record.id}]}
+        )
+    )
+    arguments = [
+        "project-plan",
+        "--project-root",
+        str(tmp_path),
+        "--variant",
+        "linux-cpu",
+        "--json",
+    ]
+    if os.name == "posix" and os.geteuid() != 0:
+        mode = library.stat().st_mode
+        library.chmod(0o555)
+        try:
+            assert main(arguments) == 1
+            output = capsys.readouterr()
+            assert output.out == ""
+            assert "cannot open library read-only" in output.err
+            assert "readonly database" in output.err
+            assert "SQLite coordination files" in output.err
+        finally:
+            library.chmod(mode)
+
+    store = LibraryStore(database)
+    try:
+        before = {path: path.read_bytes() for path in vault.root.rglob("*") if path.is_file()}
+        project_bytes = project.read_bytes()
+        planned = plan_project_requirements(tmp_path, variant="linux-cpu")
+        assert planned["plan"] == {
+            "packs": [],
+            "assets": [{**documents[0][1], "sources": []}],
+            "errors": [],
+        }
+        assert store.get("local", record.id) == record
+        assert project.read_bytes() == project_bytes
+        assert {path: path.read_bytes() for path in before} == before
+
+        reading, committed = threading.Event(), threading.Event()
+        read_bytes = AssetRef.read_bytes
+
+        def wait_for_commit(ref: AssetRef) -> bytes:
+            reading.set()
+            assert committed.wait(10), "writer did not commit"
+            return read_bytes(ref)
+
+        with monkeypatch.context() as patch, ThreadPoolExecutor(max_workers=1) as executor:
+            patch.setattr(AssetRef, "read_bytes", wait_for_commit)
+            pending = executor.submit(load_project_requirements, tmp_path)
+            try:
+                assert reading.wait(10), "planner did not read its workflow"
+                updated = store.update("local", record.id, record.revision, digest=documents[1][0])
+                assert updated is not None
+            finally:
+                committed.set()
+            with pytest.raises(RequirementError, match="inputs changed; request a new plan"):
+                pending.result(timeout=10)
+        next_plan = plan_project_requirements(tmp_path, variant="linux-cpu")
+        assert next_plan["plan"] == {
+            "packs": [],
+            "assets": [{**documents[1][1], "sources": []}],
+            "errors": [],
+        }
+        assert next_plan["inputs"] == [
+            {
+                "scope": "local",
+                "id": record.id,
+                "revision": updated.revision,
+                "digest": documents[1][0],
+            }
+        ]
+        assert store.get("local", record.id) == updated
+        assert project.read_bytes() == project_bytes
+        assert {path: path.read_bytes() for path in before} == before
+    finally:
+        store.close()
 
 
 def test_empty_project_requirements_do_not_create_library(
