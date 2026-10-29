@@ -504,6 +504,7 @@ class LocalAssetLibrary:
             path = root / relative
             if (
                 not path.is_file()
+                or path.suffix.lower() in PARTIAL_DOWNLOAD_EXTENSIONS
                 or not path.resolve(strict=True).is_relative_to(root)
                 or path == self._index_path.resolve()
             ):
