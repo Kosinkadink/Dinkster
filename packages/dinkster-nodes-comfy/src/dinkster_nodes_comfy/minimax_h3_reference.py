@@ -103,7 +103,7 @@ class MiniMaxH3ReferenceToVideo(Node):
             input_families=tuple(
                 InputFamilySpec(
                     family,
-                    (InputSpec(member, TypeExpr.concrete(kind)),),
+                    (InputSpec(member, TypeExpr.concrete(kind), required=False),),
                     min_members=0,
                     max_members=limit,
                     member_prefix=member + "_",
