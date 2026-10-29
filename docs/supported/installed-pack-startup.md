@@ -106,3 +106,10 @@
   `--generation` context does not require or create a target directory. Artifact
   admission, dependency preflight, provisioning and activation remain
   environment-owned operations.
+- `project-apply --yes --generation /absolute/target` consumes that exact approved
+  project-plan document on stdin. It revalidates workflow revisions and source
+  leads, verifies the target's admitted pack sources and variant, and materializes
+  only approved assets. Concurrent workflow edits abort publication; workflow
+  records are never rewritten. This core adapter does not activate a generation;
+  confirmed managed workflow updates still refuse until lifecycle integration is
+  complete.

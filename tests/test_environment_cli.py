@@ -153,19 +153,22 @@ def test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cach
         return {
             path.relative_to(tmp_path): path.read_bytes() if path.is_file() else None
             for path in tmp_path.rglob("*")
+            if path.name not in {"library.sqlite-wal", "library.sqlite-shm"}
         }
 
     before = snapshot()
-    for flags in ((), ("--plan",), ("--yes",)):
+    for flags in ((), ("--plan",)):
         code, result = _run(root, "update", *flags)
-        assert code == int(flags == ("--yes",)), result
+        assert code == 0, result
         assert result["current"] == 1
         actions = [line for line in result["plan"] if line.startswith("workflow assets: ")]
         assert len(actions) == 1
         assert json.loads(actions[0].split(": ", 1)[1]) == {**asset, "sources": []}
-        if code:
-            assert "execution is not available" in result["error"]
         assert snapshot() == before
+
+    code, refused = _run(root, "update", "--yes")
+    assert code == 1 and "execution is not available yet" in refused["error"]
+    assert snapshot() == before
 
     workflow_asset = AssetRef(digest_bytes(b"workflow bytes"), "workflow.bin", 14).to_wire()
     document = {
@@ -191,7 +194,8 @@ def test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cach
     (root / "project.json").write_text(json.dumps(settings))
     before = snapshot()
     code, combined = _run(root, "update", "--plan")
-    assert code == 1 and "side-effect-free library snapshots" in combined["error"]
+    assert code == 0, combined
+    assert len([line for line in combined["plan"] if line.startswith("workflow assets: ")]) == 2
     assert snapshot() == before
     settings.pop("workflows")
     (root / "project.json").write_text(json.dumps(settings))

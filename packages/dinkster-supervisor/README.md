@@ -264,15 +264,15 @@ It does not parse the registry lock or unpack sources; target-interpreter admiss
 still verifies identity and claims before sealing. A missing admission command
 refuses the generation rather than omitting sources. Automatic default dependency
 lock provisioning remains separate from source acquisition.
-Update plans with explicit additions call the active generation's
+Update plans with registered workflows or explicit additions call the active generation's
 `dinkster.workflow_requirements project-plan` adapter. Explicit catalog/cache
 inputs take precedence; otherwise selected-release sources must already exist in
 the cache with verified SHA256/size and BLAKE3 archive names. Planning never
 downloads or repairs source payloads. Pack and asset actions appear in the existing
 plan strings; unavailable saved versions refuse planning. The core adapter retains
-ownership of requirement derivation. Registered workflows refuse planning because
-the library reader can create SQLite WAL coordination files even in read-only
-mode. Confirmed execution still refuses these projects. First setup with requirements needs a runnable
+ownership of requirement derivation. SQLite read-only planning can touch WAL
+coordination files without changing logical records or project content.
+Confirmed managed execution still refuses these projects. First setup with requirements needs a runnable
 generation planner; channel/variant changes refuse migration. These commands are
 not a complete released-engine setup claim.
 

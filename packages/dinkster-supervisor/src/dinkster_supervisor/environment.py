@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import cast
 
 from .environment_artifacts import acquire, acquire_sources, discover
-from .environment_generations import build_generation, pack_operation, project_plan
+from .environment_generations import build_generation, pack_operation, project_operation
 from .environment_runtime import (
     engine_assignments,
     engine_status,
@@ -203,11 +203,12 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     result.update(
         current=current, plan=plan, status="planned", downloadBytes=size, store=str(store)
     )
+    workflow = None
+    workflow_catalog = None
+    workflow_catalog_digest = None
+    workflow_artifacts = None
+    workflow_applied = False
     if has_requirements:
-        if settings and settings.get("workflows"):
-            raise EnvironmentError(
-                "registered workflow planning requires side-effect-free library snapshots"
-            )
         if previous_root is None:
             raise EnvironmentError("workflow planning requires an existing generation interpreter")
         catalog_lock, source_artifacts = args.catalog_lock, args.artifacts
@@ -215,7 +216,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             cached_sources = acquire_sources(catalog, store, download=False)
             if cached_sources is not None:
                 catalog_lock, source_artifacts = cached_sources
-        workflow = project_plan(
+        workflow = project_operation(
             root,
             generation=previous_root,
             variant=variant,
@@ -231,6 +232,8 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         errors = cast("list[str]", actions["errors"])
         if errors:
             raise EnvironmentError(f"workflow planning refused: {'; '.join(errors)}")
+        workflow_catalog, workflow_artifacts = catalog_lock, source_artifacts
+        workflow_catalog_digest = content_digest(catalog_lock) if catalog_lock is not None else None
     if not _confirmed(args, plan):
         return 0
     if has_requirements:
@@ -241,6 +244,28 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         actual_store = pointer.read_bytes() if pointer.exists() else None
         if read_current(root) != current or actual != snapshot or actual_store != store_snapshot:
             raise EnvironmentError("project changed after planning; request a new plan")
+        if workflow is not None and previous_root is not None:
+            if (
+                workflow_catalog is not None
+                and content_digest(workflow_catalog) != workflow_catalog_digest
+            ):
+                raise EnvironmentError("target catalog changed after planning; request a new plan")
+            observed = project_operation(
+                root,
+                generation=root / "generations" / str(target)
+                if workflow_applied
+                else previous_root,
+                variant=variant,
+                catalog_lock=workflow_catalog,
+                artifacts=workflow_artifacts,
+            )
+            if any(observed[key] != workflow[key] for key in ("requirements", "inputs")):
+                raise EnvironmentError("workflow inputs changed after planning; request a new plan")
+            observed_actions = cast("dict[str, object]", observed["plan"])
+            if observed_actions["errors"] or (workflow_applied and any(observed_actions.values())):
+                raise EnvironmentError(
+                    "workflow requirements failed revalidation; request a new plan"
+                )
 
     registry = registry_path().parent
     registry.mkdir(parents=True, exist_ok=True)
@@ -324,6 +349,20 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     catalog_lock=catalog_lock,
                     artifacts=source_artifacts,
                 )
+                if workflow is not None and previous_root is not None:
+                    revalidate()
+                    applied = project_operation(
+                        root,
+                        generation=previous_root,
+                        variant=variant,
+                        catalog_lock=workflow_catalog,
+                        artifacts=workflow_artifacts,
+                        approved=workflow,
+                        target_generation=root / "generations" / str(target),
+                    )
+                    if any(cast("dict[str, object]", applied["plan"]).values()):
+                        raise EnvironmentError("workflow execution left unsatisfied requirements")
+                    workflow_applied = True
                 activate(root, journal, revalidate=revalidate)
             except Exception as exc:
                 replace(Journal.read(journal), error=str(exc)).write(journal)

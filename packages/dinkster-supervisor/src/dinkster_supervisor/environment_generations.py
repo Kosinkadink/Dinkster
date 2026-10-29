@@ -138,21 +138,23 @@ def pack_operation(
     return document
 
 
-def project_plan(
+def project_operation(
     root: Path,
     *,
     generation: Path,
     variant: str,
     catalog_lock: Path | None = None,
     artifacts: Path | None = None,
+    approved: dict[str, object] | None = None,
+    target_generation: Path | None = None,
 ) -> dict[str, object]:
-    """Read workflow requirements through the selected generation's core adapter."""
+    """Plan or apply workflow requirements through the generation's core adapter."""
     command = [
         str(interpreter(generation)),
         "-B",
         "-m",
         "dinkster.workflow_requirements",
-        "project-plan",
+        "project-apply" if approved is not None else "project-plan",
         "--project-root",
         str(root),
         "--source-generation",
@@ -165,8 +167,14 @@ def project_plan(
         command.extend(["--catalog-lock", str(catalog_lock)])
     if artifacts is not None:
         command.extend(["--artifacts", str(artifacts)])
+    if approved is not None:
+        if target_generation is None:
+            raise EnvironmentError("workflow execution requires a target generation")
+        command[0] = str(interpreter(target_generation))
+        command.extend(["--yes", "--generation", str(target_generation)])
     result = subprocess.run(
         command,
+        input=json.dumps(approved) if approved is not None else None,
         capture_output=True,
         text=True,
         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
