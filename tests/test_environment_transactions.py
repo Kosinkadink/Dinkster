@@ -20,6 +20,13 @@ from dinkster_supervisor.environment_state import (
     content_digest,
     interpreter,
     read_current,
+    write_document,
+)
+from dinkster_supervisor.environment_stores import (
+    register_project,
+    registry_path,
+    setup_registration,
+    volume,
 )
 from dinkster_supervisor.environment_transactions import (
     activate,
@@ -49,6 +56,82 @@ def _target(root: Path, number: int) -> Path:
         target / "generation.json"
     )
     return target
+
+
+@pytest.mark.parametrize("existing", [False, True])
+@pytest.mark.parametrize("later_project", [False, True])
+def test_interrupted_setup_metadata_recovery_preserves_cache_settings_and_other_projects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, existing: bool, later_project: bool
+) -> None:
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    root, store, other = (tmp_path / name for name in ("project", "store", "other"))
+    root.mkdir()
+    store.mkdir()
+    registry = registry_path()
+    registry.parent.mkdir(parents=True)
+    if existing:
+        (root / "project.json").write_bytes(b'{"custom": "preserve exact bytes"}\r\n')
+        (root / "store").write_bytes((str(store) + "\r\n").encode())
+        write_document(
+            store / "projects.json", {"format": "dinkster.store/1", "projects": [str(other)]}
+        )
+        write_document(
+            registry,
+            {
+                "format": "dinkster.stores/1",
+                "volumes": {volume(root): str(store), "999999": str(tmp_path / "unrelated")},
+            },
+        )
+    before = {
+        name: (root / name).read_bytes() if (root / name).exists() else None
+        for name in ("project.json", "store")
+    }
+    path = begin_setup(root, 1, free_port(), registration=setup_registration(root, store))
+    register_project(root, store)
+    (root / "project.json").write_text('{"custom": "setup write"}')
+    (root / "store").write_text(str(store) + "\n")
+    (store / "cached-wheel").write_bytes(b"keep verified cache")
+    script = """
+import os
+import sys
+from pathlib import Path
+from dinkster_supervisor import environment, environment_stores
+original = environment_stores.durable_unlink
+original_write = environment_stores.write_document
+def interrupt(path):
+    original(path)
+    os._exit(73)
+def interrupt_write(path, value):
+    original_write(path, value)
+    os._exit(73)
+environment_stores.durable_unlink = interrupt
+environment_stores.write_document = interrupt_write
+environment._recover_pending(Path(sys.argv[1]))
+"""
+    interrupted = subprocess.run([sys.executable, "-c", script, str(root)], timeout=30)
+    assert interrupted.returncode == 73
+    assert Journal.read(path).incomplete
+    if later_project:
+        register_project(other, store)
+    from dinkster_supervisor.environment import _recover_pending
+
+    _recover_pending(root)
+    _recover_pending(root)
+    assert Journal.read(path).stage == "rolled-back"
+    assert (store / "cached-wheel").read_bytes() == b"keep verified cache"
+    assert not (root / "current").exists()
+    for name, contents in before.items():
+        assert ((root / name).read_bytes() if (root / name).exists() else None) == contents
+    if existing or later_project:
+        assert json.loads((store / "projects.json").read_bytes())["projects"] == [str(other)]
+        expected = {volume(root): str(store)}
+        if existing:
+            expected["999999"] = str(tmp_path / "unrelated")
+        assert json.loads(registry.read_bytes())["volumes"] == expected
+    else:
+        assert not (store / "projects.json").exists()
+        assert not registry.exists()
 
 
 @pytest.mark.parametrize("interruption", [None, "before-switch", "after-switch"])

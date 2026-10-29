@@ -108,8 +108,10 @@ to absolute data-directory paths. An unregistered volume defaults to
 volume or overlapping project/store paths is refused. A store's `projects.json`
 uses `dinkster.store/1` and a sorted `projects` array of absolute project roots.
 These references are atomically updated under registry/store/project OS locks
-after confirmation and journal publication. Failed installs may retain references
-for recovery and safe garbage collection; they do not authorize data deletion.
+after confirmation and journal publication. Failed initial setup rolls back its
+own metadata additions, preserving cached bytes, pre-existing settings and other
+projects' references. Failed updates keep the existing project's references and
+active generation; they do not authorize data deletion.
 
 ## Channels
 
@@ -309,6 +311,15 @@ Initial setup records `previous: null` and the requested initial binding before
 construction. It uses the same health-before-pointer activation path. Recovery
 stops the candidate, removes any published target pointer and incomplete target,
 and retains a rolled-back journal without selecting a nonexistent predecessor.
+CLI setup journals additionally carry `setupRegistration`: absolute `store` and
+`registry` paths, prior `project` and `pointer` text (nullable), and boolean
+`addedProject`, `addedVolume`, `hadProjects` and `hadRegistry` flags. Recovery
+durably restores prior local metadata, removes only the project reference it
+added, and removes a newly added volume mapping only when it still names that
+store and no projects remain. Cached content and persistent lock inodes remain;
+a fresh setup may choose another store after rollback. Recovery holds registry,
+store and project locks in the same order as registration, and terminal journal
+publication follows durable metadata restoration.
 Every managed engine receives its explicit absolute `--generation` path, so
 candidate startup and rollback do not follow the current pointer for sources.
 

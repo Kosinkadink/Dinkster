@@ -45,6 +45,9 @@
   assignment before confirmation. Registered workflow/addition execution and
   automatic release source acquisition are not connected yet; channel or variant
   migration is refused.
+- Failed initial setup releases its own metadata and store registrations so a
+  retry can select another data directory. Cached content, pre-existing settings,
+  other projects' references and the diagnostic journal remain intact.
 - Managed workflow plans default to the selected generation's recorded variant.
   A conflicting launch variant refuses startup; an explicit request variant
   remains a read-only compatibility comparison, not an environment switch.

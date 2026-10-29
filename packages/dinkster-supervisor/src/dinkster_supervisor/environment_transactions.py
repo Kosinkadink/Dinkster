@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import shutil
 import socket
 import time
@@ -19,11 +18,25 @@ from .environment_runtime import (
     stop_engine,
     validate_assignment,
 )
-from .environment_state import EnvironmentError, Generation, Journal, read_current, set_current
+from .environment_state import (
+    EnvironmentError,
+    Generation,
+    Journal,
+    durable_unlink,
+    read_current,
+    set_current,
+)
+from .environment_stores import restore_setup_registration
 
 
 def begin_setup(
-    root: Path, target: int, port: int, gpus: tuple[str, ...] = (), *, name: str = "main"
+    root: Path,
+    target: int,
+    port: int,
+    gpus: tuple[str, ...] = (),
+    *,
+    name: str = "main",
+    registration: dict[str, object] | None = None,
 ) -> Path:
     """Record the initial binding before construction; caller holds the writer lock."""
     if read_current(root) is not None:
@@ -42,7 +55,9 @@ def begin_setup(
         "running": True,
     }
     path = root / "journal" / f"{time.time_ns()}.json"
-    Journal("setup", None, target, "planned", bindings=(binding,)).write(path)
+    Journal(
+        "setup", None, target, "planned", bindings=(binding,), setup_registration=registration
+    ).write(path)
     return path
 
 
@@ -133,7 +148,7 @@ def activate(root: Path, path: Path, *, revalidate: Callable[[], None]) -> None:
 
 
 def recover_activation(root: Path, path: Path) -> None:
-    """Restore previous current and processes before completing another mutation."""
+    """Restore state; caller holds project and any recorded registry/store locks."""
     journal = Journal.read(path)
     if not journal.incomplete:
         return
@@ -146,13 +161,7 @@ def recover_activation(root: Path, path: Path) -> None:
     for binding in journal.bindings:
         stop_engine(root, cast("str", binding["name"]), generation=journal.target)
     if journal.previous is None:
-        (root / "current").unlink(missing_ok=True)
-        if os.name != "nt":
-            directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
+        durable_unlink(root / "current")
     else:
         set_current(root, journal.previous)
     for binding in journal.bindings:
@@ -167,4 +176,6 @@ def recover_activation(root: Path, path: Path) -> None:
     target_root = root / "generations" / str(journal.target)
     if journal.operation != "rollback" and target_root.exists():
         shutil.rmtree(target_root)
+    if journal.setup_registration is not None:
+        restore_setup_registration(root, journal.setup_registration)
     replace(journal, stage="rolled-back").write(path)

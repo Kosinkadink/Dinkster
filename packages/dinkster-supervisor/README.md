@@ -269,7 +269,11 @@ the same volume reuse the registered store. A conflicting `--data`, cross-volume
 store or overlapping project/data paths is refused. The store's `projects.json`
 has `{format: "dinkster.store/1", projects: ["<absolute project root>"]}`.
 Registry, store and project writers hold OS locks while registering references.
-Failed installs may retain these references for safe diagnosis and retry.
+Failed initial setup restores prior project metadata and removes only the store
+and volume references that setup added. Cached bytes, pre-existing settings,
+other projects' references and the diagnostic journal remain. A retry can select
+another `--data` when no other project references the old store. Failed updates
+keep the existing project's references and active generation.
 Identity/health/shutdown requests use direct loopback connections, never inherited
 HTTP proxies.
 
@@ -327,10 +331,18 @@ A rollback target is retained even if its activation fails. Ambiguous process
 identity leaves the journal incomplete rather than killing an unrelated process.
 
 Initial activation uses the same journal with operation `setup` and previous
-`null`. `begin_setup` records only the requested binding, port and devices before
+`null`. `begin_setup` records the requested binding, port and devices before
 construction. Activation publishes `current` only after target health succeeds.
 Interrupted setup stops its candidate, removes any target pointer and incomplete
 tree, and retains the rolled-back journal; it does not invent a prior generation.
+CLI setup also records `setupRegistration`: absolute `store` and `registry` paths,
+prior project settings text in `project` and store-pointer text in `pointer`
+(each nullable), and boolean `addedProject`, `addedVolume`, `hadProjects` and
+`hadRegistry` flags. Recovery restores local metadata exactly, subtracts only its
+own project reference, and removes its volume mapping only if it still names that
+store and no projects remain. It locks registry, store and project in that order;
+content replacements and removals are durable before the journal becomes terminal.
+Cache directories and persistent OS-lock inodes are not deleted.
 
 Managed supervisors also use a private per-instance lifecycle directory at
 `runtime/<generation>/<name>.process/<sha256 of instance>/`. Its persistent

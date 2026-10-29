@@ -111,6 +111,17 @@ def write_document(path: Path, value: dict[str, object]) -> None:
     atomic_write(path, json.dumps(value, indent=2, sort_keys=True, ensure_ascii=True) + "\n")
 
 
+def durable_unlink(path: Path) -> None:
+    """Flush removal even when retrying an interrupted, unsynced unlink."""
+    path.unlink(missing_ok=True)
+    if os.name != "nt":
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+
+
 def generation_number(value: object) -> int:
     if type(value) is not int or value < 1:
         raise EnvironmentError("generation must be a positive integer")
@@ -347,6 +358,7 @@ class Journal:
     stage: str
     error: str | None = None
     bindings: tuple[dict[str, object], ...] = ()
+    setup_registration: dict[str, object] | None = None
 
     @classmethod
     def read(cls, path: Path) -> Journal:
@@ -416,6 +428,23 @@ class Journal:
         previous = value.get("previous")
         if previous == value.get("target") and operation in {"update", "rollback", "repair"}:
             raise EnvironmentError("activation journal must name distinct generations")
+        registration = value.get("setupRegistration")
+        if registration is not None:
+            if operation != "setup" or previous is not None or not isinstance(registration, dict):
+                raise EnvironmentError("registration snapshot requires initial setup")
+            registration = cast("dict[str, object]", registration)
+            for key in ("store", "registry"):
+                text = registration.get(key)
+                if not isinstance(text, str) or not Path(text).is_absolute():
+                    raise EnvironmentError("registration snapshot requires absolute paths")
+            for key in ("project", "pointer"):
+                if key not in registration or (
+                    registration[key] is not None and not isinstance(registration[key], str)
+                ):
+                    raise EnvironmentError("registration snapshot requires prior metadata text")
+            for key in ("addedProject", "addedVolume", "hadProjects", "hadRegistry"):
+                if type(registration.get(key)) is not bool:
+                    raise EnvironmentError("registration snapshot requires reference flags")
         return cls(
             operation,
             None if previous is None else generation_number(previous),
@@ -423,6 +452,7 @@ class Journal:
             stage,
             error,
             tuple(checked),
+            registration,
         )
 
     @property
@@ -441,4 +471,6 @@ class Journal:
             value["error"] = self.error
         if self.bindings:
             value["bindings"] = list(self.bindings)
+        if self.setup_registration is not None:
+            value["setupRegistration"] = self.setup_registration
         write_document(path, value)

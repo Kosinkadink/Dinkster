@@ -6,7 +6,13 @@ import os
 from pathlib import Path
 from typing import cast
 
-from .environment_state import EnvironmentError, read_document, write_document
+from .environment_state import (
+    EnvironmentError,
+    atomic_write,
+    durable_unlink,
+    read_document,
+    write_document,
+)
 
 
 def registry_path() -> Path:
@@ -26,8 +32,8 @@ def volume(path: Path) -> str:
     return str(parent.stat().st_dev)
 
 
-def registered_stores() -> dict[str, str]:
-    path = registry_path()
+def registered_stores(path: Path | None = None) -> dict[str, str]:
+    path = path or registry_path()
     if not path.exists():
         return {}
     document = read_document(path)
@@ -88,3 +94,51 @@ def register_project(root: Path, store: Path) -> None:
     entries = registered_stores()
     entries[volume(root)] = str(store)
     write_document(registry_path(), {"format": "dinkster.stores/1", "volumes": entries})
+
+
+def setup_registration(root: Path, store: Path) -> dict[str, object]:
+    """Snapshot only this setup's metadata ownership while all writer locks are held."""
+    registry = registry_path()
+    return {
+        "store": str(store),
+        "registry": str(registry),
+        "project": (root / "project.json").read_bytes().decode("utf-8")
+        if (root / "project.json").exists()
+        else None,
+        "pointer": (root / "store").read_bytes().decode("utf-8")
+        if (root / "store").exists()
+        else None,
+        "addedProject": str(root) not in store_projects(store),
+        "addedVolume": volume(root) not in registered_stores(),
+        "hadProjects": (store / "projects.json").exists(),
+        "hadRegistry": registry.exists(),
+    }
+
+
+def restore_setup_registration(root: Path, snapshot: dict[str, object]) -> None:
+    """Undo this setup's additions without restoring stale shared-document snapshots."""
+    store = Path(cast("str", snapshot["store"]))
+    registry = Path(cast("str", snapshot["registry"]))
+    projects = store_projects(store)
+    if snapshot["addedProject"]:
+        projects = [project for project in projects if project != str(root)]
+        if projects or snapshot["hadProjects"]:
+            write_document(
+                store / "projects.json", {"format": "dinkster.store/1", "projects": projects}
+            )
+        else:
+            durable_unlink(store / "projects.json")
+    entries = registered_stores(registry)
+    device = volume(root)
+    if snapshot["addedVolume"] and not projects and entries.get(device) == str(store):
+        del entries[device]
+    if entries or snapshot["hadRegistry"]:
+        write_document(registry, {"format": "dinkster.stores/1", "volumes": entries})
+    else:
+        durable_unlink(registry)
+    for key, name in (("project", "project.json"), ("pointer", "store")):
+        previous = snapshot[key]
+        if previous is None:
+            durable_unlink(root / name)
+        else:
+            atomic_write(root / name, cast("str", previous))

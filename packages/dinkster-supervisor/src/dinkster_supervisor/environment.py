@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -29,7 +30,7 @@ from .environment_state import (
     write_document,
     writer_lock,
 )
-from .environment_stores import register_project, registry_path, select_store
+from .environment_stores import register_project, registry_path, select_store, setup_registration
 from .environment_transactions import activate, begin_activation, begin_setup, recover_activation
 
 
@@ -114,17 +115,29 @@ def _confirmed(args: argparse.Namespace, plan: list[str]) -> bool:
     return False
 
 
-def _recover_pending(root: Path) -> None:
+def _recover_pending(root: Path, *, locked_store: Path | None = None) -> None:
     for path in sorted((root / "journal").glob("*.json")):
-        if Journal.read(path).incomplete:
+        journal = Journal.read(path)
+        if not journal.incomplete:
+            continue
+        with ExitStack() as locks:
+            if journal.setup_registration is not None:
+                registry = Path(cast("str", journal.setup_registration["registry"])).parent
+                store = Path(cast("str", journal.setup_registration["store"]))
+                if locked_store is None:
+                    locks.enter_context(writer_lock(registry))
+                    locks.enter_context(writer_lock(store))
+                elif store != locked_store or registry != registry_path().parent:
+                    raise EnvironmentError("pending setup uses another store; retry recovery")
+            if locked_store is None:
+                locks.enter_context(writer_lock(root))
             recover_activation(root, path)
 
 
 def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root).resolve()
     if args.yes and root.is_dir():
-        with writer_lock(root):
-            _recover_pending(root)
+        _recover_pending(root)
     settings = _settings(root)
     current = read_current(root)
     if args.operation == "setup" and current is not None:
@@ -207,7 +220,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
             raise EnvironmentError("store changed after planning; request a new plan")
         store.mkdir(parents=True, exist_ok=True)
         with writer_lock(store), writer_lock(root):
-            _recover_pending(root)
+            _recover_pending(root, locked_store=store)
             revalidate()
             target = (
                 max(
@@ -221,7 +234,14 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 + 1
             )
             journal = (
-                begin_setup(root, target, port, tuple(args.gpu), name=args.engine)
+                begin_setup(
+                    root,
+                    target,
+                    port,
+                    tuple(args.gpu),
+                    name=args.engine,
+                    registration=setup_registration(root, store),
+                )
                 if current is None
                 else begin_activation(root, target, "update")
             )
@@ -306,8 +326,8 @@ def _rollback(args: argparse.Namespace, result: dict[str, object]) -> int:
         if read_current(root) != current or (root / "project.json").read_bytes() != snapshot:
             raise EnvironmentError("project changed after planning; request a new plan")
 
+    _recover_pending(root)
     with writer_lock(root):
-        _recover_pending(root)
         revalidate()
         path = begin_activation(root, target, "rollback")
         activate(root, path, revalidate=revalidate)
@@ -347,8 +367,10 @@ def _runtime(args: argparse.Namespace, result: dict[str, object]) -> int:
     if not _confirmed(args, plan):
         result["status"] = "planned"
         return 0
+    _recover_pending(root)
     with writer_lock(root):
-        _recover_pending(root)
+        if any(Journal.read(path).incomplete for path in (root / "journal").glob("*.json")):
+            raise EnvironmentError("project changed after recovery; retry the operation")
         if (
             read_current(root) != current
             or (root / "project.json").read_bytes() != snapshot

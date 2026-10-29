@@ -324,6 +324,22 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
     assert not root.exists() and not store.exists() and not (tmp_path / "user-data").exists()
     root.mkdir()
     (root / "queue.json").write_text('{"running": [], "queued": []}')
+    failed_store = tmp_path / "failed-store"
+    engine_wheel = next((mirror / "engine").rglob("*.whl"))
+    original_wheel = engine_wheel.read_bytes()
+    engine_wheel.write_bytes(b"damaged release wheel")
+    failed_arguments = list(arguments)
+    failed_arguments[failed_arguments.index(str(store))] = str(failed_store)
+    code, failed = _run(root, *failed_arguments, "--yes")
+    assert code == 1 and failed["status"] == "error"
+    assert not (root / "project.json").exists() and not (root / "store").exists()
+    assert not (failed_store / "projects.json").exists()
+    assert not (tmp_path / "user-data/dinkster/stores.json").exists()
+    assert any(path.is_file() for path in (failed_store / "bases").rglob("*"))
+    failed_journal = next((root / "journal").glob("*.json"))
+    assert Journal.read(failed_journal).stage == "rolled-back"
+    assert Journal.read(failed_journal).error
+    engine_wheel.write_bytes(original_wheel)
     code, installed = _run(root, *arguments, "--yes")
     assert code == 0, installed
     try:
