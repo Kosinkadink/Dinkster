@@ -294,8 +294,7 @@ def test_persistent_diagnostics_transport_and_cache_replay(
         register_semantic_types(registry)
         manifest = tmp_path / "dinkster-pack.toml"
         manifest.write_text(
-            '[pack]\nname = "diagnostic"\npublisher = "dinkster"\n'
-            "[pack.entry]\n"
+            '[pack]\nname = "diagnostic"\n[pack.entry]\n'
             'nodes = "tests.test_value_diagnostics:DIAGNOSTIC_NODES"\n'
             'types = "tests.test_media_contract:register_semantic_types"\n'
         )

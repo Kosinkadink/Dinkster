@@ -6,9 +6,6 @@ import string
 from collections.abc import Mapping, Sequence
 
 from dinkster_api.v1 import (
-    CORE_BOOLEAN,
-    CORE_FLOAT,
-    CORE_INT,
     InputFamilySpec,
     InputSpec,
     Node,
@@ -49,7 +46,7 @@ class MathExpressions(Node):
             input_families=(
                 InputFamilySpec(
                     "values",
-                    TypeExpr.union(CORE_FLOAT, CORE_INT, CORE_BOOLEAN),
+                    TypeExpr.union("core.float", "core.int", "core.boolean"),
                     member_names=tuple(string.ascii_lowercase),
                 ),
             ),
@@ -70,10 +67,10 @@ class MathExpressions(Node):
             type_id = output.type.runtime_type_id()
             assert type_id is not None
             results[output.id] = {
-                "FLOAT": floating,
-                "INT": integer,
-                "BOOLEAN": boolean,
-                "STRING": str(floating),
+                "core.float": floating,
+                "core.int": integer,
+                "core.boolean": boolean,
+                "core.string": str(floating),
             }[type_id]
         return results
 

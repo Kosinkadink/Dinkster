@@ -27,9 +27,9 @@ Properties that make it a value and not a sentinel:
 
 from __future__ import annotations
 
-from .builtin_types import CORE_ABSENT
 from .model import PyObjPayload, Value, ValueMeta, stable_hash
 
+CORE_ABSENT = "core.absent"
 """Type id of absent envelopes. Registered as a core type; payload is None."""
 
 ABSENT_ORIGIN_META_KEY = "absent.origin"

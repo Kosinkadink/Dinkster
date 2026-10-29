@@ -115,12 +115,10 @@ from .model import (
 from .names import (
     NAME_MAX,
     RESERVED_NAMESPACES,
-    canonical_claim,
     canonical_name,
     claim_covers,
     claims_conflict,
     reserved_root,
-    validate_claim,
     validate_name,
 )
 from .node import (
@@ -293,7 +291,6 @@ __all__ = [
     "comfy_group_registry_from_wire",
     "comfy_group_registry_problems",
     "comfy_group_registry_to_wire",
-    "canonical_claim",
     "canonical_name",
     "claim_covers",
     "claims_conflict",
@@ -323,7 +320,6 @@ __all__ = [
     "type_expr_to_wire",
     "use_capture_budget",
     "use_reporter",
-    "validate_claim",
     "validate_name",
     "validate_remote_choice_authority",
     "validate_replacement_references",

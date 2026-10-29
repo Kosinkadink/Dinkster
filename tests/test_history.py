@@ -37,7 +37,7 @@ from dinkster_server.queue import Job, JobKey, JobQueue
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 
-STRING = TypeExpr.concrete("STRING")
+STRING = TypeExpr.concrete("core.string")
 
 SOURCE_DIGEST = "blake3:" + "ab" * 32
 

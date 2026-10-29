@@ -1,4 +1,4 @@
-"""Torch-free proofs for the MODEL3D GLB byte contract."""
+"""Torch-free proofs for the dinkster.model3d GLB byte contract."""
 
 from __future__ import annotations
 

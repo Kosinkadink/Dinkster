@@ -10,7 +10,6 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
-from dinkster_api.v1 import AUDIO_TYPE
 from dinkster_nodes_foundation import FOUNDATION_NODES
 from dinkster_nodes_foundation.combo import StringToCombo
 from dinkster_nodes_foundation.conversion import ValueConvert
@@ -169,12 +168,12 @@ def test_trellis2_3d_output_aliases_preserve_models() -> None:
         inputs = {item["id"]: item for item in source["interface"] if item["role"] == "input"}
         assert inputs["model_3d"]["type"] == {
             "kind": "concrete",
-            "types": ["MODEL3D"],
+            "types": ["dinkster.model3d"],
         }
         assert inputs["viewport_state"]["widget"]["multiline"] is False
         assert source["interface"][-1]["type"] == {
             "kind": "concrete",
-            "types": ["MODEL3D"],
+            "types": ["dinkster.model3d"],
         }
 
     save_source = source_schemas[save["source"]["nodeType"]]
@@ -242,7 +241,7 @@ def test_media_comfy_aliases_preserve_pinned_capture_semantics() -> None:
     assert inputs["audio"]["type"] == {"kind": "concrete", "types": ["comfy.AUDIO_RECORD"]}
     assert "widget" not in inputs["audio"]
     assert set(outputs) == {"_0_AUDIO_"}
-    assert outputs["_0_AUDIO_"]["type"] == {"kind": "concrete", "types": [AUDIO_TYPE]}
+    assert outputs["_0_AUDIO_"]["type"] == {"kind": "concrete", "types": ["comfy.AUDIO"]}
     record = records["RecordAudio"]
     assert record["confidence"]["tier"] == "parametric"
     case = record["replacement"]["cases"][0]
@@ -413,7 +412,7 @@ def test_media_comfy_aliases_preserve_pinned_audio_ops_semantics() -> None:
 
     # The pinned integer decibel volume widens to the native float gain_db.
     volume = {item["id"]: item for item in source_schemas["comfy.AudioAdjustVolume"]["interface"]}
-    assert volume["volume"]["type"] == {"kind": "concrete", "types": ["INT"]}
+    assert volume["volume"]["type"] == {"kind": "concrete", "types": ["core.int"]}
     assert volume["volume"]["default"] == 1
     assert volume["volume"]["widget"]["min"] == -100
     assert volume["volume"]["widget"]["max"] == 100

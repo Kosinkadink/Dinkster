@@ -17,8 +17,8 @@ from dinkster_values import (
     prepare_image_array_encoding,
 )
 
-NATIVE_IMAGE = "IMAGE"
-NATIVE_MASK = "MASK"
+NATIVE_IMAGE = "dinkster.image"
+NATIVE_MASK = "dinkster.mask"
 STRING = TypeExpr.concrete(CORE_STRING)
 
 

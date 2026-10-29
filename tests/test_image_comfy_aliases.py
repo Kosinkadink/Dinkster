@@ -8,7 +8,6 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
-from dinkster_api.v1 import BOUNDING_BOX_TYPE
 from dinkster_nodes_image import IMAGE_NODES, MakeRegion, Region
 from dinkster_schema import schema_from_wire, schema_to_wire, validate_replacement_references
 from dinkster_schema.replace import rule_from_wire, rule_to_wire
@@ -198,7 +197,7 @@ def test_image_comfy_aliases_preserve_executable_source_domains() -> None:
     bbox_input = next(item for item in bbox_schema["interface"] if item["id"] == "bboxes")
     assert bbox_input["type"] == {
         "kind": "union",
-        "types": ["comfy.BBOX", BOUNDING_BOX_TYPE],
+        "types": ["comfy.BBOX", "comfy.BOUNDING_BOX"],
     }
     bbox_inputs = records["comfy_alias:comfyui-kjnodes/BboxVisualize"]["replacement"]["cases"][0][
         "inputs"

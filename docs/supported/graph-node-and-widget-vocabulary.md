@@ -15,18 +15,10 @@
   visibility groups for top-level widgets;
   after-generate modes fixed/increment/decrement/randomize;
   exact integer bounds from signed 64-bit minimum through unsigned 64-bit maximum
-- Backend schemas accept number, string, boolean, and combo widgets on one-level
-  lists of their matching primitive type, retaining numeric constraints and wire
-  defaults unchanged. This schema support does not provide frontend list-value
-  submission or scalar-to-list execution coercion.
-- FLOAT number descriptors, including one-level FLOAT lists, accept `round: false`
-  for explicit no-round presentation, or a positive finite numeric precision.
-  Omission leaves precision unspecified; false is distinct from numeric zero.
-  This backend schema support does not claim frontend editor support.
 - Node schemas can declare presentation-only editor roles and JSON-safe custom
   widget descriptors. Clients use these declarations without matching node IDs;
   native video trim and crop declare their exact `VIDEO_EDIT` features.
-- Values: INT, FLOAT, STRING, COMBO, BOOLEAN,
+- Values: core.int, core.float, core.string, core.combo, core.boolean,
   core.absent, immutable linear or monotone-cubic `dinkster.curve`, ordered
   `dinkster.layers`, strict versioned `dinkster.compositor`, parametric `list<T>` and
   `asset<T>`
@@ -63,6 +55,35 @@
   and strict numeric schedule parsing
 - Role-labeled multi-stream values inside ordinary `comfy.LATENT`, with generic
   audio/video concat, separate, visual preview, and audio preview nodes
+- Native temporal video-latent trimming with metadata-preserving
+  `TrimVideoLatent` workflow compatibility
+- Native latent operation library with exact pinned-ComfyUI parity: tensor
+  math (combine, mix, multiply, rotate, flip, crop, resize, composite,
+  concat, cut), batch/metadata operations (from-batch, repeat, seed
+  behavior, batching, rebatching, noise masks, video frame replacement),
+  and reusable latent-operation values (tonemap reinhard, sharpen) applied
+  through `LatentApplyOperation` or per-step before CFG combination through
+  `LatentApplyOperationCFG`, each with comfy workflow alias records
+- Native tensor resizing without a ComfyUI installation: nearest-exact,
+  bilinear, bicubic, area, bislerp, and Lanczos interpolation, center cropping,
+  video-frame resizing, and batch resampling. Empty Hunyuan video latents
+  also work without ComfyUI.
+- Native latent noise tooling with exact pinned-KJNodes parity: standalone
+  noise generation (`GenerateNoise` compatibility: seeded CPU noise in BCHW,
+  BCTHW, or BTCHW shapes with 4 or 16 channels, optional sigma-range scaling
+  from a model's latent scale factor, multiplier, normalization, and
+  constant-batch repetition) and latent noise injection (`InjectNoiseToLatent`
+  compatibility: strength or averaged blending, normalization, bilinear mask
+  gating, and seeded randn mixing), each with comfy workflow alias records
+- Native `EmptyARVideoLatent`, `SamplerARVideo`, and `ARVideoI2V` workflow
+  nodes for Wan 2.1 CausalAR generation
+- Native `AudioEncoderLoader`, `AudioEncoderEncode`, `WanSoundImageToVideo`, and
+  `WanSoundImageToVideoExtend` workflow nodes for Wan 2.2 S2V generation
+- Native `WanDancerEncodeAudio`, `WanDancerVideo`, `WanDancerPadKeyframes`, and
+  `WanDancerPadKeyframesList` workflow nodes for Wan 2.2 WanDancer generation
+- Native `TRACKS` values and the `WanMoveTracksFromCoords`, `GenerateTracks`,
+  `WanMoveConcatTrack`, `WanMoveVisualizeTracks`, and `WanMoveTrackToVideo`
+  workflow nodes
 - Asset-backed native Save/Load Latent with deterministic `.latent`
   safetensors, ordered multi-stream roles, VAE provenance hints, and safe
   stock ComfyUI single-latent import; legacy `LoadLatent` prompts resolve

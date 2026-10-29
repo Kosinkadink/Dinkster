@@ -4,6 +4,7 @@ import dataclasses
 from typing import Any, cast
 
 import pytest
+from dinkster_native.native import LoadLatent
 from dinkster_nodes_foundation.conversion import CurveEditor
 from dinkster_nodes_foundation.routing import RouteSwitchByName
 from dinkster_nodes_image.compositor import CreateLayeredImage
@@ -27,6 +28,7 @@ from dinkster_values import CustomWidgetDescriptor
 @pytest.mark.parametrize(
     ("node", "role"),
     [
+        (LoadLatent, "latent-source"),
         (CurveEditor, "curve"),
         (RouteSwitchByName, "named-route-switch"),
         (CreateLayeredImage, "compositor"),

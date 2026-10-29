@@ -43,7 +43,6 @@ from dinkster_schema import (
 from dinkster_schema.model import DynamicComboSpec, DynamicEntry, NodeSchema
 from dinkster_schema.replace import rule_to_wire
 from dinkster_schema.wire import schema_to_wire
-from dinkster_values import MODEL3D_TYPE
 from gen_image_media_comfy_aliases import build_registry as build_image_registry
 from gen_video_media_comfy_aliases import merge_video_registry
 
@@ -201,7 +200,7 @@ def _static_schema(
 
 
 def _model3d_schema(schema: NodeSchema) -> NodeSchema:
-    model3d = TypeExpr.concrete(MODEL3D_TYPE)
+    model3d = TypeExpr.concrete("dinkster.model3d")
     return replace(
         schema,
         inputs=tuple(

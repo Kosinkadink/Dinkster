@@ -1,4 +1,4 @@
-"""Proofs for the SPLAT codec, PLY interchange, and registration."""
+"""Proofs for the dinkster.splat codec, PLY interchange, and registration."""
 
 from __future__ import annotations
 

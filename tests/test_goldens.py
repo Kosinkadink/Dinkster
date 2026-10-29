@@ -199,7 +199,7 @@ def test_combo_fixture_pins_current_wire_widget_contract() -> None:
     multicombo_output = by_key[("output", "providers")]
     assert combo_input["type"] == {
         "kind": "concrete",
-        "types": ["COMBO"],
+        "types": ["core.combo"],
     }
     assert combo_input["widget"] == {
         "type": "COMBO",
@@ -224,11 +224,11 @@ def test_combo_fixture_pins_current_wire_widget_contract() -> None:
     }
     assert combo_output["type"] == {
         "kind": "concrete",
-        "types": ["COMBO"],
+        "types": ["core.combo"],
     }
     assert multicombo_input["type"] == {
         "kind": "list",
-        "element": {"kind": "concrete", "types": ["COMBO"]},
+        "element": {"kind": "concrete", "types": ["core.combo"]},
     }
     assert multicombo_input["default"] == ["beta", "alpha", "beta"]
     assert multicombo_input["widget"] == {
@@ -259,7 +259,7 @@ def test_combo_fixture_pins_current_wire_widget_contract() -> None:
     prompt = by_key[("input", "prompt")]
     assert prompt["type"] == {
         "kind": "concrete",
-        "types": ["STRING"],
+        "types": ["core.string"],
     }
     assert prompt["widget"] == {
         "type": "REPRESENTATIONS",

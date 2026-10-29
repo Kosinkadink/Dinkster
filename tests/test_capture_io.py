@@ -433,7 +433,7 @@ def test_capture_device_inputs_are_remote_combos() -> None:
     ):
         schema = node.define_schema()
         device = next(spec for spec in schema.inputs if spec.id == "device")
-        assert device.type == TypeExpr.concrete("COMBO")
+        assert device.type == TypeExpr.concrete("core.combo")
         assert device.default == ""
         assert isinstance(device.widget, ComboWidget)
         assert device.widget.remote_route == f"/api/choices/{choices_id}"

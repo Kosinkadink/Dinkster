@@ -32,8 +32,8 @@ from dinkster_schema import (
 )
 
 IMAGE = TypeExpr.concrete("core.image")
-INT = TypeExpr.concrete("INT")
-COMBO = TypeExpr.concrete("COMBO")
+INT = TypeExpr.concrete("core.int")
+COMBO = TypeExpr.concrete("core.combo")
 
 
 def value_input(id: str, type: TypeExpr, default: object) -> InputSpec:

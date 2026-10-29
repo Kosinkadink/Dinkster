@@ -14,9 +14,8 @@ import pytest
 from dinkster_workers.backend_env import validate_benchmark_report
 
 from tests.test_backend_env import complete_benchmark_report, complete_report
-from tools.evidence_paths import EVIDENCE_ROOT, validate_evidence_revision
+from tools.evidence_paths import EVIDENCE_ROOT
 
-validate_evidence_revision()
 _MODULE_PATH = EVIDENCE_ROOT / "scripts" / "benchmark_comfyui.py"
 _SPEC = importlib.util.spec_from_file_location("benchmark_comfyui", _MODULE_PATH)
 assert _SPEC is not None and _SPEC.loader is not None
@@ -1464,7 +1463,7 @@ class TestArguments:
         assert arguments.attention_policy == "auto"
         assert arguments.quality_output_dir is None
 
-    @pytest.mark.parametrize("policy", ["sdpa", "comfy_kitchen_int8", "sage"])
+    @pytest.mark.parametrize("policy", ["sdpa", "dinkster_kitchen_int8", "sage"])
     def test_minimax_h3_cli_accepts_explicit_attention_evidence(
         self, tmp_path: Path, policy: str
     ) -> None:
@@ -2436,7 +2435,7 @@ class TestAttentionLaunchEvidence:
             lambda: {
                 "module": "sageattention",
                 "path": "/managed/sageattention/__init__.py",
-                "distribution": "comfy-kitchen",
+                "distribution": "dinkster-kitchen",
                 "version": "2.2.0.post1",
                 "authenticated": True,
             },
@@ -2448,12 +2447,12 @@ class TestAttentionLaunchEvidence:
         assert identity["selected_policy"] == "sage"
         assert identity["provider_versions"] == [
             ["torch", str(harness.shim.torch.__version__)],
-            ["comfy-kitchen", "2.2.0.post1"],
+            ["dinkster-kitchen", "2.2.0.post1"],
         ]
         assert identity["provider_module"] == {
             "module": "sageattention",
             "path": "/managed/sageattention/__init__.py",
-            "distribution": "comfy-kitchen",
+            "distribution": "dinkster-kitchen",
             "version": "2.2.0.post1",
             "authenticated": True,
         }
@@ -2476,7 +2475,7 @@ class TestAttentionLaunchEvidence:
         module_path.write_text("")
         module = ModuleType("sageattention")
         module.__file__ = str(module_path)
-        module.__distribution__ = "comfy-kitchen"  # type: ignore[attr-defined]
+        module.__distribution__ = "dinkster-kitchen"  # type: ignore[attr-defined]
         monkeypatch.setitem(sys.modules, "sageattention", module)
 
         distribution = SimpleNamespace(
@@ -2493,7 +2492,7 @@ class TestAttentionLaunchEvidence:
         assert harness.shim._sage_module_identity() == {
             "module": "sageattention",
             "path": str(module_path),
-            "distribution": "comfy-kitchen",
+            "distribution": "dinkster-kitchen",
             "version": "2.2.0.post1",
             "authenticated": True,
         }

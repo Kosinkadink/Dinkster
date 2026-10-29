@@ -50,7 +50,6 @@ from dinkster_protocol import (
     GraphCompilerRegistrySnapshot,
     KeyedContribution,
     PackSettingsSchema,
-    SingleJobMultiGpuConfig,
 )
 from dinkster_schema import (
     SCHEMA_WIRE_VERSION,
@@ -113,8 +112,8 @@ from scaffold_nodes import (
     scaffold_lazy_choices,
 )
 
-STRING = TypeExpr.concrete("STRING")
-FLOAT = TypeExpr.concrete("FLOAT")
+STRING = TypeExpr.concrete("core.string")
+FLOAT = TypeExpr.concrete("core.float")
 
 
 class Echo(Node):
@@ -1098,6 +1097,8 @@ def test_missing_capability_is_403_for_every_route_family() -> None:
         ("GET", "/api/settings", "settings:read"),
         ("PUT", "/api/settings/jobs", "settings:write"),
         ("PUT", "/api/packs/missing/settings", "settings:write"),
+        ("GET", "/api/p2p/status", "settings:read"),
+        ("POST", f"/api/p2p/transfers/blake3:{'a' * 64}/pause", "settings:write"),
         ("GET", "/api/sessions", "sessions:read"),
         ("POST", "/api/sessions", "sessions:write"),
         ("GET", "/api/queue", "queue:control"),
@@ -2050,7 +2051,7 @@ def test_job_placement_rejects_nodes_removed_by_selector_lowering(
     selector_schema = NodeSchema(
         "test.placement_selector",
         inputs=(
-            InputSpec("switch", TypeExpr.concrete("BOOLEAN")),
+            InputSpec("switch", TypeExpr.concrete("core.boolean")),
             InputSpec("off", STRING),
             InputSpec("on", STRING),
         ),
@@ -2370,24 +2371,20 @@ def test_nodes_envelope_lists_mergeable_types_sorted() -> None:
             assert resp.status == 200
             data = await resp.json()
             assert data["dinkster"]["mergeableTypes"] == []
-            assert data["typeOwners"]["INT"] == "dinkster-nodes-foundation"
-            with registry.registering_pack("mypack", ("mypack",)):
-                registry.register("mypack.thing")
             # Post-startup registration, deliberately in non-sorted order
             # to pin the sort.
             registry.register_batch_merge(
-                "STRING",
+                "core.string",
                 provider_id="test.string-merge@1",
                 merge=lambda vs: vs[0],
             )
             registry.register_batch_merge(
-                "INT", provider_id="test.int-merge@1", merge=lambda vs: vs[0]
+                "core.int", provider_id="test.int-merge@1", merge=lambda vs: vs[0]
             )
             resp = await client.get("/api/nodes")
             assert resp.status == 200
             data = await resp.json()
-            assert data["dinkster"]["mergeableTypes"] == ["INT", "STRING"]
-            assert data["typeOwners"]["mypack.thing"] == "mypack"
+            assert data["dinkster"]["mergeableTypes"] == ["core.int", "core.string"]
         finally:
             await client.close()
 
@@ -3159,7 +3156,6 @@ def test_pack_template_endpoints() -> None:
     (mismatch -> 400), and lists asset requirements as pack-local ids for
     clients to join against the packs table."""
     from dinkster_server import PackIconAsset, PackTemplateAsset
-    from test_settings import settings
 
     data = b'{"graphs": {"main": {}}}'
     digest = "sha256:" + hashlib.sha256(data).hexdigest()
@@ -3170,7 +3166,6 @@ def test_pack_template_endpoints() -> None:
         app = create_app(
             make_engine,
             SCHEMAS,
-            settings=settings(features={"templates": {"enabled": True}}),
             packs={
                 "ade": PackInfo(
                     display_name="AnimateDiff-Evolved",
@@ -3730,7 +3725,7 @@ def test_job_lifecycle_over_http() -> None:
             assert status["extensionSnapshotDigest"] == accepted["extensionSnapshotDigest"]
             # Results are value descriptors: envelope facts, not raw payloads.
             out = status["outputs"]["s"]["out"]
-            assert out["typeId"] == "STRING"
+            assert out["typeId"] == "core.string"
             assert out["fingerprint"]
             # Node progress is a state map.
             assert status["nodeStates"] == {"e": "completed", "s": "completed"}
@@ -3766,11 +3761,11 @@ def test_list_output_descriptor_reports_length() -> None:
                     await asyncio.sleep(0.01)
             assert status["state"] == "completed"
             words = status["outputs"]["sp"]["words"]
-            assert words["typeId"] == "list<STRING>"
+            assert words["typeId"] == "list<core.string>"
             assert words["length"] == 3
             # Child descriptors recurse (bounded): per-element structure is
             # remotely interrogable, not just the top-level count.
-            assert [e["typeId"] for e in words["elements"]] == ["STRING"] * 3
+            assert [e["typeId"] for e in words["elements"]] == ["core.string"] * 3
             assert "elementsTruncated" not in words
         finally:
             await client.close()
@@ -3787,19 +3782,19 @@ def test_value_descriptor_recurses_and_truncates() -> None:
 
     registry = TypeRegistry()
     register_core_types(registry)
-    inner1 = registry.wrap("list<INT>", [1, 2])
-    inner2 = registry.wrap("list<INT>", [3])
-    outer = make_list_value("list<INT>", (inner1, inner2))
+    inner1 = registry.wrap("list<core.int>", [1, 2])
+    inner2 = registry.wrap("list<core.int>", [3])
+    outer = make_list_value("list<core.int>", (inner1, inner2))
 
     descriptor = value_descriptor(outer)
-    assert descriptor["typeId"] == "list<list<INT>>"
+    assert descriptor["typeId"] == "list<list<core.int>>"
     assert descriptor["length"] == 2
     elements = descriptor["elements"]
     assert isinstance(elements, list)
     assert [e["length"] for e in elements] == [2, 1]  # ragged shape visible
-    assert elements[0]["elements"][0]["typeId"] == "INT"
+    assert elements[0]["elements"][0]["typeId"] == "core.int"
 
-    big = registry.wrap("list<INT>", list(range(DESCRIPTOR_ELEMENT_CAP + 5)))
+    big = registry.wrap("list<core.int>", list(range(DESCRIPTOR_ELEMENT_CAP + 5)))
     descriptor = value_descriptor(big)
     assert descriptor["length"] == DESCRIPTOR_ELEMENT_CAP + 5
     big_elements = descriptor["elements"]
@@ -4024,7 +4019,7 @@ def test_attention_submit_validation_and_idempotency() -> None:
         finally:
             await client.close()
 
-        client = await paused_client(default="comfy_kitchen_int8")
+        client = await paused_client(default="dinkster_kitchen_int8")
         try:
             first = await client.post("/api/jobs", json=submit_body(graph, ["n"]))
             assert first.status == 202
@@ -4034,7 +4029,7 @@ def test_attention_submit_validation_and_idempotency() -> None:
                     graph,
                     ["n"],
                     attention={
-                        "requestedPolicy": "comfy_kitchen_int8",
+                        "requestedPolicy": "dinkster_kitchen_int8",
                         "requestedRolePolicies": [],
                     },
                 ),
@@ -4060,7 +4055,7 @@ def test_attention_submit_validation_and_idempotency() -> None:
         try:
             role_pairs = [
                 ["qwen", "flash"],
-                ["flux", "comfy_kitchen_int8"],
+                ["flux", "dinkster_kitchen_int8"],
             ]
             first = await client.post(
                 "/api/jobs",
@@ -4087,54 +4082,6 @@ def test_attention_submit_validation_and_idempotency() -> None:
             )
             assert permuted.status == 202
             assert (await permuted.json())["duplicate"] is True
-        finally:
-            await client.close()
-
-    asyncio.run(scenario())
-
-
-def test_single_job_multi_gpu_submit_validation_and_idempotency() -> None:
-    async def scenario() -> None:
-        client = await make_client()
-        try:
-            assert (await client.post("/api/queue/pause")).status == 200
-            graph = echo_graph()
-            invalid = await client.post(
-                "/api/jobs",
-                json=submit_body(
-                    graph,
-                    ["s"],
-                    singleJobMultiGpu={"cudaIndices": [0], "mode": "sequence"},
-                ),
-            )
-            assert invalid.status == 400
-            assert client.app[STATE_KEY].queue.jobs() == []
-
-            config = {"cudaIndices": [1, 3], "mode": "sequence"}
-            first = await client.post(
-                "/api/jobs",
-                json=submit_body(graph, ["s"], singleJobMultiGpu=config),
-            )
-            assert first.status == 202
-            job = client.app[STATE_KEY].queue.get("c1", "j1")
-            assert job is not None
-            assert job.single_job_multi_gpu == SingleJobMultiGpuConfig((1, 3), "sequence")
-
-            duplicate = await client.post(
-                "/api/jobs",
-                json=submit_body(graph, ["s"], singleJobMultiGpu=config),
-            )
-            assert duplicate.status == 202
-            assert (await duplicate.json())["duplicate"] is True
-            changed = await client.post(
-                "/api/jobs",
-                json=submit_body(
-                    graph,
-                    ["s"],
-                    singleJobMultiGpu={"cudaIndices": [0, 1], "mode": "guidance"},
-                ),
-            )
-            assert changed.status == 409
         finally:
             await client.close()
 
@@ -5010,21 +4957,7 @@ def test_hub_broadcast_reaches_client_filtered_subscribers() -> None:
 
 def test_memory_status_events_broadcast_when_governed() -> None:
     async def scenario() -> None:
-        governor = MemoryGovernor(
-            {"ram": 100},
-            telemetry=lambda _: MeasuredMemory(
-                free_bytes=30,
-                total_bytes=100,
-                torch_allocated_bytes=17,
-                torch_reserved_bytes=23,
-                process_rss_bytes=250,
-                pinned_host_bytes=9,
-                gpu_name="Measured worker GPU",
-                gpu_utilization_percent=61,
-                gpu_temperature_celsius=54,
-                gpu_power_milliwatts=120000,
-            ),
-        )
+        governor = MemoryGovernor({"ram": 100})
         app = create_app(make_engine, SCHEMAS, governor=governor, memory_status_interval=0.02)
         client = TestClient(TestServer(app))
         await client.start_server()
@@ -5037,9 +4970,6 @@ def test_memory_status_events_broadcast_when_governed() -> None:
                     if event["type"] == "memory_status":
                         break
             assert event["memoryGovernor"]["ram"]["budgetBytes"] == 100
-            assert event["memoryGovernor"]["ram"]["measured"]["torchAllocatedBytes"] == 17
-            assert event["memoryGovernor"]["ram"]["measured"]["gpuName"] == "Measured worker GPU"
-            assert event["memoryGovernor"]["ram"]["peakUsedBytes"] == 70
             assert "devices" in event and "queue" in event
             await ws.close()
         finally:
@@ -5101,7 +5031,6 @@ def test_memory_status_distinguishes_live_and_restart_bound_accelerator_budgets(
         gib = 1024**3
         device = "vram:cuda:0"
         applied = {"dinkster-compat-comfy": {device: 24 * gib}}
-        aimdo = {"dinkster-compat-comfy": "off"}
         governor = MemoryGovernor(
             {device: 24 * gib},
             telemetry=lambda _device: MeasuredMemory(12 * gib, 32 * gib),
@@ -5111,22 +5040,12 @@ def test_memory_status_distinguishes_live_and_restart_bound_accelerator_budgets(
             SCHEMAS,
             governor=governor,
             residency_memory_budgets=lambda: applied,
-            applied_aimdo_policies=lambda: aimdo,
         )
         client = TestClient(TestServer(app))
         await client.start_server()
         try:
             data = await (await client.get("/memory/status")).json()
             policy = data["acceleratorPolicy"]
-            assert policy["aimdoConfiguredPolicy"] == "auto"
-            assert policy["aimdoPoliciesByWorker"] == {"dinkster-compat-comfy": "off"}
-            app[STATE_KEY].settings.update("aimdo-policy", "on")
-            policy = (await (await client.get("/memory/status")).json())["acceleratorPolicy"]
-            assert policy["aimdoConfiguredPolicy"] == "on"
-            assert policy["aimdoPoliciesByWorker"] == {"dinkster-compat-comfy": "off"}
-            aimdo["dinkster-compat-comfy"] = "on"
-            policy = (await (await client.get("/memory/status")).json())["acceleratorPolicy"]
-            assert policy["aimdoPoliciesByWorker"] == {"dinkster-compat-comfy": "on"}
             assert policy["physicalHeadroomBytes"] == 256 * 1024**2
             assert policy["inferenceReserveBytes"] == int(0.8 * gib)
             assert policy["minimumFreeBytes"] == 256 * 1024**2 + int(0.8 * gib)
@@ -5675,43 +5594,6 @@ def test_trim_items_validation() -> None:
     asyncio.run(scenario())
 
 
-def test_reset_peak_and_usage_metrics_over_http() -> None:
-    async def scenario() -> None:
-        measurement = MeasuredMemory(
-            200,
-            1000,
-            torch_allocated_bytes=310,
-            torch_reserved_bytes=500,
-            process_rss_bytes=2100,
-            pinned_host_bytes=80,
-        )
-        governor = MemoryGovernor({"vram:cuda:0": 900}, telemetry=lambda _: measurement)
-        client = await make_governed_client(governor)
-        try:
-            first = await (await client.get("/memory/status")).json()
-            report = first["memoryGovernor"]["vram:cuda:0"]
-            assert report["measured"]["torchReservedBytes"] == 500
-            assert report["measured"]["processRssBytes"] == 2100
-            assert report["measured"]["pinnedHostBytes"] == 80
-            assert report["peakUsedBytes"] == 800
-            measurement = MeasuredMemory(
-                700, 1000, torch_allocated_bytes=100, torch_reserved_bytes=200
-            )
-            reset = await client.post("/memory/reset-peak", json={"device": "vram:cuda:0"})
-            assert reset.status == 200
-            assert await reset.json() == {"device": "vram:cuda:0", "peakUsedBytes": 300}
-            after = await (await client.get("/memory/status")).json()
-            assert after["memoryGovernor"]["vram:cuda:0"]["peakUsedBytes"] == 300
-            assert (
-                await client.post("/memory/reset-peak", json={"device": "missing"})
-            ).status == 404
-            assert (await client.post("/memory/reset-peak", json={"device": 1})).status == 400
-        finally:
-            await client.close()
-
-    asyncio.run(scenario())
-
-
 def test_status_reports_measured_telemetry_over_the_wire() -> None:
     async def scenario() -> None:
         governor = MemoryGovernor(
@@ -5835,7 +5717,7 @@ def test_values_endpoint_serves_target_and_intermediate() -> None:
             assert resp.status == 200
             data = await resp.json()
             assert data["available"] is True
-            assert data["descriptor"]["typeId"] == "STRING"
+            assert data["descriptor"]["typeId"] == "core.string"
             assert data["descriptor"]["value"] == "HELLO"
             assert data["descriptor"]["fingerprint"]
             assert data["renditions"] == []  # strings have no rich rendition
@@ -5936,7 +5818,7 @@ def test_values_endpoint_element_traversal() -> None:
 
             resp = await client.get(values_url("sp", output_id="words", element="1"))
             data = await resp.json()
-            assert data["descriptor"]["typeId"] == "STRING"
+            assert data["descriptor"]["typeId"] == "core.string"
             assert data["descriptor"]["value"] == "b"
 
             resp = await client.get(values_url("sp", output_id="words", element="5"))
@@ -6081,7 +5963,7 @@ def test_values_endpoint_image_png_rendition() -> None:
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("type_id", ["LAYERS", "comfy.LAYERS"])
+@pytest.mark.parametrize("type_id", ["dinkster.layers", "comfy.LAYERS"])
 def test_values_endpoint_layer_document_rendition(
     type_id: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -6108,13 +5990,13 @@ def test_values_endpoint_layer_document_rendition(
         def execute(cls) -> Mapping[str, object]:
             return AddLayer.execute(image=pixels)
 
-    nodes: list[type[Node]] = [AddLayer] if type_id == "LAYERS" else [CompatLayers]
+    nodes: list[type[Node]] = [AddLayer] if type_id == "dinkster.layers" else [CompatLayers]
     schemas = build_schemas(nodes)
 
     def factory(on_event: EventListener) -> Engine:
         registry = TypeRegistry()
         register_core_types(registry)
-        if type_id == "LAYERS":
+        if type_id == "dinkster.layers":
             register_image_types(registry)
         else:
             register_comfy_host_types(registry)
@@ -6136,9 +6018,9 @@ def test_values_endpoint_layer_document_rendition(
             node = (
                 GraphNode(
                     "dinkster.layers.add",
-                    {"image": TypedLiteral("IMAGE", pixels.tolist())},
+                    {"image": TypedLiteral("dinkster.image", pixels.tolist())},
                 )
-                if type_id == "LAYERS"
+                if type_id == "dinkster.layers"
                 else GraphNode("test.compat_layers", {})
             )
             await finish_job(client, Graph(nodes={"layers": node}), ["layers"])
@@ -6159,7 +6041,7 @@ def test_values_endpoint_layer_document_rendition(
                     "cacheKey": "image",
                 }
             ]
-            assert data["renditions"] == (renditions if type_id == "LAYERS" else []) + [
+            assert data["renditions"] == (renditions if type_id == "dinkster.layers" else []) + [
                 {
                     "kind": "document",
                     "mime": IMAGE_DOCUMENT_MEDIA_TYPE,
@@ -6272,17 +6154,16 @@ def test_values_endpoint_comfy_image_png_rendition() -> None:
 
 def test_values_endpoint_omits_original_rendition_for_component_video() -> None:
     import numpy as np
-    from dinkster_api.v1 import VIDEO_TYPE
     from dinkster_nodes_media_io.video_ops import AssembleVideo
 
-    from dinkster.comfy_compose import register_comfy_host_types
+    from dinkster.comfy_compose import COMFY_VIDEO_TYPE, register_comfy_host_types
 
     class ComponentVideo(Node):
         @classmethod
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.component_video",
-                outputs=(OutputSpec("video", TypeExpr.concrete(VIDEO_TYPE)),),
+                outputs=(OutputSpec("video", TypeExpr.concrete(COMFY_VIDEO_TYPE)),),
             )
 
         @classmethod
@@ -6316,7 +6197,7 @@ def test_values_endpoint_omits_original_rendition_for_component_video() -> None:
             response = await client.get(url)
             data = await response.json()
             assert response.status == 200
-            assert data["descriptor"]["typeId"] == VIDEO_TYPE
+            assert data["descriptor"]["typeId"] == COMFY_VIDEO_TYPE
             assert data["renditions"] == []
 
             response = await client.get(url + "&rendition=original")
@@ -6336,9 +6217,12 @@ def test_values_endpoint_av_renditions_share_discovery_and_response_mime(
     import struct
 
     import numpy as np
-    from dinkster_api.v1 import AUDIO_TYPE, VIDEO_TYPE
 
-    from dinkster.comfy_compose import register_comfy_host_types
+    from dinkster.comfy_compose import (
+        COMFY_AUDIO_TYPE,
+        COMFY_VIDEO_TYPE,
+        register_comfy_host_types,
+    )
     from tests.test_video_probe import _encode
 
     mp4 = _encode("mp4", "libx264", "yuv420p")
@@ -6351,9 +6235,9 @@ def test_values_endpoint_av_renditions_share_discovery_and_response_mime(
             return NodeSchema(
                 node_type="test.av_outputs",
                 outputs=(
-                    OutputSpec("audio", TypeExpr.concrete(AUDIO_TYPE), preview=True),
-                    OutputSpec("mp4", TypeExpr.concrete(VIDEO_TYPE), preview=True),
-                    OutputSpec("webm", TypeExpr.concrete(VIDEO_TYPE), preview=True),
+                    OutputSpec("audio", TypeExpr.concrete(COMFY_AUDIO_TYPE), preview=True),
+                    OutputSpec("mp4", TypeExpr.concrete(COMFY_VIDEO_TYPE), preview=True),
+                    OutputSpec("webm", TypeExpr.concrete(COMFY_VIDEO_TYPE), preview=True),
                 ),
             )
 
@@ -6372,11 +6256,13 @@ def test_values_endpoint_av_renditions_share_discovery_and_response_mime(
     register_comfy_host_types(expected_registry)
     expected_fingerprints = {
         "audio": expected_registry.wrap(
-            AUDIO_TYPE, {"waveform": waveform, "sample_rate": 8_000}
+            COMFY_AUDIO_TYPE, {"waveform": waveform, "sample_rate": 8_000}
         ).fingerprint,
-        "mp4": expected_registry.wrap(VIDEO_TYPE, {"container": "mp4", "bytes": mp4}).fingerprint,
+        "mp4": expected_registry.wrap(
+            COMFY_VIDEO_TYPE, {"container": "mp4", "bytes": mp4}
+        ).fingerprint,
         "webm": expected_registry.wrap(
-            VIDEO_TYPE, {"container": "webm", "bytes": webm}
+            COMFY_VIDEO_TYPE, {"container": "webm", "bytes": webm}
         ).fingerprint,
     }
 
@@ -6538,11 +6424,10 @@ def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
         ASSET_TYPE,
         SAVE_TARGET_TYPE,
         AssetError,
-        AssetWriter,
-        MountSnapshotWriter,
         SaveTarget,
         digest_bytes,
     )
+    from dinkster_compat_comfy.native import mount_writer
     from dinkster_nodes_foundation import StringPrimitive
     from dinkster_nodes_media_io import SetSaveTargetPrefix, register_media_types
 
@@ -6593,7 +6478,7 @@ def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
         async def execute(cls, *, target: SaveTarget) -> Mapping[str, object]:
             if not isinstance(target, SaveTarget):
                 raise AssetError("save target input must be a SaveTarget")
-            receipt = AssetWriter(MountSnapshotWriter(snapshot)).save_bytes(
+            receipt = mount_writer().save_bytes(
                 target,
                 f"saved:{target.prefix}".encode(),
                 suffix=".bin",

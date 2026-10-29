@@ -1,0 +1,258 @@
+{
+  "format": "dinkster-workflow",
+  "formatVersion": 1,
+  "lineage": "starter-anima",
+  "root": "g0",
+  "graphs": {
+    "g0": {
+      "id": "g0",
+      "name": "Anima Starter",
+      "nodes": {
+        "model": {
+          "id": "model",
+          "type": "dinkster.load_diffusion_model",
+          "values": {
+            "diffusion_model": "anima-base-v1.0.safetensors"
+          }
+        },
+        "clip": {
+          "id": "clip",
+          "type": "dinkster.load_clip",
+          "values": {
+            "text_encoder": "qwen_3_06b_base.safetensors",
+            "type": "stable_diffusion"
+          }
+        },
+        "vae": {
+          "id": "vae",
+          "type": "dinkster.load_vae",
+          "values": {
+            "vae": "qwen_image_vae.safetensors"
+          }
+        },
+        "positive": {
+          "id": "positive",
+          "type": "dinkster.clip_text_encode",
+          "values": {
+            "text": "a cinematic landscape, detailed lighting"
+          }
+        },
+        "negative": {
+          "id": "negative",
+          "type": "dinkster.clip_text_encode",
+          "values": {
+            "text": "blurry, low quality"
+          }
+        },
+        "latent": {
+          "id": "latent",
+          "type": "dinkster.empty_latent_image",
+          "values": {
+            "width": 1024,
+            "height": 1024,
+            "batch_size": 1
+          }
+        },
+        "sampler": {
+          "id": "sampler",
+          "type": "dinkster.ksampler",
+          "values": {
+            "seed": 91,
+            "steps": 20,
+            "cfg": 7.0,
+            "sampler_name": "dinkster.euler",
+            "scheduler": "dinkster.simple",
+            "denoise": 1.0,
+            "conditioning_batching": "auto",
+            "max_fused_lanes": 2
+          }
+        },
+        "decode": {
+          "id": "decode",
+          "type": "dinkster.vae_decode",
+          "values": {}
+        },
+        "save": {
+          "id": "save",
+          "type": "dinkster.save_image",
+          "values": {
+            "target": {
+              "mount": "output",
+              "prefix": "anima"
+            }
+          }
+        }
+      },
+      "links": {
+        "l1": {
+          "id": "l1",
+          "from": {
+            "node": "clip",
+            "port": "clip"
+          },
+          "to": {
+            "node": "positive",
+            "port": "clip"
+          }
+        },
+        "l2": {
+          "id": "l2",
+          "from": {
+            "node": "clip",
+            "port": "clip"
+          },
+          "to": {
+            "node": "negative",
+            "port": "clip"
+          }
+        },
+        "l3": {
+          "id": "l3",
+          "from": {
+            "node": "model",
+            "port": "model"
+          },
+          "to": {
+            "node": "sampler",
+            "port": "model"
+          }
+        },
+        "l4": {
+          "id": "l4",
+          "from": {
+            "node": "positive",
+            "port": "conditioning"
+          },
+          "to": {
+            "node": "sampler",
+            "port": "positive"
+          }
+        },
+        "l5": {
+          "id": "l5",
+          "from": {
+            "node": "negative",
+            "port": "conditioning"
+          },
+          "to": {
+            "node": "sampler",
+            "port": "negative"
+          }
+        },
+        "l6": {
+          "id": "l6",
+          "from": {
+            "node": "latent",
+            "port": "latent"
+          },
+          "to": {
+            "node": "sampler",
+            "port": "latent_image"
+          }
+        },
+        "l7": {
+          "id": "l7",
+          "from": {
+            "node": "sampler",
+            "port": "latent"
+          },
+          "to": {
+            "node": "decode",
+            "port": "samples"
+          }
+        },
+        "l8": {
+          "id": "l8",
+          "from": {
+            "node": "vae",
+            "port": "vae"
+          },
+          "to": {
+            "node": "decode",
+            "port": "vae"
+          }
+        },
+        "l9": {
+          "id": "l9",
+          "from": {
+            "node": "decode",
+            "port": "image"
+          },
+          "to": {
+            "node": "save",
+            "port": "images"
+          }
+        }
+      },
+      "nets": {},
+      "reroutes": {},
+      "nextOrdinal": 19
+    }
+  },
+  "view": {
+    "graphs": {
+      "g0": {
+        "nodes": {
+          "model": {
+            "position": {
+              "x": 40,
+              "y": 80
+            }
+          },
+          "clip": {
+            "position": {
+              "x": 40,
+              "y": 380
+            }
+          },
+          "vae": {
+            "position": {
+              "x": 40,
+              "y": 680
+            }
+          },
+          "positive": {
+            "position": {
+              "x": 380,
+              "y": 80
+            }
+          },
+          "negative": {
+            "position": {
+              "x": 380,
+              "y": 380
+            }
+          },
+          "latent": {
+            "position": {
+              "x": 380,
+              "y": 680
+            }
+          },
+          "sampler": {
+            "position": {
+              "x": 720,
+              "y": 380
+            }
+          },
+          "decode": {
+            "position": {
+              "x": 1060,
+              "y": 80
+            }
+          },
+          "save": {
+            "position": {
+              "x": 1400,
+              "y": 80
+            }
+          }
+        }
+      }
+    }
+  },
+  "meta": {
+    "title": "Anima Starter",
+    "family": "dinkster.anima"
+  }
+}

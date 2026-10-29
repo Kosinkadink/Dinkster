@@ -9,7 +9,6 @@ from typing import Any, cast
 import av
 import numpy as np
 import pytest
-from dinkster_api.v1 import AUDIO_TYPE
 from dinkster_assets import AssetRef, AssetVault, AssetWriter, MountSnapshotResolver, digest_bytes
 from dinkster_nodes_media_io import (
     EmptyAudio,
@@ -323,7 +322,7 @@ def test_audio_schemas_preserve_preview_asset_and_bound_contracts() -> None:
     assert load.node_type == "dinkster.load_audio"
     assert load.inputs[0].type.kind == "asset"
     assert load.inputs[0].type.element is not None
-    assert load.inputs[0].type.element.types == (AUDIO_TYPE,)
+    assert load.inputs[0].type.element.types == ("comfy.AUDIO",)
     assert load.inputs[0].source_filename is not None
     assert load.inputs[0].source_filename.kind == "media/audio"
     assert isinstance(load.inputs[0].widget, AssetWidget)

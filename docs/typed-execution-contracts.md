@@ -40,7 +40,8 @@ An intervention enters the system as an immutable
   vocabulary. Initial kinds:
   - `WeightOverlay`: an ordered weight-overlay stack entry, named by
     content-addressed patch identity. The payload is the portable
-    projection of the patch-program algebra in `DESIGN.md` section 3.14: the
+    projection of the existing patch algebra in
+    `packages/dinkster-inference/src/dinkster_inference/patches.py`: the
     structural data (patch kinds, content-addressed tensor leaves,
     strengths, offsets, nesting) travels as declared values, while
     every behavioral leaf in that algebra (a `WeightAdapter`
@@ -155,8 +156,9 @@ run-scoped, lane-keyed storage. The engine owns the lifecycle:
 allocated at plan execution start, keyed by (plan, guidance lane),
 dropped at run end. Contributions never stash state in module
 attributes, globals, or closures. Lane keying follows the guidance
-vocabulary declared by the sampling engine; interventions consume
-those lane semantics and never redefine them.
+vocabulary in `packages/dinkster-inference/src/dinkster_inference/guidance.py`;
+interventions consume lane semantics from that layer and never
+redefine them.
 
 Continuation state that must survive a run (solver state, RNG
 streams, chained-generation context) is a typed, serializable value
@@ -201,7 +203,9 @@ Site declarations may be parameterized by declared selectors:
 component role, block index or block range, attention kind,
 modality, and guidance lane. The attention-kind selector vocabulary
 is versioned and carries `self`, `cross`, `joint`, `causal`, and an
-any-kind selector; new kinds extend it by revision. Selectors are part of the
+any-kind selector (joint attention already exists in declared
+geometry: `packages/dinkster-inference/src/dinkster_inference/qwen_image_layout.py`);
+new kinds extend it by revision. Selectors are part of the
 declaration, validated at plan compilation against the owner's
 declared geometry; a selector value the owner did not declare is a
 compile-time refusal, never a silent no-op.
@@ -322,7 +326,8 @@ gather.
 Under sequence partitioning (chapter 5), dense `TokenRowTable` rows
 slice by the same shard `[start, stop)` spans as hidden states and
 RoPE; `TokenRowSpan` values localize by half-open intersection and
-offset translation as specified by the partition plan.
+offset translation (`translate_segments` in
+`packages/dinkster-inference/src/dinkster_inference/sequence_partition.py`).
 
 ## 3. Activation timeline algebra
 
@@ -579,8 +584,11 @@ Each distributed invocation has exactly one canonical manifest.
 Subsystems contribute compiled-plan slots (the USP slot, the
 intervention-plan slot, the cache-policy slot, the
 windowed-evaluation slot of chapter 9); no subsystem mints a
-parallel identity scheme. Identity construction uses sha256 digests over
-canonical serialized facts.
+parallel identity scheme. Identity construction follows the existing
+fact-based conventions in
+`packages/dinkster-inference/src/dinkster_inference/identity.py`
+(`build_runtime_identity_from_facts`, sha256 digests over canonical
+serialized facts).
 
 Ordering is strict:
 
@@ -873,9 +881,11 @@ code.
 The USP runtime consumes the mesh (chapter 4), partition
 declarations and padding plan (chapter 5), the exchange backend
 seams (chapter 5.6), and the manifest slot (chapter 6) exactly as
-specified. Its sequence-parallel attention kernel is parameterized by mesh,
-partition plan, exchange backend, and an inner route-selected kernel behind
-the `dinkster_inference` execution boundary. U1R1 collapses to the existing local provider route: the
+specified. Its `SequenceParallelAttentionKernel` implements the
+existing rank-4 BHSD `AttentionKernel` contract
+(dinkster_inference_torch/attention.py), parameterized by mesh,
+partition plan, exchange backend, and an inner route-selected
+kernel. U1R1 collapses to the existing local provider route: the
 provider-route identity is the existing one, while invocation
 identity still binds the full degenerate mesh in normalized form
 per chapter 4.3 - route identity and invocation identity are
@@ -1626,7 +1636,7 @@ refusal, never a provider-specific blend, slice, or fallback.
 
 ## 11. Portable VIDEO values
 
-`VIDEO` codec v2 is immutable source/probe/ordered-edits data, or
+`comfy.VIDEO` codec v2 is immutable source/probe/ordered-edits data, or
 deferred IMAGE/AUDIO components with the same edit semantics. The exact
 fields, node surface, precision, compatibility differences, and save rules
 are defined in [First-class VIDEO values](video-io-design.md). That document
@@ -1696,7 +1706,7 @@ contract.
 
 Asset discovery traverses VIDEO references in addition to ordinary asset
 inputs and list descendants. The transport validates `asset_refs`, stages
-missing authorized content through the existing vault/value-store chain,
+missing authorized content through the existing vault/value-store/P2P chain,
 and deduplicates by digest. A value referencing an unavailable source fails
 with that source identity; it never falls back to a producer-local path.
 Admission includes nested references for authorization, not just transfer.
@@ -1781,7 +1791,7 @@ this declaration does not introduce a 3D renderer or texture type.
 
 ## 13. Asset-backed audio
 
-`AUDIO` carries a source, probe, and ordered edits. Sources are asset
+`comfy.AUDIO` carries a source, probe, and ordered edits. Sources are asset
 references, inline encoded bytes, or inline int16/float32 PCM up to 256 KiB.
 Probe fields are `sample_rate`, `channels`, `layout`, `duration`, `codec`,
 `frames`, `batch`, and `stream_index`; duration and frames may be unknown.

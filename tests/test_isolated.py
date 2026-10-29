@@ -15,8 +15,13 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
+import time
+from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from typing import cast
 
 import pytest
 from dinkster_caches import MemoryLRUCache
@@ -25,6 +30,10 @@ from dinkster_graph import Graph, GraphNode, Link
 from dinkster_memory import DEFAULT_INFERENCE_RESERVE_BYTES, InvocationView, MemoryGovernor
 from dinkster_nodes_dev import PACK_NODES
 from dinkster_protocol import (
+    GRAPH_COMPILE_CANCEL_TYPE,
+    GRAPH_COMPILE_ERROR_COMPILER_FAILURE,
+    GRAPH_COMPILE_REQUEST_TYPE,
+    GRAPH_COMPILE_RESULT_TYPE,
     WORKGROUP_CAPABILITY,
     AttentionCapabilityEvidence,
     AttentionPolicyConfig,
@@ -97,6 +106,7 @@ from dinkster_workers.boundary import (
     write_frame,
 )
 from dinkster_workers.doctor import diagnose
+from dinkster_workers.isolated import GroupMemberWorker
 from dinkster_workers.launch import HOST_OWNED_ENVIRONMENT, Launcher, LaunchSpec
 from dinkster_workers.session import BoundarySession, WorkerDied
 from scaffold_nodes import SCAFFOLD_NODES, register_scaffold_types
@@ -147,8 +157,7 @@ def write_iso_manifest(
 ) -> Path:
     manifest = tmp_path / "dinkster-pack.toml"
     manifest.write_text(
-        f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
-        'type-namespaces = ["iso"]\n\n[pack.entry]\n'
+        f'[pack]\nname = "{name}"\n\n[pack.entry]\n'
         f'nodes = "{module_name}:NODES"\ntypes = "{module_name}:register_types"\n'
     )
     return manifest
@@ -292,8 +301,7 @@ def test_isolated_worker_uses_interpreter_entry_for_split_package(tmp_path: Path
     (pack_root / "isopack_nodes" / "__init__.py").write_text("\n")
     manifest = pack_root / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname = "isopack"\npublisher = "dinkster"\n'
-        'type-namespaces = ["iso"]\n\n[pack.entry]\n'
+        '[pack]\nname = "isopack"\n\n[pack.entry]\n'
         'nodes = "isopack_nodes.entries:NODES"\n'
         'types = "isopack_nodes.entries:register_types"\n'
     )
@@ -483,7 +491,7 @@ def test_group_launched_child_keeps_handler_present_and_absent_members_distinct(
     asyncio.run(scenario())
 
 
-def negotiated_session() -> BoundarySession:
+def graph_compile_session() -> BoundarySession:
     registry = core_registry()
     session = BoundarySession(
         registry,
@@ -692,17 +700,6 @@ def test_host_requires_exact_optional_attention_evidence_before_reservation_plan
     asyncio.run(scenario())
 
 
-def test_attention_discovery_is_disabled_when_torch_is_unavailable() -> None:
-    def missing_torch(_name: str) -> object:
-        raise ModuleNotFoundError("No module named 'torch'", name="torch")
-
-    assert host_module._discover_attention_runtime(missing_torch) == (  # pyright: ignore[reportPrivateUsage]
-        None,
-        None,
-        None,
-    )
-
-
 def test_aimdo_bootstrap_disabled_does_not_import_or_log(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -723,7 +720,7 @@ def test_aimdo_bootstrap_unavailable_warns_and_continues(
     monkeypatch.delitem(sys.modules, "torch", raising=False)
 
     def unavailable(name: str) -> object:
-        assert name == "comfy_aimdo.control"
+        assert name == "dinkster_aimdo.control"
         raise ImportError(name)
 
     monkeypatch.setattr(importlib, "import_module", unavailable)
@@ -818,7 +815,7 @@ def test_aimdo_bootstrap_old_aimdo_degrades_headroomless_and_disarms(
     assert calls == [{"simple_vram_headroom": 128 * 1024**2}, {}]
     assert "NOT applied" in caplog.text
     assert "older than 0.4.10" in caplog.text
-    assert "upgrade comfy-aimdo" in caplog.text
+    assert "upgrade dinkster-aimdo" in caplog.text
     assert "completed successfully with simple_vram_headroom" not in caplog.text
     assert host_module._aimdo_bootstrap_headroom_base is None
 
@@ -858,36 +855,130 @@ def test_aimdo_bootstrap_after_torch_warns_without_touching_control(
     assert "continues without successful aimdo bootstrap" in caplog.text
 
 
+@pytest.mark.parametrize("armed", [False, True])
+def test_live_aimdo_probe_admits_visible_devices(
+    monkeypatch: pytest.MonkeyPatch, armed: bool
+) -> None:
+    from aimdo_live_nodes import AimdoArmProbe
+
+    calls: list[str] = []
+    monkeypatch.setenv("DINKSTER_AIMDO_ARM", "on" if armed else "off")
+    monkeypatch.setitem(sys.modules, "torch", ModuleType("torch"))
+    monkeypatch.setitem(
+        sys.modules,
+        "dinkster_inference_torch.aimdo_activation",
+        SimpleNamespace(ensure_visible_aimdo_devices=lambda: calls.append("visible") or True),
+    )
+    assert AimdoArmProbe.execute() == {"ready": int(armed)}
+    assert calls == (["visible"] if armed else [])
+
+
+@pytest.mark.parametrize("loaded", [False, True])
+def test_aimdo_headroom_probe_requires_library(
+    monkeypatch: pytest.MonkeyPatch, loaded: bool
+) -> None:
+    import ctypes
+
+    from aimdo_live_nodes import AimdoHeadroomProbe
+
+    library = object() if loaded else None
+    calls: list[tuple[object, str]] = []
+
+    def in_dll(dll: object, name: str) -> SimpleNamespace:
+        calls.append((dll, name))
+        return SimpleNamespace(value=1234)
+
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(device=lambda value: value))
+    monkeypatch.setitem(
+        sys.modules, "dinkster_aimdo", SimpleNamespace(control=SimpleNamespace(lib=library))
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "dinkster_compat_comfy.native_arm",
+        SimpleNamespace(_aimdo_mechanism_factory=lambda *_: (object(), None)),
+    )
+    monkeypatch.setattr(ctypes, "c_int64", SimpleNamespace(in_dll=in_dll))
+    monkeypatch.setenv("DINKSTER_AIMDO_HEADROOM_TARGET", "0")
+    if loaded:
+        assert AimdoHeadroomProbe.execute(7) == {"native_headroom": 1234, "pending": 1}
+        assert calls == [(library, "simple_vram_headroom")]
+    else:
+        with pytest.raises(RuntimeError, match="aimdo native library did not initialize"):
+            AimdoHeadroomProbe.execute(7)
+        assert calls == []
+
+
+def test_accelerator_runtime_preparation_is_optional_and_calls_runtime() -> None:
+    calls: list[str] = []
+    runtime = SimpleNamespace(
+        prepare_fp8_matmul_runtime=lambda: calls.append("prepare"),
+    )
+
+    assert not host_module._prepare_accelerator_runtime(  # pyright: ignore[reportPrivateUsage]
+        False,
+        lambda name: calls.append(name) or runtime,
+    )
+    assert host_module._prepare_accelerator_runtime(  # pyright: ignore[reportPrivateUsage]
+        True,
+        lambda name: calls.append(name) or runtime,
+    )
+    assert calls == ["dinkster_inference_torch", "prepare"]
+
+
+def test_accelerator_runtime_preparation_failure_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def fail_import(_name: str) -> object:
+        raise ImportError("missing runtime")
+
+    assert not host_module._prepare_accelerator_runtime(  # pyright: ignore[reportPrivateUsage]
+        True, fail_import
+    )
+    assert "accelerator runtime preparation failed" in caplog.text
+
+
 def test_aimdo_headroom_handler_replaces_base_and_converges_in_either_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    calls: list[int] = []
+
+    def setter(target: int) -> bool:
+        calls.append(target)
+        return True
+
     monkeypatch.setattr(host_module, "_accelerator_headroom_base", 100)
     monkeypatch.setattr(host_module, "_aimdo_bootstrap_headroom_base", 100)
     monkeypatch.setattr(host_module, "_aimdo_headroom_extra_bytes", 0)
-    monkeypatch.delenv("COMFY_AIMDO_HEADROOM_TARGET", raising=False)
+    monkeypatch.delenv("DINKSTER_AIMDO_HEADROOM_TARGET", raising=False)
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda _name: SimpleNamespace(set_simple_vram_headroom=setter),
+    )
 
     # An old parent frame keeps the current base.
     host_module._handle_aimdo_headroom(40)
-    assert os.environ["COMFY_AIMDO_HEADROOM_TARGET"] == str(DEFAULT_INFERENCE_RESERVE_BYTES + 140)
+    assert calls == [DEFAULT_INFERENCE_RESERVE_BYTES + 140]
     assert host_module._aimdo_bootstrap_headroom_base == DEFAULT_INFERENCE_RESERVE_BYTES + 100
 
     # Base then extras and extras then base converge on the same target.
     host_module._handle_aimdo_headroom(40, 200)
     host_module._handle_aimdo_headroom(60)
-    assert os.environ["COMFY_AIMDO_HEADROOM_TARGET"] == str(DEFAULT_INFERENCE_RESERVE_BYTES + 260)
+    assert calls[-1] == DEFAULT_INFERENCE_RESERVE_BYTES + 260
     host_module._handle_aimdo_headroom(40)
     host_module._handle_aimdo_headroom(60, 200)
-    assert os.environ["COMFY_AIMDO_HEADROOM_TARGET"] == str(DEFAULT_INFERENCE_RESERVE_BYTES + 260)
+    assert calls[-1] == DEFAULT_INFERENCE_RESERVE_BYTES + 260
     assert host_module._accelerator_headroom_base == 200
     assert host_module._aimdo_bootstrap_headroom_base == DEFAULT_INFERENCE_RESERVE_BYTES + 200
     assert host_module._aimdo_headroom_extra_bytes == 60
 
     host_module._handle_aimdo_headroom(0)
-    assert os.environ["COMFY_AIMDO_HEADROOM_TARGET"] == str(DEFAULT_INFERENCE_RESERVE_BYTES + 200)
+    assert calls[-1] == DEFAULT_INFERENCE_RESERVE_BYTES + 200
+    assert "DINKSTER_AIMDO_HEADROOM_TARGET" not in os.environ
 
     monkeypatch.setattr(host_module, "_aimdo_bootstrap_headroom_base", None)
     host_module._handle_aimdo_headroom(50, 300)
-    assert os.environ["COMFY_AIMDO_HEADROOM_TARGET"] == str(DEFAULT_INFERENCE_RESERVE_BYTES + 200)
+    assert calls[-1] == DEFAULT_INFERENCE_RESERVE_BYTES + 200
 
 
 @pytest.mark.parametrize("base", [True, -1, "100", None])
@@ -942,6 +1033,42 @@ def test_aimdo_headroom_handler_rejects_invalid_extra_without_state_change(
     assert host_module._aimdo_bootstrap_headroom_base == 100
     assert host_module._aimdo_headroom_extra_bytes == 25
     assert "aimdoHeadroom extraBytes" in caplog.text
+
+
+def test_aimdo_base_frame_is_applied_once_after_verified_activation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[int] = []
+    outcomes = iter((False, True))
+
+    def setter(target: int) -> bool:
+        calls.append(target)
+        return next(outcomes)
+
+    arm = importlib.import_module("dinkster_compat_comfy.native_arm")
+    monkeypatch.setattr(host_module, "_accelerator_headroom_base", 100)
+    monkeypatch.setattr(host_module, "_aimdo_bootstrap_headroom_base", 100)
+    monkeypatch.setattr(host_module, "_aimdo_headroom_extra_bytes", 0)
+    monkeypatch.delenv("DINKSTER_AIMDO_HEADROOM_TARGET", raising=False)
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda _name: SimpleNamespace(set_simple_vram_headroom=setter),
+    )
+    host_module._handle_aimdo_headroom(40, 200)
+    target = DEFAULT_INFERENCE_RESERVE_BYTES + 240
+    assert calls == [target]
+    assert os.environ["DINKSTER_AIMDO_HEADROOM_TARGET"] == str(target)
+
+    monkeypatch.setattr(
+        arm.importlib,
+        "import_module",
+        lambda _name: SimpleNamespace(set_simple_vram_headroom=setter),
+    )
+    arm._apply_pending_aimdo_headroom()
+    arm._apply_pending_aimdo_headroom()
+    assert calls == [target, target]
+    assert "DINKSTER_AIMDO_HEADROOM_TARGET" not in os.environ
 
 
 def test_classic_headroom_handler_updates_fresh_policy_without_aimdo(
@@ -1343,7 +1470,7 @@ def test_host_main_sets_aimdo_arm_only_from_argv(
         del endpoint, manifest_path, shm_threshold, use_shm
         seen.append(
             (
-                os.environ.get("COMFY_AIMDO_ARM"),
+                os.environ.get("DINKSTER_AIMDO_ARM"),
                 os.environ.get("DINKSTER_ACCELERATOR_BUDGETS"),
                 os.environ.get("DINKSTER_ACCELERATOR_HEADROOM_BYTES"),
             )
@@ -1362,7 +1489,7 @@ def test_host_main_sets_aimdo_arm_only_from_argv(
     ]
     if mode is not None:
         argv.extend(("--aimdo-arm", mode))
-    monkeypatch.setenv("COMFY_AIMDO_ARM", "on")
+    monkeypatch.setenv("DINKSTER_AIMDO_ARM", "on")
     monkeypatch.setenv("DINKSTER_ACCELERATOR_BUDGETS", "0=1")
     monkeypatch.setenv("DINKSTER_ACCELERATOR_HEADROOM_BYTES", "1")
     monkeypatch.setattr(host_module, "configure_logging_from_env", lambda _env: None)
@@ -1492,7 +1619,7 @@ def test_host_main_publishes_only_validated_headroom_argv(
         del endpoint, manifest_path, shm_threshold, use_shm
         seen.append(
             (
-                os.environ.get("COMFY_AIMDO_ARM"),
+                os.environ.get("DINKSTER_AIMDO_ARM"),
                 os.environ.get("DINKSTER_ACCELERATOR_BUDGETS"),
                 os.environ.get("DINKSTER_ACCELERATOR_HEADROOM_BYTES"),
             )
@@ -1549,7 +1676,7 @@ def test_host_main_publishes_classic_policy_argv(
         del endpoint, manifest_path, shm_threshold, use_shm
         seen.append(
             (
-                os.environ.get("COMFY_AIMDO_ARM"),
+                os.environ.get("DINKSTER_AIMDO_ARM"),
                 os.environ.get("DINKSTER_ACCELERATOR_BUDGETS"),
                 os.environ.get("DINKSTER_ACCELERATOR_HEADROOM_BYTES"),
             )
@@ -1645,6 +1772,11 @@ def test_host_main_bootstraps_aimdo_before_serve(
         "_bootstrap_aimdo",
         lambda enabled, **_kwargs: order.append("aimdo") or True,
     )
+    monkeypatch.setattr(
+        host_module,
+        "_prepare_accelerator_runtime",
+        lambda enabled: order.append("prepare") or True,
+    )
     monkeypatch.setattr(host_module, "serve", fake_serve)
     monkeypatch.setattr(
         sys,
@@ -1659,7 +1791,7 @@ def test_host_main_bootstraps_aimdo_before_serve(
         ],
     )
     host_module.main()
-    assert order == ["logging", "aimdo", "serve"]
+    assert order == ["logging", "aimdo", "prepare", "serve"]
 
 
 def image_graph(ratio: float = 0.5) -> Graph:
@@ -1692,6 +1824,77 @@ def test_hello_announces_schemas_in_wire_format() -> None:
             await worker.prepare(sorted(local))
             with pytest.raises(KeyError):
                 await worker.prepare(["no.such.node"])
+        finally:
+            await worker.close()
+
+    asyncio.run(scenario())
+
+
+def test_isolated_subprocess_accepts_derived_fallback_and_rejects_forgery(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        (tmp_path / "native_attention_nodes.py").write_text(
+            "from isopack_nodes import Sleepy, register_types\n"
+            "NODES = [Sleepy]\n"
+            "ARM_NODES = {'native': NODES}\n"
+        )
+        manifest = tmp_path / "dinkster-pack.toml"
+        manifest.write_text(
+            '[pack]\nname = "native-attention-test"\nnamespaces = ["iso"]\n\n'
+            '[pack.arms]\nnative = ["iso.sleepy"]\n\n'
+            '[pack.entry]\nnodes = "native_attention_nodes:NODES"\n'
+            'arm_nodes = "native_attention_nodes:ARM_NODES"\n'
+            'types = "native_attention_nodes:register_types"\n'
+        )
+        registry = core_registry()
+        worker = IsolatedWorker(
+            manifest,
+            registry,
+            extra_env={
+                "PYTHONPATH": os.pathsep.join(
+                    (
+                        str(tmp_path),
+                        str(TESTS_DIR / "fixtures" / "attention_provider"),
+                        str(TESTS_DIR),
+                    )
+                )
+            },
+        )
+        await worker.start()
+        try:
+            capabilities = worker.attention_capabilities
+            assert isinstance(capabilities, AttentionCapabilityEvidence)
+            fallback = derive_attention_route_token(
+                capabilities, AttentionPolicyConfig(requested_policy="flash")
+            )
+            invocation = Invocation(
+                invocation_id="fallback",
+                node_id="fallback",
+                node_type="iso.sleepy",
+                inputs={
+                    "value": registry.wrap("core.string", "accepted"),
+                    "seconds": registry.wrap("core.float", 0.0),
+                },
+                effective_schema=worker.schemas["iso.sleepy"],
+                attention_policy="flash",
+                attention_route_token=fallback,
+            )
+            accepted = await worker.invoke(invocation)
+            assert accepted.error is None
+            assert accepted.outputs is not None
+            assert accepted.outputs["value"].resolve() == "accepted"
+
+            forged = await worker.invoke(
+                replace(
+                    invocation,
+                    attention_route_token=replace(fallback, device_kind="forged"),
+                )
+            )
+            assert forged.error is not None
+            assert forged.error.message == (
+                "attention route token does not match worker startup evidence"
+            )
         finally:
             await worker.close()
 
@@ -1844,10 +2047,52 @@ def test_conversion_pending_rpc_fails_with_worker_died_on_session_close(
     asyncio.run(scenario())
 
 
+def test_graph_compile_session_request_and_correlated_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = graph_compile_session()
+    sent: list[tuple[dict[str, object], list[bytes]]] = []
+
+    async def send(header: dict[str, object], blobs: list[bytes]) -> None:
+        sent.append((header, blobs))
+        request_id = str(header["requestId"])
+        session._graph_compile_pending[request_id].set_result(  # noqa: SLF001
+            {
+                "type": GRAPH_COMPILE_RESULT_TYPE,
+                "requestId": request_id,
+                "graph": {"nodes": {"compiled": {}}},
+                "origins": {"compiled": "source"},
+            }
+        )
+
+    monkeypatch.setattr(session, "send", send)
+
+    async def scenario() -> None:
+        graph = {"nodes": {"source": {"type": "test.selector"}}}
+        reply = await session.compile_graph("generation-7", graph, ("source", "other"))
+        assert sent == [
+            (
+                {
+                    "type": GRAPH_COMPILE_REQUEST_TYPE,
+                    "requestId": "compile-0",
+                    "generationKey": "generation-7",
+                    "graph": graph,
+                    "targets": ["source", "other"],
+                },
+                [],
+            )
+        ]
+        assert reply["requestId"] == "compile-0"
+        assert reply["origins"] == {"compiled": "source"}
+        assert session._graph_compile_pending == {}  # noqa: SLF001
+
+    asyncio.run(scenario())
+
+
 def test_lazy_status_session_refuses_skew_and_malformed_reply(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    session = negotiated_session()
+    session = graph_compile_session()
     invocation = LazyStatusInvocation(
         request_id="lazy-1",
         node_id="consumer",
@@ -1945,6 +2190,361 @@ def test_lazy_status_terminal_send_failure_aborts_connection(
         await writer.wait_closed()
         server.close()
         await server.wait_closed()
+
+    asyncio.run(scenario())
+
+
+def test_graph_compile_named_remote_error_reply_is_transport_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = graph_compile_session()
+
+    async def send(header: dict[str, object], _blobs: list[bytes]) -> None:
+        request_id = str(header["requestId"])
+        session._graph_compile_pending[request_id].set_result(  # noqa: SLF001
+            {
+                "type": GRAPH_COMPILE_RESULT_TYPE,
+                "requestId": request_id,
+                "errorName": "pack.limit-refusal",
+                "error": "CompileRefusal: too many generated nodes",
+            }
+        )
+
+    monkeypatch.setattr(session, "send", send)
+
+    async def scenario() -> None:
+        reply = await session.compile_graph("generation", {}, [])
+        assert reply["errorName"] == "pack.limit-refusal"
+        assert reply["error"] == "CompileRefusal: too many generated nodes"
+
+    asyncio.run(scenario())
+
+
+def test_graph_compile_session_cancellation_sends_cancel_and_clears_pending(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = graph_compile_session()
+    sent: list[dict[str, object]] = []
+
+    async def send(header: dict[str, object], _blobs: list[bytes]) -> None:
+        sent.append(header)
+
+    monkeypatch.setattr(session, "send", send)
+
+    async def scenario() -> None:
+        task = asyncio.create_task(session.compile_graph("generation", {}, ("a",)))
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert sent == [
+            {
+                "type": GRAPH_COMPILE_REQUEST_TYPE,
+                "requestId": "compile-0",
+                "generationKey": "generation",
+                "graph": {},
+                "targets": ["a"],
+            },
+            {"type": GRAPH_COMPILE_CANCEL_TYPE, "requestId": "compile-0"},
+        ]
+        assert session._graph_compile_pending == {}  # noqa: SLF001
+
+    asyncio.run(scenario())
+
+
+def test_graph_compile_pending_fails_on_session_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = graph_compile_session()
+
+    async def drop_frame(_header: object, _blobs: object) -> None:
+        return None
+
+    monkeypatch.setattr(session, "send", drop_frame)
+
+    async def scenario() -> None:
+        pending = asyncio.create_task(session.compile_graph("generation", {}, ()))
+        await asyncio.sleep(0)
+        await session.close()
+        with pytest.raises(WorkerDied):
+            await pending
+        assert session._graph_compile_pending == {}  # noqa: SLF001
+
+    asyncio.run(scenario())
+
+
+def test_graph_compile_pending_fails_on_peer_death(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = graph_compile_session()
+
+    async def drop_frame(_header: object, _blobs: object) -> None:
+        return None
+
+    monkeypatch.setattr(session, "send", drop_frame)
+
+    async def scenario() -> None:
+        reader = asyncio.StreamReader()
+        session._reader = reader  # noqa: SLF001 - drive the production death path
+        session._reader_task = asyncio.create_task(session._read_loop())  # noqa: SLF001
+        pending = asyncio.create_task(session.compile_graph("generation", {}, ()))
+        await asyncio.sleep(0)
+        reader.feed_eof()
+        with pytest.raises(WorkerDied):
+            await pending
+        assert session._graph_compile_pending == {}  # noqa: SLF001
+        await session.close()
+
+    asyncio.run(scenario())
+
+
+def test_graph_compile_host_success_preserves_correlation_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[object, object, object, bool]] = []
+
+    def compile_graph(generation: object, graph: object, targets: object, *, cancelled) -> dict:
+        calls.append((generation, graph, targets, cancelled()))
+        return {
+            "type": "malicious-type",
+            "requestId": "malicious-id",
+            "graph": {"nodes": {}},
+            "origins": {},
+        }
+
+    monkeypatch.setattr(
+        "dinkster_workers.host.importlib.import_module",
+        lambda name: SimpleNamespace(compile_inference_graph=compile_graph),
+    )
+
+    async def scenario() -> None:
+        reader, writer, server, host_task = await start_test_host()
+        graph = {"nodes": {"a": {"type": "pack.selector"}}}
+        targets = ["a", "b"]
+        await write_frame(
+            writer,
+            {
+                "type": GRAPH_COMPILE_REQUEST_TYPE,
+                "requestId": "request-9",
+                "generationKey": "generation-9",
+                "graph": graph,
+                "targets": targets,
+            },
+            [],
+        )
+        frame = await asyncio.wait_for(read_frame(reader), 2.0)
+        assert frame is not None
+        assert frame[0] == {
+            "type": GRAPH_COMPILE_RESULT_TYPE,
+            "requestId": "request-9",
+            "graph": {"nodes": {}},
+            "origins": {},
+            "blobs": [],
+        }
+        assert calls == [("generation-9", graph, targets, False)]
+        await stop_test_host(writer, server, host_task)
+
+    asyncio.run(scenario())
+
+
+def test_graph_compile_isolated_subprocess_loads_runtime_fake_module(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "fake_graph_compile.py").write_text(
+        "def compile_inference_graph(generation_key, graph, targets, *, cancelled):\n"
+        "    return {\n"
+        "        'type': 'override',\n"
+        "        'requestId': 'override',\n"
+        "        'generationKeySeen': generation_key,\n"
+        "        'graphSeen': graph,\n"
+        "        'targetsSeen': targets,\n"
+        "        'cancelledSeen': cancelled(),\n"
+        "    }\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "sitecustomize.py").write_text(
+        "import dinkster_inference\n"
+        "from fake_graph_compile import compile_inference_graph\n"
+        "dinkster_inference.compile_inference_graph = compile_inference_graph\n",
+        encoding="utf-8",
+    )
+
+    async def scenario() -> None:
+        worker = IsolatedWorker(
+            DEV_MANIFEST,
+            core_registry(),
+            extra_env={"PYTHONPATH": str(tmp_path)},
+        )
+        await worker.start()
+        try:
+            graph = {"nodes": {"selector": {"type": "pack.selector"}}}
+            reply = await worker.compile_graph("generation-subprocess", graph, ("selector", "tail"))
+            assert reply == {
+                "type": GRAPH_COMPILE_RESULT_TYPE,
+                "requestId": "compile-0",
+                "generationKeySeen": "generation-subprocess",
+                "graphSeen": graph,
+                "targetsSeen": ["selector", "tail"],
+                "cancelledSeen": False,
+                "blobs": [],
+            }
+        finally:
+            await worker.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("error_name", "expected"),
+    [(None, GRAPH_COMPILE_ERROR_COMPILER_FAILURE), ("pack.explicit", "pack.explicit")],
+)
+def test_graph_compile_host_errors_preserve_explicit_name(
+    error_name: str | None,
+    expected: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class CompileFailure(RuntimeError):
+        pass
+
+    def compile_graph(*_args: object, **_kwargs: object) -> dict:
+        failure = CompileFailure("stable failure")
+        if error_name is not None:
+            failure.error_name = error_name  # type: ignore[attr-defined]
+        raise failure
+
+    monkeypatch.setattr(
+        "dinkster_workers.host.importlib.import_module",
+        lambda name: SimpleNamespace(compile_inference_graph=compile_graph),
+    )
+
+    async def scenario() -> None:
+        reader, writer, server, host_task = await start_test_host()
+        await write_frame(
+            writer,
+            {
+                "type": GRAPH_COMPILE_REQUEST_TYPE,
+                "requestId": "failure",
+                "generationKey": "generation",
+                "graph": {},
+                "targets": [],
+            },
+            [],
+        )
+        frame = await asyncio.wait_for(read_frame(reader), 2.0)
+        assert frame is not None
+        assert frame[0]["errorName"] == expected
+        assert frame[0]["error"] == "CompileFailure: stable failure"
+        await stop_test_host(writer, server, host_task)
+
+    asyncio.run(scenario())
+
+
+def test_graph_compile_host_non_mapping_result_is_generic_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "dinkster_workers.host.importlib.import_module",
+        lambda name: SimpleNamespace(compile_inference_graph=lambda *args, **kwargs: None),
+    )
+
+    async def scenario() -> None:
+        reader, writer, server, host_task = await start_test_host()
+        await write_frame(
+            writer,
+            {
+                "type": GRAPH_COMPILE_REQUEST_TYPE,
+                "requestId": "malformed",
+                "generationKey": "generation",
+                "graph": {},
+                "targets": [],
+            },
+            [],
+        )
+        frame = await asyncio.wait_for(read_frame(reader), 2.0)
+        assert frame is not None
+        assert frame[0]["errorName"] == GRAPH_COMPILE_ERROR_COMPILER_FAILURE
+        assert frame[0]["error"] == "TypeError: graph compiler returned a non-Mapping result"
+        await stop_test_host(writer, server, host_task)
+
+    asyncio.run(scenario())
+
+
+def test_graph_compile_host_cancel_sets_callback_and_sends_no_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = threading.Event()
+    saw_cancel = threading.Event()
+
+    def observe_cancel(*args: object, **kwargs: object) -> dict:
+        callback = cast("Callable[[], bool]", kwargs["cancelled"])
+        started.set()
+        while not callback():
+            time.sleep(0.001)
+        saw_cancel.set()
+        return {"graph": {}, "origins": {}}
+
+    monkeypatch.setattr(
+        "dinkster_workers.host.importlib.import_module",
+        lambda name: SimpleNamespace(compile_inference_graph=observe_cancel),
+    )
+
+    async def scenario() -> None:
+        reader, writer, server, host_task = await start_test_host()
+        await write_frame(
+            writer,
+            {
+                "type": GRAPH_COMPILE_REQUEST_TYPE,
+                "requestId": "cancel-me",
+                "generationKey": "generation",
+                "graph": {},
+                "targets": [],
+            },
+            [],
+        )
+        assert await asyncio.to_thread(started.wait, 2.0)
+        await write_frame(
+            writer,
+            {"type": GRAPH_COMPILE_CANCEL_TYPE, "requestId": "cancel-me"},
+            [],
+        )
+        assert await asyncio.to_thread(saw_cancel.wait, 2.0)
+        compile_tasks = [
+            task
+            for task in asyncio.all_tasks()
+            if "run_graph_compile" in task.get_coro().__qualname__ and not task.done()
+        ]
+        if compile_tasks:
+            _, pending = await asyncio.wait(compile_tasks, timeout=2.0)
+            assert not pending
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(read_frame(reader), 0.05)
+        await stop_test_host(writer, server, host_task)
+
+    asyncio.run(scenario())
+
+
+def test_graph_compile_worker_facades_forward() -> None:
+    calls: list[tuple[str, object, object]] = []
+
+    class Session:
+        async def compile_graph(self, key: str, graph: object, targets: object) -> dict:
+            calls.append((key, graph, targets))
+            return {"requestId": key}
+
+    session = Session()
+    isolated = object.__new__(IsolatedWorker)
+    isolated._session = session  # type: ignore[attr-defined]  # noqa: SLF001
+    member = GroupMemberWorker(SimpleNamespace(), session)  # type: ignore[arg-type]
+
+    async def scenario() -> None:
+        graph = {"nodes": {}}
+        targets = ("a", "b")
+        assert await isolated.compile_graph("isolated", graph, targets) == {"requestId": "isolated"}
+        assert await member.compile_graph("member", graph, targets) == {"requestId": "member"}
+        assert calls == [
+            ("isolated", graph, targets),
+            ("member", graph, targets),
+        ]
 
     asyncio.run(scenario())
 
@@ -2122,8 +2722,7 @@ def test_group_isolated_close_is_idempotent(tmp_path: Path) -> None:
             directory.mkdir()
             manifest = directory / "dinkster-pack.toml"
             manifest.write_text(
-                f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
-                'type-namespaces = ["iso"]\nnamespaces = ["iso"]\n\n'
+                f'[pack]\nname = "{name}"\nnamespaces = ["iso"]\n\n'
                 '[pack.entry]\nnodes = "isopack_nodes:NODES"\n'
                 'types = "isopack_nodes:register_types"\n',
                 encoding="utf-8",
@@ -2205,7 +2804,7 @@ def test_shm_transport_for_large_payloads_and_cleanup() -> None:
             # they must cross via shared memory, not inline bytes.
             assert stats_inputs["image"].transport == "shm"
             blend_inputs = {c.edge_id: c for c in by_node["dev.image.blend"].inputs}
-            # ratio is a small FLOAT: inline either way.
+            # ratio is a small core.float: inline either way.
             assert blend_inputs["ratio"].transport == "inline"
         finally:
             await worker.close()
@@ -2358,7 +2957,7 @@ def test_isolated_lazy_hook_protocol_and_attribution(tmp_path: Path) -> None:
                     request_id=request_id,
                     node_id="lazy",
                     node_type="iso.lazy_probe",
-                    available_inputs={"mode": registry.wrap("STRING", mode)},
+                    available_inputs={"mode": registry.wrap("core.string", mode)},
                     connected_undemanded_inputs=("value",),
                     effective_schema=schema,
                 )
@@ -2713,11 +3312,8 @@ def test_manifest_namespaces(tmp_path: Path) -> None:
         load_manifest(manifest("namespaces = []\n"))
     with pytest.raises(ManifestError, match="list of strings"):
         load_manifest(manifest("namespaces = [3]\n"))
-    assert load_manifest(manifest('namespaces = ["Img"]\n')).namespaces == ("Img",)
-    uppercase_pack = manifest('namespaces = ["Img"]\n')
-    uppercase_pack.write_text(uppercase_pack.read_text().replace('name = "p"', 'name = "P"'))
     with pytest.raises(ManifestError, match="lowercase"):
-        load_manifest(uppercase_pack)
+        load_manifest(manifest('namespaces = ["Img"]\n'))
     # Separator equivalence: img_x and img.x are the SAME claim.
     with pytest.raises(ManifestError, match="same claim"):
         load_manifest(manifest('namespaces = ["img_x", "img.x"]\n'))
@@ -3633,7 +4229,7 @@ def test_load_pack_validates_comfy_alias_carrier_ownership_and_references(
                 ComfyAliasSourceSchema(
                     NodeSchema(
                         source.node_type,
-                        inputs=(InputSpec("value", TypeExpr.concrete("STRING")),),
+                        inputs=(InputSpec("value", TypeExpr.concrete("core.string")),),
                     ),
                     SCHEMA_WIRE_VERSION,
                 ),

@@ -21,8 +21,8 @@ def _wire() -> dict[str, Any]:
         schema_to_wire(
             NodeSchema(
                 node_type="review.node",
-                inputs=(InputSpec("value", TypeExpr.concrete("INT")),),
-                outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
+                inputs=(InputSpec("value", TypeExpr.concrete("core.int")),),
+                outputs=(OutputSpec("out", TypeExpr.concrete("core.int")),),
             )
         ),
     )
@@ -31,9 +31,9 @@ def _wire() -> dict[str, Any]:
 @pytest.mark.parametrize(
     ("widget", "type_id", "message"),
     [
-        (BooleanWidget(label_on="yes"), "STRING", "boolean widget"),
-        (ComboWidget(options=("a",)), "INT", "combo widget"),
-        (SaveTargetWidget(), "STRING", "save target widget"),
+        (BooleanWidget(label_on="yes"), "core.string", "boolean widget"),
+        (ComboWidget(options=("a",)), "core.int", "combo widget"),
+        (SaveTargetWidget(), "core.string", "save target widget"),
     ],
 )
 def test_new_widget_socket_bindings_are_enforced(
@@ -47,13 +47,13 @@ def test_asset_widget_binding_matrix_accepts_assets_and_concrete_scalars() -> No
     """The picker binds to direct asset destinations and concrete scalar
     decode/merge destinations, but never list destinations or unresolved
     asset variables."""
-    image_asset = TypeExpr.asset_of(TypeExpr.concrete("IMAGE"))
-    InputSpec("bare", TypeExpr.concrete("ASSET"), widget=AssetWidget())
+    image_asset = TypeExpr.asset_of(TypeExpr.concrete("comfy.IMAGE"))
+    InputSpec("bare", TypeExpr.concrete("dinkster.asset"), widget=AssetWidget())
     InputSpec("typed", image_asset, widget=AssetWidget())
-    InputSpec("scalar", TypeExpr.concrete("IMAGE"), widget=AssetWidget())
+    InputSpec("scalar", TypeExpr.concrete("comfy.IMAGE"), widget=AssetWidget())
     InputSpec(
         "sheet",
-        TypeExpr.asset_of(TypeExpr.list_of(TypeExpr.concrete("IMAGE"))),
+        TypeExpr.asset_of(TypeExpr.list_of(TypeExpr.concrete("comfy.IMAGE"))),
         widget=AssetWidget(),
     )
     with pytest.raises(ValueError, match="asset widget"):
@@ -61,7 +61,7 @@ def test_asset_widget_binding_matrix_accepts_assets_and_concrete_scalars() -> No
     with pytest.raises(ValueError, match="asset widget"):
         InputSpec(
             "values",
-            TypeExpr.list_of(TypeExpr.concrete("IMAGE")),
+            TypeExpr.list_of(TypeExpr.concrete("comfy.IMAGE")),
             widget=AssetWidget(),
         )
     with pytest.raises(ValueError, match="asset widget"):

@@ -13,7 +13,6 @@ from dinkster_api.v1 import (
     CORE_FLOAT,
     CORE_INT,
     CORE_STRING,
-    MASK_TYPE,
     ComboOption,
     ComboWidget,
     InputSpec,
@@ -29,7 +28,7 @@ from .support import combo_input as _combo
 from .support import number_input as _number
 from .types import DETECTION_TYPE
 
-MASK = TypeExpr.concrete(MASK_TYPE)
+MASK = TypeExpr.concrete("dinkster.mask")
 DETECTION = TypeExpr.concrete(DETECTION_TYPE)
 DETECTIONS = TypeExpr.list_of(DETECTION)
 MASKS = TypeExpr.list_of(MASK)

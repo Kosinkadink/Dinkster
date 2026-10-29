@@ -13,7 +13,7 @@ import av
 import numpy as np
 import pytest
 from aiohttp import web
-from dinkster_api.v1 import ABSENT, AUDIO_TYPE, VIDEO_TYPE
+from dinkster_api.v1 import ABSENT
 from dinkster_assets import (
     AssetError,
     AssetRef,
@@ -530,8 +530,8 @@ def test_nested_audio_roundtrip_binds_without_decoding(tmp_path, monkeypatch, sa
     value = assemble_video(images, audio={"waveform": pcm, "sample_rate": 8000}, fps=8)
     monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "producer"))
     producer = TypeRegistry()
-    register_video_value_type(producer, VIDEO_TYPE)
-    wrapped = producer.wrap(VIDEO_TYPE, value)
+    register_video_value_type(producer, "comfy.VIDEO")
+    wrapped = producer.wrap("comfy.VIDEO", value)
     bound = wrapped.resolve()
     encoded = encode_video(bound)
     refs = cast(list[dict[str, Any]], wrapped.meta.get("asset_refs"))
@@ -573,8 +573,7 @@ def test_remote_audio_stages_once_and_decodes_exact_edited_window(tmp_path, monk
     expected = TrimAudio.execute(audio=source, start=0.113, duration=0.751)["audio"]
     manifest = tmp_path / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname = "audio-contract"\npublisher = "dinkster"\n'
-        'type-namespaces = ["dinkster"]\nnamespaces = ["dinkster"]\n'
+        '[pack]\nname = "audio-contract"\nnamespaces = ["dinkster"]\n'
         '[pack.entry]\nnodes = "dinkster_nodes_media_io:AUDIO_OPS_NODES"\n'
         'types = "dinkster_nodes_media_io:register_media_types"\n'
     )
@@ -593,7 +592,7 @@ def test_remote_audio_stages_once_and_decodes_exact_edited_window(tmp_path, monk
         try:
             registry = TypeRegistry()
             register_core_types(registry)
-            register_audio_value_type(registry, AUDIO_TYPE, asset.resolver)
+            register_audio_value_type(registry, "comfy.AUDIO", asset.resolver)
             register_media_types(registry)
             async with AudioHost() as endpoint:
                 worker = RemoteWorker(
@@ -613,9 +612,9 @@ def test_remote_audio_stages_once_and_decodes_exact_edited_window(tmp_path, monk
                             node_id="trim",
                             node_type="dinkster.audio.trim",
                             inputs={
-                                "audio": registry.wrap(AUDIO_TYPE, source),
-                                "start": registry.wrap("FLOAT", 0.113),
-                                "duration": registry.wrap("FLOAT", 0.751),
+                                "audio": registry.wrap("comfy.AUDIO", source),
+                                "start": registry.wrap("core.float", 0.113),
+                                "duration": registry.wrap("core.float", 0.751),
                             },
                             effective_schema=worker.schemas["dinkster.audio.trim"],
                         )
@@ -631,8 +630,8 @@ def test_remote_audio_stages_once_and_decodes_exact_edited_window(tmp_path, monk
                             node_type="dinkster.audio.fade",
                             inputs={
                                 "audio": trimmed.outputs["audio"],
-                                "fade_in_seconds": registry.wrap("FLOAT", 0.0),
-                                "fade_out_seconds": registry.wrap("FLOAT", 0.0),
+                                "fade_in_seconds": registry.wrap("core.float", 0.0),
+                                "fade_out_seconds": registry.wrap("core.float", 0.0),
                             },
                             effective_schema=worker.schemas["dinkster.audio.fade"],
                         )

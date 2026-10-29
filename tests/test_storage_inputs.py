@@ -45,7 +45,7 @@ def register_types(registry: TypeRegistry) -> None:
     # The fallback codec preserves arrays independently of media codec policy.
     registry.register("test.image", input_convert=image_input)
     registry.register("test.audio", input_convert=audio_input)
-    registry.register("ASSET")
+    registry.register("dinkster.asset")
     registry.register_asset_decoder(
         "test.image", provider_id="test.storage-decode", decode=lambda obj: obj
     )
@@ -65,7 +65,7 @@ class FloatInput(Node):
         return NodeSchema(
             node_type="test.float-input",
             inputs=(InputSpec("image", IMAGE),),
-            outputs=(OutputSpec("dtype", TypeExpr.concrete("STRING")),),
+            outputs=(OutputSpec("dtype", TypeExpr.concrete("core.string")),),
         )
 
     @classmethod
@@ -268,8 +268,7 @@ def test_invocation_storage_contract_crosses_worker_boundary(
         if isolated:
             manifest = tmp_path / "dinkster-pack.toml"
             manifest.write_text(
-                '[pack]\nname = "storage-test"\npublisher = "dinkster"\n'
-                'type-namespaces = ["test"]\n[pack.entry]\n'
+                '[pack]\nname = "storage-test"\n[pack.entry]\n'
                 'nodes = "tests.test_storage_inputs:NODES"\n'
                 'types = "tests.test_storage_inputs:register_types"\n'
             )

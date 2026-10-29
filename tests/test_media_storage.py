@@ -7,7 +7,6 @@ from typing import Any, cast
 
 import numpy as np
 import pytest
-from dinkster_api.v1 import AUDIO_TYPE
 from dinkster_values import COST_META_KEY, EncodedPayload
 from dinkster_values.audio_codec import (
     audio_meta,
@@ -241,7 +240,7 @@ def test_shared_memory_boundary_preserves_compact_storage(audio: bool) -> None:
     comfy_compose.register_comfy_host_types(registry)
     samples = np.arange(24, dtype=np.int16 if audio else np.uint8).reshape(1, 2, 4, 3)
     obj = {"waveform": samples.reshape(1, 2, 12), "sample_rate": 48000} if audio else samples
-    type_id = AUDIO_TYPE if audio else "IMAGE"
+    type_id = "comfy.AUDIO" if audio else "comfy.IMAGE"
     codec = ValueCodec(registry, shm_threshold=1)
     blobs: list[bytes] = []
     segments: list[SharedMemory] = []

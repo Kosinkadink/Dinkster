@@ -54,13 +54,7 @@ from dataclasses import dataclass
 from typing import Literal, cast
 
 from blake3 import blake3
-from dinkster_schema import (
-    canonical_claim,
-    canonical_name,
-    claims_conflict,
-    validate_claim,
-    validate_name,
-)
+from dinkster_schema import canonical_name, claims_conflict, validate_name
 
 from .model import (
     ARTIFACT_DIGEST_PREFIX,
@@ -140,11 +134,7 @@ class Lockfile:
             # namespaces, non-empty executes) locks no claims. Pack-name
             # uniqueness is enforced below independently of claims.
             for claim in entry.claims:
-                problem = validate_claim(claim)
-                if problem is not None or canonical_claim(claim) != claim:
-                    raise InstallError(
-                        f"claim of pack {entry.pack!r} {claim!r} {problem or 'is not canonical'}"
-                    )
+                _require_canonical(f"claim of pack {entry.pack!r}", claim)
             problem = validate_version(entry.version)
             if problem is not None:
                 raise InstallError(f"pack {entry.pack!r} version {entry.version!r} {problem}")
@@ -402,9 +392,9 @@ class PlanRecord:
         pin_names = [name for name, _ in self.runtime_pins]
         if len(set(pin_names)) != len(pin_names):
             raise InstallError("plan records duplicate runtime pin names")
-        if normalized_in_process and set(pin_names) != {"torch", "comfy-aimdo"}:
+        if normalized_in_process and set(pin_names) != {"torch", "dinkster-aimdo"}:
             raise InstallError(
-                "plan records in-process packs without exact torch and comfy-aimdo pins"
+                "plan records in-process packs without exact torch and dinkster-aimdo pins"
             )
         if self.runtime_pins and not normalized_in_process:
             raise InstallError("plan records runtime pins without in-process packs")
@@ -710,9 +700,9 @@ class SnapshotRecord:
         pin_names = [name for name, _ in self.runtime_pins]
         if len(set(pin_names)) != len(pin_names):
             raise InstallError("snapshot records duplicate runtime pin names")
-        if self.in_process and set(pin_names) != {"torch", "comfy-aimdo"}:
+        if self.in_process and set(pin_names) != {"torch", "dinkster-aimdo"}:
             raise InstallError(
-                "snapshot records in-process packs without exact torch and comfy-aimdo pins"
+                "snapshot records in-process packs without exact torch and dinkster-aimdo pins"
             )
         if self.runtime_pins and not self.in_process:
             raise InstallError("snapshot records runtime pins without in-process packs")

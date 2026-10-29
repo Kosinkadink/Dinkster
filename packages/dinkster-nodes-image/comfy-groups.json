@@ -16,7 +16,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "COMBO"
+              "core.combo"
             ]
           },
           "required": true,
@@ -35,7 +35,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "COMBO"
+              "core.combo"
             ]
           },
           "required": true,
@@ -102,7 +102,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "FLOAT"
+              "core.float"
             ]
           },
           "required": true,
@@ -118,7 +118,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "COMBO"
+              "core.combo"
             ]
           },
           "required": true,
@@ -216,7 +216,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "INT"
+              "core.int"
             ]
           },
           "required": true,
@@ -232,7 +232,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "BOUNDING_BOX"
+              "comfy.BOUNDING_BOX"
             ]
           }
         }
@@ -256,7 +256,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "COMBO"
+              "core.combo"
             ]
           },
           "required": true,
@@ -329,7 +329,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "STRING"
+              "core.string"
             ]
           },
           "required": true,
@@ -402,7 +402,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "BOUNDING_BOX"
+              "comfy.BOUNDING_BOX"
             ]
           },
           "required": false,
@@ -420,7 +420,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "STRING"
+              "core.string"
             ]
           },
           "required": false,
@@ -436,7 +436,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "STRING"
+              "core.string"
             ]
           },
           "required": false,
@@ -452,7 +452,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "FLOAT"
+              "core.float"
             ]
           },
           "required": true,
@@ -470,7 +470,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "INT"
+              "core.int"
             ]
           },
           "required": true,
@@ -487,7 +487,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "BOOLEAN"
+              "core.boolean"
             ]
           },
           "required": true,
@@ -514,7 +514,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "BOUNDING_BOX"
+              "comfy.BOUNDING_BOX"
             ]
           }
         }
@@ -582,7 +582,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "FLOAT"
+              "core.float"
             ]
           },
           "required": true,
@@ -600,7 +600,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "INT"
+              "core.int"
             ]
           },
           "required": true,
@@ -617,7 +617,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "INT"
+              "core.int"
             ]
           },
           "required": true,
@@ -668,7 +668,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "STRING"
+              "core.string"
             ]
           },
           "required": true,
@@ -708,7 +708,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "COMBO"
+              "core.combo"
             ]
           },
           "required": true,
@@ -726,7 +726,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "BACKGROUND_REMOVAL"
+              "comfy.BACKGROUND_REMOVAL"
             ]
           }
         }
@@ -750,7 +750,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "BACKGROUND_REMOVAL"
+              "comfy.BACKGROUND_REMOVAL"
             ]
           },
           "required": true
@@ -809,7 +809,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "FLOAT"
+              "core.float"
             ]
           },
           "required": true,
@@ -825,7 +825,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "COMBO"
+              "core.combo"
             ]
           },
           "required": true,
@@ -923,7 +923,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "INT"
+              "core.int"
             ]
           },
           "required": true,
@@ -939,7 +939,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "BOUNDING_BOX"
+              "comfy.BOUNDING_BOX"
             ]
           }
         }
@@ -971,7 +971,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "STRING"
+              "core.string"
             ]
           },
           "required": true,
@@ -987,7 +987,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "FLOAT"
+              "core.float"
             ]
           },
           "required": true,
@@ -1005,7 +1005,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "BOUNDING_BOX"
+              "comfy.BOUNDING_BOX"
             ]
           }
         }

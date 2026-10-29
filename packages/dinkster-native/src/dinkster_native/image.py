@@ -37,10 +37,17 @@ from dinkster_values.image_codec import (
 )
 
 IMAGE_V1_NAME = "IMAGE"
-"""The exact value type string that gets this codec."""
+"""The v1 type string that gets this codec (translate.py special-cases it;
+the host mirrors the derived ``comfy.IMAGE`` id in comfy_compose)."""
 
 MASK_V1_NAME = "MASK"
-"""MASK shares IMAGE's byte contract but has mask metadata and rendition."""
+"""MASK shares the image-array byte contract (``[H, W]`` / ``[B, H, W]``
+per the codec's layout contract), so ``comfy.MASK`` and ``dinkster.mask``
+are one value type at the boundary; only the host rendition differs
+(render_mask_png)."""
+
+IMAGE_TYPE_EQUIVALENCE_PROVIDER = "dinkster.image-array-type-equivalence@1"
+"""Stable identity for the shared Comfy/native image and mask byte contract."""
 
 
 def _decode_torch(data: bytes) -> object:
@@ -59,10 +66,24 @@ def register_image_type(registry: TypeRegistry, type_id: str) -> None:
         decode=_decode_torch,
         prepare_buffer_encoding=prepare_image_array_encoding,
         fingerprint=image_array_fingerprint(type_id),
-        meta=mask_array_meta if type_id == MASK_V1_NAME else image_array_meta,
+        meta=mask_array_meta if type_id in {"comfy.MASK", "dinkster.mask"} else image_array_meta,
         validate_encoded=validate_image_encoded,
         validate_encoded_buffer=validate_image_encoded,
     )
+
+
+def register_image_type_equivalences(registry: TypeRegistry) -> None:
+    """Bind Comfy and native spellings after their shared codecs exist."""
+    for compat_type, native_type in (
+        ("comfy.IMAGE", "dinkster.image"),
+        ("comfy.MASK", "dinkster.mask"),
+    ):
+        if compat_type in registry and native_type in registry:
+            registry.register_type_equivalence(
+                compat_type,
+                native_type,
+                provider_id=IMAGE_TYPE_EQUIVALENCE_PROVIDER,
+            )
 
 
 def _to_torch(array: object) -> object:

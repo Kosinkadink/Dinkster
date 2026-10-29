@@ -10,12 +10,12 @@ never learns v1 existed.
 Translation rules:
 
 - v1 primitive type strings map to core envelope types; combo lists map
-  to COMBO (choice vocabulary is UI affordance within that identity).
+  to core.combo (choice vocabulary is UI affordance within that identity).
   When
   every choice is a non-empty string the list rides along as a
   ComboWidget with baked options, so the native wire renders the same
   dropdown v1 did - except under INPUT_IS_LIST, where the socket is
-  list<COMBO> and a widget on a list socket is undefined in the
+  list<core.combo> and a widget on a list socket is undefined in the
   wire contract. A combo whose choice list IS a filesystem listing (the
   very object folder_paths.get_filename_list returned, observed by an
   injected probe) additionally carries a remote route
@@ -24,7 +24,7 @@ Translation rules:
   the honesty rules.
 - Two-option combos that are disguised booleans (enable/disable, on/off,
   true/false, yes/no - case-insensitive, either order) become honest
-  BOOLEAN inputs wearing a BooleanWidget whose labels are the
+  core.boolean inputs wearing a BooleanWidget whose labels are the
   original option strings. execute() maps the boolean back to the v1
   string, and a legacy prompt still sending the string passes through
   verbatim. v1 BOOLEAN inputs keep their label_on/label_off config as
@@ -100,7 +100,6 @@ import os
 import sys
 import textwrap
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from contextlib import nullcontext
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal, NamedTuple, cast
@@ -109,13 +108,11 @@ from dinkster_assets import (
     ASSET_TYPE,
     AssetError,
     AssetRef,
-    LocalAssetRef,
     MountSnapshotResolver,
     register_asset_type,
     resolver_from_env,
     verified_local_path,
 )
-from dinkster_native.fork_nodes import model_for_attention_route
 from dinkster_schema import (
     AssetWidget,
     BooleanWidget,
@@ -149,20 +146,6 @@ from dinkster_values import (
     CORE_STRING,
     TypeRegistry,
 )
-from dinkster_values.builtin_types import (
-    AUDIO_TYPE,
-    BACKGROUND_REMOVAL_TYPE,
-    BOUNDING_BOX_TYPE,
-    LATENT_UPSCALE_MODEL_TYPE,
-    MESH_TYPE,
-    MODEL_PATCH_TYPE,
-    MOGE_GEOMETRY_TYPE,
-    MOGE_MODEL_TYPE,
-    SHAPE_SUBDIVIDES_TYPE,
-    VIDEO_EDIT_TYPE,
-    VIDEO_TYPE,
-    VOXEL_TYPE,
-)
 from dinkster_workers import CompatGateDiagnostic, current_execution_context
 
 from .audio import AUDIO_V1_NAME, register_audio_type
@@ -177,25 +160,6 @@ from .saved_results import capture_saved_results
 from .video import VIDEO_V1_NAME, register_video_type
 
 COMFY_TYPE_PREFIX = "comfy."
-COMFY_VALUE_TYPE_NAMES = frozenset(
-    (
-        "IMAGE",
-        "MASK",
-        "LATENT",
-        AUDIO_TYPE,
-        VIDEO_TYPE,
-        VIDEO_EDIT_TYPE,
-        MOGE_MODEL_TYPE,
-        MOGE_GEOMETRY_TYPE,
-        BACKGROUND_REMOVAL_TYPE,
-        VOXEL_TYPE,
-        MESH_TYPE,
-        SHAPE_SUBDIVIDES_TYPE,
-        BOUNDING_BOX_TYPE,
-        MODEL_PATCH_TYPE,
-        LATENT_UPSCALE_MODEL_TYPE,
-    )
-)
 V3_AUTOGROW_IO_TYPE = "COMFY_AUTOGROW_V3"
 V3_DYNAMICCOMBO_IO_TYPE = "COMFY_DYNAMICCOMBO_V3"
 V3_DYNAMICSLOT_IO_TYPE = "COMFY_DYNAMICSLOT_V3"
@@ -629,19 +593,19 @@ def _stable_sorted_listing(
 
 
 def _asset_to_model_filename(value: object, category: str) -> str:
-    """Convert a verified asset or local grant to the exact relative name v1 expects.
+    """Convert one digest-backed asset to the exact relative name v1 expects.
 
     ComfyUI loader functions do not accept arbitrary paths: they accept a
     relative filename and resolve it again through ``folder_paths``. The
     conversion therefore proves all of the following before returning a
-    name: the category is allowlisted, the granted asset path is under
+    name: the category is allowlisted, the verified asset path is under
     exactly one configured category root, and ComfyUI's own lookup of the
     resulting name resolves back to the same file. Assets in a vault,
     another model category, a shadowed later root, or overlapping roots fail
-    closed instead of making v1 open a different file."""
-    if not isinstance(value, AssetRef | LocalAssetRef):
+    closed instead of making v1 open bytes other than the selected digest."""
+    if not isinstance(value, AssetRef):
         raise AssetError(
-            f"translated model input for {category!r} requires an asset reference, "
+            f"translated model input for {category!r} requires an AssetRef, "
             f"got {type(value).__name__}"
         )
     if category not in MODEL_FILE_CATEGORIES:
@@ -667,10 +631,7 @@ def _asset_to_model_filename(value: object, category: str) -> str:
         raise AssetError(f"folder_paths returned invalid roots for category {category!r}")
 
     snapshot = os.environ.get("DINKSTER_MOUNTS_SNAPSHOT", "")
-    identity = value.digest if isinstance(value, AssetRef) else f"local binding {value.binding}"
-    if isinstance(value, LocalAssetRef):
-        asset_path = value.local_path().resolve()
-    elif snapshot:
+    if snapshot:
         kind = MODEL_FILE_CATEGORIES[category].kind
         resolution = MountSnapshotResolver(snapshot).resolve_asset_for_kind(value.digest, kind)
         if resolution is None:
@@ -686,13 +647,15 @@ def _asset_to_model_filename(value: object, category: str) -> str:
     roots = tuple(dict.fromkeys(Path(root).resolve() for root in cast("Sequence[str]", raw_roots)))
     matches = [root for root in roots if asset_path.is_relative_to(root)]
     if not matches:
-        raise AssetError(f"asset {identity} is not under a configured {category!r} model root")
+        raise AssetError(f"asset {value.digest} is not under a configured {category!r} model root")
     if len(matches) != 1:
-        raise AssetError(f"asset {identity} is ambiguous across {category!r} model roots")
+        raise AssetError(f"asset {value.digest} is ambiguous across {category!r} model roots")
     relative = asset_path.relative_to(matches[0]).as_posix()
     resolved = get_full_path(category, relative)
     if not isinstance(resolved, str) or Path(resolved).resolve() != asset_path:
-        raise AssetError(f"asset {identity} is shadowed or unresolved as {category!r}/{relative}")
+        raise AssetError(
+            f"asset {value.digest} is shadowed or unresolved as {category!r}/{relative}"
+        )
     return relative
 
 
@@ -763,12 +726,10 @@ class CompatError(Exception):
 
 
 MULTI_STREAM_ROLES_KEY = "dinkster.multi_stream_roles@1"
-_NESTED_TENSOR_MODULES = frozenset({"comfy.nested_tensor", "dinkster_inference.nested_tensor"})
 _MULTI_STREAM_INPUTS: Mapping[str, frozenset[str]] = {
     "KSampler": frozenset({"latent_image"}),
     "LTXVConcatAVLatent": frozenset({"video_latent", "audio_latent"}),
     "LTXVSeparateAVLatent": frozenset({"av_latent"}),
-    "SamplerCustomAdvanced": frozenset({"latent_image"}),
 }
 _FIXED_AV_PRODUCERS = frozenset(
     {
@@ -791,25 +752,6 @@ def _contains_multistream(value: object) -> bool:
     return False
 
 
-def _is_comfy_nested_tensor(value: object) -> bool:
-    module_name = type(value).__module__
-    if module_name not in _NESTED_TENSOR_MODULES:
-        return False
-    module = cast("Any", importlib.import_module(module_name))
-    return type(value) is module.NestedTensor
-
-
-def _comfy_inference_mode() -> Any:
-    try:
-        torch = cast("Any", importlib.import_module("torch"))
-    except ModuleNotFoundError as exc:
-        if exc.name != "torch":
-            raise
-        return nullcontext()
-    inference_mode = cast("dict[str, object]", vars(torch)).get("inference_mode")
-    return inference_mode() if callable(inference_mode) else nullcontext()
-
-
 def to_comfy_multistream(value: object) -> object:
     if isinstance(value, list):
         return [to_comfy_multistream(item) for item in cast("list[object]", value)]
@@ -825,7 +767,7 @@ def to_comfy_multistream(value: object) -> object:
     roles = tuple(streams.roles)
     if not roles or any(type(role) is not str or not role for role in roles):
         raise CompatError("multi-stream LATENT roles must be nonempty strings")
-    nested_type = importlib.import_module("dinkster_inference.nested_tensor").NestedTensor
+    nested_type = importlib.import_module("comfy.nested_tensor").NestedTensor
     output = dict(latent)
     output["samples"] = nested_type(tuple(stream.payload for stream in streams.streams))
     mask = output.get("noise_mask")
@@ -849,7 +791,10 @@ def from_comfy_multistream(value: object) -> object:
         return value
     latent = cast("Mapping[object, object]", value)
     samples = latent.get("samples")
-    if not _is_comfy_nested_tensor(samples):
+    if type(samples).__name__ != "NestedTensor":
+        return cast("object", value)
+    nested_type = importlib.import_module("comfy.nested_tensor").NestedTensor
+    if type(samples) is not nested_type:
         return cast("object", value)
     sidecar = latent.get(MULTI_STREAM_ROLES_KEY)
     if not isinstance(sidecar, Mapping):
@@ -859,17 +804,17 @@ def from_comfy_multistream(value: object) -> object:
     if sidecar_map.get("version") != 1 or not isinstance(roles, (list, tuple)):
         raise CompatError("NestedTensor LATENT output has an invalid role sidecar")
     role_tuple = tuple(cast("Sequence[object]", roles))
-    payloads = tuple(from_comfy_multistream(item) for item in cast("Any", samples).unbind())
+    payloads = tuple(cast("Any", samples).unbind())
     if len(role_tuple) != len(payloads) or any(
         type(role) is not str or not role for role in role_tuple
     ):
         raise CompatError("NestedTensor LATENT output role count does not match its streams")
-    multi_stream = importlib.import_module("dinkster_inference_wire").MultiStreamLatent
+    multi_stream = importlib.import_module("dinkster_inference").MultiStreamLatent
     output = dict(latent)
     output["samples"] = multi_stream.from_pairs(zip(role_tuple, payloads, strict=True))
     mask = output.get("noise_mask")
-    if _is_comfy_nested_tensor(mask):
-        mask_payloads = tuple(from_comfy_multistream(item) for item in cast("Any", mask).unbind())
+    if type(mask) is nested_type:
+        mask_payloads = tuple(cast("Any", mask).unbind())
         if len(mask_payloads) != len(role_tuple):
             raise CompatError("NestedTensor LATENT mask count does not match its streams")
         output["noise_mask"] = multi_stream.from_pairs(zip(role_tuple, mask_payloads, strict=True))
@@ -1247,12 +1192,6 @@ def comfy_type_id(v1_type: str) -> str:
     return COMFY_TYPE_PREFIX + v1_type
 
 
-def comfy_value_type_id(v1_type: str) -> str:
-    if v1_type in COMFY_VALUE_TYPE_NAMES:
-        return v1_type
-    return comfy_type_id(v1_type)
-
-
 def _is_v3_marker(v1_type: object) -> bool:
     return type(v1_type) is str and v1_type.startswith("COMFY_") and v1_type.endswith("_V3")
 
@@ -1413,7 +1352,7 @@ def _member_type_id(io_type: str) -> tuple[str, tuple[str, ...]]:
     primitive = PRIMITIVES.get(io_type)
     if primitive is not None:
         return primitive, ()
-    opaque = comfy_value_type_id(io_type)
+    opaque = comfy_type_id(io_type)
     return opaque, (opaque,)
 
 
@@ -1471,7 +1410,7 @@ def boolean_combo(v1_type: object) -> tuple[str, str] | None:
     a disguised boolean - exactly two string choices matching one of the
     recognized truthy/falsy word pairs, either order - else None.
 
-    These translate to BOOLEAN with the original strings as toggle
+    These translate to core.boolean with the original strings as toggle
     labels; execute() maps the boolean back to the v1 string, so the
     wrapped function never learns the schema got honest."""
     if not isinstance(v1_type, (list, tuple)):
@@ -1573,20 +1512,15 @@ def number_widget(
         if field not in config:
             continue
         raw_value = config[field]
-        if field == "round" and raw_value is False:
-            accepted[field] = False
-            continue
         if type(raw_value) not in (int, float):
             continue
         value = cast("int | float", raw_value)
         if legacy_type == "INT" and abs(value) > 2**53 - 1:
             continue
         try:
-            if legacy_type == "FLOAT":
-                value = float(value)
             candidate = NumberWidget(**{field: value})  # type: ignore[arg-type]
             InputSpec(name, socket, widget=candidate)
-        except (TypeError, ValueError, OverflowError):
+        except (TypeError, ValueError):
             continue
         accepted[field] = value
 
@@ -2587,15 +2521,14 @@ class CompatTranslation:
             register_asset_type(registry, resolver_from_env())
         resident_types = resident if resident is not None else DEFAULT_RESIDENT_V1_TYPES
         for type_id in sorted(self.opaque_types):
-            if type_id in registry:
-                continue
             v1_name = type_id.removeprefix(COMFY_TYPE_PREFIX)
             if v1_name in resident_types:
                 register_resident_type(registry, type_id, table=table, meta=resident_meta)
             elif v1_name in (IMAGE_V1_NAME, MASK_V1_NAME):
                 # Images and masks cross as npy bytes, not pickle, so the
-                # torchless engine can decode and render their exact type
-                # atoms without compatibility bridges.
+                # torchless engine can decode and render them, and the two
+                # spellings of each (comfy.IMAGE/dinkster.image, comfy.MASK/
+                # dinkster.mask) stay one value type (image.py has the story).
                 register_image_type(registry, type_id)
             elif v1_name == AUDIO_V1_NAME:
                 register_audio_type(registry, type_id)
@@ -2842,7 +2775,7 @@ def translate_node(
             default = _combo_token(default)
         required_spec = required and default is None
         # The v1 choice list survives as a static dropdown - except under
-        # INPUT_IS_LIST, where the socket is list<COMBO> and a
+        # INPUT_IS_LIST, where the socket is list<core.combo> and a
         # widget on a list socket is undefined in the wire contract.
         widget: Widget | None = None
         if not input_is_list:
@@ -3079,7 +3012,7 @@ def translate_node(
             if name in restored:
                 restored[name] = _asset_to_model_filename(restored[name], category)
         for name, (on_string, off_string) in boolean_combo_strings.items():
-            # The schema says BOOLEAN; the v1 function compares
+            # The schema says core.boolean; the v1 function compares
             # strings. Convert honest booleans back, and pass a legacy
             # prompt's original string through verbatim.
             if name in restored:
@@ -3195,8 +3128,7 @@ def translate_node(
         return dict(zip(output_ids, values, strict=True))
 
     async def await_result(result: Awaitable[object]) -> Mapping[str, object]:
-        with _comfy_inference_mode():
-            return normalize_result(await result)
+        return normalize_result(await result)
 
     def invoke(inputs: Mapping[str, object]) -> object:
         custom_combo_options = (
@@ -3216,8 +3148,6 @@ def translate_node(
                     f"{sorted(structural_inputs)!r}"
                 )
         restored = {name: to_comfy_multistream(value) for name, value in native_inputs.items()}
-        if v1_name == "BasicGuider":
-            restored["model"] = model_for_attention_route(restored["model"])
         prepare_v3 = getattr(v1_class, "PREPARE_CLASS_CLONE", None)
         if callable(prepare_v3):
             hidden_inputs: dict[str, object] = {}
@@ -3245,10 +3175,8 @@ def translate_node(
             assert custom_combo_options is not None
             choice = restored.pop("choice")
             index = restored.pop("index", 0)
-            with _comfy_inference_mode():
-                return fn(choice=choice, index=index, options=custom_combo_options)
-        with _comfy_inference_mode():
-            return fn(**restored)
+            return fn(choice=choice, index=index, options=custom_combo_options)
+        return fn(**restored)
 
     async def execute_async(cls: type[Node], **inputs: object) -> Mapping[str, object]:
         del cls

@@ -1,9 +1,12 @@
-"""Workgroup lifecycle for fork-backed distributed attention."""
+"""Workgroup lifecycle gate for process-isolated native invocations."""
 
 from __future__ import annotations
 
 import asyncio
+import importlib
+import os
 from dataclasses import dataclass, field
+from typing import Any
 
 from dinkster_protocol import (
     MAX_REASON_BYTES,
@@ -25,14 +28,33 @@ from dinkster_protocol import (
     WorkUnitResult,
 )
 
-from .attention import activate_distributed_attention, release_distributed_attention
-
 
 def _bounded_reason(reason: str) -> str:
     encoded = reason.encode("utf-8", errors="replace")
     if len(encoded) <= MAX_REASON_BYTES:
         return encoded.decode("utf-8")
     return encoded[:MAX_REASON_BYTES].decode("utf-8", errors="ignore")
+
+
+def _distributed_lifecycle(name: str) -> Any:
+    try:
+        module = importlib.import_module("dinkster_inference_torch.distributed")
+    except ModuleNotFoundError as error:
+        if error.name != "torch":
+            raise
+        return _torch_free_lifecycle
+    return getattr(module, name)
+
+
+def _torch_free_lifecycle(*_args: object) -> None:
+    return None
+
+
+def _log_pinned_storage(phase: str) -> None:
+    if os.environ.get("DINKSTER_PINNED_STORAGE_DEBUG") != "1":
+        return
+    module = importlib.import_module("dinkster_inference_torch.pinned_host")
+    module.log_storage_ledger(phase)
 
 
 @dataclass
@@ -57,7 +79,10 @@ class _Attempt:
 
 
 class SingleJobWorkGroupHandler:
-    workgroup_capabilities = (WORKGROUP_CAPABILITY, WORKGROUP_DATA_PLANE_CAPABILITY)
+    workgroup_capabilities = (
+        WORKGROUP_CAPABILITY,
+        WORKGROUP_DATA_PLANE_CAPABILITY,
+    )
 
     def __init__(self) -> None:
         self._attempts: dict[tuple[object, object], _Attempt] = {}
@@ -71,7 +96,11 @@ class SingleJobWorkGroupHandler:
         if attempt is None:
             raise RuntimeError("workgroup command has no prepared attempt")
         prepared = attempt.command
-        if (message.worker, message.replica, message.device) != (
+        if (
+            message.worker,
+            message.replica,
+            message.device,
+        ) != (
             prepared.worker,
             prepared.replica,
             prepared.device,
@@ -99,7 +128,10 @@ class SingleJobWorkGroupHandler:
             if not attempt.prepared or attempt.active:
                 raise RuntimeError("workgroup commit is out of order")
             attempt.active = True
-            activate_distributed_attention(message.group.value, message.attempt.value)
+            _distributed_lifecycle("activate_distributed_sampling_attempt")(
+                message.group.value,
+                message.attempt.value,
+            )
             attempt.activated.set()
             return ()
         if type(message) is RunWorkUnit:
@@ -111,13 +143,12 @@ class SingleJobWorkGroupHandler:
             unit = {"unit": message.unit, "slot": message.slot}
             if failure is None:
                 return (WorkUnitResult(**common, **unit),)  # type: ignore[arg-type]
-            return (
-                WorkUnitFailed(
-                    **common,  # type: ignore[arg-type]
-                    **unit,
-                    reason=_bounded_reason(failure),
-                ),
+            failure_reply = WorkUnitFailed(
+                **common,  # type: ignore[arg-type]
+                **unit,
+                reason=_bounded_reason(failure),
             )
+            return (failure_reply,)
         if type(message) is CancelWorkGroup:
             attempt.cancelled = True
             attempt.activated.set()
@@ -131,7 +162,10 @@ class SingleJobWorkGroupHandler:
             return ()
         if type(message) is ReleaseWorkGroup:
             if attempt.active:
-                release_distributed_attention(message.group.value, message.attempt.value)
+                _distributed_lifecycle("release_distributed_sampling_attempt")(
+                    message.group.value,
+                    message.attempt.value,
+                )
             self._attempts.pop(self._key(message), None)
             return (WorkGroupReleased(**common),)  # type: ignore[arg-type]
         raise RuntimeError(f"unsupported workgroup command {type(message).__name__}")
@@ -152,6 +186,7 @@ class SingleJobWorkGroupHandler:
         attempt.invocation_id = invocation_id
 
     async def after_invocation(self, invocation_id: str, failure: str | None) -> None:
+        _log_pinned_storage(invocation_id)
         attempt = next(
             (
                 candidate
@@ -160,7 +195,9 @@ class SingleJobWorkGroupHandler:
             ),
             None,
         )
-        if attempt is not None and attempt.completion is not None and not attempt.completion.done():
+        if attempt is None or attempt.completion is None:
+            return
+        if not attempt.completion.done():
             attempt.completion.set_result(failure)
 
     def invocation_cancelled(self, invocation_id: str) -> bool:
@@ -175,6 +212,3 @@ class SingleJobWorkGroupHandler:
 
 def create_single_job_workgroup_handler() -> SingleJobWorkGroupHandler:
     return SingleJobWorkGroupHandler()
-
-
-__all__ = ["SingleJobWorkGroupHandler", "create_single_job_workgroup_handler"]

@@ -1,0 +1,61 @@
+{
+  "facts": {
+    "compatible_physical_order": [
+      "2",
+      "1",
+      "0"
+    ],
+    "forward_count": 1,
+    "incompatible_repeat_factor": 5,
+    "lcm": 6,
+    "mixed_role_outputs": [
+      1.5,
+      3.0
+    ],
+    "reciprocal_floor_boundary": [
+      6,
+      3,
+      2
+    ],
+    "reciprocal_floor_counts_n4": [
+      4,
+      2,
+      1
+    ],
+    "reciprocal_floor_first_order": [
+      "5",
+      "4"
+    ],
+    "repeat_factors": [
+      2,
+      1,
+      2
+    ],
+    "sd15_working_memory_bytes": 18119393.28,
+    "serial_hook_forward_orders": [
+      [
+        "0"
+      ],
+      [
+        "1"
+      ]
+    ]
+  },
+  "reference": {
+    "commit": "b78cec879b9460d5cb25228a83a942fb78d2cd24",
+    "device": "cpu",
+    "paths": [
+      "comfy/samplers.py",
+      "comfy/conds.py",
+      "comfy/model_base.py"
+    ],
+    "python": "Python 3.12.3",
+    "repo": "ComfyUI",
+    "source_sha256": {
+      "comfy/conds.py": "72058e9a22c972a9c875819e59d432d30d367fd2f7092ee6c6c45e5a60c959b0",
+      "comfy/model_base.py": "8a66ec5d6e441303f4a3c22b40d9c4f0d94e2edcdc97d073d1b1cea04c9f3de9",
+      "comfy/samplers.py": "a768a33b296c08055925f176e60e004a6f33fa95ecee3df6dd5583dccbc87a88"
+    },
+    "torch": "2.13.0+cu130"
+  }
+}

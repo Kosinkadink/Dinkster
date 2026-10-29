@@ -13,6 +13,7 @@ kind of thing doctor flags.)
 from __future__ import annotations
 
 import contextlib
+import importlib
 import inspect
 import io
 import json
@@ -154,7 +155,6 @@ def probe(manifest_path: str) -> dict[str, Any]:
         add_pack_root_to_import_path,
         load_manifest,
         resolve_entry,
-        validate_registration_claims,
     )
 
     manifest = load_manifest(manifest_path)
@@ -192,7 +192,6 @@ def probe(manifest_path: str) -> dict[str, Any]:
             contextlib.redirect_stderr(err),
             _capture_dinkster_logs(cast("list[dict[str, str]]", report["import_logs"])),
         ):
-            validate_registration_claims(manifest)
             nodes_obj = resolve_entry(manifest.nodes_entry)
             types_fn = resolve_entry(manifest.types_entry) if manifest.types_entry else None
             for scope in EXTENSION_SCOPES:
@@ -218,7 +217,7 @@ def probe(manifest_path: str) -> dict[str, Any]:
     report["threads_started"] = max(threading.active_count() - threads_before, 0)
     report["cuda_initialized_on_import"] = _cuda_initialized()
 
-    from dinkster_schema import Node, NodeSchema, claim_covers, validate_replacement_references
+    from dinkster_schema import Node, NodeSchema, validate_replacement_references
 
     if not isinstance(nodes_obj, (list, tuple)):
         report["nodes_entry_problem"] = (
@@ -242,14 +241,6 @@ def probe(manifest_path: str) -> dict[str, Any]:
         except BaseException as exc:  # noqa: BLE001
             report["schema_errors"].append(f"{cls_name}: {_exception_detail(exc)}")
             continue
-        if (
-            manifest.publisher != "dinkster"
-            and schema.node_type not in manifest.executes
-            and not claim_covers(manifest.name, schema.node_type)
-        ):
-            report["schema_errors"].append(
-                f"node {schema.node_type!r} must use the pack-name prefix"
-            )
         if schema.node_type in seen_types:
             report["duplicate_node_types"].append(
                 f"{schema.node_type} (classes {seen_types[schema.node_type]} and {cls_name})"
@@ -288,12 +279,7 @@ def probe(manifest_path: str) -> dict[str, Any]:
             )
         else:
             try:
-                with registry.registering_pack(
-                    manifest.name,
-                    manifest.type_namespaces,
-                    allow_bare=manifest.publisher == "dinkster",
-                ):
-                    types_fn(registry)
+                types_fn(registry)
             except BaseException as exc:  # noqa: BLE001
                 report["types_error"] = _exception_detail(exc)
     pack_ids = [tid for tid in registry.type_ids() if tid not in core_ids]
@@ -319,7 +305,6 @@ def probe(manifest_path: str) -> dict[str, Any]:
                     body_arms=dict(manifest.arms),
                     extension_contributions=load_extension_contributions(manifest),
                     renditions=registry.registered_renditions(),
-                    registered_types=pack_ids,
                 )
             )
             report["catalog"]["types"] = {
@@ -334,6 +319,24 @@ def probe(manifest_path: str) -> dict[str, Any]:
                     if (other := registry.equivalent_type(tid)) is not None
                 },
             }
+            inference_entry = manifest.extension.entries.inference
+            if inference_entry is not None:
+                import tempfile
+                from dataclasses import asdict
+
+                inference = importlib.import_module("dinkster_inference.extensions")
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "inference.json"
+                    key = "candidate:doctor"
+                    inference.write_sampler_catalog(
+                        path,
+                        key,
+                        (inference.SamplerExtensionEntry(manifest.name, inference_entry),),
+                    )
+                    generation = inference.materialize_inference_generation(key, catalog_path=path)
+                    report["catalog"]["inferenceContributions"] = [
+                        asdict(item) for item in generation.extensions[0][1]
+                    ]
     except Exception as exc:
         report.pop("catalog", None)
         report["schema_errors"].append(f"catalog: {_exception_detail(exc)}")

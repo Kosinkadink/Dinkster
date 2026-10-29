@@ -17,7 +17,6 @@ import struct
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
-from typing import cast
 
 import pytest
 from aiohttp import web
@@ -30,11 +29,8 @@ from dinkster_assets import (
     AssetNeed,
     AssetRef,
     AssetVault,
-    ChainResolver,
     DeclaredAsset,
     LibraryStore,
-    MountDef,
-    MountTable,
     PackagedSource,
     PackAssetCatalog,
     ProvenanceRecord,
@@ -73,7 +69,6 @@ from dinkster_server import STATE_KEY, ServerLibrary, create_app
 from dinkster_values import CORE_INT, TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 
-from dinkster.mounts_api import MountService, add_mount_routes
 from tests.platform_support import symlink_or_skip
 
 MODEL_BYTES = b"tiny model bytes for acquisition tests" * 32
@@ -261,36 +256,28 @@ def test_acquire_packaged_source_verified(tmp_path: Path) -> None:
     assert vault.resolve(MODEL_DIGEST) is not None
 
 
-def test_acquire_uses_packaged_before_http(tmp_path: Path) -> None:
+def test_acquire_uses_packaged_before_lan_and_notifies_materialization(tmp_path: Path) -> None:
     pack_root = tmp_path / "packs" / "starter"
     pack_root.mkdir(parents=True)
     (pack_root / "model.bin").write_bytes(MODEL_BYTES)
+    notified: list[None] = []
 
-    async def scenario() -> None:
-        hits: list[str] = []
-        server = TestServer(make_asset_host({"model": OTHER_BYTES}, hits))
-        await server.start_server()
-        try:
-            result = await asyncio.to_thread(
-                acquire_need,
-                AssetNeed(
-                    name="model",
-                    digest=MODEL_DIGEST,
-                    sources=(
-                        PackagedSource("starter", "model.bin"),
-                        RemoteSource(str(server.make_url("/files/model"))),
-                    ),
-                ),
-                AssetVault(tmp_path / "vault"),
-                pack_roots={"starter": pack_root},
-            )
-            assert result.status == "acquired"
-            assert result.path is not None and result.path.read_bytes() == MODEL_BYTES
-            assert hits == []
-        finally:
-            await server.close()
+    def unexpected_lan(_digest: str) -> Path | None:
+        raise AssertionError("LAN must not run before a packaged source")
 
-    asyncio.run(scenario())
+    result = acquire_need(
+        AssetNeed(
+            name="model",
+            digest=MODEL_DIGEST,
+            sources=(PackagedSource("starter", "model.bin"),),
+        ),
+        AssetVault(tmp_path / "vault"),
+        pack_roots={"starter": pack_root},
+        lan_resolve=unexpected_lan,
+        materialized=lambda: notified.append(None),
+    )
+    assert result.status == "acquired"
+    assert notified == [None]
 
 
 def test_acquire_packaged_wrong_bytes_lands_nothing(tmp_path: Path) -> None:
@@ -382,7 +369,9 @@ def test_acquire_remote_verified_and_provenance_recorded(tmp_path: Path) -> None
     asyncio.run(scenario())
 
 
-def test_acquire_uses_local_before_http_and_fetches_when_absent(tmp_path: Path) -> None:
+def test_acquire_uses_lan_before_http_and_falls_back_when_peer_disappears(
+    tmp_path: Path,
+) -> None:
     async def scenario() -> None:
         hits: list[str] = []
         server = TestServer(make_asset_host({"model": MODEL_BYTES}, hits))
@@ -393,29 +382,37 @@ def test_acquire_uses_local_before_http_and_fetches_when_absent(tmp_path: Path) 
                 digest=MODEL_DIGEST,
                 sources=(RemoteSource(str(server.make_url("/files/model"))),),
             )
-            local_vault = AssetVault(tmp_path / "local-vault")
-            with local_vault.writer(MODEL_DIGEST) as writer:
-                writer.write(MODEL_BYTES)
-                local_path = writer.commit()
+            lan_vault = AssetVault(tmp_path / "lan-vault")
+            calls: list[str] = []
+
+            def lan_resolve(digest: str) -> Path | None:
+                calls.append(digest)
+                with lan_vault.writer(digest) as writer:
+                    writer.write(MODEL_BYTES)
+                    return writer.commit()
 
             resolved = await asyncio.to_thread(
                 acquire_need,
                 need,
-                local_vault,
+                lan_vault,
+                lan_resolve=lan_resolve,
             )
-            assert resolved.status == "held"
-            assert resolved.path == local_path
+            assert resolved.status == "acquired"
+            assert calls == [MODEL_DIGEST]
             assert hits == []
 
             fallback_vault = AssetVault(tmp_path / "fallback-vault")
+            notified: list[None] = []
             fallback = await asyncio.to_thread(
                 acquire_need,
                 need,
                 fallback_vault,
+                lan_resolve=lambda digest: calls.append(digest),
+                materialized=lambda: notified.append(None),
             )
             assert fallback.status == "acquired"
-            assert fallback.path is not None and fallback.path.read_bytes() == MODEL_BYTES
             assert hits == ["model"]
+            assert notified == [None]
         finally:
             await server.close()
 
@@ -544,11 +541,11 @@ def test_asset_widget_kind_round_trips_on_the_wire() -> None:
         inputs=(
             InputSpec(
                 "model",
-                TypeExpr.concrete("ASSET"),
+                TypeExpr.concrete("dinkster.asset"),
                 widget=AssetWidget(accept=("application/octet-stream",), kind="model/lora"),
             ),
         ),
-        outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
+        outputs=(OutputSpec("out", TypeExpr.concrete("core.int")),),
     )
     wire = schema_to_wire(schema)
     entry = next(e for e in wire["interface"] if e["id"] == "model")  # type: ignore[index, union-attr]
@@ -565,8 +562,8 @@ def test_asset_widget_kind_round_trips_on_the_wire() -> None:
     bare = schema_to_wire(
         NodeSchema(
             node_type="test.bare",
-            inputs=(InputSpec("a", TypeExpr.concrete("ASSET"), widget=AssetWidget()),),
-            outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
+            inputs=(InputSpec("a", TypeExpr.concrete("dinkster.asset"), widget=AssetWidget()),),
+            outputs=(OutputSpec("out", TypeExpr.concrete("core.int")),),
         )
     )
     bare_entry = next(e for e in bare["interface"] if e["id"] == "a")  # type: ignore[index, union-attr]
@@ -580,7 +577,7 @@ def test_asset_widget_rejects_ungrammatical_kind() -> None:
 
 # --- job preflight: plan, consent, acquire, run --------------------------------
 
-ASSET = TypeExpr.concrete("ASSET")
+ASSET = TypeExpr.concrete("dinkster.asset")
 INT = TypeExpr.concrete(CORE_INT)
 
 
@@ -589,7 +586,7 @@ class AssetSize(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.asset.size",
-            inputs=(InputSpec("asset", ASSET, widget=AssetWidget(kind=KIND_MODEL_CHECKPOINT)),),
+            inputs=(InputSpec("asset", ASSET),),
             outputs=(OutputSpec("bytes", INT),),
         )
 
@@ -664,7 +661,7 @@ def test_preflight_sees_through_typed_literals() -> None:
                 "test.asset.size",
                 {
                     "asset": TypedLiteral(
-                        "ASSET",
+                        "dinkster.asset",
                         asset_literal(MODEL_DIGEST, "stamped.bin", len(MODEL_BYTES)),
                     )
                 },
@@ -678,7 +675,7 @@ def test_preflight_sees_through_typed_literals() -> None:
                 "test.asset.size",
                 {
                     "asset": TypedLiteral(
-                        "list<ASSET>",
+                        "list<dinkster.asset>",
                         [asset_literal(MODEL_DIGEST, "in-list.bin", len(MODEL_BYTES))],
                     )
                 },
@@ -688,21 +685,18 @@ def test_preflight_sees_through_typed_literals() -> None:
     assert graph_asset_names(listy) == {MODEL_DIGEST: "in-list.bin"}
 
 
-async def make_asset_client(
-    tmp_path: Path, *, mounts: MountTable | None = None
-) -> tuple[TestClient, ServerLibrary]:
+async def make_asset_client(tmp_path: Path) -> tuple[TestClient, ServerLibrary]:
     vault = AssetVault(tmp_path / "vault")
     library = ServerLibrary(
         vault=vault,
         store=LibraryStore(tmp_path / "library.sqlite"),
         provenance=ProvenanceStore(tmp_path / "provenance.json"),
-        resolver=mounts,
     )
 
     def make_engine(on_event: EventListener | None = None) -> Engine:
         registry = TypeRegistry()
         register_core_types(registry)
-        register_asset_type(registry, ChainResolver(vault, mounts) if mounts else vault)
+        register_asset_type(registry, vault)
         return Engine(
             schemas=SCHEMAS,
             registry=registry,
@@ -712,8 +706,6 @@ async def make_asset_client(
         )
 
     app = create_app(make_engine, SCHEMAS, library=library)
-    if mounts is not None:
-        add_mount_routes(app, MountService(mounts))
     client = TestClient(TestServer(app))
     await client.start_server()
     return client, library
@@ -775,40 +767,6 @@ async def wait_terminal(client: TestClient, job_id: str = "j1") -> dict[str, obj
             return status
         await asyncio.sleep(0.01)
     raise AssertionError("job never reached a terminal state")
-
-
-@pytest.mark.parametrize("present", [True, False], ids=["unhashed-local", "absent"])
-def test_submit_bare_model_name_before_mount_hashing(tmp_path: Path, present: bool) -> None:
-    async def scenario() -> None:
-        root = tmp_path / "models"
-        root.mkdir()
-        name = "model.safetensors"
-        if present:
-            (root / name).write_bytes(MODEL_BYTES)
-        mounts = MountTable(tmp_path / "mounts.json", index_root=tmp_path / "indexes")
-        mounts.add(MountDef(id="models", path=root), kind=KIND_MODEL_CHECKPOINT)
-        client, _ = await make_asset_client(tmp_path, mounts=mounts)
-        try:
-            graph = Graph({"s": GraphNode("test.asset.size", {"asset": name})})
-            response = await client.post("/api/jobs", json=submit_body(graph))
-            if present:
-                assert response.status == 202
-                status = await wait_terminal(client)
-                assert status["state"] == "completed", status
-                outputs = cast("dict[str, dict[str, dict[str, object]]]", status["outputs"])
-                assert outputs["s"]["bytes"]["value"] == len(MODEL_BYTES)
-            else:
-                assert response.status == 409
-                selection = await response.json()
-                assert selection["error"] == "assets-missing"
-                assert len(selection["assets"]) == 1
-                assert selection["assets"][0]["name"] == name
-                assert selection["assets"][0]["status"] == "missing"
-            assert not (tmp_path / "indexes" / "models.json").exists()
-        finally:
-            await client.close()
-
-    asyncio.run(scenario())
 
 
 def test_submit_missing_asset_returns_plan(tmp_path: Path) -> None:

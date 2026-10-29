@@ -13,8 +13,6 @@ from dinkster_api.v1 import (
     CORE_FLOAT,
     CORE_INT,
     CORE_STRING,
-    IMAGE_TYPE,
-    MASK_TYPE,
     MEBIBYTE,
     DynamicComboOption,
     DynamicComboSpec,
@@ -56,6 +54,9 @@ from .support import (
     resize_array as _resize_array,
 )
 from .types import REGION_TYPE, Region
+
+IMAGE_TYPE = "dinkster.image"
+MASK_TYPE = "dinkster.mask"
 
 IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 MASK = TypeExpr.concrete(MASK_TYPE)

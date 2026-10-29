@@ -27,7 +27,6 @@ from dinkster_protocol import (
     AttentionPolicyConfig,
     ExtensionSnapshot,
     MediaSourceAuthority,
-    SingleJobMultiGpuConfig,
     derive_attention_route_token,
     extension_behavior_hash,
 )
@@ -48,7 +47,7 @@ from dinkster_values import (
     register_resource_handle_type,
 )
 
-STRING = TypeExpr.concrete("STRING")
+STRING = TypeExpr.concrete("core.string")
 HANDLE_LIST = TypeExpr.list_of(TypeExpr.concrete(RESOURCE_HANDLE_TYPE))
 
 _WRAP_REGISTRY = TypeRegistry()
@@ -80,7 +79,7 @@ class Load(Node):
 
 
 def _string(text: str) -> Value:
-    return _WRAP_REGISTRY.wrap("STRING", text)
+    return _WRAP_REGISTRY.wrap("core.string", text)
 
 
 def _stamped(rid: str, owner: str) -> Value:
@@ -178,7 +177,7 @@ def test_execution_selection_rejects_blank_fields() -> None:
 def test_selected_arm_is_reported_for_execution_and_cache_reuse(diagnostic: str | None) -> None:
     async def scenario() -> None:
         async def plan(
-            node_id, node_type, schema, inputs, run_id, attention_config, single_job_multi_gpu
+            node_id, node_type, schema, inputs, run_id, attention_config
         ) -> ExecutionSelection:
             return ExecutionSelection(
                 target="compat",
@@ -218,49 +217,28 @@ def test_plan_runs_once_before_lookup_and_target_rides_invocation() -> None:
     async def scenario() -> None:
         calls: list[str] = []
         configs: list[AttentionPolicyConfig | None] = []
-        multi_gpu_configs: list[SingleJobMultiGpuConfig | None] = []
 
         async def plan(
-            node_id, node_type, schema, inputs, run_id, attention_config, single_job_multi_gpu
+            node_id, node_type, schema, inputs, run_id, attention_config
         ) -> ExecutionSelection:
             calls.append(node_type)
             configs.append(attention_config)
-            multi_gpu_configs.append(single_job_multi_gpu)
-            return ExecutionSelection(
-                target="native",
-                cache_tag="native@1",
-                fp8_matmul=True,
-                single_job_multi_gpu=single_job_multi_gpu,
-            )
+            return ExecutionSelection(target="native", cache_tag="native@1", fp8_matmul=True)
 
         worker = RecordingWorker(lambda n: _string(f"v{n}"))
         engine = _engine(worker, plan_execution=plan)
         config = AttentionPolicyConfig("flash")
-        multi_gpu = SingleJobMultiGpuConfig((1, 3), "sequence")
-        await engine.run(
-            _graph(),
-            ["p"],
-            attention_config=config,
-            single_job_multi_gpu=multi_gpu,
-        )
+        await engine.run(_graph(), ["p"], attention_config=config)
         # Miss: planned once, invoked once, selection rode the invocation.
         assert calls == ["test.produce"]
         assert configs == [config]
-        assert multi_gpu_configs == [multi_gpu]
         assert [inv.executor for inv in worker.invocations] == ["native"]
         assert [inv.expected_execution_identity for inv in worker.invocations] == ["native@1"]
         assert [inv.fp8_matmul for inv in worker.invocations] == [True]
-        assert [inv.single_job_multi_gpu for inv in worker.invocations] == [multi_gpu]
-        await engine.run(
-            _graph(),
-            ["p"],
-            attention_config=config,
-            single_job_multi_gpu=multi_gpu,
-        )
+        await engine.run(_graph(), ["p"], attention_config=config)
         # Hit: planned again (exactly once per attempt), nothing invoked.
         assert calls == ["test.produce", "test.produce"]
         assert configs == [config, config]
-        assert multi_gpu_configs == [multi_gpu, multi_gpu]
         assert len(worker.invocations) == 1
 
     asyncio.run(scenario())
@@ -279,7 +257,7 @@ def test_attention_route_partitions_cache_entries_on_the_same_arm() -> None:
         )
 
         async def plan(
-            node_id, node_type, schema, inputs, run_id, attention_config, single_job_multi_gpu
+            node_id, node_type, schema, inputs, run_id, attention_config
         ) -> ExecutionSelection:
             config = attention_config or AttentionPolicyConfig()
             token = derive_attention_route_token(evidence, config)
@@ -315,7 +293,7 @@ def test_selected_plain_nodes_admit_per_execution_arm() -> None:
         targets = {"a": "cuda:0", "b": "cuda:0"}
 
         async def plan(
-            node_id, node_type, schema, inputs, run_id, attention_config, single_job_multi_gpu
+            node_id, node_type, schema, inputs, run_id, attention_config
         ) -> ExecutionSelection:
             target = targets[run_id]
             return ExecutionSelection(target=target, cache_tag=f"native:{target}")
@@ -382,7 +360,7 @@ def test_plan_failure_fails_the_node_loudly() -> None:
         finished: list[str] = []
 
         async def plan(
-            node_id, node_type, schema, inputs, run_id, attention_config, single_job_multi_gpu
+            node_id, node_type, schema, inputs, run_id, attention_config
         ) -> ExecutionSelection:
             raise RuntimeError("no owner agreement")
 
@@ -401,7 +379,7 @@ def test_cache_tag_partitions_entries_and_rotation_is_named() -> None:
         tag = "compat@1"
 
         async def plan(
-            node_id, node_type, schema, inputs, run_id, attention_config, single_job_multi_gpu
+            node_id, node_type, schema, inputs, run_id, attention_config
         ) -> ExecutionSelection:
             return ExecutionSelection(target="arm", cache_tag=tag)
 
@@ -445,7 +423,7 @@ def test_target_alone_partitions_entries_even_with_a_shared_tag() -> None:
         target = "compat"
 
         async def plan(
-            node_id, node_type, schema, inputs, run_id, attention_config, single_job_multi_gpu
+            node_id, node_type, schema, inputs, run_id, attention_config
         ) -> ExecutionSelection:
             return ExecutionSelection(target=target, cache_tag="impl@1")
 
@@ -470,15 +448,7 @@ def test_target_alone_partitions_entries_even_with_a_shared_tag() -> None:
 
 def test_unenrolled_none_preserves_ordinary_cache_identity() -> None:
     async def scenario() -> None:
-        async def plan(
-            node_id,
-            node_type,
-            schema,
-            inputs,
-            run_id,
-            attention_config,
-            single_job_multi_gpu,
-        ) -> None:
+        async def plan(node_id, node_type, schema, inputs, run_id, attention_config) -> None:
             return None
 
         worker = RecordingWorker(lambda n: _string(f"v{n}"))
@@ -502,7 +472,7 @@ def test_current_wire_sets_the_empty_extension_cache_key() -> None:
         engine = _engine(worker, events=events)
         await engine.run(_graph(), ["p"])
         finished = next(event for event in events if event.kind == "node_finished")
-        assert finished.detail["cache_key"] == "86dabbd3c53e379977e825d25175e98782062319"
+        assert finished.detail["cache_key"] == "250e1d46c0d7a2c566da1e863ec20a18aa4f45da"
         assert worker.invocations[0].extension_snapshot_digest is None
 
     asyncio.run(scenario())
@@ -578,7 +548,7 @@ def test_enrollment_marker_does_not_collide_with_pre_enrollment_cache() -> None:
         await plain.run(_graph(), ["p"])
 
         async def plan(
-            node_id, node_type, schema, inputs, run_id, attention_config, single_job_multi_gpu
+            node_id, node_type, schema, inputs, run_id, attention_config
         ) -> ExecutionSelection:
             return ExecutionSelection(target="owner", cache_tag="unversioned")
 

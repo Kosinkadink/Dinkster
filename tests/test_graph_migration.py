@@ -15,7 +15,7 @@ from dinkster_schema import (
 
 OLD = "legacy.node"
 NEW = "current.node"
-STRING = TypeExpr.concrete("STRING")
+STRING = TypeExpr.concrete("core.string")
 
 
 def renamed_schema() -> NodeSchema:

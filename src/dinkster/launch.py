@@ -8,7 +8,6 @@ import time
 import urllib.error
 import urllib.request
 import webbrowser
-from pathlib import Path
 
 from .frontend import discover_frontend_bundle
 from .setup import default_roots
@@ -44,7 +43,6 @@ def main(argv: list[str] | None = None) -> int:
         "--no-browser", action="store_true", help="print the URL without opening it"
     )
     parser.add_argument("--port", type=_port, default=3639, help="loopback port (default: 3639)")
-    parser.add_argument("--frontend-root", type=Path, help="built browser application directory")
     parser.add_argument(
         "--frontend-dev",
         metavar="URL",
@@ -66,13 +64,14 @@ def main(argv: list[str] | None = None) -> int:
         "--install-root",
         str(install_root),
         "--prepare-stale-catalogs",
+        "--disable-p2p",
         "--allow-mount-changes",
     ]
     if args.frontend_dev:
         serve_args.extend(("--frontend-dev", args.frontend_dev))
     else:
-        bundle = args.frontend_root or discover_frontend_bundle()
-        if bundle is None or not (bundle / "index.html").is_file():
+        bundle = discover_frontend_bundle()
+        if bundle is None:
             parser.error(
                 "frontend bundle not found; build sibling Dinkster-Frontend/packages/app/dist "
                 "or pass --frontend-dev URL"

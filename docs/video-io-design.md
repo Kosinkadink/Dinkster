@@ -34,7 +34,7 @@ provenance of estimates rather than presenting them as exact counts.
 
 ## Value and ownership
 
-The schema atom remains `VIDEO`. Version 2 belongs to the value codec,
+The schema atom remains `comfy.VIDEO`. Version 2 belongs to the value codec,
 not a second media atom. The source-backed runtime form is:
 
 ```text
@@ -227,7 +227,7 @@ edit-producing node.
 
 `dinkster.save_video` accepts VIDEO, an authorized save target, container, codec,
 optional CRF, and bounded data-only metadata. It returns the input VIDEO
-unchanged as `video` and the published `asset<VIDEO>` as `asset`.
+unchanged as `video` and the published `asset<comfy.VIDEO>` as `asset`.
 Original-source rendition/download remains distinct from rendering edits;
 returning original bytes must never masquerade as an edited result.
 

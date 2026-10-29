@@ -56,7 +56,7 @@ def registry() -> TypeRegistry:
 
 
 def direct_outcome() -> InvocationReturn:
-    value = registry().wrap("STRING", "payload")
+    value = registry().wrap("core.string", "payload")
     return InvocationReturn(
         ReturnBatch(
             "scalar",
@@ -74,7 +74,7 @@ def direct_outcome() -> InvocationReturn:
 
 
 def expanded_outcome() -> InvocationReturn:
-    value = registry().wrap("INT", 7)
+    value = registry().wrap("core.int", 7)
     expansion = LocalExpansion(
         (
             LocalNode(
@@ -331,11 +331,11 @@ def test_encode_refuses_noncanonical_execute_time(execute_ms: object) -> None:
 
 def test_value_tree_preflight_refuses_noncanonical_or_excessive_lists() -> None:
     reg = registry()
-    scalar = reg.wrap("INT", 1)
-    string = reg.wrap("STRING", "wrong")
-    invalid_payload = Value("list<INT>", "bad", scalar.meta, scalar.payload)
-    invalid_child = Value("list<INT>", "bad", scalar.meta, ListPayload((string,)))
-    too_wide = make_list_value("INT", (scalar,) * 4097)
+    scalar = reg.wrap("core.int", 1)
+    string = reg.wrap("core.string", "wrong")
+    invalid_payload = Value("list<core.int>", "bad", scalar.meta, scalar.payload)
+    invalid_child = Value("list<core.int>", "bad", scalar.meta, ListPayload((string,)))
+    too_wide = make_list_value("core.int", (scalar,) * 4097)
     for value in (invalid_payload, invalid_child, too_wide):
         outcome = InvocationReturn(
             ReturnBatch("scalar", (DirectReturn((("out", PresentOutput(value)),)),))
@@ -352,9 +352,9 @@ def test_value_tree_preflight_refuses_noncanonical_or_excessive_lists() -> None:
 
 def test_typed_encode_rolls_back_segments_on_later_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     reg = registry()
-    large = reg.wrap("STRING", "x" * 32)
-    scalar = reg.wrap("INT", 1)
-    invalid = Value("list<INT>", "bad", scalar.meta, scalar.payload)
+    large = reg.wrap("core.string", "x" * 32)
+    scalar = reg.wrap("core.int", 1)
+    invalid = Value("list<core.int>", "bad", scalar.meta, scalar.payload)
     outcome = InvocationReturn(
         ReturnBatch(
             "scalar",
@@ -382,9 +382,9 @@ def test_typed_encode_rolls_back_segments_on_later_failure(monkeypatch: pytest.M
 
 def test_typed_encode_rolls_back_cas_retention_on_later_failure() -> None:
     reg = registry()
-    first = reg.wrap("STRING", "retained")
-    scalar = reg.wrap("INT", 1)
-    invalid = Value("list<INT>", "bad", scalar.meta, scalar.payload)
+    first = reg.wrap("core.string", "retained")
+    scalar = reg.wrap("core.int", 1)
+    invalid = Value("list<core.int>", "bad", scalar.meta, scalar.payload)
     codec = ValueCodec(reg, use_shm=False, cas_threshold=1)
     codec.enable_cas()
     failed = InvocationReturn(
@@ -547,7 +547,7 @@ def test_failed_invocation_write_rolls_back_cas_for_retry() -> None:
     session = BoundarySession(reg, role="test worker", pack="test", codec=codec)
     session._alive = True  # noqa: SLF001 - exercise an adopted session without a peer
     session._writer = cast(Any, object())  # noqa: SLF001 - serialization fails first
-    value = reg.wrap("STRING", "retained")
+    value = reg.wrap("core.string", "retained")
     invalid = Invocation(
         "invalid-json",
         "node",
@@ -602,7 +602,7 @@ def test_failed_invocation_write_releases_registered_shared_memory(
         "invalid-json",
         "node",
         "Node",
-        {"value": reg.wrap("STRING", "retained")},
+        {"value": reg.wrap("core.string", "retained")},
         NodeSchema("Node"),
         export_snapshot=ExportSnapshot(prompt={"value": float("nan")}),
     )
@@ -630,7 +630,7 @@ def test_concurrent_invocation_write_rollback_keeps_cas_peer_coherent() -> None:
             return None
 
     session._writer = cast(Any, Writer())  # noqa: SLF001
-    value = reg.wrap("STRING", "retained")
+    value = reg.wrap("core.string", "retained")
     invalid = Invocation(
         "invalid",
         "node",
@@ -706,8 +706,8 @@ def test_queued_invocation_refuses_after_session_close_starts(
         "node",
         "Node",
         {
-            "cas": reg.wrap("STRING", "retained"),
-            "shm": reg.wrap("STRING", "x" * 256),
+            "cas": reg.wrap("core.string", "retained"),
+            "shm": reg.wrap("core.string", "x" * 256),
         },
         NodeSchema("Node"),
     )
@@ -810,7 +810,7 @@ def test_invocation_encode_releases_partial_shared_memory(
 ) -> None:
     reg = registry()
     codec = ValueCodec(reg, shm_threshold=1)
-    value = reg.wrap("STRING", "large")
+    value = reg.wrap("core.string", "large")
     invocation = Invocation(
         "partial",
         "node",
@@ -973,7 +973,7 @@ def test_excessive_nesting_is_refused_before_typed_construction() -> None:
 def test_legacy_result_headers_remain_exact_and_algebra_free() -> None:
     reg = registry()
     codec = ValueCodec(reg, use_shm=False)
-    value = reg.wrap("INT", 3)
+    value = reg.wrap("core.int", 3)
     success, _, _ = encode_result(codec, InvocationResult(outputs={"out": value}), "legacy", 2.0)
     assert success["type"] == "result"
     assert set(success) == {"type", "invocationId", "executeMs", "outputs", "outputStats"}

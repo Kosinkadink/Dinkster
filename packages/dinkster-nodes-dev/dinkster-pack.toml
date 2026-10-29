@@ -6,9 +6,7 @@
 
 [pack]
 name = "dinkster-nodes-dev"
-publisher = "dinkster"
 namespaces = ["dev"]
-type-namespaces = ["dev"]
 requires = ["numpy>=1.26"]
 
 [pack.sandbox]

@@ -21,7 +21,6 @@ from dinkster_schema import (
     NodeSchema,
     ReplacementPredicate,
     ReplacementRule,
-    TypeExpr,
     schema_from_wire,
     schema_to_wire,
     validate_replacement_references,
@@ -221,32 +220,9 @@ def _fixture_bytes() -> bytes:
     return zlib.decompress(base64.b85decode(encoded))
 
 
-def _native_scalar_type_expressions(value: Any) -> Any:
-    scalar_types = {
-        "core.int": "INT",
-        "core.float": "FLOAT",
-        "core.string": "STRING",
-        "core.combo": "COMBO",
-        "core.boolean": "BOOLEAN",
-        "dinkster.image": "IMAGE",
-        "dinkster.mask": "MASK",
-    }
-    if isinstance(value, list):
-        return [_native_scalar_type_expressions(item) for item in value]
-    if not isinstance(value, dict):
-        return value
-    converted = {key: _native_scalar_type_expressions(item) for key, item in value.items()}
-    types = converted.get("types")
-    if converted.get("kind") == "concrete" and isinstance(types, list):
-        converted["types"] = [scalar_types.get(item, item) for item in types]
-    return converted
-
-
 @cache
 def _v1_schemas() -> dict[str, NodeSchema]:
-    wires = cast(
-        "list[dict[str, Any]]", _native_scalar_type_expressions(json.loads(_fixture_bytes()))
-    )
+    wires = json.loads(_fixture_bytes())
     return {schema.node_type: schema for schema in map(schema_from_wire, wires)}
 
 
@@ -448,13 +424,8 @@ def test_dynamic_inputs_preserve_v1_types_defaults_and_options() -> None:
                 }
                 continue
             if isinstance(entry, InputSpec):
-                expected_type = (
-                    TypeExpr.concrete("REGION")
-                    if old.type == TypeExpr.concrete("dinkster.region")
-                    else old.type
-                )
                 assert (entry.type, entry.default, entry.widget) == (
-                    expected_type,
+                    old.type,
                     old.default,
                     old.widget,
                 )

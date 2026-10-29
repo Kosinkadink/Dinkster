@@ -3,7 +3,8 @@
 - **Area:** comfy-kitchen `comfy_kitchen/backends/cuda/__init__.py`
   `_wrap_for_dlpack` (repo `Comfy-Org/comfy-kitchen`, observed at
   0.2.22 and 0.2.31 PyPI wheels)
-- **Status:** still present in 0.2.31
+- **Status:** still present in 0.2.31; fixed in Dinkster (device-context
+  pin in rounding.py)
 
 ## Symptom
 
@@ -44,7 +45,13 @@ an explicit stream for the tensor's own device) inside the CUDA
 backend, so callers are not required to manage the current-device
 state around every op.
 
-## Dinkster handling
+## Dinkster interim handling
 
-Dinkster delegates stochastic rounding to `dinkster_inference`, whose current
-Kitchen dispatch matches the upstream behavior described above.
+`dinkster_inference_torch/rounding.py` pins the device context
+(`with torch.cuda.device(value.device)`) around the kitchen kernel
+call for CUDA tensors. The direct
+`test_kitchen_cuda_stochastic_rounding_wrong_device_canary` keeps cuda:0
+current while calling Kitchen with cuda:1 tensors and pins the 0.2.31 failure;
+`test_rounding_dispatches_kitchen_cuda_backend` proves Dinkster's guarded route
+on every GPU. When upstream fixes the wrapper, the direct canary will fail and
+the guard can be removed.

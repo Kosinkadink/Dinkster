@@ -27,6 +27,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast
 
+from .native_residency import select_load_device
 from .translate import (
     MODEL_FILE_CATEGORIES,
     CompatError,
@@ -94,15 +95,8 @@ def _initialize_comfy_device() -> None:
     """
     cli_args = cast(Any, initialize_comfy_args())
     torch = importlib.import_module("torch")
-    selection = os.environ.get("DINKSTER_ACCELERATOR", "auto")
-    cuda_available = bool(torch.cuda.is_available())
-    xpu = getattr(torch, "xpu", None)
-    xpu_available = bool(xpu is not None and xpu.is_available())
-    mps = getattr(getattr(torch, "backends", None), "mps", None)
-    mps_available = bool(mps is not None and mps.is_available())
-    if selection == "cpu" or (
-        selection == "auto" and not (cuda_available or xpu_available or mps_available)
-    ):
+    device = select_load_device(torch)
+    if device.type == "cpu":
         cli_args.args.cpu = True
 
 
@@ -235,11 +229,6 @@ def ensure_prompt_server() -> object | None:
     if instance is not None:
         return instance
     try:
-        parameters = inspect.signature(prompt_server).parameters
-        if "asset_manager" in parameters:
-            asset_module = importlib.import_module("app.assets.manager")
-            default_asset_manager = asset_module.default_asset_manager
-            return prompt_server(asyncio.new_event_loop(), default_asset_manager())
         return prompt_server(asyncio.new_event_loop())
     except Exception:
         return None

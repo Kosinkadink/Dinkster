@@ -6,8 +6,6 @@ from collections.abc import Mapping
 
 from dinkster_api.v1 import (
     CORE_COMBO,
-    IMAGE_TYPE,
-    MASK_TYPE,
     ComboWidget,
     InputSpec,
     Node,
@@ -24,6 +22,8 @@ from dinkster_api.v1 import (
     prepare_image_array_encoding,
 )
 
+IMAGE_TYPE = "dinkster.image"
+MASK_TYPE = "dinkster.mask"
 IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 MASK = TypeExpr.concrete(MASK_TYPE)
 COMBO = TypeExpr.concrete(CORE_COMBO)

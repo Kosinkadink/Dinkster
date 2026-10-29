@@ -186,7 +186,7 @@ class BooleanPrimitive(Node):
             display_name="Boolean",
             category=_PRIMITIVE_CATEGORY,
             inputs=(
-                # No widget: the BOOLEAN type alone means "render a
+                # No widget: the core.boolean type alone means "render a
                 # toggle" (BooleanWidget exists only for custom labels).
                 InputSpec(
                     "value",

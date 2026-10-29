@@ -41,7 +41,7 @@ def write_staging_manifest(tmp_path: Path) -> Path:
     manifest = tmp_path / "dinkster-pack.toml"
     manifest.write_text(
         "[pack]\n"
-        'name = "declpack"\npublisher = "dinkster"\n'
+        'name = "declpack"\n'
         'namespaces = ["decl"]\n'
         "[pack.entry]\n"
         'nodes = "declpack_nodes:NODES"\n'

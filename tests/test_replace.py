@@ -44,7 +44,7 @@ from dinkster_schema import (
 )
 from dinkster_schema.replace import rule_from_wire, rule_to_wire
 
-INT = TypeExpr.concrete("INT")
+INT = TypeExpr.concrete("core.int")
 
 
 def _rule(*cases: ReplacementCase, from_type: str = "old.node") -> ReplacementRule:
@@ -1245,7 +1245,7 @@ def test_connection_consumption_is_accounted_across_family_copy_mappings() -> No
 def test_source_dependent_slot_variants_use_guarded_literal_cases() -> None:
     source = NodeSchema(
         node_type="old.guarded-slot",
-        inputs=(InputSpec("kind", TypeExpr.concrete("STRING")), InputSpec("shared", INT)),
+        inputs=(InputSpec("kind", TypeExpr.concrete("core.string")), InputSpec("shared", INT)),
     )
     target = NodeSchema(
         node_type="new.guarded-slot",
@@ -1254,7 +1254,7 @@ def test_source_dependent_slot_variants_use_guarded_literal_cases() -> None:
                 "source",
                 variants=(
                     SlotVariant("integer", INT),
-                    SlotVariant("string", TypeExpr.concrete("STRING")),
+                    SlotVariant("string", TypeExpr.concrete("core.string")),
                 ),
             ),
         ),

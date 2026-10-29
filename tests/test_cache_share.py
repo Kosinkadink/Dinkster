@@ -49,7 +49,7 @@ def test_cache_endpoints(tmp_path: Path) -> None:
     async def scenario() -> None:
         registry = make_registry()
         store = DiskCacheStore(tmp_path, registry)
-        await store.put("known-key", {"out": registry.wrap("INT", 5)})
+        await store.put("known-key", {"out": registry.wrap("core.int", 5)})
         server = await serve_cache(store)
         try:
             async with aiohttp.ClientSession() as http:
@@ -95,7 +95,7 @@ def test_peer_cache_store_round_trip(tmp_path: Path) -> None:
     async def scenario() -> None:
         registry = make_registry()
         store = DiskCacheStore(tmp_path, registry)
-        value = registry.wrap("STRING", "computed on A")
+        value = registry.wrap("core.string", "computed on A")
         await store.put("shared-key", {"out": value})
         server = await serve_cache(store)
         try:
@@ -137,7 +137,7 @@ def test_peer_cache_store_rejects_tampered_bytes(tmp_path: Path) -> None:
     async def scenario() -> None:
         registry = make_registry()
         store = DiskCacheStore(tmp_path, registry)
-        await store.put("key", {"out": registry.wrap("INT", 5)})
+        await store.put("key", {"out": registry.wrap("core.int", 5)})
         server = TestServer(create_app(make_engine, SCHEMAS, cache_export=TamperingExport(store)))
         await server.start_server()
         try:

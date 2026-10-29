@@ -34,7 +34,7 @@ from dinkster_schema.wire import SCHEMA_WIRE_VERSION, schema_to_wire
 from dinkster_server import create_app
 from dinkster_workers.manifest import load_pack_templates
 
-from dinkster.compose import PackSpec, compose_serving
+from dinkster.compose import compose_serving
 
 REPO_ROOT = Path(__file__).parent.parent
 DEV_PACK_MANIFEST = REPO_ROOT / "packages" / "dinkster-nodes-dev" / "dinkster-pack.toml"
@@ -82,7 +82,7 @@ def test_gallery_widget_wire_coverage() -> None:
     carry no widget at all."""
 
     async def scenario() -> None:
-        composition = await compose_serving([PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)])
+        composition = await compose_serving([DEV_PACK_MANIFEST])
         try:
             wire = schema_to_wire(composition.schemas["dev.gallery.widgets"])
             assert wire["schemaVersion"] == SCHEMA_WIRE_VERSION == 1
@@ -91,7 +91,7 @@ def test_gallery_widget_wire_coverage() -> None:
             static = _entry(wire, "combo_static")["widget"]
             assert _entry(wire, "combo_static")["type"] == {
                 "kind": "concrete",
-                "types": ["COMBO"],
+                "types": ["core.combo"],
             }
             assert isinstance(static, dict)
             assert static["type"] == "COMBO"
@@ -101,7 +101,7 @@ def test_gallery_widget_wire_coverage() -> None:
             remote = _entry(wire, "combo_remote")["widget"]
             assert _entry(wire, "combo_remote")["type"] == {
                 "kind": "concrete",
-                "types": ["COMBO"],
+                "types": ["core.combo"],
             }
             assert isinstance(remote, dict)
             assert remote["options"] == list(SAMPLERS)
@@ -113,7 +113,7 @@ def test_gallery_widget_wire_coverage() -> None:
             remote_empty = _entry(wire, "combo_remote_empty")["widget"]
             assert _entry(wire, "combo_remote_empty")["type"] == {
                 "kind": "concrete",
-                "types": ["COMBO"],
+                "types": ["core.combo"],
             }
             assert isinstance(remote_empty, dict)
             assert "options" not in remote_empty
@@ -185,7 +185,7 @@ def test_gallery_socket_wire_coverage() -> None:
     optional, of-union, nested), match variables, and optional outputs."""
 
     async def scenario() -> None:
-        composition = await compose_serving([PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)])
+        composition = await compose_serving([DEV_PACK_MANIFEST])
         try:
             sockets = schema_to_wire(composition.schemas["dev.gallery.sockets"])
             union2 = _entry(sockets, "union2")["type"]
@@ -238,7 +238,7 @@ def test_gallery_explicit_pack_surface() -> None:
     """The explicit pack serves gallery nodes, choices, and its template."""
 
     async def scenario() -> None:
-        dev = await compose_serving([PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)])
+        dev = await compose_serving([DEV_PACK_MANIFEST])
         try:
             assert "dev.gallery.widgets" in dev.schemas
             assert dev.choices[SAMPLERS_CHOICE_ID] == SAMPLERS
@@ -251,6 +251,8 @@ def test_gallery_explicit_pack_surface() -> None:
         plain = await compose_serving()
         try:
             assert not any(t.startswith("dev.") for t in plain.schemas)
+            # Core native inference vocabulary is on every composition
+            # (stage 3b); no dev.* choice lists leak.
             assert set(plain.choices) == {
                 "dinkster.detection.detect.providers",
                 "dinkster.detection.segment.providers",
@@ -266,6 +268,8 @@ def test_gallery_explicit_pack_surface() -> None:
                 "dinkster.preprocess.anyline.providers",
                 "dinkster.preprocess.teed.providers",
                 "dinkster.preprocess.mlsd.providers",
+                "dinkster.samplers",
+                "dinkster.schedulers",
             }
             assert set(plain.packs) == {
                 "dinkster-nodes-foundation",
@@ -294,9 +298,7 @@ def test_gallery_choice_and_template_endpoints() -> None:
     pack, and the body endpoint serves the exact declared bytes."""
 
     async def scenario() -> None:
-        from test_settings import settings
-
-        composition = await compose_serving([PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)])
+        composition = await compose_serving([DEV_PACK_MANIFEST])
         client = None
         try:
             app = create_app(
@@ -306,7 +308,6 @@ def test_gallery_choice_and_template_endpoints() -> None:
                 node_packs=composition.node_packs,
                 choices=composition.choices,
                 lazy_choices=composition.lazy_choices,
-                settings=settings(features={"templates": {"enabled": True}}),
             )
             client = TestClient(TestServer(app))
             await client.start_server()
@@ -343,7 +344,7 @@ def test_gallery_template_references_real_ports() -> None:
     it does not have to)."""
 
     async def scenario() -> None:
-        composition = await compose_serving([PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)])
+        composition = await compose_serving([DEV_PACK_MANIFEST])
         try:
             document = json.loads(gallery_template_bytes())
             assert document["format"] == "dinkster-workflow"
@@ -406,7 +407,7 @@ def test_gallery_nodes_execute() -> None:
     list through."""
 
     async def scenario() -> None:
-        composition = await compose_serving([PackSpec(DEV_PACK_MANIFEST, trust_reserved=True)])
+        composition = await compose_serving([DEV_PACK_MANIFEST])
         try:
             engine = composition.make_engine(lambda event: None)
             graph = Graph(

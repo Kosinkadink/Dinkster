@@ -75,7 +75,28 @@ from dinkster_engine import (
     Worker,
 )
 from dinkster_graph import Graph, GraphNode, Link, RegionNode, TypedLiteral, top_level_node_id
-from dinkster_inference_wire import register_inference_types
+from dinkster_inference import (
+    INFERENCE_ASSEMBLIES_SURFACE,
+    INFERENCE_COMPONENTS_SURFACE,
+    INFERENCE_FAMILIES_SURFACE,
+    INFERENCE_SAMPLERS_SURFACE,
+    INFERENCE_SCHEDULERS_SURFACE,
+    SAMPLER_CATALOG_ENV,
+    Registry,
+    RegistryError,
+    SamplerExtensionEntry,
+    assembly_declaration,
+    builtin_registries,
+    builtin_sampler_snapshot,
+    component_declaration,
+    family_declaration,
+    register_inference_types,
+    registry_choice_values,
+    remove_sampler_catalog_record,
+    sampler_choice_values,
+    scheduler_declaration,
+    write_sampler_catalog,
+)
 from dinkster_memory import (
     FullReleaseResult,
     MemoryGovernor,
@@ -87,11 +108,12 @@ from dinkster_memory import (
     TenantRegistration,
     use_model_tenant_registry,
 )
-from dinkster_memory.resident import ResidentPool
 from dinkster_native.memory import plan_reservations
+from dinkster_native.native_residency import NativeComponentPublisher
 from dinkster_native.pool import default_pool
 from dinkster_protocol import (
     GRAPH_COMPILERS_SURFACE,
+    GUIDANCE_SURFACES,
     WORKGROUP_DATA_PLANE_CAPABILITY,
     ActiveExtension,
     AttentionCapabilityEvidence,
@@ -106,6 +128,7 @@ from dinkster_protocol import (
     ExtensionScope,
     ExtensionSnapshot,
     GraphCompilerRegistrySnapshot,
+    GuidanceRegistrySnapshot,
     Invocation,
     InvocationResult,
     KeyedContribution,
@@ -117,9 +140,6 @@ from dinkster_protocol import (
     ReplicaRecipeId,
     SamplerRegistrySnapshot,
     SemanticSlot,
-    SingleJobMultiGpuConfig,
-    SingleJobMultiGpuExecution,
-    SingleJobMultiGpuMode,
     WorkerInstanceId,
     WorkGroupAttempt,
     WorkGroupId,
@@ -156,7 +176,6 @@ from dinkster_schema import (
     NodeSchema,
     build_node_types,
     build_schemas,
-    canonical_claim,
     canonical_name,
     claim_covers,
     claims_conflict,
@@ -174,7 +193,9 @@ from dinkster_server import (
     CORE_PACK_ID,
     ChoiceOwnerGone,
     LazyChoiceFetcher,
+    PackInferenceUnavailable,
     PackInfo,
+    UnavailableInferenceProvider,
     WorkerInfo,
     validate_comfy_args,
 )
@@ -186,6 +207,7 @@ from dinkster_values import (
     Rendition,
     ResourcePins,
     TypeRegistry,
+    UnresolvablePayload,
     Value,
     ValueMeta,
     list_children,
@@ -195,6 +217,7 @@ from dinkster_values import (
 from dinkster_workers import (
     PACK_AUTHOR_API_CONTRACT,
     PACK_HOST_CONTRACT,
+    PACK_INFERENCE_CONTRACT,
     ArmWorker,
     BoundaryDiagnostic,
     BubblewrapCapability,
@@ -209,7 +232,6 @@ from dinkster_workers import (
     HeadroomMirror,
     InProcessWorker,
     IsolatedWorker,
-    ManifestError,
     PackManifest,
     ReleaseGuard,
     RemoteWorker,
@@ -225,6 +247,7 @@ from dinkster_workers import (
     load_manifest,
     normalize_egress_origin,
     resident_devices,
+    unmatched_registry_providers,
 )
 from dinkster_workers.catalog import (
     PackCatalog,
@@ -233,13 +256,13 @@ from dinkster_workers.catalog import (
     worker_declarations_match_catalog,
 )
 from dinkster_workers.host import load_pack as load_host_pack
-from dinkster_workers.manifest import validate_registration_claims
 from dinkster_workers.session import WorkerDied
 
 from .extension_assets import read_module, resolve_frontend_modules
 from .lazy_worker import CatalogTypeRegistry, LazyWorker
 from .native_policy import NativeDispatchPolicy, select_resident_producer
 from .packs import pack_info_from_manifest
+from .registry_declaration import registry_declaration_toml, undeclared_registry_providers
 from .remotes import RemoteSpec
 
 T = TypeVar("T")
@@ -265,6 +288,10 @@ __all__ = [
 
 FRONTEND_API_VERSION = "1.0.0"
 
+MODEL_FAMILY_REGISTRY = "dinkster.model-families"
+SAMPLER_REGISTRY = "dinkster.samplers"
+SCHEDULER_REGISTRY = "dinkster.schedulers"
+
 ExecutionCacheMode = Literal["memory", "layered"]
 
 _SANDBOX_RO_PATH_ENV = (
@@ -288,6 +315,9 @@ _FIRST_PARTY_PACK_MODULES = MappingProxyType(
         "dinkster-nodes-image": "dinkster_nodes_image",
         "dinkster-nodes-remote": "dinkster_nodes_remote",
         "dinkster-nodes-generation": "dinkster_nodes_generation",
+        "dinkster-model-qwen-image": "dinkster_model_qwen_image",
+        "dinkster-model-triposplat": "dinkster_model_triposplat",
+        "dinkster-model-wan": "dinkster_model_wan",
         "dinkster-vision-birefnet": "dinkster_nodes_vision.birefnet",
         "dinkster-vision-depth-anything-v2": "dinkster_nodes_vision.depth_anything_v2",
         "dinkster-vision-depth-anything-v3": "dinkster_nodes_vision.depth_anything_v3",
@@ -312,7 +342,18 @@ _ISOLATED_FIRST_PARTY_PACKS = frozenset(
 _PACK_ARTIFACT_SIDECARS = ("comfy-aliases.json", "comfy-groups.json")
 _DEFAULT_SUITE_DISTRIBUTION = "dinkster-nodes-std"
 _DEFAULT_SUITE_LOCK = "dinkster_nodes_std_suite/dinkster.lock"
-_MODEL_PACK_IDS: tuple[str, ...] = ()
+_MODEL_PACK_IDS = (
+    "dinkster-model-qwen-image",
+    "dinkster-model-triposplat",
+    "dinkster-model-wan",
+)
+SAMPLING_WORKER_NAME = "dinkster.ksampler"
+"""Native worker whose arm materializes every inference extension surface."""
+INFERENCE_UNAVAILABLE_REASON = (
+    "no live native dinkster.ksampler worker was composed (the native inference "
+    "pack did not load), so this pack's samplers, schedulers, graph compilers and "
+    "guidance strategies cannot run"
+)
 
 
 def _trusted_reserved_claims_can_overlap(first: str, second: str) -> bool:
@@ -421,10 +462,6 @@ class _ReplicaWorkerPool:
     def renditions(self) -> object:
         return getattr(self._first, "renditions", ())
 
-    @property
-    def registered_types(self) -> tuple[str, ...]:
-        return tuple(getattr(self._first, "registered_types", ()))
-
     async def resolve_rendition(
         self,
         type_id: str,
@@ -479,6 +516,28 @@ class _ReplicaWorkerPool:
     async def close(self) -> None:
         await self._close_lanes()
 
+    async def materialize_inference_generation(self, key: str) -> object:
+        results = await asyncio.gather(
+            *(lane.worker.materialize_inference_generation(key) for lane in self.lanes)
+        )
+        if any(result != results[0] for result in results[1:]):
+            raise RuntimeError("replica workers materialized different inference generations")
+        return results[0]
+
+    async def release_inference_generation(self, key: str) -> None:
+        results = await asyncio.gather(
+            *(lane.worker.release_inference_generation(key) for lane in self.lanes),
+            return_exceptions=True,
+        )
+        failures = [result for result in results if isinstance(result, BaseException)]
+        if failures:
+            raise failures[0]
+
+    async def compile_graph(
+        self, generation_key: str, graph: Mapping[str, object], targets: Sequence[str]
+    ) -> Mapping[str, object]:
+        return await self._first.compile_graph(generation_key, graph, targets)
+
     async def convert_legacy_checkpoint(
         self, path: Path, logical_name: str
     ) -> tuple[str, str | None] | None:
@@ -498,7 +557,7 @@ class _SingleJobWorkerPool(_ReplicaWorkerPool):
         rendezvous_directory: Path | None = None,
     ) -> None:
         super().__init__(lanes)
-        self._rank_resources: dict[tuple[tuple[int, ...], str], tuple[Value, ...]] = {}
+        self._rank_resources: dict[str, tuple[Value, ...]] = {}
         self._rendezvous_path = rendezvous_path
         self._rendezvous_directory = rendezvous_directory
         self._reservations = reservations
@@ -508,24 +567,6 @@ class _SingleJobWorkerPool(_ReplicaWorkerPool):
         self._recovery_token = f"single-job-recovery-{uuid.uuid4().hex}"
         self._invoke_lock = asyncio.Lock()
         self.mode = mode
-
-    def resolve_config(
-        self, requested: SingleJobMultiGpuConfig | None
-    ) -> tuple[SingleJobMultiGpuConfig, tuple[_ReplicaLane, ...]]:
-        config = requested or SingleJobMultiGpuConfig(
-            tuple(lane.cuda_index for lane in self.lanes),
-            cast("SingleJobMultiGpuMode", self.mode),
-        )
-        available = {lane.cuda_index: lane for lane in self.lanes}
-        if any(index not in available for index in config.cuda_indices):
-            raise RuntimeError(
-                "single-job multi-GPU request names CUDA lanes outside the configured pool"
-            )
-        if config.mode in ("auto", "guidance") and len(config.cuda_indices) != 2:
-            raise RuntimeError(f"single-job {config.mode} mode requires exactly two CUDA lanes")
-        if config.mode == "sequence" and len(config.cuda_indices) not in (2, 4):
-            raise RuntimeError("single-job sequence mode requires two or four CUDA lanes")
-        return config, tuple(available[index] for index in config.cuda_indices)
 
     @property
     def alive(self) -> bool:
@@ -561,17 +602,17 @@ class _SingleJobWorkerPool(_ReplicaWorkerPool):
         await self.start()
         self._failed_lanes = False
 
-    def _rank_value(self, value: Value, cuda_indices: tuple[int, ...], rank: int) -> Value:
+    def _rank_value(self, value: Value, rank: int) -> Value:
         children = list_children(value)
         if children is not None:
-            replaced = tuple(self._rank_value(child, cuda_indices, rank) for child in children)
+            replaced = tuple(self._rank_value(child, rank) for child in children)
             if replaced != children:
                 payload = value.payload
                 assert isinstance(payload, ListPayload)
                 value = replace(value, payload=replace(payload, children=replaced))
         resource_id = value.meta.get(RESOURCE_ID_META_KEY)
         if isinstance(resource_id, str):
-            values = self._rank_resources.get((cuda_indices, resource_id))
+            values = self._rank_resources.get(resource_id)
             if values is not None:
                 return values[rank]
         return value
@@ -581,7 +622,6 @@ class _SingleJobWorkerPool(_ReplicaWorkerPool):
 
     async def _invoke_ranks(
         self,
-        lanes: tuple[_ReplicaLane, ...],
         invocations: tuple[Invocation, ...],
         on_event: OnInvocationEvent | None,
         primary_failure: asyncio.Future[str] | None = None,
@@ -590,7 +630,7 @@ class _SingleJobWorkerPool(_ReplicaWorkerPool):
             asyncio.create_task(
                 lane.worker.invoke(invocation, on_event=on_event if rank == 0 else None)
             ): rank
-            for rank, (lane, invocation) in enumerate(zip(lanes, invocations, strict=True))
+            for rank, (lane, invocation) in enumerate(zip(self.lanes, invocations, strict=True))
         }
         results: list[InvocationResult | None] = [None] * len(tasks)
         try:
@@ -641,8 +681,6 @@ class _SingleJobWorkerPool(_ReplicaWorkerPool):
 
     async def _invoke_workgroup(
         self,
-        lanes: tuple[_ReplicaLane, ...],
-        config: SingleJobMultiGpuConfig,
         invocations: tuple[Invocation, ...],
         on_event: OnInvocationEvent | None,
     ) -> tuple[InvocationResult, ...]:
@@ -650,14 +688,14 @@ class _SingleJobWorkerPool(_ReplicaWorkerPool):
             raise RuntimeError("single-job multi-GPU execution requires reservation service")
         if any(
             WORKGROUP_DATA_PLANE_CAPABILITY not in lane.worker.workgroup_capabilities
-            for lane in lanes
+            for lane in self.lanes
         ):
             raise RuntimeError("single-job rank did not negotiate the workgroup v2 capability")
         group = WorkGroupId(f"single-{uuid.uuid4().hex}")
         attempt = WorkGroupAttempt(1)
         recipe = ReplicaRecipeId(
             "sha256:"
-            + hashlib.sha256(f"single-job:{config.mode}:{len(lanes)}".encode()).hexdigest()
+            + hashlib.sha256(f"single-job:{self.mode}:{len(self.lanes)}".encode()).hexdigest()
         )
         workgroup_lanes = tuple(
             WorkGroupWorkerLane(
@@ -669,7 +707,7 @@ class _SingleJobWorkerPool(_ReplicaWorkerPool):
                 SemanticSlot.SINGLE,
                 lane.worker,
             )
-            for rank, lane in enumerate(lanes)
+            for rank, lane in enumerate(self.lanes)
         )
         definition, endpoints = compose_workgroup_configuration(
             group,
@@ -708,7 +746,6 @@ class _SingleJobWorkerPool(_ReplicaWorkerPool):
             await workgroup_start
             rank_invocations = asyncio.create_task(
                 self._invoke_ranks(
-                    lanes,
                     invocations,
                     on_event,
                     primary_failure,
@@ -762,7 +799,7 @@ class _SingleJobWorkerPool(_ReplicaWorkerPool):
             primary_failure.cancel()
             workgroup_start.cancel()
             await asyncio.gather(workgroup_start, return_exceptions=True)
-            for lane, member in zip(lanes, definition.members, strict=True):
+            for lane, member in zip(self.lanes, definition.members, strict=True):
                 lane.worker.unbind_workgroup_endpoint(definition, member.replica)
 
     @staticmethod
@@ -773,7 +810,7 @@ class _SingleJobWorkerPool(_ReplicaWorkerPool):
             request for invocation in invocations for request in plan_reservations(invocation)
         )
 
-    def _record_rank_values(self, cuda_indices: tuple[int, ...], values: tuple[Value, ...]) -> None:
+    def _record_rank_values(self, values: tuple[Value, ...]) -> None:
         children = tuple(list_children(value) for value in values)
         if any(items is None for items in children) != all(items is None for items in children):
             raise RuntimeError("single-job ranks returned different list value types")
@@ -784,14 +821,14 @@ class _SingleJobWorkerPool(_ReplicaWorkerPool):
             for rank_children in zip(
                 *(cast("tuple[Value, ...]", items) for items in children), strict=True
             ):
-                self._record_rank_values(cuda_indices, rank_children)
+                self._record_rank_values(rank_children)
         resource_id = values[0].meta.get(RESOURCE_ID_META_KEY)
         if isinstance(resource_id, str):
             if any(
                 not isinstance(value.meta.get(RESOURCE_ID_META_KEY), str) for value in values[1:]
             ):
                 raise RuntimeError("single-job ranks returned different resource value types")
-            self._rank_resources[(cuda_indices, resource_id)] = values
+            self._rank_resources[resource_id] = values
 
     @classmethod
     def _parent_value(cls, values: tuple[Value, ...]) -> Value:
@@ -847,23 +884,18 @@ class _SingleJobWorkerPool(_ReplicaWorkerPool):
         async with self._invoke_lock:
             if self._failed_lanes:
                 await self._replace_failed_lanes()
-            config, lanes = self.resolve_config(invocation.single_job_multi_gpu)
             invocations = tuple(
                 replace(
                     invocation,
-                    single_job_multi_gpu=None,
-                    single_job_multi_gpu_execution=SingleJobMultiGpuExecution(
-                        rank, len(lanes), config.mode
-                    ),
                     inputs={
-                        name: self._rank_value(value, config.cuda_indices, rank)
+                        name: self._rank_value(value, rank)
                         for name, value in invocation.inputs.items()
                     },
                 )
-                for rank in range(len(lanes))
+                for rank in range(len(self.lanes))
             )
             try:
-                results = await self._invoke_workgroup(lanes, config, invocations, on_event)
+                results = await self._invoke_workgroup(invocations, on_event)
             except BaseException:
                 if self._failed_lanes:
                     await self._replace_failed_lanes()
@@ -885,7 +917,7 @@ class _SingleJobWorkerPool(_ReplicaWorkerPool):
                 values = tuple(
                     cast("Mapping[str, Value]", result.outputs)[name] for result in results
                 )
-                self._record_rank_values(config.cuda_indices, values)
+                self._record_rank_values(values)
                 parent_outputs[name] = self._parent_value(values)
             return replace(results[0], outputs=parent_outputs)
 
@@ -1099,7 +1131,7 @@ class PackSpec:
     Other schema-only types still require a provider for a complete generation.
     """
     runtime_pins: Mapping[str, str] = field(default_factory=dict)
-    """Exact torch/comfy-aimdo baseline recorded by the install generation."""
+    """Exact torch/dinkster-aimdo baseline recorded by the install generation."""
     asset_vault_write: bool = False
     """Allow this trusted isolated pack to ingest verified assets into the host vault."""
     replica_cuda_indices: tuple[int, ...] = ()
@@ -1132,7 +1164,7 @@ class PackSpec:
             raise ValueError("replica and single-job CUDA indices are mutually exclusive")
         if self.in_process and self.asset_vault_write:
             raise ValueError("an in-process PackSpec cannot request asset vault write access")
-        if self.single_job_mode not in ("auto", "guidance", "sequence"):
+        if self.single_job_mode not in ("auto", "guidance", "sequence", "window"):
             raise ValueError("PackSpec single_job_mode is invalid")
         budgets: dict[str, int] = {}
         for residency, nbytes in self.vram_budgets.items():
@@ -1331,7 +1363,7 @@ def _installed_pack_spec(
                 f"default suite locks {pack_id} artifact {locked.artifact_digest}, "
                 f"but installed artifact is {digest}"
             )
-        if tuple(canonical_claim(claim) for claim in manifest_record.namespaces) != locked.claims:
+        if tuple(canonical_name(claim) for claim in manifest_record.namespaces) != locked.claims:
             raise CompositionError(
                 f"default suite locks {pack_id} claims {locked.claims!r}, "
                 f"but its manifest claims {manifest_record.namespaces!r}"
@@ -1363,11 +1395,6 @@ def _installed_pack_spec(
         env={} if env is None else env,
         asset_vault_write=asset_vault_write,
     )
-
-
-def development_pack_spec() -> PackSpec:
-    """Resolve the explicitly selected installed development scaffold pack."""
-    return _installed_pack_spec("dinkster-nodes-dev", "dinkster_nodes_dev", in_process=False)
 
 
 def default_pack_spec(pack_id: str) -> PackSpec:
@@ -1402,7 +1429,7 @@ def default_pack_specs() -> tuple[PackSpec, ...]:
         name = canonical_name(manifest.name)
         entries[name] = (manifest, spec)
         by_name[name] = spec
-    order, _receipts = _resolve_pack_contracts(entries)
+    order, _receipts = _resolve_pack_contracts(entries, _builtin_registry_providers())
     return tuple(by_name[name] for name in order)
 
 
@@ -1507,6 +1534,7 @@ class Composition:
     """Canonical pack-set provenance. It never participates in native numerical identity."""
     _isolated: list[Any] = field(default_factory=list)
     _tenant_registries: list[Any] = field(default_factory=list)
+    _component_publishers: list[NativeComponentPublisher] = field(default_factory=list)
     choices: dict[str, tuple[str, ...]] = field(default_factory=dict)
     """Combo choice lists across the composed surface (choice-list id ->
     values), for create_app's /api/choices routes."""
@@ -1548,10 +1576,9 @@ class Composition:
                 ),
             )
         pins = self._resource_pins
-        for pool in (default_pool(), *self._registry.resident_tables):
-            if isinstance(pool, ResidentPool):
-                pool.register_invalidator(cache.drop_referencing)
-                pool.register_pins(pins)
+        pool = default_pool()
+        pool.register_invalidator(cache.drop_referencing)
+        pool.register_pins(pins)
         self._engine_caches.add(cache)
         return Engine(
             schemas=self.schemas,
@@ -1584,8 +1611,10 @@ class Composition:
 
     async def _close(self) -> None:
         registries = tuple(self._tenant_registries)
+        publishers = tuple(self._component_publishers)
         workers = tuple(self._isolated)
         self._tenant_registries.clear()
+        self._component_publishers.clear()
         self._isolated.clear()
         lazy_results = await asyncio.gather(
             *(worker.close() for worker in workers if isinstance(worker, LazyWorker)),
@@ -1594,6 +1623,14 @@ class Composition:
         registry_results = await asyncio.gather(
             *(registry.close() for registry in registries), return_exceptions=True
         )
+        publisher_results: list[BaseException | None] = []
+        for publisher in publishers:
+            try:
+                publisher.close()
+            except BaseException as exc:
+                publisher_results.append(exc)
+            else:
+                publisher_results.append(None)
         worker_results = await asyncio.gather(
             *(worker.close() for worker in workers if not isinstance(worker, LazyWorker)),
             return_exceptions=True,
@@ -1603,7 +1640,7 @@ class Composition:
         self._cleanup_paths.clear()
         errors = [
             result
-            for result in (*lazy_results, *registry_results, *worker_results)
+            for result in (*lazy_results, *publisher_results, *registry_results, *worker_results)
             if isinstance(result, BaseException)
         ]
         if errors:
@@ -1715,8 +1752,14 @@ def _validated_remote_body_arms(
     """Check the hello's bodyArms are internally coherent and return them in
     deterministic order. The daemon's manifest is its own authority for which
     arms exist (it validated them against [pack.arms] before announcing);
-    this side only requires that every arm node type is announced."""
+    this side only requires that every arm node type is announced and that a
+    native arm carries attention route evidence, mirroring the local
+    _validate_body_arms evidence rule."""
     body_arms = worker.body_arms or {}
+    if "native" in body_arms and worker.attention_route_token is None:
+        raise CompositionError(
+            f"remote worker {name!r}: native bodyArms hello omitted attention route evidence"
+        )
     for arm_name, node_types in body_arms.items():
         unknown = sorted(set(node_types) - set(announced))
         if unknown:
@@ -1903,6 +1946,8 @@ class _PackRecord:
     extension_contributions: tuple[tuple[ExtensionScope, ContributionSurfaceDescriptor], ...] = ()
     tenant_registrations: _PackTenantRegistry | None = None
     owns_tenant_registrations: bool = True
+    component_publisher: NativeComponentPublisher | None = None
+    owns_component_publisher: bool = True
 
 
 PackContractInput = tuple[PackManifest, PackSpec]
@@ -2001,30 +2046,47 @@ def order_pack_entries_by_requirements(
     return tuple(ordered)
 
 
+def _builtin_registry_providers() -> dict[str, dict[str, str]]:
+    provider = PACK_INFERENCE_CONTRACT
+    registries = builtin_registries()
+    return {
+        canonical_name(MODEL_FAMILY_REGISTRY): {
+            canonical_name(id_): provider for id_ in registries.families.ids()
+        },
+        canonical_name(SAMPLER_REGISTRY): {
+            canonical_name(item.id): provider for item in builtin_sampler_snapshot().samplers
+        },
+        canonical_name(SCHEDULER_REGISTRY): {
+            canonical_name(item.id): provider for item in registries.schedulers
+        },
+    }
+
+
 def _resolve_pack_contracts(
     entries: Mapping[str, PackContractInput],
+    registry_providers: Mapping[str, Mapping[str, str]],
 ) -> tuple[tuple[str, ...], dict[str, tuple[ResolvedRequirement, ...]]]:
     """Validate one complete pack set and return dependency order plus exact receipts."""
     capabilities: dict[str, tuple[str, str]] = {}
     dependencies: dict[str, set[str]] = {}
     receipts: dict[str, list[ResolvedRequirement]] = {name: [] for name in entries}
+    providers = {registry: dict(items) for registry, items in registry_providers.items()}
+    provider_packs: dict[tuple[str, str], str] = {}
 
     for name in sorted(entries):
-        manifest, _spec = entries[name]
+        manifest, spec = entries[name]
         contracts = manifest.contracts
         if contracts is not None:
             expected: dict[RequirementKind, str] = {
                 "host": PACK_HOST_CONTRACT,
                 "api": PACK_AUTHOR_API_CONTRACT,
+                "inference": PACK_INFERENCE_CONTRACT,
             }
             declared: dict[RequirementKind, str | None] = {
                 "host": contracts.host,
                 "api": contracts.api,
+                "inference": contracts.inference,
             }
-            if contracts.inference is not None:
-                raise CompositionError(
-                    f"pack {name!r} declares the retired inference host contract"
-                )
             for kind, value in declared.items():
                 if value is None:
                     continue
@@ -2035,6 +2097,18 @@ def _resolve_pack_contracts(
                     )
                 receipts[name].append(ResolvedRequirement(name, kind, value, expected[kind]))
         dependencies[name] = {dependency.pack for dependency in manifest.dependencies}
+        for provider in manifest.provides.registry:
+            registry_id = canonical_name(provider.registry)
+            descriptor_id = canonical_name(provider.id)
+            registry = providers.setdefault(registry_id, {})
+            previous = registry.get(descriptor_id)
+            if previous is not None:
+                raise CompositionError(
+                    f"registry descriptor {provider.registry}:{provider.id} is provided by both "
+                    f"{previous!r} and {manifest.name!r}"
+                )
+            registry[descriptor_id] = _pack_provider_identity(manifest, spec)
+            provider_packs[(registry_id, descriptor_id)] = name
         for capability in manifest.capabilities:
             key = canonical_name(capability.id)
             previous = capabilities.get(key)
@@ -2075,6 +2149,28 @@ def _resolve_pack_contracts(
                     _pack_provider_identity(provider_manifest, provider_spec),
                 )
             )
+
+        for requirement in manifest.requirements.registry:
+            registry_id = canonical_name(requirement.registry)
+            descriptor_id = canonical_name(requirement.id)
+            registry = providers.get(registry_id)
+            provider = registry.get(descriptor_id) if registry is not None else None
+            if provider is None:
+                raise CompositionError(
+                    f"pack {manifest.name!r} requires registry descriptor "
+                    f"{requirement.registry}:{requirement.id}, but it is unavailable"
+                )
+            receipts[name].append(
+                ResolvedRequirement(
+                    name,
+                    "registry",
+                    f"{requirement.registry}:{requirement.id}",
+                    provider,
+                )
+            )
+            provider_pack = provider_packs.get((registry_id, descriptor_id))
+            if provider_pack is not None and provider_pack != name:
+                dependencies[name].add(provider_pack)
 
         for requirement in manifest.requirements.capabilities:
             provider = capabilities.get(canonical_name(requirement.id))
@@ -2428,7 +2524,7 @@ class ServingComposer:
         self._tenant_registry = tenant_registry
         self._torch_capable = torch_capable or _probe_torch_capability
         self._runtime_versions = runtime_versions or (
-            lambda: {name: importlib.metadata.version(name) for name in ("torch", "comfy-aimdo")}
+            lambda: {name: importlib.metadata.version(name) for name in ("torch", "dinkster-aimdo")}
         )
         self._sandbox_policy = sandbox_policy
         self._sandbox_gpu_grants = frozenset(canonical_name(name) for name in sandbox_gpu_grants)
@@ -2463,7 +2559,7 @@ class ServingComposer:
             self._diagnostic_listener = fan_out
         self._worker_env = dict(worker_env or {})
         # The asset base URL composed remote workers offer their daemons
-        # as a staging source (pull-over-HTTP asset endpoint URL
+        # as a staging source (pull-over-HTTP; peer_asset_sources URL
         # shape), plus the bearer credential for it when this engine
         # serves with auth. Engine-global: one advertised surface, every
         # remote hears the same address.
@@ -2491,6 +2587,19 @@ class ServingComposer:
         if composition_mode not in ("production", "development"):
             raise ValueError(f"invalid composition mode {composition_mode!r}")
         self._composition_mode: PackCompositionMode = composition_mode
+        self._registry_providers = _builtin_registry_providers()
+        catalog_path = self._worker_env.get(SAMPLER_CATALOG_ENV)
+        self._sampler_catalog_root: Path | None = None
+        if catalog_path is None:
+            self._sampler_catalog_root = Path(tempfile.mkdtemp(prefix="dinkster-sampler-catalog-"))
+            catalog_path = str(self._sampler_catalog_root / "catalog.json")
+            self._worker_env[SAMPLER_CATALOG_ENV] = catalog_path
+        self._sampler_catalog_path = Path(catalog_path)
+        self._published_generation_digest: str | None = None
+        # Published generations remain loaded for this worker lifetime so
+        # runtimes pinned by already-admitted jobs can still resolve them.
+        # The set is one entry per digest; close() provides the full cleanup.
+        self._retired_generation_digests: set[str] = set()
         registry_was_supplied = registry is not None
         registry = registry or TypeRegistry()
         if not registry_was_supplied:
@@ -2498,7 +2607,16 @@ class ServingComposer:
         register_inference_types(registry)
         # The host kernel starts with no nodes; nodes arrive through manifests.
         core_nodes: list[type[Node]] = []
-        self._core_choices: dict[str, tuple[str, ...]] = {}
+        # The native inference registries are core vocabulary on every
+        # surface: /api/choices/dinkster.samplers and .schedulers serve the
+        # ported catalog ids (dinkster.euler, dinkster.karras, ...) so remote
+        # COMBO widgets and future registerable-sampler packs share one
+        # source of truth (stage 3b; DESIGN first-class registries).
+        builtin_sampler_view = builtin_sampler_snapshot()
+        self._core_choices: dict[str, tuple[str, ...]] = {
+            "dinkster.samplers": tuple(d.id for d in builtin_sampler_view.samplers),
+            "dinkster.schedulers": tuple(d.id for d in builtin_registries().schedulers),
+        }
         self._core_packs: dict[str, PackInfo] = {}
         self._base_registry = registry.copy()
         schemas: dict[str, NodeSchema] = dict(build_schemas(core_nodes))
@@ -2516,7 +2634,11 @@ class ServingComposer:
         # by _mutate: startup's drive task adds packs sequentially, but a
         # reload request can arrive while composition is still in flight.
         self._records: dict[str, _PackRecord] = {}
-        self._inference_unavailable: dict[str, object] = {}
+        # Packs whose [pack.extension] inference surface has no native sampling
+        # worker to materialize it. Rebuilt at every commit point from the
+        # snapshot builder, so reload, remote attach and removal all recompute it
+        # against the topology that actually exists at that moment.
+        self._inference_unavailable: dict[str, PackInferenceUnavailable] = {}
         # Composed remote workers, keyed by their configured name. Parallel
         # to _records on purpose: remotes have no manifest and no reload.
         self._remotes: dict[str, _RemoteRecord] = {}
@@ -2540,7 +2662,6 @@ class ServingComposer:
             inputs: Mapping[str, Value],
             run_id: str,
             attention_config: AttentionPolicyConfig | None,
-            single_job_multi_gpu: SingleJobMultiGpuConfig | None,
         ) -> ExecutionSelection | None:
             return await self._plan_execution(
                 node_type,
@@ -2548,7 +2669,6 @@ class ServingComposer:
                 inputs,
                 run_id,
                 attention_config,
-                single_job_multi_gpu,
             )
 
         empty_runtime = ExecutionRuntime(
@@ -2556,7 +2676,7 @@ class ServingComposer:
             plan_execution=plan_core,
             owner_alive=self._owner_alive,
             extension_snapshot=ExtensionSnapshot(frontend_api=FRONTEND_API_VERSION),
-            sampler_registry_snapshot=SamplerRegistrySnapshot(()),
+            sampler_registry_snapshot=builtin_sampler_view,
             schemas=MappingProxyType(dict(schemas)),
         )
         self._runtime_seat = _RuntimeSeat(empty_runtime)
@@ -2589,6 +2709,7 @@ class ServingComposer:
     ) -> ServingComposer:
         """Build an isolated staging composer with this host configuration."""
         worker_env = dict(self._worker_env)
+        worker_env.pop(SAMPLER_CATALOG_ENV, None)
         selected_mode: PackCompositionMode = (
             self._composition_mode if composition_mode is None else composition_mode
         )
@@ -2730,6 +2851,8 @@ class ServingComposer:
             protected_rw_exceptions.append(vault_path)
         for name in _SANDBOX_RO_PATH_LIST_ENV:
             ro_binds.extend(path for path in effective_env.get(name, "").split(os.pathsep) if path)
+        if catalog := effective_env.get(SAMPLER_CATALOG_ENV):
+            ro_binds.append(str(Path(catalog).parent))
         for name in _SANDBOX_RW_FILE_ENV:
             if value := effective_env.get(name):
                 files = (value, value + "-wal", value + "-shm")
@@ -2949,6 +3072,14 @@ class ServingComposer:
                 "DINKSTER_SINGLE_JOB_RENDEZVOUS": f"file://{rendezvous_path}",
                 "DINKSTER_SINGLE_JOB_TOKEN": uuid.uuid4().hex,
             }
+            if spec.single_job_mode == "sequence":
+                rank_environment.update(
+                    {
+                        "DINKSTER_SINGLE_JOB_SEQUENCE_ULYSSES": str(len(selected_cuda_indices)),
+                        "DINKSTER_SINGLE_JOB_SEQUENCE_RING": "1",
+                        "DINKSTER_SINGLE_JOB_SEQUENCE_GUIDANCE": "1",
+                    }
+                )
 
         worker_env = self._worker_environment(spec, (manifest,))
 
@@ -3049,15 +3180,8 @@ class ServingComposer:
     def _resolve_contract_inputs(
         self, entries: Mapping[str, PackContractInput]
     ) -> tuple[tuple[str, ...], CompositionGeneration]:
-        type_claims = self._base_registry.copy()
-        for manifest, _spec in entries.values():
-            try:
-                validate_registration_claims(manifest)
-                type_claims.claim_types(manifest.name, manifest.type_namespaces)
-            except (ManifestError, ValueError) as exc:
-                raise CompositionError(str(exc)) from exc
         _composition_generation(entries, {}, "development")
-        order, receipts = _resolve_pack_contracts(entries)
+        order, receipts = _resolve_pack_contracts(entries, self._registry_providers)
         return order, _composition_generation(entries, receipts, self._composition_mode)
 
     def order_pack_entries(self, entries: Sequence[PackSpec | Path | str]) -> tuple[PackSpec, ...]:
@@ -3093,6 +3217,7 @@ class ServingComposer:
         publication = self._publication
         runtime = staged._runtime_seat.pin()
         old_catalog = old.asset_catalog
+        old_catalog_root = self._sampler_catalog_root
         for cache in staged.composition._engine_caches:
             old._engine_caches.add(cache)
         staged.composition._engine_caches = old._engine_caches
@@ -3103,6 +3228,13 @@ class ServingComposer:
             if staged_record.tenant_registrations is not None
             and (current := self._records.get(name)) is not None
             and current.tenant_registrations is staged_record.tenant_registrations
+        }
+        transferred_publishers = {
+            staged_record.component_publisher
+            for name, staged_record in staged._records.items()
+            if staged_record.component_publisher is not None
+            and (current := self._records.get(name)) is not None
+            and current.component_publisher is staged_record.component_publisher
         }
         staged._runtime_seat = seat
         staged._mutate = mutate
@@ -3115,10 +3247,19 @@ class ServingComposer:
                 old._tenant_registries.remove(tenant)
             if tenant not in self.composition._tenant_registries:
                 self.composition._tenant_registries.append(tenant)
+        for publisher in transferred_publishers:
+            if publisher in old._component_publishers:
+                old._component_publishers.remove(publisher)
+            if publisher not in self.composition._component_publishers:
+                self.composition._component_publishers.append(publisher)
         for name, record in tuple(self._records.items()):
             if record.tenant_registrations in transferred_tenants:
                 record = replace(record, owns_tenant_registrations=True)
+            if record.component_publisher in transferred_publishers:
+                record = replace(record, owns_component_publisher=True)
             self._records[name] = record
+        if old_catalog_root is not None:
+            old._cleanup_paths.append(old_catalog_root)
         seat.publish(runtime)
         self.composition.asset_catalog = old_catalog
         self._rebuild_asset_catalog()
@@ -3162,14 +3303,6 @@ class ServingComposer:
         """Restart-bound accelerator budgets by active policy worker."""
         return {
             name: dict(record.spec.vram_budgets)
-            for name, record in self._records.items()
-            if record.spec.runtime_settings
-        }
-
-    def applied_aimdo_policies(self) -> dict[str, str]:
-        """Policy used to start each active worker, not the next-start setting."""
-        return {
-            name: record.spec.aimdo
             for name, record in self._records.items()
             if record.spec.runtime_settings
         }
@@ -3432,7 +3565,6 @@ class ServingComposer:
         inputs: Mapping[str, Value],
         run_id: str | None = None,
         attention_config: AttentionPolicyConfig | None = None,
-        single_job_multi_gpu: SingleJobMultiGpuConfig | None = None,
         *,
         topology: Topology | None = None,
         extension_hash: str | None = None,
@@ -3651,7 +3783,6 @@ class ServingComposer:
                 inputs,
                 {arm.name: arm.default_cache_tag for arm in arms},
                 attention_routes,
-                self._producer_targets(self._topology if topology is None else topology, arms),
             )
         target = selected.target if selected is not None else first_arm.name
         if provider_target is not None:
@@ -3679,7 +3810,6 @@ class ServingComposer:
                 inputs,
                 run_id,
                 attention_config,
-                single_job_multi_gpu,
                 topology=topology,
                 extension_hash=extension_hash,
                 preferred_worker=preferred_worker,
@@ -3696,32 +3826,19 @@ class ServingComposer:
             not arm.domain.worker.alive or arm.instance_token() is None
         ):
             raise RuntimeError(f"dispatch arm {arm.name!r} for {node_type!r} is not live")
-        resolved_single_job: SingleJobMultiGpuConfig | None = None
-        if isinstance(arm.execution_worker, _SingleJobWorkerPool):
-            resolved_single_job, _lanes = arm.execution_worker.resolve_config(single_job_multi_gpu)
-        single_job_cache_tag = (
-            ""
-            if resolved_single_job is None
-            else ":single-job:"
-            + resolved_single_job.mode
-            + ":"
-            + ",".join(str(index) for index in resolved_single_job.cuda_indices)
-        )
         if selected is not None:
             return replace(
                 selected,
-                cache_tag=selected.cache_tag + single_job_cache_tag,
                 worker=(arm.remote or "local"),
                 provider=selected_provider,
                 pack=arm.implementation_pack or arm.default_arm,
                 execution_arm=arm.execution_arm,
                 attention_diagnostic=attention_diagnostics.get(arm.name),
-                single_job_multi_gpu=resolved_single_job,
             )
         token = attention_routes[arm.name]
         return ExecutionSelection(
             target=arm.name,
-            cache_tag=arm.default_cache_tag + single_job_cache_tag,
+            cache_tag=arm.default_cache_tag,
             worker=(arm.remote or "local"),
             provider=selected_provider,
             pack=arm.implementation_pack or arm.default_arm,
@@ -3729,7 +3846,6 @@ class ServingComposer:
             attention_policy=("auto" if token is None else token.requested_policy),
             attention_route_token=token,
             attention_diagnostic=attention_diagnostics.get(arm.name),
-            single_job_multi_gpu=resolved_single_job,
         )
 
     def _publish_runtime(
@@ -3812,7 +3928,6 @@ class ServingComposer:
             inputs: Mapping[str, Value],
             run_id: str,
             attention_config: AttentionPolicyConfig | None,
-            single_job_multi_gpu: SingleJobMultiGpuConfig | None,
         ) -> ExecutionSelection | None:
             return await self._plan_execution(
                 node_type,
@@ -3820,7 +3935,6 @@ class ServingComposer:
                 inputs,
                 run_id,
                 attention_config,
-                single_job_multi_gpu,
                 topology=topology,
                 extension_hash=behavior_hash,
                 vision_provider_routes=vision_provider_routes,
@@ -3914,7 +4028,6 @@ class ServingComposer:
             inputs: Mapping[str, Value],
             run_id: str,
             attention_config: AttentionPolicyConfig | None,
-            single_job_multi_gpu: SingleJobMultiGpuConfig | None,
         ) -> ExecutionSelection | None:
             worker_name = self._hinted_worker(copied, node_id)
             if worker_name is None:
@@ -3922,13 +4035,7 @@ class ServingComposer:
                     None
                     if base_planner is None
                     else await base_planner(
-                        node_id,
-                        node_type,
-                        schema,
-                        inputs,
-                        run_id,
-                        attention_config,
-                        single_job_multi_gpu,
+                        node_id, node_type, schema, inputs, run_id, attention_config
                     )
                 )
             hint_id = top_level_node_id(node_id)
@@ -3980,7 +4087,6 @@ class ServingComposer:
                     inputs,
                     run_id,
                     attention_config,
-                    single_job_multi_gpu,
                     topology=topology,
                     extension_hash=runtime.extension_behavior_hash,
                     preferred_worker=worker_name,
@@ -4092,17 +4198,6 @@ class ServingComposer:
                 **({"error": pool_result.error} if pool_result.error is not None else {}),
             }
         )
-        for index, table in enumerate(self.composition._registry.resident_tables):
-            if not isinstance(table, ResidentPool) or table is default_pool():
-                continue
-            outcome = await table.full_release()
-            local_consumers.append(
-                {
-                    "consumer": f"resident-values-{index}",
-                    "status": outcome.status,
-                    **({"error": outcome.error} if outcome.error is not None else {}),
-                }
-            )
         results: list[dict[str, object]] = [
             {
                 "worker": "local",
@@ -4219,12 +4314,47 @@ class ServingComposer:
     async def _commit_published_generation(
         self, snapshot: ExtensionSnapshot, retired_worker: IsolatedWorker | None
     ) -> None:
-        del snapshot, retired_worker
+        """Retain generations while their worker lives; forget them on rotation."""
+        new_digest = (
+            None if not snapshot.extensions else "sha256:" + extension_behavior_hash(snapshot)
+        )
+        old_digest = self._published_generation_digest
+        self._published_generation_digest = new_digest
+        if self._private_staging and old_digest is not None and old_digest != new_digest:
+            worker = self._sampling_worker(self._topology)
+            if worker is not None:
+                await worker.release_inference_generation(old_digest)
+            remove_sampler_catalog_record(self._sampler_catalog_path, old_digest)
+            return
+        if retired_worker is not None:
+            retired = set(self._retired_generation_digests)
+            if old_digest is not None:
+                retired.add(old_digest)
+            for digest in retired - {new_digest}:
+                remove_sampler_catalog_record(self._sampler_catalog_path, digest)
+            self._retired_generation_digests.clear()
+            return
+        if old_digest is None or old_digest == new_digest:
+            return
+        self._retired_generation_digests.add(old_digest)
 
     async def _rollback_unpublished_generation(
         self, snapshot: ExtensionSnapshot, topology: Topology
     ) -> None:
-        del snapshot, topology
+        """Remove a materialized generation that never reached publication."""
+        if not snapshot.extensions:
+            return
+        digest = "sha256:" + extension_behavior_hash(snapshot)
+        if (
+            digest == self._published_generation_digest
+            or digest in self._retired_generation_digests
+        ):
+            return
+        worker = self._sampling_worker(topology)
+        if worker is not None:
+            with contextlib.suppress(Exception):
+                await worker.release_inference_generation(digest)
+        remove_sampler_catalog_record(self._sampler_catalog_path, digest)
 
     def _live_token_owners(self, topology: Topology) -> dict[str, _ResidencyDomain]:
         owners: dict[str, _ResidencyDomain] = {}
@@ -4325,6 +4455,137 @@ class ServingComposer:
             settings.append((key, value))
         return tuple(settings)
 
+    @staticmethod
+    def _sampling_worker(topology: Topology) -> Any | None:
+        for arm in topology.get(SAMPLING_WORKER_NAME, ()):
+            if "@native" in arm.name:
+                return arm.owner_worker
+        return None
+
+    @staticmethod
+    def _inference_unavailable_detail(record: _PackRecord) -> PackInferenceUnavailable:
+        """Describe a pack whose inference entry has no worker to materialize it.
+
+        The declared provider ids come from the manifest because nothing was
+        materialized, so they are reported with ``available`` false to explain a
+        name a saved workflow already carries rather than to offer it."""
+        entry = record.extension
+        assert entry is not None and entry.entries.inference is not None
+        return PackInferenceUnavailable(
+            reason=INFERENCE_UNAVAILABLE_REASON,
+            entry=entry.entries.inference,
+            worker=SAMPLING_WORKER_NAME,
+            providers=tuple(
+                UnavailableInferenceProvider(registry=item.registry, id=item.id)
+                for item in unmatched_registry_providers(record.manifest.provides, ())
+            ),
+        )
+
+    async def _materialize_inference_contributions(
+        self,
+        records: Mapping[str, _PackRecord],
+        topology: Topology,
+    ) -> tuple[
+        tuple[SamplerExtensionEntry, ...],
+        dict[str, tuple[KeyedContribution, ...]],
+        dict[str, PackInferenceUnavailable],
+    ]:
+        entries = tuple(
+            SamplerExtensionEntry(name, inference_entry)
+            for name, record in sorted(records.items())
+            if record.extension is not None
+            and (inference_entry := record.extension.entries.inference) is not None
+        )
+        if not entries:
+            return (), {}, {}
+        by_extension: dict[str, tuple[KeyedContribution, ...]]
+        if all(
+            getattr(records[entry.extension_id].worker, "catalog", None) is not None
+            for entry in entries
+        ):
+            by_extension = {
+                entry.extension_id: tuple(
+                    KeyedContribution(
+                        surface_id=item["surface_id"],
+                        id=item["id"],
+                        aliases=tuple(item["aliases"]),
+                        behavior_metadata=tuple(tuple(pair) for pair in item["behavior_metadata"]),
+                    )
+                    for item in records[entry.extension_id].worker.catalog.declarations[
+                        "inferenceContributions"
+                    ]
+                )
+                for entry in entries
+            }
+        else:
+            worker = self._sampling_worker(topology)
+            if worker is None:
+                # The native inference pack did not load, so nothing can execute these
+                # declarations. Composing them anyway would register samplers whose
+                # every run fails inside the worker, and refusing the whole pack would
+                # take its nodes, routes and events with it. Degrade the one surface.
+                return (
+                    (),
+                    {},
+                    {
+                        entry.extension_id: self._inference_unavailable_detail(
+                            records[entry.extension_id]
+                        )
+                        for entry in entries
+                    },
+                )
+            candidate_key = f"candidate:{uuid.uuid4().hex}"
+            write_sampler_catalog(self._sampler_catalog_path, candidate_key, entries)
+            try:
+                try:
+                    returned = await worker.materialize_inference_generation(candidate_key)
+                except Exception as exc:
+                    if "multiple guidance strategies were materialized" in str(exc):
+                        owners = ", ".join(entry.extension_id for entry in entries)
+                        raise CompositionError(
+                            "exclusive extension surface inference:inference.guidance.strategy "
+                            f"has multiple contributors: {owners}"
+                        ) from exc
+                    raise CompositionError(f"inference extension activation failed: {exc}") from exc
+            finally:
+                try:
+                    await worker.release_inference_generation(candidate_key)
+                except Exception:
+                    # Preserve the activation error, if any; closing the worker is
+                    # the rollback backstop when explicit candidate release fails.
+                    pass
+                remove_sampler_catalog_record(self._sampler_catalog_path, candidate_key)
+            by_extension = {}
+            for extension_id, contributions in returned:
+                if extension_id in by_extension:
+                    raise CompositionError(
+                        f"inference worker returned extension {extension_id!r} more than once"
+                    )
+                by_extension[extension_id] = contributions
+            expected_ids = tuple(entry.extension_id for entry in entries)
+            if tuple(by_extension) != expected_ids:
+                raise CompositionError(
+                    "inference worker extension set does not match the staged generation: "
+                    f"expected {expected_ids}, got {tuple(by_extension)}"
+                )
+        family_surfaces = {
+            INFERENCE_FAMILIES_SURFACE,
+            INFERENCE_COMPONENTS_SURFACE,
+            INFERENCE_ASSEMBLIES_SURFACE,
+        }
+        for entry in entries:
+            declaration = records[entry.extension_id].extension
+            assert declaration is not None
+            if (
+                any(item.surface_id in family_surfaces for item in by_extension[entry.extension_id])
+                and "model-family-registration" not in declaration.capabilities
+            ):
+                raise CompositionError(
+                    f"pack {entry.extension_id!r} contributes model family registrations "
+                    "without the model-family-registration capability"
+                )
+        return entries, by_extension, {}
+
     async def call_pack_route(
         self, pack: str, route: PackRoute, data: Mapping[str, object], snapshot_digest: str
     ) -> dict[str, object]:
@@ -4358,18 +4619,84 @@ class ServingComposer:
         tuple[KeyedContribution, ...],
         GraphCompilerRegistrySnapshot,
         GraphCompileTransport | None,
-        dict[str, object],
+        dict[str, PackInferenceUnavailable],
     ]:
-        """Derive one RPC-clean extension generation."""
-        del topology
-        inference_unavailable: dict[str, object] = {}
+        """Derive and worker-validate one RPC-clean behavior generation.
+
+        The last element names the packs whose inference surface could not
+        materialize because no native sampling worker is live. Their other
+        surfaces compose normally, so the generation is published with those
+        packs present and their inference contributions simply absent."""
+        (
+            inference_entries,
+            inference_contributions,
+            inference_unavailable,
+        ) = await self._materialize_inference_contributions(records, topology)
+        sampler_registry: Registry[KeyedContribution] = Registry()
+        for declaration in builtin_sampler_snapshot().samplers:
+            sampler_registry.register(declaration)
+        scheduler_registry: Registry[KeyedContribution] = Registry()
+        registries = builtin_registries()
+        for descriptor in registries.schedulers:
+            scheduler_registry.register(scheduler_declaration(descriptor))
+        family_registry: Registry[KeyedContribution] = Registry()
+        for family_id in registries.families.ids():
+            family = registries.families.get(family_id)
+            assert family is not None
+            family_registry.register(family_declaration(family))
+        component_registry: Registry[KeyedContribution] = Registry()
+        for descriptor in registries.components:
+            component_registry.register(component_declaration(descriptor))
+        assembly_registry: Registry[KeyedContribution] = Registry()
+        for registration in registries.assemblies:
+            assembly_registry.register(assembly_declaration(registration))
+        keyed_registries = {
+            INFERENCE_SAMPLERS_SURFACE: ("sampler", sampler_registry),
+            INFERENCE_SCHEDULERS_SURFACE: ("scheduler", scheduler_registry),
+            INFERENCE_FAMILIES_SURFACE: ("family", family_registry),
+            INFERENCE_COMPONENTS_SURFACE: ("component", component_registry),
+            INFERENCE_ASSEMBLIES_SURFACE: ("assembly", assembly_registry),
+        }
         surfaces: dict[
             tuple[ExtensionScope, str],
             tuple[CompositionMode, list[str]],
         ] = {}
         active: list[ActiveExtension] = []
         for name, record in sorted(records.items()):
-            keyed_contributions: tuple[KeyedContribution, ...] = ()
+            keyed_contributions = inference_contributions.get(name, ())
+            degraded = name in inference_unavailable
+            registered = tuple((item.surface_id, item.id) for item in keyed_contributions)
+            unmatched_providers = unmatched_registry_providers(
+                record.manifest.provides,
+                registered,
+            )
+            if degraded:
+                # Every declared provider is unregistered here, which is exactly
+                # what the degraded record reports; the mismatch is not a
+                # misconfiguration until a worker exists to answer the declaration.
+                unmatched_providers = ()
+            if unmatched_providers:
+                provider = unmatched_providers[0]
+                raise CompositionError(
+                    f"pack {record.manifest.name!r} declares registry provider "
+                    f"{provider.registry}:{provider.id}, but its inference contribution "
+                    "does not register it"
+                )
+            undeclared_providers = undeclared_registry_providers(
+                record.manifest.provides,
+                registered,
+            )
+            if undeclared_providers:
+                missing = ", ".join(
+                    f"{registry}:{descriptor_id}"
+                    for registry, descriptor_id in undeclared_providers
+                )
+                raise CompositionError(
+                    f"pack {record.manifest.name!r} registers inference provider ids "
+                    "missing from [pack.provides.registry]: "
+                    f"{missing}\nAdd this exact declaration:\n"
+                    f"{registry_declaration_toml(registered)}"
+                )
             declaration = record.extension
             if declaration is None:
                 if record.extension_contributions:
@@ -4429,10 +4756,81 @@ class ServingComposer:
                             f"{descriptor.mode.value!r}"
                         )
                     owners.append(name)
-            if declaration.entries.inference is not None:
+            inference_entry = declaration.entries.inference
+            # A degraded pack registers no inference:* contribution id; its
+            # declaration is reported through the pack's inferenceUnavailable
+            # record instead, which is also why the empty-contribution check
+            # below must not fire for it.
+            if inference_entry is not None and not degraded:
+                if not keyed_contributions:
+                    raise CompositionError(
+                        f"extension {name!r} declared an inference entry but produced nothing"
+                    )
+                for surface_id in dict.fromkeys(item.surface_id for item in keyed_contributions):
+                    contribution_id = f"{ExtensionScope.INFERENCE.value}:{surface_id}"
+                    contribution_ids.append(contribution_id)
+                    mode = (
+                        CompositionMode.EXCLUSIVE
+                        if surface_id == GUIDANCE_SURFACES[2]
+                        else CompositionMode.KEYED_REGISTRY
+                        if surface_id
+                        in (
+                            INFERENCE_SAMPLERS_SURFACE,
+                            INFERENCE_SCHEDULERS_SURFACE,
+                            INFERENCE_FAMILIES_SURFACE,
+                            INFERENCE_COMPONENTS_SURFACE,
+                            INFERENCE_ASSEMBLIES_SURFACE,
+                        )
+                        else CompositionMode.ORDERED_LIST
+                        if surface_id == GRAPH_COMPILERS_SURFACE
+                        else CompositionMode.WRAPPER_CHAIN
+                        if surface_id == GUIDANCE_SURFACES[0]
+                        else CompositionMode.ORDERED_LIST
+                    )
+                    surface_key = (ExtensionScope.INFERENCE, surface_id)
+                    previous = surfaces.get(surface_key)
+                    surfaces[surface_key] = (
+                        mode,
+                        [*(previous[1] if previous is not None else []), name],
+                    )
+                    if mode is CompositionMode.EXCLUSIVE and len(surfaces[surface_key][1]) > 1:
+                        owners = surfaces[surface_key][1]
+                        raise CompositionError(
+                            f"exclusive extension surface inference:{surface_id} has multiple "
+                            f"contributors: {', '.join(sorted(owners))}"
+                        )
+            elif keyed_contributions:
                 raise CompositionError(
-                    f"extension {name!r} uses the retired inference extension surface"
+                    f"extension {name!r} produced contributions without an inference declaration"
                 )
+            for contribution in keyed_contributions:
+                if contribution.surface_id not in (
+                    INFERENCE_SAMPLERS_SURFACE,
+                    INFERENCE_SCHEDULERS_SURFACE,
+                    INFERENCE_FAMILIES_SURFACE,
+                    INFERENCE_COMPONENTS_SURFACE,
+                    INFERENCE_ASSEMBLIES_SURFACE,
+                    GRAPH_COMPILERS_SURFACE,
+                    *GUIDANCE_SURFACES,
+                ):
+                    raise CompositionError(
+                        f"extension {name!r} produced contribution {contribution.id!r} on "
+                        f"unknown surface {contribution.surface_id!r}"
+                    )
+                if not any(claim_covers(claim, contribution.id) for claim in record.claims):
+                    raise CompositionError(
+                        f"extension {name!r} contribution {contribution.id!r} is outside "
+                        f"the pack's declared namespaces ({', '.join(record.claims)})"
+                    )
+                registry_entry = keyed_registries.get(contribution.surface_id)
+                if registry_entry is not None:
+                    registry_name, registry = registry_entry
+                    try:
+                        registry.register(contribution)
+                    except RegistryError as exc:
+                        raise CompositionError(
+                            f"extension {name!r} {registry_name} registry collision: {exc}"
+                        ) from exc
             info = record.delta.packs.get(name)
             if info is None:
                 raise CompositionError(f"extension {name!r} has no matching pack identity")
@@ -4483,25 +4881,170 @@ class ServingComposer:
                     f"multiple contributors: {', '.join(sorted(owners))}"
                 )
         snapshot = ExtensionSnapshot(extensions=tuple(active), frontend_api=FRONTEND_API_VERSION)
+        sampler_snapshot = SamplerRegistrySnapshot(tuple(sampler_registry))
+        scheduler_snapshot = tuple(scheduler_registry)
+        try:
+            GuidanceRegistrySnapshot(
+                tuple(
+                    sorted(
+                        (
+                            contribution
+                            for extension in active
+                            for contribution in extension.keyed_contributions
+                            if contribution.surface_id in GUIDANCE_SURFACES
+                        ),
+                        key=lambda item: (
+                            GUIDANCE_SURFACES.index(item.surface_id),
+                            dict(item.behavior_metadata).get("order", 0),
+                            item.id,
+                        ),
+                    )
+                )
+            )
+        except (TypeError, ValueError) as exc:
+            raise CompositionError(f"invalid guidance composition: {exc}") from exc
+        try:
+            graph_compiler_registry = GraphCompilerRegistrySnapshot(
+                tuple(
+                    sorted(
+                        (
+                            contribution
+                            for extension in active
+                            for contribution in extension.keyed_contributions
+                            if contribution.surface_id == GRAPH_COMPILERS_SURFACE
+                        ),
+                        key=lambda item: (
+                            dict(item.behavior_metadata).get("order", 0),
+                            item.id,
+                        ),
+                    )
+                )
+            )
+        except (TypeError, ValueError) as exc:
+            raise CompositionError(f"invalid graph compiler composition: {exc}") from exc
+        graph_compile_transport: GraphCompileTransport | None = None
+        if snapshot.extensions:
+            digest = "sha256:" + extension_behavior_hash(snapshot)
+            if digest in self._retired_generation_digests:
+                raise CompositionError(
+                    f"inference generation {digest} is retired and cannot be materialized "
+                    "or activated for new work"
+                )
+            write_sampler_catalog(
+                self._sampler_catalog_path,
+                digest,
+                inference_entries,
+                sampler_snapshot,
+                expected_extensions=tuple(inference_contributions.items()),
+            )
+            if inference_entries:
+                worker = self._sampling_worker(topology)
+                assert worker is not None
+                try:
+                    final = (
+                        tuple(inference_contributions.items())
+                        if getattr(worker, "cold", False)
+                        else await worker.materialize_inference_generation(digest)
+                    )
+                except BaseException as exc:
+                    release = asyncio.create_task(worker.release_inference_generation(digest))
+                    with contextlib.suppress(BaseException):
+                        await asyncio.shield(release)
+                    remove_sampler_catalog_record(self._sampler_catalog_path, digest)
+                    if isinstance(exc, asyncio.CancelledError):
+                        raise
+                    raise CompositionError(
+                        f"inference extension declaration validation failed: {exc}"
+                    ) from exc
+                if final != tuple(inference_contributions.items()):
+                    try:
+                        await worker.release_inference_generation(digest)
+                    finally:
+                        remove_sampler_catalog_record(self._sampler_catalog_path, digest)
+                    raise CompositionError(
+                        "inference worker changed contribution declarations during activation"
+                    )
+                if graph_compiler_registry.contributions:
+
+                    async def compile_graph(
+                        generation_key: str,
+                        graph: Mapping[str, object],
+                        targets: Sequence[str],
+                        *,
+                        owning_digest: str = digest,
+                        owning_worker: Any = worker,
+                    ) -> Mapping[str, object]:
+                        if generation_key != owning_digest:
+                            raise AssertionError(
+                                "graph compile transport generation key does not match "
+                                f"its owning digest: {generation_key!r} != {owning_digest!r}"
+                            )
+                        async with self._mutate:
+                            return await owning_worker.compile_graph(owning_digest, graph, targets)
+
+                    graph_compile_transport = compile_graph
         return (
             snapshot,
-            SamplerRegistrySnapshot(()),
-            (),
-            GraphCompilerRegistrySnapshot(()),
-            None,
+            sampler_snapshot,
+            scheduler_snapshot,
+            graph_compiler_registry,
+            graph_compile_transport,
             inference_unavailable,
         )
 
     def _apply_inference_unavailable(
         self,
-        unavailable: Mapping[str, object],
+        unavailable: Mapping[str, PackInferenceUnavailable],
         announced: dict[str, PackInfo],
     ) -> None:
-        del unavailable, announced
-        self._inference_unavailable = {}
+        """Publish the inference degradation state and mirror it into the delta.
+
+        The state lives on ``PackInfo``, so it reaches the client only through a
+        packs-table entry. ``announced`` is that entry map for the delta being
+        committed, which normally carries only the pack being added or reloaded:
+        a pack degraded by this commit, or healed by it, is added so the client
+        sees the row change. The same object is written back to the owning
+        record's delta so a later full resync announces the identical row.
+        """
+        self._inference_unavailable = dict(unavailable)
+        for pack_id, info in list(self.composition.packs.items()):
+            detail = unavailable.get(pack_id)
+            if info.inference_unavailable == detail:
+                continue
+            updated = replace(info, inference_unavailable=detail)
+            self.composition.packs[pack_id] = updated
+            announced[pack_id] = updated
+            record = self._records.get(pack_id)
+            if record is not None and pack_id in record.delta.packs:
+                record.delta.packs[pack_id] = updated
+            if detail is not None:
+                core_logger("compose").warning(
+                    "pack %s composed without a native sampling worker: %s",
+                    pack_id,
+                    detail.reason,
+                )
 
     def _require_available_inference(self, inputs: Mapping[str, Value]) -> None:
-        del inputs
+        """Fail a plan that selects a provider a degraded pack no longer offers.
+
+        Keyed on the registry vocabulary rather than any node id: a saved
+        workflow can carry the sampler name in whatever input a sampler node or a
+        decomposed sampler seam uses, and the reason the user is told is the one
+        recorded when the surface degraded."""
+        if not self._inference_unavailable:
+            return
+        for pack_id, detail in sorted(self._inference_unavailable.items()):
+            declared = {provider.id for provider in detail.providers}
+            for input_name, value in inputs.items():
+                try:
+                    selected = value.resolve() if isinstance(value, Value) else value
+                except UnresolvablePayload:
+                    continue
+                if isinstance(selected, str) and selected in declared:
+                    raise RuntimeError(
+                        f"input {input_name!r} selects {selected!r} from pack "
+                        f"{pack_id!r}, whose inference surface is unavailable: {detail.reason}"
+                    )
 
     def _build_topology(
         self,
@@ -4860,21 +5403,6 @@ class ServingComposer:
             {node_type: tuple(arms) for node_type, arms in arms_by_type.items()}
         )
 
-    @staticmethod
-    def _producer_targets(topology: Topology, arms: Sequence[ArmRecord]) -> dict[str, str]:
-        targets = {arm.name: arm.name for arm in arms}
-        for producers in topology.values():
-            for producer in producers:
-                if producer.name in targets or producer.name != producer.default_arm:
-                    continue
-                for arm in arms:
-                    # Default bodies in separate packs can share resident objects,
-                    # but alternate implementations still require exact affinity.
-                    if arm.name == arm.default_arm and arm.domain is producer.domain:
-                        targets[producer.name] = arm.name
-                        break
-        return targets
-
     def _dispatch_routes(self, topology: Topology, node_types: Sequence[str]) -> dict[str, Worker]:
         routes: dict[str, Worker] = {}
         for node_type in node_types:
@@ -4889,7 +5417,6 @@ class ServingComposer:
                 resolve_owner=lambda token, snapshot=topology: self._resolve_owner(snapshot, token),
                 arm_domains={arm.name: arm.domain for arm in arms},
                 default_arms={arm.name: arm.default_arm for arm in arms},
-                producer_targets=self._producer_targets(topology, arms),
             )
         return routes
 
@@ -4903,6 +5430,14 @@ class ServingComposer:
         if actual != expected:
             raise CompositionError(
                 f"{manifest.name}: worker hello bodyArms does not exactly match [pack.arms]"
+            )
+        if (
+            "native" in expected
+            and not getattr(worker, "cold", False)
+            and worker.attention_route_token is None
+        ):
+            raise CompositionError(
+                f"{manifest.name}: native worker hello omitted attention route evidence"
             )
 
     def _validate_schema_only(self, manifest: PackManifest, worker: Any) -> None:
@@ -5019,6 +5554,8 @@ class ServingComposer:
             self._contract_inputs(replacing=(manifest, spec))
         )
         tenant_proxy: _PackTenantRegistry | None = None
+        component_publisher: NativeComponentPublisher | None = None
+        new_component_publisher: NativeComponentPublisher | None = None
         if spec.in_process:
             if self._private_staging:
                 reused_in_process = self._reusable_in_process.get(canonical)
@@ -5042,7 +5579,7 @@ class ServingComposer:
                 )
             if needs_residency and not spec.runtime_pins:
                 raise CompositionError(
-                    f"in-process pack {manifest.name!r} has no exact torch/comfy-aimdo "
+                    f"in-process pack {manifest.name!r} has no exact torch/dinkster-aimdo "
                     "generation baseline"
                 )
             if spec.runtime_pins:
@@ -5051,9 +5588,9 @@ class ServingComposer:
                         f"in-process pack {manifest.name!r} requires a torch-capable "
                         "serve environment"
                     )
-                if set(spec.runtime_pins) != {"torch", "comfy-aimdo"}:
+                if set(spec.runtime_pins) != {"torch", "dinkster-aimdo"}:
                     raise CompositionError(
-                        f"in-process pack {manifest.name!r} has no exact torch/comfy-aimdo "
+                        f"in-process pack {manifest.name!r} has no exact torch/dinkster-aimdo "
                         "generation baseline"
                     )
                 try:
@@ -5067,6 +5604,13 @@ class ServingComposer:
                         f"in-process runtime drift for {manifest.name!r}: expected "
                         f"{dict(spec.runtime_pins)!r}, installed {actual_versions!r}"
                     )
+                component_publisher = (
+                    reused_in_process.component_publisher
+                    if reused_in_process is not None
+                    else NativeComponentPublisher()
+                )
+                if reused_in_process is None:
+                    new_component_publisher = component_publisher
             if self._tenant_registry is not None and reused_in_process is None:
                 tenant_proxy = _PackTenantRegistry(manifest.name, self._tenant_registry)
         group_owner: GroupIsolatedWorker | None = None
@@ -5156,6 +5700,11 @@ class ServingComposer:
             def pack_context() -> Generator[None, None, None]:
                 with contextlib.ExitStack() as contexts:
                     contexts.enter_context(use_model_tenant_registry(pack_tenant_registry))
+                    if component_publisher is not None:
+                        inference_torch = importlib.import_module("dinkster_inference_torch")
+                        contexts.enter_context(
+                            inference_torch.use_component_publisher(component_publisher)
+                        )
                     yield
 
             loaded: list[Any] = []
@@ -5194,6 +5743,8 @@ class ServingComposer:
             except BaseException:
                 if tenant_proxy is not None:
                     await tenant_proxy.close()
+                if new_component_publisher is not None:
+                    new_component_publisher.close()
                 raise
         elif spec.worker_group is None:
             worker = self._isolated_worker(spec, manifest, composition._registry)
@@ -5239,7 +5790,6 @@ class ServingComposer:
             self._validate_body_arms(manifest, worker)
             self._validate_schema_only(manifest, worker)
             self._validate_executes(manifest, worker)
-            self._register_worker_types(staged_registry, manifest, worker)
             delta_schemas: dict[str, NodeSchema] = {}
             delta_node_packs: dict[str, str] = {}
             for node_type, schema in worker.schemas.items():
@@ -5327,6 +5877,8 @@ class ServingComposer:
                 await cast("Any", worker).close()
             if tenant_proxy is not None:
                 await tenant_proxy.close()
+            if new_component_publisher is not None:
+                new_component_publisher.close()
             raise
         delta = PackDelta(
             pack=manifest.name,
@@ -5375,6 +5927,8 @@ class ServingComposer:
                 else tenant_proxy
             ),
             owns_tenant_registrations=reused_in_process is None,
+            component_publisher=component_publisher,
+            owns_component_publisher=reused_in_process is None,
         )
         staged_records = {**self._records, manifest.name: record}
         snapshot: ExtensionSnapshot | None = None
@@ -5409,6 +5963,8 @@ class ServingComposer:
                 await cast("Any", worker).close()
             if tenant_proxy is not None:
                 await tenant_proxy.close()
+            if new_component_publisher is not None:
+                new_component_publisher.close()
             raise
         old_derived_choices = self._current_derived_choices()
         # Publish validated declarations and routes atomically.
@@ -5449,12 +6005,21 @@ class ServingComposer:
             routed_executes,
             self._dispatch_routes(topology, changed_types),
         )
+        old_inference_worker = self._sampling_worker(self._topology)
+        new_inference_worker = self._sampling_worker(topology)
+        retired_inference_worker = (
+            old_inference_worker
+            if old_inference_worker is not None and old_inference_worker is not new_inference_worker
+            else None
+        )
         self._records[manifest.name] = record
         composition.generation = staged_generation
         if spec.in_process and self._in_process_domain is None:
             self._in_process_domain = domain
         if tenant_proxy is not None:
             composition._tenant_registries.append(tenant_proxy)
+        if new_component_publisher is not None:
+            composition._component_publishers.append(new_component_publisher)
         if group_new:
             assert group_owner is not None and spec.worker_group is not None
             self._group_owners[spec.worker_group] = group_owner
@@ -5488,7 +6053,7 @@ class ServingComposer:
             graph_compiler_registry,
             graph_compile_transport,
         )
-        await self._commit_published_generation(snapshot, None)
+        await self._commit_published_generation(snapshot, retired_inference_worker)
         self._rebuild_asset_catalog()
         return delta
 
@@ -6475,12 +7040,9 @@ class ServingComposer:
             staged_records = dict(self._records)
             del staged_records[name]
             staged_records[manifest.name] = new_record
-            staged_registry = composition._registry.copy()
-            staged_registry.remove_pack_types(name)
             snapshot: ExtensionSnapshot | None = None
             topology: Topology | None = None
             try:
-                self._register_worker_types(staged_registry, manifest, worker)
                 topology = self._build_topology(staged_records)
                 (
                     snapshot,
@@ -6493,11 +7055,6 @@ class ServingComposer:
                 derived_choices = self._validated_derived_choices(
                     sampler_registry, scheduler_registry, staged_records, topology
                 )
-                staged_registry.remove_relayed_renditions(name)
-                if not spec.in_process:
-                    self._register_worker_renditions(staged_registry, manifest.name, worker)
-                if spec.host_types is not None:
-                    spec.host_types(staged_registry)
             except BaseException:
                 if snapshot is not None and topology is not None:
                     await self._rollback_unpublished_generation(snapshot, topology)
@@ -6506,6 +7063,10 @@ class ServingComposer:
                 raise
             old_derived_choices = self._current_derived_choices()
             old_choice_owners = dict(self._choice_owners)
+            staged_registry = composition._registry.copy()
+            staged_registry.remove_relayed_renditions(name)
+            if not spec.in_process:
+                self._register_worker_renditions(staged_registry, manifest.name, worker)
             removed_routes = tuple(
                 node_type
                 for node_type in dict.fromkeys((*old_types, *record.executes, *manifest.executes))
@@ -6519,6 +7080,14 @@ class ServingComposer:
                 if topology.get(node_type)
             )
             self._routing.swap_routes(removed_routes, self._dispatch_routes(topology, added_routes))
+            old_inference_worker = self._sampling_worker(self._topology)
+            new_inference_worker = self._sampling_worker(topology)
+            retired_inference_worker = (
+                old_inference_worker
+                if old_inference_worker is not None
+                and old_inference_worker is not new_inference_worker
+                else None
+            )
             del self._records[name]
             self._records[manifest.name] = new_record
             composition._registry.replace_from(staged_registry)
@@ -6552,7 +7121,7 @@ class ServingComposer:
                 graph_compiler_registry,
                 graph_compile_transport,
             )
-            await self._commit_published_generation(snapshot, None)
+            await self._commit_published_generation(snapshot, retired_inference_worker)
             old_worker = record.worker
             if old_worker in composition._isolated:
                 composition._isolated.remove(old_worker)
@@ -6926,10 +7495,7 @@ class ServingComposer:
                 tuple(node_type for node_type in route_candidates if topology.get(node_type)),
             )
             staged_registry = self.composition._registry.copy()
-            for pack in specs:
-                staged_registry.remove_pack_types(pack)
             for pack, member_spec in specs.items():
-                self._register_worker_types(staged_registry, manifest_by_name[pack], members[pack])
                 staged_registry.remove_relayed_renditions(pack)
                 self._register_worker_renditions(staged_registry, pack, members[pack])
                 if member_spec.host_types is not None:
@@ -6952,6 +7518,8 @@ class ServingComposer:
             if self._routing.has_route(node_type)
         )
         self._routing.swap_routes(removed_routes, prepared_routes)
+        old_inference_worker = self._sampling_worker(self._topology)
+        new_inference_worker = self._sampling_worker(topology)
         self._records = staged_records
         self.composition._registry.replace_from(staged_registry)
         self.composition.generation = staged_generation
@@ -7001,6 +7569,11 @@ class ServingComposer:
             derived_choices=changed_derived_choices,
             compat_skips=aggregate_skips,
         )
+        retired_inference_worker = (
+            old_inference_worker
+            if old_inference_worker is not None and old_inference_worker is not new_inference_worker
+            else None
+        )
         self._apply_inference_unavailable(inference_unavailable, target_delta.packs)
         self._publish_runtime(
             topology,
@@ -7009,7 +7582,7 @@ class ServingComposer:
             graph_compiler_registry,
             graph_compile_transport,
         )
-        await self._commit_published_generation(snapshot, None)
+        await self._commit_published_generation(snapshot, retired_inference_worker)
         for current in group_records.values():
             if isinstance(current.worker, LazyWorker):
                 if current.worker in self.composition._isolated:
@@ -7103,7 +7676,6 @@ class ServingComposer:
             old_derived_choices = self._current_derived_choices()
             old_choice_owners = dict(self._choice_owners)
             staged_registry = composition._registry.copy()
-            staged_registry.remove_pack_types(name)
             staged_registry.remove_relayed_renditions(name)
             route_candidates = tuple(dict.fromkeys((*old_types, *record.executes)))
             removed_routes = tuple(
@@ -7119,6 +7691,14 @@ class ServingComposer:
                 and (node_type in old_types or not topology.get(node_type))
             )
             self._routing.swap_routes(removed_routes, self._dispatch_routes(topology, added_routes))
+            old_inference_worker = self._sampling_worker(self._topology)
+            new_inference_worker = self._sampling_worker(topology)
+            retired_inference_worker = (
+                old_inference_worker
+                if old_inference_worker is not None
+                and old_inference_worker is not new_inference_worker
+                else None
+            )
             del self._records[name]
             composition._registry.replace_from(staged_registry)
             composition.generation = staged_generation
@@ -7135,13 +7715,17 @@ class ServingComposer:
                 graph_compiler_registry,
                 graph_compile_transport,
             )
-            await self._commit_published_generation(snapshot, None)
+            await self._commit_published_generation(snapshot, retired_inference_worker)
             old_worker = record.worker
             group_name = record.spec.worker_group
             if record.tenant_registrations is not None and record.owns_tenant_registrations:
                 await record.tenant_registrations.close()
                 if record.tenant_registrations in composition._tenant_registries:
                     composition._tenant_registries.remove(record.tenant_registrations)
+            if record.component_publisher is not None and record.owns_component_publisher:
+                record.component_publisher.close()
+                if record.component_publisher in composition._component_publishers:
+                    composition._component_publishers.remove(record.component_publisher)
             if record.spec.in_process:
                 pass
             elif group_name is None:
@@ -7184,7 +7768,9 @@ class ServingComposer:
         return {
             choice_id: self.composition.choices[choice_id]
             for choice_id in (
+                "dinkster.samplers",
                 "comfy.samplers",
+                "dinkster.schedulers",
                 "comfy.schedulers",
             )
             if choice_id in self.composition.choices
@@ -7228,6 +7814,19 @@ class ServingComposer:
             for choice_id in before.keys() | after.keys()
             if before.get(choice_id) != after.get(choice_id)
         }
+
+    def _validated_sampler_choices(
+        self, sampler_registry: SamplerRegistrySnapshot
+    ) -> dict[str, tuple[str, ...]]:
+        """Build and bound derived choices before a composition commit."""
+        canonical = tuple(sampler.id for sampler in sampler_registry.samplers)
+        compat = sampler_choice_values(sampler_registry)
+        try:
+            combo_choices_json_bytes(canonical, subject="derived choice 'dinkster.samplers'")
+            combo_choices_json_bytes(compat, subject="derived choice 'comfy.samplers'")
+        except ValueError as exc:
+            raise CompositionError(str(exc)) from exc
+        return {"dinkster.samplers": canonical, "comfy.samplers": compat}
 
     def _validated_providers(
         self,
@@ -7421,8 +8020,22 @@ class ServingComposer:
         records: Mapping[str, _PackRecord],
         topology: Topology,
     ) -> dict[str, tuple[str, ...]]:
-        del sampler_registry, scheduler_registry
-        choices: dict[str, tuple[str, ...]] = {}
+        choices = self._validated_sampler_choices(sampler_registry)
+        canonical_schedulers = tuple(item.id for item in scheduler_registry)
+        compat_schedulers = registry_choice_values(scheduler_registry)
+        try:
+            combo_choices_json_bytes(
+                canonical_schedulers, subject="derived choice 'dinkster.schedulers'"
+            )
+            combo_choices_json_bytes(compat_schedulers, subject="derived choice 'comfy.schedulers'")
+        except ValueError as exc:
+            raise CompositionError(str(exc)) from exc
+        choices.update(
+            {
+                "dinkster.schedulers": canonical_schedulers,
+                "comfy.schedulers": compat_schedulers,
+            }
+        )
         for provider_kind, provider_choices in (
             ("vision", self._validated_vision_providers(records, topology)[0]),
             ("generation", self._validated_generation_providers(records, topology)[0]),
@@ -7436,7 +8049,25 @@ class ServingComposer:
                 choices[choice_id] = values
         return choices
 
+    def _apply_sampler_choices(self, choices: Mapping[str, tuple[str, ...]]) -> None:
+        """Publish native ids and the aliases consumed by native KSampler arms.
+
+        Once a pack declares ``comfy.samplers``, that route is the legacy name
+        surface for the effective native registry, not a literal ComfyUI list.
+        """
+        canonical = choices["dinkster.samplers"]
+        self._core_choices["dinkster.samplers"] = canonical
+        self.composition.choices["dinkster.samplers"] = canonical
+        if "comfy.samplers" in self.composition.choices:
+            self.composition.choices["comfy.samplers"] = choices["comfy.samplers"]
+        scheduler_ids = choices["dinkster.schedulers"]
+        self._core_choices["dinkster.schedulers"] = scheduler_ids
+        self.composition.choices["dinkster.schedulers"] = scheduler_ids
+        if "comfy.schedulers" in self.composition.choices:
+            self.composition.choices["comfy.schedulers"] = choices["comfy.schedulers"]
+
     def _apply_derived_choices(self, choices: Mapping[str, tuple[str, ...]]) -> None:
+        self._apply_sampler_choices(choices)
         for provider_choices in (
             self._validated_vision_providers(self._records, self._topology)[0],
             self._validated_generation_providers(self._records, self._topology)[0],
@@ -7567,25 +8198,6 @@ class ServingComposer:
                 if arms is not None
                 else ("native",)
             )
-
-    @staticmethod
-    def _register_worker_types(registry: TypeRegistry, manifest: PackManifest, worker: Any) -> None:
-        type_ids = tuple(getattr(worker, "registered_types", ()))
-        if manifest.publisher != "dinkster" and any(
-            not claim_covers(manifest.name, tid) for tid in type_ids
-        ):
-            raise CompositionError(
-                f"{manifest.name}: registered types must use the pack-name prefix"
-            )
-        try:
-            registry.declare_types(
-                manifest.name,
-                manifest.type_namespaces,
-                type_ids,
-                allow_bare=manifest.publisher == "dinkster",
-            )
-        except ValueError as exc:
-            raise CompositionError(str(exc)) from exc
 
     @staticmethod
     def _register_worker_renditions(registry: TypeRegistry, owner: str, worker: Any) -> None:
@@ -7800,11 +8412,16 @@ class ServingComposer:
         return targets
 
     async def close(self) -> None:
-        for record in self._records.values():
-            if record.tenant_registrations is not None and record.owns_tenant_registrations:
-                await record.tenant_registrations.close()
-        await self.composition.close()
-        self._group_activations.clear()
+        try:
+            for record in self._records.values():
+                if record.tenant_registrations is not None and record.owns_tenant_registrations:
+                    await record.tenant_registrations.close()
+            await self.composition.close()
+        finally:
+            self._group_activations.clear()
+            if self._sampler_catalog_root is not None:
+                shutil.rmtree(self._sampler_catalog_root, ignore_errors=True)
+                self._sampler_catalog_root = None
 
 
 async def compose_serving(

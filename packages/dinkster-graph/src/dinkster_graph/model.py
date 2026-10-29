@@ -8,7 +8,6 @@ from types import MappingProxyType
 from typing import Literal, cast
 
 from dinkster_schema import TypeExpr
-from dinkster_values import CORE_INT
 
 
 @dataclass(frozen=True)
@@ -56,7 +55,7 @@ class GraphNode:
 
 PORTS_NODE_ID = "$region"
 REGION_INDEX_PORT_ID = "index"
-REGION_INDEX_PORT_TYPE = TypeExpr.concrete(CORE_INT)
+REGION_INDEX_PORT_TYPE = TypeExpr.concrete("core.int")
 """Inside a region body, ``$region`` reads declared ports and the implicit
 zero-based ``index`` of the immediate region. A declared ``index`` port keeps
 its existing meaning and shadows the implicit value for compatibility.

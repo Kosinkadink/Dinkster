@@ -1,0 +1,424 @@
+{
+  "cases": {
+    "cfg1_force_uncond": {
+      "calls": [
+        "evaluate"
+      ],
+      "cfg_scale": 1.0,
+      "cond": {
+        "data": [
+          1.5,
+          -2.0,
+          0.5,
+          3.0
+        ],
+        "dtype": "float32",
+        "shape": [
+          1,
+          1,
+          2,
+          2
+        ]
+      },
+      "force_uncond": true,
+      "input": {
+        "data": [
+          0.25,
+          -0.5,
+          1.25,
+          0.75
+        ],
+        "dtype": "float32",
+        "shape": [
+          1,
+          1,
+          2,
+          2
+        ]
+      },
+      "mode": "standard",
+      "output": {
+        "data": [
+          1.5,
+          -2.0,
+          0.5,
+          3.0
+        ],
+        "dtype": "float32",
+        "shape": [
+          1,
+          1,
+          2,
+          2
+        ]
+      },
+      "uncond": {
+        "data": [
+          -0.5,
+          1.0,
+          2.0,
+          -1.5
+        ],
+        "dtype": "float32",
+        "shape": [
+          1,
+          1,
+          2,
+          2
+        ]
+      }
+    },
+    "cfg1_skip_uncond": {
+      "calls": [
+        "evaluate"
+      ],
+      "cfg_scale": 1.0,
+      "cond": {
+        "data": [
+          1.5,
+          -2.0,
+          0.5,
+          3.0
+        ],
+        "dtype": "float32",
+        "shape": [
+          1,
+          1,
+          2,
+          2
+        ]
+      },
+      "force_uncond": false,
+      "input": {
+        "data": [
+          0.25,
+          -0.5,
+          1.25,
+          0.75
+        ],
+        "dtype": "float32",
+        "shape": [
+          1,
+          1,
+          2,
+          2
+        ]
+      },
+      "mode": "standard",
+      "output": {
+        "data": [
+          1.5,
+          -2.0,
+          0.5,
+          3.0
+        ],
+        "dtype": "float32",
+        "shape": [
+          1,
+          1,
+          2,
+          2
+        ]
+      },
+      "uncond": {
+        "data": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "dtype": "float32",
+        "shape": [
+          1,
+          1,
+          2,
+          2
+        ]
+      }
+    },
+    "cfg_rescale": {
+      "calls": [
+        "evaluate",
+        "rescale"
+      ],
+      "cfg_scale": 3.25,
+      "cond": {
+        "data": [
+          1.5,
+          -2.0,
+          0.5,
+          3.0
+        ],
+        "dtype": "float32",
+        "shape": [
+          1,
+          1,
+          2,
+          2
+        ]
+      },
+      "force_uncond": false,
+      "input": {
+        "data": [
+          0.25,
+          -0.5,
+          1.25,
+          0.75
+        ],
+        "dtype": "float32",
+        "shape": [
+          1,
+          1,
+          2,
+          2
+        ]
+      },
+      "mode": "rescale",
+      "output": {
+        "data": [
+          2.7214906215667725,
+          -4.046051979064941,
+          -0.5230259895324707,
+          6.069077491760254
+        ],
+        "dtype": "float32",
+        "shape": [
+          1,
+          1,
+          2,
+          2
+        ]
+      },
+      "uncond": {
+        "data": [
+          -0.5,
+          1.0,
+          2.0,
+          -1.5
+        ],
+        "dtype": "float32",
+        "shape": [
+          1,
+          1,
+          2,
+          2
+        ]
+      }
+    },
+    "custom_bypass": {
+      "calls": [
+        "evaluate",
+        "reducer"
+      ],
+      "cfg_scale": 2.0,
+      "cond": {
+        "data": [
+          1.5,
+          -2.0,
+          0.5,
+          3.0
+        ],
+        "dtype": "float32",
+        "shape": [
+          1,
+          1,
+          2,
+          2
+        ]
+      },
+      "force_uncond": false,
+      "input": {
+        "data": [
+          0.25,
+          -0.5,
+          1.25,
+          0.75
+        ],
+        "dtype": "float32",
+        "shape": [
+          1,
+          1,
+          2,
+          2
+        ]
+      },
+      "mode": "bypass",
+      "output": {
+        "data": [
+          1.0,
+          -1.25,
+          0.875,
+          1.875
+        ],
+        "dtype": "float32",
+        "shape": [
+          1,
+          1,
+          2,
+          2
+        ]
+      },
+      "uncond": {
+        "data": [
+          -0.5,
+          1.0,
+          2.0,
+          -1.5
+        ],
+        "dtype": "float32",
+        "shape": [
+          1,
+          1,
+          2,
+          2
+        ]
+      }
+    },
+    "custom_compose": {
+      "calls": [
+        "evaluate",
+        "pre_a",
+        "pre_b",
+        "reducer",
+        "post_a",
+        "post_b"
+      ],
+      "cfg_scale": 2.0,
+      "cond": {
+        "data": [
+          1.5,
+          -2.0,
+          0.5,
+          3.0
+        ],
+        "dtype": "float32",
+        "shape": [
+          1,
+          1,
+          2,
+          2
+        ]
+      },
+      "force_uncond": false,
+      "input": {
+        "data": [
+          0.25,
+          -0.5,
+          1.25,
+          0.75
+        ],
+        "dtype": "float32",
+        "shape": [
+          1,
+          1,
+          2,
+          2
+        ]
+      },
+      "mode": "compose",
+      "output": {
+        "data": [
+          1.375,
+          -1.3250000476837158,
+          1.225000023841858,
+          2.424999952316284
+        ],
+        "dtype": "float32",
+        "shape": [
+          1,
+          1,
+          2,
+          2
+        ]
+      },
+      "uncond": {
+        "data": [
+          -0.5,
+          1.0,
+          2.0,
+          -1.5
+        ],
+        "dtype": "float32",
+        "shape": [
+          1,
+          1,
+          2,
+          2
+        ]
+      }
+    },
+    "standard_cfg": {
+      "calls": [
+        "evaluate"
+      ],
+      "cfg_scale": 2.5,
+      "cond": {
+        "data": [
+          1.5,
+          -2.0,
+          0.5,
+          3.0
+        ],
+        "dtype": "float32",
+        "shape": [
+          1,
+          1,
+          2,
+          2
+        ]
+      },
+      "force_uncond": false,
+      "input": {
+        "data": [
+          0.25,
+          -0.5,
+          1.25,
+          0.75
+        ],
+        "dtype": "float32",
+        "shape": [
+          1,
+          1,
+          2,
+          2
+        ]
+      },
+      "mode": "standard",
+      "output": {
+        "data": [
+          4.5,
+          -6.5,
+          -1.75,
+          9.75
+        ],
+        "dtype": "float32",
+        "shape": [
+          1,
+          1,
+          2,
+          2
+        ]
+      },
+      "uncond": {
+        "data": [
+          -0.5,
+          1.0,
+          2.0,
+          -1.5
+        ],
+        "dtype": "float32",
+        "shape": [
+          1,
+          1,
+          2,
+          2
+        ]
+      }
+    }
+  },
+  "reference": {
+    "commit": "b78cec879b9460d5cb25228a83a942fb78d2cd24",
+    "repo": "ComfyUI",
+    "torch": "2.13.0+cu130"
+  }
+}

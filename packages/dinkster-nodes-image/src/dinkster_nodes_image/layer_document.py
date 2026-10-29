@@ -8,19 +8,7 @@ from collections.abc import Iterator, Mapping
 from typing import Any, cast
 
 import numpy as np
-from dinkster_api.v1 import (
-    CORE_STRING,
-    IMAGE_TYPE,
-    LAYERS_TYPE,
-    MASK_TYPE,
-    REGION_TYPE,
-    InputSpec,
-    Node,
-    NodeSchema,
-    OutputSpec,
-    StringWidget,
-    TypeExpr,
-)
+from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, StringWidget, TypeExpr
 from dinkster_image_document.compat import from_comfy_layers
 from dinkster_image_document.document import (
     ImageDocument,
@@ -33,10 +21,10 @@ from dinkster_image_document.format import ordered_layer_ids
 from .compositor_types import LayerStack, decode_layer_stack, source_layer_fingerprint
 from .types import Region
 
-LAYERS = TypeExpr.concrete(LAYERS_TYPE)
-IMAGE = TypeExpr.concrete(IMAGE_TYPE)
-MASK = TypeExpr.concrete(MASK_TYPE)
-STRING = TypeExpr.concrete(CORE_STRING)
+LAYERS = TypeExpr.concrete("dinkster.layers")
+IMAGE = TypeExpr.concrete("dinkster.image")
+MASK = TypeExpr.concrete("dinkster.mask")
+STRING = TypeExpr.concrete("core.string")
 
 
 def migrate_layers(obj: object) -> ImageDocument:
@@ -162,7 +150,7 @@ class SplitLayers(Node):
                     mask_polarity="transparency",
                     mask_semantic="alpha",
                 ),
-                OutputSpec("regions", TypeExpr.list_of(TypeExpr.concrete(REGION_TYPE))),
+                OutputSpec("regions", TypeExpr.list_of(TypeExpr.concrete("dinkster.region"))),
             ),
         )
 

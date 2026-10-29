@@ -17,14 +17,13 @@ never drift apart.
 
 from __future__ import annotations
 
-from .builtin_types import ASSET_TYPE
 from .lists import parse_list_type_id
 from .streams import parse_stream_type_id
 
 ASSET_TYPE_PREFIX = "asset<"
 ASSET_TYPE_SUFFIX = ">"
 
-ASSET_BASE_TYPE = ASSET_TYPE
+ASSET_BASE_TYPE = "dinkster.asset"
 """The registered atom whose TypeSpec backs every ``asset<...>`` id.
 
 Defined here rather than in dinkster-assets (which depends on this package)

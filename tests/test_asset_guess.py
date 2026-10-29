@@ -49,7 +49,7 @@ from dinkster_workers import InProcessWorker
 from dinkster.guess_api import add_guess_routes
 from dinkster.mounts_api import MountService, add_mount_routes
 
-STRING = TypeExpr.concrete("STRING")
+STRING = TypeExpr.concrete("core.string")
 
 
 class Echo(Node):

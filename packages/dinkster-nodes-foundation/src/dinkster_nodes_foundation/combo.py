@@ -1,7 +1,7 @@
-"""Explicit bridges across the STRING/COMBO boundary.
+"""Explicit bridges across the core.string/core.combo boundary.
 
-``COMBO`` values remain plain strings at execution, in literals, and in
-caches, but their envelope type is distinct from ``STRING``. Direct
+``core.combo`` values remain plain strings at execution, in literals, and in
+caches, but their envelope type is distinct from ``core.string``. Direct
 links across that boundary are hard-invalid in either direction; these two
 identity nodes are the one explicit bridge. Combo-to-combo links remain
 legal regardless of their choice lists because vocabulary is presentation,

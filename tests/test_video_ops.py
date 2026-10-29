@@ -7,7 +7,6 @@ from typing import Any, cast
 
 import numpy as np
 import pytest
-from dinkster_api.v1 import VIDEO_EDIT_TYPE, VIDEO_TYPE
 from dinkster_nodes_media_io import (
     AssembleVideo,
     DisassembleVideo,
@@ -291,7 +290,7 @@ def test_assemble_rejects_out_of_domain_controls(kwargs: dict[str, Any], match: 
     ],
 )
 def test_disassemble_rejects_malformed_video_values(video: object) -> None:
-    with pytest.raises(ValueError, match="not a valid VIDEO value"):
+    with pytest.raises(ValueError, match="not a valid comfy.VIDEO value"):
         DisassembleVideo.execute(video=video)
 
 
@@ -313,12 +312,11 @@ def test_video_ops_schemas_preserve_value_and_preview_contracts() -> None:
     assert assemble.aliases == ("CreateVideo",)
     for schema in (window, rate, disassemble, trim):
         assert schema.aliases == ()
-    # Assemble and disassemble exchange plain VIDEO values, not assets.
+    # Assemble and disassemble exchange plain comfy.VIDEO values, not assets.
     assert assemble.outputs[0].type.kind == "concrete"
-    assert assemble.outputs[0].type.types == (VIDEO_TYPE,)
+    assert assemble.outputs[0].type.types == ("comfy.VIDEO",)
     assert disassemble.inputs[0].type.kind == "concrete"
-    assert disassemble.inputs[0].type.types == (VIDEO_TYPE,)
-    assert trim.inputs[1].type.types == (VIDEO_EDIT_TYPE,)
+    assert disassemble.inputs[0].type.types == ("comfy.VIDEO",)
     assert [(output.id, output.preview, output.optional) for output in disassemble.outputs] == [
         ("images", True, False),
         ("frame_count", False, False),

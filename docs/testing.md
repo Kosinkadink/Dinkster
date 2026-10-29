@@ -30,8 +30,13 @@ makes, and these rules keep it that way as the codebase grows.
   extension scope in its disposable probe. The parameterized doctor test is
   keyed by the shared scope vocabulary, so accepting another scope without
   entry-resolution coverage fails the suite.
-- **Extension factories have explicit consumers.** The fast CI scanner checks
-  extension contribution factories against the committed source baseline.
+- **Builtin inference vocabularies have explicit consumers.** The fast CI
+  scanner pins every zero-argument registry factory, assembly-registry builder,
+  and descriptor-catalog read to an exact source location and separate
+  non-increasing ceilings. The committed ceilings are 9 registry factories,
+  1 assembly builder, and 17 descriptor-catalog reads. New and stale sites fail
+  the check. The shared-engine family-gate scanner also runs in fast CI with its
+  current zero-site ceiling.
 
 ## Platform golden evidence
 
@@ -58,21 +63,24 @@ resolution (not model weights or coverage inputs), it runs
 `bash scripts/ci-fast.sh`: Ruff format, Ruff lint, Pyright, and this fixed
 path-based unit subset:
 
+- `tests/test_extension_contract_pack.py`: a real CPU server composed with only
+  the ordinary extension fixture pack, proving two custom nodes linked through
+  a pack value type, a typed route and event, the frontend snapshot module, and
+  execution end to end.
 - `tests/test_extension_factory_guard.py`: exact registry-factory,
-  contribution-kind and factory baseline checks.
-- `tests/test_release_install.py`: release wheel and install surface checks.
+  assembly-builder, and descriptor-catalog sites with separate non-increasing
+  ceilings.
+- `tests/test_family_registration_gates.py`: zero literal family gates in
+  shared engine code and registered-property coverage.
 - `tests/test_schema.py`: schema construction and type validation.
-- `tests/test_schema_current_contracts.py`: generated current schema contracts.
-- `tests/test_validation_inputs.py`: local and hosted validation-input layout contracts.
 - `tests/test_values.py`: codecs, fingerprints, inline values and renditions.
 - `tests/test_graph.py`: graph validation and execution planning.
 - `tests/test_graph_wire.py`: wire round trips and malformed-input rejection.
 
-These tests use synthetic data. The validation-input contract checks the prepared
-evidence location without reading model data. Selection does not depend on the
-changed files, network access, model availability or hardware. Full suites remain
-required locally before landing; this subset is fast PR feedback, not a
-replacement for full validation. Reproduce the job after
+These tests use synthetic in-process data. Selection does not depend on the
+changed files, network access, model availability or hardware. Full suites
+remain required locally before landing; this subset is fast PR feedback,
+not a replacement for full validation. Reproduce the job after
 `uv sync --locked --all-packages` with `bash scripts/ci-fast.sh`.
 
 The required `CI_RUNNERS` repository variable controls every job. Its
@@ -175,37 +183,35 @@ fault injection for the remote boundary, and property/fuzz tests for the
 wire decoders, type-id grammar, and graph nesting - the highest-value fuzz
 targets because their inputs come from outside.
 
-## CPU checks
+## CPU checks and dedicated model tests
 
 The single `torch-cpu` job never acquires or executes model weights. It
 passes `run-model-tests: "false"` to
 `.github/actions/torch-cpu-suite`. The action defaults to false as well.
-Environment setup and the vision pyright projects remain in this job. The
-vision package suites also run without their artifact
+Environment setup, pinned source downloads, source-parity receipts and their
+tests, and all eleven Torch/vision pyright projects remain in this job. The
+nine vision package suites also run without their artifact
 environment variables, so their weight-dependent cases skip while synthetic
 input validation, preprocessing, batching, cache, fallback, tiling, and
 architecture tests still run. The `dinkster-nodes-vision` distribution contains
 the HED, upscale, Depth Anything V2, DETR, RT-DETR, EfficientSAM, BiRefNet,
 Depth Anything V3, and SAM 3.1 model packs.
 
-The CPU job excludes pinned model-weight acquisitions and each vision suite's
-second real-artifact run. Sampling-runtime validation lives in
-`dinkster-inference`; Dinkster's local gates validate the host and worker
-integration:
+The CPU job excludes all pinned model-weight acquisitions, the combined
+`dinkster-inference-torch` and `dinkster-model-ipadapter` test lane, each vision
+suite's second real-artifact run, and
+`tests/test_benchmark_inference.py::test_minimax_h3_identities_are_accepted_by_the_production_dit_loader`.
+No tests, assertions, goldens, hashes, or deadlines are removed or relaxed.
+The default local gates remain full, including the model lanes:
 
 ```bash
-uv run --no-sync python scripts/prepare_validation_inputs.py
 ./scripts/setup_envs.sh
 .venv/bin/python -m pytest -q
+unset MKL_CBWR
+export ATEN_CPU_CAPABILITY=avx2 ONEDNN_MAX_CPU_ISA=AVX2
+export OMP_NUM_THREADS=4 MKL_NUM_THREADS=4
+.venv-torch/bin/python -m pytest -q packages/dinkster-inference-torch/tests packages/dinkster-model-ipadapter/tests
 ```
-
-The preparation command checks out the revision in
-`tools/evidence-revision.txt` beside the Dinkster checkout under
-`.dinkster-evidence-source`, then materializes the core-owned benchmark shim and
-workflow helpers into that checkout. Pytest refuses a missing or different
-evidence revision, so local and hosted full validation execute the same benchmark
-and acceptance sources. Access to the private evidence repository is required
-only for the full maintainer suite, not to install or run Dinkster.
 
 On Windows, `scripts\setup_envs.ps1` creates the equivalent root, CPU Torch,
 and NVIDIA CUDA environments. Run the gates it prints with native Windows
@@ -249,3 +255,24 @@ credentials, downloads use `RUNNER_TEMP`, and full suites execute directly.
 optional extras. `dinkster doctor` is the same idea pointed at packs: run it in
 pack CI (the pack template wires it in) so pack regressions surface before
 users hit them.
+
+## Capability evidence census
+
+`tools/comfy_coverage.py` owns both the official-template translation census
+and the capability evidence ledger. Its pinned workflow_templates and ComfyUI
+revisions are constants in that file. With clean read-only checkouts at those
+revisions, regenerate all four checked outputs with:
+
+```bash
+uv run --locked python tools/comfy_coverage.py \
+  --templates /path/to/workflow_templates/templates \
+  --comfyui /path/to/ComfyUI
+```
+
+Add `--check` to perform the CI staleness and drift gate without writing. The
+maintained evidence source is `tools/data/comfy_capability_evidence.json`.
+Every `builtin_families()` registration must be present there, and every
+`docs/supported/` family claim must carry the matching capability marker. Maintained
+aliases enter the generated ledger automatically at T1 after their test
+selectors are validated. T0 and T1 never count as support; missing template
+capabilities remain explicit `absent`, `refused`, or `unverified` records.

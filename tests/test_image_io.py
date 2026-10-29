@@ -106,7 +106,7 @@ def test_image_io_schemas_use_typed_assets_and_mounted_targets() -> None:
     output = LoadImageOutput.schema()
     mask = LoadMask.schema()
     save = SaveImage.schema()
-    assert load.inputs[0].type == TypeExpr.asset_of(TypeExpr.concrete("IMAGE"))
+    assert load.inputs[0].type == TypeExpr.asset_of(TypeExpr.concrete("dinkster.image"))
     assert load.inputs[0].widget == AssetWidget(
         ("image/png", "image/jpeg", "image/webp", "image/gif", "image/tiff"),
         kind="media/image",
@@ -114,10 +114,12 @@ def test_image_io_schemas_use_typed_assets_and_mounted_targets() -> None:
     )
     assert load.inputs[0].source_filename == SourceFilenameSpec("media/image", "input")
     assert output.inputs[0].source_filename == SourceFilenameSpec("media/image", "output")
-    assert mask.inputs[0].type == TypeExpr.asset_of(TypeExpr.concrete("MASK"))
+    assert mask.inputs[0].type == TypeExpr.asset_of(TypeExpr.concrete("dinkster.mask"))
     assert save.inputs[1].widget == SaveTargetWidget()
     assert [item.id for item in save.outputs] == ["images", "assets"]
-    assert save.outputs[1].type == TypeExpr.list_of(TypeExpr.asset_of(TypeExpr.concrete("IMAGE")))
+    assert save.outputs[1].type == TypeExpr.list_of(
+        TypeExpr.asset_of(TypeExpr.concrete("dinkster.image"))
+    )
     assert load.aliases == ("LoadImage",)
     assert save.aliases == ("SaveImage",)
     assert PreviewImage.schema().outputs[0].preview is True
@@ -130,7 +132,7 @@ def test_image_io_schemas_use_typed_assets_and_mounted_targets() -> None:
     paint = PaintMask.schema()
     assert paint.node_type == "dinkster.mask.paint"
     assert [item.id for item in paint.inputs] == ["source", "operations"]
-    assert paint.inputs[0].type == TypeExpr.asset_of(TypeExpr.concrete("IMAGE"))
+    assert paint.inputs[0].type == TypeExpr.asset_of(TypeExpr.concrete("dinkster.image"))
     assert paint.inputs[0].widget == AssetWidget(
         ("image/png", "image/jpeg", "image/webp", "image/gif", "image/tiff"),
         kind="media/image",
@@ -139,7 +141,7 @@ def test_image_io_schemas_use_typed_assets_and_mounted_targets() -> None:
     assert paint.inputs[1].widget == StringWidget(multiline=True)
     assert [
         (item.id, item.type, item.mask_polarity, item.mask_semantic) for item in paint.outputs
-    ] == [("mask", TypeExpr.concrete("MASK"), "transparency", "alpha")]
+    ] == [("mask", TypeExpr.concrete("dinkster.mask"), "transparency", "alpha")]
 
 
 def _paint_operations(
@@ -1013,9 +1015,9 @@ def test_image_and_metadata_limits_use_verified_descriptor_size(
 def test_media_type_registration_provides_image_and_mask_asset_decoders() -> None:
     registry = TypeRegistry()
     register_media_types(registry)
-    image = registry.asset_decoder_for("IMAGE")
-    mask = registry.asset_decoder_for("MASK")
-    merge = registry.batch_merge_for("IMAGE")
+    image = registry.asset_decoder_for("dinkster.image")
+    mask = registry.asset_decoder_for("dinkster.mask")
+    merge = registry.batch_merge_for("dinkster.image")
     assert image is not None and image.provider_id == "dinkster.media-image-file@2"
     assert mask is not None and mask.provider_id == "dinkster.mask-file@2"
     assert merge is not None and merge.provider_id == "dinkster.image-batch-merge@2"
@@ -1033,7 +1035,7 @@ def test_registered_image_asset_decoder_uses_bounded_still_contract(tmp_path: Pa
     )
     registry = TypeRegistry()
     register_media_types(registry)
-    decoder = registry.asset_decoder_for("IMAGE")
+    decoder = registry.asset_decoder_for("dinkster.image")
     assert decoder is not None
     with pytest.raises(ValueError, match="animated and multipage"):
         decoder.decode(_asset(path, "image/webp"))

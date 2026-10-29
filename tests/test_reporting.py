@@ -397,8 +397,7 @@ def test_silent_node_pays_nothing() -> None:
 def write_iso_manifest(tmp_path: Path) -> Path:
     manifest = tmp_path / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname = "isopack"\npublisher = "dinkster"\n'
-        'type-namespaces = ["iso"]\n\n[pack.entry]\n'
+        '[pack]\nname = "isopack"\n\n[pack.entry]\n'
         'nodes = "isopack_nodes:NODES"\ntypes = "isopack_nodes:register_types"\n'
     )
     return manifest

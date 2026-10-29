@@ -44,8 +44,8 @@ from dinkster_values import (
 from dinkster_values.model import PyObjPayload
 from dinkster_workers import InProcessWorker
 
-IMAGE = TypeExpr.concrete("IMAGE")
-MASK = TypeExpr.concrete("MASK")
+IMAGE = TypeExpr.concrete("comfy.IMAGE")
+MASK = TypeExpr.concrete("comfy.MASK")
 
 
 def test_media_array_metadata_does_not_copy_tensor_pixels() -> None:
@@ -94,9 +94,9 @@ def _value(type_id: str, **meta: object) -> Value:
 
 
 def test_alpha_and_mask_checks_are_metadata_only_and_declarations_control_loss() -> None:
-    rgba = _value("IMAGE", shape=(1, 2, 2, 4))
-    rgb = _value("IMAGE", shape=(1, 2, 2, 3))
-    mask = _value("MASK", polarity="transparency", semantic="alpha")
+    rgba = _value("comfy.IMAGE", shape=(1, 2, 2, 4))
+    rgb = _value("comfy.IMAGE", shape=(1, 2, 2, 3))
+    mask = _value("comfy.MASK", polarity="transparency", semantic="alpha")
     schema = NodeSchema(
         node_type="test.media",
         inputs=(InputSpec("image", IMAGE), InputSpec("mask", MASK, mask_polarity="coverage")),
@@ -116,20 +116,20 @@ def test_alpha_and_mask_checks_are_metadata_only_and_declarations_control_loss()
     declared_drop = replace(schema, outputs=(OutputSpec("image", IMAGE, alpha_policy="drop"),))
     assert media_diagnostics(declared_drop, inputs, {"image": rgb}) == diagnostics[:1]
     assert media_diagnostics(schema, inputs, {"image": rgba}) == diagnostics[:1]
-    batched = make_list_value("IMAGE", (rgba, rgb))
+    batched = make_list_value("comfy.IMAGE", (rgba, rgb))
     assert media_diagnostics(schema, inputs, {"image": batched}) == diagnostics
 
 
 def test_mixed_alpha_passthrough_is_not_reported_as_loss() -> None:
-    rgba = replace(_value("IMAGE", shape=(1, 2, 2, 4)), fingerprint="rgba")
-    rgb = replace(_value("IMAGE", shape=(1, 2, 2, 3)), fingerprint="rgb")
+    rgba = replace(_value("comfy.IMAGE", shape=(1, 2, 2, 4)), fingerprint="rgba")
+    rgb = replace(_value("comfy.IMAGE", shape=(1, 2, 2, 3)), fingerprint="rgb")
     schema = NodeSchema(
         node_type="test.passthrough",
         inputs=(InputSpec("a", IMAGE), InputSpec("b", IMAGE)),
         outputs=(OutputSpec("a", IMAGE), OutputSpec("b", IMAGE)),
     )
     assert media_diagnostics(schema, {"a": rgba, "b": rgb}, {"a": rgba, "b": rgb}) == []
-    mixed = make_list_value("IMAGE", (rgba, rgb))
+    mixed = make_list_value("comfy.IMAGE", (rgba, rgb))
     assert media_diagnostics(schema, {"a": mixed}, {"a": mixed}) == []
     dropped = replace(rgb, fingerprint="dropped")
     assert media_diagnostics(schema, {"a": rgba, "b": rgb}, {"a": dropped, "b": rgb}) == [
@@ -165,7 +165,7 @@ def test_unexpected_alpha_loss_is_nonblocking_and_replayed_on_cache_hits() -> No
     async def scenario():
         registry = TypeRegistry()
         registry.register(
-            "IMAGE",
+            "comfy.IMAGE",
             encode=encode_image_array,
             decode=decode_image_array,
             meta=image_array_meta,
@@ -231,7 +231,7 @@ def test_semantic_codec_and_shared_memory_roundtrip(mask: bool, monkeypatch) -> 
             color={"primaries": 9, "transfer": 16, "matrix": 9, "range": 1, "bit_depth": 10},
         )
     )
-    type_id = "MASK" if mask else "IMAGE"
+    type_id = "comfy.MASK" if mask else "comfy.IMAGE"
     metadata = mask_array_meta if mask else image_array_meta
     encoded = encode_image_array(annotated)
     restored = decode_image_array(encoded)
@@ -285,7 +285,9 @@ def test_default_semantics_do_not_change_legacy_bytes_or_identity() -> None:
     legacy = io.BytesIO()
     np.save(legacy, array, allow_pickle=False)
     assert encode_image_array(annotated) == encode_image_array(array) == legacy.getvalue()
-    assert image_array_fingerprint("IMAGE")(annotated) == image_array_fingerprint("IMAGE")(array)
+    assert image_array_fingerprint("comfy.IMAGE")(annotated) == image_array_fingerprint(
+        "comfy.IMAGE"
+    )(array)
     assert media_semantics(array) == {}
 
 
@@ -310,11 +312,11 @@ def test_pack_registration_order_preserves_mask_contract(image_first: bool) -> N
     for register in registrations if image_first else reversed(registrations):
         register(registry)
     mask = annotate_mask(np.zeros((1, 1, 1), np.float32), polarity="transparency", semantic="alpha")
-    value = registry.wrap("MASK", mask)
+    value = registry.wrap("dinkster.mask", mask)
     assert value.meta.get("polarity") == "transparency"
     assert value.meta.get("semantic") == "alpha"
     assert "channels" not in value.meta.entries
-    for type_id in ("MASK", "IMAGE"):
+    for type_id in ("dinkster.mask", "dinkster.image"):
         assert registry.spec(type_id).validate_encoded is not None
         assert registry.spec(type_id).validate_encoded_buffer is not None
 
@@ -389,7 +391,7 @@ def test_worker_policies_preserve_require_and_create_only_when_declared(list_val
 
     rgb = np.ones((1, 2, 3, 3), dtype=np.float32)
     obj = [rgb] if list_value else rgb
-    type_id = "list<IMAGE>" if list_value else "IMAGE"
+    type_id = "list<comfy.IMAGE>" if list_value else "comfy.IMAGE"
     with pytest.raises(ValueError, match="requires an alpha"):
         apply_alpha_policy(obj, type_id, "require")
     unchanged = cast("Any", apply_alpha_policy(obj, type_id, "preserve"))
@@ -451,12 +453,12 @@ def test_asset_coercion_loss_is_reported_and_cached_without_manufacturing_loss(
         registry = TypeRegistry()
         register_asset_type(registry, vault)
         registry.register(
-            "IMAGE",
+            "comfy.IMAGE",
             encode=encode_image_array,
             decode=decode_image_array,
             meta=image_array_meta,
         )
-        registry.register_asset_decoder("IMAGE", provider_id="test.alpha@1", decode=decoder)
+        registry.register_asset_decoder("comfy.IMAGE", provider_id="test.alpha@1", decode=decoder)
         nodes = (Passthrough,)
         events = []
         engine = Engine(
@@ -469,7 +471,7 @@ def test_asset_coercion_loss_is_reported_and_cached_without_manufacturing_loss(
         graph = Graph(
             nodes={
                 "node": GraphNode(
-                    "test.alpha-drop", {"image": TypedLiteral("asset<IMAGE>", ref.to_wire())}
+                    "test.alpha-drop", {"image": TypedLiteral("asset<comfy.IMAGE>", ref.to_wire())}
                 )
             }
         )
@@ -537,7 +539,7 @@ SEMANTIC_NODES = (SemanticSource, SemanticPass, AlphaDrop)
 
 
 def register_semantic_types(registry: TypeRegistry) -> None:
-    for type_id, meta in (("IMAGE", image_array_meta), ("MASK", mask_array_meta)):
+    for type_id, meta in (("comfy.IMAGE", image_array_meta), ("comfy.MASK", mask_array_meta)):
         registry.register(
             type_id,
             encode=encode_image_array,
@@ -561,8 +563,7 @@ def test_media_contract_through_ordinary_worker_boundaries(tmp_path, isolated):
         register_semantic_types(registry)
         manifest = tmp_path / "dinkster-pack.toml"
         manifest.write_text(
-            '[pack]\nname = "media-contract"\npublisher = "dinkster"\n'
-            "[pack.entry]\n"
+            '[pack]\nname = "media-contract"\n[pack.entry]\n'
             'nodes = "tests.test_media_contract:SEMANTIC_NODES"\n'
             'types = "tests.test_media_contract:register_semantic_types"\n'
         )

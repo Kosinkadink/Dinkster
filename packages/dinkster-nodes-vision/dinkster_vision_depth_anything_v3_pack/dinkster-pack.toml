@@ -1,6 +1,5 @@
 [pack]
 name = "dinkster-vision-depth-anything-v3"
-publisher = "dinkster"
 namespaces = []
 executes = ["dinkster.preprocess.model_depth"]
 requires = [

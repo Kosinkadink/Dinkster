@@ -69,7 +69,6 @@ Surface:
                                          /docs/assets/{digest} routes
 - POST   /api/jobs                       submit {clientId, jobId, graph,
                                          targets, priority?, attention?,
-                                         singleJobMultiGpu?,
                                          sourceDocument?, scope?, placement?}
                                          (placement maps top-level node ids
                                          to worker names; scope is
@@ -267,8 +266,6 @@ from dinkster_protocol import (
     attention_policy_config_from_wire,
     attention_policy_config_to_wire,
     canonical_extension_snapshot,
-    single_job_multi_gpu_config_from_wire,
-    single_job_multi_gpu_config_to_wire,
     validate_attention_policy,
     validate_preview_animation,
     validate_preview_mode,
@@ -331,12 +328,12 @@ from .events import (
 from .execution_journal import ExecutionJournal, add_execution_journal_routes
 from .history import HistoryStore, add_history_routes
 from .library import LIBRARY_KEY, ServerLibrary, add_library_routes
+from .p2p_plugin import default_p2p_settings
 from .pack_settings import PackSettingsStore
 from .pack_surfaces import FrontendModuleRead, PackRouteDispatch, install_pack_surfaces
 from .paging import decode_cursor, encode_cursor
 from .preflight import (
     asset_preflight,
-    bind_model_names,
     graph_asset_names,
     graph_node_types,
     graph_provider_selections,
@@ -1244,7 +1241,6 @@ class ServerState:
         settings: RuntimeSettings | None = None,
         memory_headroom_changed: Callable[[int], None] | None = None,
         residency_memory_budgets: Callable[[], Mapping[str, Mapping[str, int]]] | None = None,
-        applied_aimdo_policies: Callable[[], Mapping[str, str]] | None = None,
         workers: Callable[[], Sequence[WorkerInfo]] | None = None,
         place_execution: PlaceExecution | None = None,
         debug_errors: bool = False,
@@ -1269,7 +1265,6 @@ class ServerState:
         self._workers = workers
         self._place_execution = place_execution
         self.residency_memory_budgets = residency_memory_budgets
-        self.applied_aimdo_policies = applied_aimdo_policies
         # Combo choice lists (choice-list id -> values) behind
         # /api/choices/{id}: UI vocabulary for remote ComboWidget routes,
         # never identity - a value outside the served list is the
@@ -1399,6 +1394,7 @@ class ServerState:
                 "worker-comfy-args": (),
                 "jobs": {"maxRunningJobs": max_running_jobs},
                 "logging": {"level": "info", "overrides": {}},
+                "p2p": default_p2p_settings(),
             },
             {category: "default" for category in SETTINGS_CATEGORIES},
         )
@@ -2615,7 +2611,6 @@ async def handle_nodes(request: web.Request) -> web.Response:
             for pack_id, info in state.packs.items()
         },
         "nodes": nodes,
-        "typeOwners": state.engine.registry.type_owners(),
     }
     # Present exactly while the host is still announcing packs: this table
     # is real but not final - expect more epochs, then a
@@ -3275,14 +3270,6 @@ async def handle_submit(request: web.Request) -> web.Response:
     except (TypeError, ValueError) as exc:
         raise _bad_request(f"'attention' is invalid: {exc}") from exc
     attention_config = submitted_attention or state.attention_default
-    try:
-        single_job_multi_gpu = (
-            single_job_multi_gpu_config_from_wire(body["singleJobMultiGpu"])
-            if "singleJobMultiGpu" in body
-            else None
-        )
-    except (TypeError, ValueError) as exc:
-        raise _bad_request(f"'singleJobMultiGpu' is invalid: {exc}") from exc
     # Execution-opaque provenance (frontend contract 2026-07): the canonical
     # asset digest of the workflow document this job was compiled from.
     # Syntax-checked only - it never joins execution or cache identity, so
@@ -3346,10 +3333,6 @@ async def handle_submit(request: web.Request) -> web.Response:
         }
     if submitted_attention is not None and submitted_attention != state.attention_default:
         fingerprint_payload["attention"] = attention_policy_config_to_wire(submitted_attention)
-    if single_job_multi_gpu is not None:
-        fingerprint_payload["singleJobMultiGpu"] = single_job_multi_gpu_config_to_wire(
-            single_job_multi_gpu
-        )
     if not cache_enabled:
         fingerprint_payload["cacheEnabled"] = False
     fingerprint = hashlib.sha256(
@@ -3412,13 +3395,6 @@ async def handle_submit(request: web.Request) -> web.Response:
             raise _bad_request(str(exc)) from exc
         graph = lowered.graph
         targets = list(lowered.targets)
-        graph, missing_names = await asyncio.to_thread(
-            bind_model_names, graph, execution.schemas, library
-        )
-        if missing_names:
-            return web.json_response(
-                {"error": "assets-missing", "assets": missing_names}, status=409
-            )
         execution = state.place_execution(execution, placement)
         execution_graph = graph
         if execution.resolve_providers is not None:
@@ -3553,7 +3529,6 @@ async def handle_submit(request: web.Request) -> web.Response:
                 compiled_graph=compiled_graph,
                 previews=previews,
                 attention_config=attention_config,
-                single_job_multi_gpu=single_job_multi_gpu,
                 cache_enabled=cache_enabled,
             )
         except JobGraphAdmissionError as exc:
@@ -4224,10 +4199,6 @@ def _accelerator_policy_payload(
         }
     return {
         "physicalHeadroomBytes": policy.physical_headroom_bytes,
-        "aimdoConfiguredPolicy": state.settings.aimdo_policy,
-        "aimdoPoliciesByWorker": (
-            dict(state.applied_aimdo_policies()) if state.applied_aimdo_policies is not None else {}
-        ),
         "inferenceReserveBytes": policy.inference_reserve_bytes,
         "minimumFreeBytes": policy.minimum_free_bytes,
         "aimdoSimpleHeadroomBaseBytes": policy.physical_headroom_bytes,
@@ -4246,14 +4217,6 @@ async def handle_memory_status(request: web.Request) -> web.Response:
             for name, items in state.governor.details().items()
         }
     return web.json_response(payload)
-
-
-async def handle_memory_reset_peak(request: web.Request) -> web.Response:
-    governor, _ = _governed(request.app[STATE_KEY])
-    device = _require_device(await _json_body(request))
-    if device not in governor.status():
-        raise web.HTTPNotFound(text="Device is not reported")
-    return web.json_response({"device": device, "peakUsedBytes": governor.reset_peak(device)})
 
 
 async def handle_memory_shed(request: web.Request) -> web.Response:
@@ -4486,7 +4449,6 @@ def create_app(
     pack_settings_root: Path | None = None,
     memory_headroom_changed: Callable[[int], None] | None = None,
     residency_memory_budgets: Callable[[], Mapping[str, Mapping[str, int]]] | None = None,
-    applied_aimdo_policies: Callable[[], Mapping[str, str]] | None = None,
     workers: Callable[[], Sequence[WorkerInfo]] | None = None,
     place_execution: PlaceExecution | None = None,
     debug_errors: bool = False,
@@ -4532,7 +4494,6 @@ def create_app(
         settings=settings,
         memory_headroom_changed=memory_headroom_changed,
         residency_memory_budgets=residency_memory_budgets,
-        applied_aimdo_policies=applied_aimdo_policies,
         workers=workers,
         place_execution=place_execution,
         debug_errors=debug_errors,
@@ -4594,13 +4555,12 @@ def create_app(
     app.router.add_get("/api/packs/{pack_id}/settings", handle_pack_settings_get)
     app.router.add_put("/api/packs/{pack_id}/settings", handle_pack_settings_put)
     app.router.add_get("/api/packs/{pack_id}/blueprints/{blueprint_id}", handle_pack_blueprint)
-    if state.settings.features["templates"]["enabled"]:
-        app.router.add_get("/api/templates", handle_templates_list)
-        app.router.add_get("/api/packs/{pack_id}/templates/{template_id}", handle_pack_template)
-        app.router.add_get(
-            "/api/packs/{pack_id}/templates/{template_id}/thumbnail",
-            handle_pack_template_thumbnail,
-        )
+    app.router.add_get("/api/templates", handle_templates_list)
+    app.router.add_get("/api/packs/{pack_id}/templates/{template_id}", handle_pack_template)
+    app.router.add_get(
+        "/api/packs/{pack_id}/templates/{template_id}/thumbnail",
+        handle_pack_template_thumbnail,
+    )
     app.router.add_get("/api/docs", handle_docs_list)
     app.router.add_get("/api/packs/{pack_id}/docs/pages/{digest}", handle_pack_doc_page)
     app.router.add_get("/api/packs/{pack_id}/docs/assets/{digest}", handle_pack_doc_asset)
@@ -4620,7 +4580,6 @@ def create_app(
     app.router.add_get("/api/events", handle_events)
     add_settings_routes(app, state.settings)
     app.router.add_get("/memory/status", handle_memory_status)
-    app.router.add_post("/memory/reset-peak", handle_memory_reset_peak)
     app.router.add_post("/memory/shed", handle_memory_shed)
     app.router.add_post("/memory/free", handle_memory_free)
     app.router.add_post("/memory/reserve", handle_memory_reserve)

@@ -6,8 +6,6 @@ from collections.abc import Mapping
 
 from dinkster_api.v1 import (
     ASSET_TYPE,
-    CORE_STRING,
-    IMAGE_TYPE,
     AssetRef,
     AssetWidget,
     InputSpec,
@@ -20,9 +18,9 @@ from dinkster_api.v1 import (
 from dinkster_image_document import IMAGE_DOCUMENT_MEDIA_TYPE
 from dinkster_image_document.document import ImageDocument, flatten
 
-IMAGE = TypeExpr.concrete(IMAGE_TYPE)
+IMAGE = TypeExpr.concrete("dinkster.image")
 ASSET = TypeExpr.concrete(ASSET_TYPE)
-STRING = TypeExpr.concrete(CORE_STRING)
+STRING = TypeExpr.concrete("core.string")
 
 
 class RenderImageDocument(Node):

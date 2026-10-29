@@ -1,19 +1,14 @@
 ## Standalone native generation
 
-- Source checkouts can prepare and launch the browser UI without Desktop using
-  `run.sh` on Linux/macOS or `run.ps1` on Windows. The scripts select the native
-  execution environment and preserve local model mounts and outputs on reruns.
 - The default SD 1.5 workflow runs natively without a ComfyUI checkout. For the
   bare `dinkster` launcher, set `DINKSTER_EXECUTION_PYTHON` to the Python
-  environment containing PyTorch and `dinkster_inference`. The graph
+  environment containing PyTorch and the native inference packages. The graph
   uses native checkpoint, text-encode, empty-latent, sampler, decode, and
   image-save nodes.
 - Pinned core ComfyUI schemas are advertised as import metadata, including
   KSampler and CLIPTextEncode. They are not additional executable node IDs.
   Unsupported or ambiguous imports refuse with node-specific diagnostics.
-- Same-host NVIDIA single-job execution supports guidance-lane splitting and
-  explicit two- or four-rank H3 Ulysses sequence sharding. Automatic sequence
-  selection remains two-rank.
+- Single-job multi-GPU device selection does not require ComfyUI.
 - Unmodified legacy custom packs still require a ComfyUI installation and
   run in the compatibility quarantine.
 - Native 3D operations execute without a ComfyUI checkout: geometry estimation,

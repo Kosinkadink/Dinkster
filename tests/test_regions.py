@@ -13,7 +13,6 @@ from collections.abc import Mapping, Sequence
 from typing import Literal, cast
 
 import pytest
-from dinkster_api.v1 import AUDIO_TYPE, VIDEO_TYPE
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EngineEvent, ExecutionError
 from dinkster_graph import (
@@ -60,10 +59,10 @@ from dinkster_values import (
 )
 from dinkster_workers import InProcessWorker
 
-INT = TypeExpr.concrete("INT")
-BOOL = TypeExpr.concrete("BOOLEAN")
-COMBO = TypeExpr.concrete("COMBO")
-STRING = TypeExpr.concrete("STRING")
+INT = TypeExpr.concrete("core.int")
+BOOL = TypeExpr.concrete("core.boolean")
+COMBO = TypeExpr.concrete("core.combo")
+STRING = TypeExpr.concrete("core.string")
 GENERIC = TypeExpr.variable("T")
 
 
@@ -397,7 +396,7 @@ def test_map_region_wire_roundtrip() -> None:
     assert region["kind"] == "map"
     assert region["elementPorts"] == ["item"]
     assert "binding" not in region  # zip is the default, omitted on the wire
-    assert region["ports"]["item"] == {"kind": "concrete", "types": ["INT"]}
+    assert region["ports"]["item"] == {"kind": "concrete", "types": ["core.int"]}
     assert region["outputs"]["results"] == {
         "source": {"node": "add", "output": "out"},
         "mode": "gather",
@@ -424,12 +423,12 @@ def test_implicit_region_index_wire_roundtrip() -> None:
 
 
 def test_stream_region_port_wire_roundtrip() -> None:
-    stream = TypeExpr.stream_of(TypeExpr.concrete("IMAGE"))
+    stream = TypeExpr.stream_of(TypeExpr.concrete("comfy.IMAGE"))
     graph = Graph(nodes={"m": map_region(ports={"item": stream})})
     wire = graph_to_wire(graph)
     assert wire["nodes"]["m"]["region"]["ports"]["item"] == {
         "kind": "stream",
-        "element": {"kind": "concrete", "types": ["IMAGE"]},
+        "element": {"kind": "concrete", "types": ["comfy.IMAGE"]},
     }
     assert graph_from_wire(wire) == graph
 
@@ -869,7 +868,7 @@ def test_gather_refuses_typed_literal_only_and_conflicting_generic_outputs() -> 
             nodes={
                 "route": GraphNode(
                     "dinkster.route.switch",
-                    {"index": 0, "values.only": TypedLiteral("INT", 1)},
+                    {"index": 0, "values.only": TypedLiteral("core.int", 1)},
                 )
             }
         ),
@@ -1020,28 +1019,28 @@ def test_map_region_executes_per_element() -> None:
 @pytest.mark.parametrize(
     ("type_id", "payloads"),
     [
-        ("IMAGE", [[[[0.0, 0.25, 0.5], [0.75, 1.0, 0.125]]], [[[1.0, 0.5, 0.0]]]]),
-        ("LATENT", [{"samples": [[[[1.5, -2.0], [3.25, 4.5]]]]}, {"samples": [[[[9.0]]]]}]),
-        ("CONDITIONING", [{"tokens": [1, 4], "weight": 0.75}, {"tokens": [9]}]),
-        ("MASK", [[[0.0, 1.0], [0.25, 0.75]], [[1.0]]]),
+        ("comfy.IMAGE", [[[[0.0, 0.25, 0.5], [0.75, 1.0, 0.125]]], [[[1.0, 0.5, 0.0]]]]),
+        ("comfy.LATENT", [{"samples": [[[[1.5, -2.0], [3.25, 4.5]]]]}, {"samples": [[[[9.0]]]]}]),
+        ("dinkster.conditioning", [{"tokens": [1, 4], "weight": 0.75}, {"tokens": [9]}]),
+        ("comfy.MASK", [[[0.0, 1.0], [0.25, 0.75]], [[1.0]]]),
         (
-            AUDIO_TYPE,
+            "comfy.AUDIO",
             [
                 {"waveform": [[0.0, -0.5, 0.5]], "sample_rate": 48000},
                 {"waveform": [[1.0]], "sample_rate": 44100},
             ],
         ),
-        (VIDEO_TYPE, [{"frames": ["a", "b"], "fps": 24.0}, {"frames": ["c"], "fps": 30.0}]),
+        ("comfy.VIDEO", [{"frames": ["a", "b"], "fps": 24.0}, {"frames": ["c"], "fps": 30.0}]),
         (
-            "ASSET",
+            "dinkster.asset",
             [
                 {"digest": "blake3:" + "1" * 64, "name": "one.png"},
                 {"digest": "blake3:" + "2" * 64, "name": "two.wav"},
             ],
         ),
-        ("STRING", ["alpha", "beta"]),
-        ("INT", [7, -3]),
-        ("FLOAT", [1.25, -8.5]),
+        ("core.string", ["alpha", "beta"]),
+        ("core.int", [7, -3]),
+        ("core.float", [1.25, -8.5]),
     ],
 )
 def test_map_gather_preserves_generic_payload_type_and_exact_values(
@@ -1059,7 +1058,7 @@ def test_map_gather_preserves_generic_payload_type_and_exact_values(
             element_ports=("item",),
             outputs={"results": RegionOutput(Link("identity", "value"))},
         )
-        core_types = {"STRING", "INT", "FLOAT"}
+        core_types = {"core.string", "core.int", "core.float"}
         engine = make_engine(extra_types=() if type_id in core_types else (type_id,))
         result = await engine.run(Graph(nodes={"m": region}), ["m"])
         gathered = result.outputs["m"]["results"]
@@ -1616,7 +1615,7 @@ def test_map_region_accepts_typed_literal_input() -> None:
 
     async def scenario() -> None:
         engine = make_engine()
-        region = map_region(inputs={"item": TypedLiteral("list<INT>", [10, 20, 30])})
+        region = map_region(inputs={"item": TypedLiteral("list<core.int>", [10, 20, 30])})
         result = await engine.run(Graph(nodes={"m": region}), ["m"])
         children = list_children(result.outputs["m"]["results"])
         assert children is not None
@@ -1631,7 +1630,7 @@ def test_map_region_zero_items_yields_typed_empty_list() -> None:
         engine = make_engine()
         result = await engine.run(Graph(nodes={"m": map_region(inputs={"item": []})}), ["m"])
         out = result.outputs["m"]["results"]
-        assert out.type_id == "list<INT>"
+        assert out.type_id == "list<core.int>"
         assert list_children(out) == ()
         assert AddOne.ran == []  # the body never ran
 
@@ -1758,7 +1757,7 @@ def test_flatten_concatenates_in_iteration_order_under_zip_and_broadcast(
     async def scenario() -> None:
         result = await make_engine().run(Graph(nodes={"m": region}), ["m"])
         output = result.outputs["m"]["items"]
-        assert output.type_id == "list<INT>"
+        assert output.type_id == "list<core.int>"
         assert output.resolve() == expected
 
     asyncio.run(scenario())
@@ -1769,7 +1768,7 @@ def test_flatten_zero_iterations_yields_typed_empty_list() -> None:
         region = flatten_region(inputs={"items": []})
         result = await make_engine().run(Graph(nodes={"m": region}), ["m"])
         output = result.outputs["m"]["items"]
-        assert output.type_id == "list<INT>"
+        assert output.type_id == "list<core.int>"
         assert list_children(output) == ()
 
     asyncio.run(scenario())
@@ -2085,11 +2084,11 @@ def test_last_output_returns_final_value_or_typed_absence(items: list[int]) -> N
         output = result.outputs["m"]["result"]
         if items:
             assert output.resolve() == 16
-            assert output.type_id == "INT"
+            assert output.type_id == "core.int"
         else:
             assert is_absent(output)
             assert output.meta.get(ABSENT_ORIGIN_META_KEY) == "m/result"
-            assert output.meta.get(ABSENT_STANDS_FOR_META_KEY) == "INT"
+            assert output.meta.get(ABSENT_STANDS_FOR_META_KEY) == "core.int"
 
     asyncio.run(scenario())
 
@@ -2301,7 +2300,7 @@ def test_compact_gather_omits_absent_iterations_in_order() -> None:
         )
         result = await make_engine().run(Graph(nodes={"m": region}), ["m"])
         out = result.outputs["m"]["results"]
-        assert out.type_id == "list<INT>"
+        assert out.type_id == "list<core.int>"
         assert out.resolve() == [12, 4, 8]
 
     asyncio.run(scenario())
@@ -2347,7 +2346,7 @@ def test_compact_gather_all_absent_or_zero_iterations_is_typed_empty(items: list
         )
         result = await make_engine().run(Graph(nodes={"m": region}), ["m"])
         out = result.outputs["m"]["results"]
-        assert out.type_id == "list<INT>"
+        assert out.type_id == "list<core.int>"
         assert list_children(out) == ()
 
     asyncio.run(scenario())

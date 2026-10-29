@@ -19,7 +19,6 @@ from dataclasses import replace
 from typing import cast
 
 from dinkster_memory import FullReleaseConsumer, Shedder
-from dinkster_memory.resident import ResidentPool
 from dinkster_protocol import (
     AttentionCapabilityEvidence,
     AttentionPolicyConfig,
@@ -68,7 +67,6 @@ from dinkster_values import (
     is_absent,
     list_children,
     make_absent_value,
-    process_instance_token,
 )
 
 from .error_hints import hints_for
@@ -124,7 +122,7 @@ def _is_combo_choice(entries: Sequence[DynamicEntry], parts: Sequence[str]) -> b
 class InputCoercionError(Exception):
     """An input failed worker-side admission or asset coercion.
 
-    This includes the hard COMBO boundary and asset inputs whose
+    This includes the hard core.combo boundary and asset inputs whose
     provider is missing or whose decode/merge fails. It is a fact about THIS
     node's inputs, exactly like UnresolvablePayload - reported as a NodeError,
     never a worker crash.
@@ -181,15 +179,12 @@ class InProcessWorker:
         pack_context: Callable[[], contextlib.AbstractContextManager[None]] | None = None,
         attention_capabilities: AttentionCapabilityEvidence | None = None,
         attention_route_token: AttentionRouteToken | None = None,
-        attention_runtime: object | None = None,
         combo_choices: Mapping[str, tuple[str, ...]] | None = None,
         lazy_choices: Mapping[str, Callable[[], Sequence[str]]] | None = None,
         memory_consumers: Mapping[str, Shedder] | None = None,
-        registered_types: tuple[str, ...] = (),
     ) -> None:
         self._node_types = dict(node_types)
         self._registry = registry
-        self.registered_types = registered_types
         self._pack_context = pack_context or contextlib.nullcontext
         if attention_route_token is not None and not isinstance(
             cast("object", attention_route_token), AttentionRouteToken
@@ -207,19 +202,9 @@ class InProcessWorker:
             raise ValueError("attention capabilities do not match route token")
         self._attention_capabilities = attention_capabilities
         self._attention_route_token = attention_route_token
-        self._attention_runtime = attention_runtime
         self._combo_choices = dict(combo_choices or {})
         self._lazy_choices = dict(lazy_choices or {})
         self._memory_consumers = dict(memory_consumers or {})
-        for index, table in enumerate(registry.resident_tables):
-            if not isinstance(table, ResidentPool) or any(
-                consumer is table for consumer in self._memory_consumers.values()
-            ):
-                continue
-            name = f"resident-values-{index}"
-            if name in self._memory_consumers:
-                raise ValueError(f"reserved resident consumer name: {name}")
-            self._memory_consumers[name] = table
         with self._pack_context():
             self._schemas: dict[str, NodeSchema] = {
                 node_type: cls.schema() for node_type, cls in self._node_types.items()
@@ -275,7 +260,7 @@ class InProcessWorker:
 
     @property
     def instance_token(self) -> str:
-        return process_instance_token()
+        return "in-process"
 
     @property
     def attention_route_token(self) -> AttentionRouteToken | None:
@@ -284,10 +269,6 @@ class InProcessWorker:
     @property
     def attention_capabilities(self) -> AttentionCapabilityEvidence | None:
         return self._attention_capabilities
-
-    @property
-    def attention_runtime(self) -> object | None:
-        return self._attention_runtime
 
     def bind_registry(self, registry: TypeRegistry) -> None:
         """Bind a staged worker to the host registry before publication."""
@@ -423,15 +404,10 @@ class InProcessWorker:
             vae_dtype=invocation.vae_dtype,
             attention_policy=invocation.attention_policy,
             attention_route_token=invocation.attention_route_token,
-            attention_capabilities=(
-                self._attention_capabilities
-                if invocation.attention_route_token is not None
-                else None
-            ),
-            attention_runtime=(
-                self._attention_runtime if invocation.attention_route_token is not None else None
-            ),
             extension_snapshot_digest=invocation.extension_snapshot_digest,
+            inference_registries=(
+                outer_context.inference_registries if outer_context is not None else None
+            ),
             node_id=invocation.node_id,
             cancelled=(outer_context.cancelled if outer_context is not None else lambda: False),
         )
@@ -537,22 +513,13 @@ class InProcessWorker:
                     arm=invocation.arm,
                     expected_execution_identity=invocation.expected_execution_identity,
                     extension_snapshot_digest=invocation.extension_snapshot_digest,
+                    inference_registries=None,
                     fp8_matmul=invocation.fp8_matmul,
                     diffusion_dtype=invocation.diffusion_dtype,
                     text_dtype=invocation.text_dtype,
                     vae_dtype=invocation.vae_dtype,
                     attention_policy=invocation.attention_policy,
                     attention_route_token=invocation.attention_route_token,
-                    attention_capabilities=(
-                        self._attention_capabilities
-                        if invocation.attention_route_token is not None
-                        else None
-                    ),
-                    attention_runtime=(
-                        self._attention_runtime
-                        if invocation.attention_route_token is not None
-                        else None
-                    ),
                     preview_mode=invocation.preview_mode,
                     preview_animation=invocation.preview_animation,
                     node_id=invocation.node_id,
@@ -565,22 +532,13 @@ class InProcessWorker:
                     arm=invocation.arm,
                     expected_execution_identity=invocation.expected_execution_identity,
                     extension_snapshot_digest=invocation.extension_snapshot_digest,
+                    inference_registries=outer_context.inference_registries,
                     fp8_matmul=invocation.fp8_matmul,
                     diffusion_dtype=invocation.diffusion_dtype,
                     text_dtype=invocation.text_dtype,
                     vae_dtype=invocation.vae_dtype,
                     attention_policy=invocation.attention_policy,
                     attention_route_token=invocation.attention_route_token,
-                    attention_capabilities=(
-                        self._attention_capabilities
-                        if invocation.attention_route_token is not None
-                        else None
-                    ),
-                    attention_runtime=(
-                        self._attention_runtime
-                        if invocation.attention_route_token is not None
-                        else None
-                    ),
                     preview_mode=invocation.preview_mode,
                     preview_animation=invocation.preview_animation,
                     node_id=invocation.node_id,
@@ -825,7 +783,7 @@ class InProcessWorker:
             if combo_type_mismatch_is_error(value.type_id, spec.type):
                 raise InputCoercionError(
                     f"input '{input_id}' rejects runtime type {value.type_id}: "
-                    "COMBO mismatches require an explicit converter"
+                    "core.combo mismatches require an explicit converter"
                 )
             return input_object(value.type_id, value.resolve())
         decoder = self._registry.asset_decoder_for(plan.target_type_id)

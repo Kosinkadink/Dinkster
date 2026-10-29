@@ -7,6 +7,7 @@ owner provenance is producer-stamped and relay-preserved, and manifest
 from __future__ import annotations
 
 import asyncio
+import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from multiprocessing.shared_memory import SharedMemory
@@ -25,7 +26,6 @@ from dinkster_protocol import (
     LazyStatusResult,
     MediaSourceAuthority,
     OnInvocationEvent,
-    SingleJobMultiGpuExecution,
 )
 from dinkster_schema import (
     InputSpec,
@@ -39,7 +39,6 @@ from dinkster_values import (
     RESOURCE_OWNER_META_KEY,
     RESOURCE_PRODUCER_ARM_META_KEY,
     RESOURCE_REFS_META_KEY,
-    EncodedLatentTensor,
     ResourceHandle,
     TypeRegistry,
     Value,
@@ -59,10 +58,10 @@ from dinkster_workers.boundary import (
     encode_invocation,
     release_segment,
 )
-from dinkster_workers.host import load_pack
+from dinkster_workers.host import AttentionRouteDiscoveryError, load_pack
 from dinkster_workers.manifest import ManifestError, load_manifest
 
-STRING = TypeExpr.concrete("STRING")
+STRING = TypeExpr.concrete("core.string")
 
 SCHEMA = NodeSchema(
     node_type="test.produce",
@@ -80,7 +79,7 @@ register_resource_handle_type(_REGISTRY)
 
 
 def _string(text: str) -> Value:
-    return _REGISTRY.wrap("STRING", text)
+    return _REGISTRY.wrap("core.string", text)
 
 
 def _owned(rid: str, owner: str | None, *, as_list: bool = False) -> Value:
@@ -373,7 +372,6 @@ def test_executor_stays_host_only_while_body_fields_cross_the_wire() -> None:
         text_dtype="float16",
         vae_dtype="float32",
         attention_route_token=attention_token,
-        single_job_multi_gpu_execution=SingleJobMultiGpuExecution(1, 2, "sequence"),
         extension_snapshot_digest="sha256:" + "a" * 64,
         export_snapshot=ExportSnapshot(
             prompt={"save": {"class_type": "Save", "inputs": {}}},
@@ -406,11 +404,6 @@ def test_executor_stays_host_only_while_body_fields_cross_the_wire() -> None:
         assert header["attentionPolicy"] == "auto"
         assert "attentionRouteToken" in header
         assert "attentionCapabilities" not in header
-        assert header["singleJobMultiGpuExecution"] == {
-            "rank": 1,
-            "worldSize": 2,
-            "mode": "sequence",
-        }
         assert header["extensionSnapshotDigest"] == "sha256:" + "a" * 64
         assert header["exportSnapshot"] == {
             "prompt": {"save": {"class_type": "Save", "inputs": {}}},
@@ -427,7 +420,6 @@ def test_executor_stays_host_only_while_body_fields_cross_the_wire() -> None:
         assert decoded.vae_dtype == "float32"
         assert decoded.attention_policy == "auto"
         assert decoded.attention_route_token == attention_token
-        assert decoded.single_job_multi_gpu_execution == invocation.single_job_multi_gpu_execution
         assert not hasattr(decoded, "attention_capabilities")
         assert decoded.extension_snapshot_digest == "sha256:" + "a" * 64
         assert decoded.export_snapshot == invocation.export_snapshot
@@ -715,7 +707,6 @@ def test_dispatch_enforces_domain_and_producer_arm_affinity() -> None:
             resolve_owner={"same": shared, "other": other}.get,
             arm_domains={"pack": shared, "pack@alt": shared},
             default_arms={"pack": "pack", "pack@alt": "pack"},
-            producer_targets={"source": "pack"},
         )
 
         async def result(value: Value, target: str) -> InvocationResult:
@@ -723,7 +714,6 @@ def test_dispatch_enforces_domain_and_producer_arm_affinity() -> None:
 
         assert (await result(_produced("r1", "same", "pack@alt"), "pack@alt")).error is None
         assert (await result(_owned("r2", "same"), "pack")).error is None
-        assert (await result(_produced("shared", "same", "source"), "pack")).error is None
         for value, target, message in (
             (_produced("r3", "same", "pack"), "pack@alt", "affinity"),
             (_produced("r4", "same", "pack@alt"), "pack", "affinity"),
@@ -731,9 +721,6 @@ def test_dispatch_enforces_domain_and_producer_arm_affinity() -> None:
             (_produced("r6", "other", "pack@alt"), "pack@alt", "domains"),
             (_produced("r7", "same", 3), "pack@alt", "malformed"),
             (_produced("r8", "same", "unknown"), "pack@alt", "unknown"),
-            (_produced("foreign", "other", "source"), "pack", "domains"),
-            (_produced("expired", "old-session", "source"), "pack", "no live arm"),
-            (_produced("wrong-body", "same", "source"), "pack@alt", "affinity"),
         ):
             outcome = await result(value, target)
             assert outcome.error is not None and message in outcome.error.message
@@ -778,12 +765,8 @@ def test_native_model_enters_native_load_lora_body() -> None:
 def test_sampling_settings_cross_domains_but_guider_remains_affine(
     use_shm: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from dinkster_inference_wire import register_inference_types
-    from dinkster_inference_wire.sampling_wire import (
-        NoiseSelection,
-        SamplerSelection,
-        SigmaSchedule,
-    )
+    from dinkster_inference import register_inference_types
+    from dinkster_inference.sampling_wire import NoiseSelection, SamplerSelection, SigmaSchedule
 
     # Both codecs share the creator's resource tracker in this process.
     monkeypatch.setattr(
@@ -797,9 +780,9 @@ def test_sampling_settings_cross_domains_but_guider_remains_affine(
         receiver = ValueCodec(registry, use_shm=use_shm, accept_shm=use_shm)
         inputs = {"guider": _produced("model-guider", "native-session", "native")}
         for name, type_id, raw in (
-            ("noise", "NOISE", NoiseSelection(7)),
-            ("sampler", "SAMPLER", SamplerSelection("dinkster.euler", ())),
-            ("sigmas", "SIGMAS", SigmaSchedule((1.0, 0.0))),
+            ("noise", "dinkster.noise", NoiseSelection(7)),
+            ("sampler", "dinkster.sampler", SamplerSelection("dinkster.euler", ())),
+            ("sigmas", "dinkster.sigmas", SigmaSchedule((1.0, 0.0))),
         ):
             value = stamp_resource_producer_arm(
                 registry.wrap(type_id, raw), "default-session", "default"
@@ -829,91 +812,6 @@ def test_sampling_settings_cross_domains_but_guider_remains_affine(
         assert "cannot cross residency domains" in rejected.error.message
 
     asyncio.run(scenario())
-
-
-@pytest.mark.parametrize("use_shm", [False, True])
-def test_sigma_tensor_crosses_domains_as_an_encoded_tensor(
-    use_shm: bool, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from dinkster_inference_wire import register_inference_types
-
-    monkeypatch.setattr(
-        "dinkster_workers.boundary._attach_segment", lambda name: SharedMemory(name=name)
-    )
-    raw = EncodedLatentTensor("float64", (2,), b"\x00" * 8 + b"\x00\x00\x00\x00\x00\x00\xf0?")
-    registry = TypeRegistry()
-    register_inference_types(registry)
-    sender = ValueCodec(registry, shm_threshold=1, use_shm=use_shm, accept_shm=use_shm)
-    receiver = ValueCodec(registry, use_shm=use_shm, accept_shm=use_shm)
-    value = registry.wrap("SIGMAS", raw)
-    blobs: list[bytes] = []
-    segments: list[SharedMemory] = []
-    try:
-        wire, sent = sender.encode(value, blobs, segments)
-        received, received_stat = receiver.decode(wire, blobs, [])
-        assert received.resolve() == raw
-        assert received.fingerprint == value.fingerprint
-        assert sent.transport == received_stat.transport == ("shm" if use_shm else "inline")
-    finally:
-        for segment in segments:
-            release_segment(segment)
-
-
-def test_inference_wire_registers_comfy_type_ids_without_legacy_aliases() -> None:
-    from dinkster_inference_wire import ResidentConditioningCarrier, register_inference_types
-    from dinkster_inference_wire.sampling_wire import (
-        NoiseSelection,
-        SamplerSelection,
-        SigmaSchedule,
-    )
-
-    class ResidentPayload:
-        _dinkster_resident_fingerprint = "test-conditioning"
-
-    registry = TypeRegistry()
-    register_inference_types(registry)
-
-    exact_type_ids = {
-        "MODEL",
-        "CLIP",
-        "CLIP_VISION",
-        "CONTROL_NET",
-        "VAE",
-        "CONDITIONING",
-        "SAMPLER",
-        "SIGMAS",
-        "GUIDER",
-        "NOISE",
-        "LATENT_OPERATION",
-    }
-    retired_type_ids = {
-        f"dinkster.{atom}"
-        for atom in (
-            "model",
-            "clip",
-            "clip-vision",
-            "vae",
-            "conditioning",
-            "sampler",
-            "sigmas",
-            "guider",
-            "noise",
-        )
-    }
-    assert exact_type_ids <= set(registry.type_ids())
-    assert not retired_type_ids & set(registry.type_ids())
-    for retired_type_id in retired_type_ids:
-        assert retired_type_id not in registry
-
-    for type_id, raw in (
-        ("CONDITIONING", ResidentConditioningCarrier(ResidentPayload())),
-        ("SAMPLER", SamplerSelection("dinkster.euler", ())),
-        ("SIGMAS", SigmaSchedule((1.0, 0.0))),
-        ("NOISE", NoiseSelection(7)),
-        ("LATENT_OPERATION", lambda latent: latent),
-    ):
-        spec = registry.spec(type_id)
-        assert spec.decode(spec.encode(raw)) == raw
 
 
 def test_residency_domains_use_identity_not_value_equality() -> None:
@@ -1009,7 +907,7 @@ def test_worker_startup_rejects_invalid_arm_registration(
     (tmp_path / f"{module}.py").write_text(
         f"""from collections.abc import Mapping
 from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
-STRING = TypeExpr.concrete("STRING")
+STRING = TypeExpr.concrete("core.string")
 class Base(Node):
     @classmethod
     def define_schema(cls):
@@ -1057,3 +955,49 @@ arm_nodes = "{module}:ARM_NODES"
     monkeypatch.syspath_prepend(str(tmp_path))
     with pytest.raises(ManifestError):
         load_pack(load_manifest(manifest_path))
+
+
+def test_native_provider_pack_keeps_attention_discovery_failure_fatal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest_path = tmp_path / "dinkster-pack.toml"
+    manifest_path.write_text(
+        """[pack]
+name = "provider"
+[pack.arms]
+native = ["provider.node"]
+[pack.entry]
+nodes = "provider_nodes:NODES"
+arm_nodes = "provider_nodes:ARM_NODES"
+""",
+        encoding="utf-8",
+    )
+
+    def broken_provider() -> None:
+        raise AttentionRouteDiscoveryError("attention runtime nested import failed")
+
+    monkeypatch.setattr("dinkster_workers.host._discover_attention_routing", broken_provider)
+    with pytest.raises(AttentionRouteDiscoveryError, match="nested import"):
+        load_pack(load_manifest(manifest_path))
+
+
+def test_native_provider_pack_refuses_absent_evidence_before_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest_path = tmp_path / "dinkster-pack.toml"
+    manifest_path.write_text(
+        """[pack]
+name = "provider"
+[pack.arms]
+native = ["provider.node"]
+[pack.entry]
+nodes = "entry_must_not_import:NODES"
+arm_nodes = "entry_must_not_import:ARM_NODES"
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("dinkster_workers.host._discover_attention_routing", lambda: (None, None))
+
+    with pytest.raises(AttentionRouteDiscoveryError, match="requires authenticated"):
+        load_pack(load_manifest(manifest_path))
+    assert "entry_must_not_import" not in sys.modules

@@ -1,0 +1,217 @@
+{
+  "checks": {
+    "flux_cuda_exact": true,
+    "flux_device_name_exact": true,
+    "flux_device_uuid_exact": true,
+    "flux_driver_exact": true,
+    "flux_family_exact": true,
+    "flux_real_dtype_exact": true,
+    "flux_real_elapsed_ns_within_15_percent": true,
+    "flux_real_output_exact": true,
+    "flux_real_peak_ram_bytes_within_15_percent": true,
+    "flux_real_peak_vram_bytes_within_15_percent": true,
+    "flux_real_shape_exact": true,
+    "flux_torch_exact": true,
+    "flux_warmup_dtype_exact": true,
+    "flux_warmup_elapsed_ns_within_15_percent": true,
+    "flux_warmup_output_exact": true,
+    "flux_warmup_peak_ram_bytes_within_15_percent": true,
+    "flux_warmup_peak_vram_bytes_within_15_percent": true,
+    "flux_warmup_shape_exact": true,
+    "sd_cuda_exact": true,
+    "sd_device_name_exact": true,
+    "sd_device_uuid_exact": true,
+    "sd_driver_exact": true,
+    "sd_family_exact": true,
+    "sd_real_dtype_exact": true,
+    "sd_real_elapsed_ns_within_15_percent": true,
+    "sd_real_output_exact": true,
+    "sd_real_peak_ram_bytes_within_15_percent": true,
+    "sd_real_peak_vram_bytes_within_15_percent": true,
+    "sd_real_shape_exact": true,
+    "sd_torch_exact": true,
+    "sd_warmup_dtype_exact": true,
+    "sd_warmup_elapsed_ns_within_15_percent": true,
+    "sd_warmup_output_exact": true,
+    "sd_warmup_peak_ram_bytes_within_15_percent": true,
+    "sd_warmup_peak_vram_bytes_within_15_percent": true,
+    "sd_warmup_shape_exact": true
+  },
+  "device_ordinal": 0,
+  "envelope": 0.15,
+  "historical_canonical_records_unchanged": true,
+  "implementation_source_sha256": "sha256:b6637772d36bf37e00c43e7422ba2c68aa3d82b9d34be6a0ba90b49bf5ad9b71",
+  "kind": "current-hardware-scheduled-runtime-companion",
+  "ordinary": {
+    "flux": {
+      "cuda": "13.0",
+      "device_name": "NVIDIA RTX PRO 6000 Blackwell Workstation Edition",
+      "device_uuid": "ff7692e5-eec5-36b4-4c72-e879f32c5e98",
+      "driver": "595.84",
+      "engine": "ordinary",
+      "family": "dinkster.flux_dev",
+      "phases": {
+        "real": {
+          "elapsed_ns": 56808109,
+          "output_dtype": "float32",
+          "output_sha256": "sha256:70e233cb682e8bb362995b2c501f116c5de593bc468a65580f2a512605988d0c",
+          "output_shape": [
+            1,
+            16,
+            8,
+            8
+          ],
+          "peak_ram_bytes": 1410473984,
+          "peak_vram_bytes": 44256768
+        },
+        "warmup": {
+          "elapsed_ns": 400859206,
+          "output_dtype": "float32",
+          "output_sha256": "sha256:70e233cb682e8bb362995b2c501f116c5de593bc468a65580f2a512605988d0c",
+          "output_shape": [
+            1,
+            16,
+            8,
+            8
+          ],
+          "peak_ram_bytes": 1406279680,
+          "peak_vram_bytes": 39214592
+        }
+      },
+      "torch": "2.13.0+cu130"
+    },
+    "sd": {
+      "cuda": "13.0",
+      "device_name": "NVIDIA RTX PRO 6000 Blackwell Workstation Edition",
+      "device_uuid": "ff7692e5-eec5-36b4-4c72-e879f32c5e98",
+      "driver": "595.84",
+      "engine": "ordinary",
+      "family": "dinkster.sd15",
+      "phases": {
+        "real": {
+          "elapsed_ns": 116081738,
+          "output_dtype": "float32",
+          "output_sha256": "sha256:78930fc97ba52440d3a900b2b3b834d69f48e2bc43b5df65a47d773dbb83613a",
+          "output_shape": [
+            1,
+            4,
+            8,
+            8
+          ],
+          "peak_ram_bytes": 1507377152,
+          "peak_vram_bytes": 107796992
+        },
+        "warmup": {
+          "elapsed_ns": 494525289,
+          "output_dtype": "float32",
+          "output_sha256": "sha256:78930fc97ba52440d3a900b2b3b834d69f48e2bc43b5df65a47d773dbb83613a",
+          "output_shape": [
+            1,
+            4,
+            8,
+            8
+          ],
+          "peak_ram_bytes": 1498988544,
+          "peak_vram_bytes": 73077760
+        }
+      },
+      "torch": "2.13.0+cu130"
+    }
+  },
+  "overall_pass": true,
+  "parent_commit": "c2c7f38f8192d61ef1bac56e1909afc52fc9f748",
+  "scheduled": {
+    "flux": {
+      "cuda": "13.0",
+      "device_name": "NVIDIA RTX PRO 6000 Blackwell Workstation Edition",
+      "device_uuid": "ff7692e5-eec5-36b4-4c72-e879f32c5e98",
+      "driver": "595.84",
+      "engine": "scheduled",
+      "family": "dinkster.flux_dev",
+      "phases": {
+        "real": {
+          "elapsed_ns": 63874228,
+          "output_dtype": "float32",
+          "output_sha256": "sha256:70e233cb682e8bb362995b2c501f116c5de593bc468a65580f2a512605988d0c",
+          "output_shape": [
+            1,
+            16,
+            8,
+            8
+          ],
+          "peak_ram_bytes": 1421643776,
+          "peak_vram_bytes": 44595712
+        },
+        "warmup": {
+          "elapsed_ns": 381120122,
+          "output_dtype": "float32",
+          "output_sha256": "sha256:70e233cb682e8bb362995b2c501f116c5de593bc468a65580f2a512605988d0c",
+          "output_shape": [
+            1,
+            16,
+            8,
+            8
+          ],
+          "peak_ram_bytes": 1416400896,
+          "peak_vram_bytes": 39389696
+        }
+      },
+      "torch": "2.13.0+cu130"
+    },
+    "sd": {
+      "cuda": "13.0",
+      "device_name": "NVIDIA RTX PRO 6000 Blackwell Workstation Edition",
+      "device_uuid": "ff7692e5-eec5-36b4-4c72-e879f32c5e98",
+      "driver": "595.84",
+      "engine": "scheduled",
+      "family": "dinkster.sd15",
+      "phases": {
+        "real": {
+          "elapsed_ns": 122979960,
+          "output_dtype": "float32",
+          "output_sha256": "sha256:78930fc97ba52440d3a900b2b3b834d69f48e2bc43b5df65a47d773dbb83613a",
+          "output_shape": [
+            1,
+            4,
+            8,
+            8
+          ],
+          "peak_ram_bytes": 1516421120,
+          "peak_vram_bytes": 107883008
+        },
+        "warmup": {
+          "elapsed_ns": 513303653,
+          "output_dtype": "float32",
+          "output_sha256": "sha256:78930fc97ba52440d3a900b2b3b834d69f48e2bc43b5df65a47d773dbb83613a",
+          "output_shape": [
+            1,
+            4,
+            8,
+            8
+          ],
+          "peak_ram_bytes": 1508032512,
+          "peak_vram_bytes": 73122816
+        }
+      },
+      "torch": "2.13.0+cu130"
+    }
+  },
+  "schema": 1,
+  "workload": {
+    "cfg": 7.0,
+    "compute_dtype": "float32",
+    "models": [
+      "deterministic tiny production Flux",
+      "deterministic tiny SD15 UNet"
+    ],
+    "processes": "fresh per engine",
+    "requests": [
+      "warmup",
+      "real"
+    ],
+    "sampler": "dinkster.euler",
+    "scheduler": "dinkster.normal",
+    "seed": 4,
+    "steps": 10
+  }
+}

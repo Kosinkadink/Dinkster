@@ -310,19 +310,6 @@ def test_bounded_nesting_is_normalized_for_header_and_native_schema() -> None:
         parse_latent_asset(source)
 
 
-def test_brackets_inside_metadata_text_do_not_count_as_json_nesting() -> None:
-    source = safetensors(
-        {
-            "__metadata__": {"note": "[" * 10000 + '"quoted"' + "]" * 10000},
-            "latent_tensor": {"dtype": "F32", "shape": [1], "data_offsets": [0, 4]},
-        },
-        b"data",
-    )
-    descriptor = parse_latent_asset(source)
-    assert descriptor.profile == "comfyui-single"
-    assert descriptor.tensors[0].shape == (1,)
-
-
 @pytest.mark.parametrize("version", [True, False])
 def test_native_schema_version_requires_an_exact_integer(version: bool) -> None:
     schema = json.dumps(

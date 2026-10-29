@@ -3,15 +3,7 @@
 Dinkster is pre-release. Release assets are private and are not published to a
 package index. A GitHub 404 can mean that your account does not have access.
 
-To run from source without the Desktop app, follow the
-[one-command browser quickstart](quickstart.md). Install Git and Node.js
-22 or newer with npm, clone Dinkster, and run `./run.sh` on Linux/macOS or
-`.\run.ps1` on Windows. The scripts install uv user-locally if missing;
-Python 3.12 is obtained by uv when needed. The scripts
-prepare execution environments, build the pinned frontend, and launch the UI
-and backend on one loopback origin. Rerun after `git pull` to update them.
-
-The Desktop app installs an
+The Desktop app is the supported end-user installation path. It installs an
 exact backend release from its wheel set and constraints file. Desktop builds
 are not yet available; see the
 [Desktop guide](https://github.com/Kosinkadink/Dinkster-Frontend/blob/main/docs/desktop.md)
@@ -51,8 +43,7 @@ and downloading exact pack releases.
 
 ## Develop from source
 
-The run scripts above are the default source installation path. For a manual
-development setup, clone the backend and frontend as sibling directories, then run:
+Clone the backend and frontend as sibling directories, then run:
 
 ```sh
 uv sync --python 3.12 --all-packages --frozen
@@ -86,8 +77,9 @@ when launching:
 | Linux/macOS CPU or macOS Apple Silicon MPS | `$PWD/.venv-torch/bin/python` |
 | Windows CPU | `$PWD\.venv-torch\Scripts\python.exe` |
 
-The selected execution environment installs Dinkster's pinned `dinkster_inference`
-runtime when the native or compatibility worker is provisioned.
+The [torch package README](../packages/dinkster-inference-torch/README.md)
+contains contributor test and validation details; it is not required for the
+first-image setup.
 
 ## Model folders
 

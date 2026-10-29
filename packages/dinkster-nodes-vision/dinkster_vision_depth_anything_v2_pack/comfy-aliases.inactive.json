@@ -27,7 +27,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "COMBO"
+              "core.combo"
             ]
           },
           "required": false,
@@ -48,7 +48,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "INT"
+              "core.int"
             ]
           },
           "required": false,
@@ -101,7 +101,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "COMBO"
+              "core.combo"
             ]
           },
           "required": false,
@@ -165,7 +165,7 @@
           "type": {
             "kind": "concrete",
             "types": [
-              "INT"
+              "core.int"
             ]
           },
           "required": false,

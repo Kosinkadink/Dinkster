@@ -19,7 +19,7 @@ from typing import Any, cast
 import av
 import numpy as np
 from aiohttp import web
-from dinkster_api.v1 import VIDEO_TYPE, Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_api.v1 import Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_assets import AssetRef, AssetVault, digest_bytes
 from dinkster_caches import BudgetedDiskCAS, MemoryLRUCache
 from dinkster_engine import Engine
@@ -54,7 +54,7 @@ class _ProduceConformanceVideo(Node):
             display_name="Produce Conformance Video",
             category="test",
             inputs=(),
-            outputs=(OutputSpec("video", TypeExpr.concrete(VIDEO_TYPE)),),
+            outputs=(OutputSpec("video", TypeExpr.concrete("comfy.VIDEO")),),
         )
 
     @classmethod

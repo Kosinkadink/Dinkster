@@ -7,7 +7,7 @@ dependencies = [
     "dinkster-schema",
     "dinkster-values",
     "dinkster-protocol",
-    "dinkster-inference-wire",
+    "dinkster-inference",
     "dinkster-memory",
     "dinkster-assets",
     "dinkster-video",

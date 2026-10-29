@@ -23,7 +23,6 @@ MAX_LATENT_SCHEMA_BYTES = 64 * 1024
 MAX_LATENT_DATA_BYTES = GIBIBYTE
 MAX_LATENT_STREAMS = 64
 MAX_VAE_HINT_BYTES = 8 * 1024
-_MAX_JSON_DEPTH = 1000
 
 _DTYPE_BYTES = {"F16": 2, "BF16": 2, "F32": 4, "F64": 8}
 _LATENT_SPACE_RE = re.compile(r"^dinkster\.[a-z0-9]+(?:[._-][a-z0-9]+)*$")
@@ -86,23 +85,6 @@ def _object(value: object, message: str) -> dict[str, object]:
     return cast("dict[str, object]", value)
 
 
-def _load_bounded_json(raw: str) -> object:
-    result: object = json.loads(raw, object_pairs_hook=_unique_object)
-    pending: list[tuple[object, int]] = [(result, 0)]
-    while pending:
-        value, depth = pending.pop()
-        if isinstance(value, dict):
-            children = cast("dict[str, object]", value).values()
-        elif isinstance(value, list):
-            children = cast("list[object]", value)
-        else:
-            continue
-        if depth >= _MAX_JSON_DEPTH:
-            raise ValueError("JSON exceeds nesting bound")
-        pending.extend((child, depth + 1) for child in children)
-    return result
-
-
 def parse_latent_asset(source: BinaryIO) -> LatentAssetDescriptor:
     """Validate framing and schema without reading any tensor body."""
     try:
@@ -124,7 +106,7 @@ def parse_latent_asset(source: BinaryIO) -> LatentAssetDescriptor:
     if len(raw) != header_bytes:
         raise AssetError("truncated safetensors header")
     try:
-        header = _load_bounded_json(raw.decode("utf-8"))
+        header = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object)
     except (UnicodeDecodeError, ValueError, RecursionError) as exc:
         raise AssetError("invalid safetensors header JSON") from exc
     table = _object(header, "safetensors header must be an object")
@@ -191,7 +173,7 @@ def parse_latent_asset(source: BinaryIO) -> LatentAssetDescriptor:
         if len(schema_raw.encode("utf-8")) > MAX_LATENT_SCHEMA_BYTES:
             raise AssetError("Dinkster latent schema exceeds the supported bound")
         try:
-            schema = _load_bounded_json(schema_raw)
+            schema = json.loads(schema_raw, object_pairs_hook=_unique_object)
         except (ValueError, RecursionError) as exc:
             raise AssetError("invalid Dinkster latent schema JSON") from exc
         return _parse_native(

@@ -37,7 +37,7 @@ from collections.abc import Mapping
 
 from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 
-STRING = TypeExpr.concrete("STRING")
+STRING = TypeExpr.concrete("core.string")
 
 
 class Echo(Node):

@@ -59,14 +59,17 @@ Dispatch = Callable[[Envelope], Awaitable[Envelope]]
 _VERSION = 1
 _DATA_TYPES = frozenset(
     {
-        "INT",
-        "FLOAT",
-        "BOOLEAN",
-        "STRING",
-        "COMBO",
-        "IMAGE",
-        "MASK",
-        "LATENT",
+        "core.int",
+        "core.float",
+        "core.boolean",
+        "core.string",
+        "core.combo",
+        "dinkster.image",
+        "dinkster.mask",
+        "dinkster.latent",
+        "comfy.IMAGE",
+        "comfy.MASK",
+        "comfy.LATENT",
     }
 )
 _RESIDENT_META = frozenset(

@@ -147,8 +147,8 @@ router-generated 404 and 405 responses remain available after authentication.
 | `history:read` | all `/api/history` routes, including delete; v1 has no separate history mutation verb |
 | `assets:read` | asset/library/mount reads, `POST /api/assets/guess`, and peer `/assets` reads |
 | `assets:write` | asset upload, library/mount/source mutations |
-| `settings:read` | settings reads and `GET /api/install/activation` |
-| `settings:write` | settings writes, install activation, and dev pack reload/removal |
+| `settings:read` | settings reads, `GET /api/p2p/status`, and `GET /api/install/activation` |
+| `settings:write` | settings writes, P2P transfer actions, install activation, and dev pack reload/removal |
 | `sessions:read` | session GET and session WebSocket routes |
 | `sessions:write` | session create, op, snapshot, and close routes |
 | `queue:control` | queue status, pause, resume, and clear |

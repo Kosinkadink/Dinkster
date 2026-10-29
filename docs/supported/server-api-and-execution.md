@@ -7,26 +7,21 @@
 - Resident-resource consumers follow the validated producer execution arm
   without a node-name or native-arm-name allowlist; malformed, unknown, and
   conflicting producer stamps are refused
+- Native-only checkpoint loading errors retain detection and configuration
+  failure details
+- Comfy API prompts resolve EmptyLatentImage through the native generation
+  schema, preserving its dimensions, batch size, and links to all four
+  sampling surfaces. Explicit `comfy.EmptyLatentImage` graphs retain their
+  legacy `comfy.LATENT` contract
 - Routes: health/auth, node catalog, extension/composition diagnostics,
-  choices, pack assets, jobs (status, cancellation, event
+  choices, pack assets/templates, including family/model metadata and
+  immutable template thumbnails, jobs (status, cancellation, event
   replay), values, queue control, live WebSocket events, settings, memory
   governance, cache trim/export; asset library and history routes when a
   library root is configured, including classified bounded latent upload
-- Asset record catalogs upgrade automatically with versioned migrations.
-  Matching unversioned catalogs retain scoped records, verified media grants,
-  dependency manifests, and derivations; incompatible schemas are refused.
 - Filesystem mount scans report file, byte, and elapsed progress; publish
   indexed assets before the scan finishes; reuse unchanged-file indexes; and
   keep per-mount indexes under the configured library root
-- Scans exclude partial downloads and files changing between observations.
-  Missing and replaced asset identities survive rescans and restart without
-  being offered as live content; restored content recovers its digest.
-- Native job submissions accept bare filenames in model asset inputs before
-  mount hashing. Bindings remain explicitly unverified and omit content
-  hashes until a scan verifies the same file revision. Missing names return
-  `409 assets-missing`; submission does not hash or download model bytes.
-  Native and translated model loaders accept these local bindings; translated
-  loaders retain category-root confinement and reject shadowed file names.
 - Inbound authentication with operator-managed static Bearer credentials,
   identity-service Ed25519 JWTs verified against cached JWKS, or both with
   static credentials tried first
@@ -37,17 +32,20 @@
   freshness
 - Declarative resolver-index subscriptions from local JSON files or HTTPS
   URLs, with ETag revalidation, regional mirror priority, digest-verified
-  acquisition leads, isolated source removal, and exact-basename suggestions
+  acquisition leads, isolated source removal, exact-basename suggestions, and
+  explicit per-subscription P2P trust and license-authority controls
 - Official provider subscription bootstrap from explicit URL and stable-ID
-  configuration, with identity verification and preserved unsubscribe
+  configuration, with identity verification and preserved trust/unsubscribe
   choices; no built-in provider endpoint or identity
-- Workflow templates are disabled by default: `features.templates.enabled`
-  defaults to false, and the catalog, template body and thumbnail routes
-  return 404. Guide Markdown and node documentation remain available through
-  their separate documentation routes; template-opening actions are hidden.
-- Asset acquisition checks the local vault and mounted files before packaged
-  assets and HTTP sources. Remote bytes verify against the requested digest
-  before publication, and job acquisition requires explicit consent.
+- Default-enabled LAN and global P2P through one shared sidecar session for canonical
+  BitTorrent v2 descriptors, with six-hour trust expiry, license metadata,
+  safe-format verification, durable rate and seeding budgets, metered
+  network closure, and immediate resolver-omission revocation. Global resolver
+  transport uses trackerless DHT under `lan-and-internet` scope; LAN
+  and HTTP fallback remain available when global transport closes.
+- Bounded P2P sidecar status diagnostics for native peer failures, listener
+  bindings, discovery errors, and upload-counter comparison; no packet capture
+  or persistent diagnostic logging
 - Durable job queue when history is configured: accepted jobs are recorded
   before acknowledgment, and jobs lost to a server crash or restart appear
   in history as "interrupted" (distinguishing never-started from
@@ -58,19 +56,27 @@
   execution that recomputes every node without restarting the server or
   releasing loaded model consumers; partial execution (execute up/between/from
   via target outputs), binary WebSocket preview frames
+- Concurrent native model jobs run on process-isolated GPU replicas configured
+  with `dinkster-serve --multi-gpu-devices INDEX,INDEX`
+- Single native sampling jobs can use fixed ordered logical CUDA ranks. The
+  shared engine distributes guidance lanes for every family, including
+  conditional-only requests, masks, progress and state callbacks, custom
+  samplers, and guidance transforms. SD controls and IP-Adapter also work in
+  distributed mode. No measured device capability or receipt is required.
+  MiniMax H3 FL2VA and REF2VA support explicit sequence mode with compatible
+  attention and rank geometry. Measurements cover BF16 guidance on Ada and Blackwell and
+  BF16 Ulysses sequence execution on two Blackwell GPUs with SDPA and
+  dinkster-kitchen INT8 attention. Unmeasured configurations are diagnosed,
+  not refused because they lack measurements. CUDA/NCCL transport, tensor
+  dtype/shape consistency, and mode-specific geometry checks still apply.
+  Flux packed-grid requests scatter multiple joint windows across ranks with
+  deterministic merges and progress and state callbacks. Requests without
+  multiple windows use shared guidance evaluation.
+  `auto` selects guidance or eligible Flux window scattering, never sequence
+  parallelism.
 - Memory governance: budgets, headroom, reservations with renewal,
   governed shedding, admission waiting, and item details with Aimdo model-weight
   page residency when the active Aimdo build exposes it
-- Memory status HTTP and live events include worker torch allocated/reserved,
-  process RSS and registered pinned-host bytes when available, plus GPU name
-  and optional UUID-matched NVML utilization, temperature and power. Device
-  peaks record observed driver usage and reset to current usage through
-  `POST /memory/reset-peak`. Missing probes remain unavailable, not zero.
-  Distinct worker processes contribute their allocator and host counters once;
-  device-wide free memory is never added across workers.
-  Accelerator policy distinguishes current settings from budgets and Aimdo
-  policies applied to each existing worker; changing a restart-bound setting
-  never relabels a worker that has not restarted.
 - Paused, idle queues support `POST /memory/free` to release volatile
   execution caches and live workers' declared memory consumers without
   starting dormant workers. Results report each worker and consumer;

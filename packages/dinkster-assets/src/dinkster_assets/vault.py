@@ -3,7 +3,7 @@
 A content-addressed file store, sharded like the payload CAS and sharing
 its canonical ``blake3:<64 hex>`` namespace: ``<root>/<2 hex>/<64 hex>``.
 The vault is the materialization target for asset *distribution* - bytes
-pulled from provenance URLs - while model libraries stay what
+pulled from provenance URLs or peers - while model libraries stay what
 they are: user-managed folders the vault never touches.
 
 Derived conversion sidecars live beside a source as
@@ -27,9 +27,11 @@ import contextlib
 import json
 import os
 import uuid
+from collections.abc import Mapping
 from pathlib import Path
 from types import TracebackType
 
+from . import p2p_storage
 from .identity import AssetError, new_hasher, require_digest
 from .integrity import (
     AssetVerificationRecord,
@@ -37,6 +39,7 @@ from .integrity import (
     verification_record_for_publication,
 )
 from .model import AssetResolution
+from .p2p_descriptor import P2PDescriptorV1, validate_p2p_descriptor
 
 _HEX = frozenset("0123456789abcdef")
 
@@ -101,6 +104,97 @@ class AssetVault:
         missing commit rolls back to nothing."""
         digest = require_digest(expected_digest)
         return VaultWriter(self._root, self._path(digest), digest)
+
+    @property
+    def p2p_staging_root(self) -> Path:
+        return p2p_storage.p2p_staging_root(self._root)
+
+    def p2p_staging_path(
+        self,
+        descriptor: P2PDescriptorV1 | Mapping[str, object],
+        digest: str,
+        expected_size: int,
+    ) -> Path:
+        info_hash = _validated_p2p_info_hash(descriptor, digest, expected_size)
+        return p2p_storage.p2p_staging_path(self._root, info_hash, digest)
+
+    def open_p2p_partial(
+        self,
+        descriptor: P2PDescriptorV1 | Mapping[str, object],
+        digest: str,
+        expected_size: int,
+    ) -> p2p_storage.P2PPartial:
+        info_hash = _validated_p2p_info_hash(descriptor, digest, expected_size)
+        return p2p_storage.open_p2p_partial(
+            self._root,
+            info_hash,
+            digest,
+            expected_size,
+        )
+
+    def adopt_staged_asset(
+        self,
+        descriptor: P2PDescriptorV1 | Mapping[str, object],
+        digest: str,
+        expected_size: int,
+        staged_path: Path | str,
+        format_policy_version: int,
+    ) -> Path:
+        """Verify and atomically publish a complete confined P2P partial."""
+        info_hash = _validated_p2p_info_hash(descriptor, digest, expected_size)
+        target = self._path(digest)
+        path, record = p2p_storage.adopt_staged_asset(
+            self._root,
+            target,
+            info_hash,
+            digest,
+            expected_size,
+            staged_path,
+            format_policy_version,
+        )
+        _persist_verification_record(path, record)
+        return path
+
+    def p2p_staging_usage(self) -> p2p_storage.P2PStagingUsage:
+        return p2p_storage.p2p_staging_usage(self._root)
+
+    def p2p_partial_growth(
+        self,
+        descriptor: P2PDescriptorV1 | Mapping[str, object],
+        digest: str,
+        expected_size: int,
+    ) -> int:
+        info_hash = _validated_p2p_info_hash(descriptor, digest, expected_size)
+        return p2p_storage.p2p_partial_growth(self._root, info_hash, digest, expected_size)
+
+    def purge_inactive_p2p_partials(
+        self,
+        *,
+        now: float | None = None,
+        retention_seconds: int | None = None,
+    ) -> p2p_storage.P2PStagingPurge:
+        if retention_seconds is None:
+            return p2p_storage.purge_inactive_p2p_partials(self._root, now=now)
+        return p2p_storage.purge_inactive_p2p_partials(
+            self._root,
+            now=now,
+            retention_seconds=retention_seconds,
+        )
+
+    def verify_p2p_local_file(
+        self,
+        digest: str,
+        expected_size: int,
+        local_path: Path | str,
+        format_policy_version: int,
+    ) -> p2p_storage.P2PLocalFileMapping:
+        return p2p_storage.verify_p2p_local_file(
+            self._root,
+            digest,
+            expected_size,
+            local_path,
+            format_policy_version,
+        )
 
     def delete(self, digest: str) -> bool:
         path = self._path(digest)
@@ -241,6 +335,18 @@ class VaultWriter:
     ) -> None:
         if not self._committed:
             self._discard()
+
+
+def _validated_p2p_info_hash(
+    descriptor: P2PDescriptorV1 | Mapping[str, object],
+    digest: str,
+    expected_size: int,
+) -> str:
+    return validate_p2p_descriptor(
+        descriptor,
+        asset_digest=digest,
+        size=expected_size,
+    ).info_hash
 
 
 def _persist_verification_record(

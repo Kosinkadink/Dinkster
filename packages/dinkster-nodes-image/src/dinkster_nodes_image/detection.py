@@ -12,7 +12,6 @@ from dinkster_api.v1 import (
     CORE_FLOAT,
     CORE_INT,
     CORE_STRING,
-    MASK_TYPE,
     InputSpec,
     Node,
     NodeSchema,
@@ -29,7 +28,7 @@ from .support import number_input as _number
 from .support import validate_canvas as _validate_canvas
 from .types import DETECTION_TYPE, REGION_TYPE, Detection, Region
 
-MASK = TypeExpr.concrete(MASK_TYPE)
+MASK = TypeExpr.concrete("dinkster.mask")
 REGION = TypeExpr.concrete(REGION_TYPE)
 DETECTION = TypeExpr.concrete(DETECTION_TYPE)
 DETECTIONS = TypeExpr.list_of(DETECTION)

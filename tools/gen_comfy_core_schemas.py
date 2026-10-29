@@ -47,6 +47,10 @@ def main() -> None:
     schemas = {
         node.schema().node_type: schema_to_wire(node.schema()) for node in translation.node_classes
     }
+    for schema in schemas.values():
+        description = schema.get("description")
+        if isinstance(description, str):
+            schema["description"] = description.replace("comfy_kitchen", "dinkster_kitchen")
     for name in ("KSampler", "CLIPTextEncode", "CheckpointLoaderSimple", "VAEDecode"):
         if f"comfy.{name}" not in schemas:
             raise RuntimeError(f"core schema missing: {name}")

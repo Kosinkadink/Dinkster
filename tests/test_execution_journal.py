@@ -33,7 +33,7 @@ from dinkster_server.execution_journal import execution_run_stream
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 
-STRING = TypeExpr.concrete("STRING")
+STRING = TypeExpr.concrete("core.string")
 
 
 # -- wire-event fixtures (shapes mirror app.py's published dicts) ------------

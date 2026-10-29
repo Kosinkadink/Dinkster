@@ -1,0 +1,106 @@
+{
+  "schema": 1,
+  "reference": {
+    "comfyui_commit": "947c2749dd04c51ef0e21b069544d8b0b4f9b411",
+    "provenance_note": "Hand-built parity receipt from Dinkster commit b5c5997d, generated on an NVIDIA GeForce RTX 5060 Ti host; no generator script exists, so it was NOT regenerated at the b78cec87 pin advance and its evidence remains pinned to comfyui_commit above. Building an executed-reference generator is tracked in issue #620.",
+    "generator_interpreter": ".venv-gpu/bin/python (Python 3.12, torch 2.13.0+cu130)",
+    "consecutive_instrumented_regenerations": 2,
+    "all_16_step_current_and_denoised_tensors_bit_exact": true,
+    "sample_sha256": "cc8004f4a1b1ec8f7882d34f82f1ef4da69e80a0ee9204b90f88963a964c89a8",
+    "isolated_outlier": {
+      "sample_sha256": "afa0e85ced8b4ac28198db24ab6bf328bdbffd40ccd62135e9d1c5e7cc5a073a",
+      "observed_frequency": "1 of 6 identical reference executions",
+      "stable_sample_max_abs": 0.5831151008605957,
+      "stable_sample_mean_abs": 0.04189985990524292,
+      "conditioning_bit_exact": true,
+      "first_controlnet_input_bit_exact": true,
+      "all_first_step_residuals_bit_exact": true,
+      "localization": "The anomalous reference run diverged after its first model evaluation. It did not recur in two consecutive per-step instrumented regenerations."
+    },
+    "understood_difference": {
+      "mechanism": "Cross-process fp16 kernel and reduction-order selection varies on this GPU substrate.",
+      "classification": "The reference outlier is transient rather than an alternate code path: it was bit-exact through the first evaluation and did not recur in two stable instrumented regenerations.",
+      "bit_exact_inputs": true,
+      "earlier_dinkster_pairing_sha256": "cc8004f4a1b1ec8f7882d34f82f1ef4da69e80a0ee9204b90f88963a964c89a8",
+      "later_stable_dinkster_sha256": "197982109d4fef8b642049ff45cd8c74fff72e5b787e64c3f07a8c15b0d76976",
+      "later_stable_comfyui_sha256": "cc8004f4a1b1ec8f7882d34f82f1ef4da69e80a0ee9204b90f88963a964c89a8",
+      "control_residual_max_abs": 0.015625,
+      "control_residual_mean_abs": 0.0014066696166992188,
+      "residual_interpretation": "The maximum is one fp16 ulp at magnitude 16-32; the mean is ulp-scale near magnitude 1. Diffusion amplifies this pre-sampling drift, so final hashes are not compared across processes.",
+      "forced_deterministic_pair": {
+        "settings": "torch.use_deterministic_algorithms(True), CUBLAS_WORKSPACE_CONFIG=:4096:8",
+        "dinkster_sha256": "197982109d4fef8b642049ff45cd8c74fff72e5b787e64c3f07a8c15b0d76976",
+        "comfyui_sha256": "cc8004f4a1b1ec8f7882d34f82f1ef4da69e80a0ee9204b90f88963a964c89a8",
+        "bit_exact": false,
+        "max_abs": 11.817609786987305,
+        "mean_abs": 1.1642228364944458
+      }
+    }
+  },
+  "artifacts": [
+    {
+      "role": "sd15-checkpoint",
+      "source_url": "https://huggingface.co/Comfy-Org/stable-diffusion-v1-5-archive/resolve/9cfd069101959ca3828bf9c04a4419870832b74f/v1-5-pruned-emaonly-fp16.safetensors",
+      "size": 2132696762,
+      "sha256": "e9476a13728cd75d8279f6ec8bad753a66a1957ca375a1464dc63b37db6e3916"
+    },
+    {
+      "role": "sd15-canny-controlnet",
+      "source_url": "https://huggingface.co/lllyasviel/control_v11p_sd15_canny/resolve/115a470d547982438f70198e353a921996e2e819/diffusion_pytorch_model.safetensors",
+      "size": 1445157124,
+      "sha256": "be713fb941fc7c625f0c7d816b6a19115783a665f3049a8974f127e0c075d9a9"
+    }
+  ],
+  "run": {
+    "device": "NVIDIA GeForce RTX 5060 Ti",
+    "resolution": [256, 256],
+    "sampler": "dinkster.euler",
+    "scheduler": "dinkster.normal",
+    "steps": 16,
+    "seed": 239,
+    "cfg": 7.0,
+    "positive": "a detailed architectural photograph of a stone building, dramatic sunlight",
+    "negative": "blurry, low quality, distorted",
+    "keyframes": [
+      {"progress": 0.0, "gain": 1.0},
+      {"progress": 1.0, "gain": 0.0}
+    ]
+  },
+  "native_conditioning": {
+    "no_control": {
+      "sample_sha256": "8537460e9e5fe42d9304e4731433bd3156bad7f5cf5e43527d66c31c1fcfb23f",
+      "image_sha256": "84639cd1e8a56e4dc2f9cae647b1f82886fb93a03f1d9c30bc989df7bd26a9fb"
+    },
+    "zero_gain": {
+      "sample_sha256": "8537460e9e5fe42d9304e4731433bd3156bad7f5cf5e43527d66c31c1fcfb23f",
+      "image_sha256": "84639cd1e8a56e4dc2f9cae647b1f82886fb93a03f1d9c30bc989df7bd26a9fb",
+      "no_control_bit_exact": true
+    },
+    "scalar_gain": {
+      "sample_sha256": "168f7f0c2af8af16fb8d295f35850b369b4fda076d2145b3941fb7653ca0cd89",
+      "image_sha256": "0dc0cdd97dc402e6ce01827e718a4cc27858eddd67d3280a520da91f2ca88b50"
+    },
+    "constant_schedule": {
+      "sample_sha256": "168f7f0c2af8af16fb8d295f35850b369b4fda076d2145b3941fb7653ca0cd89",
+      "image_sha256": "0dc0cdd97dc402e6ce01827e718a4cc27858eddd67d3280a520da91f2ca88b50",
+      "scalar_bit_exact": true
+    },
+    "keyframed_schedule": {
+      "sample_sha256": "427fa851c58b6b87e87b177ff5a18b353fc1376c3dbb38bb2bc9a7ad3912a5a2",
+      "image_sha256": "665566f1c25ff5be880eacc22634adc5b86d9c11297b7b88b3fb7840e22779dd",
+      "constant_image_max_abs": 0.9787197709083557,
+      "constant_image_mean_abs": 0.17046166956424713
+    }
+  },
+  "reference_conditioning": {
+    "constant_schedule_sample_sha256": "cc8004f4a1b1ec8f7882d34f82f1ef4da69e80a0ee9204b90f88963a964c89a8",
+    "comfyui_sample_sha256": "cc8004f4a1b1ec8f7882d34f82f1ef4da69e80a0ee9204b90f88963a964c89a8",
+    "bit_exact": true,
+    "max_abs": 0.0,
+    "mean_abs": 0.0
+  },
+  "visual": {
+    "hint_geometry": "asymmetric square, diagonal, and offset circle",
+    "observation": "Both controlled images retain the hint geometry; the falling keyframe schedule produces cleaner rigid outer geometry than constant gain."
+  }
+}

@@ -41,7 +41,7 @@ watchdog.daemon = True
 watchdog.start()
 
 blocked = ('dinkster_compat_comfy.native_arm', 'dinkster_compat_comfy.entry',
-           'dinkster_inference', 'torch')
+           'dinkster_inference_torch', 'torch')
 class NoExecutionImports(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
         if any(fullname == name or fullname.startswith(name + '.') for name in blocked):
@@ -106,7 +106,7 @@ def install_packs(root: Path, count: int) -> Path:
             "    @classmethod\n"
             "    def define_schema(cls):\n"
             f"        return NodeSchema(node_type='{name}.constant', "
-            "outputs=(OutputSpec('value', TypeExpr.concrete('INT')),))\n"
+            "outputs=(OutputSpec('value', TypeExpr.concrete('core.int')),))\n"
             "    @classmethod\n"
             "    def execute(cls):\n"
             "        return cls.outputs(value=1)\n"

@@ -26,8 +26,6 @@ from typing import cast
 
 import numpy as np
 from dinkster_api.v1 import (
-    CORE_BOOLEAN,
-    CURVE_TYPE,
     AudioWindowReader,
     ComboWidget,
     Curve,
@@ -60,7 +58,7 @@ _ENVELOPE_OPERATIONS = ("avg", "max", "sum")
 _MAX_ENVELOPE_FPS = 240.0
 _MAX_ENVELOPE_HZ = 100_000.0
 
-BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
+BOOLEAN = TypeExpr.concrete("core.boolean")
 FLOAT_LIST = TypeExpr.list_of(FLOAT)
 
 
@@ -748,7 +746,7 @@ class ExtractAudioEnvelope(Node):
             outputs=(
                 OutputSpec("envelope", FLOAT_LIST),
                 OutputSpec("frames", INT),
-                OutputSpec("curve", TypeExpr.concrete(CURVE_TYPE)),
+                OutputSpec("curve", TypeExpr.concrete("dinkster.curve")),
             ),
             search_terms=("amplitude", "audio reactive", "envelope", "beat"),
         )
@@ -915,7 +913,7 @@ class AudioOnsets(Node):
                     widget=NumberWidget(min=1.0, max=240.0, step=1.0),
                 ),
             ),
-            outputs=(OutputSpec("curve", TypeExpr.concrete(CURVE_TYPE)),),
+            outputs=(OutputSpec("curve", TypeExpr.concrete("dinkster.curve")),),
             search_terms=("beat", "audio reactive", "spectral flux"),
         )
 

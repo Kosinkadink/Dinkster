@@ -60,7 +60,7 @@ The graph value remains the ordinary latent mapping:
 ```
 
 Existing single-tensor latent mappings are unchanged. `MultiStreamLatent` is a
-small torch-free structural value in `dinkster-inference-wire`, parameterized by the
+small torch-free structural value in `dinkster-inference`, parameterized by the
 backend tensor type. It contains a nonempty ordered tuple of `LatentStream`
 records. Each stream has only:
 
@@ -77,8 +77,8 @@ its origin or copying model policy into data.
 
 The container exposes only structural operations needed by sampling and compat
 adapters: enumerate/unbind, map, topology comparison, and replacement by role.
-Tensor packing, allocation, interpolation, and device movement remain behind
-the `dinkster_inference` execution boundary.
+Torch packing, allocation, interpolation, and device movement remain in
+`dinkster-inference-torch`.
 
 ### Pack layout
 
@@ -355,7 +355,7 @@ The generic node surface uses only `comfy.LATENT`:
   selected visual role through the model's stream descriptor and registered
   latent RGB preview provider. Its graph output is always IMAGE and it rejects
   a nonvisual role or a family without that renderer.
-- `dinkster.preview_latent_audio(model, latent, role) -> AUDIO` resolves an
+- `dinkster.preview_latent_audio(model, latent, role) -> comfy.AUDIO` resolves an
   audio role through a registered family codec preview decoder. Its graph
   output is always AUDIO and it rejects a role without an audio renderer. Raw
   latent bytes are never labeled as waveform samples.
@@ -558,7 +558,7 @@ field is introduced here.
 Issue #97 validates the completed rework against ComfyUI on RipperPC with
 like-for-like inputs, per-stage timing, and
 `torch.cuda.memory._record_memory_history()` timelines. The implementation
-defines one torch-free execution-observer protocol in `dinkster-inference-wire`. The
+defines one torch-free execution-observer protocol in `dinkster-inference`. The
 backend attaches an observer to one execution invocation and passes it through
 the resident handle and sampler call; it is never process-global. Every event
 contains an invocation ID, span ID, optional parent span ID, begin/end phase,

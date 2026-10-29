@@ -1,4 +1,4 @@
-"""Value-level video operations over frame batches and VIDEO values."""
+"""Value-level video operations over frame batches and comfy.VIDEO values."""
 # pyright: reportUnknownArgumentType=false, reportUnknownMemberType=false, reportUnknownVariableType=false
 
 from __future__ import annotations
@@ -11,9 +11,6 @@ from fractions import Fraction
 import numpy as np
 from dinkster_api.v1 import (
     ABSENT,
-    CORE_BOOLEAN,
-    CORE_STRING,
-    VIDEO_EDIT_TYPE,
     ComboWidget,
     CustomWidgetDescriptor,
     InputSpec,
@@ -63,7 +60,7 @@ def _video_value(video: object) -> dict[str, object]:
     try:
         return coerce_video(video)
     except (TypeError, ValueError) as exc:
-        raise ValueError(f"video is not a valid VIDEO value: {exc}") from exc
+        raise ValueError(f"video is not a valid comfy.VIDEO value: {exc}") from exc
 
 
 class VideoFrameWindow(Node):
@@ -284,7 +281,7 @@ class DisassembleVideo(Node):
                 OutputSpec("fps", FLOAT),
                 OutputSpec("duration", FLOAT),
                 OutputSpec("bit_depth", INT),
-                OutputSpec("color_space", TypeExpr.concrete(CORE_STRING)),
+                OutputSpec("color_space", TypeExpr.concrete("core.string")),
             ),
             search_terms=("video to images", "extract frames", "components", "demux"),
         )
@@ -312,7 +309,7 @@ class TrimVideo(Node):
                 InputSpec("video", VIDEO),
                 InputSpec(
                     "video_edit",
-                    TypeExpr.concrete(VIDEO_EDIT_TYPE),
+                    TypeExpr.concrete("comfy.VIDEO_EDIT"),
                     required=False,
                     widget=CustomWidgetDescriptor("VIDEO_EDIT", {"features": ["trim"]}),
                 ),
@@ -332,7 +329,7 @@ class TrimVideo(Node):
                 ),
                 InputSpec(
                     "strict_duration",
-                    TypeExpr.concrete(CORE_BOOLEAN),
+                    TypeExpr.concrete("core.boolean"),
                     required=False,
                     default=False,
                 ),
@@ -384,7 +381,7 @@ class CropVideo(Node):
                 InputSpec("video", VIDEO),
                 InputSpec(
                     "video_edit",
-                    TypeExpr.concrete(VIDEO_EDIT_TYPE),
+                    TypeExpr.concrete("comfy.VIDEO_EDIT"),
                     required=False,
                     widget=CustomWidgetDescriptor("VIDEO_EDIT", {"features": ["crop"]}),
                 ),
@@ -432,7 +429,7 @@ class VideoInfo(Node):
             category="video",
             inputs=(InputSpec("video", VIDEO),),
             outputs=(
-                OutputSpec("info", TypeExpr.concrete(CORE_STRING)),
+                OutputSpec("info", TypeExpr.concrete("core.string")),
                 OutputSpec("width", INT),
                 OutputSpec("height", INT),
                 OutputSpec("fps", FLOAT, optional=True),

@@ -5,6 +5,9 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
+import sys
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,6 +24,7 @@ from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker, ManifestError
 from dinkster_workers.doctor import DoctorReport, Finding
 
+import dinkster.compose as compose_module
 import dinkster.installer as installer_module
 from dinkster.compose import (
     CompositionError,
@@ -66,7 +70,39 @@ def test_in_process_full_release_rejects_malformed_consumer_result() -> None:
     asyncio.run(scenario())
 
 
-PINS = {"torch": "2.13.0", "comfy-aimdo": "0.4.13"}
+PINS = {"torch": "2.13.0", "dinkster-aimdo": "0.4.13"}
+
+
+@pytest.fixture(autouse=True)
+def component_publisher_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict[str, list[object]]:
+    events: list[object] = []
+    publishers: list[object] = []
+
+    class Publisher:
+        def __init__(self) -> None:
+            self.close_calls = 0
+            publishers.append(self)
+
+        def close(self) -> None:
+            self.close_calls += 1
+
+    @contextmanager
+    def use_component_publisher(publisher: object) -> Generator[None, None, None]:
+        events.append(("enter", publisher))
+        try:
+            yield
+        finally:
+            events.append(("exit", publisher))
+
+    monkeypatch.setattr(compose_module, "NativeComponentPublisher", Publisher)
+    monkeypatch.setitem(
+        cast("dict[str, Any]", sys.modules),
+        "dinkster_inference_torch",
+        SimpleNamespace(use_component_publisher=use_component_publisher),
+    )
+    return {"events": events, "publishers": publishers}
 
 
 def _lockfile() -> Lockfile:
@@ -88,7 +124,7 @@ def test_in_process_policy_sidecar_authority_and_group_contradiction(tmp_path: P
     sidecar = tmp_path / "1.hosting.json"
     sidecar.write_text(
         '{"format":"dinkster.hosting/1","inProcess":["alpha"],'
-        '"runtimePins":{"comfy-aimdo":"0.4.13",'
+        '"runtimePins":{"dinkster-aimdo":"0.4.13",'
         '"torch":"2.13.0"},"venvGroups":{}}\n'
     )
     recorded = _decode_hosting_record(sidecar)
@@ -127,8 +163,7 @@ def _manifest(directory: Path, *, extra: str = "") -> Path:
     directory.mkdir()
     path = directory / "dinkster-pack.toml"
     path.write_text(
-        '[pack]\nname = "isopack"\npublisher = "dinkster"\n'
-        'type-namespaces = ["iso"]\nnamespaces = ["iso"]\n'
+        '[pack]\nname = "isopack"\nnamespaces = ["iso"]\n'
         f"{extra}\n[pack.entry]\n"
         'nodes = "isopack_nodes:NODES"\ntypes = "isopack_nodes:register_types"\n'
     )
@@ -149,7 +184,7 @@ def _placement_manifest(directory: Path) -> Path:
     directory.mkdir()
     (directory / "h31_placement_nodes.py").write_text(
         "from dinkster_schema import InputSpec,Node,NodeSchema,OutputSpec,TypeExpr\n"
-        "STRING=TypeExpr.concrete('STRING')\n"
+        "STRING=TypeExpr.concrete('core.string')\n"
         "class Echo(Node):\n"
         "    @classmethod\n"
         "    def define_schema(cls):\n"
@@ -162,8 +197,7 @@ def _placement_manifest(directory: Path) -> Path:
     )
     manifest = directory / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname = "h31-placement"\npublisher = "dinkster"\n'
-        'namespaces = ["h31"]\n[pack.entry]\n'
+        '[pack]\nname = "h31-placement"\nnamespaces = ["h31"]\n[pack.entry]\n'
         'nodes = "h31_placement_nodes:NODES"\n'
     )
     return manifest
@@ -232,8 +266,7 @@ def test_in_process_placement_is_byte_identical_for_schema_provenance_and_invoca
             )
             second = second_root / "dinkster-pack.toml"
             second.write_text(
-                '[pack]\nname = "h31-second"\npublisher = "dinkster"\n'
-                'namespaces = ["h32"]\n'
+                '[pack]\nname = "h31-second"\nnamespaces = ["h32"]\n'
                 '[pack.entry]\nnodes = "h31_second_nodes:NODES"\n'
             )
             await composer.add_pack(PackSpec(second, in_process=True, runtime_pins=PINS))
@@ -253,8 +286,7 @@ def test_in_process_placement_is_byte_identical_for_schema_provenance_and_invoca
             )
             conflicting = conflicting_root / "dinkster-pack.toml"
             conflicting.write_text(
-                '[pack]\nname = "h31-conflicting"\npublisher = "dinkster"\n'
-                'namespaces = ["h33"]\n'
+                '[pack]\nname = "h31-conflicting"\nnamespaces = ["h33"]\n'
                 '[pack.entry]\nnodes = "h31_second_nodes:NODES"\n'
             )
             with pytest.raises(ManifestError, match="already loaded from outside the pack root"):
@@ -262,6 +294,61 @@ def test_in_process_placement_is_byte_identical_for_schema_provenance_and_invoca
         finally:
             await composer.close()
             await isolated.close()
+
+    asyncio.run(scenario())
+
+
+def test_runtime_pinned_pack_owns_component_publisher_until_pack_removal(
+    tmp_path: Path,
+    component_publisher_events: dict[str, list[object]],
+) -> None:
+    async def scenario() -> None:
+        manifest = _placement_manifest(tmp_path / "publisher-pack")
+        module = manifest.parent / "h31_placement_nodes.py"
+        publisher_module = manifest.parent / "component_publisher_nodes.py"
+        module.rename(publisher_module)
+        manifest.write_text(
+            manifest.read_text().replace("h31_placement_nodes", "component_publisher_nodes")
+        )
+        spec = PackSpec(manifest, in_process=True, runtime_pins=PINS)
+        composer = _composer()
+        await composer.add_pack(spec)
+        record = composer._records["h31-placement"]
+        publisher = record.component_publisher
+        assert publisher is not None
+        assert record.owns_component_publisher
+        assert composer.composition._component_publishers == [publisher]
+        assert component_publisher_events["publishers"] == [publisher]
+
+        component_publisher_events["events"].clear()
+        graph = Graph(nodes={"n": GraphNode("h31.echo", {"value": "same"})})
+        result = await composer.composition.make_engine(lambda _event: None).run(graph, ["n"])
+        assert result.outputs["n"]["value"].resolve() == "same"
+        assert component_publisher_events["events"] == [
+            ("enter", publisher),
+            ("exit", publisher),
+        ]
+
+        discarded = composer.spawn_empty()
+        await discarded.add_pack(spec)
+        assert discarded._records["h31-placement"].component_publisher is publisher
+        assert not discarded._records["h31-placement"].owns_component_publisher
+        await discarded.close()
+        assert cast("Any", publisher).close_calls == 0
+
+        staged = composer.spawn_empty()
+        await staged.add_pack(spec)
+        old = composer.adopt(staged)
+        await old.close()
+        assert cast("Any", publisher).close_calls == 0
+        assert composer._records["h31-placement"].owns_component_publisher
+        assert composer.composition._component_publishers == [publisher]
+
+        await composer.remove_pack("h31-placement")
+        assert cast("Any", publisher).close_calls == 1
+        assert composer.composition._component_publishers == []
+        await composer.close()
+        assert cast("Any", publisher).close_calls == 1
 
     asyncio.run(scenario())
 
@@ -297,7 +384,7 @@ def test_in_process_installer_skips_venv_and_exact_pin_refusal_is_not_overridabl
         installer.apply(target, allow_doctor_findings=True)
     assert installer.current_number() is None
     assert provisioned == []
-    with pytest.raises(InstallError, match="requires exact torch and comfy-aimdo"):
+    with pytest.raises(InstallError, match="requires exact torch and dinkster-aimdo"):
         installer.apply(
             target,
             hosting_groups=(),
@@ -305,9 +392,9 @@ def test_in_process_installer_skips_venv_and_exact_pin_refusal_is_not_overridabl
             hosting_runtime_pins={},
         )
 
-    aimdo = _install_pack(tmp_path / "aimdo", "alpha", requires='"comfy-aimdo==0.4.13"')
+    aimdo = _install_pack(tmp_path / "aimdo", "alpha", requires='"dinkster-aimdo==0.4.13"')
     aimdo_target = Lockfile.of([lock_local_pack(aimdo, installer.artifacts_dir)[0]])
-    with pytest.raises(InstallError, match="must not declare a comfy-aimdo dependency"):
+    with pytest.raises(InstallError, match="must not declare a dinkster-aimdo dependency"):
         installer.apply(aimdo_target, allow_doctor_findings=True)
 
     probes = iter((PINS, {**PINS, "torch": "2.14.0"}))
@@ -458,7 +545,7 @@ def test_in_process_tenant_registers_on_invocation_unregisters_on_remove_and_ref
         "class TenantNode(Node):\n"
         "    @classmethod\n"
         "    def define_schema(cls):\n"
-        "        output=OutputSpec('device',TypeExpr.concrete('STRING'))\n"
+        "        output=OutputSpec('device',TypeExpr.concrete('core.string'))\n"
         "        return NodeSchema(node_type='tenant.load',outputs=(output,))\n"
         "    @classmethod\n"
         "    async def execute(cls):\n"
@@ -470,8 +557,7 @@ def test_in_process_tenant_registers_on_invocation_unregisters_on_remove_and_ref
     )
     manifest = tmp_path / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname = "tenantpack"\npublisher = "dinkster"\n'
-        'namespaces = ["tenant"]\n[pack.entry]\n'
+        '[pack]\nname = "tenantpack"\nnamespaces = ["tenant"]\n[pack.entry]\n'
         'nodes = "tenant_nodes:NODES"\nconsumers = "tenant_nodes:unused"\n'
     )
     monkeypatch.syspath_prepend(str(tmp_path))
@@ -502,10 +588,7 @@ def test_in_process_tenant_registers_on_invocation_unregisters_on_remove_and_ref
         workers = await composer.full_free("in-process-tenants")
         tenant_worker = next(worker for worker in workers if worker["worker"] == "tenantpack")
         assert tenant_worker["status"] == "complete"
-        assert tenant_worker["consumers"] == [
-            {"consumer": "resident-values-0", "status": "complete"},
-            {"consumer": "model-tenants", "status": "complete"},
-        ]
+        assert tenant_worker["consumers"] == [{"consumer": "model-tenants", "status": "complete"}]
         assert registry.live == {}
         await composer.remove_pack("tenantpack")
         assert registry.live == {}

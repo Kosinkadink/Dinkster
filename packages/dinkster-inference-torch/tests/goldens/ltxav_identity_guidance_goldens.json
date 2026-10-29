@@ -1,0 +1,124 @@
+{
+  "cases": {
+    "above_window": {
+      "calls": [],
+      "cfg_result": [
+        20.0,
+        -7.0,
+        4.0
+      ],
+      "conditional": [
+        11.0,
+        -3.0,
+        0.5
+      ],
+      "no_reference": [
+        5.0,
+        2.0,
+        -1.5
+      ],
+      "output": [
+        20.0,
+        -7.0,
+        4.0
+      ],
+      "scale": 3.0,
+      "sigma": 0.9,
+      "sigma_end": 0.2,
+      "sigma_start": 0.8
+    },
+    "active": {
+      "calls": [
+        {
+          "stripped": true
+        }
+      ],
+      "cfg_result": [
+        20.0,
+        -7.0,
+        4.0
+      ],
+      "conditional": [
+        11.0,
+        -3.0,
+        0.5
+      ],
+      "no_reference": [
+        5.0,
+        2.0,
+        -1.5
+      ],
+      "output": [
+        38.0,
+        -22.0,
+        10.0
+      ],
+      "scale": 3.0,
+      "sigma": 0.5,
+      "sigma_end": 0.2,
+      "sigma_start": 0.8
+    },
+    "below_window": {
+      "calls": [],
+      "cfg_result": [
+        20.0,
+        -7.0,
+        4.0
+      ],
+      "conditional": [
+        11.0,
+        -3.0,
+        0.5
+      ],
+      "no_reference": [
+        5.0,
+        2.0,
+        -1.5
+      ],
+      "output": [
+        20.0,
+        -7.0,
+        4.0
+      ],
+      "scale": 3.0,
+      "sigma": 0.1,
+      "sigma_end": 0.2,
+      "sigma_start": 0.8
+    },
+    "zero_scale": {
+      "calls": [],
+      "cfg_result": [
+        20.0,
+        -7.0,
+        4.0
+      ],
+      "conditional": [
+        11.0,
+        -3.0,
+        0.5
+      ],
+      "no_reference": [
+        5.0,
+        2.0,
+        -1.5
+      ],
+      "output": [
+        20.0,
+        -7.0,
+        4.0
+      ],
+      "scale": 0.0,
+      "sigma": 0.5,
+      "sigma_end": 0.2,
+      "sigma_start": 0.8
+    }
+  },
+  "reference": {
+    "commit": "b78cec879b9460d5cb25228a83a942fb78d2cd24",
+    "generator": "tools/gen_ltxav_identity_guidance_goldens.py",
+    "platform": "linux",
+    "python": "3.12.11",
+    "repo": "ComfyUI",
+    "torch": "2.13.0+cu130"
+  }
+}

@@ -16,7 +16,6 @@ from typing import Any, cast
 
 import numpy as np
 import pytest
-from dinkster_api.v1 import AUDIO_TYPE
 from dinkster_assets import AssetError, AssetIntegrityError, AssetRef, AssetVault, digest_bytes
 from dinkster_assets.audio import bind_audio_value, register_audio_value_type
 from dinkster_nodes_foundation.types import Curve
@@ -192,7 +191,7 @@ def test_sample_windows_and_order_survive_portable_round_trip(source) -> None:
     before = encode_audio(value)
     rebound = bind_audio_value(decode_audio(before), asset.resolver)
     assert encode_audio(rebound) == before
-    assert audio_fingerprint(AUDIO_TYPE)(value) == audio_fingerprint(AUDIO_TYPE)(rebound)
+    assert audio_fingerprint("comfy.AUDIO")(value) == audio_fingerprint("comfy.AUDIO")(rebound)
     np.testing.assert_array_equal(
         audio_window(rebound, 19, 311)["waveform"], pcm[..., 199:510] * 0.5
     )
@@ -358,8 +357,8 @@ def test_audio_admission_separates_semantics_from_local_storage(source, inline, 
 def test_audio_registration_canonicalizes_storage_before_metadata(dtype) -> None:
     pcm = np.arange(16, dtype=dtype).reshape(1, 2, 8)
     registry = TypeRegistry()
-    register_audio_value_type(registry, AUDIO_TYPE)
-    value = registry.wrap(AUDIO_TYPE, {"waveform": pcm, "sample_rate": 8000})
+    register_audio_value_type(registry, "comfy.AUDIO")
+    value = registry.wrap("comfy.AUDIO", {"waveform": pcm, "sample_rate": 8000})
     expected = pcm if dtype in (np.int16, np.float32) else pcm.astype(np.float32)
     encoded = encode_audio(value.resolve())
     decoded = cast(Any, decode_audio(encoded))
@@ -777,8 +776,8 @@ def test_onset_curve_tracks_impulses_and_silent_audio() -> None:
 
     registry = TypeRegistry()
     register_media_types(registry)
-    encoded = registry.spec("CURVE").encode(curve)
-    assert registry.spec("CURVE").decode(encoded) == curve
+    encoded = registry.spec("dinkster.curve").encode(curve)
+    assert registry.spec("dinkster.curve").decode(encoded) == curve
     assert json.loads(encoded)["points"][0] == {"position": 0.0, "value": 0.0}
     assert max(curve.points, key=lambda point: point[1])[0] == 0.25
     assert curve.evaluate(0.75) > 0.5
@@ -914,14 +913,14 @@ def test_registry_audio_wire_admission_and_receiving_host_binding(source) -> Non
     asset, expected = source
     sender = TypeRegistry()
     receiver = TypeRegistry()
-    register_audio_value_type(sender, AUDIO_TYPE, asset.resolver)
-    register_audio_value_type(receiver, AUDIO_TYPE, asset.resolver)
-    value = sender.wrap(AUDIO_TYPE, audio_from_source(asset))
-    wire = sender.spec(AUDIO_TYPE).encode(value.resolve())
-    validator = receiver.spec(AUDIO_TYPE).validate_encoded_buffer
+    register_audio_value_type(sender, "comfy.AUDIO", asset.resolver)
+    register_audio_value_type(receiver, "comfy.AUDIO", asset.resolver)
+    value = sender.wrap("comfy.AUDIO", audio_from_source(asset))
+    wire = sender.spec("comfy.AUDIO").encode(value.resolve())
+    validator = receiver.spec("comfy.AUDIO").validate_encoded_buffer
     assert validator is not None
     validator(memoryview(wire), value.meta.entries)
-    received = receiver.spec(AUDIO_TYPE).decode(wire)
+    received = receiver.spec("comfy.AUDIO").decode(wire)
     np.testing.assert_array_equal(
         audio_window(received, 712, 29)["waveform"], expected[..., 712:741]
     )
@@ -944,7 +943,7 @@ def test_lazy_audio_chain_matches_across_worker_shared_memory(source, concat) ->
     async def scenario() -> None:
         registry = TypeRegistry()
         register_core_types(registry)
-        register_audio_value_type(registry, AUDIO_TYPE, asset.resolver)
+        register_audio_value_type(registry, "comfy.AUDIO", asset.resolver)
         register_media_types(registry)
 
         async def run(worker: InProcessWorker | IsolatedWorker) -> object:
@@ -954,9 +953,9 @@ def test_lazy_audio_chain_matches_across_worker_shared_memory(source, concat) ->
                     node_id="trim",
                     node_type="dinkster.audio.trim",
                     inputs={
-                        "audio": registry.wrap(AUDIO_TYPE, value),
-                        "start": registry.wrap("FLOAT", 0.113),
-                        "duration": registry.wrap("FLOAT", 0.751),
+                        "audio": registry.wrap("comfy.AUDIO", value),
+                        "start": registry.wrap("core.float", 0.113),
+                        "duration": registry.wrap("core.float", 0.751),
                     },
                     effective_schema=worker.schemas["dinkster.audio.trim"],
                 )
@@ -990,7 +989,7 @@ def test_lazy_audio_chain_matches_across_worker_shared_memory(source, concat) ->
                 crossing.transport
                 for diagnostic in diagnostics
                 for crossing in diagnostic.inputs
-                if crossing.type_id == AUDIO_TYPE
+                if crossing.type_id == "comfy.AUDIO"
             ] == ["shm"]
         finally:
             await worker.close()

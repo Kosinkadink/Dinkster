@@ -19,6 +19,7 @@ __all__ = ["RESOLVER_INDEXES_KEY", "add_resolver_index_routes"]
 RESOLVER_INDEXES_KEY: web.AppKey[ResolverSubscriptionStore] = web.AppKey(
     "dinkster_resolver_indexes"
 )
+RESOLVER_P2P_GRANTED_KEY: web.AppKey[bool] = web.AppKey("dinkster_resolver_p2p_granted")
 
 
 def _json_error(status: int, message: str) -> web.Response:
@@ -76,6 +77,33 @@ async def handle_resolver_index_unsubscribe(request: web.Request) -> web.Respons
     return web.json_response({"removed": subscription_id})
 
 
+async def handle_resolver_index_p2p_trust(request: web.Request) -> web.Response:
+    if not request.app[RESOLVER_P2P_GRANTED_KEY]:
+        return _json_error(403, "P2P trust settings are disabled by this host")
+    body = await _json_body(request)
+    if isinstance(body, web.Response):
+        return body
+    if set(body) != {"trustedForP2P", "licenseAuthoritative"} or any(
+        type(body[field]) is not bool for field in body
+    ):
+        return _json_error(
+            400,
+            "request body requires boolean 'trustedForP2P' and 'licenseAuthoritative' fields",
+        )
+    store = request.app[RESOLVER_INDEXES_KEY]
+    try:
+        subscription = await asyncio.to_thread(
+            store.set_p2p_trust,
+            request.match_info["subscriptionId"],
+            trusted_for_p2p=cast("bool", body["trustedForP2P"]),
+            license_authoritative=cast("bool", body["licenseAuthoritative"]),
+        )
+    except ResolverSubscriptionError as exc:
+        return _json_error(404, str(exc))
+    _publish(request.app)
+    return web.json_response(subscription.descriptor())
+
+
 async def handle_resolver_indexes_refresh(request: web.Request) -> web.Response:
     body = await _json_body(request)
     if isinstance(body, web.Response):
@@ -101,15 +129,18 @@ def add_resolver_index_routes(
     app: web.Application,
     store: ResolverSubscriptionStore,
     *,
+    p2p_granted: bool = False,
     official_url: str | None = None,
     official_provider_id: str | None = None,
 ) -> None:
-    if not app[STATE_KEY].settings.features["resolver"]["enabled"]:
-        return
     app[RESOLVER_INDEXES_KEY] = store
+    app[RESOLVER_P2P_GRANTED_KEY] = p2p_granted
     app.router.add_get("/api/assets/resolver-indexes", handle_resolver_indexes_list)
     app.router.add_post("/api/assets/resolver-indexes", handle_resolver_index_subscribe)
     app.router.add_post("/api/assets/resolver-indexes/refresh", handle_resolver_indexes_refresh)
+    app.router.add_patch(
+        "/api/assets/resolver-indexes/{subscriptionId}", handle_resolver_index_p2p_trust
+    )
     app.router.add_delete(
         "/api/assets/resolver-indexes/{subscriptionId}", handle_resolver_index_unsubscribe
     )

@@ -23,20 +23,21 @@ runs:
       with:
         repository: Kosinkadink/dinkster-evidence
         deploy-key: ${{ inputs.evidence-deploy-key }}
-    - name: Read the validation evidence revision
-      id: evidence-revision
-      shell: bash
-      run: echo "revision=$(cat tools/evidence-revision.txt)" >> "$GITHUB_OUTPUT"
     - uses: actions/checkout@v4
       with:
         repository: Kosinkadink/dinkster-evidence
-        ref: ${{ steps.evidence-revision.outputs.revision }}
+        ref: a5949cd95ab302f73377ad5aa02a6f35565a60b9
         path: .evidence-source
         clean: true
         persist-credentials: false
     - shell: bash
       run: |
-        python scripts/prepare_validation_inputs.py --evidence-root .evidence-source
+        # Materialize core-owned code even on hosts without Git symlink support.
+        rm .evidence-source/packages/dinkster-inference-torch
+        rm .evidence-source/scripts/comfyui_benchmark_nodes
+        cp -R packages/dinkster-inference-torch .evidence-source/packages/
+        cp -R scripts/comfyui_benchmark_nodes .evidence-source/scripts/
+        cp tools/workflow_benchmark*.py .evidence-source/tools/
         echo "DINKSTER_EVIDENCE_ROOT=$GITHUB_WORKSPACE/.evidence-source" >> "$GITHUB_ENV"
         echo "DINKSTER_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
     - if: inputs.coverage == 'true'

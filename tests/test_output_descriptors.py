@@ -40,8 +40,8 @@ from dinkster_workers.catalog import read_catalog
 from dinkster.compose import PackSpec, ServingComposer
 from dinkster.lazy_worker import LazyWorker
 
-INT = TypeExpr.concrete("INT")
-STRING = TypeExpr.concrete("STRING")
+INT = TypeExpr.concrete("core.int")
+STRING = TypeExpr.concrete("core.string")
 
 
 def document(*entries: Mapping[str, object]) -> str:
@@ -70,7 +70,7 @@ def test_wire_and_effective_interface_roundtrip() -> None:
     effective = elaborate(schema, {"entries": value})
     assert [(out.id, out.display_name, out.type) for out in effective.outputs] == [
         ("stable", "Answer", INT),
-        ("other", "Ready", TypeExpr.concrete("BOOLEAN")),
+        ("other", "Ready", TypeExpr.concrete("core.boolean")),
     ]
     assert schema_from_wire(schema_to_wire(effective)) == effective
     assert effective.is_static
@@ -99,7 +99,7 @@ def test_wire_and_effective_interface_roundtrip() -> None:
         document({"id": "x", "name": "A", "type": "int"}, {"id": "x", "name": "B", "type": "int"}),
         document({"id": "x", "name": "A", "type": "int"}, {"id": "y", "name": "A", "type": "int"}),
         Link("producer", "text"),
-        TypedLiteral("STRING", '{"entries":[]}'),
+        TypedLiteral("core.string", '{"entries":[]}'),
     ],
 )
 def test_malformed_descriptors_fail_before_execution(value: object) -> None:
@@ -227,7 +227,7 @@ def test_entry_list_fan_out_interface_depends_only_on_stored_descriptors(
             nodes={
                 "fan": GraphNode(
                     "dinkster.list.fan_out",
-                    {"entries": entries, "items": TypedLiteral("list<INT>", items)},
+                    {"entries": entries, "items": TypedLiteral("list<core.int>", items)},
                 ),
                 "sum": GraphNode(
                     "std.math.add_ints",
@@ -294,7 +294,7 @@ def test_worker_reprojects_descriptors(
                 invocation_id="test",
                 node_id="fan",
                 node_type="dinkster.list.fan_out",
-                inputs={"entries": registry.wrap("STRING", value)},
+                inputs={"entries": registry.wrap("core.string", value)},
                 effective_schema=replace(effective, outputs=tuple(outputs)),
             )
         )
@@ -317,9 +317,9 @@ def test_persisted_descriptors_start_only_on_execution(tmp_path: Path, in_proces
         "    @classmethod\n"
         "    def define_schema(cls):\n"
         "        return NodeSchema('catalogdescriptors.math',\n"
-        "            inputs=(InputSpec('entries', TypeExpr.concrete('STRING')),),\n"
+        "            inputs=(InputSpec('entries', TypeExpr.concrete('core.string')),),\n"
         "            output_descriptors=OutputDescriptorsSpec('entries',\n"
-        "                (OutputSpec('int', TypeExpr.concrete('INT')),), 32))\n"
+        "                (OutputSpec('int', TypeExpr.concrete('core.int')),), 32))\n"
         "    @classmethod\n"
         "    def execute(cls, *, entries, output_spec):\n"
         "        return {entry['id']: entry['value'] "

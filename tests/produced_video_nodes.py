@@ -8,13 +8,13 @@ from typing import Any, cast
 
 import av
 import numpy as np
-from dinkster_api.v1 import VIDEO_TYPE, Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_api.v1 import Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_assets import register_video_value_type, resolver_from_env
 from dinkster_values import TypeRegistry, video_from_source
 
 
 def register_types(registry: TypeRegistry) -> None:
-    register_video_value_type(registry, VIDEO_TYPE, resolver_from_env())
+    register_video_value_type(registry, "comfy.VIDEO", resolver_from_env())
 
 
 class ProduceVideo(Node):
@@ -25,7 +25,7 @@ class ProduceVideo(Node):
             display_name="Produce Video",
             category="test",
             inputs=(),
-            outputs=(OutputSpec("video", TypeExpr.concrete(VIDEO_TYPE)),),
+            outputs=(OutputSpec("video", TypeExpr.concrete("comfy.VIDEO")),),
         )
 
     @classmethod

@@ -135,7 +135,7 @@ def test_list_slice_and_range_schemas_preserve_element_types() -> None:
     assert range_schema.inputs[1].required is True
     assert range_schema.inputs[1].default is None
     assert range_schema.inputs[2].default == 1
-    assert range_schema.outputs[0].type == TypeExpr.list_of(TypeExpr.concrete("INT"))
+    assert range_schema.outputs[0].type == TypeExpr.list_of(TypeExpr.concrete("core.int"))
 
     for schema in (slice_schema, range_schema):
         assert schema_from_wire(schema_to_wire(schema)) == schema
@@ -157,16 +157,15 @@ def test_scalar_or_list_match_inputs_share_the_unconstrained_t_contract() -> Non
         assert item.type == TypeExpr.variable("T"), name
 
 
-def test_compat_translation_claims_match_always_composed_schema_aliases() -> None:
-    from dinkster_compat_comfy.native import (
-        FOUNDATION_CLAIMED_V1_NAMES,
-        MEDIA_IO_CLAIMED_V1_NAMES,
-    )
+def test_compat_claim_list_pinned_to_declared_aliases() -> None:
+    """dinkster-compat-comfy evicts translated foundation twins via a
+    hand-kept STD_CLAIMED_V1_NAMES (the one-way dependency rule forbids
+    it importing this pack), so this test is the drift guard: the list
+    must equal exactly the legacy aliases the foundation nodes declare."""
+    from dinkster_compat_comfy.native import STD_CLAIMED_V1_NAMES
 
-    foundation = {alias for node in FOUNDATION_NODES for alias in node.schema().aliases}
-    media = {alias for node in MEDIA_IO_NODES for alias in node.schema().aliases}
-    assert set(FOUNDATION_CLAIMED_V1_NAMES) == foundation
-    assert set(MEDIA_IO_CLAIMED_V1_NAMES) == media
+    declared = {alias for node in FOUNDATION_NODES for alias in node.schema().aliases}
+    assert set(STD_CLAIMED_V1_NAMES) == declared
 
 
 def test_primitive_wire_presentation() -> None:
@@ -237,24 +236,24 @@ def test_primitive_wire_presentation() -> None:
     target = _entry(target_wire, "target")
     assert target["type"] == {
         "kind": "concrete",
-        "types": ["SAVE_TARGET"],
+        "types": ["dinkster.save_target"],
     }
     assert target["widget"] == {"type": "SAVE_TARGET"}
     prefix = _entry(target_wire, "prefix")
-    assert prefix["type"] == {"kind": "concrete", "types": ["STRING"]}
+    assert prefix["type"] == {"kind": "concrete", "types": ["core.string"]}
     assert prefix["required"] is False
     assert "widget" not in prefix
     output = _entry(target_wire, "save_target")
     assert output["type"] == {
         "kind": "concrete",
-        "types": ["SAVE_TARGET"],
+        "types": ["dinkster.save_target"],
     }
 
 
 def test_save_target_prefix_is_an_explicit_typed_constructor() -> None:
-    """A computed STRING may replace only the relative prefix. The
+    """A computed core.string may replace only the relative prefix. The
     structured input supplies and preserves the mount id, the output remains
-    SAVE_TARGET, and omitting the replacement is an exact identity."""
+    dinkster.save_target, and omitting the replacement is an exact identity."""
     from dinkster_assets import AssetError, SaveTarget
 
     assert SAVE_TARGET_NODES == (SetSaveTargetPrefix,)
@@ -289,7 +288,7 @@ def test_save_target_prefix_is_an_explicit_typed_constructor() -> None:
         )
         result = await engine.run(graph, ["target"])
         wrapped = result.outputs["target"]["save_target"]
-        assert wrapped.type_id == "SAVE_TARGET"
+        assert wrapped.type_id == "dinkster.save_target"
         assert wrapped.resolve() == SaveTarget(
             mount="project-output", prefix="computed/linked-scene"
         )
@@ -315,7 +314,7 @@ def test_primitives_execute_with_values_and_defaults() -> None:
         )
         result = await engine.run(graph, ["i", "f", "s", "m", "b", "p"])
         assert result.outputs["i"]["value"].resolve() == 7
-        assert result.outputs["i"]["value"].type_id == "INT"
+        assert result.outputs["i"]["value"].type_id == "core.int"
         assert result.outputs["f"]["value"].resolve() == 0.25
         assert result.outputs["s"]["value"].resolve() == "hello"
         assert result.outputs["m"]["value"].resolve() == "a\nb"
@@ -375,7 +374,7 @@ def test_unresolvable_payload_fails_as_node_error() -> None:
         registry = TypeRegistry()
         register_core_types(registry)
         worker = InProcessWorker(build_node_types(PRIMITIVE_TEST_NODES), registry)
-        donor = registry.wrap("STRING", "x")
+        donor = registry.wrap("core.string", "x")
         alien = dataclasses.replace(
             donor,
             type_id="alien.tensor",

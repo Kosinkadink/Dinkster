@@ -17,7 +17,6 @@ from av.codec import Codec
 from dinkster_api.v1 import (
     ABSENT,
     ASSET_TYPE,
-    AUDIO_TYPE,
     CORE_BOOLEAN,
     CORE_COMBO,
     CORE_FLOAT,
@@ -26,12 +25,10 @@ from dinkster_api.v1 import (
     DITHERS,
     ENCODED_MEDIA_LIMIT_BYTES,
     FRAME_FORMATS,
-    IMAGE_TYPE,
     MEBIBYTE,
     SAVE_TARGET_TYPE,
     VIDEO_AUDIO_WORKING_SET_LIMIT_BYTES,
     VIDEO_FRAME_WORKING_SET_LIMIT_BYTES,
-    VIDEO_TYPE,
     AssetError,
     AssetRef,
     AssetWidget,
@@ -60,6 +57,11 @@ from dinkster_api.v1 import (
     save_video_stream,
     video_from_source,
 )
+
+IMAGE_TYPE = "dinkster.image"
+COMPAT_IMAGE_TYPE = "comfy.IMAGE"
+AUDIO_TYPE = "comfy.AUDIO"
+VIDEO_TYPE = "comfy.VIDEO"
 
 IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 AUDIO = TypeExpr.concrete(AUDIO_TYPE)
@@ -936,6 +938,7 @@ VIDEO_NODES = (
 
 __all__ = [
     "AUDIO_TYPE",
+    "COMPAT_IMAGE_TYPE",
     "IMAGE_TYPE",
     "MAX_DECODED_AUDIO_BYTES",
     "MAX_DECODED_FRAME_BYTES",

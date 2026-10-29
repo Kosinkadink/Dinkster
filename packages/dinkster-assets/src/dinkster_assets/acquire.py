@@ -2,7 +2,7 @@
 (DESIGN 3.12 + roadmap "templates/asset distribution").
 
 One function, one contract: ``acquire_need`` resolves a need in strict
-cost order - already-local, packaged, remote - and every source must
+cost order - already-local, packaged, LAN, remote - and every source must
 verify before vault publication, so a wrong file in a pack, a lying mirror,
 or a truncated download lands NOTHING. The digest the need declared is the
 only authority.
@@ -21,7 +21,7 @@ the next machine that consults it.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -85,6 +85,8 @@ def acquire_need(
     provenance: ProvenanceStore | None = None,
     public_sources: Sequence[PublicAcquisitionSourceV1] = (),
     receipts: PublicAcquisitionReceiptStore | None = None,
+    lan_resolve: Callable[[str], Path | None] | None = None,
+    materialized: Callable[[], None] | None = None,
     timeout: float = DEFAULT_FETCH_TIMEOUT,
 ) -> AcquisitionResult:
     """Materialize one need, verified, in cost order.
@@ -92,7 +94,8 @@ def acquire_need(
     1. Local: the vault, then ``resolver`` (mounts, libraries) - free.
     2. Packaged: copy out of an installed pack under ``pack_roots``,
        digest-verified through the vault writer.
-    3. Remote: the need's URLs plus any ``provenance`` leads for the
+    3. LAN: ask the bounded P2P resolver for a verified vault object.
+    4. Remote: the need's URLs plus any ``provenance`` leads for the
        digest, via ``fetch_asset`` (verified the same way).
 
     Success from a non-local source records the winning provenance."""
@@ -130,7 +133,18 @@ def acquire_need(
             failures.append(f"packaged {source.pack}:{source.path}: {exc}")
             continue
         _record_provenance(need, provenance, note=f"packaged by {source.pack}")
+        if materialized is not None:
+            materialized()
         return AcquisitionResult(need, "acquired", path=path)
+
+    if lan_resolve is not None:
+        try:
+            path = lan_resolve(need.digest)
+        except (OSError, AssetError, TimeoutError) as exc:
+            failures.append(f"LAN P2P: {exc}")
+        else:
+            if path is not None:
+                return AcquisitionResult(need, "acquired", path=path)
 
     urls = [source.url for source in need.sources if isinstance(source, RemoteSource)]
     if provenance is not None:
@@ -170,10 +184,14 @@ def acquire_need(
                             except (OSError, AssetError):
                                 pass
                     _record_provenance(need, provenance)
+                    if materialized is not None:
+                        materialized()
                     return AcquisitionResult(need, "acquired", path=fetched.path)
         path = fetch_asset(need.digest, urls, vault, timeout=timeout)
         if path is not None:
             _record_provenance(need, provenance)
+            if materialized is not None:
+                materialized()
             return AcquisitionResult(need, "acquired", path=path)
         failures.append(f"remote: all {len(urls)} candidate URL(s) failed")
 

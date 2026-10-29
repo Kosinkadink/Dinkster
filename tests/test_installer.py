@@ -519,21 +519,14 @@ def test_apply_requires_staged_or_provided_artifacts(tmp_path: Path) -> None:
     assert number == 1
 
 
-@pytest.mark.parametrize("claims", [("demo",), ("Epsilon Scaling", "TextEncodeAceStepAudio1.5")])
-def test_lock_local_pack_digest_is_identity(tmp_path: Path, claims: tuple[str, ...]) -> None:
+def test_lock_local_pack_digest_is_identity(tmp_path: Path) -> None:
     installer = make_installer(tmp_path)
     pack_dir = write_pack(tmp_path / "demo", "demo")
-    manifest_path = pack_dir / "dinkster-pack.toml"
-    manifest_path.write_text(
-        manifest_path.read_text().replace(
-            'name = "demo"\n', 'name = "demo"\nnamespaces = ' + json.dumps(claims) + "\n"
-        )
-    )
     entry, archive = lock_local_pack(pack_dir, installer.artifacts_dir)
     assert entry.pack == "demo"
     assert entry.publisher == "local"
     assert entry.version == "0.0.0"
-    assert entry.claims == claims
+    assert entry.claims == ("demo",)
     assert entry.source == f"local:{pack_dir.resolve()}"
     assert archive.is_file()
     # the archive is content-addressed next to the digest

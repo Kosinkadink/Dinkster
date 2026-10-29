@@ -39,7 +39,7 @@
                   "type": {
                     "kind": "concrete",
                     "types": [
-                      "STRING"
+                      "core.string"
                     ]
                   },
                   "widget": {
@@ -79,7 +79,7 @@
                   "type": {
                     "kind": "concrete",
                     "types": [
-                      "COMBO"
+                      "core.combo"
                     ]
                   },
                   "widget": {
@@ -103,7 +103,7 @@
                   "type": {
                     "kind": "concrete",
                     "types": [
-                      "COMBO"
+                      "core.combo"
                     ]
                   },
                   "widget": {
@@ -141,7 +141,7 @@
               ],
               "version": 1
             },
-            "signature": "4c027efbe3db9c6f84887b38ee2cf56ddc6b27ca"
+            "signature": "1370facbdac3655642711aba0e458ad78ada5927"
           }
         },
         "sunset": null
@@ -178,7 +178,7 @@
                   "type": {
                     "kind": "concrete",
                     "types": [
-                      "STRING"
+                      "core.string"
                     ]
                   },
                   "widget": {
@@ -220,7 +220,7 @@
                   "type": {
                     "kind": "concrete",
                     "types": [
-                      "INT"
+                      "core.int"
                     ]
                   },
                   "widget": {
@@ -238,7 +238,7 @@
                   "type": {
                     "kind": "concrete",
                     "types": [
-                      "COMBO"
+                      "core.combo"
                     ]
                   },
                   "widget": {
@@ -259,7 +259,7 @@
                   "type": {
                     "kind": "concrete",
                     "types": [
-                      "COMBO"
+                      "core.combo"
                     ]
                   },
                   "widget": {
@@ -283,7 +283,7 @@
                   "type": {
                     "kind": "concrete",
                     "types": [
-                      "BOOLEAN"
+                      "core.boolean"
                     ]
                   }
                 },
@@ -313,7 +313,7 @@
               ],
               "version": 1
             },
-            "signature": "e8cc2e7415a7d758702e3a4d4f08a5b628391985"
+            "signature": "114cea86a0678e16087b6d1d26cce04eaac79501"
           }
         },
         "sunset": null

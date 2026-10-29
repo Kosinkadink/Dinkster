@@ -31,12 +31,12 @@ IMAGE = TypeExpr.concrete("core.image")
 
 SOURCE_SCHEMA = NodeSchema(
     node_type="comfy.ImageScale",
-    inputs=(InputSpec("image", IMAGE), InputSpec("mode", TypeExpr.concrete("STRING"))),
+    inputs=(InputSpec("image", IMAGE), InputSpec("mode", TypeExpr.concrete("core.string"))),
     outputs=(OutputSpec("image", IMAGE),),
 )
 TARGET_SCHEMA = NodeSchema(
     node_type="dinkster.image.resize",
-    inputs=(InputSpec("image", IMAGE), InputSpec("mode", TypeExpr.concrete("STRING"))),
+    inputs=(InputSpec("image", IMAGE), InputSpec("mode", TypeExpr.concrete("core.string"))),
     outputs=(OutputSpec("image", IMAGE),),
 )
 

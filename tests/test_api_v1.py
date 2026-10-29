@@ -15,12 +15,15 @@ enforcement half of the promise:
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import subprocess
 import sys
 from collections.abc import Mapping
+from pathlib import Path
 
 import dinkster_api.v1 as api
+import pytest
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EngineEvent
 from dinkster_graph import Graph, GraphNode, Link
@@ -29,11 +32,6 @@ from dinkster_values import register_core_types
 from dinkster_workers import InProcessWorker
 
 GOLDEN_V1_SURFACE = (
-    "initialize_inference_process",
-    "materialize_clip_vision_output",
-    "materialize_image",
-    "materialize_latent",
-    "register_inference_types",
     "FrontendContribution",
     "FrontendModule",
     "JsonField",
@@ -66,9 +64,64 @@ GOLDEN_V1_SURFACE = (
     "extension_behavior_hash",
     # -- training session boundary values (dinkster-protocol)
     "TrainingSessionHandle",
+    # -- sampling extension authoring (dinkster-inference)
+    "AssemblyRegistration",
+    "CancellationToken",
+    "CompilerEmission",
+    "ConditionScaleVector",
+    "ComponentDescriptor",
+    "ComponentWiring",
+    "ConditioningAdapter",
+    "ControlApplication",
+    "DetectionEvidence",
+    "EngineProperties",
+    "FLOAT32",
+    "GraphCompilerDescriptor",
+    "GuidanceCondition",
+    "GuidanceContribution",
+    "GuidanceEvaluationPlan",
+    "GuidanceEvaluationRequest",
+    "GuidanceEvaluationWrapperDescriptor",
+    "GuidancePlanContext",
+    "GuidancePostCFGContext",
+    "GuidancePostCFGDescriptor",
+    "GuidancePreCFGContext",
+    "GuidancePreCFGDescriptor",
+    "GuidancePrediction",
+    "GuidancePredictionSource",
+    "GuidancePredictions",
+    "GuidanceReduceContext",
+    "GuidanceResult",
+    "GuidanceRole",
+    "GuidanceScaleDescriptor",
+    "GuidanceStrategyDescriptor",
+    "InferenceContribution",
+    "InputRewrite",
+    "ContextDenoiser",
+    "ContextSolverFn",
     "MirrorSpec",
     "MirrorTolerance",
+    "ModelEvaluation",
+    "ModelFamily",
+    "NoiseKind",
+    "NoiseSampler",
+    "OptionKind",
+    "OptionSpec",
+    "OptionValue",
+    "Parameterization",
+    "ProgressScope",
+    "SamplerContribution",
+    "SamplerDescriptor",
+    "SamplerInfo",
+    "SchedulerDescriptor",
+    "SamplingCancelled",
+    "SamplingDescriptor",
+    "SamplingExecutionContext",
+    "LatentDescriptor",
+    "SolverFn",
+    "StepCallback",
     "SourceFilenameSpec",
+    "StepEvent",
     # -- node authoring (dinkster-schema)
     "ABSENT",
     "AbsentOutput",
@@ -147,49 +200,6 @@ GOLDEN_V1_SURFACE = (
     "CORE_FLOAT",
     "CORE_INT",
     "CORE_STRING",
-    "ARRAY_TYPE",
-    "AUDIO_TYPE",
-    "BACKGROUND_REMOVAL_TYPE",
-    "BOUNDING_BOX_TYPE",
-    "CLIP_TYPE",
-    "CLIP_VISION_OUTPUT_TYPE",
-    "CLIP_VISION_TYPE",
-    "COMFY_ARRAY_TYPE",
-    "COMPOSITOR_TYPE",
-    "CONDITIONING_TYPE",
-    "CONTEXT_WINDOWS_TYPE",
-    "CONTROL_NET_TYPE",
-    "DICT_TYPE",
-    "GUIDER_TYPE",
-    "IMAGE_TYPE",
-    "IMPACT_BASIC_PIPE_TYPE",
-    "INFERENCE_LATENT_OPERATION_TYPE",
-    "INPAINT_CONDITIONING_TYPE",
-    "LATENT_OPERATION_TYPE",
-    "LATENT_TYPE",
-    "LATENT_UPSCALE_MODEL_TYPE",
-    "LAYERS_TYPE",
-    "MASK_TYPE",
-    "MESH_TYPE",
-    "MODEL3D_TYPE",
-    "MODEL_PATCH_TYPE",
-    "MODEL_TYPE",
-    "MOGE_GEOMETRY_TYPE",
-    "MOGE_MODEL_TYPE",
-    "NOISE_TYPE",
-    "POSE_TYPE",
-    "RESOURCE_HANDLE_TYPE",
-    "SAMPLER_TYPE",
-    "SEGMENTATION_TYPE",
-    "SHAPE_SUBDIVIDES_TYPE",
-    "SIGMAS_TYPE",
-    "SPLAT_TYPE",
-    "VAE_TYPE",
-    "VECTOR_TYPE",
-    "VIDEO_DOCUMENT_TYPE",
-    "VIDEO_EDIT_TYPE",
-    "VIDEO_TYPE",
-    "VOXEL_TYPE",
     "COST_META_KEY",
     "CURVE_TYPE",
     "ENCODED_MEDIA_LIMIT_BYTES",
@@ -263,7 +273,7 @@ GOLDEN_V1_SURFACE = (
     "region_meta",
     # -- model3d codec (dinkster-values.model3d_codec): raw GLB bytes across
     # boundaries, the original container as the browser rendition, and the
-    # asset<MODEL3D> file decode provider.
+    # asset<dinkster.model3d> file decode provider.
     "MODEL3D_FILE_DECODER_ID",
     "decode_model3d",
     "decode_model3d_file",
@@ -276,7 +286,7 @@ GOLDEN_V1_SURFACE = (
     "validate_model3d_encoded",
     # -- gaussian splat codec (dinkster-values.splat_codec): framed tensor
     # buffers across boundaries, PLY interchange renditions, and the
-    # asset<SPLAT> file decode provider.
+    # asset<dinkster.splat> file decode provider.
     "SPLAT_FILE_DECODER_ID",
     "SPLAT_PLY_MIME",
     "decode_splat",
@@ -289,7 +299,7 @@ GOLDEN_V1_SURFACE = (
     "validate_splat_encoded",
     # -- video codec (dinkster-values.video_codec): encoded container bytes
     # across boundaries and the original container as the browser
-    # rendition. Added so packs can register and operate on VIDEO
+    # rendition. Added so packs can register and operate on comfy.VIDEO
     # values the same way the compat surface does.
     "decode_video",
     "encode_video",
@@ -318,7 +328,6 @@ GOLDEN_V1_SURFACE = (
     "AssetVault",
     "FolderListing",
     "IndexedAssetResolver",
-    "LocalAssetRef",
     "declared_asset",
     "digest_bytes",
     "digest_file",
@@ -381,6 +390,7 @@ from dinkster_api.v1 import (
 import dinkster_api.v1 as api
 
 assert set(api.__all__) <= set(dir(api))
+assert not api._INFERENCE_EXPORTS.intersection(vars(api))
 for name in ("not_an_export", "__path__"):
     try:
         getattr(api, name)
@@ -389,15 +399,8 @@ for name in ("not_an_export", "__path__"):
     else:
         raise AssertionError(name)
     assert not hasattr(api, name)
-loaded = {
-    name
-    for name in sys.modules
-    if name.split(".")[0] in {"dinkster_inference_wire", "torch"}
-}
+loaded = {name for name in sys.modules if name.split(".")[0] in {"dinkster_inference", "torch"}}
 assert not loaded, sorted(loaded)
-from dinkster_api.v1 import initialize_inference_process
-assert callable(initialize_inference_process)
-assert not any(name.split('.')[0] in {'torch', 'dinkster_inference'} for name in sys.modules)
 """
     result = subprocess.run(
         [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
@@ -405,36 +408,101 @@ assert not any(name.split('.')[0] in {'torch', 'dinkster_inference'} for name in
     assert result.returncode == 0, result.stderr
 
 
-def test_controlnet_registration_preserves_resident_identity_without_torch() -> None:
+def test_deferred_exports_match_type_checking_declarations() -> None:
+    assert api.__file__ is not None
+    tree = ast.parse(Path(api.__file__).read_text(encoding="utf-8"))
+    declarations = [
+        alias
+        for guard in tree.body
+        if isinstance(guard, ast.If)
+        and isinstance(guard.test, ast.Name)
+        and guard.test.id == "TYPE_CHECKING"
+        for statement in guard.body
+        if isinstance(statement, ast.ImportFrom) and statement.module == "dinkster_inference"
+        for alias in statement.names
+    ]
+    assert declarations
+    assert all(alias.asname in (None, alias.name) for alias in declarations)
+    declared_names = [alias.name for alias in declarations]
+    assert len(declared_names) == len(set(declared_names))
+    assert set(declared_names) == api._INFERENCE_EXPORTS
+    assert api._INFERENCE_EXPORTS <= set(api.__all__)
+
+
+@pytest.mark.parametrize("style", ["attribute", "from", "star", "inference-first"])
+def test_deferred_export_imports_preserve_identity(style: str) -> None:
     script = """
 import sys
-from dinkster_api.v1 import CONTROL_NET_TYPE, TypeRegistry, register_inference_types
-from dinkster_memory.resident import default_pool
-from dinkster_values import RESOURCE_ID_META_KEY, ResidentLookupError
 
-assert CONTROL_NET_TYPE == "CONTROL_NET"
-registry = TypeRegistry()
-register_inference_types(registry)
-spec = registry.spec(CONTROL_NET_TYPE)
-register_inference_types(registry)
-assert registry.spec(CONTROL_NET_TYPE) is spec
-assert "comfy.CONTROL_NET" not in registry
-source = object()
-encoded = spec.encode(source)
-assert spec.decode(encoded) is source
-assert spec.fingerprint(source) == spec.fingerprint(spec.decode(encoded))
-assert spec.meta(source)[RESOURCE_ID_META_KEY].startswith("resident:")
-assert default_pool().release_resident(source)
-try:
-    spec.decode(encoded)
-except ResidentLookupError:
-    pass
-else:
-    raise AssertionError("released ControlNet remained resolvable")
+style = sys.argv[1]
+if style == "inference-first":
+    import dinkster_inference
+import dinkster_api.v1 as api
+
+exports = list(api.__all__)
+discovered = dir(api)
+assert not api._INFERENCE_EXPORTS.intersection(vars(api))
+if style != "inference-first":
+    assert "dinkster_inference" not in sys.modules
+namespace = {}
+if style == "star":
+    exec("from dinkster_api.v1 import *", namespace)
+    assert namespace.keys() - {"__builtins__"} == set(exports)
+for name in sorted(api._INFERENCE_EXPORTS):
+    if style == "from":
+        exec(f"from dinkster_api.v1 import {name}", namespace)
+        value = namespace[name]
+    elif style == "star":
+        value = namespace[name]
+    else:
+        value = getattr(api, name)
+    import dinkster_inference
+    assert value is getattr(dinkster_inference, name), name
+    assert value is getattr(api, name), name
+    assert value is vars(api)[name], name
+assert api.__all__ == exports
+assert dir(api) == discovered
 assert "torch" not in sys.modules
 """
     result = subprocess.run(
-        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
+        [sys.executable, "-c", script, style], capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("style", ["attribute", "from"])
+def test_reload_discards_cached_inference_exports(style: str) -> None:
+    script = """
+import importlib
+import sys
+import dinkster_api.v1 as api
+
+cached = {name: getattr(api, name) for name in api._INFERENCE_EXPORTS}
+exports = list(api.__all__)
+import dinkster_inference
+
+sentinel = object()
+try:
+    dinkster_inference.CancellationToken = sentinel
+    importlib.reload(api)
+    assert not api._INFERENCE_EXPORTS.intersection(vars(api))
+    assert api.__all__ == exports
+    if sys.argv[1] == "from":
+        from dinkster_api.v1 import CancellationToken as value
+    else:
+        value = getattr(api, "CancellationToken")
+    assert value is sentinel
+    from dinkster_api.v1 import CancellationToken
+    assert CancellationToken is value
+    assert api.CancellationToken is value
+    assert vars(api)["CancellationToken"] is value
+finally:
+    dinkster_inference.CancellationToken = cached["CancellationToken"]
+    importlib.reload(api)
+assert api.CancellationToken is cached["CancellationToken"]
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, style], capture_output=True, text=True, timeout=30
     )
     assert result.returncode == 0, result.stderr
 
@@ -444,7 +512,6 @@ def test_golden_surface_is_exact() -> None:
     update this list deliberately; removals/renames are forbidden within v1
     (they mean a v2 module, not an edit)."""
     assert sorted(api.__all__) == sorted(GOLDEN_V1_SURFACE)
-    assert len(set(api.__all__)) == len(api.__all__)
     assert len(set(GOLDEN_V1_SURFACE)) == len(GOLDEN_V1_SURFACE)
     for name in GOLDEN_V1_SURFACE:
         assert hasattr(api, name), f"exported name missing on module: {name}"
@@ -453,8 +520,7 @@ def test_golden_surface_is_exact() -> None:
 def test_reexports_are_the_internal_objects() -> None:
     """Zero wrappers: the door hands out the internal objects themselves."""
     import dinkster_assets
-    import dinkster_inference_wire.process as inference_process
-    import dinkster_inference_wire.types as inference_types
+    import dinkster_inference
     import dinkster_memory
     import dinkster_protocol
     import dinkster_schema
@@ -462,11 +528,10 @@ def test_reexports_are_the_internal_objects() -> None:
     import dinkster_video
 
     sources = (
-        inference_process,
-        inference_types,
         dinkster_schema,
         dinkster_values,
         dinkster_protocol,
+        dinkster_inference,
         dinkster_memory,
         dinkster_assets,
         dinkster_video,
@@ -475,9 +540,7 @@ def test_reexports_are_the_internal_objects() -> None:
         exported = getattr(api, name)
         owners = [m for m in sources if name in m.__all__]
         assert owners, f"{name} is not exported by any internal package"
-        expected_owners = (
-            2 if name in {"CustomWidgetDescriptor", "ASSET_TYPE", "SAVE_TARGET_TYPE"} else 1
-        )
+        expected_owners = 2 if name == "CustomWidgetDescriptor" else 1
         assert len(owners) == expected_owners, f"{name} exported by unexpected internal packages"
         assert all(getattr(owner, name) is exported for owner in owners), (
             f"{name} is a wrapper/copy"

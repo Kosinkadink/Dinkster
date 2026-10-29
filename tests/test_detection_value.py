@@ -135,10 +135,10 @@ def test_detection_codec_rejects_invalid_frames() -> None:
     spec = _registry().spec(DETECTION_TYPE)
     detection = Detection(label="cat", score=1.0, region=Region(0, 0, 4, 3), mask=_mask())
     encoded = spec.encode(detection)
-    with pytest.raises(ValueError, match="invalid DETECTION codec framing"):
+    with pytest.raises(ValueError, match="invalid dinkster.detection codec framing"):
         spec.decode(b"not a detection")
     version_offset = encoded.index(b"\x00") + 1
-    with pytest.raises(ValueError, match="unsupported DETECTION codec version"):
+    with pytest.raises(ValueError, match="unsupported dinkster.detection codec version"):
         spec.decode(encoded[:version_offset] + bytes((99,)) + encoded[version_offset + 1 :])
     with pytest.raises(ValueError, match="mask payload is truncated"):
         spec.decode(encoded[:-4])

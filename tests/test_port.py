@@ -334,7 +334,7 @@ def test_probe_carries_schemas_and_port_extras(
     batcher = by_name["Batcher"]
     assert batcher["inputIsList"] is True
 
-    assert port_probe_report["opaqueTypes"] == ["IMAGE", "comfy.MODEL"]
+    assert port_probe_report["opaqueTypes"] == ["comfy.IMAGE", "comfy.MODEL"]
 
 
 def test_probe_resolves_pure_v3_entrypoint(tmp_path: Path) -> None:
@@ -401,7 +401,7 @@ def test_generated_pack_imports_and_schemas_survive(
         "fancy-pack.batcher",
     ]
     assert result.skipped == {"Broken": "Broken: FUNCTION does not name a method"}
-    assert result.opaque_types == ("IMAGE", "comfy.MODEL")
+    assert result.opaque_types == ("comfy.IMAGE", "comfy.MODEL")
 
     module = load_pack_module(out, "fancy_pack_nodes.py")
     nodes = cast("list[type[Node]]", module.NODES)
@@ -424,14 +424,14 @@ def test_generated_pack_imports_and_schemas_survive(
     assert sampler.output_node is True
     assert sampler.idempotent is False
     assert sampler.occupies == ("gpu",)
-    # Hidden v1 inputs never enter the schema; the combo is COMBO.
+    # Hidden v1 inputs never enter the schema; the combo is core.combo.
     assert [spec.id for spec in sampler.inputs] == ["model", "mode", "add_noise"]
     # Translated widgets survive codegen: the combo keeps its dropdown,
     # the disguised boolean becomes a labeled toggle.
     mode_spec, noise_spec = sampler.inputs[1], sampler.inputs[2]
-    assert mode_spec.type == TypeExpr.concrete("COMBO")
+    assert mode_spec.type == TypeExpr.concrete("core.combo")
     assert mode_spec.widget == ComboWidget(options=("fast", "slow", "exact"))
-    assert noise_spec.type == TypeExpr.concrete("BOOLEAN")
+    assert noise_spec.type == TypeExpr.concrete("core.boolean")
     assert noise_spec.widget == BooleanWidget(label_on="enable", label_off="disable")
 
     batcher = schemas["fancy-pack.batcher"]
@@ -446,15 +446,15 @@ def test_generated_pack_imports_and_schemas_survive(
     text = (out / "fancy_pack_nodes.py").read_text(encoding="utf-8")
     assert "def add(self, a, b):" in text
     assert "TODO(port)" in text
-    assert "mode: str" in text  # COMBO payloads stay string-shaped
+    assert "mode: str" in text  # core.combo payloads stay string-shaped
     # Choices that became widgets need no prose reminder.
     assert "source combo choices" not in text
 
-    # Shared types must come from their owner, not the generated pack.
+    # register_types registers exactly the opaque types the schemas use.
     registry = TypeRegistry()
     module.register_types(registry)
-    assert "comfy.MODEL" not in registry
-    assert "IMAGE" not in registry
+    assert registry.spec("comfy.MODEL") is not None
+    assert registry.spec("comfy.IMAGE") is not None
 
 
 def test_type_expr_codegen_reads_wire15_variable_spelling() -> None:
@@ -466,15 +466,15 @@ def test_type_expr_codegen_reads_wire15_variable_spelling() -> None:
 
     cases = {
         "TypeExpr.variable('T')": {"kind": "variable", "templateId": "T"},
-        "TypeExpr.variable('T', ('IMAGE',))": {
+        "TypeExpr.variable('T', ('comfy.IMAGE',))": {
             "kind": "variable",
             "templateId": "T",
-            "allowed": ["IMAGE"],
+            "allowed": ["comfy.IMAGE"],
         },
-        "TypeExpr.variable('T', ('IMAGE', 'MASK'))": {
+        "TypeExpr.variable('T', ('comfy.IMAGE', 'comfy.MASK'))": {
             "kind": "variable",
             "templateId": "T",
-            "allowed": ["IMAGE", "MASK"],
+            "allowed": ["comfy.IMAGE", "comfy.MASK"],
         },
     }
     for expected_code, wire in cases.items():
@@ -490,12 +490,12 @@ def test_type_expr_codegen_reads_wire15_variable_spelling() -> None:
             "element": {
                 "kind": "variable",
                 "templateId": "T",
-                "allowed": ["IMAGE", "MASK"],
+                "allowed": ["comfy.IMAGE", "comfy.MASK"],
             },
         },
         atoms,
     )
-    assert atoms == {"IMAGE", "MASK"}
+    assert atoms == {"comfy.IMAGE", "comfy.MASK"}
 
 
 def test_generation_is_deterministic(port_probe_report: dict[str, object], tmp_path: Path) -> None:
@@ -551,34 +551,13 @@ def test_generated_scalar_pack_is_doctor_clean_with_no_warnings(
 def test_generated_opaque_pack_is_doctor_clean_with_honest_warnings(
     port_probe_report: dict[str, object], tmp_path: Path
 ) -> None:
-    payloads = cast("list[dict[str, object]]", port_probe_report["nodes"])
-    schema = cast("dict[str, object]", payloads[0]["schema"])
-    interface = cast("list[dict[str, object]]", schema["interface"])
-    interface.append(
-        {
-            "role": "output",
-            "id": "owned",
-            "type": {"kind": "concrete", "types": ["fancy-pack.result"]},
-        }
-    )
-    port_probe_report["opaqueTypes"] = [
-        *cast("list[str]", port_probe_report["opaqueTypes"]),
-        "fancy-pack.result",
-    ]
     out = tmp_path / "out"
     generate_pack(cast("dict[str, object]", port_probe_report), "fancy-pack", out)
     report = diagnose(out / "dinkster-pack.toml")
     assert report.ok, render_text(report)
-    assert {f.code for f in report.findings} == {
-        "types.fallback-codec",
-        "types.unregistered",
-    }
-    module = load_pack_module(out, "fancy_pack_nodes.py")
-    registry = TypeRegistry()
-    module.register_types(registry)
-    assert "fancy-pack.result" in registry
-    assert "comfy.MODEL" not in registry
-    assert "IMAGE" not in registry
+    # The only findings are the honest ones: opaque comfy.* types still
+    # need declared codecs - exactly what the README checklist says.
+    assert {f.code for f in report.findings} == {"types.fallback-codec"}
 
 
 def test_generated_v3_pack_is_doctor_clean(tmp_path: Path) -> None:

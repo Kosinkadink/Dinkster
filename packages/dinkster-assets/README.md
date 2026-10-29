@@ -2,9 +2,9 @@
 
 `dinkster-assets` models files by canonical content digest rather than host
 path. It provides asset references, catalogs, mounts, libraries, verified
-vaults and acquisition, save targets, and value-type registration. It uses
-values and BLAKE3 for identity, and SQLAlchemy and Alembic for catalog schema
-migrations. Caches, workers, and the server build on it.
+vaults and acquisition, save targets, and value-type registration; it
+depends only on values and BLAKE3, while caches, workers, and the server
+build on it.
 
 ## Setup
 
@@ -19,7 +19,7 @@ It does not install a console script.
 
 ## Use
 
-Verified content identity is the canonical `blake3:<64 hex>` digest:
+Identity is always the canonical `blake3:<64 hex>` digest:
 
 ```python
 from dinkster_assets import AssetRef, digest_bytes
@@ -31,21 +31,6 @@ ref = AssetRef(
     size=len(payload),
 )
 ```
-
-`MountTable.bind_name(name, kind)` can bind a bare model filename before
-hashing. It returns a `LocalAssetRef` marked `verification: "unverified"`
-with no digest, or a verified `AssetRef` when the scan already knows the
-same file revision. Local bindings cross worker boundaries as opaque,
-server-scoped grants, not filesystem paths or content identities. File
-replacement and mount revocation invalidate them. Their cache fingerprints
-use an `unverified-local:` prefix and cannot be redeemed on another host.
-
-Library scans reject partial-download extensions even with custom ignore
-rules and admit files only after two size/mtime observations agree. Unchanged
-verified rows avoid rehashing. Missing or replaced identities remain in the
-existing index, available through `MountTable.missing_entries(mount_id)` but
-excluded from live resolution. A returning digest recovers its identity;
-changed bytes get a distinct digest without rebinding the old reference.
 
 Catalogs give virtual paths file-like listing and glob semantics without
 exposing real filesystem paths:
@@ -75,36 +60,55 @@ publishes bounded seekable sources atomically without buffering the complete
 file. `parse_latent_asset` strictly validates native and ComfyUI latent
 safetensors headers before tensor data is materialized.
 
-`AssetWriter.output_target(filename_prefix, mount=None)` combines separate save
-inputs into the writer's target. Omitting `mount` uses the snapshot's configured
-output mount; an explicit mount selects that grant instead. Both forms retain
-the writer's prefix validation, live write permissions and containment checks.
-Prefixes expand `%width%` and `%height%` from the optional keyword arguments
-`image_width` and `image_height` (both default to zero). SaveText uses one for
-both dimensions. `%year%`, `%month%`, `%day%`, `%hour%`, `%minute%` and `%second%`
-use local time, with two digits except for the year. Unknown tokens stay literal.
-Expansion happens before the save target is parsed, including directory names.
+## BitTorrent v2 descriptors
 
-## Catalog schema
+`derive_p2p_descriptor` makes a canonical single-file BitTorrent v2 descriptor
+without starting a client or performing network I/O. It hashes BLAKE3 identity
+and BEP 52 trees in one bounded sequential scan. The torrent name is always the
+64-character digest portion of the authoritative `blake3:` identity, and the
+piece length is always 8 MiB.
 
-`LibraryStore` upgrades its SQLite catalog to the Alembic head before serving
-records. Record CRUD remains stdlib SQLite. The initial revision creates
-`records`, `media_grants`, `asset_dependencies`, `asset_derivations`, and the
-`records_scope_modified` index. An existing unversioned catalog is adopted
-only when its schema matches; an incompatible schema fails without changing
-its records or recording a version. Back up the catalog before upgrading.
+Use `P2PDescriptorBuilder.update(bytes)` when bytes arrive incrementally, then
+call `finalize()` for the same `P2PDescriptorResult`. Chunk boundaries may fall
+anywhere; the builder retains only partial-block state and the piece roots needed
+for the result, rather than the whole asset. Empty input is rejected, and a
+finalized builder cannot be reused.
 
-From the repository root:
+`validate_p2p_descriptor` reconstructs the canonical info dictionary from the
+asset digest, byte size, and file root. `verify_p2p_descriptor` additionally
+checks local bytes and the piece layer. Both reject alternate profiles rather
+than accepting equivalent noncanonical torrent metadata.
+
+Generate and verify a portable fixture with:
 
 ```sh
-uv run alembic -c packages/dinkster-assets/alembic.ini -x catalog=/path/to/library.sqlite current
-uv run alembic -c packages/dinkster-assets/alembic.ini -x catalog=/path/to/library.sqlite check
+python -m dinkster_assets.p2p_fixture model.safetensors > descriptor.json
+python -m dinkster_assets.p2p_fixture model.safetensors --verify descriptor.json
 ```
 
-For a schema change, update `schema.py`, generate a revision with
-`alembic revision --autogenerate -m "Describe the schema change"` using the
-same configuration and catalog arguments, and review the generated operations.
-Migration resources are included in the package wheel.
+The fixture contains no trackers, peers, URLs, DHT settings, or alternate asset
+identity. Libtorrent 2.1.1 is a development-only conformance dependency.
+
+## Resumable P2P staging
+
+`AssetVault.open_p2p_partial` validates the canonical descriptor against the
+asset digest and size, then creates or reopens a sparse transfer at
+`<vault>/.p2p/staging/<infoHash>/<digest-hex>`. `write_piece` accepts bounded
+out-of-order writes and durably records completed byte ranges, so a later
+process can reopen the same descriptor and continue.
+
+`AssetVault.adopt_staged_asset` requires the same validated descriptor and
+publishes only after the staged file has the declared size, passes format
+policy 1 (strict safetensors or GGUF v3), and matches its BLAKE3 digest. Staging
+and publication use handle-relative, non-symlink operations on one filesystem;
+publication flushes the verified file before atomically claiming its canonical
+vault path.
+
+Inactive partials are retained for seven days. `p2p_staging_usage` reports
+both allocated and logical bytes for sparse-file quota decisions, and
+`purge_inactive_p2p_partials` removes expired unlocked partials.
+`verify_p2p_local_file` provides a no-copy mapping that becomes stale if the
+verified external file is changed, replaced, or deleted.
 
 ## Resolver indexes
 
@@ -127,9 +131,10 @@ leads for known model digests:
 }
 ```
 
-Each entry requires `digest`, `name`, and a nonempty HTTPS `urls` list. Optional
-fields are `kind`, `size`, `license`, `gated`, `notes`, `regions`, `family`,
-`variant`, and `components`. Every entry URL list, including each regional list,
+Each entry requires `digest`, `name`, and HTTPS `urls`. The URL list may be
+empty only with a valid canonical P2P descriptor and size. Optional
+fields are `kind`, `size`, `license`, `gated`, `notes`, `regions`, `family`, `variant`,
+`components`, and `p2p`. Every entry URL list, including each regional list,
 accepts at most 64 URLs. Version 1 parsers ignore unknown optional top-level,
 entry, and component fields. The parser rejects unknown versions, duplicate
 digests, documents over 16 MiB, and documents over 100,000 entries.
@@ -142,29 +147,87 @@ Hosted indexes refresh no more than once every six hours and retain their last
 valid document after an error. Cursor pages are assembled atomically within one
 deadline and aggregate byte/entry limits. Only complete single-page documents
 use ETag revalidation; multi-page indexes refetch every page because a page's
-ETag cannot attest the whole catalog. Acquisition accepts bytes only after
-they match the requested digest.
+ETag cannot attest the whole catalog. Legacy caches retain HTTP leads but need
+a complete unconditional refresh before supplying P2P authority. Acquisition
+still accepts bytes only after they match the requested digest.
 
 Fetch deadlines also bound the caller during DNS and TLS setup. Python cannot
 cancel a blocked OS DNS call, so at most eight daemon fetches retain capacity
 until they return; further fetches fail promptly while all slots are occupied.
-Late results never publish provenance.
+Late results never publish authority. Derived authority is validated before
+replacing persisted subscriptions, so invalid metadata cannot poison a reload.
 
-`bootstrap_official` accepts an explicit export URL and stable provider ID
-(the export's exact `name`), with no default values. Its persisted identity
-binding prevents refresh identity changes and resubscription after an explicit
-removal. Missing or changed configuration refuses bootstrap without replacing
-the saved choice. The serve CLI/environment configuration is described in
-[serve-cli.md](../../docs/serve-cli.md#--official-resolver-url--official-resolver-provider-id).
+User-added resolver subscriptions are HTTP-only by default. Enabling their
+`trustedForP2P` flag requires the host's P2P settings permission. Both flags
+default false; `licenseAuthoritative` identifies metadata authority and is not
+an eligibility condition. `bootstrap_official` accepts an explicit export URL
+and stable provider ID (the export's exact `name`), with no default values.
+It creates a complete official subscription with both flags true, or preserves
+an existing subscription's flags. Its persisted identity binding prevents
+refresh identity changes, automatic regranting, and resubscription after an
+explicit removal. Missing or changed configuration refuses bootstrap without
+replacing the saved choice. The serve CLI/environment configuration is described
+in [serve-cli.md](../../docs/serve-cli.md#--official-resolver-url--official-resolver-provider-id).
+Valid `entries[].p2p` descriptors are semantically rebound to the
+entry digest and size; a malformed descriptor disables P2P for that entry
+without removing its HTTP leads. A complete successful refresh is the entire
+P2P snapshot, so omitted descriptors become tombstones immediately. Failed or
+partial refreshes retain HTTP last-good data without renewing P2P authority.
+The resolver v1 adapter emits no trackers and uses trackerless DHT.
 
-## Public acquisition receipts
+## Public acquisition and P2P grants
+
+Resolver entries can publish a canonical `p2p` descriptor when `size` and
+the entry digest match. This is only a declaration until subscription
+trust and the P2P capability are active. The grant policy performs no
+peer discovery, transfer, or seeding itself.
 
 An acquisition receipt is written only after a credential-free HTTPS transfer
 matches both the declared byte size and BLAKE3 digest. Every redirect target's
 DNS answers and the connected peer must remain globally routable. Userinfo,
 custom headers, cookies, URL query strings, HTTPS downgrades, mixed private DNS
 answers, and rebinding deny the receipt. The ordinary verified download path
-can still make the file available locally without a receipt.
+can still make the file available locally but grants no P2P authority.
+
+`P2PGrantReconciler` derives revocable `PublicSwarmGrantV1` and `SeedGrantV1`
+records from current trusted declarations. Declarative resolver seeding needs a
+matching acquisition receipt. Trusted providers, enabled code resolvers,
+and manual declarations need their equivalent complete-file evidence. Local
+bytes are reverified against the descriptor before a seed grant is issued, so
+a matching pre-existing file and advisory provenance alone grant nothing.
+License and gated fields are metadata, not seeding or fetching conditions.
+Grants expire no later than six hours after refresh and disappear when
+their declaration, source revision, set membership, capability, or trust expires.
+
+Inspect persisted receipts and the currently effective no-network policy with:
+
+```sh
+dinkster p2p-diagnostics --library-root /path/to/library --json
+dinkster p2p-diagnostics --library-root /path/to/library --enabled --json
+```
+
+`--enabled` evaluates enabled grants without changing settings or starting
+networking.
+
+## Trusted global P2P policy
+
+`dinkster_assets.p2p_global` strictly decodes provider artifact descriptors,
+complete enumeration, license and location metadata, approved
+trackers, and tombstones without opening a socket. It intersects those facts
+with an explicit provider allowlist and adapts eligible rows into
+`PublicSwarmDeclarationV1`; `P2PGrantReconciler` remains the single source of
+public and seed grant authority. Unsafe formats, malformed enumeration,
+expiration, and observed tombstones produce no declaration. Missing or custom
+licenses and gated or absent HTTP locations do not suppress P2P authority.
+Current matching public grants map to bounded `global-p2p` transport candidates
+only while global downloads are allowed; transport ranking preserves LAN-first
+selection and HTTP fallback.
+
+Provider declarations and sidecar global leases expire within six hours.
+The default `lan-and-internet` scope permits DHT, PEX, TCP, uTP,
+approved trackers, UPnP, NAT-PMP, and PCP. Durable byte, ratio, and active
+seed-time counters can close internet participation while LAN remains
+available. Metered policy closes only global transport, preserving LAN mappings.
 
 ## Learn more
 
@@ -175,5 +238,7 @@ is in `tests/test_assets.py`, `tests/test_asset_acquisition.py`,
 `tests/test_asset_guess.py`, `tests/test_asset_writer.py`,
 `tests/test_latent_asset_format.py`, `tests/test_mounts.py`, and
 `tests/test_declared_assets.py`. Resolver-index coverage is in
-`tests/test_resolver_indexes.py`; public receipt coverage is in
-`tests/test_public_acquisition_receipts.py`.
+`tests/test_resolver_indexes.py`; P2P descriptor and staging coverage is in
+`tests/test_p2p_descriptor.py` and `tests/test_p2p_storage.py`; public receipt
+and P2P grant coverage is in `tests/test_p2p_receipts_and_grants.py`; provider
+global policy coverage is in `tests/test_p2p_global.py`.

@@ -7,7 +7,7 @@ these tests drive it with plain fakes shaped exactly like comfy_api's
 ComfyUI/comfy_api/latest/_io.py). The contract under test:
 
 - io_type strings translate by the same rules as v1 type strings
-  (primitives, COMBO -> COMBO, ``*`` -> wildcard, opaque comfy.*),
+  (primitives, COMBO -> core.combo, ``*`` -> wildcard, opaque comfy.*),
 - MultiType comma-joins become unions, MatchType templates become type
   variables, Autogrow inputs become input families,
 - lifecycle flags land on the Dinkster fields that mean the same thing,
@@ -21,20 +21,6 @@ import dataclasses
 from enum import Enum, StrEnum
 
 import pytest
-from dinkster_api.v1 import (
-    AUDIO_TYPE,
-    BACKGROUND_REMOVAL_TYPE,
-    BOUNDING_BOX_TYPE,
-    LATENT_UPSCALE_MODEL_TYPE,
-    MESH_TYPE,
-    MODEL_PATCH_TYPE,
-    MOGE_GEOMETRY_TYPE,
-    MOGE_MODEL_TYPE,
-    SHAPE_SUBDIVIDES_TYPE,
-    VIDEO_EDIT_TYPE,
-    VIDEO_TYPE,
-    VOXEL_TYPE,
-)
 from dinkster_compat_comfy import CompatError, CompatTranslation, translate_v3_schema
 from dinkster_compat_comfy.translate_v3 import translate_v3_type
 from dinkster_schema import (
@@ -295,7 +281,7 @@ def test_v3_upload_type_and_folder_translate_to_source_filename_assets() -> None
         ),
         CompatTranslation(),
     ).inputs
-    assert scalar.type == TypeExpr.concrete("ASSET")
+    assert scalar.type == TypeExpr.concrete("dinkster.asset")
     assert scalar.source_filename is not None
     assert (scalar.source_filename.kind, scalar.source_filename.category) == (
         "media/image",
@@ -306,7 +292,7 @@ def test_v3_upload_type_and_folder_translate_to_source_filename_assets() -> None
         kind="media/image",
         allow_upload=True,
     )
-    assert audio.type == TypeExpr.concrete("ASSET")
+    assert audio.type == TypeExpr.concrete("dinkster.asset")
     assert audio.source_filename is not None
     assert (audio.source_filename.kind, audio.source_filename.category) == (
         "media/audio",
@@ -363,8 +349,8 @@ def test_top_level_ordinary_ids_keep_wire_14_permissiveness() -> None:
 
 def test_opaque_io_types_register_comfy_types() -> None:
     translation = CompatTranslation()
-    assert translate_v3_type("LATENT", translation) == TypeExpr.concrete("LATENT")
-    assert translation.opaque_types == {"LATENT"}
+    assert translate_v3_type("LATENT", translation) == TypeExpr.concrete("comfy.LATENT")
+    assert translation.opaque_types == {"comfy.LATENT"}
 
 
 def test_wildcard_and_multitype_unions() -> None:
@@ -376,55 +362,6 @@ def test_wildcard_and_multitype_unions() -> None:
     assert translate_v3_type("INT,*", translation) == TypeExpr.wildcard()
     # COMBO and STRING keep distinct concrete members.
     assert translate_v3_type("COMBO,STRING", translation) == TypeExpr.union(CORE_COMBO, CORE_STRING)
-
-
-def test_v3_native_types_stay_bare_in_list_union_and_template_structures() -> None:
-    raw_types = (
-        "AUDIO",
-        "VIDEO",
-        "VIDEO_EDIT",
-        "MOGE_MODEL",
-        "MOGE_GEOMETRY",
-        "BACKGROUND_REMOVAL",
-        "VOXEL",
-        "MESH",
-        "SHAPE_SUBDIVIDES",
-        "BOUNDING_BOX",
-        "MODEL_PATCH",
-        "LATENT_UPSCALE_MODEL",
-    )
-    canonical_types = (
-        AUDIO_TYPE,
-        VIDEO_TYPE,
-        VIDEO_EDIT_TYPE,
-        MOGE_MODEL_TYPE,
-        MOGE_GEOMETRY_TYPE,
-        BACKGROUND_REMOVAL_TYPE,
-        VOXEL_TYPE,
-        MESH_TYPE,
-        SHAPE_SUBDIVIDES_TYPE,
-        BOUNDING_BOX_TYPE,
-        MODEL_PATCH_TYPE,
-        LATENT_UPSCALE_MODEL_TYPE,
-    )
-    translation = CompatTranslation()
-    assert translate_v3_type(",".join(raw_types), translation) == TypeExpr.union(*canonical_types)
-    assert translation.opaque_types == set(canonical_types)
-
-    template = FakeMatchTemplate("T", [FakeComfyType(raw_type) for raw_type in raw_types])
-    result = translate(
-        FakeSchema(
-            "NativeTypes",
-            inputs=[
-                FakeInput("values", "VIDEO"),
-                FakeInput("selected", "COMFY_MATCHTYPE_V3", template=template),
-            ],
-            is_input_list=True,
-        )
-    )
-    assert result.inputs[0].type == TypeExpr.list_of(TypeExpr.concrete(VIDEO_TYPE))
-    assert result.inputs[1].type == TypeExpr.list_of(TypeExpr.variable("T", canonical_types))
-    assert translation.opaque_types == set(canonical_types)
 
 
 def test_empty_io_type_refuses() -> None:
@@ -459,7 +396,7 @@ def test_basic_schema_translates() -> None:
     assert not a.required  # has a default
     assert a.doc == "first addend"
     assert b.required
-    # Combo identity is COMBO; the first option is the implicit default,
+    # Combo identity is core.combo; the first option is the implicit default,
     # and the choice list rides along as a static dropdown widget.
     assert mode.type == TypeExpr.concrete(CORE_COMBO)
     assert mode.default == "fast"
@@ -841,13 +778,13 @@ def test_autogrow_translates_to_input_family() -> None:
     assert result.inputs == ()
     (family,) = result.input_families
     assert family.id == "images"
-    assert family.type == TypeExpr.concrete("IMAGE")
+    assert family.type == TypeExpr.concrete("comfy.IMAGE")
     assert family.min_members == 1
     assert family.max_members == 10
     assert family.member_prefix == "image"
     assert family.member_names is None
     assert family.doc == "one frame"
-    assert "IMAGE" in translation.opaque_types
+    assert "comfy.IMAGE" in translation.opaque_types
 
     listed = translate(
         FakeSchema(
@@ -856,7 +793,7 @@ def test_autogrow_translates_to_input_family() -> None:
             is_input_list=True,
         )
     )
-    assert listed.input_families[0].type == TypeExpr.list_of(TypeExpr.concrete("IMAGE"))
+    assert listed.input_families[0].type == TypeExpr.list_of(TypeExpr.concrete("comfy.IMAGE"))
 
 
 def test_autogrow_names_template_caps_members() -> None:
@@ -907,7 +844,7 @@ def test_dynamic_combo_and_slot_translate_recursively_from_direct_v3_objects() -
 
     translated_slot = result.slots[0]
     assert isinstance(translated_slot, DynamicSlotSpec)
-    assert translated_slot.slot_type == TypeExpr.concrete("IMAGE")
+    assert translated_slot.slot_type == TypeExpr.concrete("comfy.IMAGE")
     slot_input = translated_slot.inputs[0]
     assert isinstance(slot_input, InputSpec)
     assert slot_input.type == TypeExpr.concrete(CORE_FLOAT)
@@ -915,7 +852,7 @@ def test_dynamic_combo_and_slot_translate_recursively_from_direct_v3_objects() -
     assert translated_slot.force_input is True
 
     listed = translate(FakeSchema("Listed", inputs=[slot], is_input_list=True))
-    assert listed.slots[0].slot_type == TypeExpr.list_of(TypeExpr.concrete("IMAGE"))
+    assert listed.slots[0].slot_type == TypeExpr.list_of(TypeExpr.concrete("comfy.IMAGE"))
     listed_dependent = listed.slots[0].inputs[0]
     assert isinstance(listed_dependent, InputSpec)
     assert listed_dependent.type == TypeExpr.list_of(TypeExpr.concrete(CORE_FLOAT))

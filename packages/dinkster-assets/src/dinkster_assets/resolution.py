@@ -31,6 +31,12 @@ _REASON_LIMIT = 256
 _SCHEMA_INIT_LOCK = threading.Lock()
 
 MirrorState = Literal["available", "unavailable"]
+Availability = Literal["local", "downloadable", "unavailable"]
+Compatibility = Literal["compatible", "incompatible", "unknown"]
+ResolutionStatus = Literal["resolved", "missing", "ambiguous", "incompatible"]
+ResolutionTier = Literal[
+    "mapping", "selected_variant", "trusted_source", "expected_digest", "compatibility"
+]
 AliasKind = Literal["logical", "variant"]
 
 
@@ -161,6 +167,18 @@ class DeclaredRequirements:
 
 
 @dataclass(frozen=True)
+class CompatibilityContext:
+    loaders: frozenset[str] = frozenset()
+    runtimes: frozenset[str] = frozenset()
+    hardware: frozenset[str] = frozenset()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "loaders", _string_set(self.loaders, "loader capability"))
+        object.__setattr__(self, "runtimes", _string_set(self.runtimes, "runtime capability"))
+        object.__setattr__(self, "hardware", _string_set(self.hardware, "hardware capability"))
+
+
+@dataclass(frozen=True)
 class ModelVariant:
     logical_id: str
     variant_id: str
@@ -283,6 +301,67 @@ class MountMaterialization:
 
 
 @dataclass(frozen=True)
+class ReferenceMapping:
+    scope: str
+    reference_key: str
+    logical_id: str
+    variant_id: str
+    digest: str
+    trusted_source: SourceIdentity | None = None
+    updated_at: float = field(default_factory=time.time)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "scope", _nonempty(self.scope, "scope"))
+        object.__setattr__(self, "reference_key", _nonempty(self.reference_key, "reference key"))
+        object.__setattr__(self, "logical_id", _stable_id(self.logical_id, "logical id"))
+        object.__setattr__(self, "variant_id", _stable_id(self.variant_id, "variant id"))
+        object.__setattr__(self, "digest", require_digest(self.digest))
+        object.__setattr__(self, "updated_at", _timestamp(self.updated_at, "updated at"))
+
+
+@dataclass(frozen=True)
+class ResolutionRequest:
+    scope: str
+    reference_key: str
+    asset_kind: str
+    authorized_providers: frozenset[str]
+    logical_id: str | None = None
+    variant_id: str | None = None
+    expected_digest: str | None = None
+    trusted_source: SourceIdentity | None = None
+    trusted_digest: str | None = None
+    compatibility: CompatibilityContext | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "scope", _nonempty(self.scope, "scope"))
+        object.__setattr__(self, "reference_key", _nonempty(self.reference_key, "reference key"))
+        object.__setattr__(self, "asset_kind", require_asset_kind(self.asset_kind))
+        object.__setattr__(
+            self,
+            "authorized_providers",
+            frozenset(
+                _stable_id(item, "authorized provider") for item in self.authorized_providers
+            ),
+        )
+        if self.logical_id is not None:
+            object.__setattr__(
+                self, "logical_id", _nonempty(self.logical_id, "logical id or alias")
+            )
+        if self.variant_id is not None:
+            object.__setattr__(
+                self, "variant_id", _nonempty(self.variant_id, "variant id or alias")
+            )
+        if self.variant_id is not None and self.logical_id is None:
+            raise AssetError("variant selection requires a logical selection")
+        if self.expected_digest is not None:
+            object.__setattr__(self, "expected_digest", require_digest(self.expected_digest))
+        if (self.trusted_source is None) != (self.trusted_digest is None):
+            raise AssetError("trusted source and trusted digest must be supplied together")
+        if self.trusted_digest is not None:
+            object.__setattr__(self, "trusted_digest", require_digest(self.trusted_digest))
+
+
+@dataclass(frozen=True)
 class ResolutionSnapshot:
     logical_models: tuple[LogicalModel, ...] = ()
     variants: tuple[ModelVariant, ...] = ()
@@ -341,6 +420,388 @@ class ResolutionSnapshot:
         for identity_name, keys in identities:
             if len(keys) != len(set(keys)):
                 raise AssetError(f"snapshot contains duplicate {identity_name} identity")
+
+
+@dataclass(frozen=True)
+class ResolutionCandidate:
+    logical_id: str
+    variant_id: str
+    digest: str
+    availability: Availability
+    availability_reason: str
+    compatibility: Compatibility
+    compatibility_reason: str
+    ref: AssetRef | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "logical_id", _stable_id(self.logical_id, "logical id"))
+        object.__setattr__(self, "variant_id", _stable_id(self.variant_id, "variant id"))
+        object.__setattr__(self, "digest", require_digest(self.digest))
+        if self.availability not in ("local", "downloadable", "unavailable"):
+            raise AssetError(f"unknown availability: {self.availability!r}")
+        object.__setattr__(
+            self,
+            "availability_reason",
+            _reason(self.availability_reason, "availability reason"),
+        )
+        if self.compatibility not in ("compatible", "incompatible", "unknown"):
+            raise AssetError(f"unknown compatibility: {self.compatibility!r}")
+        object.__setattr__(
+            self,
+            "compatibility_reason",
+            _reason(self.compatibility_reason, "compatibility reason"),
+        )
+        if self.compatibility == "compatible" and self.compatibility_reason:
+            raise AssetError("compatible candidate cannot carry a compatibility reason")
+        if self.compatibility != "compatible" and not self.compatibility_reason:
+            raise AssetError("non-compatible candidate requires a compatibility reason")
+        if (self.availability == "local") != (self.ref is not None):
+            raise AssetError("only local candidates carry an admitted AssetRef")
+        if self.ref is not None:
+            object.__setattr__(self, "ref", _complete_ref(self.ref))
+            if self.ref.digest != self.digest:
+                raise AssetError("candidate ref digest disagrees with artifact")
+
+
+@dataclass(frozen=True)
+class ResolutionOutcome:
+    status: ResolutionStatus
+    tier: ResolutionTier | None
+    selected: ResolutionCandidate | None
+    candidates: tuple[ResolutionCandidate, ...]
+    reason: str
+
+    def __post_init__(self) -> None:
+        if self.status not in ("resolved", "missing", "ambiguous", "incompatible"):
+            raise AssetError(f"unknown resolution status: {self.status!r}")
+        object.__setattr__(self, "reason", _reason(self.reason))
+        if self.status == "resolved" and (
+            self.selected is None
+            or self.selected.availability != "local"
+            or self.selected.compatibility != "compatible"
+            or self.tier is None
+        ):
+            raise AssetError(
+                "resolved outcome requires a tier and compatible local selected candidate"
+            )
+
+
+def _compatibility(
+    variant: ModelVariant, context: CompatibilityContext | None
+) -> tuple[Compatibility, str]:
+    requirements = variant.requirements
+    if context is None:
+        return "unknown", "compatibility context required"
+    missing_loaders = requirements.loaders - context.loaders
+    missing_runtimes = requirements.runtimes - context.runtimes
+    missing_hardware = requirements.hardware - context.hardware
+    parts: list[str] = []
+    if missing_loaders:
+        parts.append("loader:" + ",".join(sorted(missing_loaders)))
+    if missing_runtimes:
+        parts.append("runtime:" + ",".join(sorted(missing_runtimes)))
+    if missing_hardware:
+        parts.append("hardware:" + ",".join(sorted(missing_hardware)))
+    detailed = "; ".join(parts)
+    if not detailed:
+        return "compatible", ""
+    if len(detailed) <= _REASON_LIMIT:
+        return "incompatible", detailed
+    return "incompatible", (
+        "missing compatibility requirements: "
+        f"loaders={len(missing_loaders)},runtimes={len(missing_runtimes)},"
+        f"hardware={len(missing_hardware)}"
+    )
+
+
+def _canonical_selection(
+    value: str,
+    canonical: set[str],
+    aliases: Iterable[AdvisoryAlias],
+    *,
+    kind: AliasKind,
+    logical_id: str | None = None,
+) -> tuple[str | None, bool]:
+    normalized = value.strip().casefold()
+    if normalized in canonical:
+        return normalized, False
+    matches = {
+        alias.variant_id if kind == "variant" else alias.logical_id
+        for alias in aliases
+        if alias.kind == kind
+        and alias.alias == value.strip()
+        and (logical_id is None or alias.logical_id == logical_id)
+    }
+    return (next(iter(matches)), False) if len(matches) == 1 else (None, len(matches) > 1)
+
+
+def _candidate_facts(
+    request: ResolutionRequest, snapshot: ResolutionSnapshot
+) -> tuple[ResolutionCandidate, ...]:
+    logical = {row.logical_id: row for row in snapshot.logical_models}
+    variants = {(row.logical_id, row.variant_id): row for row in snapshot.variants}
+    local_by_digest = {row.ref.digest: row for row in snapshot.locals if row.scope == request.scope}
+    mount_by_kind_digest: dict[tuple[str, str], MountMaterialization] = {}
+    for row in sorted(
+        (item for item in snapshot.mounts if item.scope == request.scope),
+        key=lambda item: (item.priority, item.mount_id, item.ref.virtual_path),
+    ):
+        kind = _mount_asset_kind(row)
+        mount_by_kind_digest.setdefault((kind, row.ref.digest), row)
+    mirrors_by_digest: dict[str, list[ProviderMirror]] = {}
+    for mirror in snapshot.mirrors:
+        if mirror.source.provider_id in request.authorized_providers:
+            mirrors_by_digest.setdefault(mirror.digest, []).append(mirror)
+    candidates: list[ResolutionCandidate] = []
+    for link in snapshot.links:
+        variant = variants.get((link.logical_id, link.variant_id))
+        if variant is None:
+            continue
+        compatibility, compatibility_reason = _compatibility(variant, request.compatibility)
+        local = local_by_digest.get(link.digest)
+        mount = (
+            mount_by_kind_digest.get((logical[link.logical_id].asset_kind, link.digest))
+            if link.logical_id in logical
+            else None
+        )
+        mirrors = mirrors_by_digest.get(link.digest, [])
+        if local is not None:
+            availability: Availability = "local"
+            availability_reason = "local materialization"
+            ref = local.ref
+        elif mount is not None:
+            availability = "local"
+            availability_reason = "ready local mount"
+            ref = mount.ref
+        elif any(mirror.state == "available" for mirror in mirrors):
+            availability = "downloadable"
+            availability_reason = "authorized provider mirror available"
+            ref = None
+        else:
+            availability = "unavailable"
+            reasons = sorted({mirror.reason for mirror in mirrors if mirror.reason})
+            availability_reason = (
+                reasons[0] if reasons else "no local or authorized provider materialization"
+            )
+            ref = None
+        candidates.append(
+            ResolutionCandidate(
+                link.logical_id,
+                link.variant_id,
+                link.digest,
+                availability,
+                availability_reason,
+                compatibility,
+                compatibility_reason,
+                ref,
+            )
+        )
+    return tuple(sorted(candidates, key=lambda row: (row.logical_id, row.variant_id, row.digest)))
+
+
+def _mount_asset_kind(row: MountMaterialization) -> str:
+    if row.asset_kind:
+        return row.asset_kind
+    major = row.ref.media_type.partition("/")[0]
+    if major in {"audio", "image", "video"}:
+        return f"media/{major}"
+    return "asset/file"
+
+
+def _finish(
+    candidates: tuple[ResolutionCandidate, ...], tier: ResolutionTier, reason: str
+) -> ResolutionOutcome:
+    if not candidates:
+        return ResolutionOutcome("missing", tier, None, (), reason)
+    bindable = tuple(row for row in candidates if row.compatibility == "compatible")
+    if len(bindable) > 1:
+        return ResolutionOutcome("ambiguous", tier, None, candidates, reason)
+    if not bindable:
+        if len(candidates) > 1:
+            return ResolutionOutcome("ambiguous", tier, None, candidates, reason)
+        selected = next(iter(candidates))
+        if selected.compatibility == "unknown":
+            return ResolutionOutcome(
+                "missing", tier, selected, candidates, selected.compatibility_reason
+            )
+        return ResolutionOutcome(
+            "incompatible", tier, selected, candidates, selected.compatibility_reason
+        )
+    selected = next(iter(bindable))
+    if selected.availability == "local":
+        return ResolutionOutcome("resolved", tier, selected, candidates, reason)
+    return ResolutionOutcome("missing", tier, selected, candidates, selected.availability_reason)
+
+
+def _trusted_source_problem(
+    source: SourceIdentity,
+    digest: str,
+    authorized_providers: frozenset[str],
+    mirrors: tuple[ProviderMirror, ...],
+) -> str:
+    if source.provider_id not in authorized_providers:
+        return "trusted provider unauthorized"
+    observations = tuple(mirror for mirror in mirrors if mirror.source == source)
+    if not observations:
+        return "trusted source unavailable"
+    if any(mirror.digest != digest for mirror in observations):
+        return "trusted source digest mismatch"
+    if not any(mirror.state == "available" for mirror in observations):
+        return "trusted source unavailable"
+    return ""
+
+
+def resolve(
+    request: ResolutionRequest,
+    mapping: ReferenceMapping | None,
+    snapshot: ResolutionSnapshot,
+) -> ResolutionOutcome:
+    """Resolve validated facts without file IO, hashing, network, or mutation."""
+
+    logical = {row.logical_id: row for row in snapshot.logical_models}
+    variants = {(row.logical_id, row.variant_id): row for row in snapshot.variants}
+    facts = _candidate_facts(request, snapshot)
+
+    selected_logical: str | None = None
+    selected_variant: str | None = None
+    if request.logical_id is not None:
+        selected_logical, alias_ambiguous = _canonical_selection(
+            request.logical_id, set(logical), snapshot.aliases, kind="logical"
+        )
+        if alias_ambiguous:
+            return ResolutionOutcome("ambiguous", None, None, facts, "logical alias ambiguous")
+        if selected_logical is None:
+            return ResolutionOutcome("missing", None, None, facts, "logical model unknown")
+        if logical[selected_logical].asset_kind != request.asset_kind:
+            return ResolutionOutcome(
+                "incompatible", None, None, facts, "logical model kind mismatch"
+            )
+    if request.variant_id is not None and selected_logical is not None:
+        canonical_variants = {
+            variant_id for logical_id, variant_id in variants if logical_id == selected_logical
+        }
+        selected_variant, alias_ambiguous = _canonical_selection(
+            request.variant_id,
+            canonical_variants,
+            snapshot.aliases,
+            kind="variant",
+            logical_id=selected_logical,
+        )
+        if alias_ambiguous:
+            return ResolutionOutcome("ambiguous", None, None, facts, "variant alias ambiguous")
+        if selected_variant is None:
+            return ResolutionOutcome("missing", None, None, facts, "variant unknown")
+
+    applicable_mapping = (
+        mapping
+        if mapping is not None
+        and mapping.scope == request.scope
+        and mapping.reference_key == request.reference_key
+        else None
+    )
+    if applicable_mapping is not None:
+        model = logical.get(applicable_mapping.logical_id)
+        if model is None or model.asset_kind != request.asset_kind:
+            return ResolutionOutcome(
+                "incompatible", "mapping", None, facts, "mapping kind mismatch"
+            )
+        if (selected_logical is not None and selected_logical != applicable_mapping.logical_id) or (
+            selected_variant is not None and selected_variant != applicable_mapping.variant_id
+        ):
+            return ResolutionOutcome(
+                "incompatible", "mapping", None, facts, "mapping selection mismatch"
+            )
+        if (
+            request.expected_digest is not None
+            and request.expected_digest != applicable_mapping.digest
+        ):
+            return ResolutionOutcome(
+                "incompatible", "mapping", None, facts, "mapping digest mismatch"
+            )
+        if (
+            request.trusted_digest is not None
+            and request.trusted_digest != applicable_mapping.digest
+        ):
+            return ResolutionOutcome(
+                "incompatible", "mapping", None, facts, "mapping trusted mismatch"
+            )
+        if (
+            request.trusted_source is not None
+            and applicable_mapping.trusted_source is not None
+            and request.trusted_source != applicable_mapping.trusted_source
+        ):
+            return ResolutionOutcome(
+                "incompatible", "mapping", None, facts, "mapping source mismatch"
+            )
+        required_sources = tuple(
+            source
+            for source in (applicable_mapping.trusted_source, request.trusted_source)
+            if source is not None
+        )
+        for source in required_sources:
+            problem = _trusted_source_problem(
+                source,
+                applicable_mapping.digest,
+                request.authorized_providers,
+                snapshot.mirrors,
+            )
+            if problem:
+                return ResolutionOutcome("incompatible", "mapping", None, facts, problem)
+        exact = tuple(
+            row
+            for row in facts
+            if (row.logical_id, row.variant_id, row.digest)
+            == (
+                applicable_mapping.logical_id,
+                applicable_mapping.variant_id,
+                applicable_mapping.digest,
+            )
+        )
+        return _finish(exact, "mapping", "exact reference mapping")
+
+    filtered = tuple(
+        row
+        for row in facts
+        if (selected_logical is None or row.logical_id == selected_logical)
+        and (selected_variant is None or row.variant_id == selected_variant)
+    )
+    wrong_kind = tuple(
+        row
+        for row in filtered
+        if logical.get(row.logical_id) is None
+        or logical[row.logical_id].asset_kind != request.asset_kind
+    )
+    if wrong_kind and len(wrong_kind) == len(filtered):
+        return ResolutionOutcome(
+            "incompatible", None, None, wrong_kind, "logical model kind mismatch"
+        )
+    filtered = tuple(row for row in filtered if row not in wrong_kind)
+
+    if request.trusted_source is not None and request.trusted_digest is not None:
+        problem = _trusted_source_problem(
+            request.trusted_source,
+            request.trusted_digest,
+            request.authorized_providers,
+            snapshot.mirrors,
+        )
+        if problem:
+            return ResolutionOutcome("incompatible", "trusted_source", None, filtered, problem)
+        trusted = tuple(row for row in filtered if row.digest == request.trusted_digest)
+        return _finish(trusted, "trusted_source", "exact trusted source and digest")
+    if request.expected_digest is not None:
+        expected = tuple(row for row in filtered if row.digest == request.expected_digest)
+        return _finish(expected, "expected_digest", "exact expected digest")
+    if selected_variant is not None:
+        return _finish(filtered, "selected_variant", "explicit variant selection")
+    if request.compatibility is not None:
+        return _finish(filtered, "compatibility", "explicit compatibility leaves one candidate")
+    return ResolutionOutcome(
+        "missing" if not filtered else "ambiguous",
+        None,
+        None,
+        filtered,
+        "no sibling variant preference without explicit compatibility",
+    )
 
 
 _SCHEMA_STATEMENTS = (
@@ -652,6 +1113,51 @@ class ResolutionStore:
             except BaseException:
                 self._conn.rollback()
                 raise
+
+    def upsert_mapping(self, mapping: ReferenceMapping) -> None:
+        provider = mapping.trusted_source.provider_id if mapping.trusted_source else None
+        source = mapping.trusted_source.source_id if mapping.trusted_source else None
+        with self._lock, self._conn:
+            self._conn.execute(
+                """INSERT INTO mappings VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(scope, reference_key) DO UPDATE SET
+                    logical_id=excluded.logical_id, variant_id=excluded.variant_id,
+                    digest=excluded.digest, trusted_provider_id=excluded.trusted_provider_id,
+                    trusted_source_id=excluded.trusted_source_id,
+                    updated_at=excluded.updated_at""",
+                (
+                    mapping.scope,
+                    mapping.reference_key,
+                    mapping.logical_id,
+                    mapping.variant_id,
+                    mapping.digest,
+                    provider,
+                    source,
+                    mapping.updated_at,
+                ),
+            )
+
+    def get_mapping(self, scope: str, reference_key: str) -> ReferenceMapping | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM mappings WHERE scope = ? AND reference_key = ?",
+                (_nonempty(scope, "scope"), _nonempty(reference_key, "reference key")),
+            ).fetchone()
+        if row is None:
+            return None
+        provider = row["trusted_provider_id"]
+        source = row["trusted_source_id"]
+        if (provider is None) != (source is None):
+            raise AssetError("stored mapping has incomplete trusted source")
+        return ReferenceMapping(
+            row["scope"],
+            row["reference_key"],
+            row["logical_id"],
+            row["variant_id"],
+            row["digest"],
+            SourceIdentity(provider, source) if provider is not None else None,
+            row["updated_at"],
+        )
 
     def snapshot(self, scope: str) -> ResolutionSnapshot:
         scope = _nonempty(scope, "scope")

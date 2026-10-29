@@ -5,8 +5,8 @@ diagnostic host, then composes the installed default packs with their exact
 artifact provenance, each configured pack, and an optional ComfyUI
 compatibility surface. First-party packs may run in-process in the shared
 Dinkster environment; each `--pack` runs in its own worker process by default.
-The default SD 1.5 workflow runs without a ComfyUI checkout. Its execution
-interpreter must contain PyTorch and the pinned `dinkster_inference` package.
+The default SD 1.5 workflow runs natively without a ComfyUI checkout. Its
+execution interpreter must contain PyTorch and the native inference packages.
 The bare `dinkster` launcher inherits that interpreter from
 `DINKSTER_EXECUTION_PYTHON`; advanced `dinkster-serve` launches can select it
 separately from the host with `--execution-python`.
@@ -455,27 +455,44 @@ pool VRAM, or shard one model across GPUs.
 
 ### --single-job-multi-gpu-devices / --single-job-multi-gpu-mode
 
-`--single-job-multi-gpu-devices INDEX,INDEX[,INDEX...]` starts two or more
-ordered logical CUDA ranks as the server's allowed single-job pool. Indices are
-relative to `CUDA_VISIBLE_DEVICES`; Dinkster does not discover or add devices.
-It is mutually exclusive with `--multi-gpu-devices`.
+`--single-job-multi-gpu-devices INDEX,INDEX[,INDEX...]` fixes two or more
+ordered logical CUDA ranks for each single-job workgroup. Indices are relative
+to `CUDA_VISIBLE_DEVICES`; Dinkster does not discover or add devices. It is
+mutually exclusive with `--multi-gpu-devices`.
 
-The startup mode is `auto`, `guidance`, or `sequence` (default
-`auto`). Guidance splits model-evaluated conditioning lanes, sequence selects
-H3 Ulysses. Auto and guidance
-require exactly two participating ranks. Explicit sequence supports two or four
-ranks.
+The mode is `auto`, `guidance`, `sequence`, or `window` (default `auto`).
+These modes distribute one sampling job; they are not whole-job replicas and
+do not guarantee lower latency:
+
+- `guidance` assigns model-evaluated guidance lanes to separate full-model
+  ranks and gathers each denoiser evaluation. It requires at least conditional
+  and unconditional model lanes.
+- `sequence` uses every selected rank for pure Ulysses sequence parallelism
+  (`U=rank count`, `R=1`, guidance degree 1). It admits only an exact registered
+  sequence receipt and is never selected by `auto`.
+- `window` scatters a windowed Flux plan's per-step window evaluations across
+  full-model ranks with a bit-exact merge. It refuses when the plan has fewer
+  than two joint windows or no registered window receipt, and never falls back
+  to another topology.
+- `auto` uses receipted guidance for H3 and SD1.5, or window scattering for
+  eligible Flux windowed plans. It never selects sequence parallelism. It
+  fails before sampling when none is eligible rather than running
+  duplicate single-device work on every rank.
+
+Guidance mode currently supports SD1.5 FP16 and registered MiniMax H3 BF16 and
+INT8 ConvRot FL2VA plans on two SM 8.9 Ada or two SM 12.0 Blackwell GPUs with
+builtin samplers and schedulers. Other model, dtype, rank-count, and architecture combinations
+refuse until they have their own receipt. Sequence mode currently supports
+MiniMax H3 FL2VA BF16 with built-in SDPA under torch 2.13.0+cu130 on two
+SM 12.0 Blackwell GPUs. Separate receipts also admit explicitly selected
+comfy-kitchen 0.2.31 and 0.2.32 INT8 attention under that torch runtime.
+Other provider versions and runtimes refuse.
 
 Every rank is a separate process with one selected GPU and its own model
 residency. Rank 0 owns progress and the final result. A rank failure or
 cancellation terminates the workgroup because a timed-out NCCL communicator
-cannot be reused.
-
-The native and Comfy-compatible job APIs may select a permitted subset and mode
-for one run with `singleJobMultiGpu`, for example
-`{"cudaIndices":[1,3],"mode":"sequence"}`. The indices must belong to the
-startup pool. Mode and ordered device selection are part of execution and cache
-identity; rank-local resources do not cross between different subsets.
+cannot be reused. Mode and device selection are fixed for the server lifetime;
+they are not currently workflow widgets or per-request settings.
 
 ### --memory-budget
 
@@ -521,9 +538,9 @@ Syntax: `--aimdo {auto,on,off}`.
 
 Default: `auto`.
 
-Weight residency mechanism for native execution. `auto` enables comfy-aimdo
+Weight residency mechanism for native execution. `auto` enables dinkster-aimdo
 partial weight offload on supported NVIDIA CUDA workers on Linux and Windows.
-`on` requests comfy-aimdo wherever the capability chain passes. If Aimdo is
+`on` requests dinkster-aimdo wherever the capability chain passes. If Aimdo is
 unavailable, selection reports the failed capability and explicitly falls back
 to eager residency. After Aimdo is selected, component construction failures
 fail the load without changing mechanisms or caching an eager replacement.
@@ -760,11 +777,19 @@ URLs. Region names contain 1-32 lowercase letters, digits, or hyphens.
 
 With a library root, resolver indexes are managed through
 `GET/POST /api/assets/resolver-indexes`,
+`PATCH /api/assets/resolver-indexes/{subscriptionId}`,
 `DELETE /api/assets/resolver-indexes/{subscriptionId}`, and
 `POST /api/assets/resolver-indexes/refresh`. Mutations require
 `assets:write`; listing requires `assets:read`. The guess endpoint includes
 exact, case-sensitive basename suggestions from subscribed indexes and never
 downloads a suggestion.
+
+The PATCH body is
+`{"trustedForP2P":boolean,"licenseAuthoritative":boolean}`. Both flags default
+false, and setting them requires the host's `p2p` settings grant. A subscription
+with `trustedForP2P` enabled can authorize its resolver `p2p` entries;
+`licenseAuthoritative` identifies metadata authority, not transfer eligibility.
+Provider names and URLs never imply either flag.
 
 Hosted subscription sources require HTTPS. Loopback HTTP is accepted for
 local development.
@@ -780,16 +805,27 @@ the export's `name` must match that ID exactly. HTTPS is required except for
 loopback HTTP fixtures. URLs must be ASCII: percent-encode non-ASCII paths and
 queries, and use IDNA hostnames. Requests send no authorization or cookies.
 
-Startup creates the subscription only after fetching a complete,
-identity-matching export. Missing configuration, invalid identity, or fetch failure emits an
+Startup creates the subscription with both `trustedForP2P` and
+`licenseAuthoritative` true only after fetching a complete, identity-matching
+export. Missing configuration, invalid identity, or fetch failure emits an
 `official resolver bootstrap refused` diagnostic and leaves ordinary serving
-available.
+available. Provider deployment still requires live allowlist, canonical
+descriptor, full-enumeration, and omission/tombstone validation.
 
-Bootstrap is recorded once in `resolver-indexes.json`. Unsubscribe choices
-survive restart; bootstrap never recreates a removed
+Bootstrap is recorded once in `resolver-indexes.json`. An existing matching
+subscription retains its trust flags. Later trust changes and unsubscribe
+survive restart; bootstrap never regrants trust or recreates a removed
 subscription. A different configured URL/ID pair is refused rather than
 silently replacing the recorded choice. Refresh rejects provider identity
-changes. Bootstrap never changes settings-write permissions.
+changes without renewing cached authority. Other subscriptions still default
+both flags false. Bootstrap never changes P2P settings, saved opt-outs,
+`--disable-p2p`, or settings-write permissions.
+
+### --disable-p2p
+
+Disable peer-to-peer downloads and background seeding at startup. Fresh settings
+leave both off; existing saved choices are preserved.
+This override does not modify saved settings or grant settings-write access.
 
 ### --allow-settings-changes
 
@@ -800,7 +836,7 @@ writable.
 
 Grant runtime mutation for one category. The v1 categories are
 `memory-budgets`, `memory-headroom`, `aimdo-policy`, `dtype-policy`,
-`fp8-matmul`, `worker-comfy-args`, `jobs`, and `logging`. Repeat the
+`fp8-matmul`, `worker-comfy-args`, `jobs`, `logging`, and `p2p`. Repeat the
 flag to grant a union:
 
 ```

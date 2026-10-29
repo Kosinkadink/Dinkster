@@ -31,15 +31,6 @@ from typing import Literal, cast
 # reaches sideways in the bottom layer, so expression-level types and
 # runtime type ids can never drift apart.
 from dinkster_values import (
-    ASSET_TYPE,
-    COMPOSITOR_TYPE,
-    CORE_BOOLEAN,
-    CORE_COMBO,
-    CORE_FLOAT,
-    CORE_INT,
-    CORE_STRING,
-    CURVE_TYPE,
-    SAVE_TARGET_TYPE,
     CustomWidgetDescriptor,
     asset_type_id,
     list_type_id,
@@ -428,13 +419,13 @@ class InputFamilyOptionSource:
 class ComboWidget:
     """Presentation request for a combo-choice dropdown.
 
-    The socket has concrete ``COMBO`` identity while its runtime value,
+    The socket has concrete ``core.combo`` identity while its runtime value,
     literal, cache payload, and node-facing object stay a plain string.
     Choice vocabulary is never identity within combos: different option
     lists remain compatible, and a stored value outside the current options
     is the frontend's diagnostic to surface, not a schema error. This
     descriptor never joins schema signatures or execution identity. InputSpec
-    enforces the concrete COMBO binding.
+    enforces the concrete core.combo binding.
 
     ``options`` are static choices, rendered immediately. ``option_source``
     derives choices from the current members of a top-level input family:
@@ -540,7 +531,7 @@ class MultiComboWidget:
     """Presentation request for a list-valued combo selector.
 
     Unlike ``ComboWidget``, this descriptor owns one canonical
-    ``list<COMBO>`` value. Options and remote policy are presentation
+    ``list<core.combo>`` value. Options and remote policy are presentation
     vocabulary only; selected order and duplicate multiplicity remain value,
     fingerprint, and cache identity. There is deliberately no
     control-after-generate field because upstream defines no deterministic
@@ -602,7 +593,7 @@ class MultiComboWidget:
 class BooleanWidget:
     """Presentation request for a boolean toggle with custom state labels.
 
-    Only meaningful on ``BOOLEAN`` inputs. A label-less boolean
+    Only meaningful on ``core.boolean`` inputs. A label-less boolean
     carries no widget at all - the type alone means "render a toggle" -
     so this widget exists purely to carry ComfyUI-style label_on/
     label_off prose ("enable"/"disable" on a mute toggle). Presentation
@@ -646,7 +637,7 @@ _DECIMAL_WIRE_INT_MAX = 2**64 - 1
 class NumberWidget:
     """Presentation request for a numeric input's editor.
 
-    Only meaningful on ``INT``/``FLOAT`` inputs; the socket type
+    Only meaningful on ``core.int``/``core.float`` inputs; the socket type
     decides integer vs float rendering, so one widget kind covers both.
     All constraints are UI vocabulary: the runtime value stays a plain
     number and out-of-range stored values are the frontend's diagnostic to
@@ -657,16 +648,16 @@ class NumberWidget:
     ``display`` is an explicit editor presentation when present. Bounds and
     step are independent constraints: they never imply a slider or any other
     presentation. ``round`` is an independent finite positive rendering
-    precision, or literal False to disable rounding, available only on FLOAT;
-    it never implies display or changes bounds/step. ``control_after_generate``
-    names the INITIAL mode of the seed-style control-after-generate selector; setting it asks the
+    precision available only on core.float; it never implies display or
+    changes bounds/step. ``control_after_generate`` names the INITIAL mode
+    of the seed-style control-after-generate selector; setting it asks the
     frontend to render that control. Absence of the descriptor means "no
     presentation metadata", and the frontend still renders a number editor
     by primitive type inference; it never means the input is widgetless
     (pinned with the frontend).
 
     Socket binding: this descriptor is only
-    legal on concrete ``INT``/``FLOAT`` inputs, and constraints
+    legal on concrete ``core.int``/``core.float`` inputs, and constraints
     are interpreted in the socket's domain - an int socket with a
     fractional min/max/step is malformed. Enforced by InputSpec, which is
     the first place the widget meets its socket type."""
@@ -675,8 +666,8 @@ class NumberWidget:
     max: int | float | None = None
     step: int | float | None = None
     control_after_generate: ControlAfterGenerate | None = None
-    display: Literal["number", "slider", "knob", "gradientslider", "color"] | None = None
-    round: int | float | Literal[False] | None = None
+    display: Literal["number", "slider", "knob", "gradientslider"] | None = None
+    round: int | float | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -712,17 +703,11 @@ class NumberWidget:
                     f"number widget {name} must fit the supported integer range "
                     f"({_DECIMAL_WIRE_INT_MIN}..{_DECIMAL_WIRE_INT_MAX}), got {bound}"
                 )
-        if (
-            self.round is not None
-            and self.round is not False
-            and (
-                type(self.round) not in (int, float)
-                or not math.isfinite(self.round)
-                or self.round <= 0
-            )
+        if self.round is not None and (
+            type(self.round) not in (int, float) or not math.isfinite(self.round) or self.round <= 0
         ):
             raise ValueError(
-                f"number widget round must be False or a finite positive number, got {self.round!r}"
+                f"number widget round must be a finite positive number, got {self.round!r}"
             )
         if self.min is not None and self.max is not None and self.min > self.max:
             raise ValueError(f"number widget min ({self.min}) must not exceed max ({self.max})")
@@ -739,11 +724,11 @@ class NumberWidget:
             )
         if self.display is not None and (
             type(self.display) is not str
-            or self.display not in {"number", "slider", "knob", "gradientslider", "color"}
+            or self.display not in {"number", "slider", "knob", "gradientslider"}
         ):
             raise ValueError(
                 "number widget display must be one of "
-                "['color', 'gradientslider', 'knob', 'number', 'slider'], "
+                "['gradientslider', 'knob', 'number', 'slider'], "
                 f"got {self.display!r}"
             )
 
@@ -803,7 +788,7 @@ class TextCompletions:
 class StringWidget:
     """Presentation request for a string editor.
 
-    Only legal on concrete ``STRING`` inputs (enforced by InputSpec).
+    Only legal on concrete ``core.string`` inputs (enforced by InputSpec).
     Explicit ``multiline=False`` lets a named representation set compose both
     one-line and multiline editors from the same closed
     descriptor. Absence still means the original inferred one-line editor,
@@ -838,7 +823,7 @@ class StringWidget:
 
 @dataclass(frozen=True)
 class ColorWidget:
-    """Fieldless color-picker presentation over a canonical STRING value."""
+    """Fieldless color-picker presentation over a canonical core.string value."""
 
 
 @dataclass(frozen=True)
@@ -984,81 +969,85 @@ Widget = WidgetDescriptor | WidgetRepresentations
 def _validate_widget_binding(input_id: str, input_type: TypeExpr, widget: WidgetDescriptor) -> None:
     """Bind one descriptor to the canonical socket/value domain."""
 
-    primitive_type = (
-        cast("TypeExpr", input_type.element) if input_type.kind == "list" else input_type
-    )
     if isinstance(widget, NumberWidget):
-        socket = primitive_type.types[0] if primitive_type.kind == "concrete" else None
-        if socket not in (CORE_INT, CORE_FLOAT):
+        socket = input_type.types[0] if input_type.kind == "concrete" else None
+        if socket not in ("core.int", "core.float"):
             raise ValueError(
                 f"input {input_id}: number widget requires a concrete "
-                f"INT or FLOAT input, got {input_type.kind} "
+                f"core.int or core.float input, got {input_type.kind} "
                 f"{socket or ''}".rstrip()
             )
-        if socket == CORE_INT:
+        if socket == "core.int":
             for name in ("min", "max", "step"):
                 bound = getattr(widget, name)
                 if bound is not None and bound != int(bound):
                     raise ValueError(
                         f"input {input_id}: number widget {name} must be integral "
-                        f"on a INT input, got {bound}"
+                        f"on a core.int input, got {bound}"
                     )
                 if isinstance(bound, float) and abs(bound) > _JSON_SAFE_INT:
                     raise ValueError(
                         f"input {input_id}: number widget {name} must be exactly representable "
-                        f"on a INT input, got {bound}"
+                        f"on a core.int input, got {bound}"
                     )
-        if socket == CORE_FLOAT:
+        elif socket == "core.float":
             for name in ("min", "max", "step"):
                 bound = getattr(widget, name)
                 if isinstance(bound, int) and abs(bound) > _JSON_SAFE_INT:
                     raise ValueError(
-                        f"input {input_id}: number widget {name} must use a float "
-                        f"outside the safe integer range on a FLOAT input, got {bound}"
+                        f"input {input_id}: number widget {name} must fit the JSON-double-safe "
+                        f"integer range on a core.float input, got {bound}"
                     )
-        if widget.round is not None and socket != CORE_FLOAT:
+        if widget.round is not None and socket != "core.float":
             raise ValueError(
-                f"input {input_id}: number widget round requires a concrete FLOAT input"
+                f"input {input_id}: number widget round requires a concrete core.float input"
             )
-    if isinstance(widget, StringWidget) and primitive_type != TypeExpr.concrete(CORE_STRING):
-        raise ValueError(f"input {input_id}: string widget requires a concrete STRING input")
-    if isinstance(widget, ColorWidget) and input_type != TypeExpr.concrete(CORE_STRING):
-        raise ValueError(f"input {input_id}: color widget requires a concrete STRING input")
-    if isinstance(widget, CurveWidget) and input_type != TypeExpr.concrete(CURVE_TYPE):
-        raise ValueError(f"input {input_id}: curve widget requires a concrete {CURVE_TYPE} input")
-    if isinstance(widget, CompositorWidget) and input_type != TypeExpr.concrete(COMPOSITOR_TYPE):
-        raise ValueError(
-            f"input {input_id}: compositor widget requires a concrete {COMPOSITOR_TYPE} input"
-        )
-    if isinstance(widget, BooleanWidget) and primitive_type != TypeExpr.concrete(CORE_BOOLEAN):
-        raise ValueError(f"input {input_id}: boolean widget requires a concrete BOOLEAN input")
-    if isinstance(widget, ComboWidget) and primitive_type != TypeExpr.concrete(CORE_COMBO):
-        raise ValueError(f"input {input_id}: combo widget requires a concrete COMBO input")
-    if isinstance(widget, MultiComboWidget) and input_type != TypeExpr.list_of(
-        TypeExpr.concrete(CORE_COMBO)
+    if isinstance(widget, StringWidget) and input_type != TypeExpr.concrete("core.string"):
+        raise ValueError(f"input {input_id}: string widget requires a concrete core.string input")
+    if isinstance(widget, ColorWidget) and input_type != TypeExpr.concrete("core.string"):
+        raise ValueError(f"input {input_id}: color widget requires a concrete core.string input")
+    if isinstance(widget, CurveWidget) and input_type != TypeExpr.concrete("dinkster.curve"):
+        raise ValueError(f"input {input_id}: curve widget requires a concrete dinkster.curve input")
+    if isinstance(widget, CompositorWidget) and input_type != TypeExpr.concrete(
+        "dinkster.compositor"
     ):
-        raise ValueError(f"input {input_id}: multi combo widget requires a list<COMBO> input")
+        raise ValueError(
+            f"input {input_id}: compositor widget requires a concrete dinkster.compositor input"
+        )
+    if isinstance(widget, BooleanWidget) and input_type != TypeExpr.concrete("core.boolean"):
+        raise ValueError(f"input {input_id}: boolean widget requires a concrete core.boolean input")
+    if isinstance(widget, ComboWidget) and input_type != TypeExpr.concrete("core.combo"):
+        raise ValueError(f"input {input_id}: combo widget requires a concrete core.combo input")
+    if isinstance(widget, MultiComboWidget) and input_type != TypeExpr.list_of(
+        TypeExpr.concrete("core.combo")
+    ):
+        raise ValueError(f"input {input_id}: multi combo widget requires a list<core.combo> input")
     if isinstance(widget, AssetWidget) and not (
-        input_type == TypeExpr.concrete(ASSET_TYPE)
+        input_type == TypeExpr.concrete("dinkster.asset")
         or (input_type.kind == "asset" and input_type.runtime_type_id() is not None)
         or input_type.kind == "concrete"
-        or (widget.allow_upload and input_type == TypeExpr.list_of(TypeExpr.concrete(ASSET_TYPE)))
+        or (
+            widget.allow_upload
+            and input_type == TypeExpr.list_of(TypeExpr.concrete("dinkster.asset"))
+        )
     ):
         # Asset destinations receive one ref directly. Concrete scalar
         # destinations receive an asset-stamped literal that the worker
         # decodes (or a stamped list that it terminally merges). The exact
-        # upload-enabled list<ASSET> spelling supports ordered source
+        # upload-enabled list<dinkster.asset> spelling supports ordered source
         # uploads; other lists and unresolved asset variables cannot determine
         # a contract.
         raise ValueError(
             f"input {input_id}: asset widget requires a concrete "
-            f"scalar, bare {ASSET_TYPE}, upload-enabled list<{ASSET_TYPE}>, or "
+            "scalar, bare dinkster.asset, upload-enabled list<dinkster.asset>, or "
             "fully-concrete asset<...> input; other list inputs and "
             "asset<variable> are not supported"
         )
-    if isinstance(widget, SaveTargetWidget) and input_type != TypeExpr.concrete(SAVE_TARGET_TYPE):
+    if isinstance(widget, SaveTargetWidget) and input_type != TypeExpr.concrete(
+        "dinkster.save_target"
+    ):
         raise ValueError(
-            f"input {input_id}: save target widget requires a concrete {SAVE_TARGET_TYPE} input"
+            f"input {input_id}: save target widget requires a concrete dinkster.save_target input"
         )
 
 
@@ -1124,7 +1113,7 @@ class InputSpec:
             else (self.widget,)
         )
         if self.source_filename is not None:
-            source_type = TypeExpr.concrete(ASSET_TYPE)
+            source_type = TypeExpr.concrete("dinkster.asset")
             typed_asset = self.type.kind == "asset" and self.type.runtime_type_id() is not None
             if not typed_asset and self.type not in (source_type, TypeExpr.list_of(source_type)):
                 raise ValueError(
@@ -2176,12 +2165,6 @@ class NodeSchema:
     chunk_safe: tuple[tuple[str, ...], tuple[str, ...]] | None = None
     """Media ranges; ordinary inputs promise independent, cardinality-preserving execution."""
     chunk_safe_applies: Mapping[str, tuple[str, ...]] | None = None
-    input_order: tuple[str, ...] = ()
-    """Interleave top-level input groups in the wire interface and elaboration.
-
-    Empty retains inputs, families, combos, then slots. An explicit order
-    names every entry exactly once and preserves order within each group.
-    """
 
     def __post_init__(self) -> None:
         if not self.node_type:
@@ -2296,9 +2279,9 @@ class NodeSchema:
             ):
                 raise ValueError(f"{self.node_type}: selector schemas require exactly one output")
             selector_input = inputs_by_id.get(selector.input)
-            if selector_input is None or selector_input.type != TypeExpr.concrete(CORE_BOOLEAN):
+            if selector_input is None or selector_input.type != TypeExpr.concrete("core.boolean"):
                 raise ValueError(
-                    f"{self.node_type}: selector input must name a stored BOOLEAN input"
+                    f"{self.node_type}: selector input must name a stored core.boolean input"
                 )
             branch_ids = (selector.branches["false"], selector.branches["true"])
             if selector.input in branch_ids:
@@ -2319,22 +2302,6 @@ class NodeSchema:
         out_family_ids = [fam.id for fam in self.output_families]
         combo_ids = [combo.id for combo in self.combos]
         slot_ids = [slot.id for slot in self.slots]
-        if not isinstance(cast("object", self.input_order), tuple):
-            raise ValueError(f"{self.node_type}: input_order must be an immutable tuple")
-        if self.input_order:
-            groups = (input_ids, in_family_ids, combo_ids, slot_ids)
-            all_ids = [name for group in groups for name in group]
-            if len(self.input_order) != len(all_ids) or set(self.input_order) != set(all_ids):
-                raise ValueError(
-                    f"{self.node_type}: input_order must name every input exactly once"
-                )
-            for group in groups:
-                if [name for name in self.input_order if name in group] != group:
-                    raise ValueError(
-                        f"{self.node_type}: input_order must preserve each group's order"
-                    )
-            if self.input_order == tuple(all_ids):
-                object.__setattr__(self, "input_order", ())
         reserved = RESERVED_INPUT_IDS & (
             set(input_ids) | set(in_family_ids) | set(combo_ids) | set(slot_ids)
         )
@@ -2429,11 +2396,11 @@ class NodeSchema:
             if (
                 descriptor_input is None
                 or not descriptor_input.required
-                or descriptor_input.type != TypeExpr.concrete(CORE_STRING)
+                or descriptor_input.type != TypeExpr.concrete("core.string")
             ):
                 raise ValueError(
                     f"{self.node_type}: output descriptors require a required top-level "
-                    "STRING input"
+                    "core.string input"
                 )
             probe = self.output_descriptors.probe
             if probe is not None:
@@ -2441,10 +2408,10 @@ class NodeSchema:
                 if (
                     asset_input is None
                     or not asset_input.required
-                    or asset_input.type != TypeExpr.concrete(ASSET_TYPE)
+                    or asset_input.type != TypeExpr.concrete("dinkster.asset")
                 ):
                     raise ValueError(
-                        f"output probe requires a required top-level {ASSET_TYPE} input"
+                        "output probe requires a required top-level dinkster.asset input"
                     )
         for output in self.outputs:
             known_value = output.known_value
@@ -2456,10 +2423,10 @@ class NodeSchema:
                         f"{known_value.input!r} is not a declared top-level input"
                     )
                 primitive_types = {
-                    TypeExpr.concrete(CORE_INT),
-                    TypeExpr.concrete(CORE_FLOAT),
-                    TypeExpr.concrete(CORE_STRING),
-                    TypeExpr.concrete(CORE_BOOLEAN),
+                    TypeExpr.concrete("core.int"),
+                    TypeExpr.concrete("core.float"),
+                    TypeExpr.concrete("core.string"),
+                    TypeExpr.concrete("core.boolean"),
                 }
                 if known_input.type != output.type or output.type not in primitive_types:
                     raise ValueError(
@@ -2502,11 +2469,11 @@ class NodeSchema:
             if (
                 count_input is None
                 or not count_input.required
-                or count_input.type != TypeExpr.concrete(CORE_INT)
+                or count_input.type != TypeExpr.concrete("core.int")
             ):
                 raise ValueError(
                     f"{self.node_type}: output family count must reference a required "
-                    "top-level INT input"
+                    "top-level core.int input"
                 )
         if set(in_family_ids) & set(input_ids):
             raise ValueError(f"{self.node_type}: input family id collides with input id")
@@ -2585,14 +2552,6 @@ class NodeSchema:
             if spec.id == output_id:
                 return spec
         return None
-
-    @property
-    def input_entries(self) -> tuple[DynamicEntry, ...]:
-        entries = (*self.inputs, *self.input_families, *self.combos, *self.slots)
-        if not self.input_order:
-            return entries
-        by_id = {entry.id: entry for entry in entries}
-        return tuple(by_id[name] for name in self.input_order)
 
 
 def _remote_choice_ids(schema: NodeSchema) -> tuple[str, ...]:

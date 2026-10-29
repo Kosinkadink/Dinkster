@@ -204,7 +204,7 @@ def test_hed_provider_executes_in_an_isolated_worker(tmp_path: Path) -> None:
                     "hed": GraphNode(
                         "dinkster.preprocess.model_edges",
                         {
-                            "image": TypedLiteral("IMAGE", source.tolist()),
+                            "image": TypedLiteral("dinkster.image", source.tolist()),
                             "provider": "dinkster-vision-hed",
                             "safe": True,
                             "scribble": True,

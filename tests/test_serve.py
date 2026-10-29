@@ -74,6 +74,8 @@ def test_core_server_serves_real_catalog_without_optional_packages(tmp_path: Pat
             "dinkster-collab",
             "--no-install-package",
             "dinkster-supervisor",
+            "--no-install-package",
+            "dinkster-p2p",
         ],
         cwd=TESTS_DIR.parent,
         env=sync_environment,
@@ -86,9 +88,9 @@ def test_core_server_serves_real_catalog_without_optional_packages(tmp_path: Pat
             "-c",
             "import importlib.metadata as m, importlib.util as u; "
             "assert all(u.find_spec(n) is None for n in "
-            "('dinkster_collab', 'dinkster_supervisor')); "
+            "('dinkster_collab', 'dinkster_supervisor', 'dinkster_p2p')); "
             "assert all(not any(d.metadata['Name'] == n for d in m.distributions()) for n in "
-            "('dinkster-collab', 'dinkster-supervisor'))",
+            "('dinkster-collab', 'dinkster-supervisor', 'dinkster-p2p'))",
         ],
         check=True,
     )
@@ -113,6 +115,7 @@ def test_core_server_serves_real_catalog_without_optional_packages(tmp_path: Pat
             str(port),
             "--library-root",
             "",
+            "--disable-p2p",
         ],
         cwd=tmp_path,
         env=process_environment,
@@ -167,6 +170,7 @@ def test_core_server_serves_real_catalog_without_optional_packages(tmp_path: Pat
             assert job["state"] == "completed", job
             async with session.get(base + "/api/sessions") as response:
                 assert response.status == 404
+            assert "p2p unavailable" in log.read_text("utf-8")
 
     try:
         asyncio.run(scenario())
@@ -254,13 +258,13 @@ def test_native_runtime_versions_are_read_from_worker_interpreter(
         return type(
             "Completed",
             (),
-            {"stdout": '{"comfy-kitchen": "0.2.31", "torch": "2.13.0+cu130"}'},
+            {"stdout": '{"dinkster-kitchen": "0.2.31", "torch": "2.13.0+cu130"}'},
         )()
 
     monkeypatch.setattr(serve.subprocess, "run", run)
 
     assert serve.detect_native_runtime_versions("worker-python") == {
-        "comfy-kitchen": "0.2.31",
+        "dinkster-kitchen": "0.2.31",
         "torch": "2.13.0+cu130",
     }
     assert calls[0][:3] == ["worker-python", "-I", "-c"]
@@ -310,7 +314,8 @@ def test_standard_vision_pack_provisions_declared_runtime_before_composition(
         "dinkster-assets",
         "dinkster-caches",
         "dinkster-image-document",
-        "dinkster-inference-wire",
+        "dinkster-inference",
+        "dinkster-inference-torch",
         "dinkster-memory",
         "dinkster-protocol",
         "dinkster-schema",
@@ -328,9 +333,8 @@ def test_standard_vision_pack_provisions_declared_runtime_before_composition(
         assert dependencies & package_names <= workspace_names
     assert TESTS_DIR.parent / "packages" / "dinkster-video" in workspace
     if pack_name == "dinkster-vision-birefnet":
-        assert any(
-            requirement.startswith("dinkster-inference @ git+") for requirement in manifest.requires
-        )
+        assert "dinkster-inference-torch==0.0.1" in manifest.requires
+        assert TESTS_DIR.parent / "packages" / "dinkster-inference-torch" in workspace
     assert str(manifest.root.parent / "src") in prepared.env["PYTHONPATH"].split(os.pathsep)
 
 
@@ -529,6 +533,7 @@ def test_native_compute_dtypes_falls_back_permissive(
                     "worker-comfy-args",
                     "jobs",
                     "logging",
+                    "p2p",
                 }
             ),
         ),
@@ -546,6 +551,7 @@ def test_native_compute_dtypes_falls_back_permissive(
                     "worker-comfy-args",
                     "jobs",
                     "logging",
+                    "p2p",
                 }
             ),
         ),
@@ -580,6 +586,7 @@ def test_settings_gate_rejects_unknown_category() -> None:
                     "worker-comfy-args",
                     "jobs",
                     "logging",
+                    "p2p",
                 }
             ),
         ),
@@ -595,6 +602,7 @@ def test_settings_gate_rejects_unknown_category() -> None:
                     "worker-comfy-args",
                     "jobs",
                     "logging",
+                    "p2p",
                 }
             ),
         ),
@@ -615,6 +623,7 @@ def test_settings_gate_rejects_unknown_category() -> None:
                     "worker-comfy-args",
                     "jobs",
                     "logging",
+                    "p2p",
                 }
             ),
         ),
@@ -643,11 +652,71 @@ def test_settings_gate_argparse_matrix(
     assert captured == [expected]
 
 
+@pytest.mark.parametrize("persisted_enabled", [None, False, True])
+@pytest.mark.parametrize("disabled", [False, True])
+def test_serve_p2p_defaults_off_preserves_saved_choice_and_allows_cli_disable(
+    persisted_enabled: bool | None,
+    disabled: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_p2p import default_p2p_settings
+
+    from dinkster import serve
+
+    saved = {
+        **default_p2p_settings(),
+        "downloadsEnabled": persisted_enabled,
+        "seedingEnabled": persisted_enabled,
+        "scope": "lan-only",
+    }
+    path = tmp_path / "settings.json"
+    if persisted_enabled is not None:
+        saved.pop("stagingBudgetBytes")
+        path.write_text(json.dumps({"p2p": saved}), encoding="utf-8")
+    original = path.read_bytes() if path.exists() else None
+    captured: list[tuple[dict[str, object], dict[str, object]]] = []
+
+    def record_settings(values: object, sources: object, **kwargs: object) -> object:
+        captured.append((dict(values), dict(sources)))  # type: ignore[arg-type]
+        assert kwargs["granted"] == frozenset()
+        return object()
+
+    def fake_run_app(awaitable: object, **_kwargs: object) -> None:
+        awaitable.close()  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(serve, "RuntimeSettings", record_settings)
+    monkeypatch.setattr(serve.web, "run_app", fake_run_app)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "dinkster-serve",
+            "--library-root",
+            str(tmp_path),
+            *(["--disable-p2p"] if disabled else []),
+        ],
+    )
+    serve.main()
+    value = captured[0][0]["p2p"]
+    assert isinstance(value, dict)
+    enabled = not disabled and persisted_enabled is True
+    assert value["downloadsEnabled"] is enabled
+    assert value["seedingEnabled"] is enabled
+    assert value["stagingBudgetBytes"] == 64 * 1024**3
+    assert value["scope"] == ("lan-and-internet" if persisted_enabled is None else "lan-only")
+    assert captured[0][1]["p2p"] == (
+        "cli" if disabled else "default" if persisted_enabled is None else "persisted"
+    )
+    assert (path.read_bytes() if path.exists() else None) == original
+
+
 @pytest.mark.parametrize("configuration", ["environment", "cli", "absent"])
-def test_serve_official_bootstrap_configuration_preserves_identity_and_permissions(
+def test_serve_official_bootstrap_configuration_preserves_p2p_off_and_permissions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, configuration: str
 ) -> None:
     from aiohttp.test_utils import TestClient, TestServer
+    from dinkster_p2p import default_p2p_settings
 
     from dinkster import serve
 
@@ -655,7 +724,7 @@ def test_serve_official_bootstrap_configuration_preserves_identity_and_permissio
     provider_id = "fixture-provider"
     monkeypatch.delenv("DINKSTER_OFFICIAL_RESOLVER_URL", raising=False)
     monkeypatch.delenv("DINKSTER_OFFICIAL_RESOLVER_PROVIDER_ID", raising=False)
-    flags: list[str] = []
+    flags = ["--disable-p2p"]
     settings_path = tmp_path / "settings.json"
     if configuration != "absent":
         monkeypatch.setenv("DINKSTER_OFFICIAL_RESOLVER_URL", source)
@@ -664,7 +733,20 @@ def test_serve_official_bootstrap_configuration_preserves_identity_and_permissio
         source += "?cli=1"
         provider_id = "cli-provider"
         flags += ["--official-resolver-url", source, "--official-resolver-provider-id", provider_id]
-    settings_path.write_text('{"features":{"resolver":{"enabled":true}}}\n', "utf-8")
+    elif configuration == "environment":
+        flags = []
+        settings_path.write_text(
+            json.dumps(
+                {
+                    "p2p": {
+                        **default_p2p_settings(),
+                        "downloadsEnabled": False,
+                        "seedingEnabled": False,
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
     original = settings_path.read_bytes() if settings_path.exists() else None
     calls: list[tuple[str | None, str | None]] = []
 
@@ -681,6 +763,10 @@ def test_serve_official_bootstrap_configuration_preserves_identity_and_permissio
                 assert response.status == 200
                 settings = await response.json()
                 assert settings["categories"]["granted"] == []
+                p2p = settings["settings"]["p2p"]
+                assert p2p["value"]["downloadsEnabled"] is False
+                assert p2p["value"]["seedingEnabled"] is False
+                assert p2p["source"] == ("persisted" if configuration == "environment" else "cli")
             finally:
                 await client.close()
 
@@ -1274,6 +1360,7 @@ def test_read_only_output_mount_is_not_selected_as_the_save_default(
             "--library-root",
             str(library),
             "--no-default-packs",
+            "--disable-p2p",
         ],
     )
 
@@ -1876,10 +1963,10 @@ def test_serve_multi_gpu_cli_reaches_compat_worker(
 @pytest.mark.parametrize(
     ("devices", "mode"),
     (
+        ("2,0", "guidance"),
+        ("3,1,2", "guidance"),
         ("1,0", "sequence"),
-        ("3,1,2", "auto"),
-        ("0,1", "guidance"),
-        ("3,2,1,0", "sequence"),
+        ("1,0", "window"),
     ),
 )
 def test_serve_single_job_multi_gpu_preserves_logical_rank_order(
@@ -1921,14 +2008,13 @@ def test_serve_single_job_multi_gpu_preserves_logical_rank_order(
     assert config.mode == mode  # type: ignore[attr-defined]
 
 
-@pytest.mark.parametrize("mode", ("model", "window"))
-def test_serve_rejects_removed_single_job_mode(monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
+def test_serve_rejects_removed_single_job_model_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     from dinkster import serve
 
     monkeypatch.setattr(
         sys,
         "argv",
-        ["dinkster-serve", "--single-job-multi-gpu-mode", mode],
+        ["dinkster-serve", "--single-job-multi-gpu-mode", "model"],
     )
     with pytest.raises(SystemExit):
         serve.main()
@@ -2329,6 +2415,7 @@ def test_unprepared_library_catalog_fails_before_api_binding(
             "dinkster-serve",
             "--library-root",
             str(tmp_path),
+            "--disable-p2p",
             "--pack",
             "fixture",
         ],
@@ -2411,7 +2498,6 @@ def test_video_preview_pack_route_event_and_module_end_to_end(tmp_path: Path) ->
     (source / "dinkster-pack.toml").write_text("""
 [pack]
 name = "preview-source"
-publisher = "dinkster"
 [pack.entry]
 nodes = "preview_source:NODES"
 types = "preview_source:register_types"
@@ -2419,25 +2505,19 @@ types = "preview_source:register_types"
     (source / "preview_source.py").write_text("""
 from pathlib import Path
 from dinkster_api.v1 import (
-    VIDEO_TYPE,
-    Node,
-    NodeSchema,
-    OutputSpec,
-    TypeExpr,
-    register_video_value_type,
-    video_from_source,
+    Node, NodeSchema, OutputSpec, TypeExpr, register_video_value_type, video_from_source,
 )
 class Source(Node):
     @classmethod
     def define_schema(cls):
         return NodeSchema(node_type="preview-source.clip",
-                          outputs=(OutputSpec("video", TypeExpr.concrete(VIDEO_TYPE)),))
+                          outputs=(OutputSpec("video", TypeExpr.concrete("comfy.VIDEO")),))
     @classmethod
     def execute(cls):
         source = Path(__file__).with_name("clip.mp4").read_bytes()
         return cls.outputs(video=video_from_source(source))
 def register_types(registry):
-    register_video_value_type(registry, VIDEO_TYPE)
+    register_video_value_type(registry, "comfy.VIDEO")
 NODES = [Source]
 """)
     port = free_port()
@@ -2564,7 +2644,7 @@ def write_shutdown_pack(directory: Path, index: int, *, startup_delay: float = 0
     )
     manifest = directory / "dinkster-pack.toml"
     manifest.write_text(
-        f'[pack]\nname = "shutdown-pack-{index}"\npublisher = "dinkster"\n'
+        f'[pack]\nname = "shutdown-pack-{index}"\n'
         f'namespaces = ["{namespace}"]\n\n'
         f'[pack.entry]\nnodes = "{module}:NODES"\n',
         encoding="utf-8",
@@ -2772,32 +2852,14 @@ def test_memory_budget_failure_retains_server_output(tmp_path: Path) -> None:
     process = Mock()
     process.poll.return_value = 1
     log = tmp_path / "serve.log"
-    log.write_text("startup reached readiness check\n", encoding="utf-8")
+    log.write_text("startup reached p2p\n", encoding="utf-8")
 
     with pytest.raises(AssertionError, match="serve process died") as raised:
         assert_served_memory_budgets(process, 1, {}, log)
 
-    assert "server output:\nstartup reached readiness check" in "\n".join(raised.value.__notes__)
+    assert "server output:\nstartup reached p2p" in "\n".join(raised.value.__notes__)
     process.terminate.assert_not_called()
     process.wait.assert_called_once_with(timeout=30)
-
-
-def test_serve_development_pack_is_explicitly_trusted(tmp_path: Path) -> None:
-    port = free_port()
-    process, log = start_logged_serve(
-        serve_command(port, "--no-default-packs", "--development-pack"), tmp_path
-    )
-    pending_error: BaseException | None = None
-    try:
-        report = wait_for_composition(process, port)
-        packs = report["packs"]
-        assert isinstance(packs, dict)
-        assert packs["dinkster-nodes-dev"]["state"] == "announced"
-    except BaseException as error:
-        pending_error = error
-        raise
-    finally:
-        stop_logged_serve(process, log, pending_error)
 
 
 def test_serve_loads_memory_budgets_from_library_config(tmp_path: Path) -> None:
@@ -2845,8 +2907,9 @@ def test_settings_precedence_cli_over_persisted_over_memory_config(
 
 @pytest.mark.parametrize("no_defaults", [False, True])
 @pytest.mark.parametrize("launcher", [False, True])
+@pytest.mark.parametrize("disable_p2p", [False, True])
 def test_library_startup_composes_without_pack_workers(
-    tmp_path: Path, no_defaults: bool, launcher: bool
+    tmp_path: Path, no_defaults: bool, launcher: bool, disable_p2p: bool
 ) -> None:
     import psutil
 
@@ -2855,6 +2918,8 @@ def test_library_startup_composes_without_pack_workers(
     entry = ENTRY
     port = free_port()
     extra = ("--no-default-packs",) if no_defaults else ()
+    if disable_p2p:
+        extra += ("--disable-p2p",)
     command = serve_with_library_command(port, tmp_path, *extra)
     command[1:3] = ["-c", entry]
     if launcher:
@@ -2895,7 +2960,20 @@ def test_library_startup_composes_without_pack_workers(
             server = bound_server(process.pid, output.splitlines())
             if launcher:
                 assert server.pid != process.pid
-            assert not server.children(recursive=True)
+            async with session.get(f"http://127.0.0.1:{port}/api/settings") as resp:
+                assert resp.status == 200
+                settings = await resp.json()
+            panel_value = settings["settings"]["p2p"]["value"]
+            assert panel_value["downloadsEnabled"] is False
+            assert panel_value["seedingEnabled"] is False
+            async with session.get(f"http://127.0.0.1:{port}/api/p2p/status") as resp:
+                assert resp.status == 200
+                p2p = await resp.json()
+            assert p2p["state"] == "disabled", p2p
+            assert p2p["settings"]["downloadsEnabled"] is False, p2p
+            assert p2p["settings"]["seedingEnabled"] is False, p2p
+            assert p2p["sidecar"] is None, p2p
+            assert server.children(recursive=True) == []
 
     try:
         asyncio.run(scenario())
@@ -2934,8 +3012,7 @@ def test_degraded_default_ordering_composes_media_io_before_image(
     broken = tmp_path / "ordering-probe"
     broken.mkdir()
     (broken / "dinkster-pack.toml").write_text(
-        '[pack]\nname = "dinkster-ordering-probe"\npublisher = "dinkster"\n'
-        'namespaces = ["probe"]\n'
+        '[pack]\nname = "dinkster-ordering-probe"\nnamespaces = ["probe"]\n'
         "[pack.requirements.capabilities]\n"
         '"dinkster.ordering.probe" = ">=1.0.0,<2.0.0"\n'
         '[pack.entry]\nnodes = "probe_ordering_nodes:NODES"\n',
@@ -2981,7 +3058,9 @@ def test_degraded_default_ordering_composes_media_io_before_image(
         asyncio.run(composer.close())
 
 
-def test_degraded_default_ordering_retains_generation_pack(tmp_path: Path) -> None:
+def test_degraded_default_ordering_places_generation_before_model_packs(
+    tmp_path: Path,
+) -> None:
     from dinkster_workers import load_manifest
 
     import dinkster.serve as serve
@@ -2991,8 +3070,7 @@ def test_degraded_default_ordering_retains_generation_pack(tmp_path: Path) -> No
     broken = tmp_path / "ordering-probe"
     broken.mkdir()
     (broken / "dinkster-pack.toml").write_text(
-        '[pack]\nname = "dinkster-ordering-probe"\npublisher = "dinkster"\n'
-        'namespaces = ["probe"]\n'
+        '[pack]\nname = "dinkster-ordering-probe"\nnamespaces = ["probe"]\n'
         "[pack.requirements.capabilities]\n"
         '"dinkster.ordering.probe" = ">=1.0.0,<2.0.0"\n'
         '[pack.entry]\nnodes = "probe_ordering_nodes:NODES"\n',
@@ -3007,7 +3085,13 @@ def test_degraded_default_ordering_retains_generation_pack(tmp_path: Path) -> No
         asyncio.run(composer.close())
 
     names = [load_manifest(Path(spec.manifest)).name for spec in ordered]
-    assert "dinkster-nodes-generation" in names
+    generation = names.index("dinkster-nodes-generation")
+    for model in (
+        "dinkster-model-qwen-image",
+        "dinkster-model-triposplat",
+        "dinkster-model-wan",
+    ):
+        assert generation < names.index(model)
 
 
 def test_serve_progressive_pack_announcement(tmp_path: Path) -> None:
@@ -3138,6 +3222,9 @@ def test_default_catalog_publishes_only_owned_translation_carriers(
                     for key in ("comfyAliases", "comfyGroups"):
                         for record in pack.get(key, {}).get("records", []):
                             assert payload["nodes"][record["carrier"]]["pack"] == pack_id
+                for pack_id in ("dinkster-nodes-generation", "dinkster-nodes-image"):
+                    for key in ("comfyAliases", "comfyGroups"):
+                        assert payload["packs"][pack_id][key]["records"]
                 # CI passes this real HTTP response to the frontend validator.
                 if output := os.environ.get("DINKSTER_CATALOG_WIRE_OUTPUT"):
                     Path(output).write_text(json.dumps(payload), encoding="utf-8")
@@ -3617,7 +3704,7 @@ async def _peek_value(
 
 def test_serve_mounted_save_end_to_end(tmp_path: Path) -> None:
     """The write path, real process to real bytes: grant a readwrite mount
-    over the API while dinkster-serve runs, execute the PGM saver in
+    over the API while dinkster-serve runs, execute dev.image.save_pgm in
     that same process, verify the file landed inside the mount with the
     digest the job reported, stream it back via /api/assets, then revoke
     the mount and prove the very next save job fails - no restart
@@ -3628,28 +3715,6 @@ def test_serve_mounted_save_end_to_end(tmp_path: Path) -> None:
     library_root = tmp_path / "library"
     outdir = tmp_path / "outdir"
     outdir.mkdir()
-    pack = tmp_path / "mounted-save"
-    pack.mkdir()
-    manifest = pack / "dinkster-pack.toml"
-    manifest.write_text(
-        '[pack]\nname = "mounted-save"\npublisher = "dinkster"\n'
-        'type-namespaces = ["dev"]\n[pack.entry]\n'
-        'nodes = "mounted_save:NODES"\n'
-        'types = "dinkster_nodes_dev.image:register_dev_types"\n'
-    )
-    (pack / "mounted_save.py").write_text(
-        "from dataclasses import replace\n"
-        "from dinkster_nodes_dev.image import GradientImage, SaveImagePGM\n"
-        "class Gradient(GradientImage):\n"
-        "    @classmethod\n"
-        "    def define_schema(cls):\n"
-        "        return replace(super().define_schema(), node_type='mounted-save.gradient')\n"
-        "class Save(SaveImagePGM):\n"
-        "    @classmethod\n"
-        "    def define_schema(cls):\n"
-        "        return replace(super().define_schema(), node_type='mounted-save.save_pgm')\n"
-        "NODES = [Gradient, Save]\n"
-    )
     port = free_port()
     process, log = start_logged_serve(
         [
@@ -3664,20 +3729,24 @@ def test_serve_mounted_save_end_to_end(tmp_path: Path) -> None:
             str(library_root),
             "--allow-mount-changes",
             "--pack",
-            str(manifest),
+            str(
+                Path(__file__).parent.parent
+                / "packages"
+                / "dinkster-nodes-dev"
+                / "dinkster-pack.toml"
+            ),
             "--event-loop-stall-threshold",
             "4",
         ],
         tmp_path,
-        env={**os.environ, "PYTHONPATH": str(pack)},
     )
 
     def save_job(job_id: str) -> dict[str, object]:
         graph = Graph(
             nodes={
-                "g": GraphNode("mounted-save.gradient", {"width": 3, "height": 2}),
+                "g": GraphNode("dev.image.gradient", {"width": 3, "height": 2}),
                 "save": GraphNode(
-                    "mounted-save.save_pgm",
+                    "dev.image.save_pgm",
                     {
                         "image": Link("g", "image"),
                         "target": {"mount": "renders", "prefix": "shots/frame"},
@@ -3711,7 +3780,7 @@ def test_serve_mounted_save_end_to_end(tmp_path: Path) -> None:
                 while True:
                     async with session.get(base + "/api/nodes?wire=43") as resp:
                         nodes = (await resp.json())["nodes"]
-                    if "mounted-save.save_pgm" in nodes:
+                    if "dev.image.save_pgm" in nodes:
                         break
                     await asyncio.sleep(0.05)
 

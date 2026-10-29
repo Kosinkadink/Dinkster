@@ -179,8 +179,12 @@ class MountService:
                     )
                 )
                 while not scan_task.done():
-                    done, _ = await asyncio.wait({scan_task}, timeout=_SCAN_PROGRESS_INTERVAL)
-                    if not done:
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.shield(scan_task),
+                            timeout=_SCAN_PROGRESS_INTERVAL,
+                        )
+                    except TimeoutError:
                         progress = self.table.scan_progress(mount_id)
                         if progress is not None:
                             publish_progress(progress)

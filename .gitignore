@@ -7,7 +7,6 @@ __pycache__/
 .venv-gpu-extras/
 .venv-rocm/
 .venv-xpu/
-.run/
 rocm-report.json
 xpu-report.json
 dist/

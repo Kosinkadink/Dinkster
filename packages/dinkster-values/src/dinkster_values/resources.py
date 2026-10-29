@@ -20,8 +20,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import cast
 
-from .builtin_types import RESOURCE_HANDLE_TYPE
-
 # RESOURCE_ID_META_KEY's canonical home is model.py (the traversal helpers
 # in lists.py need it below the registry layer); re-exported here where the
 # resource docs live.
@@ -42,6 +40,8 @@ Cost is scheduling/accounting metadata only - never part of the
 fingerprint, for the same reason residency is not: the same computation
 on different hardware is the same computation.
 """
+
+RESOURCE_HANDLE_TYPE = "dinkster.resource"
 
 
 def unqualified_cost(cost: object) -> dict[str, int]:

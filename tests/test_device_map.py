@@ -124,8 +124,7 @@ def test_identity_map_returns_value_unchanged() -> None:
 def write_manifest(tmp_path: Path) -> Path:
     manifest = tmp_path / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname = "isopack"\npublisher = "dinkster"\n'
-        'type-namespaces = ["iso"]\n\n[pack.entry]\n'
+        '[pack]\nname = "isopack"\n\n[pack.entry]\n'
         'nodes = "isopack_nodes:NODES"\ntypes = "isopack_nodes:register_types"\n'
         'reservations = "isopack_nodes:plan_reservations"\n'
     )

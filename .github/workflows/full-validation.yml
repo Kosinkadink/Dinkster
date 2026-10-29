@@ -32,11 +32,18 @@ jobs:
         uses: actions/github-script@v7
         env:
           ALWAYS_MODEL_MATRIX: >-
+            [{"name":"inference and IPAdapter, shard 1 of 8","group":"inference","suites":"inference-torch,model-ipadapter","pytest-args":"-p tools.pytest_file_shard --file-shard 1/8","timeout-minutes":30},{"name":"inference and IPAdapter, shard 2 of 8","group":"inference","suites":"inference-torch,model-ipadapter","pytest-args":"-p tools.pytest_file_shard --file-shard 2/8","timeout-minutes":30},{"name":"inference and IPAdapter, shard 3 of 8","group":"inference","suites":"inference-torch,model-ipadapter","pytest-args":"-p tools.pytest_file_shard --file-shard 3/8","timeout-minutes":30},{"name":"inference and IPAdapter, shard 4 of 8","group":"inference","suites":"inference-torch,model-ipadapter","pytest-args":"-p tools.pytest_file_shard --file-shard 4/8","timeout-minutes":30},{"name":"inference and IPAdapter, shard 5 of 8","group":"inference","suites":"inference-torch,model-ipadapter","pytest-args":"-p tools.pytest_file_shard --file-shard 5/8","timeout-minutes":30},{"name":"inference and IPAdapter, shard 6 of 8","group":"inference","suites":"inference-torch,model-ipadapter","pytest-args":"-p tools.pytest_file_shard --file-shard 6/8","timeout-minutes":30},{"name":"inference and IPAdapter, shard 7 of 8","group":"inference","suites":"inference-torch,model-ipadapter","pytest-args":"-p tools.pytest_file_shard --file-shard 7/8","timeout-minutes":30},{"name":"inference and IPAdapter, shard 8 of 8","group":"inference","suites":"inference-torch,model-ipadapter","pytest-args":"-p tools.pytest_file_shard --file-shard 8/8","timeout-minutes":30},{"name":"acceptance and benchmark","group":"acceptance","suites":"acceptance-sampling,benchmark-loader","pytest-args":"","timeout-minutes":30}]
+          # SAM jobs reached 29:18; 45 minutes preserves cleanup headroom.
+          VISION_MODEL_MATRIX: >-
             [{"name":"HED, upscale and EfficientSAM","group":"vision-fast","suites":"hed,upscale,efficient-sam","pytest-args":"","timeout-minutes":30},{"name":"Depth Anything V2, DETR and RT-DETR","group":"vision-detection","suites":"depth-anything-v2,detr,rtdetr","pytest-args":"","timeout-minutes":30},{"name":"BiRefNet and Depth Anything V3","group":"vision-large","suites":"birefnet,depth-anything-v3","pytest-args":"","timeout-minutes":30},{"name":"SAM 3.1","group":"vision-sam","suites":"sam31","pytest-args":"","timeout-minutes":45}]
         with:
           script: |
             const alwaysModelMatrix = JSON.parse(process.env.ALWAYS_MODEL_MATRIX);
-            core.setOutput('model-matrix', JSON.stringify(alwaysModelMatrix));
+            const visionModelMatrix = JSON.parse(process.env.VISION_MODEL_MATRIX);
+            const modelMatrix = context.eventName === 'schedule'
+              ? [...alwaysModelMatrix, ...visionModelMatrix]
+              : alwaysModelMatrix;
+            core.setOutput('model-matrix', JSON.stringify(modelMatrix));
             if (context.eventName !== 'schedule') {
               core.setOutput('run-heavy', 'true');
               return;
@@ -137,8 +144,8 @@ jobs:
         run: |
           $python = uv run --no-sync python -c "import sys; print(sys.executable)"
           uv pip install --python $python --no-deps --index-url https://pypi.org/simple `
-            "comfy-kitchen==0.2.40" "comfy-aimdo==0.6.0"
-          & $python -c "from importlib.metadata import version; from importlib.util import find_spec; assert find_spec('comfy_kitchen') is not None; assert find_spec('comfy_aimdo') is not None; assert version('comfy-kitchen') == '0.2.40'; assert version('comfy-aimdo') == '0.6.0'; print('comfy-kitchen', version('comfy-kitchen')); print('comfy-aimdo', version('comfy-aimdo'))"
+            "dinkster-kitchen==0.2.35.post1" "dinkster-aimdo==0.5.5.post2"
+          & $python -c "from importlib.metadata import version; from importlib.util import find_spec; assert find_spec('dinkster_kitchen') is not None; assert find_spec('dinkster_aimdo') is not None; assert version('dinkster-kitchen') == '0.2.35.post1'; assert version('dinkster-aimdo') == '0.5.5.post2'; print('dinkster-kitchen', version('dinkster-kitchen')); print('dinkster-aimdo', version('dinkster-aimdo'))"
       - run: uv run --locked ruff format --check .
         if: matrix.run_checks
       - run: uv run ruff check .
@@ -193,6 +200,54 @@ jobs:
           pnpm exec tsx ../tools/validate_default_catalog.mjs "$CATALOG" .
         env:
           CATALOG: ${{ runner.temp }}/default-catalog.json
+
+  p2p-descriptor-macos:
+    needs: validation-plan
+    if: needs.validation-plan.outputs.run-heavy == 'true'
+    runs-on: ${{ fromJSON(vars.CI_RUNNERS).macos }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --all-packages
+      - run: uv run --locked pytest -q tests/test_p2p_descriptor.py
+
+  p2p-artifact-smoke:
+    needs: validation-plan
+    if: needs.validation-plan.outputs.run-heavy == 'true'
+    runs-on: ${{ fromJSON(vars.CI_RUNNERS)[matrix.runner] }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [linux, windows, macos]
+        python-version: ["3.12"]
+        include:
+          - os: linux
+            runner: linux
+          - os: windows
+            runner: windows
+          - os: macos
+            runner: macos
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --locked
+      - run: uv run --locked pytest -q tests/test_p2p_artifact_smoke.py
 
   torch-cpu:
     needs: validation-plan
@@ -324,7 +379,7 @@ jobs:
           uv run coverage combine coverage-data
           uv run coverage report --fail-under=80
 
-  video-template-replay:
+  translation-coverage:
     needs: validation-plan
     if: needs.validation-plan.outputs.run-heavy == 'true'
     runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
@@ -343,6 +398,15 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
       - run: uv sync --all-packages
+      - name: Verify translation, capability, and source-parity evidence
+        run: |
+          uv run --locked python tools/comfy_coverage.py \
+            --templates "$WORKFLOW_TEMPLATES_ROOT/templates" --comfyui "$COMFYUI_ROOT" \
+            --supported docs/supported
+          uv run --locked python tools/comfy_coverage.py \
+            --templates "$WORKFLOW_TEMPLATES_ROOT/templates" --comfyui "$COMFYUI_ROOT" \
+            --supported docs/supported --check
+          git diff --exit-code -- docs/comfy-translation-coverage.md docs/comfy-capability-evidence.md
       - name: Replay VIDEO template shapes
         run: uv run --locked pytest -q tests/test_video_alias_templates.py
 
@@ -352,11 +416,12 @@ jobs:
     needs:
       - validation-plan
       - test
+      - p2p-descriptor-macos
+      - p2p-artifact-smoke
       - torch-cpu
       - model-tests-gate
       - coverage-gate
-      - video-template-replay
-      - registry-install
+      - translation-coverage
     runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
     timeout-minutes: 2
     steps:
@@ -364,13 +429,16 @@ jobs:
         env:
           RUN_HEAVY: ${{ needs.validation-plan.outputs.run-heavy }}
           TEST_RESULT: ${{ needs.test.result }}
+          MACOS_RESULT: ${{ needs.p2p-descriptor-macos.result }}
+          ARTIFACT_RESULT: ${{ needs.p2p-artifact-smoke.result }}
           TORCH_RESULT: ${{ needs.torch-cpu.result }}
           MODEL_RESULT: ${{ needs.model-tests-gate.result }}
           COVERAGE_RESULT: ${{ needs.coverage-gate.result }}
+          TRANSLATION_RESULT: ${{ needs.translation-coverage.result }}
         run: |
-          printf '{"commit":"%s","runHeavy":"%s","lanes":{"test":"%s","torchCpu":"%s","modelTests":"%s","coverage":"%s"}}\n' \
-            "$GITHUB_SHA" "$RUN_HEAVY" "$TEST_RESULT" \
-            "$TORCH_RESULT" "$MODEL_RESULT" "$COVERAGE_RESULT" \
+          printf '{"commit":"%s","runHeavy":"%s","lanes":{"test":"%s","p2pDescriptorMacos":"%s","p2pArtifactSmoke":"%s","torchCpu":"%s","modelTests":"%s","coverage":"%s","translationCoverage":"%s"}}\n' \
+            "$GITHUB_SHA" "$RUN_HEAVY" "$TEST_RESULT" "$MACOS_RESULT" "$ARTIFACT_RESULT" \
+            "$TORCH_RESULT" "$MODEL_RESULT" "$COVERAGE_RESULT" "$TRANSLATION_RESULT" \
             > main-validation-status.json
           cat main-validation-status.json >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
@@ -384,51 +452,18 @@ jobs:
         env:
           RUN_HEAVY: ${{ needs.validation-plan.outputs.run-heavy }}
           TEST_RESULT: ${{ needs.test.result }}
+          MACOS_RESULT: ${{ needs.p2p-descriptor-macos.result }}
+          ARTIFACT_RESULT: ${{ needs.p2p-artifact-smoke.result }}
           TORCH_RESULT: ${{ needs.torch-cpu.result }}
           MODEL_RESULT: ${{ needs.model-tests-gate.result }}
           COVERAGE_RESULT: ${{ needs.coverage-gate.result }}
-          REGISTRY_RESULT: ${{ needs.registry-install.result }}
+          TRANSLATION_RESULT: ${{ needs.translation-coverage.result }}
         run: |
           if [ "$RUN_HEAVY" = false ]; then exit 0; fi
           test "$TEST_RESULT" = success
+          test "$MACOS_RESULT" = success
+          test "$ARTIFACT_RESULT" = success
           test "$TORCH_RESULT" = success
           test "$MODEL_RESULT" = success
           test "$COVERAGE_RESULT" = success
-          test "$REGISTRY_RESULT" = success
-
-  registry-install:
-    needs: validation-plan
-    if: needs.validation-plan.outputs.run-heavy == 'true'
-    runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/configure-private-repository
-        with:
-          repository: Kosinkadink/dinkster-registry
-          deploy-key: ${{ secrets.DINKSTER_REGISTRY_READ_KEY }}
-      - uses: actions/checkout@v4
-        with:
-          repository: Kosinkadink/dinkster-registry
-          ref: 5d844ae53616f88756a98eb6dc3aa73fefb92622
-          path: registry
-          persist-credentials: false
-      - name: Configure and verify the Linux probe jail
-        run: bash scripts/setup_probe_jail.sh
-      - uses: astral-sh/setup-uv@v5
-        with:
-          python-version: "3.12"
-      - run: |
-          uv sync --locked --all-packages
-          uv sync --project registry --frozen
-          uv run --no-sync python scripts/verify_release_install.py "$GITHUB_WORKSPACE" \
-            --state "$RUNNER_TEMP/registry-install-state" \
-            --registry-command "$GITHUB_WORKSPACE/registry/.venv/bin/dinkster-registry"
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: registry-install-state
-          path: ${{ runner.temp }}/registry-install-state
-          retention-days: 7
+          test "$TRANSLATION_RESULT" = success

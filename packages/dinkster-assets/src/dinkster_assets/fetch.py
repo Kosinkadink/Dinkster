@@ -35,14 +35,7 @@ from typing import Protocol, cast
 from dinkster_values import MEBIBYTE
 
 from .identity import AssetError, require_digest
-from .model import (
-    AssetRef,
-    AssetResolution,
-    AssetResolver,
-    LocalAssetResolver,
-    LocalFileSignature,
-    RecordedAssetResolver,
-)
+from .model import AssetResolution, AssetResolver, RecordedAssetResolver
 from .vault import AssetVault
 
 FETCH_CHUNK_SIZE = 8 * MEBIBYTE
@@ -426,22 +419,6 @@ class ChainResolver:
                 path = resolver.resolve(digest)
                 if path is not None:
                     return path
-        return None
-
-    def resolve_local(self, binding: str) -> tuple[Path, LocalFileSignature] | None:
-        for resolver in self._resolvers:
-            if isinstance(resolver, LocalAssetResolver):
-                location = resolver.resolve_local(binding)
-                if location is not None:
-                    return location
-        return None
-
-    def reconcile_local(self, binding: str) -> AssetRef | None:
-        for resolver in self._resolvers:
-            if isinstance(resolver, LocalAssetResolver):
-                ref = resolver.reconcile_local(binding)
-                if ref is not None:
-                    return ref
         return None
 
     def resolve_asset(self, digest: str) -> AssetResolution | None:

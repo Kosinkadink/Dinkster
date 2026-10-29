@@ -7,8 +7,6 @@ from collections.abc import Mapping, Sequence
 from dinkster_api.v1 import (
     CORE_COMBO,
     DETECTION_TYPE,
-    IMAGE_TYPE,
-    MASK_TYPE,
     REGION_TYPE,
     ComboOption,
     ComboWidget,
@@ -35,6 +33,8 @@ from dinkster_api.v1 import (
     region_meta,
 )
 
+IMAGE_TYPE = "dinkster.image"
+MASK_TYPE = "dinkster.mask"
 IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 MASKS = TypeExpr.list_of(TypeExpr.concrete(MASK_TYPE))
 DETECTIONS = TypeExpr.list_of(TypeExpr.concrete(DETECTION_TYPE))

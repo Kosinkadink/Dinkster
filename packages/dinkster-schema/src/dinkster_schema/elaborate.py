@@ -95,12 +95,14 @@ def elaborate(
         stored_values = None
         stored_ids = tuple(stored_inputs)
     choices = slot_variants or {}
-    inputs, active_choices, consumed_choices = _elaborate_dynamic_entries(
-        schema.input_entries,
+    inputs = list(schema.inputs)
+    projected, active_choices, consumed_choices = _elaborate_dynamic_entries(
+        (*schema.input_families, *schema.combos, *schema.slots),
         "",
         stored_ids,
         choices,
     )
+    inputs.extend(projected)
     inputs = [
         replace(spec, widget=_materialize_family_options(spec.widget, inputs))
         if spec.widget is not None
@@ -181,7 +183,6 @@ def elaborate(
     return replace(
         schema,
         inputs=tuple(inputs),
-        input_order=(),
         outputs=tuple(outputs),
         mirror=mirror,
         chunk_safe=(

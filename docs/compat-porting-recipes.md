@@ -49,11 +49,11 @@ class Gate(Node):
         return NodeSchema(
             node_type="example.gate",
             inputs=(
-                InputSpec("value", TypeExpr.concrete("INT")),
-                InputSpec("enabled", TypeExpr.concrete("BOOLEAN")),
+                InputSpec("value", TypeExpr.concrete("core.int")),
+                InputSpec("enabled", TypeExpr.concrete("core.boolean")),
             ),
             outputs=(
-                OutputSpec("value", TypeExpr.concrete("INT"), optional=True),
+                OutputSpec("value", TypeExpr.concrete("core.int"), optional=True),
             ),
         )
 
@@ -183,7 +183,7 @@ run. Use a `fold` region to match VHS's strictly sequential
 one-window-at-a-time residency; `map` dispatches windows concurrently, which
 trades peak memory for throughput.
 
-- Window list: compute per-window `start_time` values as a `list<FLOAT>`
+- Window list: compute per-window `start_time` values as a `list<core.float>`
   (for example `dinkster.curve.sample` over `[0, duration]`, or list and math
   nodes over a window index list). The source duration must be supplied by
   the author: `dinkster.load_video` reports the duration of the frames it

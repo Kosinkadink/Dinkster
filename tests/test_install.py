@@ -140,24 +140,6 @@ def test_lockfile_allows_same_publisher_nested_suites() -> None:
     assert len(suite.packs) == 2
 
 
-def test_lockfile_preserves_exact_claims_and_rejects_cross_kind_conflicts() -> None:
-    claims = ("Epsilon Scaling", "TextEncodeAceStepAudio1.5", "Video Slice")
-    original = Lockfile.of([locked(claims=claims)])
-    restored = Lockfile.from_record_json(original.record_json())
-    assert restored == original
-    assert restored.packs[0].claims == claims
-    assert restored.record_digest() == original.record_digest()
-    with pytest.raises(InstallError, match="conflicting namespaces"):
-        Lockfile.of([locked(claims=claims), locked("other", publisher="bob", claims=claims)])
-    with pytest.raises(InstallError, match="conflicting namespaces"):
-        Lockfile.of(
-            [
-                locked(claims=("Img.Blur",)),
-                locked("other", publisher="bob", claims=("img",)),
-            ]
-        )
-
-
 def test_lockfile_stores_canonical_forms_only() -> None:
     with pytest.raises(InstallError, match="not canonical"):
         Lockfile.of([locked("img_tools", claims=("img_tools",))])

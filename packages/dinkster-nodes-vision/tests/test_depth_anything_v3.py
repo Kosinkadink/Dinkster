@@ -219,7 +219,7 @@ def test_depth_provider_executes_in_an_isolated_worker(tmp_path: Path) -> None:
                     "depth": GraphNode(
                         "dinkster.preprocess.model_depth",
                         {
-                            "image": TypedLiteral("IMAGE", source.tolist()),
+                            "image": TypedLiteral("dinkster.image", source.tolist()),
                             "provider": "dinkster-vision-depth-anything-v3",
                             "resolution": 64,
                         },

@@ -20,16 +20,9 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
-from dinkster_assets import (
-    AssetError,
-    AssetRef,
-    LocalAssetRef,
-    MountDef,
-    MountSnapshotResolver,
-    MountTable,
-    digest_bytes,
-)
+from dinkster_assets import AssetError, AssetRef, MountDef, MountTable, digest_bytes
 from dinkster_compat_comfy import CompatTranslation, bootstrap, translate_mappings
+from dinkster_compat_comfy.native import NATIVE_NODES
 from dinkster_compat_comfy.translate import (
     MODEL_FILE_CATEGORIES,
     MODEL_FILE_SELECTORS,
@@ -41,7 +34,8 @@ from dinkster_compat_comfy.translate import (
     translate_node,
 )
 from dinkster_engine import Engine, EventListener
-from dinkster_schema import AssetWidget, ComboWidget, TypeExpr
+from dinkster_nodes_generation import GENERATION_NODES
+from dinkster_schema import AssetWidget, ComboWidget, InputSpec, TypeExpr
 from dinkster_server import create_app
 from dinkster_values import TypeRegistry
 from dinkster_workers import ManifestError
@@ -174,7 +168,7 @@ def test_exact_model_selector_becomes_digest_backed_asset() -> None:
         probe=_probe_with(_listing("checkpoints", listed)),
     )
     (spec,) = node.schema().inputs
-    assert spec.type == TypeExpr.concrete("ASSET")
+    assert spec.type == TypeExpr.concrete("dinkster.asset")
     assert spec.required and spec.default is None
     assert _only_asset_widget(node) == AssetWidget(
         accept=("application/octet-stream",), kind="model/checkpoint"
@@ -183,7 +177,7 @@ def test_exact_model_selector_becomes_digest_backed_asset() -> None:
     assert translation.listing_snapshots == {}
     registry = TypeRegistry()
     translation.register_types(registry)
-    assert "ASSET" in registry
+    assert "dinkster.asset" in registry
 
 
 def test_custom_node_using_model_category_remains_remote_combo() -> None:
@@ -203,7 +197,7 @@ def test_custom_node_using_model_category_remains_remote_combo() -> None:
     )
     registry = TypeRegistry()
     translation.register_types(registry)
-    assert "ASSET" not in registry
+    assert "dinkster.asset" not in registry
 
 
 def test_unrecognized_listing_category_keeps_remote_combo() -> None:
@@ -223,7 +217,7 @@ def test_unrecognized_listing_category_keeps_remote_combo() -> None:
     assert translation.listing_snapshots == {"comfy.files.custom_models": ("a.bin", "b.bin")}
     registry = TypeRegistry()
     translation.register_types(registry)
-    assert "ASSET" not in registry
+    assert "dinkster.asset" not in registry
 
 
 def test_true_enum_stays_frozen_under_probe() -> None:
@@ -297,7 +291,7 @@ def test_listing_shared_by_two_supported_categories_refuses() -> None:
     assert translation.listing_snapshots == {}
     registry = TypeRegistry()
     translation.register_types(registry)
-    assert "ASSET" not in registry
+    assert "dinkster.asset" not in registry
 
 
 def test_identity_disambiguates_equal_value_categories() -> None:
@@ -382,7 +376,7 @@ _BACKGROUND_SCHEMA_SOURCE = (
 )
 
 
-def test_path_loaded_builtin_extra_inventory(
+def test_path_loaded_builtin_extra_inventory_and_complete_catalog_contract(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = _fake_comfy_root(tmp_path)
@@ -423,7 +417,32 @@ def test_path_loaded_builtin_extra_inventory(
         )
         translated_assets.append((selector.class_name, selector.input_id, widget.kind))
 
+    native_assets = [
+        (schema.node_type, input_spec.id, input_spec.widget.kind)
+        for node_class in (*NATIVE_NODES, *GENERATION_NODES)
+        for schema in (node_class.schema(),)
+        for input_spec in (
+            *schema.inputs,
+            *(item for family in schema.input_families for item in family.template),
+        )
+        if isinstance(input_spec, InputSpec)
+        and isinstance(input_spec.widget, AssetWidget)
+        and input_spec.widget.kind.startswith("model/")
+    ]
     assert len(translated_assets) == 38
+    assert ("dinkster.load_controlnet", "control_net_name", "model/controlnet") in native_assets
+    assert len(native_assets) == 24
+    assert len(translated_assets) + len(native_assets) == 62
+    assert (
+        "dinkster.load_dual_clip",
+        "text_encoder1",
+        "model/text-encoder",
+    ) in native_assets
+    assert (
+        "dinkster.load_dual_clip",
+        "text_encoder2",
+        "model/text-encoder",
+    ) in native_assets
 
 
 def test_path_loaded_builtin_selector_provenance_fails_closed(
@@ -467,7 +486,7 @@ def test_path_loaded_builtin_selector_provenance_fails_closed(
             probe=_probe_with(_listing(category, listed)),
         )
         (input_spec,) = node.schema().inputs
-        assert input_spec.type == TypeExpr.concrete("COMBO")
+        assert input_spec.type == TypeExpr.concrete("core.combo")
         assert isinstance(input_spec.widget, ComboWidget)
 
     third_party = tmp_path / "custom_nodes" / expected_source.name
@@ -601,7 +620,7 @@ def test_ungrammatical_category_stays_frozen() -> None:
 
 
 def test_input_is_list_combo_carries_no_widget_or_snapshot() -> None:
-    # Under INPUT_IS_LIST the socket is list<COMBO>; a widget on a
+    # Under INPUT_IS_LIST the socket is list<core.combo>; a widget on a
     # list socket is undefined in the wire contract, so nothing to
     # remote-ify and no snapshot is recorded.
     listed = ["a.safetensors"]
@@ -753,40 +772,7 @@ def test_translated_model_asset_converts_to_exact_v1_relative_name(
     assert node.execute(ckpt_name=ref) == {"model": "sd15/model.safetensors"}
     registry = TypeRegistry()
     translation.register_types(registry)
-    assert "ASSET" in registry
-
-
-def test_translated_unhashed_model_uses_granted_worker_binding(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    root = tmp_path / "models" / "checkpoints"
-    model = root / "nested" / "model.safetensors"
-    model.parent.mkdir(parents=True)
-    model.write_bytes(b"unhashed model")
-    snapshot = tmp_path / "mounts.json"
-    table = MountTable(snapshot)
-    table.add(MountDef(id="models", path=root), kind="model/checkpoint")
-    ref = table.bind_name(model.name, "model/checkpoint")
-    assert isinstance(ref, LocalAssetRef)
-    worker_ref = LocalAssetRef.from_wire(ref.to_wire(), MountSnapshotResolver(snapshot))
-    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
-    _install_category_paths(monkeypatch, {"checkpoints": [root]})
-    listed = ["nested/model.safetensors"]
-    node = translate_node(
-        "LoadCkpt",
-        _selector_node(_CHECKPOINT_SELECTOR, listed),
-        CompatTranslation(),
-        probe=_probe_with(_listing("checkpoints", listed)),
-    )
-
-    assert node.execute(ckpt_name=worker_ref) == {"model": "nested/model.safetensors"}
-    assert "digest" not in worker_ref.to_wire()
-    _install_category_paths(monkeypatch, {"checkpoints": [tmp_path / "elsewhere"]})
-    with pytest.raises(AssetError, match="not under a configured"):
-        node.execute(ckpt_name=worker_ref)
-    table.remove("models")
-    with pytest.raises(AssetError, match="unavailable, revoked or changed"):
-        node.execute(ckpt_name=worker_ref)
+    assert "dinkster.asset" in registry
 
 
 def test_translated_model_asset_resolves_only_from_its_semantic_mount_kind(
@@ -1087,7 +1073,7 @@ def test_combo_choices_serves_listing_snapshots(
         "import_module",
         lambda name: (
             SimpleNamespace(KSampler=SimpleNamespace(SAMPLERS=["euler"], SCHEDULERS=["normal"]))
-            if name == "dinkster_inference.samplers"
+            if name == "comfy.samplers"
             else folder_paths
             if name == "folder_paths"
             else real_import(name)
@@ -1136,7 +1122,7 @@ def test_prompt_inventory_choices_compose_without_matching_schemas(
         "import_module",
         lambda name: (
             SimpleNamespace(KSampler=SimpleNamespace(SAMPLERS=(), SCHEDULERS=()))
-            if name == "dinkster_inference.samplers"
+            if name == "comfy.samplers"
             else SimpleNamespace(get_filename_list=lambda category: listings[category])
             if name == "folder_paths"
             else real_import(name)
@@ -1197,7 +1183,7 @@ def test_prompt_inventory_choices_use_shared_validation(
         "import_module",
         lambda name: (
             SimpleNamespace(KSampler=SimpleNamespace(SAMPLERS=(), SCHEDULERS=()))
-            if name == "dinkster_inference.samplers"
+            if name == "comfy.samplers"
             else SimpleNamespace(
                 get_filename_list=lambda category: values if category == "embeddings" else ()
             )

@@ -1,0 +1,396 @@
+{
+  "format": "dinkster-workflow",
+  "formatVersion": 1,
+  "lineage": "starter-ltxav",
+  "root": "g0",
+  "graphs": {
+    "g0": {
+      "id": "g0",
+      "name": "LTX Audio/Video Starter",
+      "nodes": {
+        "checkpoint": {
+          "id": "checkpoint",
+          "type": "dinkster.load_checkpoint",
+          "values": {
+            "checkpoint": "ltx-2-19b-dev-fp8.safetensors"
+          }
+        },
+        "clip": {
+          "id": "clip",
+          "type": "dinkster.load_ltxav_text_encoder",
+          "values": {
+            "text_encoder": "gemma_3_12B_it_fp4_mixed.safetensors",
+            "ckpt_name": "ltx-2-19b-dev-fp8.safetensors"
+          }
+        },
+        "audio_vae": {
+          "id": "audio_vae",
+          "type": "dinkster.load_ltxav_audio_vae",
+          "values": {
+            "ckpt_name": "ltx-2-19b-dev-fp8.safetensors"
+          }
+        },
+        "positive": {
+          "id": "positive",
+          "type": "dinkster.clip_text_encode",
+          "values": {
+            "text": "a cinematic landscape, detailed lighting"
+          }
+        },
+        "negative": {
+          "id": "negative",
+          "type": "dinkster.clip_text_encode",
+          "values": {
+            "text": "blurry, low quality"
+          }
+        },
+        "condition": {
+          "id": "condition",
+          "type": "dinkster.ltxav_conditioning",
+          "values": {
+            "frame_rate": 24.0
+          }
+        },
+        "latent": {
+          "id": "latent",
+          "type": "dinkster.empty_ltxav_latent",
+          "values": {
+            "width": 768,
+            "height": 512,
+            "length": 97,
+            "batch_size": 1,
+            "frame_rate": 24
+          }
+        },
+        "sampler": {
+          "id": "sampler",
+          "type": "dinkster.ksampler",
+          "values": {
+            "seed": 91,
+            "steps": 20,
+            "cfg": 4.0,
+            "sampler_name": "dinkster.euler",
+            "scheduler": "dinkster.simple",
+            "denoise": 1.0,
+            "conditioning_batching": "auto",
+            "max_fused_lanes": 2
+          }
+        },
+        "separate": {
+          "id": "separate",
+          "type": "dinkster.separate_av_latent",
+          "values": {}
+        },
+        "audio_decode": {
+          "id": "audio_decode",
+          "type": "dinkster.ltxav_audio_vae_decode",
+          "values": {}
+        },
+        "decode": {
+          "id": "decode",
+          "type": "dinkster.vae_decode",
+          "values": {}
+        },
+        "assemble": {
+          "id": "assemble",
+          "type": "dinkster.video.assemble",
+          "values": {
+            "fps": 24.0
+          }
+        },
+        "save": {
+          "id": "save",
+          "type": "dinkster.save_video",
+          "values": {
+            "target": {
+              "mount": "output",
+              "prefix": "ltxav"
+            }
+          }
+        }
+      },
+      "links": {
+        "l1": {
+          "id": "l1",
+          "from": {
+            "node": "clip",
+            "port": "clip"
+          },
+          "to": {
+            "node": "positive",
+            "port": "clip"
+          }
+        },
+        "l2": {
+          "id": "l2",
+          "from": {
+            "node": "clip",
+            "port": "clip"
+          },
+          "to": {
+            "node": "negative",
+            "port": "clip"
+          }
+        },
+        "l3": {
+          "id": "l3",
+          "from": {
+            "node": "positive",
+            "port": "conditioning"
+          },
+          "to": {
+            "node": "condition",
+            "port": "positive"
+          }
+        },
+        "l4": {
+          "id": "l4",
+          "from": {
+            "node": "negative",
+            "port": "conditioning"
+          },
+          "to": {
+            "node": "condition",
+            "port": "negative"
+          }
+        },
+        "l5": {
+          "id": "l5",
+          "from": {
+            "node": "checkpoint",
+            "port": "model"
+          },
+          "to": {
+            "node": "latent",
+            "port": "model"
+          }
+        },
+        "l6": {
+          "id": "l6",
+          "from": {
+            "node": "checkpoint",
+            "port": "model"
+          },
+          "to": {
+            "node": "sampler",
+            "port": "model"
+          }
+        },
+        "l7": {
+          "id": "l7",
+          "from": {
+            "node": "condition",
+            "port": "positive"
+          },
+          "to": {
+            "node": "sampler",
+            "port": "positive"
+          }
+        },
+        "l8": {
+          "id": "l8",
+          "from": {
+            "node": "condition",
+            "port": "negative"
+          },
+          "to": {
+            "node": "sampler",
+            "port": "negative"
+          }
+        },
+        "l9": {
+          "id": "l9",
+          "from": {
+            "node": "latent",
+            "port": "latent"
+          },
+          "to": {
+            "node": "sampler",
+            "port": "latent_image"
+          }
+        },
+        "l10": {
+          "id": "l10",
+          "from": {
+            "node": "sampler",
+            "port": "latent"
+          },
+          "to": {
+            "node": "separate",
+            "port": "latent"
+          }
+        },
+        "l11": {
+          "id": "l11",
+          "from": {
+            "node": "separate",
+            "port": "audio_latent"
+          },
+          "to": {
+            "node": "audio_decode",
+            "port": "samples"
+          }
+        },
+        "l12": {
+          "id": "l12",
+          "from": {
+            "node": "audio_vae",
+            "port": "audio_vae"
+          },
+          "to": {
+            "node": "audio_decode",
+            "port": "audio_vae"
+          }
+        },
+        "l13": {
+          "id": "l13",
+          "from": {
+            "node": "separate",
+            "port": "video_latent"
+          },
+          "to": {
+            "node": "decode",
+            "port": "samples"
+          }
+        },
+        "l14": {
+          "id": "l14",
+          "from": {
+            "node": "checkpoint",
+            "port": "vae"
+          },
+          "to": {
+            "node": "decode",
+            "port": "vae"
+          }
+        },
+        "l15": {
+          "id": "l15",
+          "from": {
+            "node": "decode",
+            "port": "image"
+          },
+          "to": {
+            "node": "assemble",
+            "port": "images"
+          }
+        },
+        "l16": {
+          "id": "l16",
+          "from": {
+            "node": "audio_decode",
+            "port": "audio"
+          },
+          "to": {
+            "node": "assemble",
+            "port": "audio"
+          }
+        },
+        "l17": {
+          "id": "l17",
+          "from": {
+            "node": "assemble",
+            "port": "video"
+          },
+          "to": {
+            "node": "save",
+            "port": "video"
+          }
+        }
+      },
+      "nets": {},
+      "reroutes": {},
+      "nextOrdinal": 31
+    }
+  },
+  "view": {
+    "graphs": {
+      "g0": {
+        "nodes": {
+          "checkpoint": {
+            "position": {
+              "x": 40,
+              "y": 80
+            }
+          },
+          "clip": {
+            "position": {
+              "x": 40,
+              "y": 380
+            }
+          },
+          "audio_vae": {
+            "position": {
+              "x": 40,
+              "y": 680
+            }
+          },
+          "positive": {
+            "position": {
+              "x": 380,
+              "y": 80
+            }
+          },
+          "negative": {
+            "position": {
+              "x": 380,
+              "y": 380
+            }
+          },
+          "condition": {
+            "position": {
+              "x": 720,
+              "y": 80
+            }
+          },
+          "latent": {
+            "position": {
+              "x": 720,
+              "y": 680
+            }
+          },
+          "sampler": {
+            "position": {
+              "x": 1060,
+              "y": 380
+            }
+          },
+          "separate": {
+            "position": {
+              "x": 1400,
+              "y": 380
+            }
+          },
+          "audio_decode": {
+            "position": {
+              "x": 1740,
+              "y": 680
+            }
+          },
+          "decode": {
+            "position": {
+              "x": 1740,
+              "y": 80
+            }
+          },
+          "assemble": {
+            "position": {
+              "x": 2080,
+              "y": 80
+            }
+          },
+          "save": {
+            "position": {
+              "x": 2420,
+              "y": 80
+            }
+          }
+        }
+      }
+    }
+  },
+  "meta": {
+    "title": "LTX Audio/Video Starter",
+    "family": "dinkster.ltxav"
+  }
+}

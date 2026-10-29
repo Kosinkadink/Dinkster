@@ -39,7 +39,7 @@ from dinkster_workers import GroupIsolatedWorker, InProcessWorker, IsolatedWorke
 from dinkster.compose import CompositionError, PackSpec, ServingComposer, UnknownPackError
 from dinkster.reload_api import add_reload_routes, apply_reload, apply_remove
 
-STRING = TypeExpr.concrete("STRING")
+STRING = TypeExpr.concrete("core.string")
 
 MODULE_TEMPLATE = '''\
 """Reload test pack, generation {gen!r}: rewritten on disk mid-test."""
@@ -49,7 +49,7 @@ from collections.abc import Mapping
 from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_values import TypeRegistry
 
-STRING = TypeExpr.concrete("STRING")
+STRING = TypeExpr.concrete("core.string")
 
 
 def register_types(registry: TypeRegistry) -> None:
@@ -109,8 +109,7 @@ def write_pack(
     manifest = directory / "dinkster-pack.toml"
     schema_only_entry = f'schema-only = ["rl.echo", "{extra_type}"]\n' if schema_only else ""
     manifest.write_text(
-        f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
-        f'namespaces = ["rl"]\n{schema_only_entry}\n'
+        f'[pack]\nname = "{name}"\nnamespaces = ["rl"]\n{schema_only_entry}\n'
         '[pack.entry]\nnodes = "rlpack_nodes:NODES"\n'
         'types = "rlpack_nodes:register_types"\n\n'
         "[pack.presentation]\n"
@@ -132,7 +131,7 @@ def write_group_pack(
         "import os\n"
         "from collections.abc import Mapping\n"
         "from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr\n"
-        "STRING = TypeExpr.concrete('STRING')\n"
+        "STRING = TypeExpr.concrete('core.string')\n"
         "class Echo(Node):\n"
         "    @classmethod\n"
         "    def define_schema(cls) -> NodeSchema:\n"

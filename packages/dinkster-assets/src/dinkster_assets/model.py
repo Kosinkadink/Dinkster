@@ -10,7 +10,6 @@ identity, equality, and fingerprint never change.
 
 from __future__ import annotations
 
-import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -37,109 +36,6 @@ class AssetResolution:
 @runtime_checkable
 class RecordedAssetResolver(Protocol):
     def resolve_asset(self, digest: str) -> AssetResolution | None: ...
-
-
-LocalFileSignature = tuple[int, int, int, int, int]
-
-
-def local_file_signature(stat: os.stat_result) -> LocalFileSignature:
-    return stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_dev, stat.st_ino
-
-
-@runtime_checkable
-class LocalAssetResolver(Protocol):
-    def resolve_local(self, binding: str) -> tuple[Path, LocalFileSignature] | None: ...
-
-    def reconcile_local(self, binding: str) -> AssetRef | None: ...
-
-
-@runtime_checkable
-class NamedAssetResolver(Protocol):
-    def bind_name(self, name: str, kind: str) -> AssetRef | LocalAssetRef | None: ...
-
-
-@dataclass(frozen=True)
-class LocalAssetRef:
-    """An unverified, host-granted local file, never a content identity.
-
-    The opaque binding is scoped to the granting server and file revision.
-    It cannot be used as a digest or transferred to another host's stores.
-    """
-
-    binding: str
-    name: str
-    size: int
-    virtual_path: str
-    media_type: str = "application/octet-stream"
-    resolver: LocalAssetResolver | None = field(default=None, compare=False, repr=False)
-
-    def __post_init__(self) -> None:
-        if not self.binding or type(self.size) is not int or self.size < 0:
-            raise AssetError("local asset requires a binding and nonnegative size")
-
-    def _location(self) -> tuple[Path, LocalFileSignature]:
-        location = self.resolver.resolve_local(self.binding) if self.resolver else None
-        if location is None:
-            raise AssetError("local asset binding is unavailable, revoked or changed")
-        return location
-
-    def verified(self) -> AssetRef | None:
-        return self.resolver.reconcile_local(self.binding) if self.resolver else None
-
-    def local_path(self) -> Path:
-        return self._location()[0]
-
-    def open(self) -> BinaryIO:
-        path, signature = self._location()
-        handle = path.open("rb")
-        try:
-            opened = local_file_signature(os.fstat(handle.fileno()))
-            # Windows creation time can differ between path and descriptor stats.
-            if (
-                opened[:2] != signature[:2]
-                or opened[3:] != signature[3:]
-                or (os.name != "nt" and opened[2] != signature[2])
-            ):
-                raise AssetError("local asset changed while opening")
-        except BaseException:
-            handle.close()
-            raise
-        return handle
-
-    def read_bytes(self) -> bytes:
-        with self.open() as handle:
-            return handle.read()
-
-    def to_wire(self) -> dict[str, object]:
-        return {
-            "verification": "unverified",
-            "localBinding": self.binding,
-            "name": self.name,
-            "size": self.size,
-            "mediaType": self.media_type,
-            "virtualPath": self.virtual_path,
-        }
-
-    @classmethod
-    def from_wire(
-        cls, wire: Mapping[str, object], resolver: LocalAssetResolver | None = None
-    ) -> LocalAssetRef:
-        binding, size = wire.get("localBinding"), wire.get("size")
-        if (
-            wire.get("verification") != "unverified"
-            or "digest" in wire
-            or not isinstance(binding, str)
-            or type(size) is not int
-        ):
-            raise AssetError("invalid unverified local asset wire value")
-        return cls(
-            binding,
-            str(wire.get("name", "")),
-            size,
-            str(wire.get("virtualPath", "")),
-            str(wire.get("mediaType", "")),
-            resolver,
-        )
 
 
 @dataclass(frozen=True)

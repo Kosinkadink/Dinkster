@@ -124,7 +124,6 @@ class LazyWorker:
             "body_arms",
             "extension_contributions",
             "renditions",
-            "registered_types",
         ):
             return getattr(self.catalog, name)
         if name in ("attention_capabilities", "attention_route_token"):
@@ -138,6 +137,9 @@ class LazyWorker:
             "resolve_rendition",
             "resolve_rendition_mime",
             "render_rendition",
+            "materialize_sampler_registry",
+            "materialize_inference_generation",
+            "compile_graph",
             "convert_legacy_checkpoint",
         ):
 
@@ -188,6 +190,10 @@ class LazyWorker:
         except BaseException:
             await self._close()
             raise
+
+    async def release_inference_generation(self, key: str) -> None:
+        if self.alive:
+            await self._worker.release_inference_generation(key)
 
     async def close(self) -> None:
         if self._closing is None:

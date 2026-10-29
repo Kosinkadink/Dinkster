@@ -7,7 +7,6 @@ from collections.abc import Mapping
 from typing import cast
 
 from dinkster_api.v1 import (
-    VIDEO_TYPE,
     InputSpec,
     JsonField,
     JsonObjectSchema,
@@ -44,7 +43,7 @@ def preview_policy(_request: Mapping[str, object]) -> dict[str, object]:
 class InitializePreview(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        video = TypeExpr.concrete(VIDEO_TYPE)
+        video = TypeExpr.concrete("comfy.VIDEO")
         return NodeSchema(
             node_type="video-preview.initialize",
             display_name="Initialize Video Preview",
@@ -78,7 +77,7 @@ class InitializePreview(Node):
 
 
 def register_types(registry: TypeRegistry) -> None:
-    register_video_value_type(registry, VIDEO_TYPE, resolver_from_env())
+    register_video_value_type(registry, "comfy.VIDEO", resolver_from_env())
 
 
 NODES = [InitializePreview]

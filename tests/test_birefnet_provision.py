@@ -53,12 +53,10 @@ def provider_runtime(
         )
         assert not (manifest_path.parent / "pyproject.toml").exists()
     manifest = load_manifest(manifest_path)
-    assert (
-        "dinkster-inference @ git+https://github.com/Kosinkadink/dinkster-inference.git@"
-        "dacdebc66f097e9889ce66e36e41c25a7b8f6494"
-    ) in manifest.requires
+    assert "dinkster-inference-torch==0.0.1" in manifest.requires
     workspace, pythonpath = _pack_runtime_sources(manifest)
     if request.param == "source":
+        assert ROOT / "packages" / "dinkster-inference-torch" in workspace
         # Editable installation, not inherited dev paths, must supply source dependencies.
         pythonpath = ""
     else:
@@ -79,19 +77,22 @@ def provider_runtime(
             "-I",
             "-c",
             "import importlib.metadata as m, importlib.util as u, json, pathlib, sys\n"
-            "dist = m.distribution('dinkster-inference')\n"
-            "assert dist.version == '0.1.0'\n"
-            "spec = u.find_spec('dinkster_inference')\n"
+            "dist = m.distribution('dinkster-inference-torch')\n"
+            "assert dist.version == '0.0.1'\n"
+            "spec = u.find_spec('dinkster_inference_torch')\n"
             "assert spec is not None and spec.origin is not None\n"
-            "root = pathlib.Path(spec.origin).with_name('background_removal')\n"
-            "assert root.joinpath('birefnet.py').is_file()\n"
+            "assert pathlib.Path(spec.origin).with_name('birefnet.py').is_file()\n"
             "direct = dist.read_text('direct_url.json')\n"
-            "assert direct is not None\n"
-            "assert json.loads(direct)['vcs_info']['commit_id'] == sys.argv[1]\n"
-            "assert pathlib.Path(spec.origin).is_relative_to(sys.prefix)\n"
-            "for name in ('dinkster_engine', 'comfy_kitchen', 'tokenizers', 'comfy'):\n"
+            "if sys.argv[1] == 'source':\n"
+            "    assert direct is not None\n"
+            "    assert json.loads(direct)['url'] == pathlib.Path(sys.argv[2]).as_uri()\n"
+            "else:\n"
+            "    assert direct is None\n"
+            "    assert pathlib.Path(spec.origin).is_relative_to(sys.prefix)\n"
+            "for name in ('dinkster_engine', 'dinkster_kitchen', 'tokenizers', 'comfy'):\n"
             "    assert u.find_spec(name) is None, name\n",
-            "dacdebc66f097e9889ce66e36e41c25a7b8f6494",
+            str(request.param),
+            str(ROOT / "packages" / "dinkster-inference-torch"),
         ],
         capture_output=True,
         text=True,
@@ -152,7 +153,7 @@ def test_manifest_provisioned_birefnet_matches_pinned_matte(
                     "matte": GraphNode(
                         "dinkster.image.matte",
                         {
-                            "image": TypedLiteral("IMAGE", source.tolist()),
+                            "image": TypedLiteral("dinkster.image", source.tolist()),
                             "provider": "dinkster-vision-birefnet",
                         },
                     )

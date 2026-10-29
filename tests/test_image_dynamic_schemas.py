@@ -155,15 +155,15 @@ def test_geometry_dynamic_schema_shape() -> None:
         "apply",
         "interpolation",
     )
-    resize_type = TypeExpr.variable("input_type", ("IMAGE", "MASK"))
+    resize_type = TypeExpr.variable("input_type", ("dinkster.image", "dinkster.mask"))
     assert resize.inputs[0].type == resize_type
-    assert resize.inputs[1].type == TypeExpr.concrete("MASK")
+    assert resize.inputs[1].type == TypeExpr.concrete("dinkster.mask")
     assert resize.inputs[1].required is False
     assert resize.inputs[2].advanced is True
     assert resize.inputs[3].advanced is True
     assert resize.inputs[4].advanced is True
     assert resize.outputs[0].type == resize_type
-    assert resize.outputs[1].type == TypeExpr.concrete("MASK")
+    assert resize.outputs[1].type == TypeExpr.concrete("dinkster.mask")
     assert resize.outputs[1].optional is True
     assert resize.aliases == ()
     target, mode, divisibility = resize.combos
@@ -471,8 +471,8 @@ def test_resize_v4_binds_image_and_mask_outputs_at_worker_boundary() -> None:
     async def scenario() -> None:
         registry = TypeRegistry()
         register_core_types(registry)
-        register_image_type(registry, "IMAGE")
-        register_image_type(registry, "MASK")
+        register_image_type(registry, "dinkster.image")
+        register_image_type(registry, "dinkster.mask")
         schemas = build_schemas((ImageResize,))
         engine = Engine(
             schemas=schemas,
@@ -496,12 +496,12 @@ def test_resize_v4_binds_image_and_mask_outputs_at_worker_boundary() -> None:
             {
                 "image": GraphNode(
                     "dinkster.image.resize",
-                    {"image": TypedLiteral("IMAGE", image.tolist()), **inputs},
+                    {"image": TypedLiteral("dinkster.image", image.tolist()), **inputs},
                     slot_variants=choices,
                 ),
                 "mask": GraphNode(
                     "dinkster.image.resize",
-                    {"image": TypedLiteral("MASK", mask.tolist()), **inputs},
+                    {"image": TypedLiteral("dinkster.mask", mask.tolist()), **inputs},
                     slot_variants=choices,
                 ),
             }
@@ -510,8 +510,8 @@ def test_resize_v4_binds_image_and_mask_outputs_at_worker_boundary() -> None:
         result = await engine.run(graph, ("image", "mask"))
         image_output = result.outputs["image"]["image"]
         mask_output = result.outputs["mask"]["image"]
-        assert image_output.type_id == "IMAGE"
-        assert mask_output.type_id == "MASK"
+        assert image_output.type_id == "dinkster.image"
+        assert mask_output.type_id == "dinkster.mask"
         assert np.asarray(image_output.resolve()).shape == (1, 2, 2, 3)
         assert np.asarray(mask_output.resolve()).shape == (1, 2, 2)
 

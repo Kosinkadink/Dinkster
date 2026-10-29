@@ -481,8 +481,7 @@ def test_daemon_waits_for_detached_sync_invocation_before_handover(tmp_path: Pat
     async def scenario() -> None:
         manifest = tmp_path / "dinkster-pack.toml"
         manifest.write_text(
-            '[pack]\nname = "memorypack"\npublisher = "dinkster"\n'
-            'type-namespaces = ["mem"]\n\n[pack.entry]\n'
+            '[pack]\nname = "memorypack"\n\n[pack.entry]\n'
             'nodes = "memorypack_nodes:NODES"\ntypes = "memorypack_nodes:register_types"\n'
             'consumers = "memorypack_nodes:memory_consumers"\n'
         )
@@ -592,8 +591,7 @@ def test_service_death_fails_pending_invocations(tmp_path: Path) -> None:
     async def scenario() -> None:
         manifest = tmp_path / "dinkster-pack.toml"
         manifest.write_text(
-            '[pack]\nname = "isopack"\npublisher = "dinkster"\n'
-            'type-namespaces = ["iso"]\n\n[pack.entry]\n'
+            '[pack]\nname = "isopack"\n\n[pack.entry]\n'
             'nodes = "isopack_nodes:NODES"\ntypes = "isopack_nodes:register_types"\n'
         )
         proc, host, port = await start_service(manifest, tmp_path)
@@ -631,8 +629,7 @@ def test_remote_relay_qualifies_devices_and_collapses_on_death(
     async def scenario() -> None:
         manifest = tmp_path / "dinkster-pack.toml"
         manifest.write_text(
-            '[pack]\nname = "memorypack"\npublisher = "dinkster"\n'
-            'type-namespaces = ["mem"]\n\n[pack.entry]\n'
+            '[pack]\nname = "memorypack"\n\n[pack.entry]\n'
             'nodes = "memorypack_nodes:NODES"\ntypes = "memorypack_nodes:register_types"\n'
             'consumers = "memorypack_nodes:memory_consumers"\n'
         )
@@ -694,7 +691,7 @@ def test_remote_never_accepts_shm_descriptors() -> None:
     register_core_types(registry)
     codec = ValueCodec(registry, use_shm=False, accept_shm=False)
     wire = {
-        "typeId": "STRING",
+        "typeId": "core.string",
         "fingerprint": "f",
         "metaBlob": 0,
         "payload": {"transport": "shm", "segment": "dinksterdeadbeef", "size": 4},

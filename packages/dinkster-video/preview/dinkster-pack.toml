@@ -1,6 +1,5 @@
 [pack]
 name = "dinkster-video-preview"
-publisher = "dinkster"
 namespaces = ["video-preview"]
 
 [pack.contracts]

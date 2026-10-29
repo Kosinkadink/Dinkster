@@ -29,7 +29,7 @@ from dinkster_assets import (
     digest_bytes,
     fetch_asset,
 )
-from dinkster_server import create_app
+from dinkster_server import create_app, peer_asset_sources
 from test_server import SCHEMAS, make_engine
 
 MODEL_BYTES = b"pretend this is a 7 GB checkpoint" * 64
@@ -205,12 +205,13 @@ def test_fetch_every_candidate_failing_is_none(tmp_path: Path) -> None:
     assert vault.digests() == []
 
 
-# --- instance endpoints + HTTP acquisition ------------------------------------
+# --- instance endpoints + peer pull -------------------------------------------
 
 
-def test_asset_endpoints_and_http_fetch(tmp_path: Path) -> None:
+def test_asset_endpoints_and_peer_fetch(tmp_path: Path) -> None:
     """Instance A holds a model; instance B resolves it by digest through
-    the verified HTTP fetch path and afterwards serves it locally."""
+    the same provenance-guided fetch path any mirror would use, verifies,
+    and afterwards serves it locally."""
 
     async def scenario() -> None:
         vault_a = AssetVault(tmp_path / "a")
@@ -231,7 +232,7 @@ def test_asset_endpoints_and_http_fetch(tmp_path: Path) -> None:
 
             vault_b = AssetVault(tmp_path / "b")
             endpoint = str(server.make_url("")).rstrip("/")
-            resolver = FetchingResolver(vault_b, lambda digest: [f"{endpoint}/assets/{digest}"])
+            resolver = FetchingResolver(vault_b, peer_asset_sources([endpoint]))
             path = await asyncio.to_thread(resolver.resolve, MODEL_DIGEST)
             assert path is not None and path.read_bytes() == MODEL_BYTES
             assert vault_b.has(MODEL_DIGEST)  # promoted: held locally now
@@ -255,6 +256,23 @@ def test_asset_endpoints_absent_without_export(tmp_path: Path) -> None:
             await server.close()
 
     asyncio.run(scenario())
+
+
+def test_peer_sources_merge_provenance_and_peers(tmp_path: Path) -> None:
+    provenance = ProvenanceStore(tmp_path / "provenance.json")
+    provenance.add(ProvenanceRecord(digest=MODEL_DIGEST, sources=("https://hub.example/m",)))
+    sources = peer_asset_sources(
+        ["http://peer1:8188/", "http://peer2:8188"], provenance=provenance.sources
+    )
+    assert sources(MODEL_DIGEST) == [
+        "https://hub.example/m",
+        f"http://peer1:8188/assets/{MODEL_DIGEST}",
+        f"http://peer2:8188/assets/{MODEL_DIGEST}",
+    ]
+    lan_first = peer_asset_sources(
+        ["http://peer1:8188"], provenance=provenance.sources, peers_first=True
+    )
+    assert lan_first(MODEL_DIGEST)[0] == f"http://peer1:8188/assets/{MODEL_DIGEST}"
 
 
 # --- the node-facing path: AssetRef.local_path() through the chain ------------
@@ -281,7 +299,7 @@ def test_asset_ref_materializes_through_chain_with_fetch(tmp_path: Path) -> None
             chain = ChainResolver(
                 library,
                 vault_b,
-                FetchingResolver(vault_b, lambda digest: [f"{endpoint}/assets/{digest}"]),
+                FetchingResolver(vault_b, peer_asset_sources([endpoint])),
             )
             ref = AssetRef(
                 digest=MODEL_DIGEST,

@@ -14,7 +14,6 @@ import av
 import numpy as np
 import pytest
 from av.error import InvalidDataError
-from dinkster_api.v1 import VIDEO_TYPE
 from dinkster_assets import AssetRef, AssetVault, digest_bytes, register_video_value_type
 from dinkster_nodes_media_io.video_ops import CropVideo, TrimVideo, VideoInfo
 from dinkster_values import (
@@ -74,7 +73,9 @@ def test_inline_v2_roundtrip_and_v1_migration() -> None:
     assert decode_video(encoded) == value
     assert decode_video(data) == value
     assert video_meta(value)["codec_version"] == 2
-    assert video_fingerprint(VIDEO_TYPE)(value) == video_fingerprint(VIDEO_TYPE)(decode_video(data))
+    assert video_fingerprint("comfy.VIDEO")(value) == video_fingerprint("comfy.VIDEO")(
+        decode_video(data)
+    )
 
 
 def test_asset_codec_does_not_open_and_rebinds_at_destination(
@@ -95,8 +96,8 @@ def test_asset_codec_does_not_open_and_rebinds_at_destination(
         encoded = encode_video(value)
         assert len(encoded) < 2000
     registry = TypeRegistry()
-    register_video_value_type(registry, VIDEO_TYPE, vault)
-    decoded = registry.spec(VIDEO_TYPE).decode(encoded)
+    register_video_value_type(registry, "comfy.VIDEO", vault)
+    decoded = registry.spec("comfy.VIDEO").decode(encoded)
     with monkeypatch.context() as patch:
         patch.setattr(AssetRef, "open", lambda self: pytest.fail("admitted edits must not probe"))
         assert video_meta(decoded)["asset_refs"] == [ref.to_wire()]
@@ -341,9 +342,9 @@ def test_native_video_chain_matches_across_worker_shared_memory() -> None:
                     node_id="trim",
                     node_type="dinkster.video.trim",
                     inputs={
-                        "video": registry.wrap(VIDEO_TYPE, source),
-                        "start_time": registry.wrap("FLOAT", 0.5),
-                        "duration": registry.wrap("FLOAT", 1.0),
+                        "video": registry.wrap("comfy.VIDEO", source),
+                        "start_time": registry.wrap("core.float", 0.5),
+                        "duration": registry.wrap("core.float", 1.0),
                     },
                     effective_schema=worker.schemas["dinkster.video.trim"],
                 )
@@ -385,7 +386,7 @@ def test_native_video_chain_matches_across_worker_shared_memory() -> None:
                 crossing.transport
                 for diagnostic in diagnostics
                 for crossing in diagnostic.inputs
-                if crossing.type_id == VIDEO_TYPE
+                if crossing.type_id == "comfy.VIDEO"
             ] == ["shm", "shm"]
         finally:
             await worker.close()
@@ -680,8 +681,8 @@ def test_nested_large_sources_publish_without_reprobe(
         av, "open", lambda *a, **kw: pytest.fail("admitted source must not reprobe")
     )
     registry = TypeRegistry()
-    register_video_value_type(registry, VIDEO_TYPE)
-    value = registry.wrap(VIDEO_TYPE, joined)
+    register_video_value_type(registry, "comfy.VIDEO")
+    value = registry.wrap("comfy.VIDEO", joined)
     assert len(cast(list[object], value.meta.get("asset_refs"))) == 1
     assert value.meta.get("cost") == {"ram": 0}
     assert AssetVault(tmp_path / "vault").resolve(digest_bytes(data)) is not None
@@ -745,7 +746,9 @@ def test_nested_video_source_preflight_and_remote_staging_fetch_once(
     wire = AssetRef(digest, "source.mp4", len(data)).to_wire()
     clip = {**video_from_source(data), "source": wire}
     joined = edit_video(clip, {"concat": [clip]})
-    graph = Graph(nodes={"n": GraphNode("apack.read", {"data": TypedLiteral(VIDEO_TYPE, joined)})})
+    graph = Graph(
+        nodes={"n": GraphNode("apack.read", {"data": TypedLiteral("comfy.VIDEO", joined)})}
+    )
     assert graph_asset_names(graph) == {digest: "source.mp4"}
 
     class VideoHost(AssetHost):
@@ -766,8 +769,8 @@ def test_nested_video_source_preflight_and_remote_staging_fetch_once(
                 await worker.start()
                 try:
                     registry = TypeRegistry()
-                    register_video_value_type(registry, VIDEO_TYPE)
-                    value = registry.wrap(VIDEO_TYPE, joined)
+                    register_video_value_type(registry, "comfy.VIDEO")
+                    value = registry.wrap("comfy.VIDEO", joined)
                     invocation = Invocation(
                         invocation_id="video",
                         node_id="n",

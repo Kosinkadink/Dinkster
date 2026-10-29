@@ -21,11 +21,11 @@ from dinkster_schema import (
 )
 from dinkster_server.preflight import graph_asset_names
 
-T = TypeExpr.concrete("INT")
+T = TypeExpr.concrete("core.int")
 SWITCH = NodeSchema(
     "test.switch",
     inputs=(
-        InputSpec("switch", TypeExpr.concrete("BOOLEAN")),
+        InputSpec("switch", TypeExpr.concrete("core.boolean")),
         InputSpec("off", T),
         InputSpec("on", T),
     ),
@@ -55,7 +55,7 @@ def test_selector_lowering_matrix() -> None:
     assert set(result.graph.nodes) == {"on", "orphan", "sink"}
     assert result.graph.nodes["sink"].inputs["value"] == Link("on", "out")
 
-    for value in (7, TypedLiteral("INT", 8)):
+    for value in (7, TypedLiteral("core.int", 8)):
         graph = Graph(
             {
                 "switch": GraphNode(SWITCH.node_type, {"switch": True, "on": value}),

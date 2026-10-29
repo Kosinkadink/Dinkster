@@ -1,7 +1,7 @@
 """Typed combo edge nodes: dinkster.string_to_combo and dinkster.combo_to_string.
 
 What this proves: both nodes are always-composed foundation nodes and are the
-explicit STRING/COMBO bridges. Execution remains string identity,
+explicit core.string/core.combo bridges. Execution remains string identity,
 no aliases are claimed, and neither node carries a widget of its own.
 """
 
@@ -18,8 +18,8 @@ from dinkster_schema import build_node_types, build_schemas, schema_to_wire
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 
-STRING_TYPE = {"kind": "concrete", "types": ["STRING"]}
-COMBO_TYPE = {"kind": "concrete", "types": ["COMBO"]}
+STRING_TYPE = {"kind": "concrete", "types": ["core.string"]}
+COMBO_TYPE = {"kind": "concrete", "types": ["core.combo"]}
 
 
 def make_engine() -> Engine:
@@ -82,8 +82,8 @@ def test_combo_edge_nodes_execute_as_identity() -> None:
         )
         result = await engine.run(graph, ["c", "t"])
         assert result.outputs["c"]["choice"].resolve() == "not-a-choice.txt"
-        assert result.outputs["c"]["choice"].type_id == "COMBO"
+        assert result.outputs["c"]["choice"].type_id == "core.combo"
         assert result.outputs["t"]["text"].resolve() == "not-a-choice.txt"
-        assert result.outputs["t"]["text"].type_id == "STRING"
+        assert result.outputs["t"]["text"].type_id == "core.string"
 
     asyncio.run(scenario())

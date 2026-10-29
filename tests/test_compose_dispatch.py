@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from collections.abc import Mapping
 from contextlib import asynccontextmanager, nullcontext
-from dataclasses import dataclass, field, replace
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from dinkster_caches import MemoryLRUCache
+from dinkster_compat_comfy.workgroup import SingleJobWorkGroupHandler
 from dinkster_engine import (
     Engine,
     EngineEvent,
@@ -24,34 +26,22 @@ from dinkster_memory import ReservationRequest
 from dinkster_protocol import (
     WORKGROUP_CAPABILITY,
     WORKGROUP_DATA_PLANE_CAPABILITY,
-    AbortWorkGroup,
     AttentionCapabilityEvidence,
     AttentionPolicyConfig,
     AttentionRouteToken,
-    BeginWorkGroup,
     CacheKey,
-    CancelWorkGroup,
-    CommitWorkGroup,
     Invocation,
     InvocationEvent,
     InvocationResult,
     NodeError,
-    PrepareReplica,
     ReleaseWorkGroup,
     ReplicaId,
-    ReplicaReady,
     RunWorkUnit,
-    SingleJobMultiGpuConfig,
-    WorkGroupCancelled,
     WorkGroupDefinition,
     WorkGroupLifecycle,
     WorkGroupMessage,
-    WorkGroupPrepared,
-    WorkGroupReleased,
     WorkGroupState,
-    WorkUnitFailed,
     WorkUnitId,
-    WorkUnitResult,
     derive_attention_route_token,
 )
 from dinkster_schema import (
@@ -104,125 +94,6 @@ from dinkster.compose import (
     compose_serving,
 )
 from dinkster.lazy_worker import LazyWorker
-
-
-@dataclass
-class _WorkGroupAttempt:
-    command: PrepareReplica
-    prepared: bool = False
-    active: bool = False
-    activated: asyncio.Event = field(default_factory=asyncio.Event)
-    run_allowed: asyncio.Event = field(default_factory=asyncio.Event)
-    completion: asyncio.Future[str | None] | None = None
-    invocation_id: str | None = None
-    cancelled: bool = False
-
-    def common(self) -> dict[str, object]:
-        return {
-            "worker": self.command.worker,
-            "replica": self.command.replica,
-            "group": self.command.group,
-            "attempt": self.command.attempt,
-            "device": self.command.device,
-        }
-
-
-class _TestWorkGroupHandler:
-    def __init__(self) -> None:
-        self._attempts: dict[tuple[object, object], _WorkGroupAttempt] = {}
-
-    @staticmethod
-    def _key(message: WorkGroupMessage) -> tuple[object, object]:
-        return message.group, message.attempt
-
-    def _attempt(self, message: WorkGroupMessage) -> _WorkGroupAttempt:
-        attempt = self._attempts.get(self._key(message))
-        if attempt is None:
-            raise RuntimeError("workgroup command has no prepared attempt")
-        prepared = attempt.command
-        if (message.worker, message.replica, message.device) != (
-            prepared.worker,
-            prepared.replica,
-            prepared.device,
-        ):
-            raise RuntimeError("workgroup command differs from the prepared rank")
-        return attempt
-
-    async def __call__(self, message: WorkGroupMessage) -> tuple[WorkGroupMessage, ...]:
-        if type(message) is PrepareReplica:
-            key = self._key(message)
-            if key in self._attempts:
-                raise RuntimeError("workgroup attempt was prepared twice")
-            attempt = _WorkGroupAttempt(message)
-            self._attempts[key] = attempt
-            return (ReplicaReady(**attempt.common()),)  # type: ignore[arg-type]
-
-        attempt = self._attempt(message)
-        common = attempt.common()
-        if type(message) is BeginWorkGroup:
-            attempt.prepared = True
-            return (WorkGroupPrepared(**common),)  # type: ignore[arg-type]
-        if type(message) is CommitWorkGroup:
-            attempt.active = True
-            attempt.activated.set()
-            return ()
-        if type(message) is RunWorkUnit:
-            attempt.completion = asyncio.get_running_loop().create_future()
-            attempt.run_allowed.set()
-            failure = await attempt.completion
-            unit = {"unit": message.unit, "slot": message.slot}
-            if failure is None:
-                return (WorkUnitResult(**common, **unit),)  # type: ignore[arg-type]
-            return (WorkUnitFailed(**common, **unit, reason=failure),)  # type: ignore[arg-type]
-        if type(message) is CancelWorkGroup:
-            attempt.cancelled = True
-            attempt.activated.set()
-            attempt.run_allowed.set()
-            if attempt.completion is not None and not attempt.completion.done():
-                attempt.completion.set_result(message.reason)
-            return (WorkGroupCancelled(**common),)  # type: ignore[arg-type]
-        if type(message) is AbortWorkGroup:
-            attempt.activated.set()
-            attempt.run_allowed.set()
-            return ()
-        if type(message) is ReleaseWorkGroup:
-            self._attempts.pop(self._key(message), None)
-            return (WorkGroupReleased(**common),)  # type: ignore[arg-type]
-        raise RuntimeError(f"unsupported workgroup command {type(message).__name__}")
-
-    async def before_invocation(self, invocation_id: str) -> None:
-        attempts = tuple(self._attempts.values())
-        if not attempts:
-            return
-        if len(attempts) != 1:
-            raise RuntimeError("multiple workgroup attempts are active")
-        attempt = attempts[0]
-        await attempt.activated.wait()
-        if not attempt.active:
-            raise RuntimeError("workgroup attempt ended before invocation dispatch")
-        await attempt.run_allowed.wait()
-        attempt.invocation_id = invocation_id
-
-    async def after_invocation(self, invocation_id: str, failure: str | None) -> None:
-        attempt = next(
-            (
-                candidate
-                for candidate in self._attempts.values()
-                if candidate.invocation_id == invocation_id
-            ),
-            None,
-        )
-        if attempt is not None and attempt.completion is not None and not attempt.completion.done():
-            attempt.completion.set_result(failure)
-
-    def invocation_cancelled(self, invocation_id: str) -> bool:
-        return any(
-            attempt.invocation_id == invocation_id and attempt.cancelled
-            for attempt in self._attempts.values()
-        )
-
-    def parent_manages_invocation_reservations(self) -> bool:
-        return True
 
 
 def _resource_value(resource_id: str, rank: int) -> Value:
@@ -292,7 +163,7 @@ class _WorkGroupFakeWorker(_SingleJobFakeWorker):
     def __init__(self, rank: int) -> None:
         super().__init__(rank)
         self.instance_token = f"worker-{rank}"
-        self.handler = _TestWorkGroupHandler()
+        self.handler = SingleJobWorkGroupHandler()
         self.unbound = 0
         self.release_failure = False
         self.run_transport_failure = False
@@ -380,11 +251,7 @@ def _single_job_pool(
     workers = (_SingleJobFakeWorker(0), _SingleJobFakeWorker(1))
     lanes = tuple(_ReplicaLane(rank, worker) for rank, worker in enumerate(workers))  # type: ignore[arg-type]
     pool = _SingleJobWorkerPool(lanes, tmp_path / "rendezvous", "guidance")
-
-    async def invoke_ranks(lanes, _config, invocations, on_event):
-        return await pool._invoke_ranks(lanes, invocations, on_event)
-
-    pool._invoke_workgroup = invoke_ranks  # type: ignore[method-assign]
+    pool._invoke_workgroup = pool._invoke_ranks  # type: ignore[method-assign]
     return pool, workers
 
 
@@ -449,61 +316,6 @@ def test_single_job_pool_preserves_rank_local_resources_and_rank_zero_events(
             assert received.resolve() == f"resource-{rank}"
             assert received.meta.get(RESOURCE_OWNER_META_KEY) == f"owner-{rank}"
             assert received.meta.get(RESOURCE_PRODUCER_ARM_META_KEY) == f"arm-{rank}"
-
-    asyncio.run(scenario())
-
-
-def test_single_job_pool_selects_requested_lanes_and_resolves_local_ranks(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        workers = tuple(_SingleJobFakeWorker(rank) for rank in range(4))
-        lanes = tuple(_ReplicaLane(rank, worker) for rank, worker in enumerate(workers))  # type: ignore[arg-type]
-        pool = _SingleJobWorkerPool(lanes, tmp_path / "rendezvous", "window")
-
-        async def invoke_ranks(lanes, _config, invocations, on_event):
-            return await pool._invoke_ranks(lanes, invocations, on_event)
-
-        pool._invoke_workgroup = invoke_ranks  # type: ignore[method-assign]
-        selected = replace(
-            _single_job_invocation(),
-            single_job_multi_gpu=SingleJobMultiGpuConfig((1, 3), "sequence"),
-        )
-        result = await pool.invoke(selected)
-        assert result.error is None
-        assert [len(worker.calls) for worker in workers] == [0, 1, 0, 1]
-        executions = [workers[index].calls[0].single_job_multi_gpu_execution for index in (1, 3)]
-        assert [(item.rank, item.world_size, item.mode) for item in executions if item] == [
-            (0, 2, "sequence"),
-            (1, 2, "sequence"),
-        ]
-
-        four_rank = replace(
-            _single_job_invocation(),
-            single_job_multi_gpu=SingleJobMultiGpuConfig((0, 1, 2, 3), "sequence"),
-        )
-        result = await pool.invoke(four_rank)
-        assert result.error is None
-        executions = [worker.calls[-1].single_job_multi_gpu_execution for worker in workers]
-        assert [(item.rank, item.world_size, item.mode) for item in executions if item] == [
-            (0, 4, "sequence"),
-            (1, 4, "sequence"),
-            (2, 4, "sequence"),
-            (3, 4, "sequence"),
-        ]
-
-        for mode in ("auto", "guidance"):
-            invalid = replace(
-                _single_job_invocation(),
-                single_job_multi_gpu=SingleJobMultiGpuConfig((0, 1, 2, 3), mode),
-            )
-            with pytest.raises(RuntimeError, match="requires exactly two"):
-                await pool.invoke(invalid)
-        three_rank_sequence = replace(
-            _single_job_invocation(),
-            single_job_multi_gpu=SingleJobMultiGpuConfig((0, 1, 2), "sequence"),
-        )
-        with pytest.raises(RuntimeError, match="requires two or four"):
-            await pool.invoke(three_rank_sequence)
-        assert [len(worker.calls) for worker in workers] == [1, 2, 1, 2]
 
     asyncio.run(scenario())
 
@@ -945,12 +757,40 @@ def _attention_capabilities(*, kitchen: bool = False) -> AttentionCapabilityEvid
         device_sm=None,
         sdpa_torch_runtime="2.13.0",
         adapter_contract_revision="dinkster.attention-kernel.v1",
-        available_policies=("sdpa", "comfy_kitchen_int8") if kitchen else ("sdpa",),
+        available_policies=("sdpa", "dinkster_kitchen_int8") if kitchen else ("sdpa",),
         provider_versions=(
-            (("comfy-kitchen", "0.2.31"), ("torch", "2.13.0"))
+            (("dinkster-kitchen", "0.2.31"), ("torch", "2.13.0"))
             if kitchen
             else (("torch", "2.13.0"),)
         ),
+    )
+
+
+def _write_flash_attention_provider(root: Path) -> None:
+    (root / "dinkster_inference_torch.py").write_text(
+        """from dinkster_protocol import (
+    AttentionCapabilityEvidence,
+    AttentionPolicyConfig,
+    derive_attention_route_token,
+)
+
+EVIDENCE = AttentionCapabilityEvidence(
+    version=1,
+    device_kind="cpu",
+    device_sm=None,
+    sdpa_torch_runtime="2.13.0",
+    adapter_contract_revision="dinkster.attention-kernel.v1",
+    available_policies=("sdpa", "flash"),
+    provider_versions=(("torch", "2.13.0"),),
+)
+
+def discover_attention_capabilities():
+    return EVIDENCE
+
+def discover_attention_route_token(policy="auto"):
+    return derive_attention_route_token(EVIDENCE, AttentionPolicyConfig(policy))
+""",
+        encoding="utf-8",
     )
 
 
@@ -1020,7 +860,7 @@ class Own(Node):
 from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_values import TypeRegistry
 
-STRING = TypeExpr.concrete("STRING")
+STRING = TypeExpr.concrete("core.string")
 
 def register_types(registry: TypeRegistry) -> None:
     pass
@@ -1059,8 +899,7 @@ NODES = [{nodes}]
     arm_entry = f'arm_nodes = "{module}:ARM_NODES"\n' if body_arm else ""
     manifest = root / "dinkster-pack.toml"
     manifest.write_text(
-        f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
-        f'namespaces = ["{namespace}"]\n'
+        f'[pack]\nname = "{name}"\nnamespaces = ["{namespace}"]\n'
         f"{executes_line}{schema_only_line}{arms_table}\n[pack.entry]\n"
         f'nodes = "{module}:NODES"\ntypes = "{module}:register_types"\n{arm_entry}'
     )
@@ -1096,8 +935,8 @@ def _write_vision_provider_packs(
 
 from dinkster_api.v1 import ComboWidget, InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 
-STRING = TypeExpr.concrete("STRING")
-COMBO = TypeExpr.concrete("COMBO")
+STRING = TypeExpr.concrete("core.string")
+COMBO = TypeExpr.concrete("core.combo")
 
 class Vision(Node):
     @classmethod
@@ -1135,7 +974,6 @@ def choices() -> dict[str, tuple[str, ...]]:
     owner_manifest.write_text(
         """[pack]
 name = "vision-owner"
-publisher = "dinkster"
 namespaces = ["vision"]
 [pack.entry]
 nodes = "vision_owner_nodes:NODES"
@@ -1450,8 +1288,8 @@ def _write_generation_provider_packs(root: Path) -> tuple[Path, Path, Path]:
 
 from dinkster_api.v1 import ComboWidget, InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 
-STRING = TypeExpr.concrete("STRING")
-COMBO = TypeExpr.concrete("COMBO")
+STRING = TypeExpr.concrete("core.string")
+COMBO = TypeExpr.concrete("core.combo")
 
 class Generate(Node):
     @classmethod
@@ -1514,7 +1352,6 @@ def choices() -> dict[str, tuple[str, ...]]:
     owner_manifest.write_text(
         """[pack]
 name = "generation-owner"
-publisher = "dinkster"
 namespaces = ["fixture"]
 schema-only = ["fixture.generate"]
 [pack.capabilities]
@@ -1689,6 +1526,20 @@ def test_generation_provider_is_explicit_and_suppresses_lazy_native_inputs(
             await composer.close()
 
     asyncio.run(scenario())
+
+
+def test_composer_rejects_native_hello_without_attention_evidence(tmp_path: Path) -> None:
+    manifest = load_manifest(
+        _write_pack(tmp_path / "native", "nativepack", "nativepack.echo", body_arm="native")
+    )
+    worker = SimpleNamespace(
+        body_arms={"native": ("nativepack.echo",)},
+        attention_route_token=None,
+    )
+    composer = ServingComposer()
+
+    with pytest.raises(CompositionError, match="omitted attention route evidence"):
+        composer._validate_body_arms(manifest, worker)
 
 
 @pytest.mark.parametrize("with_policy", [False, True])
@@ -1917,7 +1768,7 @@ def test_composer_keeps_portable_attention_arms_and_respects_placement() -> None
         weak = arm("weak", kitchen=False)
         strong = arm("strong", kitchen=True)
         topology = {"nativepack.echo": (weak, strong)}
-        config = AttentionPolicyConfig("comfy_kitchen_int8")
+        config = AttentionPolicyConfig("dinkster_kitchen_int8")
         composer = ServingComposer()
 
         selected = await composer._plan_execution(
@@ -1930,9 +1781,9 @@ def test_composer_keeps_portable_attention_arms_and_respects_placement() -> None
         )
         assert selected is not None
         assert selected.target == "weak"
-        assert selected.attention_policy == "comfy_kitchen_int8"
+        assert selected.attention_policy == "dinkster_kitchen_int8"
         assert selected.attention_route_token is not None
-        assert selected.attention_route_token.requested_policy == "comfy_kitchen_int8"
+        assert selected.attention_route_token.requested_policy == "dinkster_kitchen_int8"
         assert selected.attention_route_token.version == 3
         assert all(route.primary == "sdpa" for route in selected.attention_route_token.routes)
 
@@ -2103,6 +1954,67 @@ def test_composer_follows_resident_producer_without_native_policy() -> None:
     asyncio.run(scenario())
 
 
+def test_job_attention_policy_crosses_isolated_invocation_boundary(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        root = tmp_path / "routed"
+        manifest = _write_pack(root, "routed", "routed.echo", body_arm="native")
+        _write_flash_attention_provider(root)
+        composer = ServingComposer(worker_env=_env(root))
+        try:
+            await composer.add_pack(manifest)
+            engine = composer.composition.make_engine(lambda _event: None)
+            cases = (
+                ("scalar", AttentionPolicyConfig("flash")),
+                (
+                    "role",
+                    AttentionPolicyConfig(requested_role_policies=(("flux", "flash"),)),
+                ),
+            )
+            for value, config in cases:
+                result = await engine.run(
+                    _graph("routed.echo", value),
+                    ["n"],
+                    attention_config=config,
+                )
+                assert result.outputs["n"]["value"].resolve() == f"routed:{value}"
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
+def test_job_attention_policy_crosses_isolated_lazy_status_boundary(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        root = tmp_path / "lazy-routed"
+        manifest = _write_pack(
+            root,
+            "lazy-routed",
+            "lazy-routed.echo",
+            body_arm="native",
+            lazy=True,
+        )
+        _write_flash_attention_provider(root)
+        composer = ServingComposer(worker_env=_env(root))
+        try:
+            await composer.add_pack(manifest)
+            engine = composer.composition.make_engine(lambda _event: None)
+            cases = (
+                ("default", None),
+                ("non-default", AttentionPolicyConfig("flash")),
+            )
+            for value, config in cases:
+                result = await engine.run(
+                    _graph("lazy-routed.echo", value),
+                    ["n"],
+                    attention_config=config,
+                )
+                assert result.outputs["n"]["value"].resolve() == f"lazy-routed:{value}"
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
 def test_composer_fallback_keeps_requested_policy_in_cache_identity() -> None:
     async def scenario() -> None:
         worker = SimpleNamespace(alive=True)
@@ -2155,7 +2067,6 @@ def test_composer_fallback_keeps_requested_policy_in_cache_identity() -> None:
             inputs: object,
             run_id: str,
             attention_config: object,
-            single_job_multi_gpu: object,
         ) -> object:
             return await composer._plan_execution(
                 node_type,
@@ -2163,7 +2074,6 @@ def test_composer_fallback_keeps_requested_policy_in_cache_identity() -> None:
                 inputs,  # type: ignore[arg-type]
                 run_id,
                 attention_config,  # type: ignore[arg-type]
-                single_job_multi_gpu,  # type: ignore[arg-type]
                 topology={node_type: (arm,)},
             )
 
@@ -2174,7 +2084,7 @@ def test_composer_fallback_keeps_requested_policy_in_cache_identity() -> None:
             cache=cache,
             plan_execution=plan,  # type: ignore[arg-type]
         )
-        for policy in ("comfy_kitchen_int8", "sdpa", "comfy_kitchen_int8"):
+        for policy in ("dinkster_kitchen_int8", "sdpa", "dinkster_kitchen_int8"):
             await engine.run(
                 Graph(nodes={"n": GraphNode(schema.node_type, {})}),
                 ["n"],
@@ -2184,7 +2094,7 @@ def test_composer_fallback_keeps_requested_policy_in_cache_identity() -> None:
         assert cache.get_calls == 3
         assert cache.put_calls == 2
         assert [token.requested_policy for token in execution_worker.tokens] == [
-            "comfy_kitchen_int8",
+            "dinkster_kitchen_int8",
             "sdpa",
         ]
         assert execution_worker.tokens[0].version == 3
@@ -2233,7 +2143,6 @@ ARM_NODES = {"alt": [AltResident]}
     manifest.write_text(
         """[pack]
 name = "resident"
-publisher = "dinkster"
 [pack.arms]
 alt = ["resident.make"]
 [pack.entry]
@@ -2247,65 +2156,6 @@ arm_nodes = "resident_nodes:ARM_NODES"
 
 def _graph(node_type: str, value: str = "x") -> Graph:
     return Graph(nodes={"n": GraphNode(node_type, {"value": value})})
-
-
-@pytest.mark.parametrize("shared_group", [True, False])
-def test_crosspack_resident_models_survive_group_reload(tmp_path: Path, shared_group: bool) -> None:
-    async def scenario() -> None:
-        manifests = []
-        for name, entry in (("source", "SOURCE_NODES"), ("merge", "MERGE_NODES")):
-            root = tmp_path / name
-            root.mkdir()
-            manifest = root / "dinkster-pack.toml"
-            manifest.write_text(
-                f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
-                f'namespaces = ["{name}"]\n'
-                f'[pack.entry]\nnodes = "crosspack_nodes:{entry}"\n'
-                'types = "dinkster_inference_wire:register_inference_types"\n'
-            )
-            manifests.append(manifest)
-        composer = ServingComposer(worker_env=_env(Path(__file__).parent))
-        try:
-            for manifest in manifests:
-                await composer.add_pack(
-                    PackSpec(
-                        manifest,
-                        worker_group="crosspack-models" if shared_group else None,
-                        group_manifests=tuple(manifests) if shared_group else (),
-                    )
-                )
-            graph = Graph(
-                nodes={
-                    "a": GraphNode("source.model", {"weight": 10.0}),
-                    "b": GraphNode("source.model", {"weight": -4.0}),
-                    "m": GraphNode(
-                        "merge.simple",
-                        {"a": Link("a", "model"), "b": Link("b", "model"), "ratio": 0.25},
-                    ),
-                    "w": GraphNode("source.weight", {"model": Link("m", "model")}),
-                    "mixed": GraphNode(
-                        "merge.simple",
-                        {"a": Link("a", "model"), "b": Link("m", "model"), "ratio": 0.25},
-                    ),
-                    "mixed_weight": GraphNode("source.weight", {"model": Link("mixed", "model")}),
-                }
-            )
-            if not shared_group:
-                with pytest.raises(ExecutionError, match="unknown producer arm"):
-                    await composer.composition.make_engine(lambda event: None).run(graph, ["w"])
-                return
-            for reload in (False, True):
-                if reload:
-                    await composer.reload_pack("source")
-                result = await composer.composition.make_engine(lambda event: None).run(
-                    graph, ["w", "mixed_weight"]
-                )
-                assert result.outputs["w"]["weight"].resolve() == -0.5
-                assert result.outputs["mixed_weight"]["weight"].resolve() == 2.125
-        finally:
-            await composer.close()
-
-    asyncio.run(scenario())
 
 
 def test_enrollment_publishes_dispatch_and_keeps_claimed_schema_private(
@@ -2403,7 +2253,7 @@ def test_cross_pack_provider_may_publish_same_session_body_arms(tmp_path: Path) 
                     invocation_id=target,
                     node_id=target,
                     node_type="owned.echo",
-                    inputs={"value": registry.wrap("STRING", "ok")},
+                    inputs={"value": registry.wrap("core.string", "ok")},
                     effective_schema=schema,
                     executor=target,
                     expected_execution_identity="identity",
@@ -2501,7 +2351,7 @@ def test_schema_only_owner_routes_only_after_provider_composes(
 
 
 def _fixture_alias_registry(carrier: str) -> ComfyAliasRegistry:
-    string = TypeExpr.concrete("STRING")
+    string = TypeExpr.concrete("core.string")
     source = ComfyAliasSource("comfy-core", "Echo", "comfy.Echo", "b78cec87")
     return ComfyAliasRegistry(
         source_schemas=(
@@ -3092,6 +2942,30 @@ def test_policy_selected_native_arm_is_liveness_validated(tmp_path: Path) -> Non
     async def scenario() -> None:
         root = tmp_path / "same"
         root.mkdir(parents=True)
+        (root / "dinkster_inference_torch.py").write_text(
+            """from dinkster_protocol import (
+    AttentionCapabilityEvidence,
+    AttentionPolicyConfig,
+    derive_attention_route_token,
+)
+
+def discover_attention_capabilities():
+    return AttentionCapabilityEvidence(
+        version=1,
+        device_kind="cpu",
+        device_sm=None,
+        sdpa_torch_runtime="2.13.0",
+        adapter_contract_revision="dinkster.attention-kernel.v1",
+        available_policies=("sdpa",),
+        provider_versions=(("torch", "2.13.0"),),
+    )
+
+def discover_attention_route_token(policy="auto"):
+    return derive_attention_route_token(
+        discover_attention_capabilities(), AttentionPolicyConfig(policy)
+    )
+"""
+        )
         manifest = _write_pack(root, "same", "same.echo", body_arm="native")
         policy = SelectNative()
         composer = ServingComposer(
@@ -3156,7 +3030,7 @@ def test_same_session_body_arm_routes_without_selector_bleed(tmp_path: Path) -> 
                     invocation_id=f"inv-{index}",
                     node_id=f"n-{index}",
                     node_type="same.echo",
-                    inputs={"value": registry.wrap("STRING", str(index))},
+                    inputs={"value": registry.wrap("core.string", str(index))},
                     effective_schema=schema,
                     executor=target,
                     expected_execution_identity=f"identity-{index}",
@@ -3205,6 +3079,30 @@ def test_replica_topology_exposes_one_native_arm_per_requested_device(
     async def scenario() -> None:
         root = tmp_path / "replicas"
         root.mkdir(parents=True)
+        (root / "dinkster_inference_torch.py").write_text(
+            """from dinkster_protocol import (
+    AttentionCapabilityEvidence,
+    AttentionPolicyConfig,
+    derive_attention_route_token,
+)
+
+def discover_attention_capabilities():
+    return AttentionCapabilityEvidence(
+        version=1,
+        device_kind="cpu",
+        device_sm=None,
+        sdpa_torch_runtime="2.13.0",
+        adapter_contract_revision="dinkster.attention-kernel.v1",
+        available_policies=("sdpa",),
+        provider_versions=(("torch", "2.13.0"),),
+    )
+
+def discover_attention_route_token(policy="auto"):
+    return derive_attention_route_token(
+        discover_attention_capabilities(), AttentionPolicyConfig(policy)
+    )
+"""
+        )
         manifest = _write_pack(root, "same", "same.echo", body_arm="native")
         composer = ServingComposer(worker_env=_env(root))
         try:
@@ -3218,6 +3116,10 @@ def test_replica_topology_exposes_one_native_arm_per_requested_device(
             ]
             assert len({id(arm.domain) for arm in arms[1:]}) == 3
             assert len({arm.instance_token() for arm in arms[1:]}) == 3
+            assert (
+                composer._sampling_worker({"dinkster.ksampler": arms})
+                is composer._records["same"].worker
+            )
         finally:
             await composer.close()
 
@@ -3264,17 +3166,14 @@ def test_single_job_topology_follows_replacement_rank_workers(tmp_path: Path) ->
             assert composer._resolve_owner(composer._topology, new_token) is domain
             assert all(arm.domain.worker.alive for arm in arms)
 
-            async def invoke_ranks(lanes, _config, invocations, on_event):
-                return await pool._invoke_ranks(lanes, invocations, on_event)
-
-            pool._invoke_workgroup = invoke_ranks  # type: ignore[method-assign]
+            pool._invoke_workgroup = pool._invoke_ranks  # type: ignore[method-assign]
             registry = composer.composition._registry
             result = await composer._routing._routes["same.echo"].invoke(
                 Invocation(
                     invocation_id="replacement",
                     node_id="replacement",
                     node_type="same.echo",
-                    inputs={"value": registry.wrap("STRING", "ok")},
+                    inputs={"value": registry.wrap("core.string", "ok")},
                     effective_schema=composer.composition.schemas["same.echo"],
                     executor=arms[1].name,
                 )
@@ -3362,6 +3261,82 @@ def test_worker_host_stamps_nested_residents_for_selected_body(tmp_path: Path) -
             for foreign in (default_foreign, alt_foreign):
                 assert foreign.meta.get(RESOURCE_OWNER_META_KEY) == "foreign-session"
                 assert foreign.meta.get(RESOURCE_PRODUCER_ARM_META_KEY) is None
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
+def test_native_flux_patch_graph_follows_producer_through_real_dispatch(tmp_path: Path) -> None:
+    """The real native patch executes over the existing weight-free worker fixture."""
+    from dinkster.native_policy import NativeDispatchPolicy
+
+    patch_type = "dinkster.model_sampling_flux"
+    read_type = "test.flux_shift"
+    common = (
+        "from dataclasses import replace\n"
+        "from flux_sampling_pack_nodes import "
+        "GenerationModelSamplingFlux, LoadModel, ReadShift, register_types\n"
+        "\nclass Load(LoadModel):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return replace(super().define_schema(), node_type='producer.load')\n"
+    )
+    roots = [tmp_path / name for name in ("owner", "producer")]
+    for root in roots:
+        root.mkdir()
+        nodes = "[GenerationModelSamplingFlux, ReadShift]"
+        if root.name == "producer":
+            nodes = "[Load, GenerationModelSamplingFlux, ReadShift]"
+        (root / f"{root.name}_nodes.py").write_text(common + f"\nNODES = {nodes}\n")
+        claims = ["dinkster", "test"] if root.name == "owner" else ["producer"]
+        executes = [] if root.name == "owner" else [patch_type, read_type]
+        executes_line = f"executes = {json.dumps(executes)}\n" if executes else ""
+        (root / "dinkster-pack.toml").write_text(
+            f'[pack]\nname = "{root.name}"\nnamespaces = {json.dumps(claims)}\n'
+            f"{executes_line}[pack.entry]\n"
+            f'nodes = "{root.name}_nodes:NODES"\n'
+            f'types = "{root.name}_nodes:register_types"\n'
+        )
+
+    async def scenario() -> None:
+        policy = NativeDispatchPolicy(lambda _digest: None, lambda _diagnostic: None)
+        composer = ServingComposer(
+            worker_env=_env(*roots, Path(__file__).parent), native_policy=policy
+        )
+        try:
+            for root in roots:
+                await composer.add_pack(PackSpec(root / "dinkster-pack.toml", trust_reserved=True))
+            assert composer._topology[patch_type][0].name == "owner"
+            assert composer._topology[read_type][0].name == "owner"
+            engine = composer.composition.make_engine(lambda _event: None)
+            graph = Graph(
+                nodes={
+                    "load": GraphNode("producer.load"),
+                    "patch": GraphNode(
+                        patch_type,
+                        {
+                            "model": Link("load", "model"),
+                            "max_shift": 1.15,
+                            "base_shift": 0.5,
+                            "width": 768,
+                            "height": 1024,
+                        },
+                    ),
+                    "read": GraphNode(read_type, {"model": Link("patch", "model")}),
+                }
+            )
+            result = await engine.run(graph, ["load", "patch", "read"])
+            assert result.outputs["read"]["shift"].resolve() == 0.9766666666666666
+            for node_id in ("load", "patch"):
+                model = result.outputs[node_id]["model"]
+                assert model.meta.get(RESOURCE_PRODUCER_ARM_META_KEY) == "producer"
+                assert model.meta.get(RESOURCE_OWNER_META_KEY) == (
+                    composer._records["producer"].worker.instance_token
+                )
+            again = await engine.run(graph, ["load", "patch", "read"])
+            assert again.executed == ()
+            assert again.outputs["read"]["shift"].resolve() == 0.9766666666666666
         finally:
             await composer.close()
 

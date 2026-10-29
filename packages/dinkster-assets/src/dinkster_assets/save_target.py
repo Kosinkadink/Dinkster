@@ -24,12 +24,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import cast
 
-from dinkster_values import SAVE_TARGET_TYPE, TypeRegistry
+from dinkster_values import TypeRegistry
 
 from .identity import AssetError
 from .mounts import MOUNT_ID_PATTERN
 
 __all__ = ["SAVE_TARGET_TYPE", "SaveTarget", "register_save_target_type"]
+
+SAVE_TARGET_TYPE = "dinkster.save_target"
 
 
 @dataclass(frozen=True)

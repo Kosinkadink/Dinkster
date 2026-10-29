@@ -5,20 +5,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from dinkster_api.v1 import (
-    ASSET_TYPE,
-    BACKGROUND_REMOVAL_TYPE,
     CORE_BOOLEAN,
     CORE_COMBO,
     CORE_FLOAT,
     CORE_INT,
     CORE_STRING,
-    IMAGE_TYPE,
-    MASK_TYPE,
-    MESH_TYPE,
-    MODEL3D_TYPE,
-    MOGE_GEOMETRY_TYPE,
-    MOGE_MODEL_TYPE,
-    VOXEL_TYPE,
     AssetWidget,
     ComboWidget,
     InputSpec,
@@ -30,20 +21,20 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 
-ASSET = TypeExpr.concrete(ASSET_TYPE)
+ASSET = TypeExpr.concrete("dinkster.asset")
 BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
 COMBO = TypeExpr.concrete(CORE_COMBO)
 FLOAT = TypeExpr.concrete(CORE_FLOAT)
 INT = TypeExpr.concrete(CORE_INT)
 STRING = TypeExpr.concrete(CORE_STRING)
-IMAGE = TypeExpr.concrete(IMAGE_TYPE)
-MASK = TypeExpr.concrete(MASK_TYPE)
-MODEL3D = TypeExpr.concrete(MODEL3D_TYPE)
-MOGE_MODEL = TypeExpr.concrete(MOGE_MODEL_TYPE)
-MOGE_GEOMETRY = TypeExpr.concrete(MOGE_GEOMETRY_TYPE)
-BACKGROUND_REMOVAL = TypeExpr.concrete(BACKGROUND_REMOVAL_TYPE)
-VOXEL = TypeExpr.concrete(VOXEL_TYPE)
-MESH = TypeExpr.concrete(MESH_TYPE)
+IMAGE = TypeExpr.concrete("dinkster.image")
+MASK = TypeExpr.concrete("dinkster.mask")
+MODEL3D = TypeExpr.concrete("dinkster.model3d")
+MOGE_MODEL = TypeExpr.concrete("comfy.MOGE_MODEL")
+MOGE_GEOMETRY = TypeExpr.concrete("comfy.MOGE_GEOMETRY")
+BACKGROUND_REMOVAL = TypeExpr.concrete("comfy.BACKGROUND_REMOVAL")
+VOXEL = TypeExpr.concrete("comfy.VOXEL")
+MESH = TypeExpr.concrete("comfy.MESH")
 
 
 class _SchemaOnlyNode(Node):

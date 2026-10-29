@@ -11,8 +11,8 @@ and enforces the ownership contract around it:
 - an invocation arriving without a selection is a wiring error, loudly;
 - every resident input's owner token (RESOURCE_OWNER_META_KEY) must resolve
   to the selected arm's opaque worker-session domain;
-- producer-arm provenance must match the selected arm or a compatible
-  cross-pack default body in the same residency domain;
+- producer-arm provenance must match the selected arm even when several
+  arms share one session and residency domain;
 - every resident OUTPUT must satisfy the same two facts, or it would poison
   the cache entry the selection's tag names.
 
@@ -125,7 +125,6 @@ class DispatchWorker:
         resolve_owner: ResolveOwner,
         arm_domains: Mapping[str, ResidencyDomain],
         default_arms: Mapping[str, str],
-        producer_targets: Mapping[str, str] | None = None,
     ) -> None:
         if not arms:
             raise ValueError("DispatchWorker needs at least one arm")
@@ -136,15 +135,6 @@ class DispatchWorker:
         self._resolve_owner = resolve_owner
         self._arm_domains = dict(arm_domains)
         self._default_arms = dict(default_arms)
-        self._producer_targets = {arm: arm for arm in arms}
-        if producer_targets is not None:
-            self._producer_targets.update(producer_targets)
-        if any(target not in arms for target in self._producer_targets.values()):
-            raise ValueError("DispatchWorker producer_targets must name executable arms")
-        if any(self._producer_targets[arm] != arm for arm in arms):
-            raise ValueError(
-                "DispatchWorker producer_targets must preserve executable arm affinity"
-            )
         if set(self._arm_domains) != set(self._arms):
             raise ValueError("DispatchWorker arm_domains must exactly match arms")
         if set(self._default_arms) != set(self._arms):
@@ -204,12 +194,12 @@ class DispatchWorker:
                 if not require_producer_arm:
                     continue
                 if producer_present:
-                    if not isinstance(producer, str) or producer not in self._producer_targets:
+                    if not isinstance(producer, str) or producer not in self._arms:
                         return (
                             f"{direction} '{name}' references resource {rid!r} "
                             f"with malformed or unknown producer arm {producer!r}"
                         )
-                    producer_arm = self._producer_targets[producer]
+                    producer_arm = producer
                 else:
                     producer_arm = self._default_arms[target]
                 if producer_arm != target:

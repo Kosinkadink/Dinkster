@@ -23,8 +23,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
-from .builtin_types import DETECTION_TYPE, REGION_TYPE
-
 if TYPE_CHECKING:
     import numpy as np
 
@@ -42,6 +40,9 @@ __all__ = [
     "encode_region",
     "region_meta",
 ]
+
+REGION_TYPE = "dinkster.region"
+DETECTION_TYPE = "dinkster.detection"
 
 DETECTION_CODEC_MAGIC = b"DINKSTER-DETECTION\x00"
 DETECTION_CODEC_VERSION = 1

@@ -893,9 +893,9 @@ def test_sam31_provider_nodes_execute_in_an_isolated_worker(tmp_path: Path) -> N
                     "segment": GraphNode(
                         "dinkster.detection.segment",
                         {
-                            "image": TypedLiteral("IMAGE", source.tolist()),
+                            "image": TypedLiteral("dinkster.image", source.tolist()),
                             "detections": TypedLiteral(
-                                "list<DETECTION>",
+                                "list<dinkster.detection>",
                                 [detection.to_record()],
                             ),
                             "provider": "dinkster-vision-sam31",

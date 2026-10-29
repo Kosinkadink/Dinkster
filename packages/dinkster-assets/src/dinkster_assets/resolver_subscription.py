@@ -13,7 +13,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from http.client import HTTPConnection, HTTPException, HTTPMessage, HTTPResponse, HTTPSConnection
@@ -24,6 +24,15 @@ from urllib.parse import quote, unquote_plus, urlsplit, urlunsplit
 from .component_manifest import AssetComponentManifest
 from .identity import AssetError
 from .json_metadata import thaw_json
+from .p2p_global import (
+    ProviderArtifactP2PV1,
+    ProviderLocationV1,
+    ProviderP2PEnumerationV1,
+    ProviderP2PSnapshotV1,
+    ProviderP2PTombstoneV1,
+    provider_declarations,
+)
+from .p2p_grants import P2P_REMOTE_GRANT_MAX_SECONDS, PublicSwarmDeclarationV1
 from .provenance import ProvenanceRecord, ProvenanceStore
 from .public_acquisition import PublicAcquisitionSourceV1
 from .resolver_index import (
@@ -78,6 +87,9 @@ class ResolverSubscription:
     checked_at: float = 0.0
     error: str = ""
     refreshed_at: float = 0.0
+    trusted_for_p2p: bool = False
+    license_authoritative: bool = False
+    p2p_tombstones: tuple[tuple[str, float], ...] = ()
     complete_snapshot: bool = False
 
     def descriptor(self) -> dict[str, object]:
@@ -94,6 +106,8 @@ class ResolverSubscription:
             "checkedAt": self.checked_at,
             "refreshedAt": self.refreshed_at,
             "error": self.error,
+            "trustedForP2P": self.trusted_for_p2p,
+            "licenseAuthoritative": self.license_authoritative,
         }
 
     def to_wire(self) -> dict[str, object]:
@@ -106,6 +120,12 @@ class ResolverSubscription:
             "checkedAt": self.checked_at,
             "refreshedAt": self.refreshed_at,
             "error": self.error,
+            "trustedForP2P": self.trusted_for_p2p,
+            "licenseAuthoritative": self.license_authoritative,
+            "p2pTombstones": [
+                {"digest": digest, "observedAt": observed_at}
+                for digest, observed_at in self.p2p_tombstones
+            ],
             "index": self.index.to_wire(),
         }
 
@@ -548,7 +568,25 @@ def _fetch_page(
 
 
 def _subscription_from_wire(wire: Mapping[str, object]) -> ResolverSubscription:
-    # Persisted rows may contain fields from capabilities this host no longer uses.
+    expected = {
+        "id",
+        "source",
+        "sourceType",
+        "completeSnapshot",
+        "etag",
+        "checkedAt",
+        "refreshedAt",
+        "error",
+        "trustedForP2P",
+        "licenseAuthoritative",
+        "p2pTombstones",
+        "index",
+    }
+    unknown = set(wire) - expected
+    if unknown:
+        raise ResolverSubscriptionError(
+            f"persisted resolver subscription has unknown fields: {sorted(unknown)}"
+        )
     subscription_id = wire.get("id")
     source = wire.get("source")
     source_type = wire.get("sourceType")
@@ -556,7 +594,10 @@ def _subscription_from_wire(wire: Mapping[str, object]) -> ResolverSubscription:
     checked_at = wire.get("checkedAt", 0.0)
     error = wire.get("error", "")
     refreshed_at = wire.get("refreshedAt", checked_at if not error else 0.0)
+    trusted_for_p2p = wire.get("trustedForP2P", False)
+    license_authoritative = wire.get("licenseAuthoritative", False)
     complete_snapshot = wire.get("completeSnapshot", False)
+    tombstones = wire.get("p2pTombstones", [])
     index = wire.get("index")
     if (
         not isinstance(subscription_id, str)
@@ -573,8 +614,37 @@ def _subscription_from_wire(wire: Mapping[str, object]) -> ResolverSubscription:
         raise ResolverSubscriptionError("persisted resolver subscription source is not canonical")
     if not isinstance(etag, str) or not isinstance(error, str):
         raise ResolverSubscriptionError("persisted resolver subscription status must be strings")
+    if type(trusted_for_p2p) is not bool or type(license_authoritative) is not bool:
+        raise ResolverSubscriptionError("persisted resolver P2P trust flags must be booleans")
     if type(complete_snapshot) is not bool:
         raise ResolverSubscriptionError("persisted resolver completeSnapshot must be a boolean")
+    if not isinstance(tombstones, list):
+        raise ResolverSubscriptionError("persisted resolver P2P tombstones must be a bounded list")
+    tombstone_rows = cast("list[object]", tombstones)
+    if len(tombstone_rows) > RESOLVER_INDEX_MAX_ENTRIES:
+        raise ResolverSubscriptionError("persisted resolver P2P tombstones must be a bounded list")
+    parsed_tombstones: list[tuple[str, float]] = []
+    for position, row in enumerate(tombstone_rows):
+        if not isinstance(row, Mapping):
+            raise ResolverSubscriptionError(
+                f"persisted resolver P2P tombstone {position} has an invalid shape"
+            )
+        row_wire = cast("Mapping[object, object]", row)
+        if set(row_wire) != {"digest", "observedAt"} or any(
+            not isinstance(key, str) for key in row_wire
+        ):
+            raise ResolverSubscriptionError(
+                f"persisted resolver P2P tombstone {position} has an invalid shape"
+            )
+        try:
+            tombstone = ProviderP2PTombstoneV1.from_wire(cast("Mapping[str, object]", row_wire))
+        except AssetError as exc:
+            raise ResolverSubscriptionError(
+                f"persisted resolver P2P tombstone {position} is invalid: {exc}"
+            ) from exc
+        parsed_tombstones.append((tombstone.digest, tombstone.observed_at))
+    if len({digest for digest, _ in parsed_tombstones}) != len(parsed_tombstones):
+        raise ResolverSubscriptionError("persisted resolver P2P tombstones contain duplicates")
     normalized_checked_at = _timestamp(
         checked_at,
         "persisted resolver subscription checkedAt is invalid",
@@ -598,6 +668,9 @@ def _subscription_from_wire(wire: Mapping[str, object]) -> ResolverSubscription:
         checked_at=normalized_checked_at,
         refreshed_at=normalized_refreshed_at,
         error=error,
+        trusted_for_p2p=trusted_for_p2p,
+        license_authoritative=license_authoritative,
+        p2p_tombstones=tuple(parsed_tombstones),
         complete_snapshot=complete_snapshot,
     )
 
@@ -631,6 +704,14 @@ class ResolverSubscriptionStore:
         self._official_bootstrap: _OfficialResolverBootstrap | None = None
         self._subscriptions = self._load()
         self._filename_index: dict[str, tuple[ResolverSuggestion, ...]] = {}
+        self._p2p_snapshots_cache: tuple[ProviderP2PSnapshotV1, ...] | None = None
+        self._p2p_declarations_cache: tuple[PublicSwarmDeclarationV1, ...] | None = None
+        self._p2p_declaration_batches: tuple[
+            tuple[float, float, tuple[PublicSwarmDeclarationV1, ...]], ...
+        ] = ()
+        self._p2p_active_batch_key: tuple[int, ...] | None = None
+        self._p2p_active_declarations_cache: tuple[PublicSwarmDeclarationV1, ...] = ()
+        self._ensure_p2p_cache()
         active_sources = {
             self._source_name(subscription.id) for subscription in self._subscriptions
         }
@@ -770,6 +851,9 @@ class ResolverSubscriptionStore:
             raise ResolverSubscriptionError(
                 f"resolver subscription file exceeds {RESOLVER_SUBSCRIPTIONS_MAX_BYTES} bytes"
             )
+        # Validate derived authority before replacing durable state. A failed
+        # build or write leaves the previous caches intact for caller rollback.
+        cache = self._build_p2p_cache()
         tmp = self._path.with_name(self._path.name + f".tmp-{os.getpid()}")
         self._path.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -779,6 +863,13 @@ class ResolverSubscriptionStore:
             with contextlib.suppress(OSError):
                 tmp.unlink()
             raise
+        (
+            self._p2p_snapshots_cache,
+            self._p2p_declarations_cache,
+            self._p2p_declaration_batches,
+        ) = cache
+        self._p2p_active_batch_key = None
+        self._p2p_active_declarations_cache = ()
 
     def _records(self, subscription: ResolverSubscription) -> tuple[ProvenanceRecord, ...]:
         records: list[ProvenanceRecord] = []
@@ -867,6 +958,180 @@ class ResolverSubscriptionStore:
                     except AssetError:
                         continue
         return tuple(sources)
+
+    @staticmethod
+    def _safe_p2p_name(name: str) -> bool:
+        lowered = name.replace("\\", "/").rsplit("/", 1)[-1].casefold()
+        return lowered.endswith((".safetensors", ".gguf"))
+
+    @staticmethod
+    def _provider_locations(urls: Sequence[str], *, gated: bool) -> tuple[ProviderLocationV1, ...]:
+        locations: list[ProviderLocationV1] = []
+        for url in urls:
+            try:
+                locations.append(
+                    ProviderLocationV1(url, eligible=not gated, credential_free=not gated)
+                )
+            except AssetError:
+                continue
+        return tuple(locations)
+
+    def _provider_snapshot(
+        self, subscription: ResolverSubscription
+    ) -> ProviderP2PSnapshotV1 | None:
+        self._check_official_identity(subscription)
+        index = subscription.index
+        # Legacy caches may have discarded nextCursor. Their HTTP entries remain
+        # usable, but only a new complete refresh can establish P2P authority.
+        if (
+            not subscription.complete_snapshot
+            or not subscription.trusted_for_p2p
+            or not index.name
+            or not index.updated
+        ):
+            return None
+        # Snapshot revisions cover full content independently of HTTP validators.
+        source_revision = f"{index.updated}|{_index_revision(index)}"
+        artifacts: list[ProviderArtifactP2PV1] = []
+        enumeration: list[ProviderP2PEnumerationV1] = []
+        expires_at = subscription.refreshed_at + P2P_REMOTE_GRANT_MAX_SECONDS
+        for entry in sorted(index.entries, key=lambda row: row.digest):
+            if entry.size <= 0 or entry.p2p is None:
+                continue
+            try:
+                source_id = (
+                    "resolver:"
+                    + hashlib.sha256(f"{index.name}\0{entry.digest}".encode()).hexdigest()
+                )
+                grant_id = hashlib.sha256(
+                    f"resolver-p2p-v1\0{index.name}\0{source_revision}\0{entry.digest}".encode()
+                ).hexdigest()
+                artifacts.append(
+                    ProviderArtifactP2PV1(
+                        source_id=source_id,
+                        digest=entry.digest,
+                        size_bytes=entry.size,
+                        descriptor=entry.p2p,
+                        license=entry.license,
+                        format_safe=self._safe_p2p_name(entry.name),
+                        locations=self._provider_locations(
+                            entry.urls_for(self._region), gated=entry.gated
+                        ),
+                    )
+                )
+                enumeration.append(
+                    ProviderP2PEnumerationV1(
+                        grant_id=grant_id,
+                        digest=entry.digest,
+                        size_bytes=entry.size,
+                        descriptor=entry.p2p,
+                        expires_at=expires_at,
+                    )
+                )
+            except AssetError:
+                continue
+        try:
+            return ProviderP2PSnapshotV1(
+                provider_id=index.name,
+                source_revision=source_revision,
+                refreshed_at=subscription.refreshed_at,
+                artifacts=tuple(artifacts),
+                p2p_artifacts=tuple(enumeration),
+                p2p_trackers=(),
+                tombstones=tuple(
+                    ProviderP2PTombstoneV1(digest, observed_at)
+                    for digest, observed_at in subscription.p2p_tombstones
+                ),
+            )
+        except AssetError:
+            return None
+
+    def provider_p2p_snapshots(self) -> tuple[ProviderP2PSnapshotV1, ...]:
+        """Current complete resolver refreshes explicitly trusted for internet P2P."""
+        with self._lock:
+            self._ensure_p2p_cache()
+            assert self._p2p_snapshots_cache is not None
+            return self._p2p_snapshots_cache
+
+    def _ensure_p2p_cache(self) -> None:
+        if self._p2p_snapshots_cache is not None:
+            return
+        (
+            self._p2p_snapshots_cache,
+            self._p2p_declarations_cache,
+            self._p2p_declaration_batches,
+        ) = self._build_p2p_cache()
+
+    def _build_p2p_cache(
+        self,
+    ) -> tuple[
+        tuple[ProviderP2PSnapshotV1, ...],
+        tuple[PublicSwarmDeclarationV1, ...],
+        tuple[tuple[float, float, tuple[PublicSwarmDeclarationV1, ...]], ...],
+    ]:
+        snapshots = tuple(
+            snapshot
+            for subscription in self._subscriptions
+            if (snapshot := self._provider_snapshot(subscription)) is not None
+        )
+        declarations: list[PublicSwarmDeclarationV1] = []
+        batches: list[tuple[float, float, tuple[PublicSwarmDeclarationV1, ...]]] = []
+        for snapshot in snapshots:
+            snapshot_declarations = tuple(
+                decision.declaration
+                for decision in provider_declarations(
+                    snapshot,
+                    trusted_provider_ids=frozenset({snapshot.provider_id}),
+                    now=snapshot.refreshed_at,
+                )
+                if decision.declaration is not None
+            )
+            grouped: dict[tuple[float, float], list[PublicSwarmDeclarationV1]] = {}
+            for declaration in snapshot_declarations:
+                grouped.setdefault((declaration.refreshed_at, declaration.expires_at), []).append(
+                    declaration
+                )
+            batches.extend(
+                (active_from, expires_at, tuple(rows))
+                for (active_from, expires_at), rows in grouped.items()
+            )
+            declarations.extend(snapshot_declarations)
+        return snapshots, tuple(declarations), tuple(batches)
+
+    def public_swarm_declarations(
+        self, digest: str | None = None
+    ) -> tuple[PublicSwarmDeclarationV1, ...]:
+        """Current declarations from resolver subscriptions explicitly trusted for P2P."""
+        with self._lock:
+            self._ensure_p2p_cache()
+            assert self._p2p_declarations_cache is not None
+            now = _timestamp(self._clock(), "resolver clock returned an invalid timestamp")
+            active_batch_key = tuple(
+                index
+                for index, (active_from, expires_at, _) in enumerate(self._p2p_declaration_batches)
+                if active_from <= now < expires_at
+            )
+            if digest is None:
+                if len(active_batch_key) == len(self._p2p_declaration_batches):
+                    return self._p2p_declarations_cache
+                if not active_batch_key:
+                    return ()
+                if active_batch_key == self._p2p_active_batch_key:
+                    return self._p2p_active_declarations_cache
+                declarations = tuple(
+                    declaration
+                    for index in active_batch_key
+                    for declaration in self._p2p_declaration_batches[index][2]
+                )
+                self._p2p_active_batch_key = active_batch_key
+                self._p2p_active_declarations_cache = declarations
+                return declarations
+            return tuple(
+                declaration
+                for index in active_batch_key
+                for declaration in self._p2p_declaration_batches[index][2]
+                if declaration.digest == digest
+            )
 
     def suggest(self, name: str) -> tuple[ResolverSuggestion, ...]:
         basename = self._basename(name)
@@ -975,15 +1240,61 @@ class ResolverSubscriptionStore:
                 raise ResolverSubscriptionError(
                     "official resolver export name does not match configured provider ID"
                 )
+            if existing is None:
+                subscription = replace(
+                    subscription, trusted_for_p2p=True, license_authoritative=True
+                )
+                if self._provider_snapshot(subscription) is None:
+                    raise ResolverSubscriptionError(
+                        "official resolver export lacks complete provider snapshot metadata"
+                    )
             self._official_bootstrap = replace(configured, subscription_id=subscription.id)
             try:
                 if existing is None:
                     return self._add_subscription(subscription)
+                # A pre-existing subscription already embodies a user's trust
+                # choices. Pin its identity without elevating either flag.
                 self._save()
             except Exception:
                 self._official_bootstrap = previous
                 raise
             return subscription
+
+    def set_p2p_trust(
+        self,
+        subscription_id: str,
+        *,
+        trusted_for_p2p: bool,
+        license_authoritative: bool,
+    ) -> ResolverSubscription:
+        if type(trusted_for_p2p) is not bool or type(license_authoritative) is not bool:
+            raise ResolverSubscriptionError("resolver P2P trust flags must be booleans")
+        with self._lock:
+            position = next(
+                (
+                    position
+                    for position, subscription in enumerate(self._subscriptions)
+                    if subscription.id == subscription_id
+                ),
+                None,
+            )
+            if position is None:
+                raise ResolverSubscriptionError(
+                    f"unknown resolver index subscription: {subscription_id}"
+                )
+            previous = self._subscriptions[position]
+            updated = replace(
+                previous,
+                trusted_for_p2p=trusted_for_p2p,
+                license_authoritative=license_authoritative,
+            )
+            self._subscriptions[position] = updated
+            try:
+                self._save()
+            except Exception:
+                self._subscriptions[position] = previous
+                raise
+            return updated
 
     def unsubscribe(self, subscription_id: str) -> bool:
         with self._lock:
@@ -1032,6 +1343,21 @@ class ResolverSubscriptionStore:
                         "resolver index returned not-modified without a cached complete document"
                     )
                 index = subscription.index if data is None else parse_resolver_index(data)
+                tombstones = (
+                    subscription.p2p_tombstones
+                    if data is None
+                    else tuple(
+                        (digest, now)
+                        for digest in sorted(
+                            {
+                                entry.digest
+                                for entry in subscription.index.entries
+                                if entry.p2p is not None
+                            }
+                            - {entry.digest for entry in index.entries if entry.p2p is not None}
+                        )
+                    )
+                )
                 refreshed = replace(
                     subscription,
                     index=index,
@@ -1039,6 +1365,7 @@ class ResolverSubscriptionStore:
                     checked_at=now,
                     refreshed_at=now,
                     error="",
+                    p2p_tombstones=tombstones,
                     complete_snapshot=True,
                 )
             else:
@@ -1050,6 +1377,17 @@ class ResolverSubscriptionStore:
                     refreshed_at=now,
                     error="",
                     complete_snapshot=True,
+                    p2p_tombstones=tuple(
+                        (digest, now)
+                        for digest in sorted(
+                            {
+                                entry.digest
+                                for entry in subscription.index.entries
+                                if entry.p2p is not None
+                            }
+                            - {entry.digest for entry in index.entries if entry.p2p is not None}
+                        )
+                    ),
                 )
         except (ResolverIndexError, ResolverSubscriptionError) as exc:
             refreshed = replace(
@@ -1117,6 +1455,13 @@ class ResolverSubscriptionStore:
 
             subscriptions_before = list(self._subscriptions)
             filename_index_before = self._filename_index
+            p2p_cache_before = (
+                self._p2p_snapshots_cache,
+                self._p2p_declarations_cache,
+                self._p2p_declaration_batches,
+                self._p2p_active_batch_key,
+                self._p2p_active_declarations_cache,
+            )
             positions = {
                 subscription.id: position
                 for position, subscription in enumerate(self._subscriptions)
@@ -1145,5 +1490,12 @@ class ResolverSubscriptionStore:
                         ResolverSubscriptionStore._save(self)
                 finally:
                     self._filename_index = filename_index_before
+                    (
+                        self._p2p_snapshots_cache,
+                        self._p2p_declarations_cache,
+                        self._p2p_declaration_batches,
+                        self._p2p_active_batch_key,
+                        self._p2p_active_declarations_cache,
+                    ) = p2p_cache_before
                 raise
             return tuple(attempted)

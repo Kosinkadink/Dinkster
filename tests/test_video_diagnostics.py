@@ -9,7 +9,6 @@ from typing import Any, cast
 import av
 import numpy as np
 import pytest
-from dinkster_api.v1 import VIDEO_TYPE
 from dinkster_assets import AssetRef
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EngineEvent
@@ -41,10 +40,10 @@ class FormatSource(Node):
         return NodeSchema(
             node_type="test.format-source",
             inputs=(
-                InputSpec("alpha", TypeExpr.concrete("BOOLEAN")),
-                InputSpec("audio", TypeExpr.concrete("BOOLEAN"), default=False),
+                InputSpec("alpha", TypeExpr.concrete("core.boolean")),
+                InputSpec("audio", TypeExpr.concrete("core.boolean"), default=False),
             ),
-            outputs=(OutputSpec("video", TypeExpr.concrete(VIDEO_TYPE)),),
+            outputs=(OutputSpec("video", TypeExpr.concrete("comfy.VIDEO")),),
         )
 
     @classmethod
@@ -65,8 +64,7 @@ def worker_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytes
     register_media_types(registry)
     manifest = tmp_path / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname="video-diagnostics"\npublisher="dinkster"\n'
-        "[pack.entry]\n"
+        '[pack]\nname="video-diagnostics"\n[pack.entry]\n'
         'nodes="tests.test_video_diagnostics:DIAGNOSTIC_NODES"\n'
         'types="dinkster_nodes_media_io:register_media_types"\n'
     )

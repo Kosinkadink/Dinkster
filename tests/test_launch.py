@@ -101,6 +101,7 @@ def test_bare_cli_launches_one_origin_and_opens_browser(
     assert args[args.index("--port") + 1] == "4640"
     assert args[args.index("--frontend-root") + 1] == str(bundle)
     assert "--prepare-stale-catalogs" in args
+    assert "--disable-p2p" in args
     assert "--allow-mount-changes" in args
     assert "--execution-python" not in args
 
@@ -134,19 +135,6 @@ def test_browser_waits_for_health_before_opening(monkeypatch) -> None:
 
     assert attempts == 2
     assert events == ["sleep", "http://127.0.0.1:4640"]
-
-
-def test_explicit_frontend_root_overrides_discovery(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "state"))
-    setup.main([])
-    bundle = tmp_path / "managed frontend"
-    bundle.mkdir()
-    (bundle / "index.html").write_text("editor")
-    monkeypatch.setattr(launch, "discover_frontend_bundle", lambda: None)
-    calls = []
-    monkeypatch.setattr(serve, "main", lambda argv: calls.append(argv))
-    assert launch.main(["--no-browser", "--frontend-root", str(bundle)]) == 0
-    assert calls[0][calls[0].index("--frontend-root") + 1] == str(bundle)
 
 
 def test_no_browser_and_vite_proxy_are_the_only_alternate_launch_controls(

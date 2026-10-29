@@ -100,8 +100,7 @@ async def hosted_pool(pool: ResidentPool, guard: ReleaseGuard) -> AsyncIterator[
 def write_manifest(tmp_path: Path) -> Path:
     manifest = tmp_path / "dinkster-pack.toml"
     manifest.write_text(
-        '[pack]\nname = "memorypack"\npublisher = "dinkster"\n'
-        'type-namespaces = ["mem"]\n\n[pack.entry]\n'
+        '[pack]\nname = "memorypack"\n\n[pack.entry]\n'
         'nodes = "memorypack_nodes:NODES"\ntypes = "memorypack_nodes:register_types"\n'
         'consumers = "memorypack_nodes:memory_consumers"\n'
     )
@@ -428,8 +427,8 @@ def test_full_release_acknowledges_worker_with_no_consumers(tmp_path: Path) -> N
     async def scenario() -> None:
         manifest = tmp_path / "dinkster-pack.toml"
         manifest.write_text(
-            '[pack]\nname = "memorypack"\npublisher = "dinkster"\n'
-            '[pack.entry]\nnodes = "memorypack_nodes:NODES"\n'
+            '[pack]\nname = "memorypack"\n\n[pack.entry]\n'
+            'nodes = "memorypack_nodes:NODES"\ntypes = "memorypack_nodes:register_types"\n'
         )
         worker = IsolatedWorker(
             manifest,
@@ -566,8 +565,7 @@ def test_group_full_release_stays_busy_until_cancelled_thread_settles(tmp_path: 
             root.mkdir()
             manifest = root / "dinkster-pack.toml"
             manifest.write_text(
-                f'[pack]\nname = "{pack}"\npublisher = "dinkster"\n'
-                'type-namespaces = ["mem"]\n\n[pack.entry]\n'
+                f'[pack]\nname = "{pack}"\n\n[pack.entry]\n'
                 'nodes = "memorypack_nodes:NODES"\n'
                 'types = "memorypack_nodes:register_types"\n'
                 'consumers = "memorypack_nodes:memory_consumers"\n'
@@ -1163,7 +1161,7 @@ def test_cancelled_in_process_invocation_refuses_late_source_materialization() -
         registry = core_registry()
         schema = NodeSchema(
             node_type="test.late_source",
-            outputs=(OutputSpec("result", TypeExpr.concrete("STRING")),),
+            outputs=(OutputSpec("result", TypeExpr.concrete("core.string")),),
         )
         entered = threading.Event()
         finished = threading.Event()
@@ -1779,8 +1777,7 @@ def test_bad_consumers_entry_fails_start(tmp_path: Path) -> None:
     async def scenario() -> None:
         manifest = tmp_path / "dinkster-pack.toml"
         manifest.write_text(
-            '[pack]\nname = "memorypack"\npublisher = "dinkster"\n'
-            'type-namespaces = ["mem"]\n\n[pack.entry]\n'
+            '[pack]\nname = "memorypack"\n\n[pack.entry]\n'
             'nodes = "memorypack_nodes:NODES"\ntypes = "memorypack_nodes:register_types"\n'
             'consumers = "memorypack_nodes:NODES"\n'  # a list, not a factory
         )

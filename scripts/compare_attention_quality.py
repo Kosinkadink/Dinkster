@@ -17,10 +17,11 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from dinkster_inference import BUILTIN_FAMILIES_BY_ID
 from dinkster_protocol import attention_route_token_from_wire
 from dinkster_workers.backend_env import validate_benchmark_report
 
-_CANDIDATE_POLICIES = ("comfy_kitchen_int8", "sage")
+_CANDIDATE_POLICIES = ("dinkster_kitchen_int8", "sage")
 _MEDIA = ("image", "audio")
 _QUALITY_FIELDS = ("dtype", "source_shape", "captured_shape", "spatial_stride")
 _MATCHED_REPORT_FIELDS = (
@@ -128,7 +129,7 @@ def _attention_authentication_problems(
         providers = dict(parsed_token.provider_versions)
         required_provider = {
             "sdpa": "torch",
-            "comfy_kitchen_int8": "comfy-kitchen",
+            "dinkster_kitchen_int8": "dinkster-kitchen",
             "sage": "sageattention",
         }[policy]
         if required_provider not in providers:
@@ -166,7 +167,7 @@ def _attention_authentication_problems(
     torch_version = _reported_torch_version(report)
     if not isinstance(torch_version, str) or providers.get("torch") != torch_version:
         problems.append(f"{label} provider torch runtime differs from the report")
-    if policy == "comfy_kitchen_int8" and "comfy-kitchen" not in providers:
+    if policy == "dinkster_kitchen_int8" and "comfy-kitchen" not in providers:
         problems.append(f"{label} comfy-kitchen provider version is missing")
     execution = attention.get("execution")
     if not isinstance(execution, Mapping) or execution.get("policy") != policy:
@@ -227,15 +228,16 @@ def comparability_problems(
             problems.append(f"{label} accelerator is missing")
             continue
         family_id = report.get("family_id")
-        h3 = family_id == "dinkster.minimax_h3"
+        registered = BUILTIN_FAMILIES_BY_ID.get(family_id) if isinstance(family_id, str) else None
+        engine = None if registered is None else registered.engine
         try:
             incomplete = validate_benchmark_report(
                 report,
                 accelerator=accelerator,
-                residency_route_roles=(
-                    ("diffusion", "conditioner", "video_vae", "audio_vae") if h3 else ()
+                residency_route_roles=() if engine is None else engine.residency_route_roles,
+                requires_accelerator_residency=(
+                    False if engine is None else engine.requires_accelerator_residency
                 ),
-                requires_accelerator_residency=h3,
             )
         except ValueError as error:
             problems.append(f"{label} report validation failed: {error}")

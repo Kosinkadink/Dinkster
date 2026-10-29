@@ -38,14 +38,6 @@ from dinkster_schema import (
     schema_from_wire,
     schema_signature,
     schema_to_wire,
-    type_expr_to_wire,
-)
-from dinkster_values.builtin_types import (
-    CORE_BOOLEAN,
-    CORE_COMBO,
-    CORE_FLOAT,
-    CORE_INT,
-    CORE_STRING,
 )
 
 SCHEMA = NodeSchema(
@@ -53,11 +45,11 @@ SCHEMA = NodeSchema(
     display_name="Test Node",
     category="test",
     inputs=(
-        InputSpec("a", TypeExpr.concrete("INT")),
-        InputSpec("b", TypeExpr.union("INT", "FLOAT"), required=False, default=1),
+        InputSpec("a", TypeExpr.concrete("core.int")),
+        InputSpec("b", TypeExpr.union("core.int", "core.float"), required=False, default=1),
         InputSpec("anything", TypeExpr.wildcard(), required=False),
     ),
-    outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
+    outputs=(OutputSpec("out", TypeExpr.concrete("core.int")),),
 )
 
 
@@ -66,7 +58,7 @@ def _represented_schema(
     represents: OutputRepresents | None = None,
     combos: tuple[DynamicComboSpec, ...] = (),
 ) -> NodeSchema:
-    image = TypeExpr.concrete("IMAGE")
+    image = TypeExpr.concrete("dinkster.image")
     return NodeSchema(
         node_type="test.represented-output",
         inputs=(
@@ -128,8 +120,8 @@ class TwoOutputs(Node):
         return NodeSchema(
             node_type="test.two_outputs",
             outputs=(
-                OutputSpec("first", TypeExpr.concrete("INT")),
-                OutputSpec("second", TypeExpr.concrete("INT")),
+                OutputSpec("first", TypeExpr.concrete("core.int")),
+                OutputSpec("second", TypeExpr.concrete("core.int")),
             ),
         )
 
@@ -184,7 +176,7 @@ def test_output_preview_authoring_requires_an_actual_bool() -> None:
         with pytest.raises(ValueError, match="preview must be a bool"):
             OutputSpec(
                 "value",
-                TypeExpr.concrete("STRING"),
+                TypeExpr.concrete("core.string"),
                 preview=malformed,  # type: ignore[arg-type]
             )
 
@@ -194,7 +186,7 @@ def test_output_family_preview_authoring_requires_an_actual_bool() -> None:
         with pytest.raises(ValueError, match="preview must be a bool"):
             OutputFamilySpec(
                 "values",
-                TypeExpr.concrete("STRING"),
+                TypeExpr.concrete("core.string"),
                 preview=malformed,  # type: ignore[arg-type]
             )
 
@@ -214,14 +206,14 @@ def test_output_preview_signature_stripping_never_reaches_input_defaults() -> No
 def test_input_family_vocabulary_validation_and_wire_shape() -> None:
     prefix = InputFamilySpec(
         "items",
-        TypeExpr.concrete("STRING"),
+        TypeExpr.concrete("core.string"),
         min_members=1,
         max_members=3,
         member_prefix="items",
     )
     names = InputFamilySpec(
         "named",
-        TypeExpr.concrete("STRING"),
+        TypeExpr.concrete("core.string"),
         member_names=(),
     )
     wire = schema_to_wire(
@@ -254,7 +246,7 @@ def test_input_family_vocabulary_validation_and_wire_shape() -> None:
 
 
 def test_recursive_dynamic_entries_round_trip_at_every_depth() -> None:
-    variable = TypeExpr.variable("T", ("STRING", "FLOAT"))
+    variable = TypeExpr.variable("T", ("core.string", "core.float"))
     nested = DynamicComboSpec(
         "mode",
         options=(
@@ -280,7 +272,7 @@ def test_recursive_dynamic_entries_round_trip_at_every_depth() -> None:
                         variants=(
                             SlotVariant(
                                 "text",
-                                TypeExpr.concrete("STRING"),
+                                TypeExpr.concrete("core.string"),
                                 inputs=(InputSpec("variant_dep", variable),),
                             ),
                         ),
@@ -288,7 +280,7 @@ def test_recursive_dynamic_entries_round_trip_at_every_depth() -> None:
                     ),
                     DynamicSlotSpec(
                         "open",
-                        slot_type=TypeExpr.concrete("STRING"),
+                        slot_type=TypeExpr.concrete("core.string"),
                         inputs=(InputSpec("dependent", variable),),
                         force_input=True,
                     ),
@@ -305,7 +297,7 @@ def test_recursive_dynamic_entries_round_trip_at_every_depth() -> None:
 def test_recursive_wire_decode_is_fail_closed() -> None:
     family = InputFamilySpec(
         "items",
-        (InputSpec("value", TypeExpr.concrete("STRING")),),
+        (InputSpec("value", TypeExpr.concrete("core.string")),),
     )
     base = schema_to_wire(NodeSchema(node_type="test.fail-closed", input_families=(family,)))
     entry = cast("list[dict[str, Any]]", base["interface"])[0]
@@ -349,7 +341,7 @@ def test_recursive_wire_decode_is_fail_closed() -> None:
 
 
 def test_dynamic_slot_forms_and_combo_default_validation() -> None:
-    concrete = TypeExpr.concrete("STRING")
+    concrete = TypeExpr.concrete("core.string")
     with pytest.raises(ValueError, match="exactly one"):
         DynamicSlotSpec("neither")
     with pytest.raises(ValueError, match="exactly one"):
@@ -387,7 +379,7 @@ def test_dynamic_combo_option_key_grammar_rejects_other_shapes(key: str) -> None
 def test_dynamic_combo_option_keys_keep_exact_identity_and_default_membership() -> None:
     spaced = DynamicComboOption(
         "Flux.2 [pro]",
-        (InputSpec("width", TypeExpr.concrete("STRING")),),
+        (InputSpec("width", TypeExpr.concrete("core.string")),),
     )
     other = DynamicComboOption("Flux.2 [max]")
     combo = DynamicComboSpec(
@@ -440,7 +432,7 @@ def test_dynamic_combo_option_keys_allow_non_aliasing_bfl_siblings() -> None:
 
 
 def test_dynamic_combo_option_key_grammar_does_not_widen_other_identifiers() -> None:
-    concrete = TypeExpr.concrete("STRING")
+    concrete = TypeExpr.concrete("core.string")
     with pytest.raises(ValueError, match="dynamic combo id must match"):
         DynamicComboSpec("combo.id", (DynamicComboOption("valid"),))
     with pytest.raises(ValueError, match="input family id must match"):
@@ -470,10 +462,10 @@ def test_anchored_grammars_reject_trailing_newlines() -> None:
     with pytest.raises(ValueError, match="entry id must match"):
         DynamicComboOption(
             "valid",
-            (InputSpec("dependent\n", TypeExpr.concrete("STRING")),),
+            (InputSpec("dependent\n", TypeExpr.concrete("core.string")),),
         )
     with pytest.raises(ValueError, match="slot variant key must match"):
-        SlotVariant("variant\n", TypeExpr.concrete("STRING"))
+        SlotVariant("variant\n", TypeExpr.concrete("core.string"))
     with pytest.raises(ValueError, match="asset widget kind"):
         AssetWidget(kind="model/lora\n")
 
@@ -484,7 +476,9 @@ def test_asset_widget_wire_roundtrip_and_signature_exclusion() -> None:
     accept = ("image/png", "image/jpeg", "image/webp")
     schema = dataclasses.replace(
         SCHEMA,
-        inputs=(InputSpec("asset", TypeExpr.concrete("ASSET"), widget=AssetWidget(accept)),)
+        inputs=(
+            InputSpec("asset", TypeExpr.concrete("dinkster.asset"), widget=AssetWidget(accept)),
+        )
         + SCHEMA.inputs[1:],
     )
     wire = schema_to_wire(schema)
@@ -501,7 +495,7 @@ def test_asset_widget_wire_roundtrip_and_signature_exclusion() -> None:
 
 def test_save_target_widget_wire_roundtrip_and_signature_exclusion() -> None:
     """SAVE_TARGET is a closed widget kind: a
-    save-destination picker whose value is a structured SAVE_TARGET
+    save-destination picker whose value is a structured dinkster.save_target
     mapping, never a raw path string. Same rule as ASSET: presentation
     metadata rides the wire but never joins execution identity."""
     schema = dataclasses.replace(
@@ -509,7 +503,7 @@ def test_save_target_widget_wire_roundtrip_and_signature_exclusion() -> None:
         inputs=(
             InputSpec(
                 "target",
-                TypeExpr.concrete("SAVE_TARGET"),
+                TypeExpr.concrete("dinkster.save_target"),
                 widget=SaveTargetWidget(".png"),
             ),
         )
@@ -532,7 +526,7 @@ def test_save_target_widget_wire_roundtrip_and_signature_exclusion() -> None:
         inputs=(
             InputSpec(
                 "target",
-                TypeExpr.concrete("SAVE_TARGET"),
+                TypeExpr.concrete("dinkster.save_target"),
                 widget=SaveTargetWidget(),
             ),
         )
@@ -545,7 +539,7 @@ def test_save_target_widget_wire_roundtrip_and_signature_exclusion() -> None:
 
 
 def test_combo_widget_wire_roundtrip_and_signature_exclusion() -> None:
-    """COMBO is a closed widget kind bound to COMBO. Static options
+    """COMBO is a closed widget kind bound to core.combo. Static options
     render immediately; a remote route names a
     server-enumerated list (registered samplers and kin) that REPLACES
     them once fetched. Same rule as ASSET/SAVE_TARGET: presentation rides
@@ -557,7 +551,8 @@ def test_combo_widget_wire_roundtrip_and_signature_exclusion() -> None:
     )
     schema = dataclasses.replace(
         SCHEMA,
-        inputs=(InputSpec("choice", TypeExpr.concrete("COMBO"), widget=combo),) + SCHEMA.inputs[1:],
+        inputs=(InputSpec("choice", TypeExpr.concrete("core.combo"), widget=combo),)
+        + SCHEMA.inputs[1:],
     )
     wire = schema_to_wire(schema)
     interface = cast("list[dict[str, Any]]", wire["interface"])
@@ -580,7 +575,7 @@ def test_combo_widget_wire_roundtrip_and_signature_exclusion() -> None:
         SCHEMA,
         inputs=(
             dataclasses.replace(
-                InputSpec("choice", TypeExpr.concrete("COMBO")),
+                InputSpec("choice", TypeExpr.concrete("core.combo")),
                 widget=ComboWidget(options=("a", "b")),
             ),
         )
@@ -595,7 +590,7 @@ def test_combo_widget_wire_roundtrip_and_signature_exclusion() -> None:
         SCHEMA,
         inputs=(
             dataclasses.replace(
-                InputSpec("choice", TypeExpr.concrete("COMBO")),
+                InputSpec("choice", TypeExpr.concrete("core.combo")),
                 widget=ComboWidget(remote_route="/api/choices/test.remote"),
             ),
         )
@@ -611,17 +606,17 @@ def test_combo_widget_wire_roundtrip_and_signature_exclusion() -> None:
 
 
 def test_multicombo_widget_model_and_wire_are_strict() -> None:
-    combo_list = TypeExpr.list_of(TypeExpr.concrete("COMBO"))
+    combo_list = TypeExpr.list_of(TypeExpr.concrete("core.combo"))
     widget = MultiComboWidget(options=("a", "b"))
     assert InputSpec("values", combo_list, widget=widget).widget is widget
 
     for wrong_type in (
-        TypeExpr.concrete("COMBO"),
-        TypeExpr.list_of(TypeExpr.concrete("STRING")),
+        TypeExpr.concrete("core.combo"),
+        TypeExpr.list_of(TypeExpr.concrete("core.string")),
         TypeExpr.list_of(combo_list),
         TypeExpr.wildcard(),
     ):
-        with pytest.raises(ValueError, match="requires a list<COMBO> input"):
+        with pytest.raises(ValueError, match="requires a list<core.combo> input"):
             InputSpec("values", wrong_type, widget=widget)
 
     for bad_default in ("a", ["a", 1], [True], [["a"]]):
@@ -667,8 +662,8 @@ def test_multicombo_widget_model_and_wire_are_strict() -> None:
         with pytest.raises(ValueError, match="default must be an array of strings"):
             schema_from_wire(candidate)
 
-    entry["type"] = {"kind": "concrete", "types": ["COMBO"]}
-    with pytest.raises(ValueError, match="requires a list<COMBO> input"):
+    entry["type"] = {"kind": "concrete", "types": ["core.combo"]}
+    with pytest.raises(ValueError, match="requires a list<core.combo> input"):
         schema_from_wire(base)
 
 
@@ -709,7 +704,7 @@ def test_combo_remote_policy_validation_is_strict() -> None:
 
 def test_boolean_widget_wire_roundtrip_and_signature_exclusion() -> None:
     """BOOLEAN is a closed widget kind: custom toggle
-    labels on a BOOLEAN input (ComfyUI's label_on/label_off). A
+    labels on a core.boolean input (ComfyUI's label_on/label_off). A
     label-less boolean carries no widget - the type alone means "render
     a toggle" - and empty labels are omitted from the wire, never null.
     Same rule as every widget: presentation, never execution identity."""
@@ -717,7 +712,7 @@ def test_boolean_widget_wire_roundtrip_and_signature_exclusion() -> None:
         SCHEMA,
         inputs=(
             dataclasses.replace(
-                InputSpec("flag", TypeExpr.concrete("BOOLEAN")),
+                InputSpec("flag", TypeExpr.concrete("core.boolean")),
                 widget=BooleanWidget(label_on="enable", label_off="disable"),
             ),
         )
@@ -742,7 +737,7 @@ def test_boolean_widget_wire_roundtrip_and_signature_exclusion() -> None:
         SCHEMA,
         inputs=(
             dataclasses.replace(
-                InputSpec("flag", TypeExpr.concrete("BOOLEAN")),
+                InputSpec("flag", TypeExpr.concrete("core.boolean")),
                 widget=BooleanWidget(label_on="mute"),
             ),
         )
@@ -813,32 +808,6 @@ def test_number_widget_wire_roundtrip_and_signature_exclusion() -> None:
     assert schema_from_wire(controller_wire) == controller_only
     assert schema_signature(controller_only) == schema_signature(full)
 
-    color = NodeSchema(
-        node_type="test.packed-color",
-        inputs=(
-            InputSpec(
-                "color",
-                TypeExpr.concrete("INT"),
-                default=0x1234AB,
-                widget=NumberWidget(min=0, max=0xFFFFFF, step=1, display="color"),
-            ),
-        ),
-    )
-    color_wire = schema_to_wire(color)
-    color_interface = cast("list[dict[str, Any]]", color_wire["interface"])
-    assert color_interface[0]["type"] == {"kind": "concrete", "types": ["INT"]}
-    assert color_interface[0]["widget"] == {
-        "type": "NUMBER",
-        "min": 0,
-        "max": 0xFFFFFF,
-        "step": 1,
-        "display": "color",
-    }
-    assert schema_from_wire(color_wire) == color
-    assert schema_signature(color) == schema_signature(
-        dataclasses.replace(color, inputs=(dataclasses.replace(color.inputs[0], widget=None),))
-    )
-
 
 def test_number_widget_validated() -> None:
     with pytest.raises(ValueError, match="at least one constraint"):
@@ -853,10 +822,6 @@ def test_number_widget_validated() -> None:
         NumberWidget(min=float("nan"))
     with pytest.raises(ValueError, match="must be finite"):
         NumberWidget(max=float("inf"))
-    for name in ("min", "max", "step"):
-        for boolean in (False, True):
-            with pytest.raises(ValueError, match="must be a number"):
-                NumberWidget(**{name: boolean})  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="control_after_generate"):
         NumberWidget(control_after_generate="rand")  # type: ignore[arg-type]
 
@@ -921,63 +886,69 @@ def test_widget_representations_authoring_is_closed_and_domain_preserving() -> N
     representations = WidgetRepresentations(
         (single, multiline), default="multiline", user_switchable=True
     )
-    with pytest.raises(ValueError, match="string widget requires a concrete STRING"):
-        InputSpec("value", TypeExpr.concrete("INT"), widget=representations)
+    with pytest.raises(ValueError, match="string widget requires a concrete core.string"):
+        InputSpec("value", TypeExpr.concrete("core.int"), widget=representations)
 
 
 def test_widget_socket_binding_enforced() -> None:
-    """Scalar widget constraints use the socket's concrete value domain."""
+    """NUMBER/STRING descriptors bind to the socket type and constraints
+    interpret in the socket's domain: NUMBER
+    only on concrete core.int/core.float with integral constraints on int
+    sockets, STRING only on concrete core.string. The backend refuses to
+    emit what the frontend would warn-and-drop."""
     # NUMBER on a non-numeric concrete socket.
     with pytest.raises(ValueError, match="number widget requires a concrete"):
-        InputSpec("s", TypeExpr.concrete("STRING"), widget=NumberWidget(min=0))
+        InputSpec("s", TypeExpr.concrete("core.string"), widget=NumberWidget(min=0))
     # NUMBER on non-concrete sockets (union / wildcard).
     with pytest.raises(ValueError, match="number widget requires a concrete"):
         InputSpec(
             "u",
-            TypeExpr.union("INT", "FLOAT"),
+            TypeExpr.union("core.int", "core.float"),
             widget=NumberWidget(min=0),
         )
     with pytest.raises(ValueError, match="number widget requires a concrete"):
         InputSpec("w", TypeExpr.wildcard(), widget=NumberWidget(min=0))
     # Fractional constraints are malformed in an int socket's domain.
     with pytest.raises(ValueError, match="step must be integral"):
-        InputSpec("i", TypeExpr.concrete("INT"), widget=NumberWidget(step=0.1))
+        InputSpec("i", TypeExpr.concrete("core.int"), widget=NumberWidget(step=0.1))
     with pytest.raises(ValueError, match="min must be integral"):
-        InputSpec("i", TypeExpr.concrete("INT"), widget=NumberWidget(min=0.5))
+        InputSpec("i", TypeExpr.concrete("core.int"), widget=NumberWidget(min=0.5))
     with pytest.raises(ValueError, match="max must be integral"):
-        InputSpec("i", TypeExpr.concrete("INT"), widget=NumberWidget(max=9.5))
+        InputSpec("i", TypeExpr.concrete("core.int"), widget=NumberWidget(max=9.5))
     # Float sockets take integral or fractional constraints alike.
     InputSpec(
         "f",
-        TypeExpr.concrete("FLOAT"),
+        TypeExpr.concrete("core.float"),
         widget=NumberWidget(min=0, max=1.0, step=0.05),
     )
     # Integral-valued floats are integral (JSON has one number type).
     InputSpec(
         "i",
-        TypeExpr.concrete("INT"),
+        TypeExpr.concrete("core.int"),
         widget=NumberWidget(min=0.0, max=10.0, step=1.0),
     )
-    # STRING only on concrete STRING.
+    # STRING only on concrete core.string.
     with pytest.raises(ValueError, match="string widget requires a concrete"):
-        InputSpec("i", TypeExpr.concrete("INT"), widget=StringWidget())
+        InputSpec("i", TypeExpr.concrete("core.int"), widget=StringWidget())
     with pytest.raises(ValueError, match="string widget requires a concrete"):
         InputSpec("w", TypeExpr.wildcard(), widget=StringWidget())
 
-    InputSpec("color", TypeExpr.concrete("STRING"), widget=ColorWidget())
-    with pytest.raises(ValueError, match="color widget requires a concrete STRING"):
-        InputSpec("color", TypeExpr.concrete("COMBO"), widget=ColorWidget())
+    InputSpec("color", TypeExpr.concrete("core.string"), widget=ColorWidget())
+    with pytest.raises(ValueError, match="color widget requires a concrete core.string"):
+        InputSpec("color", TypeExpr.concrete("core.combo"), widget=ColorWidget())
 
-    # COMBO rejects a different primitive, wildcard, or union domain.
+    # COMBO only on concrete core.combo - not string, wildcard, union, or a
+    # list whose element is combo. The descriptor describes one combo socket.
     InputSpec(
         "combo",
-        TypeExpr.concrete("COMBO"),
+        TypeExpr.concrete("core.combo"),
         widget=ComboWidget(options=("a", "b")),
     )
     for wrong in (
-        TypeExpr.concrete("STRING"),
+        TypeExpr.concrete("core.string"),
         TypeExpr.wildcard(),
-        TypeExpr.union("COMBO", "STRING"),
+        TypeExpr.union("core.combo", "core.string"),
+        TypeExpr.list_of(TypeExpr.concrete("core.combo")),
     ):
         with pytest.raises(ValueError, match="combo widget requires a concrete"):
             InputSpec("combo", wrong, widget=ComboWidget(options=("a", "b")))
@@ -986,92 +957,14 @@ def test_widget_socket_binding_enforced() -> None:
 def test_combo_widget_binding_is_enforced_during_wire_decode() -> None:
     schema = dataclasses.replace(
         SCHEMA,
-        inputs=(InputSpec("choice", TypeExpr.concrete("COMBO")),) + SCHEMA.inputs[1:],
+        inputs=(InputSpec("choice", TypeExpr.concrete("core.combo")),) + SCHEMA.inputs[1:],
     )
     wire = schema_to_wire(schema)
     interface = cast("list[dict[str, Any]]", wire["interface"])
-    interface[0]["type"] = {"kind": "concrete", "types": ["STRING"]}
+    interface[0]["type"] = {"kind": "concrete", "types": ["core.string"]}
     interface[0]["widget"] = {"type": "COMBO", "options": ["a", "b"]}
-    with pytest.raises(ValueError, match="combo widget requires a concrete COMBO"):
+    with pytest.raises(ValueError, match="combo widget requires a concrete core.combo"):
         schema_from_wire(wire)
-
-
-@pytest.mark.parametrize(
-    ("element", "widget", "default"),
-    (
-        (CORE_INT, NumberWidget(min=0, max=2**64 - 1, step=1), 1),
-        (CORE_FLOAT, NumberWidget(min=0, max=1, step=0.1, round=0.01), 0.95),
-        (CORE_FLOAT, NumberWidget(round=False), [1.23456789, -0.123456789]),
-        (CORE_STRING, StringWidget(multiline=True), ""),
-        (CORE_BOOLEAN, BooleanWidget(label_on="yes"), True),
-        (CORE_COMBO, ComboWidget(options=("first", "second")), "first"),
-        (CORE_STRING, StringWidget(multiline=True), ["caption"]),
-    ),
-)
-def test_primitive_widget_list_binding_roundtrip(
-    element: str, widget: Any, default: object
-) -> None:
-    schema = NodeSchema(
-        "test.list-widget",
-        inputs=(
-            InputSpec(
-                "value",
-                TypeExpr.list_of(TypeExpr.concrete(element)),
-                default=default,
-                widget=widget,
-            ),
-        ),
-    )
-    wire = schema_to_wire(schema)
-    assert schema_from_wire(wire) == schema
-    interface = cast(list[dict[str, Any]], wire["interface"])
-    assert interface[0]["default"] == default
-    assert interface[0]["type"] == {
-        "kind": "list",
-        "element": {"kind": "concrete", "types": [element]},
-    }
-    for wrong in (
-        TypeExpr.list_of(TypeExpr.list_of(TypeExpr.concrete(element))),
-        TypeExpr.list_of(TypeExpr.wildcard()),
-        TypeExpr.list_of(TypeExpr.union(CORE_INT, CORE_STRING)),
-    ):
-        with pytest.raises(ValueError, match="widget requires"):
-            InputSpec("value", wrong, widget=widget)
-        interface[0]["type"] = type_expr_to_wire(wrong)
-        with pytest.raises(ValueError, match="widget requires"):
-            schema_from_wire(wire)
-
-
-def test_primitive_widget_lists_preserve_numeric_and_specialized_rules() -> None:
-    integer = TypeExpr.list_of(TypeExpr.concrete(CORE_INT))
-    for widget in (
-        NumberWidget(min=0.5),
-        NumberWidget(max=2.5),
-        NumberWidget(step=0.25),
-        NumberWidget(min=float(2**54)),
-        NumberWidget(round=0.1),
-        NumberWidget(round=False),
-    ):
-        with pytest.raises(ValueError, match="integral|exactly representable|round requires"):
-            InputSpec("value", integer, widget=widget)
-    for element, widget in (
-        (CORE_INT, StringWidget()),
-        (CORE_STRING, NumberWidget(min=0)),
-        (CORE_FLOAT, BooleanWidget(label_on="yes")),
-        (CORE_STRING, ComboWidget(options=("a",))),
-    ):
-        with pytest.raises(ValueError, match="widget requires"):
-            InputSpec("value", TypeExpr.list_of(TypeExpr.concrete(element)), widget=widget)
-    for widget, expression in (
-        (
-            MultiComboWidget(options=("a",)),
-            TypeExpr.list_of(TypeExpr.list_of(TypeExpr.concrete(CORE_COMBO))),
-        ),
-        (AssetWidget(), TypeExpr.list_of(TypeExpr.concrete(CORE_STRING))),
-        (ColorWidget(), TypeExpr.list_of(TypeExpr.concrete(CORE_STRING))),
-    ):
-        with pytest.raises(ValueError, match="widget requires"):
-            InputSpec("value", expression, widget=widget)
 
 
 def test_number_widget_rejects_bool_constraints() -> None:
@@ -1099,13 +992,13 @@ def test_display_name_rides_the_wire_but_never_the_signature() -> None:
 
 
 def test_combo_source_is_retired_from_model_and_wire() -> None:
-    """COMBO identity replaces the retired suggestion marker.
+    """core.combo identity replaces the retired suggestion marker.
     No OutputSpec field or comboSource spelling remains."""
     combo_schema = dataclasses.replace(
         SCHEMA,
         outputs=(
-            OutputSpec("choice", TypeExpr.concrete("COMBO")),
-            OutputSpec("text", TypeExpr.concrete("STRING")),
+            OutputSpec("choice", TypeExpr.concrete("core.combo")),
+            OutputSpec("text", TypeExpr.concrete("core.string")),
         ),
     )
     wire = schema_to_wire(combo_schema)
@@ -1160,7 +1053,7 @@ def test_strict_wire_decode_rejects_noncanonical_combo_route() -> None:
             inputs=(
                 InputSpec(
                     "choice",
-                    TypeExpr.concrete("COMBO"),
+                    TypeExpr.concrete("core.combo"),
                     widget=ComboWidget(remote_route="/api/choices/test.valid"),
                 ),
             ),
@@ -1296,7 +1189,7 @@ def test_output_represents_is_strict_frozen_presentation_metadata() -> None:
     with pytest.raises(ValueError, match="applies must not be empty"):
         OutputRepresents("image", "decoded-image", applies={})
     with pytest.raises(ValueError, match="represents must be an OutputRepresents"):
-        OutputSpec("out", TypeExpr.concrete("IMAGE"), represents=cast("Any", {}))
+        OutputSpec("out", TypeExpr.concrete("dinkster.image"), represents=cast("Any", {}))
 
 
 def test_output_represents_validates_input_and_combo_scope() -> None:
@@ -1315,7 +1208,7 @@ def test_output_represents_validates_input_and_combo_scope() -> None:
     with pytest.raises(ValueError, match="must use an asset widget"):
         dataclasses.replace(
             schema,
-            inputs=(InputSpec("image", TypeExpr.concrete("STRING")),),
+            inputs=(InputSpec("image", TypeExpr.concrete("core.string")),),
         )
 
     combo = DynamicComboSpec(
@@ -1364,7 +1257,7 @@ def test_output_represents_never_joins_schema_signature() -> None:
 
 
 def test_output_known_value_wire_decode_rejects_unknown_fields_and_bad_shapes() -> None:
-    integer = TypeExpr.concrete("INT")
+    integer = TypeExpr.concrete("core.int")
     schema = NodeSchema(
         node_type="test.known-output-wire",
         inputs=(InputSpec("value", integer),),
@@ -1562,19 +1455,19 @@ def test_accepts_concrete() -> None:
 
 def test_runtime_type_atom() -> None:
     # The inverse of runtime_type_id: peel structured layers to the atom.
-    assert TypeExpr.runtime_type_atom("INT") == "INT"
-    assert TypeExpr.runtime_type_atom("list<INT>") == "INT"
-    assert TypeExpr.runtime_type_atom("list<list<INT>>") == "INT"
-    assert TypeExpr.runtime_type_atom("stream<INT>") == "INT"
-    assert TypeExpr.runtime_type_atom("asset<stream<INT>>") == "INT"
+    assert TypeExpr.runtime_type_atom("core.int") == "core.int"
+    assert TypeExpr.runtime_type_atom("list<core.int>") == "core.int"
+    assert TypeExpr.runtime_type_atom("list<list<core.int>>") == "core.int"
+    assert TypeExpr.runtime_type_atom("stream<core.int>") == "core.int"
+    assert TypeExpr.runtime_type_atom("asset<stream<core.int>>") == "core.int"
     # Malformed grammar is None: empty, unclosed, empty constructor, or
     # angle brackets inside what should be an atom.
     for bad in (
         "",
         "list<>",
-        "list<INT",
+        "list<core.int",
         "stream<>",
-        "stream<INT",
+        "stream<core.int",
         "core<int>",
         "list<list<>>",
         "a>b",
@@ -1618,7 +1511,7 @@ def test_duplicate_ids_rejected() -> None:
         NodeSchema(
             node_type="dup",
             inputs=(
-                InputSpec("x", TypeExpr.concrete("INT")),
-                InputSpec("x", TypeExpr.concrete("INT")),
+                InputSpec("x", TypeExpr.concrete("core.int")),
+                InputSpec("x", TypeExpr.concrete("core.int")),
             ),
         )

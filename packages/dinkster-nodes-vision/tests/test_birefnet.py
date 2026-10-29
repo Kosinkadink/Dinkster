@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
-import importlib
 import json
 import os
 import sys
@@ -20,17 +19,11 @@ from dinkster_assets import AssetVault, install_declared_assets, use_declared_as
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, TypedLiteral
-from dinkster_inference.cli_args import args
+from dinkster_nodes_vision.birefnet import model as birefnet_model
+from dinkster_nodes_vision.birefnet import register_types
+from dinkster_nodes_vision.birefnet.model import execute_matte, prepare_frame
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import IsolatedWorker, load_manifest
-
-args.cpu = True
-
-birefnet_module = importlib.import_module("dinkster_nodes_vision.birefnet")
-birefnet_model = importlib.import_module("dinkster_nodes_vision.birefnet.model")
-register_types = birefnet_module.register_types
-execute_matte = birefnet_model.execute_matte
-prepare_frame = birefnet_model.prepare_frame
 
 ROOT = Path(__file__).parents[3]
 MANIFEST = ROOT / "packages/dinkster-nodes-vision/dinkster_vision_birefnet_pack/dinkster-pack.toml"
@@ -206,7 +199,7 @@ def test_birefnet_provider_executes_in_an_isolated_worker(tmp_path: Path) -> Non
                     "matte": GraphNode(
                         "dinkster.image.matte",
                         {
-                            "image": TypedLiteral("IMAGE", source.tolist()),
+                            "image": TypedLiteral("dinkster.image", source.tolist()),
                             "provider": "dinkster-vision-birefnet",
                         },
                     )

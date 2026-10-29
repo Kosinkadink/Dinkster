@@ -13,8 +13,6 @@ from collections.abc import Mapping
 
 import numpy as np
 from dinkster_api.v1 import (
-    CORE_BOOLEAN,
-    CORE_INT,
     AbsentOutput,
     InputSpec,
     Node,
@@ -27,8 +25,8 @@ from dinkster_api.v1 import (
 
 from .image import DEV_IMAGE
 
-INT = TypeExpr.concrete(CORE_INT)
-BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
+INT = TypeExpr.concrete("core.int")
+BOOLEAN = TypeExpr.concrete("core.boolean")
 IMAGE = TypeExpr.concrete(DEV_IMAGE)
 
 

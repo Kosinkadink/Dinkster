@@ -32,7 +32,6 @@ Three pieces, one file:
 
 from __future__ import annotations
 
-import glob
 import hashlib
 import json
 import os
@@ -40,7 +39,6 @@ import re
 import threading
 import time
 import tomllib
-import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -51,13 +49,7 @@ from .identity import AssetError, require_digest
 from .integrity import AssetVerificationRecord
 from .kind import KIND_MODEL_EMBEDDING, require_asset_kind
 from .library import INDEX_NAME, AssetScanProgress, IndexedAssetResolver, LocalAssetLibrary
-from .model import (
-    AssetRef,
-    AssetResolution,
-    LocalAssetRef,
-    LocalFileSignature,
-    local_file_signature,
-)
+from .model import AssetRef, AssetResolution
 
 __all__ = [
     "MOUNT_MODES",
@@ -128,7 +120,7 @@ class EmbeddingNameIndex:
         if (
             not isinstance(loaded, dict)
             or "mounts" not in snapshot
-            or set(snapshot) - {"mounts", "outputMount", "localBindings"}
+            or set(snapshot) - {"mounts", "outputMount"}
             or not isinstance(snapshot["mounts"], list)
         ):
             raise MountsError(f"malformed configured mounts snapshot {path}")
@@ -427,7 +419,6 @@ class _MountRow:
         self.error: str | None = None
         self.library: LocalAssetLibrary | None = None
         self.entry_count: int | None = None
-        self.missing_entry_count: int | None = None
         self.progress: AssetScanProgress | None = None
         self.scan_started: float | None = None
 
@@ -454,7 +445,6 @@ class MountTable:
         self._snapshot_path = Path(snapshot_path) if snapshot_path is not None else None
         self._index_root = Path(index_root) if index_root is not None else None
         self._output_mount = output_mount
-        self._local_bindings: dict[str, tuple[MountDef, str, LocalFileSignature]] = {}
 
     @property
     def output_mount(self) -> str | None:
@@ -496,11 +486,6 @@ class MountTable:
             if self._output_mount == mount_id:
                 raise MountsError(f"mount {mount_id!r} is the selected output mount")
             row = self._rows.pop(mount_id, None)
-            self._local_bindings = {
-                token: registered
-                for token, registered in self._local_bindings.items()
-                if registered[0].id != mount_id
-            }
         if row is None:
             raise MountsError(f"unknown mount: {mount_id!r}")
         self.write_snapshot()
@@ -572,8 +557,6 @@ class MountTable:
                     wire["path"] = str(row.mount.path)
                 if row.entry_count is not None:
                     wire["entryCount"] = row.entry_count
-                if row.missing_entry_count is not None:
-                    wire["missingEntryCount"] = row.missing_entry_count
                 progress = self._current_progress(row)
                 if progress is not None:
                     wire["scanProgress"] = {
@@ -679,7 +662,6 @@ class MountTable:
                 return count
             row.library = library
             row.entry_count = count
-            row.missing_entry_count = len(library.missing_entries())
             self.write_snapshot()
             row.state = "ready"
             row.progress = None
@@ -694,15 +676,6 @@ class MountTable:
                 raise MountsError(f"unknown mount: {mount_id!r}")
             library = row.library
         return library.entries() if library is not None else ()
-
-    def missing_entries(self, mount_id: str) -> tuple[AssetEntry, ...]:
-        """Previously indexed identities retained after disappearance or replacement."""
-        with self._lock:
-            row = self._rows.get(mount_id)
-            if row is None:
-                raise MountsError(f"unknown mount: {mount_id!r}")
-            library = row.library
-        return library.missing_entries() if library is not None else ()
 
     def ready_snapshot(self) -> tuple[ReadyMountSnapshot, ...]:
         """Capture indexed mount rows and their exact catalog generation."""
@@ -770,100 +743,6 @@ class MountTable:
             path = library.resolve(digest)
             if path is not None:
                 return path
-        return None
-
-    def bind_name(self, name: str, kind: str) -> AssetRef | LocalAssetRef | None:
-        """Bind an exact basename in ranked category roots, without reading bytes."""
-        require_asset_kind(kind)
-        if not name or name in {".", ".."} or any(c in name for c in "/\\\0"):
-            return None
-        with self._lock:
-            rows = sorted(
-                (row for row in self._rows.values() if row.kind == kind),
-                key=lambda row: (row.mount.priority, row.mount.id),
-            )
-        for row in rows:
-            try:
-                root = row.mount.path.resolve()
-                paths = [
-                    path
-                    for path in root.rglob(glob.escape(name))
-                    if path.name == name and path.is_file() and path.resolve().is_relative_to(root)
-                ]
-                if not paths:
-                    continue
-                if len(paths) != 1:
-                    return None
-                path = paths[0]
-                signature = local_file_signature(path.stat())
-                relative = path.relative_to(root).as_posix()
-            except OSError:
-                continue
-            with self._lock:
-                if self._rows.get(row.mount.id) is not row:
-                    return None
-                binding = None
-                for candidate, registered in self._local_bindings.items():
-                    if registered == (row.mount, relative, signature):
-                        binding = candidate
-                        break
-                if binding is None:
-                    binding = uuid.uuid4().hex
-                    self._local_bindings[binding] = (row.mount, relative, signature)
-            verified = self.reconcile_local(binding)
-            if verified is not None:
-                return verified
-            self.write_snapshot()
-            return LocalAssetRef(
-                binding, name, signature[0], f"mounts/{row.mount.id}/{relative}", resolver=self
-            )
-        return None
-
-    def resolve_local(self, binding: str) -> tuple[Path, LocalFileSignature] | None:
-        with self._lock:
-            registered = self._local_bindings.get(binding)
-            if registered is None:
-                return None
-            mount, relative, signature = registered
-            row = self._rows.get(mount.id)
-            if row is None or row.mount is not mount:
-                return None
-        try:
-            root = mount.path.resolve()
-            path = root / relative
-            if (
-                path.resolve().is_relative_to(root)
-                and local_file_signature(path.stat()) == signature
-            ):
-                return path, signature
-        except OSError:
-            pass
-        return None
-
-    def reconcile_local(self, binding: str) -> AssetRef | None:
-        location = self.resolve_local(binding)
-        if location is None:
-            return None
-        with self._lock:
-            registered = self._local_bindings.get(binding)
-            if registered is None:
-                return None
-            mount, relative, _signature = registered
-            row = self._rows.get(mount.id)
-            library = row.library if row is not None else None
-        if library is None:
-            return None
-        try:
-            ref = library.ref(f"mounts/{mount.id}/{relative}")
-            resolution = library.resolve_asset(ref.digest)
-            if (
-                resolution
-                and resolution.verification
-                and resolution.verification.matches(location[0].stat())
-            ):
-                return ref
-        except (AssetError, OSError):
-            pass
         return None
 
     def resolve_asset(self, digest: str) -> AssetResolution | None:
@@ -934,26 +813,7 @@ class MountTable:
                 )
                 if row.library is not None
             ]
-            local_bindings: dict[str, object] = {}
-            for binding, (mount, relative, signature) in self._local_bindings.items():
-                location = self.resolve_local(binding)
-                if location is None:
-                    continue
-                verified = self.reconcile_local(binding)
-                local_bindings[binding] = {
-                    "root": str(mount.path.resolve()),
-                    "relative": relative,
-                    "signature": signature,
-                    **({"verified": verified.to_wire()} if verified else {}),
-                }
-            serialized = json.dumps(
-                {
-                    "mounts": rows,
-                    "outputMount": self._output_mount,
-                    **({"localBindings": local_bindings} if local_bindings else {}),
-                },
-                indent=1,
-            )
+            serialized = json.dumps({"mounts": rows, "outputMount": self._output_mount}, indent=1)
             tmp = self._snapshot_path.with_name(
                 self._snapshot_path.name + f".tmp-{os.getpid()}-{threading.get_ident()}"
             )
@@ -979,7 +839,6 @@ class MountSnapshotResolver:
         self._lock = threading.Lock()
         self._stamp: tuple[int, int] | None = None
         self._resolvers: list[tuple[str, IndexedAssetResolver]] = []
-        self._local_bindings: dict[str, object] = {}
 
     def resolve(self, digest: str) -> Path | None:
         for _kind, resolver in self._refresh():
@@ -993,46 +852,6 @@ class MountSnapshotResolver:
             resolution = resolver.resolve_asset(digest)
             if resolution is not None:
                 return resolution
-        return None
-
-    def resolve_local(self, binding: str) -> tuple[Path, LocalFileSignature] | None:
-        self._refresh()
-        with self._lock:
-            raw = self._local_bindings.get(binding)
-        if not isinstance(raw, dict):
-            return None
-        entry = cast("dict[str, object]", raw)
-        root, relative, signature = entry.get("root"), entry.get("relative"), entry.get("signature")
-        if (
-            not isinstance(root, str)
-            or not isinstance(relative, str)
-            or not isinstance(signature, list)
-            or len(cast("list[object]", signature)) != 5
-            or any(type(value) is not int for value in cast("list[object]", signature))
-        ):
-            return None
-        expected = cast("LocalFileSignature", tuple(cast("list[object]", signature)))
-        try:
-            root_path = Path(root).resolve()
-            path = root_path / relative
-            if (
-                path.resolve().is_relative_to(root_path)
-                and local_file_signature(path.stat()) == expected
-            ):
-                return path, expected
-        except OSError:
-            pass
-        return None
-
-    def reconcile_local(self, binding: str) -> AssetRef | None:
-        if self.resolve_local(binding) is None:
-            return None
-        with self._lock:
-            raw = self._local_bindings.get(binding)
-        if isinstance(raw, dict):
-            verified = cast("dict[str, object]", raw).get("verified")
-            if isinstance(verified, dict):
-                return AssetRef.from_wire(cast("dict[str, object]", verified), resolver=self)
         return None
 
     def resolve_for_kind(self, digest: str, kind: str) -> Path | None:
@@ -1077,7 +896,6 @@ class MountSnapshotResolver:
             return
         self._stamp = stamp
         self._resolvers = []
-        self._local_bindings = {}
         if stamp is None:
             return
         try:
@@ -1086,9 +904,6 @@ class MountSnapshotResolver:
             return
         if not isinstance(loaded, dict):
             return
-        bindings = cast("dict[str, object]", loaded).get("localBindings")
-        if isinstance(bindings, dict):
-            self._local_bindings = cast("dict[str, object]", bindings)
         rows = cast("dict[str, object]", loaded).get("mounts")
         if not isinstance(rows, list):
             return

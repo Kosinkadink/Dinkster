@@ -4,9 +4,9 @@ The ONE resolution of the exceptional hard type boundary and of "does this
 runtime value fit that input, and how?" Graph validation, the engine, and
 workers consume this policy so diagnostics and execution cannot drift.
 
-Most Dinkster type compatibility remains deliberately advisory. ``COMBO``
+Most Dinkster type compatibility remains deliberately advisory. ``core.combo``
 is the scoped exception: once ordinary TypeExpr acceptance and a valid asset
-coercion are exhausted, an incompatible runtime type involving COMBO
+coercion are exhausted, an incompatible runtime type involving core.combo
 (including inside list/asset shapes) is a hard admission error. Wildcards
 and explicit unions containing the arriving type accept normally before
 this predicate is consulted.
@@ -67,13 +67,13 @@ def _expr_mentions_combo(expr: TypeExpr) -> bool:
 
 def combo_type_mismatch_is_error(source_type_id: str, expected: TypeExpr) -> bool:
     """Whether an incompatible source/destination pair crosses the hard
-    COMBO boundary.
+    core.combo boundary.
 
     Callers first honor ``expected.accepts_concrete(source_type_id)`` and
     ``plan_asset_coercion``. This function only classifies a mismatch after
     those normal acceptance paths fail. Peeling the runtime atom makes the
-    exception apply recursively to list<COMBO>, asset<COMBO>, and
-    stream<COMBO>.
+    exception apply recursively to list<core.combo>, asset<core.combo>, and
+    stream<core.combo>.
     """
     return runtime_type_atom(source_type_id) == CORE_COMBO or _expr_mentions_combo(expected)
 

@@ -1,5 +1,4 @@
 import dataclasses
-import json
 from typing import Any, cast
 
 import pytest
@@ -13,10 +12,6 @@ from dinkster_schema import (
     CurveWidget,
     CustomWidgetDescriptor,
     Deprecation,
-    DynamicComboOption,
-    DynamicComboSpec,
-    DynamicSlotSpec,
-    InputFamilySpec,
     InputSpec,
     MultiComboWidget,
     Node,
@@ -28,7 +23,6 @@ from dinkster_schema import (
     SaveTargetWidget,
     StringWidget,
     TypeExpr,
-    elaborate,
     schema_from_wire,
     schema_signature,
     schema_to_wire,
@@ -42,11 +36,11 @@ SCHEMA = NodeSchema(
     display_name="Test Node",
     category="test",
     inputs=(
-        InputSpec("a", TypeExpr.concrete("INT")),
-        InputSpec("b", TypeExpr.union("INT", "FLOAT"), required=False, default=1),
+        InputSpec("a", TypeExpr.concrete("core.int")),
+        InputSpec("b", TypeExpr.union("core.int", "core.float"), required=False, default=1),
         InputSpec("anything", TypeExpr.wildcard(), required=False),
     ),
-    outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
+    outputs=(OutputSpec("out", TypeExpr.concrete("core.int")),),
 )
 
 
@@ -99,28 +93,27 @@ def test_current_schema_features_roundtrip() -> None:
 @pytest.mark.parametrize(
     ("type_id", "widget", "expected"),
     [
-        ("ASSET", AssetWidget(("image/png",)), {"type": "ASSET", "accept": ["image/png"]}),
+        ("dinkster.asset", AssetWidget(("image/png",)), {"type": "ASSET", "accept": ["image/png"]}),
         (
-            "SAVE_TARGET",
+            "dinkster.save_target",
             SaveTargetWidget(".png"),
             {"type": "SAVE_TARGET", "suffix": ".png"},
         ),
-        ("COMBO", ComboWidget(options=("a", "b")), {"type": "COMBO", "options": ["a", "b"]}),
+        ("core.combo", ComboWidget(options=("a", "b")), {"type": "COMBO", "options": ["a", "b"]}),
         (
-            "BOOLEAN",
+            "core.boolean",
             BooleanWidget("yes", "no"),
             {"type": "BOOLEAN", "labelOn": "yes", "labelOff": "no"},
         ),
         (
-            "INT",
+            "core.int",
             NumberWidget(min=0, max=10, step=1),
             {"type": "NUMBER", "min": 0, "max": 10, "step": 1},
         ),
-        ("FLOAT", NumberWidget(round=False), {"type": "NUMBER", "round": False}),
-        ("STRING", StringWidget(multiline=True), {"type": "STRING", "multiline": True}),
-        ("STRING", ColorWidget(), {"type": "COLOR"}),
-        ("CURVE", CurveWidget(), {"type": "CURVE"}),
-        ("COMPOSITOR", CompositorWidget(), {"type": "COMPOSITOR"}),
+        ("core.string", StringWidget(multiline=True), {"type": "STRING", "multiline": True}),
+        ("core.string", ColorWidget(), {"type": "COLOR"}),
+        ("dinkster.curve", CurveWidget(), {"type": "CURVE"}),
+        ("dinkster.compositor", CompositorWidget(), {"type": "COMPOSITOR"}),
     ],
 )
 def test_widget_roundtrip(type_id: str, widget: object, expected: dict[str, object]) -> None:
@@ -136,122 +129,13 @@ def test_widget_roundtrip(type_id: str, widget: object, expected: dict[str, obje
     )
 
 
-@pytest.mark.parametrize("list_socket", [False, True])
-@pytest.mark.parametrize("precision", [False, 0.01, 1, None])
-def test_float_round_precision_preserves_false_and_absence(
-    list_socket: bool, precision: Any
-) -> None:
-    socket = TypeExpr.concrete("FLOAT")
-    if list_socket:
-        socket = TypeExpr.list_of(socket)
-    schema = NodeSchema(
-        "test.float-round",
-        inputs=(
-            InputSpec("value", socket, widget=NumberWidget(display="number", round=precision)),
-        ),
-    )
-    wire = schema_to_wire(schema)
-    widget = cast("list[dict[str, Any]]", wire["interface"])[0]["widget"]
-    if precision is None:
-        assert "round" not in widget
-        widget["round"] = None
-        with pytest.raises(ValueError, match="round must be"):
-            schema_from_wire(wire)
-        del widget["round"]
-    else:
-        assert widget["round"] == precision
-        assert type(widget["round"]) is type(precision)
-    restored = schema_from_wire(json.loads(json.dumps(wire)))
-    assert restored == schema
-    assert isinstance(restored.inputs[0].widget, NumberWidget)
-    assert type(restored.inputs[0].widget.round) is type(precision)
-    wire_widget = cast("list[dict[str, Any]]", wire["interface"])[0]
-    wire_widget["type"] = (
-        {"kind": "list", "element": {"kind": "concrete", "types": ["INT"]}}
-        if list_socket
-        else {"kind": "concrete", "types": ["INT"]}
-    )
-    if precision is not None:
-        integer = TypeExpr.concrete("INT")
-        if list_socket:
-            integer = TypeExpr.list_of(integer)
-        with pytest.raises(ValueError, match="round requires"):
-            InputSpec("value", integer, widget=NumberWidget(round=precision))
-        with pytest.raises(ValueError, match="round requires"):
-            schema_from_wire(wire)
-
-
-@pytest.mark.parametrize("precision", [True, 0, 0.0, -1, float("nan"), float("inf"), -float("inf")])
-def test_float_round_rejects_nonpositive_and_nonfinite_precision(precision: Any) -> None:
-    with pytest.raises(ValueError, match="round must be"):
-        NumberWidget(round=precision)
-    schema = NodeSchema(
-        "test.float-round",
-        inputs=(InputSpec("value", TypeExpr.concrete("FLOAT"), widget=NumberWidget(round=0.1)),),
-    )
-    wire = schema_to_wire(schema)
-    cast("list[dict[str, Any]]", wire["interface"])[0]["widget"]["round"] = precision
-    with pytest.raises(ValueError, match="round must be"):
-        schema_from_wire(wire)
-
-
-def test_float_widget_preserves_large_float_bounds_on_the_wire() -> None:
-    schema = NodeSchema(
-        "test.float-bounds",
-        inputs=(
-            InputSpec(
-                "value",
-                TypeExpr.concrete("FLOAT"),
-                widget=NumberWidget(min=-float(2**63), max=float(2**63), step=0.25),
-            ),
-        ),
-    )
-
-    wire = schema_to_wire(schema)
-    widget = cast("list[dict[str, object]]", wire["interface"])[0]["widget"]
-    assert widget == {
-        "type": "NUMBER",
-        "min": -9.223372036854776e18,
-        "max": 9.223372036854776e18,
-        "step": 0.25,
-    }
-    assert isinstance(widget, dict)
-    assert type(widget["min"]) is float
-    assert type(widget["max"]) is float
-    assert schema_from_wire(wire) == schema
-
-
-@pytest.mark.parametrize(
-    "field,value",
-    [("min", -(2**53)), ("min", 2**53), ("max", -(2**53)), ("max", 2**53), ("step", 2**53)],
-)
-@pytest.mark.parametrize("list_socket", [False, True])
-def test_float_widget_rejects_unsafe_integer_constraints(
-    field: str, value: int, list_socket: bool
-) -> None:
-    socket = TypeExpr.concrete("FLOAT")
-    if list_socket:
-        socket = TypeExpr.list_of(socket)
-    with pytest.raises(ValueError, match="FLOAT input"):
-        InputSpec(
-            "value",
-            socket,
-            widget=NumberWidget(**{field: value}),  # type: ignore[arg-type]
-        )
-    InputSpec(
-        "value",
-        socket,
-        widget=NumberWidget(**{field: value - (1 if value > 0 else -1)}),  # type: ignore[arg-type]
-    )
-
-
 def test_multi_combo_roundtrip() -> None:
     schema = NodeSchema(
         "test.multi",
         inputs=(
             InputSpec(
                 "values",
-                TypeExpr.list_of(TypeExpr.concrete("COMBO")),
+                TypeExpr.list_of(TypeExpr.concrete("core.combo")),
                 default=["a"],
                 widget=MultiComboWidget(options=("a", "b")),
             ),
@@ -262,12 +146,12 @@ def test_multi_combo_roundtrip() -> None:
 
 def test_type_expressions_roundtrip_and_remain_closed() -> None:
     expressions = (
-        TypeExpr.concrete("INT"),
-        TypeExpr.union("INT", "FLOAT"),
+        TypeExpr.concrete("core.int"),
+        TypeExpr.union("core.int", "core.float"),
         TypeExpr.wildcard(),
-        TypeExpr.variable("T", ("INT",)),
-        TypeExpr.list_of(TypeExpr.concrete("INT")),
-        TypeExpr.asset_of(TypeExpr.concrete("IMAGE")),
+        TypeExpr.variable("T", ("core.int",)),
+        TypeExpr.list_of(TypeExpr.concrete("core.int")),
+        TypeExpr.asset_of(TypeExpr.concrete("dinkster.image")),
     )
     for expression in expressions:
         assert type_expr_from_wire(type_expr_to_wire(expression)) == expression
@@ -289,14 +173,14 @@ def test_output_represents_wire_decode_rejects_unknown_fields_and_bad_shapes() -
         inputs=(
             InputSpec(
                 "image",
-                TypeExpr.asset_of(TypeExpr.concrete("IMAGE")),
+                TypeExpr.asset_of(TypeExpr.concrete("dinkster.image")),
                 widget=AssetWidget(kind="media/image"),
             ),
         ),
         outputs=(
             OutputSpec(
                 "image",
-                TypeExpr.concrete("IMAGE"),
+                TypeExpr.concrete("dinkster.image"),
                 represents=OutputRepresents("image", "decoded-image"),
             ),
         ),
@@ -335,8 +219,8 @@ class TwoOutputs(Node):
         return NodeSchema(
             "test.two_outputs",
             outputs=(
-                OutputSpec("first", TypeExpr.concrete("INT")),
-                OutputSpec("second", TypeExpr.concrete("INT")),
+                OutputSpec("first", TypeExpr.concrete("core.int")),
+                OutputSpec("second", TypeExpr.concrete("core.int")),
             ),
         )
 
@@ -352,64 +236,7 @@ def test_duplicate_ids_are_rejected() -> None:
         NodeSchema(
             "test.duplicate",
             inputs=(
-                InputSpec("x", TypeExpr.concrete("INT")),
-                InputSpec("x", TypeExpr.concrete("INT")),
+                InputSpec("x", TypeExpr.concrete("core.int")),
+                InputSpec("x", TypeExpr.concrete("core.int")),
             ),
-        )
-
-
-def test_mixed_input_order_survives_wire_and_elaboration() -> None:
-    integer = TypeExpr.concrete("INT")
-    schema = NodeSchema(
-        "test.ordered",
-        inputs=(InputSpec("before", integer), InputSpec("after", integer)),
-        input_families=(InputFamilySpec("values", integer, min_members=0),),
-        combos=(
-            DynamicComboSpec(
-                "mode",
-                (DynamicComboOption("a", (InputSpec("value", integer),)),),
-                default="a",
-            ),
-        ),
-        slots=(DynamicSlotSpec("slot", slot_type=integer, required=False),),
-        input_order=("values", "before", "slot", "mode", "after"),
-    )
-    wire = schema_to_wire(schema)
-    assert [item["id"] for item in cast("list[dict[str, Any]]", wire["interface"])] == [
-        "values",
-        "before",
-        "slot",
-        "mode",
-        "after",
-    ]
-    assert schema_from_wire(wire) == schema
-    effective = elaborate(
-        schema_from_wire(wire),
-        ("values.b", "values.a", "slot"),
-        slot_variants={"mode": "a"},
-    )
-    assert [spec.id for spec in effective.inputs] == [
-        "values.b",
-        "values.a",
-        "before",
-        "slot",
-        "mode.value",
-        "after",
-    ]
-    assert schema_from_wire(schema_to_wire(effective)) == effective
-    assert schema_signature(schema) != schema_signature(dataclasses.replace(schema, input_order=()))
-
-
-@pytest.mark.parametrize(
-    "order",
-    [("family", "a"), ("family", "a", "a"), ("unknown", "a", "b"), ("family", "b", "a")],
-)
-def test_input_order_rejects_missing_duplicate_unknown_or_reversed_entries(order) -> None:
-    integer = TypeExpr.concrete("INT")
-    with pytest.raises(ValueError, match="input_order"):
-        NodeSchema(
-            "test.invalid_order",
-            inputs=(InputSpec("a", integer), InputSpec("b", integer)),
-            input_families=(InputFamilySpec("family", integer, min_members=0),),
-            input_order=order,
         )

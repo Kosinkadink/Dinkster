@@ -1,0 +1,612 @@
+{
+  "format": "dinkster-workflow",
+  "formatVersion": 1,
+  "lineage": "starter-trellis2",
+  "root": "g0",
+  "graphs": {
+    "g0": {
+      "id": "g0",
+      "name": "TRELLIS.2 / Pixal3D Starter",
+      "nodes": {
+        "source": {
+          "id": "source",
+          "type": "dinkster.load_image",
+          "values": {
+            "image": "input.png"
+          }
+        },
+        "model": {
+          "id": "model",
+          "type": "dinkster.load_diffusion_model",
+          "values": {
+            "diffusion_model": "trellis_2_int8_convrot.safetensors"
+          }
+        },
+        "vision": {
+          "id": "vision",
+          "type": "dinkster.load_vision",
+          "values": {
+            "vision_encoder": "dino_v3_L_naf_fp32.safetensors"
+          }
+        },
+        "shape_vae": {
+          "id": "shape_vae",
+          "type": "dinkster.load_vae",
+          "values": {
+            "vae": "trellis_2_shape_vae_bf16.safetensors"
+          }
+        },
+        "texture_vae": {
+          "id": "texture_vae",
+          "type": "dinkster.load_vae",
+          "values": {
+            "vae": "trellis_2_texture_vae_bf16.safetensors"
+          }
+        },
+        "condition": {
+          "id": "condition",
+          "type": "dinkster.trellis2_conditioning",
+          "values": {}
+        },
+        "structure_latent": {
+          "id": "structure_latent",
+          "type": "dinkster.empty_trellis2_latent_structure",
+          "values": {}
+        },
+        "structure_sampler": {
+          "id": "structure_sampler",
+          "type": "dinkster.ksampler",
+          "values": {
+            "seed": 91,
+            "steps": 12,
+            "cfg": 7.5,
+            "sampler_name": "dinkster.euler",
+            "scheduler": "dinkster.simple",
+            "denoise": 1.0,
+            "conditioning_batching": "auto",
+            "max_fused_lanes": 2
+          }
+        },
+        "structure_decode": {
+          "id": "structure_decode",
+          "type": "dinkster.vae_decode_structure_trellis2",
+          "values": {}
+        },
+        "shape_stage": {
+          "id": "shape_stage",
+          "type": "dinkster.trellis2_shape_stage",
+          "values": {}
+        },
+        "shape_sampler": {
+          "id": "shape_sampler",
+          "type": "dinkster.ksampler",
+          "values": {
+            "seed": 91,
+            "steps": 12,
+            "cfg": 7.5,
+            "sampler_name": "dinkster.euler",
+            "scheduler": "dinkster.simple",
+            "denoise": 1.0,
+            "conditioning_batching": "auto",
+            "max_fused_lanes": 2
+          }
+        },
+        "shape_decode": {
+          "id": "shape_decode",
+          "type": "dinkster.vae_decode_shape_trellis",
+          "values": {}
+        },
+        "texture_stage": {
+          "id": "texture_stage",
+          "type": "dinkster.trellis2_texture_stage",
+          "values": {}
+        },
+        "sampler": {
+          "id": "sampler",
+          "type": "dinkster.ksampler",
+          "values": {
+            "seed": 91,
+            "steps": 12,
+            "cfg": 7.5,
+            "sampler_name": "dinkster.euler",
+            "scheduler": "dinkster.simple",
+            "denoise": 1.0,
+            "conditioning_batching": "auto",
+            "max_fused_lanes": 2
+          }
+        },
+        "texture_decode": {
+          "id": "texture_decode",
+          "type": "dinkster.vae_decode_texture_trellis",
+          "values": {}
+        },
+        "paint": {
+          "id": "paint",
+          "type": "dinkster.paint_mesh",
+          "values": {}
+        },
+        "model3d": {
+          "id": "model3d",
+          "type": "dinkster.mesh_to_model3d",
+          "values": {}
+        },
+        "save": {
+          "id": "save",
+          "type": "dinkster.save_model3d",
+          "values": {
+            "target": {
+              "mount": "output",
+              "prefix": "trellis2"
+            }
+          }
+        }
+      },
+      "links": {
+        "l1": {
+          "id": "l1",
+          "from": {
+            "node": "vision",
+            "port": "vision"
+          },
+          "to": {
+            "node": "condition",
+            "port": "clip_vision_model"
+          }
+        },
+        "l2": {
+          "id": "l2",
+          "from": {
+            "node": "source",
+            "port": "image"
+          },
+          "to": {
+            "node": "condition",
+            "port": "image"
+          }
+        },
+        "l3": {
+          "id": "l3",
+          "from": {
+            "node": "model",
+            "port": "model"
+          },
+          "to": {
+            "node": "structure_sampler",
+            "port": "model"
+          }
+        },
+        "l4": {
+          "id": "l4",
+          "from": {
+            "node": "condition",
+            "port": "positive"
+          },
+          "to": {
+            "node": "structure_sampler",
+            "port": "positive"
+          }
+        },
+        "l5": {
+          "id": "l5",
+          "from": {
+            "node": "condition",
+            "port": "negative"
+          },
+          "to": {
+            "node": "structure_sampler",
+            "port": "negative"
+          }
+        },
+        "l6": {
+          "id": "l6",
+          "from": {
+            "node": "structure_latent",
+            "port": "latent"
+          },
+          "to": {
+            "node": "structure_sampler",
+            "port": "latent_image"
+          }
+        },
+        "l7": {
+          "id": "l7",
+          "from": {
+            "node": "structure_sampler",
+            "port": "latent"
+          },
+          "to": {
+            "node": "structure_decode",
+            "port": "samples"
+          }
+        },
+        "l8": {
+          "id": "l8",
+          "from": {
+            "node": "shape_vae",
+            "port": "vae"
+          },
+          "to": {
+            "node": "structure_decode",
+            "port": "vae"
+          }
+        },
+        "l9": {
+          "id": "l9",
+          "from": {
+            "node": "condition",
+            "port": "positive"
+          },
+          "to": {
+            "node": "shape_stage",
+            "port": "positive"
+          }
+        },
+        "l10": {
+          "id": "l10",
+          "from": {
+            "node": "condition",
+            "port": "negative"
+          },
+          "to": {
+            "node": "shape_stage",
+            "port": "negative"
+          }
+        },
+        "l11": {
+          "id": "l11",
+          "from": {
+            "node": "structure_decode",
+            "port": "voxel"
+          },
+          "to": {
+            "node": "shape_stage",
+            "port": "voxel"
+          }
+        },
+        "l12": {
+          "id": "l12",
+          "from": {
+            "node": "model",
+            "port": "model"
+          },
+          "to": {
+            "node": "shape_sampler",
+            "port": "model"
+          }
+        },
+        "l13": {
+          "id": "l13",
+          "from": {
+            "node": "shape_stage",
+            "port": "positive"
+          },
+          "to": {
+            "node": "shape_sampler",
+            "port": "positive"
+          }
+        },
+        "l14": {
+          "id": "l14",
+          "from": {
+            "node": "shape_stage",
+            "port": "negative"
+          },
+          "to": {
+            "node": "shape_sampler",
+            "port": "negative"
+          }
+        },
+        "l15": {
+          "id": "l15",
+          "from": {
+            "node": "shape_stage",
+            "port": "latent"
+          },
+          "to": {
+            "node": "shape_sampler",
+            "port": "latent_image"
+          }
+        },
+        "l16": {
+          "id": "l16",
+          "from": {
+            "node": "shape_sampler",
+            "port": "latent"
+          },
+          "to": {
+            "node": "shape_decode",
+            "port": "samples"
+          }
+        },
+        "l17": {
+          "id": "l17",
+          "from": {
+            "node": "shape_vae",
+            "port": "vae"
+          },
+          "to": {
+            "node": "shape_decode",
+            "port": "vae"
+          }
+        },
+        "l18": {
+          "id": "l18",
+          "from": {
+            "node": "shape_stage",
+            "port": "positive"
+          },
+          "to": {
+            "node": "texture_stage",
+            "port": "positive"
+          }
+        },
+        "l19": {
+          "id": "l19",
+          "from": {
+            "node": "shape_stage",
+            "port": "negative"
+          },
+          "to": {
+            "node": "texture_stage",
+            "port": "negative"
+          }
+        },
+        "l20": {
+          "id": "l20",
+          "from": {
+            "node": "shape_sampler",
+            "port": "latent"
+          },
+          "to": {
+            "node": "texture_stage",
+            "port": "shape_latent"
+          }
+        },
+        "l21": {
+          "id": "l21",
+          "from": {
+            "node": "model",
+            "port": "model"
+          },
+          "to": {
+            "node": "sampler",
+            "port": "model"
+          }
+        },
+        "l22": {
+          "id": "l22",
+          "from": {
+            "node": "texture_stage",
+            "port": "positive"
+          },
+          "to": {
+            "node": "sampler",
+            "port": "positive"
+          }
+        },
+        "l23": {
+          "id": "l23",
+          "from": {
+            "node": "texture_stage",
+            "port": "negative"
+          },
+          "to": {
+            "node": "sampler",
+            "port": "negative"
+          }
+        },
+        "l24": {
+          "id": "l24",
+          "from": {
+            "node": "texture_stage",
+            "port": "latent"
+          },
+          "to": {
+            "node": "sampler",
+            "port": "latent_image"
+          }
+        },
+        "l25": {
+          "id": "l25",
+          "from": {
+            "node": "sampler",
+            "port": "latent"
+          },
+          "to": {
+            "node": "texture_decode",
+            "port": "samples"
+          }
+        },
+        "l26": {
+          "id": "l26",
+          "from": {
+            "node": "texture_vae",
+            "port": "vae"
+          },
+          "to": {
+            "node": "texture_decode",
+            "port": "vae"
+          }
+        },
+        "l27": {
+          "id": "l27",
+          "from": {
+            "node": "shape_decode",
+            "port": "shape_subdivides"
+          },
+          "to": {
+            "node": "texture_decode",
+            "port": "shape_subdivides"
+          }
+        },
+        "l28": {
+          "id": "l28",
+          "from": {
+            "node": "shape_decode",
+            "port": "mesh"
+          },
+          "to": {
+            "node": "paint",
+            "port": "mesh"
+          }
+        },
+        "l29": {
+          "id": "l29",
+          "from": {
+            "node": "texture_decode",
+            "port": "voxel_colors"
+          },
+          "to": {
+            "node": "paint",
+            "port": "voxel_colors"
+          }
+        },
+        "l30": {
+          "id": "l30",
+          "from": {
+            "node": "paint",
+            "port": "mesh"
+          },
+          "to": {
+            "node": "model3d",
+            "port": "mesh"
+          }
+        },
+        "l31": {
+          "id": "l31",
+          "from": {
+            "node": "model3d",
+            "port": "model"
+          },
+          "to": {
+            "node": "save",
+            "port": "model"
+          }
+        }
+      },
+      "nets": {},
+      "reroutes": {},
+      "nextOrdinal": 50
+    }
+  },
+  "view": {
+    "graphs": {
+      "g0": {
+        "nodes": {
+          "source": {
+            "position": {
+              "x": 40,
+              "y": 80
+            }
+          },
+          "model": {
+            "position": {
+              "x": 40,
+              "y": 380
+            }
+          },
+          "vision": {
+            "position": {
+              "x": 40,
+              "y": 680
+            }
+          },
+          "shape_vae": {
+            "position": {
+              "x": 40,
+              "y": 980
+            }
+          },
+          "texture_vae": {
+            "position": {
+              "x": 40,
+              "y": 1280
+            }
+          },
+          "condition": {
+            "position": {
+              "x": 380,
+              "y": 80
+            }
+          },
+          "structure_latent": {
+            "position": {
+              "x": 380,
+              "y": 380
+            }
+          },
+          "structure_sampler": {
+            "position": {
+              "x": 720,
+              "y": 80
+            }
+          },
+          "structure_decode": {
+            "position": {
+              "x": 1060,
+              "y": 80
+            }
+          },
+          "shape_stage": {
+            "position": {
+              "x": 1400,
+              "y": 80
+            }
+          },
+          "shape_sampler": {
+            "position": {
+              "x": 1740,
+              "y": 80
+            }
+          },
+          "shape_decode": {
+            "position": {
+              "x": 2080,
+              "y": 80
+            }
+          },
+          "texture_stage": {
+            "position": {
+              "x": 1740,
+              "y": 680
+            }
+          },
+          "sampler": {
+            "position": {
+              "x": 2080,
+              "y": 680
+            }
+          },
+          "texture_decode": {
+            "position": {
+              "x": 2420,
+              "y": 680
+            }
+          },
+          "paint": {
+            "position": {
+              "x": 2760,
+              "y": 80
+            }
+          },
+          "model3d": {
+            "position": {
+              "x": 3100,
+              "y": 80
+            }
+          },
+          "save": {
+            "position": {
+              "x": 3440,
+              "y": 80
+            }
+          }
+        }
+      }
+    }
+  },
+  "meta": {
+    "title": "TRELLIS.2 / Pixal3D Starter",
+    "family": "dinkster.trellis2"
+  }
+}

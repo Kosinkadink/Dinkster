@@ -2,9 +2,9 @@
 
 The registration makes three deliberate choices:
 
-- **Verified fingerprints are content digests.** Unverified local files
-  instead use opaque, revocable binding tokens with an explicit prefix;
-  those tokens never claim content identity or cross-host portability.
+- **The fingerprint is the content digest.** A model input's cache identity
+  is its bytes, wherever they live - location-independent cache keys for
+  model-dependent nodes fall out with zero special-casing (hazard H4).
 - **The codec carries identity + metadata only, never bytes.** An AssetRef
   crossing a process/machine boundary is a couple hundred bytes of JSON;
   content moves only when a worker actually materializes it, from its own
@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -44,7 +43,7 @@ from dinkster_values.video_probe import probe_video
 from .audio import bind_audio_value
 from .declared import produced_asset_vault
 from .identity import AssetError, digest_bytes, digest_file
-from .model import AssetRef, AssetResolver, LocalAssetRef, LocalAssetResolver
+from .model import AssetRef, AssetResolver
 
 ASSET_TYPE = ASSET_BASE_TYPE
 """Aliases dinkster_values.ASSET_BASE_TYPE (typed assets pinned the constant
@@ -58,11 +57,6 @@ def register_asset_type(registry: TypeRegistry, resolver: AssetResolver | None =
     resolver where bytes are actually read)."""
 
     def coerce(obj: object) -> object:
-        if isinstance(obj, LocalAssetRef):
-            if obj.resolver is None and isinstance(resolver, LocalAssetResolver):
-                obj = replace(obj, resolver=resolver)
-            obj.local_path()
-            return obj.verified() or obj
         if isinstance(obj, AssetRef):
             if obj.resolver is None and resolver is not None:
                 return AssetRef(
@@ -75,13 +69,6 @@ def register_asset_type(registry: TypeRegistry, resolver: AssetResolver | None =
                 )
             return obj
         if isinstance(obj, Mapping):
-            if cast("Mapping[str, object]", obj).get("verification") == "unverified":
-                return coerce(
-                    LocalAssetRef.from_wire(
-                        cast("Mapping[str, object]", obj),
-                        resolver=resolver if isinstance(resolver, LocalAssetResolver) else None,
-                    )
-                )
             return AssetRef.from_wire(cast("Mapping[str, object]", obj), resolver=resolver)
         raise AssetError(
             "asset inputs must be an AssetRef or a mapping with a 'digest' - "
@@ -90,7 +77,7 @@ def register_asset_type(registry: TypeRegistry, resolver: AssetResolver | None =
         )
 
     def encode(obj: object) -> bytes:
-        if not isinstance(obj, AssetRef | LocalAssetRef):
+        if not isinstance(obj, AssetRef):
             raise AssetError(f"cannot encode {type(obj).__name__} as {ASSET_TYPE}")
         return json.dumps(obj.to_wire(), sort_keys=True, separators=(",", ":")).encode("utf-8")
 
@@ -98,21 +85,14 @@ def register_asset_type(registry: TypeRegistry, resolver: AssetResolver | None =
         wire: object = json.loads(data)
         if not isinstance(wire, Mapping):
             raise AssetError("asset wire form must be a JSON object")
-        if cast("Mapping[str, object]", wire).get("verification") == "unverified":
-            return LocalAssetRef.from_wire(
-                cast("Mapping[str, object]", wire),
-                resolver=resolver if isinstance(resolver, LocalAssetResolver) else None,
-            )
         return AssetRef.from_wire(cast("Mapping[str, object]", wire), resolver=resolver)
 
     def fingerprint(obj: object) -> str:
-        if isinstance(obj, LocalAssetRef):
-            return "unverified-local:" + obj.binding
         assert isinstance(obj, AssetRef)  # coerce ran first
         return obj.digest
 
     def meta(obj: object) -> Mapping[str, object]:
-        assert isinstance(obj, AssetRef | LocalAssetRef)  # coerce ran first
+        assert isinstance(obj, AssetRef)  # coerce ran first
         return obj.to_wire()
 
     registry.register(

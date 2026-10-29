@@ -22,10 +22,7 @@ abstract "gpu" lane - conservative, never wrong.
 from __future__ import annotations
 
 import importlib
-import os
-import sys
-from collections.abc import Callable, Mapping
-from functools import cache
+from collections.abc import Mapping
 from typing import Any, cast
 
 from dinkster_memory import MeasuredMemory
@@ -89,6 +86,12 @@ def comfy_resident_meta(obj: object) -> Mapping[str, object]:
     devices = _device_strings(patcher)
     nbytes = _model_nbytes(patcher)
     if not devices:
+        # Native CPU execution still owns the assembled weight bytes for the
+        # resident's lifetime. Preserve the historical empty metadata for
+        # ordinary CPU Comfy patchers; this marker belongs only to the native
+        # checkpoint bundle.
+        if getattr(patcher, "_dinkster_native_residency", False) and nbytes > 0:
+            return {COST_META_KEY: {"ram": nbytes}}
         return {}
     meta: dict[str, object] = {
         RESOURCES_META_KEY: {"gpu": devices[0] if len(devices) == 1 else devices}
@@ -104,50 +107,6 @@ def comfy_resident_meta(obj: object) -> Mapping[str, object]:
         cost["ram"] = nbytes
         meta[COST_META_KEY] = cost
     return meta
-
-
-def _optional_counter(read: Callable[[], object]) -> int | None:
-    try:
-        value = read()
-        return (
-            int(value)
-            if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0
-            else None
-        )
-    except Exception:  # noqa: BLE001 - one unavailable metric must not hide the others
-        return None
-
-
-@cache
-def _nvml_device(uuid: str) -> tuple[Any, Any]:
-    nvml = cast("Any", importlib.import_module("pynvml"))
-    nvml.nvmlInit()
-    return nvml, nvml.nvmlDeviceGetHandleByUUID(uuid)
-
-
-def _nvml_telemetry(properties: Any) -> dict[str, int]:
-    """Match the physical GPU UUID; CUDA_VISIBLE_DEVICES remaps torch indices."""
-    try:
-        uuid = str(properties.uuid)
-        if not uuid.startswith("GPU-"):
-            uuid = f"GPU-{uuid}"
-        nvml, handle = _nvml_device(uuid)
-    except Exception:  # noqa: BLE001 - optional vendor telemetry
-        return {}
-    readings = {
-        "driver_free_bytes": lambda: nvml.nvmlDeviceGetMemoryInfo(handle).free,
-        "gpu_utilization_percent": lambda: nvml.nvmlDeviceGetUtilizationRates(handle).gpu,
-        "gpu_temperature_celsius": lambda: nvml.nvmlDeviceGetTemperature(
-            handle, nvml.NVML_TEMPERATURE_GPU
-        ),
-        "gpu_power_milliwatts": lambda: nvml.nvmlDeviceGetPowerUsage(handle),
-        "gpu_power_limit_milliwatts": lambda: nvml.nvmlDeviceGetPowerManagementLimit(handle),
-    }
-    return {
-        name: value
-        for name, read in readings.items()
-        if (value := _optional_counter(read)) is not None
-    }
 
 
 def torch_vram_telemetry(device: str) -> MeasuredMemory | None:
@@ -174,37 +133,40 @@ def torch_vram_telemetry(device: str) -> MeasuredMemory | None:
         mem_get_info = getattr(namespace, "mem_get_info", None)
         if not callable(mem_get_info):
             return None
-        torch_device = torch.device(device.removeprefix("vram:"))
-        free, total = cast("tuple[int, int]", mem_get_info(torch_device))
-        hardware: dict[str, int] = {}
-        name: str | None = None
-        try:
-            properties = namespace.get_device_properties(torch_device)
-            name = str(properties.name)
-            if family == "cuda" and not getattr(torch.version, "hip", None):
-                hardware = _nvml_telemetry(properties)
-        except Exception:  # noqa: BLE001 - basic capacity remains useful without device details
-            pass
-        manager_module = sys.modules.get("dinkster_inference.model_management")
-        pinned = _optional_counter(lambda: cast("Any", manager_module).TOTAL_PINNED_MEMORY)
-        return MeasuredMemory(
-            free_bytes=int(free),
-            total_bytes=int(total),
-            torch_allocated_bytes=_optional_counter(
-                lambda: namespace.memory_allocated(torch_device)
-            ),
-            torch_reserved_bytes=_optional_counter(lambda: namespace.memory_reserved(torch_device)),
-            process_id=os.getpid(),
-            process_count=1,
-            process_rss_bytes=_optional_counter(
-                lambda: cast("Any", importlib.import_module("psutil")).Process().memory_info().rss
-            ),
-            pinned_host_bytes=pinned,
-            gpu_name=name,
-            **hardware,
+        free, total = cast(
+            "tuple[int, int]", mem_get_info(torch.device(device.removeprefix("vram:")))
         )
+        return MeasuredMemory(free_bytes=int(free), total_bytes=int(total))
     except Exception:  # noqa: BLE001 - a failing probe is an absent probe
         return None
+
+
+def _structured_cuda_measurement(device: object) -> MeasuredMemory:
+    inference_torch = cast("Any", importlib.import_module("dinkster_inference_torch"))
+    memory = inference_torch.dynamic_cuda_memory_snapshot(device)
+    return MeasuredMemory(
+        free_bytes=int(memory.free_bytes),
+        total_bytes=int(memory.total_bytes),
+        driver_free_bytes=int(memory.driver_free_bytes),
+        allocator_reclaimable_bytes=int(memory.allocator_reclaimable_bytes),
+        dynamic_evictable_bytes=int(memory.dynamic_evictable_bytes),
+        dynamic_pinned_bytes=int(memory.dynamic_pinned_bytes),
+    )
+
+
+def _structured_xpu_measurement(device: object) -> MeasuredMemory:
+    inference_torch = cast("Any", importlib.import_module("dinkster_inference_torch"))
+    memory = inference_torch.xpu_memory_snapshot(device)
+    if not memory.driver_reported:
+        # Allocator-derived free cannot see other processes' usage;
+        # measured telemetry must come from the driver's own report.
+        raise RuntimeError("XPU snapshot free bytes were not driver-reported")
+    return MeasuredMemory(
+        free_bytes=int(memory.free_bytes),
+        total_bytes=int(memory.total_bytes),
+        driver_free_bytes=int(memory.driver_free_bytes),
+        allocator_reclaimable_bytes=int(memory.allocator_reclaimable_bytes),
+    )
 
 
 def _family_telemetry_snapshot(torch: Any, family: str) -> dict[str, MeasuredMemory]:
@@ -215,9 +177,14 @@ def _family_telemetry_snapshot(torch: Any, family: str) -> dict[str, MeasuredMem
         count = int(namespace.device_count())
     except Exception:  # noqa: BLE001 - a failing probe is an absent probe
         return {}
+    structured = _structured_cuda_measurement if family == "cuda" else _structured_xpu_measurement
     snapshot: dict[str, MeasuredMemory] = {}
     for index in range(count):
-        measured = torch_vram_telemetry(f"vram:{family}:{index}")
+        measured: MeasuredMemory | None = None
+        try:
+            measured = structured(torch.device(family, index))
+        except Exception:  # noqa: BLE001 - a failing structured probe falls back to the driver
+            measured = torch_vram_telemetry(f"vram:{family}:{index}")
         if measured is not None:
             snapshot[f"vram:{family}:{index}"] = measured
     return snapshot
@@ -226,6 +193,13 @@ def _family_telemetry_snapshot(torch: Any, family: str) -> dict[str, MeasuredMem
 def vram_telemetry_snapshot() -> Mapping[str, MeasuredMemory]:
     """Measured accelerator capacity and attribution for every visible
     CUDA and XPU device.
+
+    Structured CUDA snapshots add torch allocator reserve and only
+    unpinned, evictable Dinkster VBAR pages to driver free, capped at
+    physical total. Pinned pages remain visible as attribution and never
+    become free. Structured XPU snapshots carry driver free and allocator
+    reserve attribution. This probe is the only derivation point; parent
+    telemetry passes it through without changing admission.
 
     ROCm devices appear under ``vram:cuda:N`` because the ROCm torch
     build exposes AMD GPUs through the CUDA namespace; their family

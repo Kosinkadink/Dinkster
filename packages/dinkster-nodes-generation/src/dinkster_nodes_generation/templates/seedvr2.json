@@ -1,0 +1,260 @@
+{
+  "format": "dinkster-workflow",
+  "formatVersion": 1,
+  "lineage": "starter-seedvr2",
+  "root": "g0",
+  "graphs": {
+    "g0": {
+      "id": "g0",
+      "name": "SeedVR2 Starter",
+      "nodes": {
+        "source": {
+          "id": "source",
+          "type": "dinkster.load_image",
+          "values": {
+            "image": "input.png"
+          }
+        },
+        "model": {
+          "id": "model",
+          "type": "dinkster.load_diffusion_model",
+          "values": {
+            "diffusion_model": "seedvr2_3b_int8_convrot.safetensors"
+          }
+        },
+        "vae": {
+          "id": "vae",
+          "type": "dinkster.load_vae",
+          "values": {
+            "vae": "seedvr2_ema_vae_fp16.safetensors"
+          }
+        },
+        "encode": {
+          "id": "encode",
+          "type": "dinkster.vae_encode_tiled",
+          "values": {}
+        },
+        "condition": {
+          "id": "condition",
+          "type": "dinkster.seedvr2_conditioning",
+          "values": {}
+        },
+        "sampler": {
+          "id": "sampler",
+          "type": "dinkster.ksampler",
+          "values": {
+            "seed": 91,
+            "steps": 1,
+            "cfg": 1.0,
+            "sampler_name": "dinkster.euler",
+            "scheduler": "dinkster.simple",
+            "denoise": 1.0,
+            "conditioning_batching": "auto",
+            "max_fused_lanes": 2
+          }
+        },
+        "decode": {
+          "id": "decode",
+          "type": "dinkster.vae_decode",
+          "values": {}
+        },
+        "save": {
+          "id": "save",
+          "type": "dinkster.save_image",
+          "values": {
+            "target": {
+              "mount": "output",
+              "prefix": "seedvr2"
+            }
+          }
+        }
+      },
+      "links": {
+        "l1": {
+          "id": "l1",
+          "from": {
+            "node": "source",
+            "port": "image"
+          },
+          "to": {
+            "node": "encode",
+            "port": "pixels"
+          }
+        },
+        "l2": {
+          "id": "l2",
+          "from": {
+            "node": "vae",
+            "port": "vae"
+          },
+          "to": {
+            "node": "encode",
+            "port": "vae"
+          }
+        },
+        "l3": {
+          "id": "l3",
+          "from": {
+            "node": "model",
+            "port": "model"
+          },
+          "to": {
+            "node": "condition",
+            "port": "model"
+          }
+        },
+        "l4": {
+          "id": "l4",
+          "from": {
+            "node": "encode",
+            "port": "latent"
+          },
+          "to": {
+            "node": "condition",
+            "port": "vae_conditioning"
+          }
+        },
+        "l5": {
+          "id": "l5",
+          "from": {
+            "node": "model",
+            "port": "model"
+          },
+          "to": {
+            "node": "sampler",
+            "port": "model"
+          }
+        },
+        "l6": {
+          "id": "l6",
+          "from": {
+            "node": "condition",
+            "port": "positive"
+          },
+          "to": {
+            "node": "sampler",
+            "port": "positive"
+          }
+        },
+        "l7": {
+          "id": "l7",
+          "from": {
+            "node": "condition",
+            "port": "negative"
+          },
+          "to": {
+            "node": "sampler",
+            "port": "negative"
+          }
+        },
+        "l8": {
+          "id": "l8",
+          "from": {
+            "node": "encode",
+            "port": "latent"
+          },
+          "to": {
+            "node": "sampler",
+            "port": "latent_image"
+          }
+        },
+        "l9": {
+          "id": "l9",
+          "from": {
+            "node": "sampler",
+            "port": "latent"
+          },
+          "to": {
+            "node": "decode",
+            "port": "samples"
+          }
+        },
+        "l10": {
+          "id": "l10",
+          "from": {
+            "node": "vae",
+            "port": "vae"
+          },
+          "to": {
+            "node": "decode",
+            "port": "vae"
+          }
+        },
+        "l11": {
+          "id": "l11",
+          "from": {
+            "node": "decode",
+            "port": "image"
+          },
+          "to": {
+            "node": "save",
+            "port": "images"
+          }
+        }
+      },
+      "nets": {},
+      "reroutes": {},
+      "nextOrdinal": 20
+    }
+  },
+  "view": {
+    "graphs": {
+      "g0": {
+        "nodes": {
+          "source": {
+            "position": {
+              "x": 40,
+              "y": 80
+            }
+          },
+          "model": {
+            "position": {
+              "x": 40,
+              "y": 380
+            }
+          },
+          "vae": {
+            "position": {
+              "x": 40,
+              "y": 680
+            }
+          },
+          "encode": {
+            "position": {
+              "x": 380,
+              "y": 80
+            }
+          },
+          "condition": {
+            "position": {
+              "x": 720,
+              "y": 80
+            }
+          },
+          "sampler": {
+            "position": {
+              "x": 1060,
+              "y": 80
+            }
+          },
+          "decode": {
+            "position": {
+              "x": 1400,
+              "y": 80
+            }
+          },
+          "save": {
+            "position": {
+              "x": 1740,
+              "y": 80
+            }
+          }
+        }
+      }
+    }
+  },
+  "meta": {
+    "title": "SeedVR2 Starter",
+    "family": "dinkster.seedvr2"
+  }
+}

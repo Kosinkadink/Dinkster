@@ -40,7 +40,7 @@ $TorchPython = Join-Path $TorchEnvironment "Scripts\python.exe"
 $GpuPython = Join-Path $GpuEnvironment "Scripts\python.exe"
 $EvidenceRoot = $env:DINKSTER_EVIDENCE_ROOT
 if (-not $EvidenceRoot) {
-    $EvidenceRoot = Join-Path $RepoRoot "../.dinkster-evidence-source"
+    $EvidenceRoot = Join-Path $RepoRoot "../dinkster-evidence"
 }
 $AcceptancePackage = Join-Path $EvidenceRoot "packages/dinkster-acceptance"
 $InstallAcceptance = Test-Path $AcceptancePackage -PathType Container
@@ -56,13 +56,17 @@ $CpuEditablePackages = @(
     "packages/dinkster-protocol",
     "packages/dinkster-assets",
     "packages/dinkster-caches",
-    "packages/dinkster-inference-wire",
+    "packages/dinkster-inference",
     "packages/dinkster-memory",
     "packages/dinkster-graph",
     "packages/dinkster-engine",
     "packages/dinkster-native",
+    "packages/dinkster-inference-torch",
     "packages/dinkster-nodes-generation",
     "packages/dinkster-compat-comfy",
+    "packages/dinkster-model-ipadapter",
+    "packages/dinkster-model-qwen-image",
+    "packages/dinkster-model-triposplat",
     "packages/dinkster-nodes-vision",
     "packages/dinkster-workers"
 )
@@ -74,17 +78,20 @@ $GpuEditablePackages = @(
     "packages/dinkster-protocol",
     "packages/dinkster-assets",
     "packages/dinkster-caches",
-    "packages/dinkster-inference-wire",
+    "packages/dinkster-inference",
     "packages/dinkster-graph",
     "packages/dinkster-engine",
     "packages/dinkster-memory",
     "packages/dinkster-native",
+    "packages/dinkster-inference-torch",
     "packages/dinkster-workers",
     "packages/dinkster-nodes-generation",
-    "packages/dinkster-compat-comfy"
+    "packages/dinkster-compat-comfy",
+    "packages/dinkster-model-ipadapter",
+    "packages/dinkster-model-triposplat",
+    "packages/dinkster-model-wan"
 )
-$KitchenCpuWheel = "comfy-kitchen@https://files.pythonhosted.org/packages/9c/2e/1c6c621a1cd2ba89ae12fe99e095faa50986c0e6485461170732adfcfa6d/comfy_kitchen-0.2.40-py3-none-any.whl#sha256=e5834f2ce993c8d5ea8c01650157c639742b5a28ecb0d95253777f31b5248099"
-$DinksterInferenceRequirement = "dinkster-inference @ git+https://github.com/Kosinkadink/dinkster-inference.git@c4ce40550e77f5a3b9b8d2f96597a4d6c24c1377"
+$KitchenCpuWheel = "dinkster-kitchen@https://files.pythonhosted.org/packages/2e/20/84e29ca1dedcd51eb5edd297d3c2f6c665cf2e30bb9237892f0f8d108d0d/dinkster_kitchen-0.2.35.post1-py3-none-any.whl#sha256=31458547cdcf9ff26974a4955cf79e83ebdf50077666720d3bb3255786c5fc4f"
 $PreviousProject = [Environment]::GetEnvironmentVariable("UV_PROJECT", "Process")
 $PreviousProjectEnvironment = [Environment]::GetEnvironmentVariable(
     "UV_PROJECT_ENVIRONMENT", "Process"
@@ -122,13 +129,12 @@ try {
     )
     $CpuDependencies = @(
         "pytest", "packaging", "numpy>=1.26", "scipy>=1.11",
-        "simpleeval==1.0.8", "onnxruntime==1.29.0",
+        "simpleeval==1.0.3", "onnxruntime==1.29.0",
         "opencv-python-headless==5.0.0.93", "pillow==12.0.0",
         "safetensors==0.8.0", "sentencepiece==0.2.1", "tokenizers==0.23.1",
         "transformers==5.16.1",
         $KitchenCpuWheel,
-        $DinksterInferenceRequirement,
-        "comfy-aimdo==0.6.0"
+        "dinkster-aimdo==0.5.5.post2"
     ) + (Get-EditableArguments $CpuEditablePackages)
     Invoke-Native "uv" (@("pip", "install", "--python", $TorchPython) + $CpuDependencies)
     if ($InstallAcceptance) {
@@ -139,7 +145,7 @@ try {
     }
     Invoke-Native $TorchPython @(
         "-c",
-        "from importlib.metadata import version; import torch; assert torch.__version__ == '2.13.0+cpu'; assert version('torchvision') == '0.28.0+cpu'; assert version('comfy-kitchen') == '0.2.40'; assert version('comfy-aimdo') == '0.6.0'"
+        "from importlib.metadata import version; import torch; assert torch.__version__ == '2.13.0+cpu'; assert version('torchvision') == '0.28.0+cpu'; assert version('dinkster-kitchen') == '0.2.35.post1'; assert version('dinkster-aimdo') == '0.5.5.post2'"
     )
 
     $PythonInclude = (& $TorchPython -c "import sysconfig; print(sysconfig.get_paths()['include'])")
@@ -153,9 +159,7 @@ try {
 
     $NvidiaSmi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
     $HasNvidiaGpu = $false
-    $CudaMask = [Environment]::GetEnvironmentVariable("CUDA_VISIBLE_DEVICES", "Process")
-    $CudaEnabled = $null -eq $CudaMask -or ($CudaMask -ne "" -and $CudaMask -ne "-1")
-    if ($NvidiaSmi -and $CudaEnabled) {
+    if ($NvidiaSmi) {
         & $NvidiaSmi.Source -L *> $null
         $HasNvidiaGpu = $LASTEXITCODE -eq 0
     }
@@ -173,8 +177,7 @@ try {
         $GpuDependencies = @(
             "pytest", "numpy", "scipy", "torchsde", "tqdm", "pillow", "packaging",
             "safetensors==0.8.0", "sentencepiece==0.2.1", "tokenizers==0.23.1",
-            "comfy-kitchen==0.2.40", "comfy-aimdo==0.6.0",
-            $DinksterInferenceRequirement,
+            "dinkster-kitchen==0.2.35.post1", "dinkster-aimdo==0.5.5.post2",
             "triton-windows==3.7.1.post27"
         ) + (Get-EditableArguments $GpuEditablePackages)
         Invoke-Native "uv" (@("pip", "install", "--python", $GpuPython) + $GpuDependencies)
@@ -190,13 +193,22 @@ try {
         )
     }
     else {
-        Write-Host "==> no enabled NVIDIA GPU detected - skipping .venv-gpu"
+        Write-Host "==> no NVIDIA GPU detected - skipping .venv-gpu"
     }
 
     Write-Host "==> done. Gates:"
     Write-Host "  .venv\Scripts\ruff.exe check ."
     Write-Host "  .venv\Scripts\pyright.exe"
     Write-Host "  .venv\Scripts\python.exe -m pytest -q"
+    Write-Host "  .venv\Scripts\pyright.exe -p packages\dinkster-inference-torch"
+    Write-Host "  .venv-torch\Scripts\python.exe -m pytest -q packages\dinkster-inference-torch\tests"
+    if ($HasNvidiaGpu) {
+        Write-Host '  $env:DINKSTER_ENABLE_GPU_TESTS = "1"'
+        Write-Host '  $env:DINKSTER_VALIDATE_REFERENCE_GOLDENS = "1"'
+        Write-Host "  .venv-gpu\Scripts\python.exe -m pytest -q packages\dinkster-inference-torch\tests"
+        Write-Host "  Remove-Item Env:\DINKSTER_ENABLE_GPU_TESTS"
+        Write-Host "  Remove-Item Env:\DINKSTER_VALIDATE_REFERENCE_GOLDENS"
+    }
 }
 finally {
     [Environment]::SetEnvironmentVariable("UV_PROJECT", $PreviousProject, "Process")

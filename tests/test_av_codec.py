@@ -1,4 +1,4 @@
-"""Torch-free proofs for the AUDIO and VIDEO byte contracts."""
+"""Torch-free proofs for the comfy.AUDIO and comfy.VIDEO byte contracts."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ from functools import cache
 
 import numpy as np
 import pytest
-from dinkster_api.v1 import AUDIO_TYPE, VIDEO_TYPE
 from dinkster_assets import AssetRef, digest_bytes
 from dinkster_values import (
     TypeRegistry,
@@ -30,7 +29,11 @@ from dinkster_values import (
     video_rendition_mime,
 )
 
-from dinkster.comfy_compose import register_comfy_host_types
+from dinkster.comfy_compose import (
+    COMFY_AUDIO_TYPE,
+    COMFY_VIDEO_TYPE,
+    register_comfy_host_types,
+)
 from tests.test_video_probe import _encode
 
 
@@ -73,7 +76,7 @@ def test_audio_fingerprint_is_numpy_torch_form_independent() -> None:
     waveform = np.linspace(-1.0, 1.0, 12, dtype=np.float32).reshape(1, 2, 6)
     numpy_form = {"waveform": waveform, "sample_rate": 6}
     tensor_form = {"waveform": FakeTensor(waveform), "sample_rate": 6}
-    fingerprint = audio_fingerprint(AUDIO_TYPE)
+    fingerprint = audio_fingerprint("comfy.AUDIO")
     assert encode_audio(numpy_form) == encode_audio(tensor_form)
     assert fingerprint(numpy_form) == fingerprint(tensor_form)
     assert audio_meta(numpy_form) == {
@@ -176,19 +179,7 @@ def test_video_fingerprint_is_wrapper_independent() -> None:
     data = mp4_bytes()
     value = {"container": "mp4", "bytes": data}
     decoded = decode_video(encode_video(value))
-    assert video_fingerprint(VIDEO_TYPE)(value) == video_fingerprint(VIDEO_TYPE)(decoded)
-
-
-def test_av_codecs_preserve_payload_bytes_while_type_domains_change() -> None:
-    audio = {"waveform": np.array([[[0.0, 0.5]]], dtype=np.float32), "sample_rate": 8_000}
-    video = {"container": "mp4", "bytes": mp4_bytes()}
-    audio_payload = encode_audio(audio)
-    video_payload = encode_video(video)
-
-    assert encode_audio(decode_audio(audio_payload)) == audio_payload
-    assert encode_video(decode_video(video_payload)) == video_payload
-    assert audio_fingerprint(AUDIO_TYPE)(audio) != audio_fingerprint("comfy.AUDIO")(audio)
-    assert video_fingerprint(VIDEO_TYPE)(video) != video_fingerprint("comfy.VIDEO")(video)
+    assert video_fingerprint("comfy.VIDEO")(value) == video_fingerprint("comfy.VIDEO")(decoded)
 
 
 def test_video_refuses_unknown_mismatched_and_unrecognized_containers() -> None:
@@ -283,24 +274,24 @@ def test_audio_crosses_between_compat_torch_and_torch_free_forms(
     host = TypeRegistry()
     register_comfy_host_types(host)
     worker = TypeRegistry()
-    register_audio_type(worker, AUDIO_TYPE)
+    register_audio_type(worker, COMFY_AUDIO_TYPE)
     waveform = np.linspace(-1.0, 1.0, 8, dtype=np.float32).reshape(1, 2, 4)
     torch_form = {"waveform": FakeTensor(waveform), "sample_rate": 4}
 
-    worker_bytes = worker.spec(AUDIO_TYPE).encode(torch_form)
-    host_form = host.spec(AUDIO_TYPE).decode(worker_bytes)
+    worker_bytes = worker.spec(COMFY_AUDIO_TYPE).encode(torch_form)
+    host_form = host.spec(COMFY_AUDIO_TYPE).decode(worker_bytes)
     assert isinstance(host_form, dict)
     assert np.array_equal(host_form["waveform"], waveform)
     assert host_form["sample_rate"] == 4
 
-    host_bytes = host.spec(AUDIO_TYPE).encode(host_form)
-    worker_form = worker.spec(AUDIO_TYPE).decode(host_bytes)
+    host_bytes = host.spec(COMFY_AUDIO_TYPE).encode(host_form)
+    worker_form = worker.spec(COMFY_AUDIO_TYPE).decode(host_bytes)
     assert isinstance(worker_form, dict)
     assert isinstance(worker_form["waveform"], FakeTensor)
     assert np.array_equal(worker_form["waveform"].array, waveform)
     assert (
-        worker.wrap(AUDIO_TYPE, torch_form).fingerprint
-        == host.wrap(AUDIO_TYPE, host_form).fingerprint
+        worker.wrap(COMFY_AUDIO_TYPE, torch_form).fingerprint
+        == host.wrap(COMFY_AUDIO_TYPE, host_form).fingerprint
     )
 
 
@@ -347,9 +338,9 @@ def test_pinned_component_video_defaults_to_srgb(monkeypatch: pytest.MonkeyPatch
     )
     value = FakeVideoFromComponents(components)
     worker = TypeRegistry()
-    register_video_type(worker, VIDEO_TYPE)
+    register_video_type(worker, COMFY_VIDEO_TYPE)
 
-    decoded = decode_video(worker.spec(VIDEO_TYPE).encode(value))
+    decoded = decode_video(worker.spec(COMFY_VIDEO_TYPE).encode(value))
     assert decoded["components"]["color_space"] == "sRGB"  # type: ignore[index]
 
 
@@ -367,21 +358,21 @@ def test_video_crosses_between_upstream_family_and_torch_free_form(
     host = TypeRegistry()
     register_comfy_host_types(host)
     worker = TypeRegistry()
-    register_video_type(worker, VIDEO_TYPE)
-    assert worker.spec(VIDEO_TYPE).validate_encoded_buffer is validate_video_encoded
+    register_video_type(worker, COMFY_VIDEO_TYPE)
+    assert worker.spec(COMFY_VIDEO_TYPE).validate_encoded_buffer is validate_video_encoded
     upstream = FakeVideoInput(mp4_bytes())
 
-    worker_bytes = worker.spec(VIDEO_TYPE).encode(upstream)
-    host_form = host.spec(VIDEO_TYPE).decode(worker_bytes)
+    worker_bytes = worker.spec(COMFY_VIDEO_TYPE).encode(upstream)
+    host_form = host.spec(COMFY_VIDEO_TYPE).decode(worker_bytes)
     assert host_form == decode_video(mp4_bytes())
 
-    host_bytes = host.spec(VIDEO_TYPE).encode(host_form)
-    worker_form = worker.spec(VIDEO_TYPE).decode(host_bytes)
+    host_bytes = host.spec(COMFY_VIDEO_TYPE).encode(host_form)
+    worker_form = worker.spec(COMFY_VIDEO_TYPE).decode(host_bytes)
     assert isinstance(worker_form, FakeVideoInput)
     assert worker_form.get_stream_source().getvalue() == mp4_bytes()
     assert (
-        worker.wrap(VIDEO_TYPE, upstream).fingerprint
-        == host.wrap(VIDEO_TYPE, host_form).fingerprint
+        worker.wrap(COMFY_VIDEO_TYPE, upstream).fingerprint
+        == host.wrap(COMFY_VIDEO_TYPE, host_form).fingerprint
     )
 
 
@@ -396,30 +387,31 @@ def test_compat_video_refuses_unknown_subclasses(monkeypatch: pytest.MonkeyPatch
         pass
 
     worker = TypeRegistry()
-    register_video_type(worker, VIDEO_TYPE)
+    register_video_type(worker, COMFY_VIDEO_TYPE)
     with pytest.raises(TypeError, match="unsupported VideoInput subclass"):
-        worker.spec(VIDEO_TYPE).encode(UnknownVideo(mp4_bytes()))
+        worker.spec(COMFY_VIDEO_TYPE).encode(UnknownVideo(mp4_bytes()))
 
 
-def test_av_registration_wiring_covers_host_and_translation() -> None:
+def test_av_registration_wiring_covers_host_translation_and_native() -> None:
+    from dinkster_compat_comfy.native import register_native_types
     from dinkster_compat_comfy.translate import CompatTranslation
 
     host = TypeRegistry()
     register_comfy_host_types(host)
-    assert host.spec(AUDIO_TYPE).declared_codec
-    assert host.spec(VIDEO_TYPE).declared_codec
-    assert host.spec(VIDEO_TYPE).validate_encoded_buffer is validate_video_encoded
+    assert host.spec(COMFY_AUDIO_TYPE).declared_codec
+    assert host.spec(COMFY_VIDEO_TYPE).declared_codec
+    assert host.spec(COMFY_VIDEO_TYPE).validate_encoded_buffer is validate_video_encoded
     audio_value = host.wrap(
-        AUDIO_TYPE,
+        COMFY_AUDIO_TYPE,
         {"waveform": np.zeros((1, 1, 1), dtype=np.float32), "sample_rate": 1},
     )
-    video_value = host.wrap(VIDEO_TYPE, {"container": "mp4", "bytes": mp4_bytes()})
-    assert [(s.kind, s.mime, s.default) for s in host.renditions_of(AUDIO_TYPE)] == [
+    video_value = host.wrap(COMFY_VIDEO_TYPE, {"container": "mp4", "bytes": mp4_bytes()})
+    assert [(s.kind, s.mime, s.default) for s in host.renditions_of(COMFY_AUDIO_TYPE)] == [
         ("wav", "audio/wav", True),
         ("waveform", "image/png", False),
         ("window", "audio/wav", False),
     ]
-    video_spec = host.renditions_of(VIDEO_TYPE)[0]
+    video_spec = host.renditions_of(COMFY_VIDEO_TYPE)[0]
     assert (video_spec.kind, video_spec.default) == ("original", True)
     assert video_spec.mime_for(video_value.meta.entries) == "video/mp4"
     assert host.render(audio_value).mime == "audio/wav"
@@ -427,18 +419,24 @@ def test_av_registration_wiring_covers_host_and_translation() -> None:
 
     translated = TypeRegistry()
     translation = CompatTranslation()
-    translation.opaque_types.update({AUDIO_TYPE, VIDEO_TYPE})
+    translation.opaque_types.update({COMFY_AUDIO_TYPE, COMFY_VIDEO_TYPE})
     translation.register_types(translated)
-    assert translated.spec(AUDIO_TYPE).declared_codec
-    assert translated.spec(VIDEO_TYPE).declared_codec
-    assert translated.spec(VIDEO_TYPE).validate_encoded_buffer is validate_video_encoded
+    assert translated.spec(COMFY_AUDIO_TYPE).declared_codec
+    assert translated.spec(COMFY_VIDEO_TYPE).declared_codec
+    assert translated.spec(COMFY_VIDEO_TYPE).validate_encoded_buffer is validate_video_encoded
+
+    native = TypeRegistry()
+    register_native_types(native)
+    assert native.spec(COMFY_AUDIO_TYPE).declared_codec
+    assert native.spec(COMFY_VIDEO_TYPE).declared_codec
+    assert native.spec(COMFY_VIDEO_TYPE).validate_encoded_buffer is validate_video_encoded
 
 
 def test_av_preview_intent_is_explicit_on_test_owned_output_schemas() -> None:
     from dinkster_schema import Node, NodeSchema, OutputSpec, TypeExpr
 
-    audio = TypeExpr.concrete(AUDIO_TYPE)
-    video = TypeExpr.concrete(VIDEO_TYPE)
+    audio = TypeExpr.concrete(COMFY_AUDIO_TYPE)
+    video = TypeExpr.concrete(COMFY_VIDEO_TYPE)
 
     class PreviewAV(Node):
         @classmethod

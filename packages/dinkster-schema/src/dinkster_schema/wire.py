@@ -541,12 +541,8 @@ def _widget_descriptor_from_wire(
                 None if raw is None else _number_constraint_from_wire(raw, field, wire_version)
             )
         round_value = widget_data.get("round")
-        if (
-            "round" in widget_data
-            and round_value is not False
-            and type(round_value) not in (int, float)
-        ):
-            raise ValueError("NUMBER widget round must be False or a number")
+        if "round" in widget_data and type(round_value) not in (int, float):
+            raise ValueError("NUMBER widget round must be a number")
         control = widget_data.get("controlAfterGenerate")
         if control is not None and (
             not isinstance(control, str) or control not in CONTROL_AFTER_GENERATE
@@ -563,7 +559,7 @@ def _widget_descriptor_from_wire(
             min=bounds["min"],
             max=bounds["max"],
             step=bounds["step"],
-            round=cast("int | float | Literal[False] | None", round_value),
+            round=cast("int | float | None", round_value),
             control_after_generate=cast("ControlAfterGenerate | None", control),
             display=cast("Any", display),
         )
@@ -886,11 +882,17 @@ def schema_to_wire(
     if type(wire_version) is not int or wire_version != SCHEMA_WIRE_VERSION:
         raise ValueError(f"unsupported schemaVersion: {wire_version!r}")
     interface: list[dict[str, object]] = []
-    for spec in schema.input_entries:
+    for spec in schema.inputs:
         try:
             interface.append(_dynamic_entry_to_wire(spec, wire_version))
         except ValueError as exc:
             raise ValueError(f"node {schema.node_type!r}, {exc}") from exc
+    for fam in schema.input_families:
+        interface.append(_dynamic_entry_to_wire(fam, wire_version))
+    for combo in schema.combos:
+        interface.append(_dynamic_entry_to_wire(combo, wire_version))
+    for slot in schema.slots:
+        interface.append(_dynamic_entry_to_wire(slot, wire_version))
     for out in schema.outputs:
         out_entry: dict[str, object] = {
             "role": "output",
@@ -1526,7 +1528,6 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
     output_descriptors = None
     combos: list[DynamicComboSpec] = []
     slots: list[DynamicSlotSpec] = []
-    input_order: list[str] = []
     for raw_entry in _expect_list(wire.get("interface"), "interface"):
         entry = _expect_object(raw_entry, "interface entry")
         role = _expect_str(entry.get("role"), "interface role")
@@ -1546,7 +1547,6 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
             raise ValueError(f"unsupported interface role: {role!r}")
         if role in {"input", "inputFamily", "dynamicCombo", "dynamicSlot"}:
             dynamic = _dynamic_entry_from_wire(entry, cast("int", wire_version))
-            input_order.append(dynamic.id)
             if isinstance(dynamic, InputSpec):
                 inputs.append(dynamic)
             elif isinstance(dynamic, InputFamilySpec):
@@ -1687,7 +1687,6 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
         output_descriptors=output_descriptors,
         combos=tuple(combos),
         slots=tuple(slots),
-        input_order=tuple(input_order),
         slot_choices=tuple(slot_choices),
         idempotent=_expect_bool(wire.get("idempotent", True), "idempotent"),
         occupies=_expect_strings(wire.get("occupies", []), "occupies"),

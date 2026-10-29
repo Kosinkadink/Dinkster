@@ -172,21 +172,21 @@ metadata, model-family combinations, providers, or patch forms fail explicitly.
 The unscheduled path remains the ordinary runtime path. Scheduling changes
 behavior identity whenever conditioning or patch curves can affect execution.
 
-## Product activation
+## Native product activation
 
 Compatibility authoring nodes map hook keyframes, LoRA declarations,
 conditioning ranges, and conditioning properties into the canonical records at
-model-execution call sites. Text encoding and sampling consume those records
-through `dinkster_inference`. Runtime patch state is created only at that execution
+native node call sites. Native text encoding and native sampling consume those
+records directly. Runtime patch state is created only at the native execution
 seam, not by graph compilers.
 
-This keeps a graph loaded with the ordinary checkpoint node on the model arm.
+This keeps a graph loaded with the ordinary checkpoint node on the native arm.
 Scheduling does not require a compatibility checkpoint loader, a compatibility
 runtime, or test-only injection.
 
-## Authoring surface
+## Native authoring surface
 
-Scheduling accepts SD 1.5, SDXL, SDXL Refiner, Flux Dev, and Flux
+Native scheduling accepts SD 1.5, SDXL, SDXL Refiner, Flux Dev, and Flux
 Schnell workflows through these compatibility-shaped authoring nodes:
 
 - Create Hook LoRA sets model and CLIP base strengths from -20.0 through 20.0

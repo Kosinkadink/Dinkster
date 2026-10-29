@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import subprocess
-import sys
 import tomllib
 import zipfile
 from pathlib import Path
@@ -22,7 +21,8 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert workflow[True] == {"push": {"tags": ["v*.*.*"]}}
     assert set(workflow["jobs"]) == {"validation", "build", "install", "release"}
     assert workflow["jobs"]["validation"] == {
-        "uses": "./.github/workflows/ci.yml",
+        "uses": "./.github/workflows/full-validation.yml",
+        "secrets": "inherit",
     }
     assert workflow["jobs"]["build"]["needs"] == "validation"
     assert workflow["jobs"]["install"]["needs"] == "build"
@@ -118,129 +118,37 @@ def test_release_install_matrix_covers_supported_desktop_platforms() -> None:
     )
 
 
-def test_release_install_launches_without_private_registry_inputs() -> None:
+def test_linux_release_install_exercises_the_pinned_registry_service() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
     steps = workflow["jobs"]["install"]["steps"]
-    assert "secrets." not in (ROOT / ".github/workflows/release.yml").read_text()
-    assert all(
-        step.get("with", {}).get("repository") != "Kosinkadink/dinkster-registry" for step in steps
+    registry_checkout = next(
+        step
+        for step in steps
+        if step.get("uses") == "actions/checkout@v4"
+        and step.get("with", {}).get("repository") == "Kosinkadink/dinkster-registry"
     )
+    assert registry_checkout["if"] == "matrix.os == 'linux'"
+    assert registry_checkout["with"] == {
+        "clean": True,
+        "repository": "Kosinkadink/dinkster-registry",
+        "ref": "5d844ae53616f88756a98eb6dc3aa73fefb92622",
+        "path": "registry",
+        "persist-credentials": False,
+    }
+    registry_install = next(
+        step for step in steps if step.get("name") == "Install the independent loopback registry"
+    )
+    assert registry_install["if"] == "matrix.os == 'linux'"
+    assert registry_install["run"].splitlines()[-1] == "uv sync --project registry --frozen"
     wheel_install = next(
         step for step in steps if step.get("name") == "Install and launch from wheels"
     )
+    assert 'if [ "$RUNNER_OS" = Linux ]; then' in wheel_install["run"]
     assert "scripts/verify_release_install.py" in wheel_install["run"]
-    assert "--registry-command" not in wheel_install["run"]
-
-
-def test_independent_release_launch_serves_composition_and_nodes(tmp_path: Path) -> None:
-    import sys
-
-    from scripts.verify_release_install import verify_launch
-
-    state = tmp_path / "release"
-    verify_launch(state, Path(sys.executable))
-    assert json.loads((state / "nodes.json").read_text())["nodes"] == {}
-    assert (state / "composition.json").is_file()
-
-
-def test_release_failure_prints_service_and_publication_log_tails(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    from scripts.verify_release_install import print_log_tails
-
-    (tmp_path / "registry.log").write_text("\n".join(f"line {i}" for i in range(125)))
-    (tmp_path / "backend.log").write_text("backend failed\n")
-    (tmp_path / "publish.log").write_text("publication result\n")
-    (tmp_path / "registry.db").write_text("not a log")
-    print_log_tails(tmp_path)
-    output = capsys.readouterr().err
-    assert "backend failed" in output and "publication result" in output
-    assert "line 24\n" not in output and "line 25\n" in output and "line 124\n" in output
-    assert "not a log" not in output
-
-
-def test_registry_install_keeps_state_and_uploads_it_even_on_failure() -> None:
-    workflow = yaml.safe_load((ROOT / ".github/workflows/full-validation.yml").read_text())
-    steps = workflow["jobs"]["registry-install"]["steps"]
-    command = next(
-        step["run"] for step in steps if "scripts/verify_release_install.py" in step.get("run", "")
+    assert (
+        '--registry-command "$GITHUB_WORKSPACE/registry/.venv/bin/dinkster-registry"'
+        in wheel_install["run"]
     )
-    assert '--state "$RUNNER_TEMP/registry-install-state"' in command
-    upload = steps[-1]
-    assert upload["uses"] == "actions/upload-artifact@v4"
-    assert upload["if"] == "always()"
-    assert upload["with"]["path"] == "${{ runner.temp }}/registry-install-state"
-
-
-def test_probe_jail_is_configured_before_registry_validation_only() -> None:
-    workflow = yaml.safe_load((ROOT / ".github/workflows/full-validation.yml").read_text())
-    steps = workflow["jobs"]["registry-install"]["steps"]
-    setup_index = next(
-        index
-        for index, step in enumerate(steps)
-        if step.get("run") == "bash scripts/setup_probe_jail.sh"
-    )
-    validation_index = next(
-        index for index, step in enumerate(steps) if "uv sync" in step.get("run", "")
-    )
-    assert setup_index < validation_index
-    assert "if" not in steps[setup_index]
-    fast = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
-    assert all(
-        "setup_probe_jail.sh" not in step.get("run", "") for step in fast["jobs"]["fast"]["steps"]
-    )
-
-
-@pytest.mark.skipif(sys.platform != "linux", reason="Linux CI probe-jail setup")
-@pytest.mark.parametrize(
-    "scenario, update_attempts, install_attempts, succeeds",
-    [("retry", 2, 2, True), ("update-fails", 2, 0, False), ("install-fails", 1, 2, False)],
-)
-def test_probe_jail_apt_is_bounded_and_retries_once(
-    scenario: str, update_attempts: int, install_attempts: int, succeeds: bool
-) -> None:
-    command = """
-update_attempts=0
-install_attempts=0
-sudo() {
-    printf 'sudo'; printf ' <%s>' "$@"; printf '\\n'
-    if [[ "$1" != timeout ]]; then return 0; fi
-    if [[ "$*" == *" update" ]]; then
-        update_attempts=$((update_attempts + 1))
-        if [[ "$scenario" == update-fails ]] ||
-           [[ "$scenario" == retry && "$update_attempts" == 1 ]]; then return 124; fi
-    else
-        install_attempts=$((install_attempts + 1))
-        if [[ "$scenario" == install-fails ]] ||
-           [[ "$scenario" == retry && "$install_attempts" == 1 ]]; then return 124; fi
-    fi
-}
-bwrap() { echo jail-preflight; }
-source "$1"
-"""
-    result = subprocess.run(
-        [
-            "bash",
-            "-c",
-            'scenario="$2"\n' + command,
-            "setup-test",
-            str(ROOT / "scripts/setup_probe_jail.sh"),
-            scenario,
-        ],
-        capture_output=True,
-        text=True,
-    )
-    apt_calls = [line for line in result.stdout.splitlines() if line.startswith("sudo <timeout>")]
-    assert sum(line.endswith("<update>") for line in apt_calls) == update_attempts
-    assert sum("<install>" in line for line in apt_calls) == install_attempts
-    for line in apt_calls:
-        assert "<timeout> <180> <apt-get>" in line
-        assert "<Acquire::Retries=3>" in line
-        assert "<Acquire::http::Timeout=30>" in line
-        assert "<Acquire::https::Timeout=30>" in line
-    assert (result.returncode == 0) is succeeds
-    assert ("jail-preflight" in result.stdout) is succeeds
-    assert "failed or exceeded 180 seconds" in result.stderr
 
 
 @pytest.mark.parametrize("tag", ["0.0.1", "v0.0", "v0.0.1-rc1", "backend-0.0.1"])
@@ -264,7 +172,7 @@ def test_release_version_matches_every_workspace_project(tmp_path: Path) -> None
 
 def test_repository_versions_match_first_release_tag() -> None:
     assert release_version(ROOT, "v0.0.1") == "0.0.1"
-    assert len(workspace_projects(ROOT)) == 29
+    assert len(workspace_projects(ROOT)) == 33
     frontend = json.loads((ROOT / "scripts/release_sources.json").read_text(encoding="utf-8"))
     assert frontend["repository"] == "Kosinkadink/Dinkster-Frontend"
     assert len(frontend["commit"]) == 40

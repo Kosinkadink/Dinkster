@@ -7,8 +7,6 @@ from collections.abc import Mapping
 
 from dinkster_api.v1 import (
     ASSET_TYPE,
-    CORE_COMBO,
-    LAYERS_TYPE,
     SAVE_TARGET_TYPE,
     AssetRef,
     AssetWidget,
@@ -26,7 +24,7 @@ from dinkster_image_document import IMAGE_DOCUMENT_MEDIA_TYPE
 from dinkster_image_document.document import ImageDocument
 from dinkster_image_document.interchange import export_ora, export_psd, load_document
 
-LAYERS = TypeExpr.concrete(LAYERS_TYPE)
+LAYERS = TypeExpr.concrete("dinkster.layers")
 ASSET = TypeExpr.concrete(ASSET_TYPE)
 
 
@@ -64,7 +62,7 @@ class SaveLayers(Node):
                 InputSpec("target", TypeExpr.concrete(SAVE_TARGET_TYPE), widget=SaveTargetWidget()),
                 InputSpec(
                     "format",
-                    TypeExpr.concrete(CORE_COMBO),
+                    TypeExpr.concrete("core.combo"),
                     required=False,
                     default="native",
                     widget=ComboWidget(options=("native", "ora", "psd")),

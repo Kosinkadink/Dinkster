@@ -153,7 +153,7 @@ def test_image_operation_alpha_policy_inventory(node: type[Node]) -> None:
     schema = node.define_schema()
     for output in schema.outputs:
         expected = "preserve"
-        if node is ImageChannelSplit and output.type.runtime_type_id() == "IMAGE":
+        if node is ImageChannelSplit and output.type.runtime_type_id() == "dinkster.image":
             expected = "drop"
         elif node.__module__.endswith("preprocess") and output.id == "image":
             expected = "drop"

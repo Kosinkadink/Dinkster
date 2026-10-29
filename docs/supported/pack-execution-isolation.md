@@ -1,21 +1,5 @@
 ## Pack execution isolation
 
-- `dinkster-serve --development-pack` explicitly trusts the installed first-party
-  development scaffold pack. It stays outside the default pack set. Ordinary
-  `--pack` paths receive no reserved-namespace trust from this option.
-- Value type ownership is discoverable for live and cold-catalog packs without
-  activating cold workers. Removing or replacing a pack retracts its old type
-  identities; a rejected replacement preserves the active owners.
-  Built-in identities remain owned by foundation independently of the
-  official pack that provides their codec and survive pack removal.
-- Dinkster-specific built-in socket types use bare uppercase ids, including
-  ASSET, CURVE, REGION, DETECTION, RESOURCE and VIDEO_DOCUMENT. Schemas,
-  codecs and generators share their canonical spelling module. The internal
-  core.absent execution envelope is not a socket type.
-- Non-dinkster publishers' node schemas and type claims require the pack-name
-  prefix at loading and catalog preparation. Declared type claims remain
-  exclusive even when the pack has no codec callback. Dependent packs can
-  reference an owner's type without registering or claiming it themselves.
 - All supported platforms can run packs in separate worker processes and
   virtual environments for dependency and crash isolation. That alone is not
   a host security boundary. Each manifest directory is on its worker's import

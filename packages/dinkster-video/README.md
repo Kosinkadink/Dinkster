@@ -160,7 +160,7 @@ The opt-in `dinkster-video-preview` pack is included in this package. Its
 code is isolated under `preview/`: the pack imports the API, while the video
 library remains a lower-layer API dependency and does not import the pack.
 The Python wheel includes the complete pack under `dinkster_video/preview`.
-The `video-preview.initialize` node accepts and returns `VIDEO` unchanged.
+The `video-preview.initialize` node accepts and returns `comfy.VIDEO` unchanged.
 It folds portable video metadata, bounds preview size to 512 pixels wide and
 120 frames, and emits `video-preview.initialized` with `fps`, `frameCount`,
 `height`, and `width`. It neither decodes frames nor imports Torch or ComfyUI.

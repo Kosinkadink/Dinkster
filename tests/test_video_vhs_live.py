@@ -23,7 +23,6 @@ from typing import Any, cast
 import av
 import numpy as np
 import pytest
-from dinkster_api.v1 import VIDEO_TYPE
 from dinkster_nodes_media_io.video_ops import AssembleVideo, DisassembleVideo, VideoInfo
 from dinkster_values import TypeRegistry, edit_video, video_from_source
 
@@ -101,8 +100,8 @@ def _live_receipt(paths: dict[str, str], destination: str) -> None:
     torch = importlib.import_module("torch")
     assert not torch.cuda.is_initialized()
     registry = TypeRegistry()
-    compat.register_video_type(registry, VIDEO_TYPE)
-    spec = registry.spec(VIDEO_TYPE)
+    compat.register_video_type(registry, "comfy.VIDEO")
+    spec = registry.spec("comfy.VIDEO")
     assert spec.coerce is not None
     result: dict[str, Any] = {}
     for case, path in paths.items():
