@@ -574,7 +574,7 @@ def test_delta_codecs_bind_edits_and_reject_stale_documents() -> None:
     }
     registry = TypeRegistry()
     register_image_types(registry)
-    for type_id in ("dinkster.compositor", "comfy.COMPOSITOR"):
+    for type_id in ("COMPOSITOR", "comfy.COMPOSITOR"):
         spec = registry.spec(type_id)
         decoded = spec.decode(spec.encode(delta))
         assert decoded == delta

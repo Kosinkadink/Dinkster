@@ -13,12 +13,12 @@ from typing import cast
 import numpy as np
 from dinkster_api.v1 import (
     BLEND_MODES,
+    COMPOSITOR_TYPE,
     COST_META_KEY,
     array_storage_meta,
     decode_image_array,
     encode_image_array,
 )
-from dinkster_api.v1 import COMPOSITOR_RECIPE_TYPE as COMPOSITOR_TYPE
 from dinkster_api.v1 import IMAGE_DOCUMENT_TYPE as LAYERS_TYPE
 
 from .support import check_output_size

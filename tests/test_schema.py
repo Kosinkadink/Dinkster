@@ -223,7 +223,6 @@ def test_current_schema_features_roundtrip() -> None:
         ("STRING", ColorWidget(), {"type": "COLOR"}),
         ("CURVE", CurveWidget(), {"type": "CURVE"}),
         ("COMPOSITOR", CompositorWidget(), {"type": "COMPOSITOR"}),
-        ("dinkster.compositor", CompositorWidget(), {"type": "COMPOSITOR"}),
     ],
 )
 def test_widget_roundtrip(type_id: str, widget: object, expected: dict[str, object]) -> None:

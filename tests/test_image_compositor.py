@@ -222,7 +222,7 @@ def test_document_types_remain_distinct_from_core_editor_types(image_first: bool
         register(registry)
 
     assert LAYERS_TYPE == "dinkster.layers" != CORE_LAYERS_TYPE
-    assert COMPOSITOR_TYPE == "dinkster.compositor" != CORE_COMPOSITOR_TYPE
+    assert COMPOSITOR_TYPE == CORE_COMPOSITOR_TYPE == "COMPOSITOR"
     document = empty_document(2, 3)
     value = registry.wrap(LAYERS_TYPE, document)
     assert registry.render(value, "document").data == document.data

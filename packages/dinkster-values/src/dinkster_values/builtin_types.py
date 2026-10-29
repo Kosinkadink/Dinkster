@@ -57,7 +57,6 @@ VIDEO_DOCUMENT_TYPE = "VIDEO_DOCUMENT"
 LAYERS_TYPE = "LAYERS"
 COMPOSITOR_TYPE = "COMPOSITOR"
 IMAGE_DOCUMENT_TYPE = "dinkster.layers"
-COMPOSITOR_RECIPE_TYPE = "dinkster.compositor"
 POSE_TYPE = "POSE"
 POSE_KEYPOINT_TYPE = "POSE_KEYPOINT"
 VECTOR_TYPE = "VECTOR"
@@ -104,7 +103,6 @@ __all__ = [
     "COLORS_TYPE",
     "COLOR_TYPE",
     "COMPOSITOR_TYPE",
-    "COMPOSITOR_RECIPE_TYPE",
     "COMFY_ARRAY_TYPE",
     "CONDITIONING_TYPE",
     "CONTEXT_WINDOWS_TYPE",
@@ -173,8 +171,7 @@ __all__ = [
     "WAN_CAMERA_EMBEDDING_TYPE",
 ]
 
-# Document and recipe values remain owned by the image pack, not foundation.
+# Image documents remain owned by the image pack, not foundation.
 BUILTIN_TYPE_IDS: frozenset[str] = frozenset(globals()[name] for name in __all__) - {
     IMAGE_DOCUMENT_TYPE,
-    COMPOSITOR_RECIPE_TYPE,
 }
