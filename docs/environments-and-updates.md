@@ -463,12 +463,13 @@ checks without creating a GitHub release or invoking PyPI. Tag publication
 waits for all clean-install checks, attaches the checked assets to GitHub,
 then uploads only `workspaceWheels` to PyPI through OIDC trusted publishing
 in the protected `pypi` environment. No PyPI API token is stored.
-If any workspace project is absent from PyPI, the publication job is
-skipped without blocking the checked GitHub release or build artifact.
-The repository owner bootstraps the entire wheel set once from an approved
-artifact on their own machine, using a short-lived PyPI token that is
-revoked afterwards, then adds trusted publishers to the existing projects.
-Subsequent tag uploads skip versions already uploaded out of band.
+Before the first upload, the repository owner registers a pending trusted
+publisher on PyPI for each distribution, naming `Kosinkadink/Dinkster`,
+workflow `release.yml` and environment `pypi`. A pending publisher does not
+create the project; the first trusted upload creates it. Tag publication
+does not require the project to exist beforehand. Missing or mismatched
+publisher registration fails the upload rather than silently skipping it.
+Subsequent tag uploads skip versions already uploaded.
 
 The tag workflow uploads every workspace wheel and the frontend wheel to
 PyPI with trusted publishing, so `pip install dinkster` and the `stable`
