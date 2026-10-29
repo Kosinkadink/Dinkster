@@ -251,8 +251,16 @@ def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
         constraints=constraints,
         find_links=[wheels],
     )
-    assert len(payloads) == 13
+    assert len(payloads) == 11
+    assert not list(output.glob("dinkster-nodes-generation-*"))
     inventory = Lockfile.from_record_json((output / "official-packs.lock").read_text())
+    assert {entry.pack for entry in inventory.packs} == {
+        "dinkster-nodes-comfy",
+        "dinkster-nodes-foundation",
+        "dinkster-nodes-image",
+        "dinkster-nodes-media-io",
+        "dinkster-nodes-remote",
+    }
     for entry in inventory.packs:
         assert entry.version == "1.2.3"
         lock_path = output / f"{entry.pack}-1.2.3-linux-cpu.pack-lock.json"
