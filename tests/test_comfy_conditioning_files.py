@@ -34,10 +34,9 @@ def test_conditioning_file_schemas_and_registration() -> None:
     ]
     assert saver.output_node and not saver.idempotent
     assert COMFY_NODES.count(ConditioningLoader) == COMFY_NODES.count(SaveConditioning) == 1
-    assert (
-        tuple(node.schema().node_type for node in COMFY_NODES)
-        == load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml").namespaces
-    )
+    assert ("devices", *(node.schema().node_type for node in COMFY_NODES)) == load_manifest(
+        "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+    ).namespaces
 
 
 def test_conditioning_file_import_is_torch_free() -> None:

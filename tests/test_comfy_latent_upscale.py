@@ -46,7 +46,7 @@ def test_latent_upscale_registration_and_manifest_order_are_complete() -> None:
         )
     )
     registered = tuple(node.schema().node_type for node in COMFY_NODES)
-    assert tuple(manifest["pack"]["namespaces"]) == registered
+    assert tuple(manifest["pack"]["namespaces"]) == ("devices", *registered)
     assert tuple(node.schema().node_type for node in LATENT_UPSCALE_NODES) == (
         "HunyuanVideo15LatentUpscaleWithModel",
         "LTXVLatentUpsampler",
