@@ -290,6 +290,10 @@ class ExecutionRuntime:
         | None
     ) = None
     asset_folders: AssetFolderContext | None = None
+    validate_saved_artifacts: (
+        Callable[[str, Sequence[Mapping[str, object]], int], Awaitable[tuple[SavedArtifact, ...]]]
+        | None
+    ) = None
 
     def __post_init__(self) -> None:
         if bool(self.graph_compiler_registry.contributions) != (
@@ -1818,6 +1822,7 @@ class Engine:
                 )
             )
             started = time.perf_counter()
+            started_at_ns = time.time_ns()
             preview_policy = self._run_preview_policy.get(run_id)
             invocation = Invocation(
                 invocation_id=uuid.uuid4().hex,
@@ -1971,6 +1976,23 @@ class Engine:
                     if publisher is None:
                         raise RuntimeError("preview artifact publication has no host publisher")
                     artifacts = await publisher(label, result.preview_artifacts)
+                except Exception as exc:
+                    self._emit(
+                        EngineEvent(
+                            "node_failed",
+                            run_id,
+                            label,
+                            self._execution_detail(label, selection, message=str(exc)),
+                        )
+                    )
+                    raise ExecutionError(NodeError(label, node.node_type, str(exc))) from exc
+                self._run_artifacts[run_id].extend(artifacts)
+            if result.saved_artifact_claims:
+                validate = self._runtime().validate_saved_artifacts
+                try:
+                    if validate is None:
+                        raise RuntimeError("saved artifact attachment has no host authority")
+                    artifacts = await validate(label, result.saved_artifact_claims, started_at_ns)
                 except Exception as exc:
                     self._emit(
                         EngineEvent(

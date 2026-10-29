@@ -335,10 +335,7 @@ def test_standard_vision_pack_provisions_declared_runtime_before_composition(
         assert dependencies & package_names <= workspace_names
     assert TESTS_DIR.parent / "packages" / "dinkster-video" in workspace
     if pack_name == "dinkster-vision-birefnet":
-        assert any(
-            requirement.startswith("dinkster-inference @ https://")
-            for requirement in manifest.requires
-        )
+        assert "dinkster-inference==0.1.0" in manifest.requires
     assert str(manifest.root.parent / "src") in prepared.env["PYTHONPATH"].split(os.pathsep)
 
 
@@ -2608,6 +2605,125 @@ def write_shutdown_pack(directory: Path, index: int, *, startup_delay: float = 0
     return manifest
 
 
+@pytest.mark.parametrize("in_process", [False, True])
+def test_serve_explicit_generation_uses_only_its_sources(tmp_path: Path, in_process: bool) -> None:
+    import venv
+
+    from dinkster_registry import LockedPack, Lockfile, build_artifact
+    from dinkster_workers.doctor import prepare_catalog
+
+    from dinkster.generation_packs import stage_generation_packs
+
+    manifest = write_shutdown_pack(tmp_path / "source", 57)
+    archive = tmp_path / "pack.zip"
+    digest = build_artifact(manifest.parent, archive)
+    generation = tmp_path / "generations" / "1"
+    generation.mkdir(parents=True)
+    pack = "shutdown-pack-57"
+    lock = Lockfile.of([LockedPack(pack, "1.2.3", digest, "dinkster", ("shutdown57",))])
+    stage_generation_packs(generation, lock, {pack: archive})
+    (generation / "generation.json").write_text(
+        json.dumps(
+            {
+                "format": "dinkster.generation/1",
+                "variant": "linux-cpu",
+                "inProcessPacks": [pack] if in_process else [],
+            }
+        )
+    )
+    if not in_process:
+        venv.EnvBuilder(system_site_packages=True).create(generation / "packs" / pack)
+    source = generation / "pack-sources" / pack
+    report = prepare_catalog(source / "dinkster-pack.toml", environment={"PYTHONPATH": str(source)})
+    assert report.ok, report
+    port = free_port()
+    log = tmp_path / "server.log"
+    with log.open("wb") as output:
+        process = subprocess.Popen(
+            serve_with_library_command(
+                port,
+                tmp_path / "library",
+                "--generation",
+                str(generation),
+                "--strict-packs",
+                *(["--engine-variant", "linux-cpu"] if in_process else []),
+            ),
+            cwd=tmp_path,
+            stdout=output,
+            stderr=output,
+        )
+        try:
+            wait_for_composition(process, port)
+
+            async def check() -> None:
+                async with aiohttp.ClientSession() as client:
+                    async with client.get(f"http://127.0.0.1:{port}/api/nodes") as response:
+                        data = await response.json()
+                    workflow = {
+                        "format": "dinkster-workflow",
+                        "formatVersion": 1,
+                        "graphs": {"root": {"nodes": {"probe": {"type": "shutdown57.probe"}}}},
+                        "environment": {
+                            "nodes": {"shutdown57.probe": {"pack": pack}},
+                            "packs": {pack: {"version": "1.2.3"}},
+                        },
+                    }
+                    for variant in (None, "win-nvidia"):
+                        body: dict[str, object] = {"workflows": [workflow]}
+                        if variant is not None:
+                            body["variant"] = variant
+                        async with client.post(
+                            f"http://127.0.0.1:{port}/api/workflows/plan", json=body
+                        ) as response:
+                            plan = await response.json()
+                            assert response.status == 200, plan
+                            assert plan == {"packs": [], "assets": [], "errors": []}
+                assert set(data["nodes"]) == {"shutdown57.probe"}, data
+                assert data["nodes"]["shutdown57.probe"]["pack"] == pack
+
+            asyncio.run(check())
+        except Exception as exc:
+            exc.add_note(log.read_text())
+            raise
+        finally:
+            process.terminate()
+            try:
+                process.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=30)
+
+    if in_process:
+        for selected_variant, explicit_variant, error in (
+            ("linux-cpu", "win-nvidia", "--engine-variant differs"),
+            (None, "linux-cpu", "generation variant must be a non-empty string"),
+        ):
+            (generation / "generation.json").write_text(
+                json.dumps(
+                    {
+                        "format": "dinkster.generation/1",
+                        "variant": selected_variant,
+                        "inProcessPacks": [pack],
+                    }
+                )
+            )
+            refused = subprocess.run(
+                serve_command(
+                    free_port(),
+                    "--generation",
+                    str(generation),
+                    "--engine-variant",
+                    explicit_variant,
+                ),
+                cwd=tmp_path,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert refused.returncode != 0
+            assert error in refused.stderr
+
+
 def child_pids(parent: subprocess.Popen[bytes]) -> tuple[int, ...]:
     children = Path(f"/proc/{parent.pid}/task/{parent.pid}/children")
     return tuple(int(pid) for pid in children.read_text("ascii").split())
@@ -2825,7 +2941,16 @@ def test_serve_plain_dev_pack_is_announced(tmp_path: Path, pack_path: str) -> No
     port = free_port()
     pack = Path(__file__).resolve().parent.parent / pack_path
     process, log = start_logged_serve(
-        serve_command(port, "--no-default-packs", "--pack", str(pack)), tmp_path
+        serve_with_library_command(
+            port,
+            tmp_path / "library",
+            "--no-default-packs",
+            "--pack",
+            str(pack),
+            "--engine-variant",
+            "linux-cpu",
+        ),
+        tmp_path,
     )
     pending_error: BaseException | None = None
     try:
@@ -2833,6 +2958,22 @@ def test_serve_plain_dev_pack_is_announced(tmp_path: Path, pack_path: str) -> No
         packs = report["packs"]
         assert isinstance(packs, dict)
         assert packs["dinkster-nodes-dev"]["state"] == "announced"
+
+        async def plan() -> None:
+            workflow = {
+                "format": "dinkster-workflow",
+                "formatVersion": 1,
+                "graphs": {"root": {"nodes": {}}},
+            }
+            async with aiohttp.ClientSession() as client:
+                async with client.post(
+                    f"http://127.0.0.1:{port}/api/workflows/plan",
+                    json={"workflows": [workflow]},
+                ) as response:
+                    assert response.status == 200, await response.text()
+                    assert await response.json() == {"packs": [], "assets": [], "errors": []}
+
+        asyncio.run(plan())
     except BaseException as error:
         pending_error = error
         raise

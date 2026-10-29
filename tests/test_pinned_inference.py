@@ -9,13 +9,11 @@ from packaging.requirements import Requirement
 
 from tools.verify_pinned_inference import pinned_requirement, verify_source_contracts
 
-PIN = "1" * 40
-REQUIREMENT = (
-    f"dinkster-inference @ https://github.com/Kosinkadink/dinkster-inference/archive/{PIN}.zip"
-)
+PIN = "0.1.0"
+REQUIREMENT = f"dinkster-inference=={PIN}"
 
 
-def test_pack_requirements_match_setup_script_pin() -> None:
+def test_pack_requirements_match_native_dependency_pin() -> None:
     root = Path(__file__).resolve().parents[1]
     requirement, _ = pinned_requirement(root)
     for path in root.glob("packages/**/*pack.toml"):
@@ -53,20 +51,15 @@ def test_runtime_dependencies_do_not_require_git() -> None:
                 assert "git+" not in source, f"{relative}: Git requirement {source}"
 
 
-def _write_setup_scripts(root: Path, shell_pin: str, powershell_pin: str) -> None:
-    scripts = root / "scripts"
-    scripts.mkdir()
-    (scripts / "setup_envs.sh").write_text(f'dinkster_inference_requirement="{shell_pin}"\n')
-    (scripts / "setup_envs.ps1").write_text(f'$DinksterInferenceRequirement = "{powershell_pin}"\n')
-
-
-def test_pinned_requirement_requires_matching_exact_commits(tmp_path: Path) -> None:
-    _write_setup_scripts(tmp_path, REQUIREMENT, REQUIREMENT)
+def test_pinned_requirement_requires_exact_release(tmp_path: Path) -> None:
+    package = tmp_path / "packages/dinkster-native"
+    package.mkdir(parents=True)
+    project = package / "pyproject.toml"
+    project.write_text(f'[project]\ndependencies = ["{REQUIREMENT}"]\n')
     assert pinned_requirement(tmp_path) == (REQUIREMENT, PIN)
 
-    other = REQUIREMENT.replace(PIN, "2" * 40)
-    (tmp_path / "scripts/setup_envs.ps1").write_text(f'$DinksterInferenceRequirement = "{other}"\n')
-    with pytest.raises(RuntimeError, match="pin different inference commits"):
+    project.write_text('[project]\ndependencies = ["dinkster-inference>=0.1.0"]\n')
+    with pytest.raises(RuntimeError, match="no exact dinkster-inference release"):
         pinned_requirement(tmp_path)
 
 

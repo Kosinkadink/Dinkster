@@ -6,6 +6,10 @@ rescale classifier-free guidance; select compute dtype; and select a supported
 dense attention backend. They use the pinned `dinkster_inference` sampler and
 model patcher.
 
+`ModelAttentionBackend` offers PyTorch attention without loading the tensor
+runtime during schema discovery. Kitchen attention remains available through
+runtime attention policies and capability selection, with their existing fallback.
+
 `ChromaRadianceOptions` applies Chroma Radiance transformer options over an
 inclusive sigma range while optionally retaining an existing model wrapper.
 `FluxKVCache` reuses reference-image attention keys and values independently

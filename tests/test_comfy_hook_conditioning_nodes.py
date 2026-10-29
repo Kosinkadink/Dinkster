@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -128,7 +129,17 @@ def test_hook_conditioning_schemas_are_torch_free_and_match_core_interfaces() ->
         (True, 0.0, NumberWidget(min=0.0, max=1.0, step=0.001)),
         (True, 1.0, NumberWidget(min=0.0, max=1.0, step=0.001)),
     ]
-    assert "torch" not in sys.modules
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from dinkster_nodes_comfy.hook_conditioning import HOOK_CONDITIONING_NODES; "
+            "[node.schema() for node in HOOK_CONDITIONING_NODES]; "
+            "import sys; assert 'torch' not in sys.modules",
+        ],
+        check=True,
+        timeout=30,
+    )
 
 
 def test_hook_conditioning_cold_discovery_avoids_torch_and_inference_imports() -> None:
