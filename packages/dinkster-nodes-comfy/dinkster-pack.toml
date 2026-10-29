@@ -18,6 +18,7 @@ requires = [
     "comfy-kitchen",
 ]
 namespaces = [
+    "devices",
     "AudioEncoderLoader",
     "AudioEncoderEncode",
     "SheetSage2AudioToABC",
@@ -530,6 +531,8 @@ namespaces = [
     "CropByBBoxes",
     "CameraAngle",
     "CreateCameraInfo",
+    "GetSplatCount",
+    "TransformSplat",
     "Trellis2UpsampleStage",
     "MoGePanoramaInference",
     "MoGeInference",
@@ -578,3 +581,4 @@ api = "dinkster-api/v1"
 [pack.entry]
 nodes = "dinkster_nodes_comfy:COMFY_NODES"
 types = "dinkster_nodes_comfy:register_inference_types"
+choices = "dinkster_nodes_comfy.device_routing:device_choices"

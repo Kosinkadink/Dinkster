@@ -197,6 +197,7 @@ def test_ordinary_manifest_executes_stable3d_twice(tmp_path: Path, in_process: b
             (tmp_path / "stable3d_fixture.py").write_text(
                 "from test_stable3d_torch import Stable3DInspect, Stable3DSource\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, Stable3DSource, Stable3DInspect)\n",
                 encoding="ascii",
             )
@@ -205,6 +206,10 @@ def test_ordinary_manifest_executes_stable3d_twice(tmp_path: Path, in_process: b
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["stable3d-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "stable3d_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "stable3d_fixture:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "stable3d_fixture:register_inference_types",

@@ -48,13 +48,14 @@ def test_extract_preserves_the_published_files(tmp_path: Path) -> None:
     assert json.loads((tmp_path / "manifest.json").read_text())["sha256"] == pin["sha256"]
 
 
-def test_wheel_preserves_the_published_bundle_and_manifest(tmp_path: Path) -> None:
+@pytest.mark.parametrize("version", ["0.0.2", "0.0.2.dev123+g" + "a" * 40])
+def test_wheel_preserves_the_published_bundle_and_manifest(tmp_path: Path, version: str) -> None:
     payload, pin = artifact()
     published = tmp_path / "frontend.zip"
     published.write_bytes(payload)
     uv = shutil.which("uv")
     assert uv is not None, "release packaging requires uv"
-    wheel = build_frontend_wheel(published, "0.0.2", pin, tmp_path, uv)
+    wheel = build_frontend_wheel(published, version, pin, tmp_path, uv)
     with zipfile.ZipFile(wheel) as installed, zipfile.ZipFile(io.BytesIO(payload)) as wrapper:
         with zipfile.ZipFile(io.BytesIO(wrapper.read("bundle.zip"))) as bundle:
             assert {
@@ -65,7 +66,7 @@ def test_wheel_preserves_the_published_bundle_and_manifest(tmp_path: Path) -> No
         assert json.loads(installed.read("dinkster_frontend/manifest.json")) == json.loads(
             wrapper.read("manifest.json")
         )
-    assert wheel.name == "dinkster_frontend-0.0.2-py3-none-any.whl"
+    assert wheel.name == f"dinkster_frontend-{version}-py3-none-any.whl"
 
 
 @pytest.mark.parametrize(

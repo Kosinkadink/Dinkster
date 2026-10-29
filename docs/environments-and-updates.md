@@ -564,6 +564,110 @@ own files and are unaffected.
 
 ## Publishing the engine
 
+### Engine release layout
+
+An engine release is a flat directory of GitHub release assets. The same
+directory is the build artifact used by installation checks and publication:
+
+| Asset | Contract |
+|---|---|
+| `*.whl` | Every workspace distribution, including the root `dinkster` distribution, plus `dinkster-frontend`; workspace dependencies require the exact same release version |
+| `constraints.txt` | Hashed `uv export --locked --all-packages --no-dev --group engine-base` requirements, excluding editable workspace entries and including exact versions and SHA-256 hashes of the built workspace and frontend wheels |
+| `release-manifest.json` | UTF-8 JSON with a trailing LF; `format: dinkster.engine/1`, `repository`, `tag`, full source `commit`, PEP 440 `version`, integer `workerProtocol`, `workspaceWheels` filenames and `artifacts` rows containing `name`, lowercase hex `sha256` and byte `size` |
+| `SHA256SUMS` | One lowercase SHA-256, two spaces, asset basename and LF per line; covers every asset except itself, including the manifest; verifiable with `sha256sum -c SHA256SUMS` |
+| `dinkster-source-<version>.zip` | Maintainer source archive; never an installation requirement |
+
+The workflow also builds the official pack source ZIPs and `official-packs.lock`
+with `scripts/build_official_packs.py` and admits them through repeated
+`--artifact` inputs. Pack versions use the engine's public version (without
+the local `+g<commit>` segment); the existing pack lock retains the full source
+commit. These payloads have the same artifact hashes and checksums as other
+release assets but are not `workspaceWheels` and are never uploaded to PyPI.
+
+The engine release id used by channels is `sha256:` followed by the SHA-256
+of the exact `release-manifest.json` bytes. The manifest lists payload assets,
+not itself or `SHA256SUMS`, avoiding a circular digest. Artifact names are
+basenames relative to the release directory. Clients verify the manifest
+against the channel id before trusting its artifact hashes.
+
+The builder accepts repeated `--external-wheel PATH` candidates and checks
+each filename, size and SHA-256 against `uv.lock` before staging it. External
+wheels are release payloads, not entries in `workspaceWheels` for PyPI upload.
+The workflow uses `--download-external-wheels` to select the locked compatible
+Windows/Linux x86_64 CPython 3.14.10 wheels, evaluating target requirement
+markers and preferring native interpreter tags over older stable ABI tags.
+Every download must match the lock size and SHA-256 and an exported requirement
+hash. The only direct-wheel exception is the pinned OpenTimelineIO cp314 build
+under `Kosinkadink/Dinkster`'s `opentimelineio-wheels-*` releases. Its native uv
+entry has no size: acquisition and staging require the matching target's
+`opentimelineio-windows.json` or `opentimelineio-linux.json` from that same
+release, with the pinned source identity, exact filename/hash and positive
+measured size. The export, lock source URL and wheel URL must agree. Other
+direct requirements, missing compatible wheels, mismatched provenance and
+corrupted downloads fail the build; acquisition never resolves dependencies
+or falls back to source. Target markers are evaluated before source admission.
+After staging verifies the actual bytes, the final `constraints.txt` replaces
+each approved direct-wheel URL with its exact locked version, preserving the
+target marker and hash. Missing or mismatched bytes fail the build. Acquisition
+still uses the unchanged native lock and URL-bearing export; offline consumers
+use only the version/hash requirements and supplied wheel files.
+Repeated `--base-manifest PATH` inputs use the existing `dinkster.base/1`
+manifest, including its canonical id, and `--target-variant NAME` identifies
+the selected targets. Only an exact filename/size/SHA-256 member present in
+every selected base can be omitted from a shared release. An unexpected or
+duplicate variant fails; incomplete or absent base coverage retains all
+candidates. The base's full transitive `wheels` list is authoritative, not a
+union of package names or a list of closure seeds.
+
+`python -m scripts.acquire_engine_bases --tag base-<variant>-<id-hex>`
+accepts repeated exact tags from `Kosinkadink/Dinkster-Environments` and
+writes the original documents to `engine-base-manifests/<variant>/manifest.json`.
+The output directory must be new; a failed selection leaves no partial set.
+Acquisition requires a published release, complete archive parts with verified
+sizes/hashes, canonical manifest identity and compatibility with the engine's
+Python, platform, worker protocol and locked pins. Torch variant wheels match
+the lock's public version and the variant index; other same-name wheels must
+match locked artifact hashes. GitHub asset digests verify parts when available;
+otherwise acquisition streams and hashes the part bytes. The adjacent extras
+index must match the selected base and variant; its downloaded size and any
+GitHub asset digest are checked, without inventing an extras hash field in the
+base manifest. Published tags follow the producer's no-reupload convention;
+GitHub's immutable-release setting is not required, since old parts are pruned.
+The helper does not
+publish, resolve, select latest or turn planning/build-run artifacts into durable
+channel locations. The channel writer consumes these qualified documents, not
+a second base-id list. A compatible published base set is still required before
+channel publication.
+
+The non-default `engine-base` dependency group carries torch 2.14.1,
+torchvision 0.29.1, numpy 2.5.1 and contrib-headless OpenCV 5.0.0.93 in
+`uv.lock`. The release export explicitly includes the group; mandatory
+inference dependencies can also bring torch into ordinary workspace sync.
+These requirements do not embed an index URL. A torch/torchvision bump must have cp314 wheels
+for both Windows and Linux on every supported torch index before the lock
+moves, not just a PyPI release.
+
+Tag releases use `vX.Y.Z` and require every workspace project's source
+version to equal `X.Y.Z`. A main commit uses GitHub release tag
+`main-<full commit>` and wheel version
+`<next patch>.dev<commit Unix timestamp>+g<full commit>`. These are GitHub
+prereleases, never PyPI publications. The frontend wheel has the engine
+release version even when its pinned frontend commit is unchanged. A
+temporary source tree gives every workspace wheel that version and pins
+workspace dependencies to it without rewriting the checkout or its lock.
+
+Pull requests changing release machinery run the build and clean-install
+checks without creating a GitHub release or invoking PyPI. Tag publication
+waits for all clean-install checks, attaches the checked assets to GitHub,
+then uploads only `workspaceWheels` to PyPI through OIDC trusted publishing
+in the protected `pypi` environment. No PyPI API token is stored.
+If any workspace project is absent from PyPI, the publication job is
+skipped without blocking the checked GitHub release or build artifact.
+The repository owner bootstraps the entire wheel set once from an approved
+artifact on their own machine, using a short-lived PyPI token that is
+revoked afterwards, then adds trusted publishers to the existing projects.
+Subsequent tag uploads skip versions already uploaded out of band.
+
 The tag workflow uploads every workspace wheel and the frontend wheel to
 PyPI with trusted publishing, so `pip install dinkster` and the `stable`
 channel install the same artifacts: the channel fetches them by hash from
@@ -619,8 +723,10 @@ newest ids per variant; every base manifest is kept forever. A client that
 needs a base whose archive is gone rebuilds it locally from the base
 manifest: it fetches each listed wheel by hash from the source index the
 manifest names and the interpreter from python-build-standalone, which is
-the one case where an engine install reads a package index. Engine releases
-are small and are kept indefinitely. A region-specific mirror is one more
+the one case where an engine install reads a package index. Stable engine
+releases are kept indefinitely. The workflow retains the newest 50
+commit-named main prereleases; stable releases, drafts and other prerelease
+tags are never removed by this cleanup. A region-specific mirror is one more
 entry in the client's mirror list and, when Dinkster does not operate it,
 serves only signed documents.
 

@@ -63,7 +63,7 @@ def test_audio_encoder_interfaces_and_native_manifest() -> None:
         assert node in COMFY_NODES
         assert schema_from_wire(schema_to_wire(node.schema())) == node.schema()
     manifest = load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml")
-    assert tuple(node.schema().node_type for node in COMFY_NODES) == manifest.namespaces
+    assert ("devices", *(node.schema().node_type for node in COMFY_NODES)) == manifest.namespaces
 
 
 def test_audio_encoder_resident_release_and_first_authority(
