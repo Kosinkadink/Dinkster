@@ -439,7 +439,10 @@ def test_release_version_matches_every_workspace_project(tmp_path: Path) -> None
 
 def test_repository_versions_match_first_release_tag() -> None:
     assert release_version(ROOT, "v0.0.1") == "0.0.1"
-    assert len(workspace_projects(ROOT)) == 29
+    projects = workspace_projects(ROOT)
+    assert "dinkster-nodes-std" not in projects
+    dev = tomllib.loads(projects["dinkster-nodes-dev"].read_text(encoding="utf-8"))
+    assert "Private :: Do Not Upload" in dev["project"]["classifiers"]
     frontend = json.loads((ROOT / "scripts/release_sources.json").read_text(encoding="utf-8"))
     assert frontend["repository"] == "Kosinkadink/Dinkster-Frontend"
     assert len(frontend["commit"]) == 40
