@@ -209,3 +209,7 @@
 - Reference file-input metadata includes manually enumerated file choices whose
   declared execution method directly resolves the input as an annotated path.
   Empty file lists retain this classification; unrelated empty combos do not.
+- Native Save SVG writes ordered UTF-8 SVG streams to the selected output mount,
+  retaining duplicate and empty streams, source batch counters, and submitted
+  prompt/workflow metadata in source-compatible CDATA blocks. Invalid UTF-8 fails
+  rather than being replaced. The unchanged SVG value remains available downstream.

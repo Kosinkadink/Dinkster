@@ -180,6 +180,7 @@ from .stable_cascade import STABLE_CASCADE_NODES
 from .standard_sampling import STANDARD_SAMPLING_NODES
 from .style_model import STYLE_MODEL_NODES
 from .supir import SUPIRApply
+from .svg_save import SaveSVGNode
 from .switch import ComfySwitchNode
 from .text import TEXT_NODES
 from .text_generation import TextGenerate, TextGenerateLTX2Prompt
@@ -462,6 +463,7 @@ COMFY_NODES = (
     WanDancerVideo,
     VOIDWarpedNoise,
     LoadVideo,
+    SaveSVGNode,
 )
 
 

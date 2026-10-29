@@ -548,6 +548,7 @@ namespaces = [
     "WanDancerVideo",
     "VOIDWarpedNoise",
     "LoadVideo",
+    "SaveSVGNode",
 ]
 
 [pack.sandbox]
