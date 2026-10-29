@@ -79,6 +79,14 @@ dev = [
     "threadpoolctl>=3.7",
 ]
 
+[tool.uv]
+# Model validation and pack manifests use this tokenizer/transformer combination.
+constraint-dependencies = [
+    "sentencepiece==0.2.1",
+    "tokenizers==0.23.1",
+    "transformers==5.16.1",
+]
+
 [tool.uv.workspace]
 members = ["packages/*"]
 

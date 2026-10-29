@@ -46,12 +46,10 @@ jobs:
             --no-hashes --output-file "$RUNNER_TEMP/torch-versions.txt"
           uv pip compile --python-version 3.12 --torch-backend cpu --generate-hashes \
             --output-file "$RUNNER_TEMP/torch-constraints.txt" "$RUNNER_TEMP/torch-versions.txt"
-          uv venv --python 3.12 "$RUNNER_TEMP/cpu-runtime"
-          uv pip install --python "$RUNNER_TEMP/cpu-runtime/bin/python" \
-            --constraint "$RUNNER_TEMP/torch-constraints.txt" --torch-backend cpu \
-            torch==2.14.1+cpu torchvision==0.29.1+cpu
-          uv pip check --python "$RUNNER_TEMP/cpu-runtime/bin/python"
-          "$RUNNER_TEMP/cpu-runtime/bin/python" - <<'PY'
+          CUDA_VISIBLE_DEVICES="" UV_CONSTRAINT="$RUNNER_TEMP/torch-constraints.txt" \
+            bash scripts/setup_envs.sh
+          uv pip check --python .venv-torch/bin/python
+          .venv-torch/bin/python - <<'PY'
           import torch
           import torchvision
 

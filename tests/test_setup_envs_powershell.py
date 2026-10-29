@@ -124,6 +124,30 @@ def test_setup_math_dependency_matches_workspace_lock() -> None:
     assert f'"{requirement}"' in POSIX_SETUP.read_text()
 
 
+def test_cpu_setup_exact_dependencies_match_workspace_lock() -> None:
+    lock = tomllib.loads((REPO_ROOT / "uv.lock").read_text())
+    versions = {item["name"]: item["version"] for item in lock["package"]}
+    powershell = POWERSHELL_SETUP.read_text()
+    posix = POSIX_SETUP.read_text().split(
+        "# ------------------------------------------------------------ .venv-gpu"
+    )[0]
+    requirements = _powershell_dependency_array(powershell, "CpuDependencies")
+    for requirement in requirements:
+        if "==" not in requirement:
+            continue
+        name, version = requirement.split("==")
+        if name in versions:
+            assert version == versions[name], requirement
+        assert requirement in posix
+    for path in (REPO_ROOT / "packages/dinkster-nodes-vision").glob(
+        "dinkster_vision_*/dinkster-pack.toml"
+    ):
+        manifest = tomllib.loads(path.read_text())
+        for requirement in manifest["pack"].get("requires", []):
+            if requirement.startswith("transformers=="):
+                assert requirement == f"transformers=={versions['transformers']}", path
+
+
 def test_powershell_setup_limits_force_and_has_no_private_installer() -> None:
     setup = POWERSHELL_SETUP.read_text()
     force_body = setup.split("if ($Force) {", 1)[1].split("Write-Host", 1)[0]
