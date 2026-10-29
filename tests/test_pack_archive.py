@@ -248,6 +248,25 @@ def test_official_artifacts_preserve_sources_and_existing_pack_identities(tmp_pa
         "dinkster-vision-upscale",
     }
     assert {pack.pack for pack in lock.packs} == expected
+    core_requirements = {
+        "dinkster-nodes-comfy": ("simpleeval==1.0.8",),
+        "dinkster-nodes-foundation": (),
+        "dinkster-nodes-image": (
+            "comfy-angle==0.1.1; sys_platform != 'darwin' or platform_machine == 'arm64'",
+            "numpy>=1.26",
+            "opencv-contrib-python-headless>=5.0,<5.1",
+            "pillow>=10",
+            "PyOpenGL>=3.1.8,<4",
+        ),
+        "dinkster-nodes-media-io": (
+            "av==18.1.0",
+            "numpy>=1.26",
+            "pillow>=10",
+            "scipy>=1.11",
+        ),
+        "dinkster-nodes-remote": ("httpx>=0.28,<1",),
+        "dinkster-nodes-generation": (),
+    }
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
     for pack in lock.packs:
         assert pack.version == version
@@ -259,6 +278,8 @@ def test_official_artifacts_preserve_sources_and_existing_pack_identities(tmp_pa
         )
         manifest = load_manifest(extracted / "dinkster-pack.toml")
         assert manifest.name == pack.pack
+        if pack.pack in core_requirements:
+            assert manifest.requires == core_requirements[pack.pack]
         module = manifest.nodes_entry.partition(":")[0]
         relative = Path(*module.split(".")) / "__init__.py"
         if pack.pack.startswith("dinkster-vision-"):
