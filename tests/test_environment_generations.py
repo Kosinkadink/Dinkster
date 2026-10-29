@@ -126,6 +126,9 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
             site = next(target.rglob("stable_fixture.py")).parent
             value = 97 if reject_packs else 11
             (site / "in_process_fixture.py").write_text(f"VALUE = {value}\n")
+            catalog = target / "pack-sources/fixture/__pycache__/dinkster-schema-catalog/pack.json"
+            catalog.parent.mkdir(parents=True)
+            catalog.write_text('{"prepared": true}\n')
             if reject_packs:
                 staged = subprocess.check_output(
                     [
@@ -177,6 +180,12 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
     assert first.drift(first_dir) == ()
     assert second.drift(second_dir) == ()
     assert any(name.endswith("in_process_fixture.py") for name, _ in first.files)
+    catalog_name = "pack-sources/fixture/__pycache__/dinkster-schema-catalog/pack.json"
+    assert catalog_name in dict(first.files)
+    catalog = first_dir / catalog_name
+    catalog.unlink()
+    assert first.drift(first_dir) == (f"missing: {catalog_name}",)
+    catalog.write_text('{"prepared": true}\n')
     set_current(root, 2)
     set_current(root, 1)
     assert read_current(root) == 1
@@ -208,6 +217,22 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
             build(5, "2.0", second_hash, source_inputs=True)
     assert read_current(root) == 1
     assert not (root / "generations" / "5").exists()
+
+    def refused_catalog(command, *args, **kwargs):
+        if command[1:4] == ["-B", "-m", "dinkster.generation_packs"]:
+            target = Path(command[command.index("--generation") + 1])
+            (target / "dinkster.lock").write_text("admitted source inventory\n")
+            return subprocess.CompletedProcess(command, 0, '{"packs": [], "errors": []}', "")
+        if command[1:4] == ["-B", "-m", "dinkster.manager"]:
+            return subprocess.CompletedProcess(command, 1, "", "pack import failed")
+        return run(command, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(subprocess, "run", refused_catalog)
+        with pytest.raises(EnvironmentError, match="pack catalog preparation failed: pack import"):
+            build(6, "2.0", second_hash, source_inputs=True)
+    assert read_current(root) == 1
+    assert not (root / "generations" / "6").exists()
     assert first.drift(first_dir) == ()
     assert (
         subprocess.check_output([str(interpreter(first_dir)), "-B", "-c", script]).strip() == b"53"

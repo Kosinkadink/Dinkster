@@ -239,7 +239,13 @@ does not parse a second catalog. Success requires a single object containing
 distinct pack ids, an empty errors array, zero exit status and the written
 `dinkster.lock`. An admission error, malformed result or missing inventory removes
 the entire target, including any partial sources or interpreter changes. The
-`prepare_packs` callback may prepare node catalogs afterward, before sealing.
+target interpreter then runs `-B -m dinkster.manager --root "" prepare-catalogs
+--generation ABS` with repeated `--in-process-pack` selections. This command
+verifies admitted sources and uses their prepared pack interpreters, without
+legacy default discovery or dependency resolution. A preparation error removes
+the target before activation. Catalogs enter the sealed file inventory even
+though their `__pycache__/dinkster-schema-catalog` location is excluded from
+source artifact identities. Additional `prepare_packs` staging runs before sealing.
 
 `environment_archives.extract_base(parts, destination)` reconstructs verified
 split 7z parts in order and stages their contents beside the final base path.

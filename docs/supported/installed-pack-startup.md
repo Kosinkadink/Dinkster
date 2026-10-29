@@ -42,6 +42,9 @@
 - Generation construction admits verified pack archives before sealing sources.
   A rejected source discards the incomplete target without changing the active
   generation or its running engine.
+- Admitted generation packs prepare their runtime catalogs in their selected
+  interpreters before activation. Missing interpreters, changed sources or failed
+  imports refuse the candidate; sealed generations cannot be prepared in place.
 - The environment CLI can acquire an explicit mirror selection, build an offline
   generation and health-check it before activation, with confirmation and retained
   rollback. Setup plans show the selected engine binding, port and ordered GPU

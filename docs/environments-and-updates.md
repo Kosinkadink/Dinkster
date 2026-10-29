@@ -81,6 +81,13 @@ consumes that lock/cache pair, verifies artifact identity and claims, and refuse
 the whole candidate on errors. Explicit paired `--catalog-lock`/`--artifacts`
 inputs override release-source acquisition. Dependency locks remain distinct from
 source identities and are supplied through the existing pack-provisioning path.
+After dependency doctor and source admission, the target interpreter runs
+`dinkster-pack prepare-catalogs --generation ABS` with its in-process pack ids.
+This selects only admitted generation sources and already-provisioned pack
+interpreters; the source CLI itself does not create catalogs. Preparation errors
+refuse the candidate before inventory, sealing, health and current publication.
+Prepared catalogs are included in the generation file inventory, but remain
+excluded from source artifact identities. Sealed generations refuse preparation.
 
 ### Project records
 

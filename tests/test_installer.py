@@ -214,6 +214,98 @@ def test_generation_source_staging_cli(tmp_path: Path, problem: str | None, mess
     assert not (generation / "official-packs.lock").exists()
 
 
+@pytest.mark.parametrize("problem", [None, "isolated", "missing", "tampered", "sealed", "import"])
+def test_unsealed_generation_catalog_preparation(tmp_path: Path, problem: str | None) -> None:
+    from dinkster_supervisor.environment_generations import prepare_pack_catalogs
+    from dinkster_supervisor.environment_state import EnvironmentError, interpreter
+    from dinkster_workers import load_manifest
+    from dinkster_workers.catalog import catalog_path, read_catalog
+    from test_doctor import HEALTHY_MANIFEST, HEALTHY_NODES
+
+    from dinkster.generation_packs import stage_generation_packs
+
+    generation = tmp_path / "generation"
+    hosted = problem not in {"isolated", "missing"}
+    pack_python = generation / "python" if hosted else generation / "packs/healthy"
+    body = (
+        "import sys\nfrom pathlib import Path\n"
+        f"assert Path(sys.prefix) == Path({str(pack_python)!r})\n" + HEALTHY_NODES
+    )
+    if problem == "import":
+        body = "raise RuntimeError('catalog import refused')\n" + body
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "dinkster-pack.toml").write_text(HEALTHY_MANIFEST)
+    (source / "healthy_nodes.py").write_text(body)
+    archive = tmp_path / "healthy.zip"
+    digest = build_artifact(source, archive)
+    entry = LockedPack("healthy", "1.0.0", digest, "local", ("healthy",))
+    generation.mkdir()
+    stage_generation_packs(generation, Lockfile.of([entry]), {"healthy": archive})
+    for environment in {generation / "python", pack_python}:
+        subprocess.run(
+            [sys.executable, "-m", "venv", "--without-pip", str(environment)], check=True
+        )
+        python = (
+            interpreter(generation) if environment.name == "python" else venv_python(environment)
+        )
+        site = Path(
+            subprocess.check_output(
+                [str(python), "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"],
+                text=True,
+            ).strip()
+        )
+        (site / "fixture.pth").write_text(
+            "\n".join(str(Path(path).resolve()) for path in sys.path if path) + "\n"
+        )
+    manifest = generation / "pack-sources/healthy/dinkster-pack.toml"
+    if problem == "missing":
+        venv_python(pack_python).unlink()
+    elif problem == "tampered":
+        (manifest.parent / "healthy_nodes.py").write_text("NODES = []\n")
+    elif problem == "sealed":
+        (generation / "generation.json").write_text("already sealed\n")
+
+    def invoke() -> None:
+        prepare_pack_catalogs(generation, ("healthy",) if hosted else ())
+
+    if problem in {"missing", "tampered", "sealed", "import"}:
+        with pytest.raises(EnvironmentError, match="pack catalog preparation failed"):
+            invoke()
+        assert not catalog_path(manifest).exists()
+    else:
+        invoke()
+        catalog = read_catalog(load_manifest(manifest))
+        assert catalog is not None
+        assert set(catalog.schemas) == {"healthy.doubler", "healthy.tagger"}
+        assert build_artifact(manifest.parent, tmp_path / "prepared.zip") == digest
+        assert not (generation / "generation.json").exists()
+        if hosted:
+            catalog_path(manifest).unlink()
+            direct = subprocess.run(
+                [
+                    sys.executable,
+                    "-B",
+                    "-m",
+                    "dinkster.manager",
+                    "--root",
+                    "",
+                    "prepare-catalogs",
+                    "--generation",
+                    str(generation),
+                    "--in-process-pack",
+                    "healthy",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert direct.returncode == 0, direct.stdout + direct.stderr
+            catalog = read_catalog(load_manifest(manifest))
+            assert catalog is not None
+            assert set(catalog.schemas) == {"healthy.doubler", "healthy.tagger"}
+
+
 def fake_provision(manifest: PackManifest, venv_root: Path, spec: VenvSpec | None = None) -> Path:
     """Stand-in for ensure_pack_venv: same layout, no uv, same
     reuse-if-present behavior. Records the spec it was handed so

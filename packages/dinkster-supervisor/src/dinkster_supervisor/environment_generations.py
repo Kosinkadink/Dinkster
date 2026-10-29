@@ -254,6 +254,33 @@ def stage_pack_sources(generation: Path, *, catalog_lock: Path, artifacts: Path)
         raise EnvironmentError("pack source staging did not write the installed source lock")
 
 
+def prepare_pack_catalogs(generation: Path, in_process_packs: tuple[str, ...]) -> None:
+    """Prepare admitted pack catalogs in the target before sealing its file inventory."""
+    command = [
+        str(interpreter(generation)),
+        "-B",
+        "-m",
+        "dinkster.manager",
+        "--root",
+        "",
+        "prepare-catalogs",
+        "--generation",
+        str(generation),
+    ]
+    for pack in in_process_packs:
+        command.extend(["--in-process-pack", pack])
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+    )
+    if result.returncode:
+        raise EnvironmentError(
+            f"pack catalog preparation failed: {result.stderr.strip() or result.stdout.strip()}"
+        )
+
+
 def build_generation(
     *,
     root: Path,
@@ -366,6 +393,7 @@ def build_generation(
                 )
         if catalog_lock is not None and artifacts is not None:
             stage_pack_sources(destination, catalog_lock=catalog_lock, artifacts=artifacts)
+            prepare_pack_catalogs(destination, in_process_packs)
         if prepare_packs is not None:
             prepare_packs(destination)
         files = tuple(
@@ -373,7 +401,10 @@ def build_generation(
             for path in sorted(destination.rglob("*"))
             if path.is_file()
             and path.relative_to(destination).parts[0] != "packs"
-            and "__pycache__" not in path.relative_to(destination).parts
+            and (
+                "__pycache__" not in path.relative_to(destination).parts
+                or "dinkster-schema-catalog" in path.relative_to(destination).parts
+            )
         )
         generation = Generation(
             number,
