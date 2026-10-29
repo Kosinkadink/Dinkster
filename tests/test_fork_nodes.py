@@ -568,9 +568,14 @@ def test_generation_ksampler_preserves_h3_stream_roles(monkeypatch: pytest.Monke
     assert sampled.by_role("audio") is outputs[1]
 
 
-def test_generation_ksampler_switches_from_lora_clone_to_base_without_eviction(
+@pytest.mark.parametrize("canonical", [False, True])
+def test_ksampler_switches_from_lora_clone_to_base_without_eviction(
     monkeypatch: pytest.MonkeyPatch,
+    canonical: bool,
 ) -> None:
+    from dinkster_nodes_comfy import standard_sampling
+
+    monkeypatch.setattr(standard_sampling, "initialize_inference_process", lambda: None)
     events: list[tuple[object, ...]] = []
     base_weight = 10.0
     resident_patch = 0.0
@@ -599,7 +604,8 @@ def test_generation_ksampler_switches_from_lora_clone_to_base_without_eviction(
 
     def sample_latent(actual_model: Model, *args: object, **kwargs: object) -> float:
         nonlocal resident_patch
-        assert _FakeTorch.inference_mode_enabled
+        if not canonical:
+            assert _FakeTorch.inference_mode_enabled
         resident_patch = actual_model.patch
         events.append(("sample", actual_model, args, kwargs))
         return base_weight + resident_patch
@@ -624,8 +630,10 @@ def test_generation_ksampler_switches_from_lora_clone_to_base_without_eviction(
         lambda name: modules.get(name) or real_import(name),
     )
 
+    sampler = standard_sampling.KSampler if canonical else fork_nodes.GenerationKSampler
+
     def run(model: Model) -> object:
-        return fork_nodes.GenerationKSampler.execute(
+        return sampler.execute(
             model=model,
             seed=459,
             steps=5,
@@ -641,7 +649,7 @@ def test_generation_ksampler_switches_from_lora_clone_to_base_without_eviction(
                 "downscale_ratio_temporal": 4,
             },
             denoise=1.0,
-        )["latent"]
+        )["LATENT" if canonical else "latent"]
 
     lora_result = cast("Mapping[str, object]", run(lora_model))
     base_result = cast("Mapping[str, object]", run(base_model))
