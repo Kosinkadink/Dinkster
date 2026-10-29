@@ -139,6 +139,9 @@ its records or recording a version. Back up the catalog before upgrading.
 `LibraryStore(path, read_only=True)` opens an existing catalog without creating
 directories, migrating schemas or changing journal mode. Scoped lookups retain
 the same membership rules, and SQLite refuses writes through this connection.
+SQLite may create or update its WAL/shared-memory coordination files; these are
+not catalog content. Read-only open failures report the underlying SQLite reason
+without retrying with write access or bypassing WAL recovery.
 
 Asset observations share this database but are separate from mutable workflow
 records. `LibraryStore.record_asset` records an original basename, observed

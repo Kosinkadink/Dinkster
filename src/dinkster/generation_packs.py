@@ -69,8 +69,20 @@ def load_generation_packs(generation: Path) -> tuple[str, tuple[PackSpec, ...]]:
         or len(set(hosting)) != len(hosting)
     ):
         raise CompositionError("generation inProcessPacks must contain distinct pack ids")
+    return variant, generation_pack_specs(generation, tuple(hosting))
+
+
+def generation_pack_specs(
+    generation: Path, in_process_packs: tuple[str, ...] = ()
+) -> tuple[PackSpec, ...]:
+    """Select verified admitted sources and their already-provisioned interpreters."""
+    if not generation.is_absolute():
+        raise CompositionError("--generation requires an absolute path")
+    generation = generation.resolve()
     lock = Lockfile.from_record_json((generation / "dinkster.lock").read_text(encoding="utf-8"))
-    if set(hosting) - {entry.pack for entry in lock.packs}:
+    if len(set(in_process_packs)) != len(in_process_packs):
+        raise CompositionError("generation inProcessPacks must contain distinct pack ids")
+    if set(in_process_packs) - {entry.pack for entry in lock.packs}:
         raise CompositionError("generation hosting names packs absent from dinkster.lock")
     specs: list[PackSpec] = []
     for entry in lock.packs:
@@ -84,7 +96,7 @@ def load_generation_packs(generation: Path) -> tuple[str, tuple[PackSpec, ...]]:
                 f"generation pack {entry.pack!r} artifact digest differs from lock"
             )
         manifest = _manifest(root, entry)
-        in_process = entry.pack in hosting
+        in_process = entry.pack in in_process_packs
         python = (
             generation
             / "packs"
@@ -118,7 +130,7 @@ def load_generation_packs(generation: Path) -> tuple[str, tuple[PackSpec, ...]]:
                 ),
             )
         )
-    return variant, tuple(specs)
+    return tuple(specs)
 
 
 def main() -> int:

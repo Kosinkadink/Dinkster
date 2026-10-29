@@ -34,6 +34,30 @@ fix produces a new engine release of a few tens of megabytes; the base bundle
 changes when torch or another heavy pin moves. That split is the whole reason
 updates are cheap.
 
+## Environment tools bootstrap
+
+The native client bootstrap is an engine-release artifact named
+`dinkster-tools-<os>-<arch>.zip` (`linux`, `windows`, `macos`; `x86_64` or
+`arm64`). Its ordinary `artifacts` row in the hash-verified `dinkster.engine/1`
+manifest supplies the complete archive size and SHA256. It contains only a
+standalone `python/` tree with the release's supervisor wheel, its locked
+runtime dependency closure and pinned uv, not the engine or torch. ZIP is the
+bootstrap container and does not change the base bundle's tar+zstd format.
+
+Desktop verifies the archive bytes before safe extraction into a new owned
+directory, preserving Unix executable mode bits. Internal interpreter aliases
+are materialized, requiring no Windows symlink privilege. It invokes
+`python/bin/python3 -I -m dinkster_supervisor.environment` (Windows
+`python/python.exe`) and prepends `python/bin` (Windows `python/Scripts`) to
+that child's PATH for bundled uv. Desktop performs no package installation,
+resolution or fallback to a host Python/package manager.
+
+The native build/acquisition command and input pinning are documented in
+[the supervisor README](../packages/dinkster-supervisor/README.md#extraction-only-desktop-bootstrap).
+The shared [lifecycle fixture builder](../tests/fixtures/environments/README.md)
+generates the same base/engine/channel formats for CLI and Desktop
+setup/update/rollback comparisons without a second provisioner.
+
 ## Layout
 
 ```
@@ -72,6 +96,70 @@ The engine environment is immutable and hash-checked. `dinkster-env doctor`
 compares the active generation against its constraints and reports drift.
 Repair re-syncs from the wheel store without network access.
 
+When the selected engine manifest lists `official-packs.lock`, setup/update also
+acquire that existing registry lock and the release's ZIP source payloads. Manifest
+SHA256/size checks verify transport; raw ZIP-byte BLAKE3 identities name the cache
+entries at `engines/<release-id>/artifacts/<digest-hex>.zip`. The supervisor does not
+parse the registry lock or extract sources. Target-interpreter source admission
+consumes that lock/cache pair, verifies artifact identity and claims, and refuses
+the whole candidate on errors. Explicit paired `--catalog-lock`/`--artifacts`
+inputs override release-source acquisition. Dependency locks remain distinct from
+source identities. Unless repeated `--pack-lock` inputs override bundled selection,
+setup/update acquire the selected release's existing
+`<pack>-<public-version>-<variant>.pack-lock.json` artifact rows, verify size/SHA256
+and retain original bytes under `engines/<release-id>/`. The target provisioner
+owns their schema and conflict checks; dependency installation is offline, from
+verified local wheels only. Every admitted source pack must have a dependency
+record, including empty closures and in-process packs.
+After dependency doctor and source admission, the target interpreter runs
+`dinkster-pack prepare-catalogs --generation ABS` with its in-process pack ids.
+This selects only admitted generation sources and already-provisioned pack
+interpreters; the source CLI itself does not create catalogs. Preparation errors
+refuse the candidate before inventory, sealing, health and current publication.
+Prepared catalogs are included in the generation file inventory, but remain
+excluded from source artifact identities. Sealed generations refuse preparation.
+
+### Project records
+
+`current` is the active positive decimal generation number followed by one
+newline. `store` is the absolute data-directory path followed by one newline.
+Each generation holds its complete interpreter under `python/`, including
+`python/python.exe` on Windows or `python/bin/python3` on Linux, and retains
+the engine release's `constraints.txt` beside `generation.json`.
+
+`generation.json` uses `format: dinkster.generation/1`. Its fields are:
+
+- `generation`: positive integer matching the directory name.
+- `base`: `sha256:` content identifier of the base manifest.
+- `engine`: object containing `version` and the `sha256:` release identifier.
+- `constraints`: `sha256:` digest of the retained constraints file.
+- `variant`: portable variant name; `workerProtocol`: positive integer.
+- `inProcessPacks`: optional array of pack ids, empty when omitted. These packs
+  have locks under `packs/<pack>/pack-lock.json` but no venv. Their dependencies
+  are staged into a fresh generation before its immutable file inventory.
+- `files`: object mapping portable generation-relative paths to `sha256:`
+  file digests. It covers the interpreter, installed packages and constraints,
+  not `generation.json` itself or the independently checked pack venvs.
+  Runtime bytecode not present in this inventory is ignored by drift checks.
+
+Writers flush pointer and journal contents before atomic replacement. JSON
+objects are UTF-8, ASCII-escaped, sorted by key and newline-terminated. These
+records are shared by the command-line client, Desktop and pack provisioning;
+none of those clients defines a second generation format.
+
+The per-user `dinkster/stores.json` lives below `LOCALAPPDATA` on Windows or
+`XDG_DATA_HOME` (default `~/.local/share`) on Linux. Its format is
+`dinkster.stores/1`, with `volumes` mapping decimal platform `st_dev` identities
+to absolute data-directory paths. An unregistered volume defaults to
+`dinkster-data` beside the project. An explicit conflicting store, another
+volume or overlapping project/store paths is refused. A store's `projects.json`
+uses `dinkster.store/1` and a sorted `projects` array of absolute project roots.
+These references are atomically updated under registry/store/project OS locks
+after confirmation and journal publication. Failed initial setup rolls back its
+own metadata additions, preserving cached bytes, pre-existing settings and other
+projects' references. Failed updates keep the existing project's references and
+active generation; they do not authorize data deletion.
+
 ## Channels
 
 `channels/<name>.json` on the mirror:
@@ -79,8 +167,22 @@ Repair re-syncs from the wheel store without network access.
 ```json
 {
   "format": "dinkster.channel/1",
-  "engine": { "version": "0.3.1", "release": "sha256:..." },
-  "base": { "win-nvidia": "sha256:...", "win-cpu": "sha256:..." },
+  "engine": {
+    "version": "0.3.1",
+    "release": "sha256:<engine-hex>",
+    "tag": "v0.3.1",
+    "locations": [
+      { "type": "mirror", "path": "engine/<engine-hex>/release-manifest.json" }
+    ]
+  },
+  "base": {
+    "win-cpu": {
+      "id": "sha256:<base-hex>",
+      "locations": [
+        { "type": "mirror", "path": "base/win-cpu/<base-hex>/manifest.json" }
+      ]
+    }
+  },
   "minimumDesktopVersion": "0.2.0",
   "signature": null
 }
@@ -89,6 +191,18 @@ Repair re-syncs from the wheel store without network access.
 The channel names artifacts by content hash, never by "latest GitHub release".
 A channel update is one small file write, so a release that was built earlier
 and kept unpublished becomes live in seconds.
+
+Each selected variant names a base id and ordered location hints. The hex
+placeholders above stand for complete lowercase SHA-256 values. Mirror paths
+are relative to the configured mirror; an immutable GitHub location is
+`{type: "github", repository, tag, asset}`. A location never overrides digest
+verification. The engine id hashes the final release-manifest.json bytes,
+including its trailing newline; `engine.tag` is copied from that manifest,
+not inferred from its development version. Base ids use the base producer's
+canonical identity fields. The local channel builder validates publisher
+manifests, engine payload hashes, worker protocols and effective constraints
+before atomically replacing one channel file. It does not select base releases
+or publish artifacts itself.
 
 `stable` is written when a `vX.Y.Z` tag's release workflow finishes. `main`
 is written when a push to `main` finishes the same workflow without a
@@ -131,10 +245,19 @@ Its build workflow:
    the `workerProtocol` the engine wheels in this lock declare, the minimum
    NVIDIA driver and compute capability for the CUDA tag, and
    `signature: null`.
-4. Archives the interpreter and wheels as split 7z parts under 2 GB each so
-   GitHub releases can host them, with the base manifest listing part hashes.
+4. Archives the interpreter and wheels as one tar stream compressed with zstd,
+   byte-split strictly below 2,000,000,000 bytes per part. The manifest carries
+   `archive: {"format": "tar+zstd", "parts": [...]}` with ordered filenames,
+   sizes and SHA-256 hashes. The canonical identity includes the archive format,
+   not its derived part rows.
 5. Publishes to a GitHub release of `Dinkster-Environments` and, when the R2
    secrets are present, to `releases.dinkster.org/base/<variant>/<id>/`.
+
+The consumer verifies every part before streaming the ordered bytes through
+`zstandard` into Python's tar data extraction filter. Relative internal symlinks
+and safe permission bits are preserved; traversal, absolute paths, hardlinks,
+devices and duplicate paths are refused. The manifest interpreter must run in
+isolation before promotion. A missing execute bit is repaired with a warning.
 
 The base is rebuilt only when its part of the lock changes. The workflow
 compares the base-relevant lock entries with the newest published base
@@ -222,6 +345,37 @@ newer generation stays on disk until garbage collection, which keeps the
 active and previous generation of each project, and keeps every wheel and
 base in the store that any retained generation references.
 
+Generation collection uses the last successful activation journal to find the
+previous generation, not numeric order. A gc journal carries optional
+`collectedGenerations`, distinct positive obsolete numbers excluding current;
+`previous` and `target` both name current. Trees are durably quarantined under
+`.garbage/<journal timestamp>/<number>` before recording complete, then deleted.
+Incomplete collection restores quarantined trees before another confirmed
+operation; terminal cleanup is retryable. Live or ambiguous obsolete engine
+bindings refuse collection. Previously published generation numbers are not reused.
+
+Shared-store collection preserves the bases, engine caches and hashed wheels of
+every extant generation in registered projects, except this project's approved
+obsolete trees. Missing projects, unreadable constraints/dependency locks or linked
+cache paths refuse deletion. The generation-owned provisioner reports dependency
+wheel hashes through its read-only `references` operation. Other-platform hashes
+are retained too. The extracted uv cache is disposable; deleting it does not
+change installed hardlinks or clones. Only recognized digest-named cache entries
+are collected; project libraries and registration records are never collection
+targets.
+Recorded pack dependency locks are included in the immutable generation file
+inventory even though pack venv contents remain separately doctor-managed.
+
+A store collection journal additionally carries `collectionStore` (absolute path)
+and `collectedStorePaths` (distinct `bases/<sha256>`, `engines/<sha256>`,
+`downloads/<sha256>`, `wheels/<sha256>` or `uv-cache` entries). They are parked under
+`<store>/.garbage/<journal timestamp>/<relative entry>` in the same transaction.
+`<store>/collection` contains the owning journal's absolute path and newline until
+recovery or committed cleanup finishes. Any registered project recovers this
+operation under the store and owning project locks before a confirmed mutation.
+Collection acquires registry, store and all registered project locks and rechecks
+the approved deletion set before publishing its journal.
+
 Moving a project is `dinkster-env move <new-root>`. Within a volume it moves
 the root, rewrites the `home` line of every pack venv's `pyvenv.cfg`, and
 runs `doctor`. Across volumes it creates a store on the destination volume
@@ -229,6 +383,25 @@ if none exists, re-syncs each retained generation there from the moved
 wheels, and rebuilds the pack venvs, so the link sharing holds on the new
 volume. A store that no project references any more is deleted by garbage
 collection.
+
+Move confirmation includes a temporary stop of idle engines. The source stays
+authoritative until destination doctor and engine health succeed; the original
+named ports and device assignments are restored at the destination, or at the
+source after failure. If all bindings are stopped, a temporary engine performs
+the destination health check without changing their stopped assignments.
+Plans reject absolute or escaping project symlinks rather than copy broken links.
+
+Move journals optionally carry `relocation`, containing absolute `sourceRoot`,
+`targetRoot`, `sourceStore` and `targetStore` paths plus `sourceFiles` (relative
+paths mapped to SHA256 identities or `link:` plus the relative link text).
+The existing registration snapshot also applies to a move's destination.
+An internal probe binding is marked `healthProbe: true` and is removed after
+authenticated shutdown. Destination journal publication is staged in the
+destination parent's `.dinkster-move-<journal timestamp>` directory before
+publishing that directory. The original root retains its diagnostic journals
+after commit, and refuses stale engine startup with the destination path.
+Cleanup refuses source files that changed after copying. Completed historical
+move journals remain diagnostics when neither endpoint is the current root.
 
 An engine swap while a job is running is refused with a message to finish or
 cancel the job.
@@ -244,6 +417,64 @@ client that finds a journal with an incomplete operation at startup finishes
 the rollback before doing anything else. The journal is the only record of
 update outcomes; Dinkster sends no telemetry, and a user reporting a problem
 can export the journal directory.
+
+Journal records use `format: dinkster.journal/1`, `operation` (`setup`,
+`update`, `rollback`, `move`, `repair` or `gc`), `previous` (positive integer
+or null), `target` (positive integer), and `stage`. Stages are `planned`,
+`building`, `starting`, `switching`, `complete` and `rolled-back`. Only
+`complete` and `rolled-back` are terminal. A failed operation may also carry
+an `error` string, retained after rollback. A malformed record is an error,
+not permission to ignore a possibly interrupted operation.
+
+`update --channel <name>` and `update --variant <name>` use the same confirmed
+generation construction and target-variant workflow replan. Selection updates and
+their rollbacks carry optional `projectSettings`, with `previous` and `target`
+project.json text strings. Other project fields, workflows and additions are
+preserved. After health and final revalidation, `switching` writes target settings
+before replacing `current`. Interrupted switching restores previous exact text
+and the pointer; earlier stages leave settings untouched. Unexpected external
+settings refuse recovery, and settings edited after selection refuse rollback,
+rather than overwrite user edits. Journals without this field keep settings
+unchanged; rollback reverses a successful selection pair without rebuilding.
+
+Activation records also retain `bindings`, an array of objects with `name`,
+`port`, `gpus` (device-id strings), `running` (boolean) and `targetPort`.
+These preserve previous assignments and candidate ports before construction
+or startup. Stopped bindings keep `targetPort` equal to `port`; only running
+bindings use new candidate ports, excluding the retained stopped assignments.
+Private process records live at
+`runtime/<generation>/<name>.json`; old and new same-name bindings can coexist
+without overwriting either process identity. Status follows `current`, but
+mutation safety checks inspect all recorded engines. Recovery restores the
+previous pointer and running assignments, stops only authenticated candidate
+processes and discards newly built failed targets. A retained rollback target
+is never discarded. Process identity ambiguity leaves the journal incomplete.
+
+Initial setup records `previous: null` and the requested initial binding before
+construction. It uses the same health-before-pointer activation path. Recovery
+stops the candidate, removes any published target pointer and incomplete target,
+and retains a rolled-back journal without selecting a nonexistent predecessor.
+CLI setup journals additionally carry `setupRegistration`: absolute `store` and
+`registry` paths, prior `project` and `pointer` text (nullable), and boolean
+`addedProject`, `addedVolume`, `hadProjects` and `hadRegistry` flags. Recovery
+durably restores prior local metadata, removes only the project reference it
+added, and removes a newly added volume mapping only when it still names that
+store and no projects remain. Cached content and persistent lock inodes remain;
+a fresh setup may choose another store after rollback. Recovery holds registry,
+store and project locks in the same order as registration, and terminal journal
+publication follows durable metadata restoration.
+Every managed engine receives its explicit absolute `--generation` path, so
+candidate startup and rollback do not follow the current pointer for sources.
+
+Per-instance process receipts are private runtime state under
+`runtime/<generation>/<name>.process/<sha256 of instance>/state.json`, containing
+the instance, lifecycle state and supervisor PID. A launch guard holds the
+directory's OS lock through child cleanup. Recovery may cancel a still-pending
+launch under that lock; a delayed supervisor then exits without an engine.
+The supervisor writes a stopped receipt only after cleanup, so interruption
+of the updater before its own record write cannot erase shutdown evidence.
+A dead supervisor without that receipt remains ambiguous. No process receipt
+or shutdown credential is added to the exported operation journal.
 
 ### Shipping code before it is public
 
