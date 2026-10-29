@@ -1,5 +1,6 @@
 """Torch-free schemas and manifest claims for custom-sampling guiders."""
 
+import subprocess
 import sys
 
 from dinkster_api.v1 import (
@@ -13,7 +14,17 @@ from dinkster_nodes_comfy.cfg_guiders import CFG_GUIDER_NODES
 
 
 def test_cfg_guider_schemas_are_cold_and_registered_in_source_order() -> None:
-    assert "torch" not in sys.modules
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from dinkster_nodes_comfy.cfg_guiders import CFG_GUIDER_NODES; "
+            "[node.schema() for node in CFG_GUIDER_NODES]; "
+            "import sys; assert 'torch' not in sys.modules",
+        ],
+        check=True,
+        timeout=30,
+    )
     expected = (
         ("CFGGuider", ("model", "positive", "negative", "cfg")),
         ("BasicGuider", ("model", "conditioning")),
