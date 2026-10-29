@@ -219,9 +219,12 @@
 - GLB 3D model assets through Load 3D Model, Save 3D Model, and Preview 3D
   nodes carrying validated raw GLB bytes as `dinkster.model3d`
 - Gaussian splat assets through Load Gaussian Splat and Save Gaussian Splat
-  nodes: `dinkster.splat` batches of activated world-space gaussians with
+  nodes: `SPLAT` batches of activated world-space gaussians with
   binary little-endian PLY interchange byte-compatible with ComfyUI's
-  splat PLY files
+  splat PLY files. Shared inference and media packs preserve optional per-item
+  counts, empty Gaussian tensors and floating dtype across ordinary worker
+  boundaries; live tensors retain their device and storage. Empty splats can
+  cross workers but cannot be exported to PLY.
 - Native ImageOnlyCheckpointSave exports model, vision encoder and VAE weights
   to a selected writable mount, preserving checkpoint metadata and reserved
   counter names, and reports the host-validated saved file in execution results.
