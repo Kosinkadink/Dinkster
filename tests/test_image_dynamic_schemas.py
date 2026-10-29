@@ -13,9 +13,9 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 from dinkster_caches import MemoryLRUCache
-from dinkster_compat_comfy.image import register_image_type
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, TypedLiteral
+from dinkster_native.image import register_image_type
 from dinkster_nodes_image import IMAGE_NODES
 from dinkster_nodes_image.adjust import ImageAdjust
 from dinkster_nodes_image.batch import (

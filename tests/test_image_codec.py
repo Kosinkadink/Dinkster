@@ -808,13 +808,13 @@ def test_merge_image_batches_concatenates_and_reconciles() -> None:
 
 
 def test_worker_image_type_decodes_to_torch(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The worker half (dinkster_compat_comfy.image): same bytes, torch
+    """The worker half (dinkster_native.image): same bytes, torch
     runtime form. torch is faked through sys.modules - the point is the
     codec calls torch.from_numpy on the decoded array, not torch itself."""
     import sys
     import types
 
-    from dinkster_compat_comfy.image import register_image_type
+    from dinkster_native.image import register_image_type
 
     captured: list[np.ndarray] = []
 

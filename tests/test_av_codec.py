@@ -271,10 +271,10 @@ def test_video_cost_rejects_malformed_remote_accounting(cost: object) -> None:
         validate_video_encoded(encode_video(video), metadata)
 
 
-def test_audio_crosses_between_compat_torch_and_torch_free_forms(
+def test_audio_crosses_between_native_torch_and_torch_free_forms(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from dinkster_compat_comfy.audio import register_audio_type
+    from dinkster_native.audio import register_audio_type
 
     fake_torch = types.ModuleType("torch")
     fake_torch.from_numpy = FakeTensor  # pyright: ignore[reportAttributeAccessIssue]
@@ -331,7 +331,7 @@ class FakeVideoFromComponents:
 
 
 def test_pinned_component_video_defaults_to_srgb(monkeypatch: pytest.MonkeyPatch) -> None:
-    from dinkster_compat_comfy.video import register_video_type
+    from dinkster_native.video import register_video_type
 
     input_impl = types.ModuleType("comfy_api.input_impl")
     input_impl.VideoFromFile = FakeVideoInput  # pyright: ignore[reportAttributeAccessIssue]
@@ -356,7 +356,7 @@ def test_pinned_component_video_defaults_to_srgb(monkeypatch: pytest.MonkeyPatch
 def test_video_crosses_between_upstream_family_and_torch_free_form(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from dinkster_compat_comfy.video import register_video_type
+    from dinkster_native.video import register_video_type
 
     comfy_api = types.ModuleType("comfy_api")
     input_impl = types.ModuleType("comfy_api.input_impl")
@@ -385,8 +385,8 @@ def test_video_crosses_between_upstream_family_and_torch_free_form(
     )
 
 
-def test_compat_video_refuses_unknown_subclasses(monkeypatch: pytest.MonkeyPatch) -> None:
-    from dinkster_compat_comfy.video import register_video_type
+def test_native_video_refuses_unknown_subclasses(monkeypatch: pytest.MonkeyPatch) -> None:
+    from dinkster_native.video import register_video_type
 
     input_impl = types.ModuleType("comfy_api.input_impl")
     input_impl.VideoFromFile = FakeVideoInput  # pyright: ignore[reportAttributeAccessIssue]
