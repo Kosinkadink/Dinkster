@@ -140,6 +140,11 @@ so stored nodes migrate once into the selected dynamic shape.
 `ReplacementCase.input_families` additionally supports copying a top-level
 dynamic family while preserving suffixes and authored order, or creating an
 explicit ordered member list from static source inputs.
+`InputFamilyMapping.copy(member_ids="targetPositions")` explicitly maps authored
+source order to target naming positions instead of copying suffixes. The wire
+field is `memberIds`; omission preserves the default descriptor byte shape.
+This option composes with historical `source_template` and `source_member_port`
+metadata and does not affect execution schema signatures.
 
 `ComfyAliasRegistry` models maintained ComfyUI import translations separately
 from native schemas. Each record carries an exact `ReplacementRule`, confidence

@@ -269,6 +269,82 @@ def test_input_family_mapping_validation() -> None:
         InputFamilyMember.build("value1", inputs={})
 
 
+def test_input_family_positional_member_ids_roundtrip() -> None:
+    mapping = InputFamilyMapping.copy(
+        "operands",
+        inputs={"value": MappingSource.copy("item")},
+        source_template=("item",),
+        source_member_port="operands.operands",
+        member_ids="targetPositions",
+    )
+    rule = _rule(ReplacementCase.build("new.node", input_families={"values": mapping}))
+    wire = _wire(*rule.cases)
+    assert wire["cases"][0]["inputFamilies"]["values"] == {
+        "kind": "copy",
+        "sourceFamily": "operands",
+        "inputs": {"value": {"kind": "copy", "input": "item"}},
+        "sourceTemplate": {"inputs": ["item"], "memberPort": "operands.operands"},
+        "memberIds": "targetPositions",
+    }
+    assert rule_from_wire(wire) == rule
+    current = NodeSchema(node_type="new.node", replacements=(rule,))
+    assert schema_from_wire(schema_to_wire(current)) == current
+    without_option = dataclasses.replace(
+        current,
+        replacements=(
+            _rule(
+                ReplacementCase.build(
+                    "new.node",
+                    input_families={"values": dataclasses.replace(mapping, member_ids=None)},
+                )
+            ),
+        ),
+    )
+    assert (
+        "memberIds"
+        not in _wire(*without_option.replacements[0].cases)["cases"][0]["inputFamilies"]["values"]
+    )
+    assert schema_signature(current) == schema_signature(without_option)
+    wire["cases"][0]["inputFamilies"]["values"]["memberIds"] = None
+    with pytest.raises(ValueError, match="memberIds"):
+        rule_from_wire(wire)
+
+
+@pytest.mark.parametrize("option", [True, "unknown", [], {}, 0])
+def test_input_family_rejects_invalid_member_identity_options(option: Any) -> None:
+    with pytest.raises(ValueError, match="member ids"):
+        InputFamilyMapping.copy(
+            "operands", inputs={"value": MappingSource.copy("item")}, member_ids=option
+        )
+    wire = _wire(
+        ReplacementCase.build(
+            "new.node",
+            input_families={
+                "values": InputFamilyMapping.copy(
+                    "operands", inputs={"value": MappingSource.copy("item")}
+                )
+            },
+        )
+    )
+    wire["cases"][0]["inputFamilies"]["values"]["memberIds"] = option
+    with pytest.raises(ValueError, match="memberIds"):
+        rule_from_wire(wire)
+
+
+def test_input_family_members_rejects_copy_identity_option() -> None:
+    member = InputFamilyMember.build("a", inputs={"value": MappingSource.constant(9)})
+    with pytest.raises(ValueError, match="only explicit members"):
+        InputFamilyMapping(kind="members", members=(member,), member_ids="targetPositions")
+    wire = _wire(
+        ReplacementCase.build(
+            "new.node", input_families={"values": InputFamilyMapping.from_members(member)}
+        )
+    )
+    wire["cases"][0]["inputFamilies"]["values"]["memberIds"] = "targetPositions"
+    with pytest.raises(ValueError, match="memberIds"):
+        rule_from_wire(wire)
+
+
 @pytest.mark.parametrize(
     ("template", "member_port"),
     [(("item",), ""), (("weight", "item"), ""), (("item",), "operands.operands")],
