@@ -128,6 +128,58 @@ def _batch_noise(samples: torch.Tensor, seed: int) -> torch.Tensor:
     return torch.cat((draws[2], draws[0]))
 
 
+@pytest.mark.parametrize("advanced", (False, True))
+def test_standard_sampling_consumes_prepared_clone(
+    monkeypatch: pytest.MonkeyPatch, advanced: bool
+) -> None:
+    model, _ = _model()
+    from dinkster_inference import sample
+    from dinkster_protocol import use_sampling_model_preparer
+
+    prepared = model.clone()
+    source = _latent()
+
+    def prepare(actual: object) -> object:
+        assert actual is model
+        return prepared
+
+    def normalize(actual: object, latent: torch.Tensor, *_args: object) -> torch.Tensor:
+        assert actual is prepared
+        return latent + 3.0
+
+    def sample_model(actual: object, *_args: object, **_kwargs: object) -> torch.Tensor:
+        return source["samples"] + (7.0 if actual is prepared else -11.0)
+
+    monkeypatch.setattr(sample, "fix_empty_latent_channels", normalize)
+    monkeypatch.setattr(sample, "prepare_noise", lambda latent, *_args: torch.zeros_like(latent))
+    monkeypatch.setattr(sample, "sample", sample_model)
+    common = dict(
+        model=model,
+        steps=2,
+        cfg=1.0,
+        sampler_name="euler",
+        scheduler="normal",
+        positive=_conditioning(),
+        negative=_conditioning(),
+        latent_image=source,
+    )
+    with use_sampling_model_preparer(prepare):
+        if advanced:
+            result = KSamplerAdvanced.execute(
+                **common,
+                add_noise="enable",
+                noise_seed=739,
+                start_at_step=0,
+                end_at_step=2,
+                return_with_leftover_noise="disable",
+            )["LATENT"]
+        else:
+            result = KSampler.execute(**common, seed=739, denoise=1.0)["LATENT"]
+    torch.testing.assert_close(result["samples"], source["samples"] + 7.0)
+    assert result["preserved"] == "metadata"
+    assert model.model_options == prepared.model_options
+
+
 @pytest.mark.parametrize("denoise", (1.0, 0.5, 0.0))
 def test_ksampler_runs_pinned_cpu_engine_with_seed_batch_mask_and_source_preservation(
     denoise: float,
