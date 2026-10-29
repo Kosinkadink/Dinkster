@@ -17,6 +17,7 @@ __all__ = ["DownloadError", "fetch_artifact", "read_metadata"]
 _DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 _CONTENT_RANGE_PATTERN = re.compile(r"bytes (\d+)-(\d+)/(\d+)\Z")
 _CHUNK_SIZE = 1024 * 1024
+_USER_AGENT = "dinkster-env"
 
 
 class DownloadError(ValueError):
@@ -45,7 +46,8 @@ def read_metadata(mirror: str, relative_path: str) -> bytes:
     if parsed.scheme and not Path(mirror).is_absolute():
         _validate_remote_url(mirror)
         url = mirror.rstrip("/") + "/" + quote(relative_path, safe="/")
-        with build_opener(_SafeRedirects()).open(url, timeout=30) as response:
+        request = Request(url, headers={"User-Agent": _USER_AGENT})
+        with build_opener(_SafeRedirects()).open(request, timeout=30) as response:
             if response.status != 200:
                 raise DownloadError("unexpected metadata response status")
             data = response.read(maximum + 1)
@@ -173,7 +175,9 @@ def _download_http(mirror: str, relative_path: str, partial: Path, size: int) ->
     if offset > size:
         partial.unlink()
         offset = 0
-    headers = {"Range": f"bytes={offset}-"} if offset else {}
+    headers = {"User-Agent": _USER_AGENT}
+    if offset:
+        headers["Range"] = f"bytes={offset}-"
     request = Request(url, headers=headers)
     with build_opener(_SafeRedirects()).open(request, timeout=30) as response:
         status = response.status

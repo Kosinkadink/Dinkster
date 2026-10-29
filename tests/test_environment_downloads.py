@@ -21,6 +21,9 @@ def artifact_server(
 ) -> Iterator[str]:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
+            if self.headers.get("User-Agent") != "dinkster-env":
+                self.send_error(403, "product User-Agent required")
+                return
             if redirect is not None:
                 self.send_response(302)
                 self.send_header("Location", redirect)
