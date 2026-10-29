@@ -210,10 +210,24 @@ def build(
             raise ValueError(
                 "tools dependency closure is inconsistent: " + checked.stdout + checked.stderr
             )
-        scripts = python.parent if os.name != "nt" else python.parent / "Scripts"
+        scripts = Path(
+            subprocess.check_output(
+                [str(python), "-I", "-c", "import sysconfig; print(sysconfig.get_path('scripts'))"],
+                text=True,
+            ).strip()
+        )
+        if not scripts.resolve().is_relative_to((payload / "python").resolve()):
+            raise ValueError("tools scripts directory must be inside the standalone interpreter")
         bundled_uv = scripts / ("uv.exe" if os.name == "nt" else "uv")
         if not bundled_uv.is_file():
             raise ValueError("locked tools installation is missing uv")
+        command_directory = python.parent if os.name != "nt" else python.parent / "Scripts"
+        if scripts != command_directory:
+            # Distribution Python builds can install scripts under python/local/bin.
+            # Keep the bootstrap's native bin/Scripts PATH contract independent of that scheme.
+            for command in ("uv", "uvx"):
+                name = command + (".exe" if os.name == "nt" else "")
+                shutil.copy2(scripts / name, command_directory / name)
         # ZIP dereferences safe internal aliases, requiring no symlink privilege at bootstrap.
         # Relocation cannot rely on installer-generated console-script shebangs.
         for path in scripts.glob("dinkster-*"):
