@@ -55,6 +55,8 @@
 - A server launched with `--engine-variant` supplies that declared target to
   workflow-open plans that omit `variant`. Explicit request variants remain
   available for read-only comparisons; no target is inferred from hardware.
+  Plans support packs supplied with either a directory or an explicit manifest
+  path through `--pack`.
 - Local environment operators can run `python -m dinkster.workflow_requirements
   project-plan --project-root /absolute/project --source-generation /absolute/source
   --catalog-lock /absolute/release/official-packs.lock --artifacts /absolute/cache
