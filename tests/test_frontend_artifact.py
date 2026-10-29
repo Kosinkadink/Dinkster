@@ -6,12 +6,13 @@ import hashlib
 import io
 import json
 import shutil
+import subprocess
 import zipfile
 from pathlib import Path
 
 import pytest
 
-from scripts.build_release import build_frontend_wheel
+from scripts.build_release import versioned_sources
 from scripts.download_frontend import REPOSITORY, download, verify_and_extract
 
 
@@ -55,18 +56,25 @@ def test_wheel_preserves_the_published_bundle_and_manifest(tmp_path: Path, versi
     published.write_bytes(payload)
     uv = shutil.which("uv")
     assert uv is not None, "release packaging requires uv"
-    wheel = build_frontend_wheel(published, version, pin, tmp_path, uv)
+    with versioned_sources(Path(__file__).resolve().parents[1], version) as staged:
+        verify_and_extract(payload, pin, staged / "src/dinkster/frontend_bundle/static")
+        subprocess.run(
+            [uv, "build", "--package", "dinkster", "--wheel", "--out-dir", str(tmp_path)],
+            cwd=staged,
+            check=True,
+        )
+    [wheel] = tmp_path.glob("*.whl")
     with zipfile.ZipFile(wheel) as installed, zipfile.ZipFile(io.BytesIO(payload)) as wrapper:
         with zipfile.ZipFile(io.BytesIO(wrapper.read("bundle.zip"))) as bundle:
             assert {
-                name.removeprefix("dinkster_frontend/static/"): installed.read(name)
+                name.removeprefix("dinkster/frontend_bundle/static/"): installed.read(name)
                 for name in installed.namelist()
-                if name.startswith("dinkster_frontend/static/")
+                if name.startswith("dinkster/frontend_bundle/static/")
             } == {name: bundle.read(name) for name in bundle.namelist()}
-        assert json.loads(installed.read("dinkster_frontend/manifest.json")) == json.loads(
+        assert json.loads(installed.read("dinkster/frontend_bundle/manifest.json")) == json.loads(
             wrapper.read("manifest.json")
         )
-    assert wheel.name == f"dinkster_frontend-{version}-py3-none-any.whl"
+    assert wheel.name == f"dinkster-{version}-py3-none-any.whl"
 
 
 @pytest.mark.parametrize(

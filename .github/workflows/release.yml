@@ -142,7 +142,7 @@ jobs:
             --requirement "$RUNNER_TEMP/dinkster-release/constraints.txt"
           "$python" -m pip check
           "$python" -m dinkster.cli --help
-          "$python" -c "from dinkster_frontend import bundle_path; assert bundle_path().joinpath('index.html').is_file()"
+          "$python" -c "from dinkster.frontend import discover_frontend_bundle; assert discover_frontend_bundle() is not None"
           "$python" scripts/verify_release_install.py "$GITHUB_WORKSPACE" --python "$python" --require-frontend
       - name: Verify streaming base extraction on the host filesystem
         shell: bash
@@ -213,17 +213,58 @@ jobs:
         with:
           name: wheel-release
           path: dist
-      - name: Select the built workspace and frontend wheels
+      - name: Select the engine distribution
         run: |
           mkdir publish
-          python3 - <<'PY'
-          import json
-          import shutil
-          from pathlib import Path
-          manifest = json.loads(Path('dist/release-manifest.json').read_text())
-          for name in manifest['workspaceWheels']:
-              shutil.copy2(Path('dist') / name, 'publish')
-          PY
+          cp dist/dinkster-[0-9]*.whl publish/
+      - name: Publish the engine with PyPI trusted publishing
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: publish/
+          skip-existing: true
+
+  publish-api:
+    needs: release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi-dinkster-api
+      url: https://pypi.org/project/dinkster-api/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-release
+          path: dist
+      - name: Select the API distribution
+        run: |
+          mkdir publish
+          cp dist/dinkster_api-[0-9]*.whl publish/
+      - name: Publish the API with PyPI trusted publishing
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: publish/
+          skip-existing: true
+
+  publish-supervisor:
+    needs: release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi-dinkster-supervisor
+      url: https://pypi.org/project/dinkster-supervisor/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-release
+          path: dist
+      - name: Select the supervisor distribution
+        run: |
+          mkdir publish
+          cp dist/dinkster_supervisor-[0-9]*.whl publish/
       - name: Publish the release wheels with PyPI trusted publishing
         uses: pypa/gh-action-pypi-publish@release/v1
         with:

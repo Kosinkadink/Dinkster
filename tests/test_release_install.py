@@ -17,7 +17,6 @@ from test_frontend_artifact import artifact
 
 from scripts.build_release import (
     build,
-    build_frontend_wheel,
     build_source_archive,
     development_version,
     download_external_wheels,
@@ -28,6 +27,7 @@ from scripts.build_release import (
     workspace_projects,
     write_constraints,
 )
+from scripts.download_frontend import verify_and_extract
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -40,7 +40,14 @@ def test_built_frontend_wheel_is_discovered_without_a_checkout(tmp_path: Path) -
     published.write_bytes(payload)
     uv = shutil.which("uv")
     assert uv is not None, "release packaging requires uv"
-    wheel = build_frontend_wheel(published, "0.0.1", pin, tmp_path, uv)
+    with versioned_sources(ROOT, "0.0.1") as staged:
+        verify_and_extract(payload, pin, staged / "src/dinkster/frontend_bundle/static")
+        subprocess.run(
+            [uv, "build", "--package", "dinkster", "--wheel", "--out-dir", str(tmp_path)],
+            cwd=staged,
+            check=True,
+        )
+    [wheel] = tmp_path.glob("*.whl")
     installed = tmp_path / "site-packages"
     with zipfile.ZipFile(wheel) as archive:
         archive.extractall(installed)
@@ -58,7 +65,7 @@ def test_built_frontend_wheel_is_discovered_without_a_checkout(tmp_path: Path) -
         cwd=tmp_path,
         text=True,
     ).strip()
-    assert discovered == str(installed / "dinkster_frontend/static")
+    assert discovered == str(installed / "dinkster/frontend_bundle/static")
 
 
 def test_release_workflow_validates_tag_before_building_and_publishing() -> None:
@@ -66,7 +73,15 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert workflow[True]["push"] == {"branches": ["main"], "tags": ["v*.*.*"]}
     assert ".github/workflows/release.yml" in workflow[True]["pull_request"]["paths"]
     assert "src/dinkster/frontend.py" in workflow[True]["pull_request"]["paths"]
-    assert set(workflow["jobs"]) == {"validation", "build", "install", "release", "publish"}
+    assert set(workflow["jobs"]) == {
+        "validation",
+        "build",
+        "install",
+        "release",
+        "publish",
+        "publish-api",
+        "publish-supervisor",
+    }
     assert workflow["jobs"]["validation"] == {
         "uses": "./.github/workflows/ci.yml",
     }
@@ -103,20 +118,51 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     }
 
 
-def test_release_publication_is_tag_only_and_uses_trusted_publishing() -> None:
+@pytest.mark.parametrize(
+    ("job", "project", "environment"),
+    [
+        ("publish", "dinkster", "pypi"),
+        ("publish-api", "dinkster-api", "pypi-dinkster-api"),
+        ("publish-supervisor", "dinkster-supervisor", "pypi-dinkster-supervisor"),
+    ],
+)
+def test_release_publication_is_tag_only_and_uses_trusted_publishing(
+    job: str, project: str, environment: str, tmp_path: Path
+) -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
     assert workflow["jobs"]["release"]["if"] == "github.event_name == 'push'"
-    publish = workflow["jobs"]["publish"]
+    publish = workflow["jobs"][job]
     assert publish["needs"] == "release"
     assert publish["if"] == ("github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')")
     assert "pypi.org/pypi/" not in json.dumps(workflow)
     assert "pypi-ready" not in json.dumps(workflow)
     assert publish["permissions"] == {"id-token": "write"}
-    assert publish["environment"]["name"] == "pypi"
+    assert publish["environment"] == {
+        "name": environment,
+        "url": f"https://pypi.org/project/{project}/",
+    }
     action = publish["steps"][-1]
     assert action["uses"] == "pypa/gh-action-pypi-publish@release/v1"
     assert action["with"] == {"packages-dir": "publish/", "skip-existing": True}
     assert "secrets." not in json.dumps(publish)
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    for name in (
+        "dinkster-1.2.3-py3-none-any.whl",
+        "dinkster_api-1.2.3-py3-none-any.whl",
+        "dinkster_supervisor-1.2.3-py3-none-any.whl",
+        "dinkster_inference-1.2.3-py3-none-any.whl",
+        "official-packs.lock",
+        "dinkster-source-1.2.3.zip",
+    ):
+        (dist / name).write_bytes(name.encode())
+    selection = next(step["run"] for step in publish["steps"] if "run" in step)
+    subprocess.run(["bash", "-e", "-c", selection], cwd=tmp_path, check=True)
+    selected = list((tmp_path / "publish").iterdir())
+    assert [path.name for path in selected] == [
+        f"{project.replace('-', '_')}-1.2.3-py3-none-any.whl"
+    ]
+    assert selected[0].read_bytes() == (dist / selected[0].name).read_bytes()
     assert all(
         "latest" in row["runner"]
         for row in workflow["jobs"]["install"]["strategy"]["matrix"]["include"]
@@ -212,7 +258,7 @@ def test_release_install_matrix_covers_supported_desktop_platforms() -> None:
     assert "--require-hashes" in command
     assert "--find-links" in command
     assert "--requirement" in command
-    assert "from dinkster_frontend import bundle_path" in command
+    assert "from dinkster.frontend import discover_frontend_bundle" in command
     assert all(
         step.get("uses") != "./.github/actions/configure-dinkster-identity"
         for step in workflow["jobs"]["install"]["steps"]
@@ -251,11 +297,11 @@ def test_release_http_check_requires_the_application_root(
 ) -> None:
     from scripts.verify_release_install import verify_launch
 
-    module = tmp_path / "dinkster_frontend"
-    (module / "static").mkdir(parents=True)
-    (module / "__init__.py").touch()
+    module = tmp_path / "dinkster"
+    shutil.copytree(ROOT / "src/dinkster", module)
+    (module / "frontend_bundle/static").mkdir(parents=True)
     document = '<html><div id="root"></div></html>' if has_root else "<html>Error</html>"
-    (module / "static/index.html").write_text(document)
+    (module / "frontend_bundle/static/index.html").write_text(document)
     monkeypatch.setenv("PYTHONPATH", str(tmp_path))
     state = tmp_path / "release"
     if has_root:
@@ -406,12 +452,13 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     original_lock = hashlib.sha256((ROOT / "uv.lock").read_bytes()).hexdigest()
     output = tmp_path / "wheels"
     with versioned_sources(ROOT, version) as staged:
-        subprocess.run(
-            ["uv", "build", "--wheel", "--package", "dinkster", "--out-dir", str(output)],
-            cwd=staged,
-            check=True,
-        )
-    [wheel] = output.glob("*.whl")
+        for project in ("dinkster", "dinkster-api"):
+            subprocess.run(
+                ["uv", "build", "--wheel", "--package", project, "--out-dir", str(output)],
+                cwd=staged,
+                check=True,
+            )
+    [wheel] = output.glob("dinkster-*.whl")
     with zipfile.ZipFile(wheel) as archive:
         [name] = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
         metadata = archive.read(name).decode()
@@ -420,6 +467,60 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
             for name in archive.namelist()
             if name.startswith("dinkster/") and name.endswith(".py")
         }
+        for member in (
+            "graph",
+            "engine",
+            "server",
+            "native",
+            "collab",
+            "compat-comfy",
+            "nodes-generation",
+        ):
+            namespace = "dinkster_" + member.replace("-", "_")
+            source = ROOT / "packages" / f"dinkster-{member}" / "src"
+            assert {
+                name
+                for name in archive.namelist()
+                if name.startswith(namespace + "/") and name.endswith(".py")
+            } == {path.relative_to(source).as_posix() for path in source.rglob("*.py")}
+    [api_wheel] = output.glob("dinkster_api-*.whl")
+    with zipfile.ZipFile(api_wheel) as archive:
+        [name] = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
+        api_metadata = archive.read(name).decode()
+        assert "Requires-Dist: torch" not in api_metadata
+        assert {
+            line
+            for line in api_metadata.splitlines()
+            if line.startswith("Requires-Dist: dinkster-")
+        } == {"Requires-Dist: dinkster-opentimelineio==0.19.0"}
+        for member in (
+            "api",
+            "values",
+            "schema",
+            "protocol",
+            "memory",
+            "assets",
+            "caches",
+            "inference-wire",
+            "image-document",
+            "video",
+            "workers",
+            "registry",
+        ):
+            namespace = "dinkster_" + member.replace("-", "_")
+            source = ROOT / "packages" / f"dinkster-{member}" / "src"
+            assert {
+                name
+                for name in archive.namelist()
+                if name.startswith(namespace + "/")
+                and "/preview/" not in name
+                and name.endswith(".py")
+            } == {path.relative_to(source).as_posix() for path in source.rglob("*.py")}
+        assert "dinkster_video_preview/__init__.py" in archive.namelist()
+        assert (
+            "dinkster-doctor = dinkster_workers.doctor:main"
+            in archive.read(f"dinkster_api-{version}.dist-info/entry_points.txt").decode()
+        )
     source_archive = build_source_archive(ROOT, version, tmp_path)
     with zipfile.ZipFile(source_archive) as archive:
         source_modules = {
@@ -431,7 +532,8 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     assert source_modules == wheel_modules
     assert f"Version: {version}\n" in metadata
     assert f"Requires-Dist: dinkster-api=={version}\n" in metadata
-    assert f"Requires-Dist: dinkster-frontend=={version}\n" in metadata
+    assert "dinkster-frontend" not in metadata
+    assert "Requires-Dist: dinkster-inference==0.1.0\n" in metadata
     assert "Requires-Dist: aiohttp>=3.10\n" in metadata
     subprocess.run(
         [
@@ -767,6 +869,8 @@ def test_external_payload_omits_only_exact_members_shared_by_all_target_bases(
 def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
     tmp_path: Path,
 ) -> None:
+    from dinkster_registry import LockedPack, Lockfile, build_artifact
+
     root = tmp_path / "source"
     frontend = tmp_path / "frontend.zip"
     frontend_payload, frontend_pin = artifact()
@@ -774,6 +878,8 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
     files = {
         "pyproject.toml": (
             '[project]\nname = "dinkster"\nversion = "1.2.3"\n'
+            "[tool.uv.workspace]\n"
+            'members = ["packages/dinkster-api", "packages/dinkster-supervisor"]\n'
             "[dependency-groups]\nengine-base = []\n"
             '[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n'
         ),
@@ -781,6 +887,12 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
         "packages/dinkster-workers/src/dinkster_workers/boundary.py": "PROTOCOL_VERSION = 1\n",
         "scripts/release_sources.json": json.dumps(frontend_pin),
     }
+    for member in ("api", "supervisor"):
+        files[f"packages/dinkster-{member}/pyproject.toml"] = (
+            f'[project]\nname = "dinkster-{member}"\nversion = "1.2.3"\n'
+            '[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n'
+        )
+        files[f"packages/dinkster-{member}/src/dinkster_{member}/__init__.py"] = ""
     for name, value in files.items():
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -792,17 +904,44 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
     (root / ".git/HEAD").write_text(tree + "\n")
     payload = tmp_path / "official-pack-1.2.3.tar.gz"
     payload.write_bytes(b"finished pack archive")
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    (pack / "dinkster-pack.toml").write_text(
+        '[pack]\nname = "dinkster-nodes-foundation"\npublisher = "dinkster"\n'
+        'namespaces = ["std"]\n[pack.entry]\nnodes = "nodes:NODES"\n'
+    )
+    (pack / "nodes.py").write_text("NODES = ()\n")
+    archive = tmp_path / "dinkster-nodes-foundation-1.2.3.zip"
+    digest = build_artifact(pack, archive)
+    catalog = tmp_path / "official-packs.lock"
+    catalog.write_text(
+        Lockfile.of(
+            [
+                LockedPack(
+                    "dinkster-nodes-foundation", "1.2.3", digest, "dinkster", ("std",), "release"
+                )
+            ]
+        ).record_json()
+    )
     bootstrap = tmp_path / ("dinkster-tools-1.2.4.dev123+g" + "a" * 40 + "-linux-x86_64.tar.gz")
     bootstrap.write_bytes(b"finished interpreter and supervisor payload")
     output = tmp_path / "release"
-    built = build(root, output, "v1.2.3", frontend, payload_artifacts=[payload, bootstrap])
+    payloads = [payload, bootstrap, archive, catalog]
+    built = build(root, output, "v1.2.3", frontend, payload_artifacts=payloads)
     manifest = json.loads((output / "release-manifest.json").read_text())
     assert built == manifest
     assert set(manifest["workspaceWheels"]) == {
         "dinkster-1.2.3-py2.py3-none-any.whl",
-        "dinkster_frontend-1.2.3-py3-none-any.whl",
+        "dinkster_api-1.2.3-py2.py3-none-any.whl",
+        "dinkster_supervisor-1.2.3-py2.py3-none-any.whl",
     }
-    for candidate in (payload, bootstrap):
+    with zipfile.ZipFile(output / "dinkster-1.2.3-py2.py3-none-any.whl") as wheel:
+        assert {
+            name.removeprefix("dinkster/official_packs/"): wheel.read(name)
+            for name in wheel.namelist()
+            if name.startswith("dinkster/official_packs/")
+        } == {path.name: path.read_bytes() for path in (archive, catalog)}
+    for candidate in payloads:
         assert (output / candidate.name).read_bytes() == candidate.read_bytes()
         row = next(row for row in manifest["artifacts"] if row["name"] == candidate.name)
         assert row == {

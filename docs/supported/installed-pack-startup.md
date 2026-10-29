@@ -13,7 +13,8 @@
   their terminals use scratch venvs and doctor reports dependency drift.
 - The official pack artifact builder produces deterministic source archives and
   an existing registry artifact lock from committed sources, preserving the
-  fifteen pack identities and node entry points without importing node code.
+  fourteen pack identities and node entry points without importing node code.
+  Generation schemas remain engine-carried rather than separate official packs.
 - Official source artifacts retain their committed manifest dependency
   declarations without adding workspace project requirements at publication.
   Publishing can emit separate per-variant hashed dependency locks against the
@@ -110,7 +111,11 @@
   remains a read-only compatibility comparison, not an environment switch.
 - The default local launcher prepares missing or stale catalogs before binding,
   then serves the browser application and engine API from one loopback origin.
-- Released engines discover the installed frontend wheel without a frontend
+- A pip-installed engine prepares the bundled default pack catalogs before
+  binding; the core worker is selected once with its configured runtime options.
+- Checkout defaults retain their managed source lock without requiring an
+  installed standard-suite distribution.
+- Released engines discover the frontend bundled inside the engine wheel without a frontend
   checkout. Release installation checks require the browser application document
   at `/` as well as the engine API.
 - Health reports composed and failed counts and is not ready when composition
