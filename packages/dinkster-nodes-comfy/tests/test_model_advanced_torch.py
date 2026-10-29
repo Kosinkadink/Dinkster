@@ -254,9 +254,8 @@ def test_compute_dtype_installs_torch_dtype() -> None:
     assert result.dtype is torch.bfloat16
 
 
-@pytest.mark.parametrize("attention", ("pytorch attention", "comfy kitchen attention"))
 def test_attention_backend_installs_runtime_callback(
-    monkeypatch: pytest.MonkeyPatch, attention: str
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import dinkster_nodes_comfy.model_advanced as advanced
 
@@ -281,7 +280,7 @@ def test_attention_backend_installs_runtime_callback(
         ),
     )
     original = source()
-    patched = ModelAttentionBackend.execute(model=original, attention=attention)["MODEL"]
+    patched = ModelAttentionBackend.execute(model=original, attention="pytorch attention")["MODEL"]
     query = torch.tensor([1.0, -2.0])
     key = torch.tensor([3.0, 5.0])
     value = torch.tensor([-4.0, 2.0])

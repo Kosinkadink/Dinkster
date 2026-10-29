@@ -9,6 +9,8 @@ on:
       - scripts/setup_envs.ps1
       - tools/minimax_h3_multigpu_receipt.py
       - tests/test_minimax_h3_multigpu_receipt.py
+      - packages/dinkster-nodes-comfy/tests/test_model_advanced_torch.py
+      - packages/dinkster-nodes-comfy/tests/test_void_sampler_torch.py
       - pyproject.toml
       - uv.lock
 
@@ -26,6 +28,8 @@ jobs:
     env:
       OMP_NUM_THREADS: "4"
       MKL_NUM_THREADS: "4"
+      ATEN_CPU_CAPABILITY: avx2
+      ONEDNN_MAX_CPU_ISA: AVX2
     steps:
       - uses: actions/checkout@v4
         with:
@@ -60,3 +64,41 @@ jobs:
           assert torchvision.ops.nms(boxes, scores, 0.2).tolist() == [0, 2]
           print('Constrained CPU torch/torchvision imports and NMS passed')
           PY
+      - name: Trace CPU sampler scalar arithmetic
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          uv pip install --python .venv-torch/bin/python \
+            --constraint "$RUNNER_TEMP/torch-constraints.txt" -e . -e packages/dinkster-nodes-comfy
+          .venv-torch/bin/python - <<'PY'
+          import sys
+          import torch
+          from dinkster_nodes_comfy.void_sampler import VOIDSampler
+
+          def trace(frame, event, arg):
+              if frame.f_code.co_name == 'sample' and frame.f_code.co_filename.endswith('void_sampler.py'):
+                  if event == 'line':
+                      print(frame.f_lineno, {k: v.tolist() if isinstance(v, torch.Tensor) else v
+                            for k, v in frame.f_locals.items()
+                            if k in ('index', 'sigma', 'alpha_t', 'alpha_prev', 'pred_eps', 'x', 'denoised')})
+                  return trace
+
+          sampler = VOIDSampler.execute()['SAMPLER']
+          for dtype in (torch.float32, torch.float64):
+              sigmas = torch.tensor([2., 1., .25, 0.], dtype=dtype)
+              alpha = 1. / (1. + sigmas**2)
+              print(dtype, alpha.tolist(), [(a**.5).item() for a in alpha])
+              sys.settrace(trace)
+              result = sampler.sample(lambda x, sigma, **kw: x*.25 + sigma.reshape(-1, 1, 1, 1)*.125,
+                                      sigmas, {}, None, torch.tensor([[[[2., -3.]]]], dtype=torch.float64),
+                                      disable_pbar=True)
+              sys.settrace(None)
+              print('result', result.tolist())
+          PY
+      - name: Test public CPU sampler and attention contracts
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          .venv-torch/bin/python -m pytest -q \
+            packages/dinkster-nodes-comfy/tests/test_void_sampler_torch.py \
+            packages/dinkster-nodes-comfy/tests/test_model_advanced_torch.py
