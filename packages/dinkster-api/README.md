@@ -198,6 +198,8 @@ active invocation; it is not a droppable event. The host independently checks
 the mounted file and writer publication before returning a `SavedArtifact` in
 the run result. Failed executions return no attachments. Ordinary ASSET outputs
 do not imply a saved-file attachment, and no bytes are copied to a second store.
+Attach every published file in a batch; an invocation admits up to 4096 saved-file
+claims, independently of the encoded-preview and legacy-candidate limits.
 
 - [Pack authoring](../../docs/pack-authoring.md) describes manifests, nodes,
   custom value types, and the compatibility contract.
