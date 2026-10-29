@@ -243,6 +243,12 @@ def _retention_key(scope: object, owner_kind: object, owner_id: object) -> tuple
 def _retention_digests(raw: object) -> tuple[str, ...]:
     if not isinstance(raw, list) or len(cast(list[object], raw)) > 4096:
         raise AssetError("retained digests must be a list of at most 4096 identities")
+    return _canonical_digests(raw)
+
+
+def _canonical_digests(raw: object) -> tuple[str, ...]:
+    if not isinstance(raw, list):
+        raise AssetError("asset references must be a list")
     digests: set[str] = set()
     for digest in cast(list[object], raw):
         if not isinstance(digest, str):
@@ -380,7 +386,9 @@ class LibraryStore:
         return retained
 
     @contextmanager
-    def hold_asset_references(self) -> Generator[frozenset[str]]:
+    def hold_asset_references(
+        self, additional_roots: Sequence[str] = ()
+    ) -> Generator[frozenset[str]]:
         """Inspect catalog and explicit roots in every scope behind their write barrier.
 
         This excludes other SQLite writers, not cache or history publishers.
@@ -391,11 +399,19 @@ class LibraryStore:
                 self._conn.execute("BEGIN IMMEDIATE")
                 rows = self._conn.execute("SELECT * FROM asset_retentions").fetchall()
                 roots = set(digest for row in rows for digest in _retention_from_row(row).digests)
+                roots.update(require_digest(digest) for digest in additional_roots)
                 for table in ("records", "media_grants", "asset_observations"):
                     for (digest,) in self._conn.execute(f"SELECT digest FROM {table}"):
                         if not isinstance(digest, str):
                             raise AssetError("catalog reference identity is invalid")
                         roots.add(require_digest(digest))
+                for (references,) in self._conn.execute(
+                    "SELECT asset_digests FROM asset_derivations"
+                ):
+                    try:
+                        roots.update(_canonical_digests(json.loads(references)))
+                    except (TypeError, ValueError) as exc:
+                        raise AssetError("derivation asset references are unavailable") from exc
                 manifests = {
                     row["digest"]: row["manifest"]
                     for row in self._conn.execute("SELECT digest, manifest FROM asset_dependencies")
@@ -757,20 +773,38 @@ class LibraryStore:
             ).fetchone()
         return None if row is None else json.loads(row["manifest"])
 
-    def put_derivation(self, cache_key: str, manifest: Mapping[str, object]) -> bool:
-        """Persist an immutable content-derived result under its complete cache key."""
+    def put_derivation(
+        self, cache_key: str, manifest: Mapping[str, object], *, references: list[str]
+    ) -> bool:
+        """Persist immutable provenance and its producer-declared external identities atomically."""
         cache_key = require_digest(cache_key)
         encoded = json.dumps(dict(manifest), separators=(",", ":"), sort_keys=True)
+        cleaned = _canonical_digests(references)
         with self._lock, self._conn:
             inserted = self._conn.execute(
-                "INSERT OR IGNORE INTO asset_derivations VALUES (?, ?)", (cache_key, encoded)
+                "INSERT OR IGNORE INTO asset_derivations (cache_key, manifest, asset_digests) "
+                "VALUES (?, ?, ?)",
+                (cache_key, encoded, json.dumps(cleaned)),
             )
             row = self._conn.execute(
-                "SELECT manifest FROM asset_derivations WHERE cache_key = ?", (cache_key,)
+                "SELECT manifest, asset_digests FROM asset_derivations WHERE cache_key = ?",
+                (cache_key,),
             ).fetchone()
-        assert row is not None
-        if row["manifest"] != encoded:
-            raise AssetError("derivation conflicts with immutable stored manifest")
+            assert row is not None
+            if row["manifest"] != encoded:
+                raise AssetError("derivation conflicts with immutable stored manifest")
+            if row["asset_digests"] is None:
+                self._conn.execute(
+                    "UPDATE asset_derivations SET asset_digests = ? WHERE cache_key = ?",
+                    (json.dumps(cleaned), cache_key),
+                )
+            else:
+                try:
+                    stored = _canonical_digests(json.loads(row["asset_digests"]))
+                except (TypeError, ValueError) as exc:
+                    raise AssetError("derivation asset references are unavailable") from exc
+                if stored != cleaned:
+                    raise AssetError("derivation conflicts with immutable asset references")
         return inserted.rowcount == 1
 
     def get_derivation(self, cache_key: str) -> dict[str, object] | None:

@@ -51,7 +51,13 @@ stale client from releasing values after the owner identifier is reused.
 `LibraryStore.hold_asset_references()` holds a SQLite write transaction while
 reading explicit associations, records, media grants and observations in every
 scope, then follows their adopted dependency manifests transitively. Corrupt
-reachable state refuses inspection. This is not a complete collector barrier:
+reachable state refuses inspection. Callers can supply roots held by other
+owners so their dependencies join the same traversal; those owners must stay
+held throughout inspection. Cached derivations atomically persist their
+producer-declared identities alongside opaque provenance, without treating
+cache keys or arbitrary provenance fields as asset identities. Legacy unknown
+derivation references refuse inspection until the producer certifies them
+against the unchanged provenance. This is not a complete collector barrier:
 caches, history, publishers and callers have independent lifetimes, and opaque
 documents without declared associations cannot be assumed reference-free.
 

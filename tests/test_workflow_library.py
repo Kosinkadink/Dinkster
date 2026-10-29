@@ -144,7 +144,12 @@ def test_catalog_alembic_head_preserves_records(tmp_path: Path, catalog: str) ->
         store.close()
     with sqlite3.connect(path) as connection:
         for table, rows in before.items():
-            assert connection.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall() == rows
+            after = connection.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall()
+            if table == "asset_derivations":
+                assert [row[:2] for row in after] == rows
+                assert all(row[2] is None for row in after)
+            else:
+                assert after == rows
     args = [
         sys.executable,
         "-m",
@@ -155,7 +160,7 @@ def test_catalog_alembic_head_preserves_records(tmp_path: Path, catalog: str) ->
         f"catalog={path}",
     ]
     current = subprocess.run([*args, "current"], text=True, capture_output=True, check=True)
-    assert "0003_asset_retentions (head)" in current.stdout
+    assert "0004_derivation_references (head)" in current.stdout
     checked = subprocess.run([*args, "check"], text=True, capture_output=True, check=True)
     assert "No new upgrade operations detected" in checked.stdout
     LibraryStore(path).close()
@@ -482,6 +487,8 @@ def test_catalog_asset_roots_include_other_scopes_and_reachable_dependencies(
         store.put_dependencies(orphan, [{"digest": unrelated}])
         with store.hold_asset_references() as roots:
             assert roots == {DIGEST_A, DIGEST_B, observed}
+        with store.hold_asset_references(additional_roots=[orphan]) as roots:
+            assert roots == {DIGEST_A, DIGEST_B, observed, orphan, unrelated}
         with sqlite3.connect(tmp_path / "library.sqlite") as connection:
             connection.execute(
                 "UPDATE asset_dependencies SET manifest = 'broken' WHERE digest = ?", (DIGEST_A,)
@@ -489,6 +496,50 @@ def test_catalog_asset_roots_include_other_scopes_and_reachable_dependencies(
         with pytest.raises(AssetError):
             with store.hold_asset_references():
                 pytest.fail("unreadable dependency state was ignored")
+    finally:
+        store.close()
+
+
+def test_derivation_references_are_durable_atomic_and_explicit(tmp_path: Path) -> None:
+    store = make_store(tmp_path)
+    cache_key = digest_bytes(b"derivation key, not asset bytes")
+    legacy_key = digest_bytes(b"legacy derivation key")
+    decoy = digest_bytes(b"opaque provenance, not an external reference")
+    manifest: dict[str, object] = {"fingerprint": decoy}
+    try:
+        assert store.put_derivation(cache_key, manifest, references=[DIGEST_A, DIGEST_A])
+        assert not store.put_derivation(cache_key, manifest, references=[DIGEST_A])
+        with pytest.raises(AssetError, match="immutable stored manifest"):
+            store.put_derivation(cache_key, {"other": decoy}, references=[DIGEST_B])
+        with pytest.raises(AssetError, match="immutable asset references"):
+            store.put_derivation(cache_key, manifest, references=[DIGEST_B])
+        store.close()
+        store = make_store(tmp_path)
+        assert store.get_derivation(cache_key) == manifest
+        with store.hold_asset_references() as roots:
+            assert roots == {DIGEST_A}
+        with sqlite3.connect(tmp_path / "library.sqlite") as connection:
+            connection.execute(
+                "INSERT INTO asset_derivations(cache_key, manifest) VALUES (?, ?)",
+                (legacy_key, json.dumps(manifest, separators=(",", ":"), sort_keys=True)),
+            )
+        with pytest.raises(AssetError, match="unavailable"):
+            with store.hold_asset_references():
+                pytest.fail("legacy derivation references were assumed empty")
+        # Only the producer can certify the roots of the same immutable provenance.
+        with pytest.raises(AssetError, match="immutable stored manifest"):
+            store.put_derivation(legacy_key, {"different": decoy}, references=[DIGEST_B])
+        with pytest.raises(AssetError, match="unavailable"):
+            with store.hold_asset_references():
+                pytest.fail("a conflicting declaration changed legacy ownership")
+        assert not store.put_derivation(legacy_key, manifest, references=[DIGEST_B])
+        with store.hold_asset_references() as roots:
+            assert roots == {DIGEST_A, DIGEST_B}
+        with sqlite3.connect(tmp_path / "library.sqlite") as connection:
+            connection.execute("UPDATE asset_derivations SET asset_digests = 'broken'")
+        with pytest.raises(AssetError, match="unavailable"):
+            with store.hold_asset_references():
+                pytest.fail("corrupt derivation references were assumed empty")
     finally:
         store.close()
 

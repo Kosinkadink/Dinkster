@@ -31,6 +31,11 @@
   storing output payloads or changing history responses. Legacy and interrupted
   history with unknown output references refuses collection inspection. This
   does not retain opaque workflow contents or live previews, or enable deletion.
+- Cached image-document renders retain their source, resources and output
+  identities independently of catalog records. Verified cache reuse can certify
+  previously unknown references without changing render provenance or responses.
+  Unknown or unreadable derivation references block collection inspection;
+  cleanup remains disabled.
 - Host-validated saved-file artifacts are cataloged in the submitted project
   with job and node provenance before the job reports completion. Unavailable
   or revoked files and catalog failures fail the job rather than report a

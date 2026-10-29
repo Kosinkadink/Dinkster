@@ -42,6 +42,7 @@ sa.Table(
     metadata,
     sa.Column("cache_key", sa.Text, primary_key=True, nullable=True),
     sa.Column("manifest", sa.Text, nullable=False),
+    sa.Column("asset_digests", sa.Text, nullable=True),
 )
 asset_observations = sa.Table(
     "asset_observations",
