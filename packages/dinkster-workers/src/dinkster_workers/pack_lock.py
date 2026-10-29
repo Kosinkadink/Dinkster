@@ -308,6 +308,11 @@ def resolve_pack_lock(
                         url,
                     )
                 )
+            if not candidates:
+                raise ProvisionError(
+                    f"pack {pack}: {item['name']}=={item['version']}: "
+                    "source-only closure has no wheel candidates"
+                )
             packages.append(
                 LockedDistribution(
                     canonicalize_name(item["name"]),
