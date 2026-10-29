@@ -27,7 +27,7 @@ def _artifact(name: str, data: bytes, *, key: str = "name") -> dict:
 
 
 def _mirror(
-    root: Path, *, protocol: int = 11, damaged_archive: bool = False
+    root: Path, *, protocol: int = 11, damaged_archive: bool = False, variant: str = "fixture-cpu"
 ) -> tuple[dict, dict, dict]:
     root.mkdir(parents=True)
     python = "python/python.exe" if os.name == "nt" else "python/bin/python3"
@@ -49,7 +49,7 @@ def _mirror(
     }
     base = {
         "format": "dinkster.base/1",
-        "variant": "fixture-cpu",
+        "variant": variant,
         "platform": {"os": "windows" if os.name == "nt" else "linux", "arch": "x86_64"},
         "python": "3.14.10",
         "interpreter": interpreter,
@@ -65,7 +65,7 @@ def _mirror(
         output.writestr(b"wrong" if damaged_archive else base_wheel, "wheels/" + wheel["filename"])
     data = archive.read_bytes()
     archive.unlink()
-    base_path = root / f"base/fixture-cpu/{base_id}"
+    base_path = root / f"base/{variant}/{base_id}"
     base_path.mkdir(parents=True)
     parts = (data[: len(data) // 2], data[len(data) // 2 :])
     base["parts"] = []
@@ -108,10 +108,10 @@ def _mirror(
             "locations": [{"type": "mirror", "path": f"engine/{release}/release-manifest.json"}],
         },
         "base": {
-            "fixture-cpu": {
+            variant: {
                 "id": base["id"],
                 "locations": [
-                    {"type": "mirror", "path": f"base/fixture-cpu/{base_id}/manifest.json"}
+                    {"type": "mirror", "path": f"base/{variant}/{base_id}/manifest.json"}
                 ],
             }
         },
@@ -164,16 +164,25 @@ def test_acquires_release_sources_into_the_existing_artifact_identity_cache(tmp_
     _mirror(mirror)
     release, payloads = _release_sources(mirror)
     catalog = discover((str(mirror),), "main")
+    with pytest.raises(EnvironmentError, match="intact cached release source"):
+        acquire_sources(catalog, store, download=False)
+    assert not store.exists()
     acquired = acquire_sources(catalog, store)
     assert acquired is not None
     lock, artifacts = acquired
     assert lock.read_bytes() == payloads["official-packs.lock"]
     entries = Lockfile.from_record_json(lock.read_text()).packs
     assert len(entries) == 2
+    assert acquire_sources(catalog, store, download=False) == acquired
     for entry in entries:
         cached = artifacts / f"{entry.artifact_digest.removeprefix('blake3:')}.zip"
         assert cached.read_bytes() == payloads[f"{entry.pack}-1.0.zip"]
         cached.write_bytes(b"damaged cache")
+    with pytest.raises(EnvironmentError, match="intact cached release source"):
+        acquire_sources(catalog, store, download=False)
+    for entry in entries:
+        cached = artifacts / f"{entry.artifact_digest.removeprefix('blake3:')}.zip"
+        assert cached.read_bytes() == b"damaged cache"
     acquire_sources(catalog, store)
     for entry in entries:
         cached = artifacts / f"{entry.artifact_digest.removeprefix('blake3:')}.zip"

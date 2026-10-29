@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import cast
 
 from .environment_artifacts import acquire, acquire_sources, discover
-from .environment_generations import build_generation, pack_operation
+from .environment_generations import build_generation, pack_operation, project_plan
 from .environment_runtime import (
     engine_assignments,
     engine_status,
@@ -146,8 +146,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         raise EnvironmentError("project has no active generation; run setup first")
     if args.operation == "update" and (args.port is not None or args.gpu or args.engine != "main"):
         raise EnvironmentError("update preserves engine assignments; stop/start to change them")
-    if settings and (settings.get("workflows") or settings.get("additions")):
-        raise EnvironmentError("registered workflow/addition execution is not available yet")
+    has_requirements = bool(settings and (settings.get("workflows") or settings.get("additions")))
     snapshot = (root / "project.json").read_bytes() if settings else None
     channel = args.channel or (cast("str", settings["channel"]) if settings else "stable")
     variant = args.variant or (cast("str", settings["variant"]) if settings else None)
@@ -203,8 +202,38 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     result.update(
         current=current, plan=plan, status="planned", downloadBytes=size, store=str(store)
     )
+    if has_requirements:
+        if settings and settings.get("workflows"):
+            raise EnvironmentError(
+                "registered workflow planning requires side-effect-free library snapshots"
+            )
+        if previous_root is None:
+            raise EnvironmentError("workflow planning requires an existing generation interpreter")
+        catalog_lock, source_artifacts = args.catalog_lock, args.artifacts
+        if catalog_lock is None:
+            cached_sources = acquire_sources(catalog, store, download=False)
+            if cached_sources is not None:
+                catalog_lock, source_artifacts = cached_sources
+        workflow = project_plan(
+            root,
+            generation=previous_root,
+            variant=variant,
+            catalog_lock=catalog_lock,
+            artifacts=source_artifacts,
+        )
+        actions = cast("dict[str, object]", workflow["plan"])
+        for kind in ("packs", "assets"):
+            for action in cast("list[object]", actions[kind]):
+                plan.append(f"workflow {kind}: {json.dumps(action, sort_keys=True)}")
+        if (root / "project.json").read_bytes() != snapshot:
+            raise EnvironmentError("project changed during planning; request a new plan")
+        errors = cast("list[str]", actions["errors"])
+        if errors:
+            raise EnvironmentError(f"workflow planning refused: {'; '.join(errors)}")
     if not _confirmed(args, plan):
         return 0
+    if has_requirements:
+        raise EnvironmentError("registered workflow/addition execution is not available yet")
 
     def revalidate() -> None:
         actual = (root / "project.json").read_bytes() if (root / "project.json").exists() else None

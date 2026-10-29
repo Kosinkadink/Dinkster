@@ -328,14 +328,17 @@ def acquire(catalog: EnvironmentCatalog, variant: str, store: Path) -> Path:
     return constraints
 
 
-def acquire_sources(catalog: EnvironmentCatalog, store: Path) -> tuple[Path, Path] | None:
+def acquire_sources(
+    catalog: EnvironmentCatalog, store: Path, *, download: bool = True
+) -> tuple[Path, Path] | None:
     """Verify release payload transport; target admission alone interprets the pack lock."""
     rows = _rows(catalog.engine["artifacts"], "name")
     if not any(row["name"] == "official-packs.lock" for row in rows):
         return None
     release = store / "engines" / catalog.channel.engine_release[7:]
     artifacts = release / "artifacts"
-    artifacts.mkdir(parents=True, exist_ok=True)
+    if download:
+        artifacts.mkdir(parents=True, exist_ok=True)
     for row in rows:
         name, sha, size = (
             cast("str", row["name"]),
@@ -344,13 +347,29 @@ def acquire_sources(catalog: EnvironmentCatalog, store: Path) -> tuple[Path, Pat
         )
         if name != "official-packs.lock" and not name.endswith(".zip"):
             continue
-        downloaded = fetch_artifact(catalog.engine_sources, name, release / name, sha, size)
+        downloaded = release / name
+        if download:
+            fetch_artifact(catalog.engine_sources, name, downloaded, sha, size)
+        elif (
+            downloaded.is_symlink()
+            or not downloaded.is_file()
+            or downloaded.stat().st_size != size
+            or content_digest(downloaded) != "sha256:" + sha
+        ):
+            raise EnvironmentError(f"planning requires intact cached release source: {name}")
         if name.endswith(".zip"):
             identity = blake3()
             with downloaded.open("rb") as source:
                 for chunk in iter(lambda: source.read(1024 * 1024), b""):
                     identity.update(chunk)
-            fetch_artifact(
-                (str(release),), name, artifacts / f"{identity.hexdigest()}.zip", sha, size
-            )
+            cached = artifacts / f"{identity.hexdigest()}.zip"
+            if download:
+                fetch_artifact((str(release),), name, cached, sha, size)
+            elif (
+                cached.is_symlink()
+                or not cached.is_file()
+                or cached.stat().st_size != size
+                or content_digest(cached) != "sha256:" + sha
+            ):
+                raise EnvironmentError(f"planning requires intact cached release source: {cached}")
     return release / "official-packs.lock", artifacts

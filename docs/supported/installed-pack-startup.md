@@ -47,6 +47,12 @@
   missing admission support refuses activation. Automatic default dependency
   provisioning and registered workflow/addition execution are not connected yet;
   channel or variant migration is refused.
+- Update plans include explicit-addition needs through the
+  active generation's read-only planner. Selected release sources must already be
+  verified in the local cache, or supplied through explicit catalog/cache inputs.
+  Missing or corrupt cache and unavailable saved pack versions refuse planning;
+  plans never fetch payloads, repair caches or activate a generation. Registered
+  workflows refuse planning without a side-effect-free library snapshot reader.
 - Failed initial setup releases its own metadata and store registrations so a
   retry can select another data directory. Cached content, pre-existing settings,
   other projects' references and the diagnostic journal remain intact.

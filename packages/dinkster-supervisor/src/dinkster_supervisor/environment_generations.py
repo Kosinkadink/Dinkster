@@ -135,6 +135,68 @@ def pack_operation(
     return document
 
 
+def project_plan(
+    root: Path,
+    *,
+    generation: Path,
+    variant: str,
+    catalog_lock: Path | None = None,
+    artifacts: Path | None = None,
+) -> dict[str, object]:
+    """Read workflow requirements through the selected generation's core adapter."""
+    command = [
+        str(interpreter(generation)),
+        "-B",
+        "-m",
+        "dinkster.workflow_requirements",
+        "project-plan",
+        "--project-root",
+        str(root),
+        "--source-generation",
+        str(generation),
+        "--variant",
+        variant,
+        "--json",
+    ]
+    if catalog_lock is not None:
+        command.extend(["--catalog-lock", str(catalog_lock)])
+    if artifacts is not None:
+        command.extend(["--artifacts", str(artifacts)])
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+    )
+    try:
+        raw: object = json.loads(result.stdout)
+        if not isinstance(raw, dict):
+            raise ValueError("expected an object")
+        document = cast("dict[str, object]", raw)
+        requirements, plan, inputs = (
+            document.get("requirements"),
+            document.get("plan"),
+            document.get("inputs"),
+        )
+        if not isinstance(requirements, dict) or not isinstance(plan, dict):
+            raise ValueError("requirements and plan must be objects")
+        if not isinstance(inputs, list):
+            raise ValueError("inputs must be an array")
+        actions = cast("dict[str, object]", plan)
+        for kind in ("packs", "assets", "errors"):
+            if not isinstance(actions.get(kind), list):
+                raise ValueError(f"plan {kind} must be an array")
+        errors = cast("list[object]", actions["errors"])
+        if any(not isinstance(error, str) for error in errors):
+            raise ValueError("plan errors must contain strings")
+    except ValueError as exc:
+        detail = result.stderr.strip() or str(exc)
+        raise EnvironmentError(f"workflow planning failed: {detail}") from exc
+    if result.returncode and not errors:
+        raise EnvironmentError(f"workflow planning failed: {result.stderr.strip()}")
+    return document
+
+
 def stage_pack_sources(generation: Path, *, catalog_lock: Path, artifacts: Path) -> None:
     """Run source admission in the unsealed target, never in the supervisor interpreter."""
     if not all(path.is_absolute() for path in (generation, catalog_lock, artifacts)):

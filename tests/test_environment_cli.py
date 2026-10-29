@@ -14,6 +14,9 @@ from urllib.request import urlopen
 
 import py7zr
 import pytest
+from dinkster_assets import AssetRef, AssetVault, LibraryStore, digest_bytes
+from dinkster_registry import Lockfile
+from dinkster_supervisor.environment_artifacts import acquire_sources, discover
 from dinkster_supervisor.environment_state import Journal, content_digest, writer_lock
 from test_environment_artifacts import _artifact, _json, _mirror, _release_sources
 from test_environment_generations import _assert_shared, _standalone_tree, _wheel
@@ -124,6 +127,96 @@ def _runtime_project(root: Path) -> int:
         )
     )
     return port
+
+
+def test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    # The runtime fixture links Python without installing the core workspace into it.
+    monkeypatch.setenv(
+        "PYTHONPATH", os.pathsep.join(str(Path(path).resolve()) for path in sys.path)
+    )
+    mirror, root, store = tmp_path / "mirror", tmp_path / "project", tmp_path / "store"
+    _mirror(mirror, variant="linux-cpu")
+    _runtime_project(root)
+    (root / "store").write_text(str(store) + "\n")
+    settings = json.loads((root / "project.json").read_bytes())
+    asset = AssetRef(digest_bytes(b"required bytes"), "required.bin", 14).to_wire()
+    settings.update(mirrors=[str(mirror)], additions={"assets": [asset]})
+    (root / "project.json").write_text(json.dumps(settings))
+    (root / "generations/1/dinkster.lock").write_text(Lockfile().record_json())
+
+    def snapshot() -> dict[Path, bytes | None]:
+        return {
+            path.relative_to(tmp_path): path.read_bytes() if path.is_file() else None
+            for path in tmp_path.rglob("*")
+        }
+
+    before = snapshot()
+    for flags in ((), ("--plan",), ("--yes",)):
+        code, result = _run(root, "update", *flags)
+        assert code == int(flags == ("--yes",)), result
+        assert result["current"] == 1
+        actions = [line for line in result["plan"] if line.startswith("workflow assets: ")]
+        assert len(actions) == 1
+        assert json.loads(actions[0].split(": ", 1)[1]) == {**asset, "sources": []}
+        if code:
+            assert "execution is not available" in result["error"]
+        assert snapshot() == before
+
+    workflow_asset = AssetRef(digest_bytes(b"workflow bytes"), "workflow.bin", 14).to_wire()
+    document = {
+        "format": "dinkster-workflow",
+        "formatVersion": 1,
+        "root": "main",
+        "graphs": {"main": {"nodes": {}, "valueSources": {"asset": {"value": workflow_asset}}}},
+    }
+    data = json.dumps(document).encode()
+    identity = digest_bytes(data)
+    vault = AssetVault(root / "library/vault")
+    with vault.writer(identity) as writer:
+        writer.write(data)
+        writer.commit()
+    library = LibraryStore(root / "library/library.sqlite")
+    try:
+        record = library.create(
+            "local", "Workflow", identity, "application/x-dinkster-workflow+json"
+        )
+    finally:
+        library.close()
+    settings["workflows"] = [{"scope": "local", "id": record.id}]
+    (root / "project.json").write_text(json.dumps(settings))
+    before = snapshot()
+    code, combined = _run(root, "update", "--plan")
+    assert code == 1 and "side-effect-free library snapshots" in combined["error"]
+    assert snapshot() == before
+    settings.pop("workflows")
+    (root / "project.json").write_text(json.dumps(settings))
+
+    _release_sources(mirror)
+    before = snapshot()
+    code, missing = _run(root, "update", "--plan")
+    assert code == 1 and "intact cached release source" in missing["error"]
+    assert snapshot() == before
+    acquired = acquire_sources(discover((str(mirror),), "main"), store)
+    assert acquired is not None
+    lock, artifacts = acquired
+    settings["additions"]["packs"] = [{"pack": "first-pack", "version": "9.9.9"}]
+    (root / "project.json").write_text(json.dumps(settings))
+    before = snapshot()
+    for extra in ((), ("--catalog-lock", str(lock), "--artifacts", str(artifacts))):
+        code, unavailable = _run(root, "update", "--plan", *extra)
+        assert code == 1 and "saved version is unavailable" in unavailable["error"]
+        assert '"version": "9.9.9"' in "\n".join(unavailable["plan"])
+        assert snapshot() == before
+    cached = next(artifacts.glob("*.zip"))
+    cached.write_bytes(b"x" * cached.stat().st_size)
+    before = snapshot()
+    code, corrupt = _run(root, "update", "--plan")
+    assert code == 1 and "intact cached release source" in corrupt["error"]
+    assert snapshot() == before
 
 
 def test_runtime_confirmation_assignment_and_stop_first_through_cli(tmp_path: Path):
