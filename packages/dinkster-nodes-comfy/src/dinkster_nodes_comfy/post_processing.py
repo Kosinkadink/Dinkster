@@ -380,7 +380,12 @@ class BatchImagesNode(Node):
             category="image/batch",
             input_families=(
                 InputFamilySpec(
-                    "images", (InputSpec("image", _IMAGE),), 1, 50, member_prefix="image"
+                    "images",
+                    (InputSpec("image", _IMAGE),),
+                    1,
+                    50,
+                    member_prefix="image",
+                    optional_after_minimum=True,
                 ),
             ),
             outputs=(OutputSpec("IMAGE", _IMAGE),),
@@ -399,7 +404,14 @@ class BatchMasksNode(Node):
             display_name="Batch Masks",
             category="image/mask",
             input_families=(
-                InputFamilySpec("masks", (InputSpec("mask", _MASK),), 1, 50, member_prefix="mask"),
+                InputFamilySpec(
+                    "masks",
+                    (InputSpec("mask", _MASK),),
+                    1,
+                    50,
+                    member_prefix="mask",
+                    optional_after_minimum=True,
+                ),
             ),
             outputs=(OutputSpec("MASK", _MASK),),
         )
@@ -418,7 +430,12 @@ class BatchLatentsNode(Node):
             category="model/latent/batch",
             input_families=(
                 InputFamilySpec(
-                    "latents", (InputSpec("latent", _LATENT),), 1, 50, member_prefix="latent"
+                    "latents",
+                    (InputSpec("latent", _LATENT),),
+                    1,
+                    50,
+                    member_prefix="latent",
+                    optional_after_minimum=True,
                 ),
             ),
             outputs=(OutputSpec("LATENT", _LATENT),),

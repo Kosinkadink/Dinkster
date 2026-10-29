@@ -106,6 +106,129 @@ def test_elaboration_members_keep_stored_ids_in_document_order() -> None:
     assert effective.input_families == ()  # effective interface is concrete
 
 
+@pytest.mark.parametrize("named", [False, True])
+@pytest.mark.parametrize("required", [False, True])
+def test_positional_family_requiredness_round_trips_and_uses_vocabulary(
+    named: bool, required: bool
+) -> None:
+    family = InputFamilySpec(
+        "pieces",
+        (InputSpec("value", STRING, required=required),),
+        min_members=2,
+        member_names=("z", "a", "b", "c") if named else None,
+        member_prefix=None if named else "piece",
+        optional_after_minimum=True,
+    )
+    schema = NodeSchema("test.positional", input_families=(family,))
+    assert schema_from_wire(schema_to_wire(schema)) == schema
+    ordinary = NodeSchema(
+        "test.positional",
+        input_families=(
+            InputFamilySpec(
+                "pieces",
+                STRING,
+                min_members=2,
+                member_names=("z", "a", "b", "c") if named else None,
+                member_prefix=None if named else "piece",
+            ),
+        ),
+    )
+    assert schema_signature(schema) != schema_signature(ordinary)
+    suffixes = ["c", "b"] if named else ["piece10", "piece2"]
+    effective = elaborate(schema, [f"pieces.{suffix}" for suffix in suffixes])
+    initial = ["z", "a"] if named else ["piece0", "piece1"]
+    expected = initial + list(reversed(suffixes)) if required else list(reversed(suffixes))
+    assert [(spec.id, spec.required) for spec in effective.inputs] == [
+        (f"pieces.{suffix}", required and suffix in initial) for suffix in expected
+    ]
+    assert [(spec.id, spec.required) for spec in elaborate(schema, []).inputs] == (
+        [(f"pieces.{suffix}", True) for suffix in initial] if required else []
+    )
+
+
+def test_positional_family_validation_requires_first_slots_not_tail() -> None:
+    schema = NodeSchema(
+        "test.positional",
+        input_families=(
+            InputFamilySpec(
+                "pieces",
+                STRING,
+                min_members=2,
+                max_members=4,
+                member_prefix="piece",
+                optional_after_minimum=True,
+            ),
+        ),
+    )
+
+    def diagnostics(inputs: dict[str, object]) -> list[str]:
+        graph = Graph(nodes={"n": GraphNode(schema.node_type, inputs)})
+        return [
+            d.message
+            for d in validate(graph, {schema.node_type: schema}, ["n"])
+            if d.code == "missing-input"
+        ]
+
+    assert (
+        diagnostics({"pieces.piece0": "first", "pieces.piece1": "second", "pieces.piece2": None})
+        == []
+    )
+    missing = diagnostics({"pieces.piece2": "third", "pieces.piece3": "fourth"})
+    assert len(missing) == 2
+    assert any("pieces.piece0" in message for message in missing)
+    assert any("pieces.piece1" in message for message in missing)
+
+
+@pytest.mark.parametrize("minimum", [0, 2])
+def test_positional_family_allows_empty_optional_template(minimum: int) -> None:
+    schema = NodeSchema(
+        "test.positional",
+        input_families=(
+            InputFamilySpec(
+                "pieces",
+                (InputSpec("value", STRING, required=False),),
+                min_members=minimum,
+                member_prefix="piece",
+                optional_after_minimum=True,
+            ),
+        ),
+    )
+    assert elaborate(schema, []).inputs == ()
+    assert not elaborate(schema, ["pieces.piece10"]).inputs[0].required
+
+
+@pytest.mark.parametrize("declaration", ["missing-vocabulary", "grouped", "not-bool"])
+def test_positional_family_rejects_invalid_declarations(declaration: str) -> None:
+    with pytest.raises(ValueError, match="optional_after_minimum"):
+        InputFamilySpec(
+            "pieces",
+            (InputSpec("a", STRING), InputSpec("b", STRING))
+            if declaration == "grouped"
+            else STRING,
+            member_prefix=None if declaration == "missing-vocabulary" else "piece",
+            optional_after_minimum=1 if declaration == "not-bool" else True,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize("suffix", ["piece01", "piece-1", "other2", "piece99"])
+def test_positional_family_rejects_noncanonical_or_out_of_range_members(suffix: str) -> None:
+    schema = NodeSchema(
+        "test.positional",
+        input_families=(
+            InputFamilySpec(
+                "pieces",
+                STRING,
+                min_members=2,
+                max_members=4,
+                member_prefix="piece",
+                optional_after_minimum=True,
+            ),
+        ),
+    )
+    with pytest.raises(ElaborationError):
+        elaborate(schema, [f"pieces.{suffix}"])
+
+
 def test_elaboration_is_deterministic_and_ignores_unknown_keys() -> None:
     keys = ["separator", "pieces.x", "not_a_real_input"]
     a = elaborate(JOIN_SCHEMA, keys)

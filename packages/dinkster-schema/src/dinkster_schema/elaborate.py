@@ -397,11 +397,48 @@ def _elaborate_family(
         suffix = choice_path[len(prefix) :].split(".", 1)[0]
         if suffix and suffix not in suffixes:
             suffixes.append(suffix)
+    positions: dict[str, int] = {}
+    if family.optional_after_minimum:
+        for suffix in suffixes:
+            if family.member_names is not None:
+                if suffix not in family.member_names:
+                    raise ElaborationError(f"input family '{path}' has unknown member {suffix!r}")
+                position = family.member_names.index(suffix)
+            else:
+                assert family.member_prefix is not None
+                number = suffix.removeprefix(family.member_prefix)
+                if (
+                    not number.isascii()
+                    or not number.isdecimal()
+                    or suffix != family.member_prefix + str(int(number))
+                ):
+                    raise ElaborationError(
+                        f"input family '{path}' has noncanonical member {suffix!r}"
+                    )
+                position = int(number)
+            if family.max_members is not None and position >= family.max_members:
+                raise ElaborationError(
+                    f"input family '{path}' member {suffix!r} exceeds its maximum"
+                )
+            positions[suffix] = position
+        template = family.template[0]
+        assert isinstance(template, InputSpec)
+        if template.required:
+            if family.min_members > MAX_FAMILY_MEMBERS:
+                raise ElaborationError(f"input family '{path}' minimum exceeds member budget")
+            for position in range(family.min_members):
+                suffix = (
+                    family.member_names[position]
+                    if family.member_names is not None
+                    else f"{family.member_prefix}{position}"
+                )
+                positions[suffix] = position
+        suffixes = sorted(positions, key=positions.__getitem__)
     if len(suffixes) > MAX_FAMILY_MEMBERS:
         raise ElaborationError(
             f"input family '{path}' has {len(suffixes)} members, budget is {MAX_FAMILY_MEMBERS}"
         )
-    if len(suffixes) < family.min_members:
+    if not family.optional_after_minimum and len(suffixes) < family.min_members:
         raise ElaborationError(
             f"input family '{path}' has {len(suffixes)} members, needs >= {family.min_members}"
         )
@@ -426,6 +463,10 @@ def _elaborate_family(
                 replace(
                     spec,
                     id=member_path,
+                    required=spec.required
+                    and (
+                        not family.optional_after_minimum or positions[suffix] < family.min_members
+                    ),
                     type=_scope_member_type(spec.type, member_path)
                     if family.independent_types
                     else spec.type,

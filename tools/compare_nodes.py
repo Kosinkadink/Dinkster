@@ -109,6 +109,8 @@ def _reference_inputs(groups: dict[str, Any], list_inputs: bool = False) -> list
                 if entry["min"] == 0:
                     for member in entry["template"]:
                         member["group"] = "optional"
+                elif any(member["group"] == "required" for member in entry["template"]):
+                    entry["optional_after_minimum"] = True
                 if "names" in template:
                     entry["names"] = template["names"]
                 else:
@@ -208,6 +210,12 @@ def _native_inputs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             entry.update(
                 type=role, template=_native_inputs(item["template"]), min=item.get("minMembers", 0)
             )
+            if (
+                item.get("optionalAfterMinimum")
+                and entry["min"] > 0
+                and any(member["group"] == "required" for member in entry["template"])
+            ):
+                entry["optional_after_minimum"] = True
             if "memberNames" in item:
                 entry["names"] = item["memberNames"]
             else:

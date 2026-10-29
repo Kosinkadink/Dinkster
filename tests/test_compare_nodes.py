@@ -1003,6 +1003,7 @@ def test_autogrow_member_requiredness_matches_expanded_reference(
         "id": "images",
         "required": True,
         "minMembers": minimum,
+        "optionalAfterMinimum": minimum > 0 and template_required,
         "template": [
             {
                 "role": "input",
@@ -1030,6 +1031,10 @@ def test_autogrow_member_requiredness_matches_expanded_reference(
     }
     registry = {"nodes": {"Example": {"nodeType": "Example", "interface": [family]}}}
     assert compare_registry(reference, registry)["passed"]
+    if minimum > 0 and template_required:
+        family["optionalAfterMinimum"] = False
+        assert not compare_registry(reference, registry)["passed"]
+        family["optionalAfterMinimum"] = True
     leaf = family["template"][0]
     leaf["required"] = not leaf["required"]
     assert not compare_registry(reference, registry)["passed"]
@@ -1117,6 +1122,7 @@ def test_nested_inputs_preserve_file_slots_and_detect_child_drift(
                 },
             ]
             native_input["memberPrefix"] = "input"
+            native_input["optionalAfterMinimum"] = True
         else:
             reference_input = [
                 "COMFY_DYNAMICGROUP_V3",
