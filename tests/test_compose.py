@@ -1099,15 +1099,15 @@ def test_compose_serving_default_resolution_is_atomic(
         ),
         (
             "dinkster-nodes-media-io",
-            "blake3:fbf67f7575979f4b6a0c3b4fe4d1662386ca8da8173b59fa26a12294d799b779",
+            "blake3:5e58e5125276e9f2fd12b842ebd6ab86264f71fb4163c0fa598c704597496177",
         ),
         (
             "dinkster-nodes-image",
-            "blake3:709482f832f53ce1a37de9caba53c3c174439f26b5520c50f57b344627892c12",
+            "blake3:7bb3476628d08cd7daa56a09c13a4eb068438f5b4012b753e8c3a0ed3581c276",
         ),
         (
             "dinkster-nodes-remote",
-            "blake3:08eff2916a87c45c57174a474ad096ba609e54c24258a453875b97324825b9fa",
+            "blake3:3059cb21c012775a4e16e21a2a8dde55bc2853b50f8426781bf78e1afd8d89ea",
         ),
     ],
 )
@@ -1924,7 +1924,7 @@ def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(tmp_pa
 
     claims = tuple(node.schema().node_type for node in COMFY_NODES)
     manifest = TESTS_DIR.parent / "packages/dinkster-nodes-comfy/dinkster-pack.toml"
-    assert load_manifest(manifest).namespaces == claims
+    assert load_manifest(manifest).namespaces == ("devices", *claims)
     other_manifest = tmp_path / "dinkster-pack.toml"
     other_manifest.write_text(
         '[pack]\nname = "other-owner"\npublisher = "dinkster"\n'

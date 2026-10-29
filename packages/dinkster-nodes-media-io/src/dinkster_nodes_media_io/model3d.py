@@ -23,6 +23,7 @@ from dinkster_api.v1 import (
     SaveTargetWidget,
     SourceFilenameSpec,
     TypeExpr,
+    attach_saved_artifact,
     decode_model3d_file,
     encode_model3d,
 )
@@ -112,6 +113,7 @@ class SaveModel3D(Node):
             media_type=MODEL3D_MEDIA_TYPE,
             limit=MAX_ENCODED_MODEL3D_BYTES,
         )
+        attach_saved_artifact(ref.to_wire())
         return cls.outputs(model=ref)
 
 

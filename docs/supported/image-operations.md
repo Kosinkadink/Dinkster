@@ -12,6 +12,8 @@
   placement, rotation, opacity, blend mode, and stacking metadata.
 - Native `CameraAngle` produces an orbit-camera dictionary and shot description
   from horizontal angle, elevation, and zoom.
+- Native `CreateCameraInfo` builds cameras from orbit angles, a look-at position,
+  or an explicit quaternion, with roll, field of view, zoom, and projection.
 - Native `MoGeGeometryToFOV` derives horizontal, vertical, or diagonal field of
   view and focal length in pixels from MoGe geometry intrinsics.
 - Native `TripoSplatPreprocessImage` erodes alpha, crops foreground to a padded
@@ -28,6 +30,8 @@
   resolution-preview metadata pass between node packs without rewriting their values.
 - Native `PrimitiveBoundingBox` constructs pixel bounding boxes; `ImageCropV2`
   crops each image in a batch to that box and reports a PNG preview.
+- Native `ImageCropToMask` crops images around foreground masks with adjustable
+  margin, mask growth, background color and output dimensions.
 - Native `CropByBBoxes` crops each frame to its bounding-box union and resizes
   with stretching or aspect-preserving black padding.
 - Native `SDPoseFaceBBoxes` converts canonical pose face keypoints into per-frame

@@ -26,6 +26,8 @@ from dinkster_schema import build_node_types, build_schemas
 from dinkster_values import TypeRegistry, decode_model3d, register_core_types
 from dinkster_workers import InProcessWorker
 
+pytestmark = pytest.mark.usefixtures("saved_artifact_context")
+
 
 def glb_bytes(document: bytes = b'{"asset":{"version":"2.0"}}') -> bytes:
     padded = document + b" " * (-len(document) % 4)
