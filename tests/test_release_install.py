@@ -772,6 +772,8 @@ def test_external_payload_omits_only_exact_members_shared_by_all_target_bases(
 def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
     tmp_path: Path,
 ) -> None:
+    from dinkster_registry import LockedPack, Lockfile, build_artifact
+
     root = tmp_path / "source"
     frontend = tmp_path / "frontend.zip"
     frontend_payload, frontend_pin = artifact()
@@ -805,10 +807,30 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
     (root / ".git/HEAD").write_text(tree + "\n")
     payload = tmp_path / "official-pack-1.2.3.tar.gz"
     payload.write_bytes(b"finished pack archive")
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    (pack / "dinkster-pack.toml").write_text(
+        '[pack]\nname = "dinkster-nodes-foundation"\npublisher = "dinkster"\n'
+        'namespaces = ["std"]\n[pack.entry]\nnodes = "nodes:NODES"\n'
+    )
+    (pack / "nodes.py").write_text("NODES = ()\n")
+    archive = tmp_path / "dinkster-nodes-foundation-1.2.3.zip"
+    digest = build_artifact(pack, archive)
+    catalog = tmp_path / "official-packs.lock"
+    catalog.write_text(
+        Lockfile.of(
+            [
+                LockedPack(
+                    "dinkster-nodes-foundation", "1.2.3", digest, "dinkster", ("std",), "release"
+                )
+            ]
+        ).record_json()
+    )
     bootstrap = tmp_path / ("dinkster-tools-1.2.4.dev123+g" + "a" * 40 + "-linux-x86_64.tar.gz")
     bootstrap.write_bytes(b"finished interpreter and supervisor payload")
     output = tmp_path / "release"
-    built = build(root, output, "v1.2.3", frontend, payload_artifacts=[payload, bootstrap])
+    payloads = [payload, bootstrap, archive, catalog]
+    built = build(root, output, "v1.2.3", frontend, payload_artifacts=payloads)
     manifest = json.loads((output / "release-manifest.json").read_text())
     assert built == manifest
     assert set(manifest["workspaceWheels"]) == {
@@ -816,7 +838,13 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
         "dinkster_api-1.2.3-py2.py3-none-any.whl",
         "dinkster_supervisor-1.2.3-py2.py3-none-any.whl",
     }
-    for candidate in (payload, bootstrap):
+    with zipfile.ZipFile(output / "dinkster-1.2.3-py2.py3-none-any.whl") as wheel:
+        assert {
+            name.removeprefix("dinkster/official_packs/"): wheel.read(name)
+            for name in wheel.namelist()
+            if name.startswith("dinkster/official_packs/")
+        } == {path.name: path.read_bytes() for path in (archive, catalog)}
+    for candidate in payloads:
         assert (output / candidate.name).read_bytes() == candidate.read_bytes()
         row = next(row for row in manifest["artifacts"] if row["name"] == candidate.name)
         assert row == {
