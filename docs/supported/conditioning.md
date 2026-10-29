@@ -87,4 +87,6 @@
   positions to conditioning, preserving prior boxes and other prompt metadata.
 - `PiDConditioning` attaches Flux, SD3, SDXL, or Qwen Image latents and a
   degradation sigma to conditioning for PiD decoding and upscaling.
+- Bernini and HiDream-O1 accept authored reference image sockets left
+  unconnected, preserving prefixed/named members and conditioning fanout.
 - Other model-family conditioning surfaces are unsupported.
