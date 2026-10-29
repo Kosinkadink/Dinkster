@@ -547,9 +547,21 @@ def test_in_process_dependencies_conflict_before_downloads(tmp_path: Path) -> No
     assert not (target / "packs").exists()
 
 
+@pytest.mark.parametrize("windows_error", [False, True], ids=["native", "windows-launch-error"])
 def test_doctor_rejects_unavailable_generation_even_without_packs(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    windows_error: bool,
 ) -> None:
+    if windows_error:
+
+        def missing_interpreter(
+            *args: object, **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            raise FileNotFoundError("[WinError 2] The system cannot find the file specified")
+
+        monkeypatch.setattr(subprocess, "run", missing_interpreter)
     constraints = tmp_path / "constraints.txt"
     constraints.write_text("")
     assert (
