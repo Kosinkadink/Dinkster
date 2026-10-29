@@ -112,11 +112,13 @@ def start_engine(
             record["state"] = "stopped"
             _write_record(root, name, record)
             raise
-    record["pid"] = process.pid
-    _write_record(root, name, record)
     deadline = time.monotonic() + _STARTUP_TIMEOUT
     while time.monotonic() < deadline:
         inspected = _inspect(record)
+        # A Python launcher may forward to a supervisor with a different PID.
+        if _identity_matches(inspected) and inspected["pid"] != record["pid"]:
+            record = inspected
+            _write_record(root, name, record)
         if inspected["state"] == "ready" and _health_is_ready(inspected):
             return _public_row(inspected)
         if inspected["state"] == "failed" and _identity_matches(inspected):

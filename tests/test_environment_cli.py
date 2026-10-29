@@ -99,7 +99,7 @@ def test_malformed_existing_project_returns_error_not_empty_status(tmp_path: Pat
 
 def test_doctor_reports_actual_content_drift_with_nonzero_exit_and_no_repair(tmp_path: Path):
     generation = _generation(tmp_path, 1).parent
-    (tmp_path / "current").write_text("1\n")
+    (tmp_path / "current").write_bytes(b"1\n")
     code, result = _run(tmp_path, "doctor")
     assert code == 0
     assert result["status"] == "clean"

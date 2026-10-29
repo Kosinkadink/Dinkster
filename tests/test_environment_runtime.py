@@ -97,10 +97,26 @@ def make_generation(root: Path, number: int = 1) -> None:
         (root / "current").write_text(f"{number}\n")
 
 
-def test_start_status_idempotence_and_stop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("redirecting_launcher", [False, True])
+def test_start_status_idempotence_and_stop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, redirecting_launcher: bool
+) -> None:
     monkeypatch.setattr(
         "dinkster_supervisor.environment_runtime.secrets.token_urlsafe", lambda _: "-token"
     )
+    if redirecting_launcher:
+        launcher = tmp_path / "launcher.py"
+        launcher.write_text(
+            "import subprocess, sys\n"
+            "with subprocess.Popen([sys.executable, *sys.argv[1:]]) as child:\n"
+            "    sys.exit(child.wait())\n"
+        )
+        original = subprocess.Popen
+
+        def launch(command, **kwargs):
+            return original([command[0], str(launcher), *command[1:]], **kwargs)
+
+        monkeypatch.setattr("dinkster_supervisor.environment_runtime.subprocess.Popen", launch)
     make_generation(tmp_path)
     port = free_port()
     row = start_engine(tmp_path, 1, "main", port, ("0", "GPU-aB12"))
@@ -115,6 +131,10 @@ def test_start_status_idempotence_and_stop(tmp_path: Path, monkeypatch: pytest.M
             assert json.loads(response.read()) == {"cuda": "0,GPU-aB12"}
         with urlopen(f"http://127.0.0.1:{port}/api/generation") as response:  # noqa: S310
             assert json.loads(response.read()) == {"generation": str(tmp_path / "generations/1")}
+        with urlopen(f"http://127.0.0.1:{port}/supervisor/status") as response:  # noqa: S310
+            supervisor_pid = json.loads(response.read())["supervisor"]["pid"]
+        persisted = json.loads((tmp_path / "runtime/1/main.json").read_bytes())
+        assert persisted["pid"] == supervisor_pid and supervisor_pid > 0
         assert engine_status(tmp_path) == (row,)
         assert start_engine(tmp_path, 1, "main", port, ("0", "GPU-aB12")) == row
         with pytest.raises(EnvironmentError, match="stop it first"):
