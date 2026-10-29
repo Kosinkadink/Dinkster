@@ -440,6 +440,7 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
         assert installed["current"] == 1 and installed["status"] == "applied"
         assert installed["url"] == f"http://127.0.0.1:{port}"
         assert _run(root, "doctor")[1]["status"] == "clean"
+        initial_settings = (root / "project.json").read_bytes()
         assert json.loads((store / "projects.json").read_bytes())["projects"] == [str(root)]
         other = tmp_path / "second project"
         code, second_plan = _run(
@@ -471,6 +472,21 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
         assert code == 1 and "volume already uses store" in conflict["error"]
         assert not other.exists() and not (tmp_path / "another-store").exists()
         _executable_release(mirror, base, "2.0", 59)
+        shutil.copyfile(mirror / "channels/main.json", mirror / "channels/stable.json")
+        before_selection = {
+            p.relative_to(root): content_digest(p)
+            for p in root.rglob("*")
+            if p.is_file() and p.suffix != ".log"
+        }
+        code, selection_plan = _run(root, "update", "--channel", "stable", "--plan")
+        assert code == 0 and any(
+            "change project selection" in step for step in selection_plan["plan"]
+        )
+        assert {
+            p.relative_to(root): content_digest(p)
+            for p in root.rglob("*")
+            if p.is_file() and p.suffix != ".log"
+        } == before_selection
         (root / "queue.json").write_text('{"running": ["real-job"], "queued": []}')
         before = sorted(path.name for path in (root / "journal").iterdir())
         code, busy = _run(root, "update", "--yes")
@@ -494,9 +510,10 @@ environment.main()
         assert Journal.read(journals[-1]).stage == "building"
         assert (root / "current").read_text() == "1\n"
         started = time.monotonic()
-        code, updated = _run(root, "update", "--yes")
+        code, updated = _run(root, "update", "--channel", "stable", "--yes")
         elapsed = time.monotonic() - started
         assert code == 0, updated
+        assert json.loads((root / "project.json").read_bytes())["channel"] == "stable"
         assert Journal.read(journals[-1]).stage == "rolled-back"
         assert updated["current"] == 2 and updated["url"] != installed["url"]
         first, second = (root / "generations" / str(n) for n in (1, 2))
@@ -512,6 +529,7 @@ environment.main()
         retained_digest = content_digest(python)
         code, rolled_back = _run(root, "rollback", "--yes")
         assert code == 0, rolled_back
+        assert (root / "project.json").read_bytes() == initial_settings
         assert rolled_back["current"] == 1 and first.exists() and second.exists()
         after = python.stat()
         assert (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) == (

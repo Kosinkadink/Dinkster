@@ -330,6 +330,17 @@ or null), `target` (positive integer), and `stage`. Stages are `planned`,
 an `error` string, retained after rollback. A malformed record is an error,
 not permission to ignore a possibly interrupted operation.
 
+`update --channel <name>` and `update --variant <name>` use the same confirmed
+generation construction and target-variant workflow replan. Selection updates and
+their rollbacks carry optional `projectSettings`, with `previous` and `target`
+project.json text strings. Other project fields, workflows and additions are
+preserved. After health and final revalidation, `switching` writes target settings
+before replacing `current`. Interrupted switching restores previous exact text
+and the pointer; earlier stages leave settings untouched. Unexpected external
+settings refuse recovery, and settings edited after selection refuse rollback,
+rather than overwrite user edits. Journals without this field keep settings
+unchanged; rollback reverses a successful selection pair without rebuilding.
+
 Activation records also retain `bindings`, an array of objects with `name`,
 `port`, `gpus` (device-id strings), `running` (boolean) and `targetPort`.
 These preserve previous assignments and candidate ports before construction

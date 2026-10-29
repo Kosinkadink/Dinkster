@@ -290,9 +290,11 @@ revisions are checked before publication and after candidate health checks;
 activation also requires an empty target requirement plan. Failure retains the
 previous generation, serving state and diagnostic journal; verified cached asset
 bytes may remain. Workflow records are never rewritten.
-First setup with requirements needs a runnable generation planner;
-channel/variant changes refuse migration. These commands are
-not a complete released-engine setup claim.
+First setup with requirements needs a runnable generation planner. Update can
+select another `--channel` or `--variant` through the same confirmed construction
+and workflow replan. Project selection changes only after target health and final
+revalidation; other project fields are preserved. These commands are not a
+complete released-engine setup claim.
 
 `stores.json` lives under `dinkster/` in `LOCALAPPDATA` on Windows or
 `XDG_DATA_HOME` (default `~/.local/share`) on Linux. It has
@@ -367,6 +369,15 @@ latest successful activation journal, starts its retained interpreter on new
 ports, waits for health, replaces `current`, then stops the newer processes.
 It does not sync or rebuild either tree. Apply revalidates project bytes and
 current under the writer lock; unconfirmed rollback does not write anything.
+
+Channel/variant selection journals also carry optional `projectSettings`, an
+object containing `previous` and `target` project.json text strings. Activation
+writes target settings during `switching`, immediately before `current`.
+Interrupted switching restores the previous exact text along with the pointer;
+earlier stages never changed settings. Unexpected settings during recovery refuse
+rather than overwrite an external edit. Rollback reverses the successful pair
+without rebuilding; settings edited since selection refuse rollback rather than
+discard user changes. Journals without this field leave project settings alone.
 
 Activation journals retain `bindings`: objects containing `name`, `port`,
 `gpus` (device-id strings), `running` (boolean), and `targetPort`. The prior

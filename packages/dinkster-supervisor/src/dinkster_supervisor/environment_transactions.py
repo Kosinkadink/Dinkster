@@ -22,6 +22,7 @@ from .environment_state import (
     EnvironmentError,
     Generation,
     Journal,
+    atomic_write,
     durable_unlink,
     read_current,
     set_current,
@@ -61,7 +62,13 @@ def begin_setup(
     return path
 
 
-def begin_activation(root: Path, target: int, operation: str) -> Path:
+def begin_activation(
+    root: Path,
+    target: int,
+    operation: str,
+    *,
+    project_settings: dict[str, str] | None = None,
+) -> Path:
     """Persist prior bindings before building; caller holds the project writer lock."""
     if operation not in {"update", "rollback", "repair"}:
         raise EnvironmentError("activation requires update, rollback or repair")
@@ -93,7 +100,14 @@ def begin_activation(root: Path, target: int, operation: str) -> Path:
                     break
             binding["targetPort"] = sock.getsockname()[1]
         path = root / "journal" / f"{time.time_ns()}.json"
-        Journal(operation, previous, target, "planned", bindings=tuple(bindings)).write(path)
+        Journal(
+            operation,
+            previous,
+            target,
+            "planned",
+            bindings=tuple(bindings),
+            project_settings=project_settings,
+        ).write(path)
         Journal.read(path)
         return path
     finally:
@@ -136,6 +150,8 @@ def activate(root: Path, path: Path, *, revalidate: Callable[[], None]) -> None:
         require_idle(root)
         journal = replace(journal, stage="switching")
         journal.write(path)
+        if journal.project_settings is not None:
+            atomic_write(root / "project.json", journal.project_settings["target"])
         set_current(root, journal.target)
         for binding in journal.bindings:
             if binding["running"] and journal.previous is not None:
@@ -158,8 +174,14 @@ def recover_activation(root: Path, path: Path) -> None:
         raise EnvironmentError("journal previous generation does not match its operation")
     if read_current(root) not in {journal.previous, journal.target}:
         raise EnvironmentError("current does not match interrupted activation")
+    if journal.project_settings is not None and journal.stage == "switching":
+        actual = (root / "project.json").read_bytes().decode("utf-8")
+        if actual not in journal.project_settings.values():
+            raise EnvironmentError("project settings changed during interrupted selection")
     for binding in journal.bindings:
         stop_engine(root, cast("str", binding["name"]), generation=journal.target)
+    if journal.project_settings is not None and journal.stage == "switching":
+        atomic_write(root / "project.json", journal.project_settings["previous"])
     if journal.previous is None:
         durable_unlink(root / "current")
     else:

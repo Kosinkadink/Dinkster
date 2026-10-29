@@ -212,7 +212,10 @@ else:
         stop_engine(tmp_path, "compute", generation=1)
 
 
-def test_update_and_rollback_reactivate_retained_tree_without_rebuild(tmp_path: Path) -> None:
+@pytest.mark.parametrize("migration", [False, True])
+def test_update_and_rollback_reactivate_retained_tree_without_rebuild(
+    tmp_path: Path, migration: bool
+) -> None:
     retained = _target(tmp_path, 1)
     before = (retained / "generation.json").read_bytes()
     identity = interpreter(retained).stat()
@@ -234,11 +237,23 @@ def test_update_and_rollback_reactivate_retained_tree_without_rebuild(tmp_path: 
     stale_parked = parked_path.read_bytes()
     stop_engine(tmp_path, "parked", generation=1)
     parked_path.write_bytes(stale_parked)
-    path = begin_activation(tmp_path, 2, "update")
+    previous_settings = (tmp_path / "project.json").read_text()
+    selected = json.loads(previous_settings)
+    selected.update(channel="stable", variant="win-cpu", custom={"keep": "selection"})
+    next_settings = json.dumps(selected) + "\n"
+    path = begin_activation(
+        tmp_path,
+        2,
+        "update",
+        project_settings={"previous": previous_settings, "target": next_settings}
+        if migration
+        else None,
+    )
     _target(tmp_path, 2)
 
     def revalidate() -> None:
         assert read_current(tmp_path) == 1
+        assert (tmp_path / "project.json").read_text() == previous_settings
         binding = next(row for row in Journal.read(path).bindings if row["name"] == "main")
         with urlopen(f"http://127.0.0.1:{binding['targetPort']}/api/generation") as response:  # noqa: S310
             assert json.loads(response.read()) == {"generation": str(tmp_path / "generations/2")}
@@ -246,6 +261,9 @@ def test_update_and_rollback_reactivate_retained_tree_without_rebuild(tmp_path: 
     try:
         activate(tmp_path, path, revalidate=revalidate)
         assert read_current(tmp_path) == 2
+        assert (tmp_path / "project.json").read_text() == (
+            next_settings if migration else previous_settings
+        )
         assert engine_status(tmp_path)[0]["state"] == "ready"
         assert engine_status(tmp_path)[0]["generation"] == 2
         assert engine_status(tmp_path)[1]["url"] == f"http://127.0.0.1:{parked_port}"
@@ -255,6 +273,15 @@ def test_update_and_rollback_reactivate_retained_tree_without_rebuild(tmp_path: 
         assert code == 0 and restarted["url"] == f"http://127.0.0.1:{parked_port}"
         assert _run(tmp_path, "stop", "--engine", "parked", "--yes")[0] == 0
         journals = sorted((tmp_path / "journal").glob("*.json"))
+        if migration:
+            (tmp_path / "project.json").write_text(json.dumps({**selected, "custom": "later edit"}))
+            edited = (tmp_path / "project.json").read_bytes()
+            code, refused = _run(tmp_path, "rollback", "--yes")
+            assert code == 1 and "settings changed since selection" in refused["error"]
+            assert (tmp_path / "project.json").read_bytes() == edited
+            assert read_current(tmp_path) == 2
+            assert sorted((tmp_path / "journal").glob("*.json")) == journals
+            (tmp_path / "project.json").write_text(next_settings)
         code, planned = _run(tmp_path, "rollback", "--plan")
         assert code == 0 and planned["status"] == "planned"
         assert read_current(tmp_path) == 2
@@ -263,6 +290,7 @@ def test_update_and_rollback_reactivate_retained_tree_without_rebuild(tmp_path: 
         assert code == 0, applied
         assert applied["status"] == "applied"
         assert read_current(tmp_path) == 1
+        assert (tmp_path / "project.json").read_text() == previous_settings
         assert engine_status(tmp_path)[0]["state"] == "ready"
         assert engine_status(tmp_path)[1]["state"] == "stopped"
         code, restarted = _run(tmp_path, "start", "--engine", "parked", "--yes")
@@ -294,11 +322,13 @@ def test_update_and_rollback_reactivate_retained_tree_without_rebuild(tmp_path: 
 @pytest.mark.parametrize(
     "interruption", ["none", "unavailable", "asset-removed", "workflow-edited"]
 )
+@pytest.mark.parametrize("migration", [False, True])
 def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     interruption: str,
+    migration: bool,
 ) -> None:
     from dinkster_supervisor import environment, environment_transactions
 
@@ -308,7 +338,9 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
         monkeypatch.setenv(variable, str(tmp_path / "user-data"))
     monkeypatch.setenv("PYTHONPATH", os.pathsep.join(str(Path(p).resolve()) for p in sys.path))
     root, store, mirror = (tmp_path / name for name in ("project", "store", "mirror"))
-    _mirror(mirror, variant="linux-cpu")
+    _mirror(mirror, variant="win-cpu" if migration else "linux-cpu")
+    if migration:
+        shutil.copyfile(mirror / "channels/main.json", mirror / "channels/stable.json")
     old = _target(root, 1)
     (old / "dinkster.lock").write_text(Lockfile().record_json())
     (root / "store").write_text(str(store) + "\n")
@@ -379,9 +411,9 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
                 if p.is_file()
             )
         )
-        replace(generation, files=files, in_process_packs=("example",)).write(
-            target / "generation.json"
-        )
+        replace(
+            generation, files=files, in_process_packs=("example",), variant=str(kwargs["variant"])
+        ).write(target / "generation.json")
         (root / "dinkster/__init__.py").write_text(f"__path__.append({str(core)!r})\n")
 
     monkeypatch.setattr(environment, "build_generation", fixture_build)
@@ -425,6 +457,7 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
                 str(catalog),
                 "--artifacts",
                 str(archives),
+                *(["--channel", "stable", "--variant", "win-cpu"] if migration else []),
             ],
         )
         with pytest.raises(SystemExit) as exited:
@@ -441,6 +474,17 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
                 == payload
             )
             assert Journal.read(journals[0]).stage == "complete"
+            if migration:
+                assert json.loads((root / "project.json").read_bytes()) == {
+                    **settings,
+                    "channel": "stable",
+                    "variant": "win-cpu",
+                }
+                index = LibraryStore(root / "library/library.sqlite")
+                try:
+                    assert index.get("local", record.id) == record
+                finally:
+                    index.close()
         else:
             assert code == 1, result
             expected = (
@@ -457,7 +501,8 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
             assert Journal.read(journals[0]).stage == "rolled-back"
             with urlopen(f"{prior['url']}/api/health") as response:  # noqa: S310
                 assert json.loads(response.read()) == {"ok": True}
-        assert (root / "project.json").read_bytes() == original_settings
+        if interruption != "none" or not migration:
+            assert (root / "project.json").read_bytes() == original_settings
         assert (old / "dinkster.lock").read_text() == Lockfile().record_json()
     finally:
         stop_engine(root, "main", generation=1)
@@ -466,7 +511,14 @@ def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
 
 @pytest.mark.parametrize(
     "interruption",
-    ["before-spawn", "before-switch", "after-switch", "after-shutdown", "during-recovery"],
+    [
+        "before-spawn",
+        "before-switch",
+        "after-settings",
+        "after-switch",
+        "after-shutdown",
+        "during-recovery",
+    ],
 )
 def test_interrupted_activation_restores_previous_serving_generation(
     tmp_path: Path,
@@ -474,7 +526,19 @@ def test_interrupted_activation_restores_previous_serving_generation(
 ) -> None:
     make_generation(tmp_path)
     prior = start_engine(tmp_path, 1, "main", free_port())
-    path = begin_activation(tmp_path, 2, "update")
+    previous_settings = (
+        '{"format":"dinkster.project/1","channel":"main","variant":"linux-cpu","custom":42}\r\n'
+    )
+    target_settings = (
+        '{"format":"dinkster.project/1","channel":"stable","variant":"win-cpu","custom":42}\n'
+    )
+    (tmp_path / "project.json").write_bytes(previous_settings.encode())
+    path = begin_activation(
+        tmp_path,
+        2,
+        "update",
+        project_settings={"previous": previous_settings, "target": target_settings},
+    )
     _target(tmp_path, 2)
 
     script = """
@@ -486,7 +550,14 @@ from dinkster_supervisor import environment_runtime as runtime
 root, journal = Path(sys.argv[1]), Path(sys.argv[2])
 def interrupted():
     os._exit(71)
-if sys.argv[3] == 'after-switch':
+if sys.argv[3] == 'after-settings':
+    original = transactions.atomic_write
+    def settings_then_interrupt(path, text):
+        original(path, text)
+        interrupted()
+    transactions.atomic_write = settings_then_interrupt
+    transactions.activate(root, journal, revalidate=lambda: None)
+elif sys.argv[3] == 'after-switch':
     original = transactions.set_current
     def switch_then_interrupt(root, number):
         original(root, number)
@@ -516,6 +587,8 @@ else:
         )
         assert exited.returncode == 71, exited.stderr
         assert Journal.read(path).incomplete
+        if interruption in {"after-settings", "after-switch", "after-shutdown"}:
+            assert (tmp_path / "project.json").read_bytes() == target_settings.encode()
         if interruption == "during-recovery":
             recovery_script = """
 import os
@@ -539,8 +612,24 @@ recover_activation(Path(sys.argv[1]), Path(sys.argv[2]))
             )
             assert exited.returncode == 72, exited.stderr
             assert Journal.read(path).incomplete
+        if interruption in {"after-settings", "after-shutdown"}:
+            external = target_settings.replace('"custom":42', '"custom":99').encode()
+            (tmp_path / "project.json").write_bytes(external)
+            current_before_refusal = read_current(tmp_path)
+            serving_before_refusal = engine_status(tmp_path)
+            with pytest.raises(EnvironmentError, match="settings changed during interrupted"):
+                recover_activation(tmp_path, path)
+            assert (tmp_path / "project.json").read_bytes() == external
+            assert read_current(tmp_path) == current_before_refusal
+            assert engine_status(tmp_path) == serving_before_refusal
+            assert serving_before_refusal[0]["state"] == "ready"
+            with urlopen(str(serving_before_refusal[0]["url"]) + "/api/health") as response:  # noqa: S310
+                assert json.loads(response.read()) == {"ok": True}
+            assert Journal.read(path).incomplete
+            (tmp_path / "project.json").write_bytes(target_settings.encode())
         recover_activation(tmp_path, path)
         assert read_current(tmp_path) == 1
+        assert (tmp_path / "project.json").read_bytes() == previous_settings.encode()
         assert engine_status(tmp_path) == (prior,)
         assert not (tmp_path / "generations/2").exists()
         assert Journal.read(path).stage == "rolled-back"
@@ -561,14 +650,23 @@ def test_busy_refusal_and_failed_final_revalidation_preserve_current(tmp_path: P
             begin_activation(tmp_path, 2, "update")
         assert not (tmp_path / "journal").exists()
         (tmp_path / "queue.json").write_text(json.dumps({"running": [], "queued": []}))
-        path = begin_activation(tmp_path, 2, "update")
+        settings = '{"format":"dinkster.project/1","channel":"main"}\n'
+        (tmp_path / "project.json").write_text(settings)
+        path = begin_activation(
+            tmp_path,
+            2,
+            "update",
+            project_settings={"previous": settings, "target": settings.replace("main", "stable")},
+        )
         _target(tmp_path, 2)
 
         def changed() -> None:
+            (tmp_path / "project.json").write_text(settings.replace("main", "external"))
             raise EnvironmentError("project changed after confirmation")
 
         with pytest.raises(EnvironmentError, match="project changed"):
             activate(tmp_path, path, revalidate=changed)
+        assert (tmp_path / "project.json").read_text() == settings.replace("main", "external")
         assert read_current(tmp_path) == 1
         assert engine_status(tmp_path) == (prior,)
         assert not (tmp_path / "generations/2").exists()

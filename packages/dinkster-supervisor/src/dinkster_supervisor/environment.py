@@ -159,8 +159,20 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     )
     if not variant:
         raise EnvironmentError("setup requires an explicit --variant")
+    project_settings = None
     if settings and (channel != settings["channel"] or variant != settings["variant"]):
-        raise EnvironmentError("changing channel or variant requires journaled project migration")
+        if args.operation != "update":
+            raise EnvironmentError("change channel or variant with update")
+        project_settings = {
+            "previous": cast("bytes", snapshot).decode("utf-8"),
+            "target": json.dumps(
+                {**settings, "channel": channel, "variant": variant, "mirrors": list(mirrors)},
+                indent=2,
+                sort_keys=True,
+                ensure_ascii=True,
+            )
+            + "\n",
+        }
     if settings and args.operation == "setup" and port != settings["port"]:
         raise EnvironmentError("retry setup with the configured initial port")
     if (args.catalog_lock is None) != (args.artifacts is None):
@@ -194,6 +206,11 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         f"artifact payload size {size} bytes; reuse verified local artifacts in {store}",
         "build an offline generation, check health, then activate; retain the previous tree",
     ]
+    if project_settings is not None and settings is not None:
+        plan.append(
+            f"change project selection from {settings['channel']}/{settings['variant']} "
+            f"to {channel}/{variant} only after candidate health and workflow revalidation"
+        )
     if args.operation == "setup":
         plan.insert(
             1,
@@ -296,7 +313,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     registration=setup_registration(root, store),
                 )
                 if current is None
-                else begin_activation(root, target, "update")
+                else begin_activation(root, target, "update", project_settings=project_settings)
             )
             try:
                 register_project(root, store)
@@ -506,10 +523,20 @@ def _rollback(args: argparse.Namespace, result: dict[str, object]) -> int:
         raise EnvironmentError("project has no active generation")
     snapshot = (root / "project.json").read_bytes()
     target = None
+    project_settings = None
     for path in sorted((root / "journal").glob("*.json"), reverse=True):
         journal = Journal.read(path)
         if journal.stage == "complete" and journal.target == current and journal.previous:
             target = journal.previous
+            if journal.project_settings is not None:
+                if snapshot.decode("utf-8") != journal.project_settings["target"]:
+                    raise EnvironmentError(
+                        "project settings changed since selection; cannot restore prior settings"
+                    )
+                project_settings = {
+                    "previous": journal.project_settings["target"],
+                    "target": journal.project_settings["previous"],
+                }
             break
     if target is None:
         raise EnvironmentError("project has no previous successful generation")
@@ -525,7 +552,7 @@ def _rollback(args: argparse.Namespace, result: dict[str, object]) -> int:
     _recover_pending(root)
     with writer_lock(root):
         revalidate()
-        path = begin_activation(root, target, "rollback")
+        path = begin_activation(root, target, "rollback", project_settings=project_settings)
         activate(root, path, revalidate=revalidate)
         result.update(current=target, status="applied", engines=list(engine_status(root)))
     return 0

@@ -359,6 +359,7 @@ class Journal:
     error: str | None = None
     bindings: tuple[dict[str, object], ...] = ()
     setup_registration: dict[str, object] | None = None
+    project_settings: dict[str, str] | None = None
 
     @classmethod
     def read(cls, path: Path) -> Journal:
@@ -428,6 +429,25 @@ class Journal:
         previous = value.get("previous")
         if previous == value.get("target") and operation in {"update", "rollback", "repair"}:
             raise EnvironmentError("activation journal must name distinct generations")
+        settings = value.get("projectSettings")
+        if settings is not None:
+            if operation not in {"update", "rollback"} or not isinstance(settings, dict):
+                raise EnvironmentError("project settings snapshot requires update or rollback")
+            settings = cast("dict[str, object]", settings)
+            if set(settings) != {"previous", "target"}:
+                raise EnvironmentError("project settings snapshot requires previous and target")
+            for text in settings.values():
+                if not isinstance(text, str):
+                    raise EnvironmentError("project settings snapshots must be JSON text")
+                try:
+                    document: object = json.loads(text)
+                except ValueError as exc:
+                    raise EnvironmentError("project settings snapshots must be JSON text") from exc
+                if (
+                    not isinstance(document, dict)
+                    or cast("dict[str, object]", document).get("format") != "dinkster.project/1"
+                ):
+                    raise EnvironmentError("project settings snapshots require project documents")
         registration = value.get("setupRegistration")
         if registration is not None:
             if operation != "setup" or previous is not None or not isinstance(registration, dict):
@@ -453,6 +473,7 @@ class Journal:
             error,
             tuple(checked),
             registration,
+            cast("dict[str, str] | None", settings),
         )
 
     @property
@@ -473,4 +494,6 @@ class Journal:
             value["bindings"] = list(self.bindings)
         if self.setup_registration is not None:
             value["setupRegistration"] = self.setup_registration
+        if self.project_settings is not None:
+            value["projectSettings"] = self.project_settings
         write_document(path, value)

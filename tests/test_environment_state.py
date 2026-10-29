@@ -149,6 +149,27 @@ def test_journal_records_recovery_state_and_retains_failure_diagnostics(tmp_path
     assert json.loads(path.read_text())["format"] == "dinkster.journal/1"
 
 
+@pytest.mark.parametrize(
+    "settings",
+    [
+        [],
+        {},
+        {"previous": "{}"},
+        {"previous": "{}", "target": 42},
+        {"previous": "{}", "target": "not json"},
+        {"previous": "{}", "target": "{}"},
+    ],
+)
+def test_journal_refuses_incomplete_or_invalid_project_selection(tmp_path: Path, settings: object):
+    path = tmp_path / "journal.json"
+    Journal("update", 1, 2, "switching").write(path)
+    document = json.loads(path.read_bytes())
+    document["projectSettings"] = settings
+    path.write_text(json.dumps(document))
+    with pytest.raises(EnvironmentError, match="project settings"):
+        Journal.read(path)
+
+
 def _channel_document() -> dict:
     return {
         "format": "dinkster.channel/1",

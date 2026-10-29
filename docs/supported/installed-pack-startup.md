@@ -45,8 +45,9 @@
   assignment before confirmation. Releases carrying an official source lock feed
   their verified source ZIPs into target-interpreter admission automatically;
   missing admission support refuses activation. Automatic default dependency
-  provisioning and registered workflow/addition execution are not connected yet;
-  channel or variant migration is refused.
+  provisioning is not connected yet. Confirmed updates can select another channel
+  or variant, retaining the old selection until candidate health and requirement
+  revalidation succeed. Failure recovers the prior selection and serving engine.
 - Update plans include explicit-addition needs through the
   active generation's read-only planner. Selected release sources must already be
   verified in the local cache, or supplied through explicit catalog/cache inputs.
@@ -115,7 +116,10 @@
   registered workflow inputs and target requirements after candidate health checks.
   Failed acquisition or revalidation retains the previous serving generation and
   diagnostic journal. First setup with requirements still needs an existing
-  generation interpreter; channel/variant migration is not available.
+  generation interpreter. Channel/variant selection replans requirements for the
+  selected target; workflow records and other project fields are preserved.
+  Rollback restores the retained selection without rebuilding, refusing when
+  settings were edited after selection rather than discarding user changes.
 - A local channel builder accepts completed engine release files and selected
   base manifests, verifies engine payload hashes and base/engine compatibility,
   and atomically writes the existing stable/main channel format. It preserves
