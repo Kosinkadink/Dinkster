@@ -459,6 +459,18 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     assert f"Requires-Dist: dinkster-api=={version}\n" in metadata
     assert f"Requires-Dist: dinkster-frontend=={version}\n" in metadata
     assert "Requires-Dist: aiohttp>=3.10\n" in metadata
+    subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            f"import sys; sys.path.insert(0, {str(wheel)!r}); "
+            "import dinkster; from importlib.metadata import version; "
+            f"assert dinkster.__version__ == version('dinkster') == {version!r}",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
     assert hashlib.sha256((ROOT / "uv.lock").read_bytes()).hexdigest() == original_lock
 
 

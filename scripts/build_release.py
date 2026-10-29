@@ -104,6 +104,16 @@ def versioned_sources(root: Path, version: str) -> Iterator[Path]:
                 text = text.replace(
                     "dependencies = [", f'dependencies = [\n    "dinkster-frontend=={version}",', 1
                 )
+                module = staged / "src/dinkster/__init__.py"
+                module.write_text(
+                    re.sub(
+                        r'(?m)^__version__ = "[^"]+"$',
+                        f'__version__ = "{version}"',
+                        module.read_text(encoding="utf-8"),
+                        count=1,
+                    ),
+                    encoding="utf-8",
+                )
             path.write_text(text, encoding="utf-8")
         yield staged
 
