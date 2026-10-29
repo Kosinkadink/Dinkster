@@ -92,9 +92,22 @@ def _assert_shared(first: Path, second: Path) -> None:
     assert extents[0] == extents[1]
 
 
-@pytest.mark.parametrize("problem", [None, "update", "extra", "missing", "variant", "wheel"])
+@pytest.mark.parametrize(
+    "problem",
+    [
+        None,
+        "update",
+        "extra",
+        "missing",
+        "variant",
+        "wheel",
+        "repair",
+        "repair-extra",
+        "repair-missing",
+    ],
+)
 def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
-    tmp_path: Path, problem: str | None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, problem: str | None
 ) -> None:
     from dinkster_registry import LockedPack, Lockfile, build_artifact
     from dinkster_workers import load_manifest
@@ -112,6 +125,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
         subprocess.check_output(
             [
                 str(interpreter(base.parent)),
+                "-B",
                 "-c",
                 "import sysconfig; print(sysconfig.get_path('purelib'))",
             ],
@@ -198,7 +212,8 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
         artifacts=artifacts,
         source_generation=previous,
     )
-    if problem is not None and problem not in {"update", "extra"}:
+    repairs = {"repair", "repair-extra", "repair-missing"}
+    if problem is not None and problem not in {"update", "extra"} | repairs:
         message = {
             "missing": "selected packs have no dependency lock: other",
             "variant": "variant wrong-variant does not match",
@@ -224,6 +239,76 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
             assert prepared is not None
             assert set(prepared.schemas) == {f"{name}.doubler", f"{name}.tagger"}
         assert sum("dinkster-schema-catalog" in name for name, _ in generation.files) == 2
+        if problem in repairs:
+            from dataclasses import replace
+
+            from dinkster_supervisor.environment_state import write_document
+            from test_environment_cli import _run
+
+            monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "user-data"))
+            monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "user-data"))
+            legacy_files = {
+                name: sha for name, sha in generation.files if not name.startswith("packs/")
+            }
+            if problem == "repair-extra":
+                del legacy_files["pack-sources/other/other_nodes.py"]
+            elif problem == "repair-missing":
+                (target / "recorded.txt").write_bytes(b"retained input")
+                from dinkster_supervisor.environment_state import content_digest
+
+                legacy_files["recorded.txt"] = content_digest(target / "recorded.txt")
+            replace(generation, files=tuple(sorted(legacy_files.items()))).write(
+                target / "generation.json"
+            )
+            set_current(root, number)
+            (root / "store").write_text(str(store) + "\n")
+            write_document(
+                root / "project.json",
+                {
+                    "format": "dinkster.project/1",
+                    "channel": "main",
+                    "variant": variant,
+                    "mirrors": [str(tmp_path / "unavailable-mirror")],
+                    "port": 3639,
+                },
+            )
+            release = store / "engines" / ("b" * 64)
+            shutil.copytree(artifacts, release / "artifacts")
+            code, result = _run(root, "doctor", "--repair", "--yes")
+            if problem == "repair":
+                assert code == 0 and result["current"] == 2, result
+                from dinkster_supervisor.environment_state import Generation
+
+                repaired = Generation.read(root / "generations/2/generation.json")
+                assert repaired.drift(root / "generations/2") == ()
+                assert all(
+                    f"packs/{name}/pack-lock.json" in dict(repaired.files)
+                    for name in ("healthy", "other")
+                )
+                assert (
+                    subprocess.check_output(
+                        [
+                            str(venv_python(root / "generations/2/packs/other")),
+                            "-c",
+                            "import stable_fixture, sys; "
+                            "print(stable_fixture.VALUE); print(sys.prefix)",
+                        ],
+                        text=True,
+                    ).strip()
+                    == f"40\n{root / 'generations/2/packs/other'}"
+                )
+                for name in ("healthy", "other"):
+                    manifest = load_manifest(
+                        root / "generations/2/pack-sources" / name / "dinkster-pack.toml"
+                    )
+                    prepared = read_catalog(manifest)
+                    assert prepared is not None
+                    assert set(prepared.schemas) == {f"{name}.doubler", f"{name}.tagger"}
+            else:
+                assert code == 1 and "repaired file inventory differs" in result["error"], result
+                assert read_current(root) == 1
+                assert not (root / "generations/2").exists()
+            return
         if problem == "extra":
             from dinkster_supervisor.environment_collection import store_collection_plan
             from dinkster_supervisor.environment_state import write_document
