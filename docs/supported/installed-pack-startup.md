@@ -43,6 +43,9 @@
   generation and health-check it before activation, with confirmation and retained
   rollback. Registered workflow/addition execution and automatic release source
   acquisition are not connected yet; channel or variant migration is refused.
+- Managed workflow plans default to the selected generation's recorded variant.
+  A conflicting launch variant refuses startup; an explicit request variant
+  remains a read-only compatibility comparison, not an environment switch.
 - The default local launcher prepares missing or stale catalogs before binding,
   then serves the browser application and engine API from one loopback origin.
 - Released engines discover the installed frontend wheel without a frontend

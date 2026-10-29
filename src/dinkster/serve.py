@@ -157,7 +157,7 @@ from .compose import (
 )
 from .frontend import install_frontend
 from .generation_api import GenerationModel, GenerationService, add_generation_routes
-from .generation_packs import generation_pack_specs
+from .generation_packs import load_generation_packs
 from .guess_api import add_guess_routes
 from .installer import Installer
 from .mounts_api import MountService, add_mount_routes
@@ -1800,7 +1800,13 @@ def main(argv: list[str] | None = None) -> None:
         specs.extend(compat_specs)
     if args.generation is not None:
         try:
-            for spec in generation_pack_specs(args.generation):
+            selected_variant, generation_specs = load_generation_packs(args.generation)
+            if selected_variant not in VARIANTS:
+                raise CompositionError(f"unsupported generation variant: {selected_variant}")
+            if args.engine_variant is not None and args.engine_variant != selected_variant:
+                raise CompositionError("--engine-variant differs from selected generation variant")
+            args.engine_variant = selected_variant
+            for spec in generation_specs:
                 if spec.packs and "dinkster-nodes-remote" in spec.packs:
                     spec = _with_remote_config(
                         spec,

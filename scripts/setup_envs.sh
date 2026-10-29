@@ -2,7 +2,7 @@
 # Build the three validation environments the AGENTS.md gates need,
 # from a fresh checkout, with no sudo and no system mutation:
 #
-#   .venv        torch-free root env        (uv sync --all-packages)
+#   .venv        locked workspace env      (uv sync --all-packages)
 #   .venv-torch  CPU torch test env         (torch README "Setup: torch
 #                                            environments")
 #   .venv-gpu    CUDA torch test env        (torch README "GPU
@@ -36,8 +36,6 @@ else
     echo "==> dinkster-evidence not found - skipping optional dinkster-acceptance"
 fi
 
-dinkster_inference_requirement="dinkster-inference @ https://github.com/Kosinkadink/dinkster-inference/archive/9a9d0fd74ede9dea3058a0a63b2c5e9a8b00cb1c.zip"
-
 FORCE=0
 for arg in "$@"; do
     case "$arg" in
@@ -56,12 +54,16 @@ if [ "$FORCE" = 1 ]; then
 fi
 
 # ---------------------------------------------------------------- .venv
-echo "==> .venv (torch-free root env)"
+echo "==> .venv (locked workspace env)"
 UV_PROJECT_ENVIRONMENT="$PWD/.venv" uv sync --project "$PWD" --python 3.12 --all-packages
 
 # ---------------------------------------------------------- .venv-torch
 echo "==> .venv-torch (CPU torch test env)"
 [ -x .venv-torch/bin/python ] || uv venv .venv-torch --python 3.12
+# Both OpenCV distributions own cv2; restore contrib's files after removing the old one.
+uv pip uninstall --python .venv-torch/bin/python opencv-python-headless
+uv pip install --python .venv-torch/bin/python \
+    --reinstall-package opencv-contrib-python-headless "opencv-contrib-python-headless==5.0.0.93"
 if [ "$os" = "Darwin" ]; then
     # The mac torch wheel is one native arm64 build with MPS included;
     # PyPI is its canonical source (the cpu index mirrors it).
@@ -80,9 +82,9 @@ fi
 # benchmark-harness tests can run in this venv.
 uv pip install --python .venv-torch/bin/python pytest packaging "numpy>=1.26" "scipy>=1.11" \
     "simpleeval==1.0.8" \
-    "onnxruntime==1.29.0" "opencv-python-headless==5.0.0.93" "pillow==12.0.0" \
+    "onnxruntime==1.29.0" "opencv-contrib-python-headless==5.0.0.93" "pillow==12.0.0" \
     "safetensors==0.8.0" "sentencepiece==0.2.1" "tokenizers==0.23.1" \
-    "transformers==5.16.1" "$dinkster_inference_requirement" \
+    "transformers==5.16.1" \
     -e packages/dinkster-api \
     -e packages/dinkster-schema \
     -e packages/dinkster-values \
@@ -178,7 +180,6 @@ if [ "${CUDA_VISIBLE_DEVICES-unset}" != "" ] && [ "${CUDA_VISIBLE_DEVICES-unset}
         pytest numpy scipy torchsde tqdm pillow packaging \
         "safetensors==0.8.0" "sentencepiece==0.2.1" "tokenizers==0.23.1" \
         comfy-kitchen==0.2.40 comfy-aimdo==0.6.0 \
-        "$dinkster_inference_requirement" \
         -e packages/dinkster-api \
         -e packages/dinkster-schema \
         -e packages/dinkster-values \
