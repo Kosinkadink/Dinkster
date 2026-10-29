@@ -294,6 +294,7 @@ def test_ordinary_pack_encodes_original_and_selected_layers(
             (tmp_path / "clip_fixture.py").write_text(
                 "from test_comfy_clip_nodes import CLIP_FIXTURES\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, *CLIP_FIXTURES)\n",
                 encoding="ascii",
             )
@@ -302,6 +303,10 @@ def test_ordinary_pack_encodes_original_and_selected_layers(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["clip-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "clip_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "clip_fixture:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "clip_fixture:register_inference_types",

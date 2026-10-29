@@ -32,7 +32,6 @@ def test_latent_upscale_loader_public_schema_and_manifest_order() -> None:
     )
     assert schema_from_wire(schema_to_wire(schema)) == schema
     assert LatentUpscaleModelLoader in COMFY_NODES
-    assert (
-        tuple(node.schema().node_type for node in COMFY_NODES)
-        == load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml").namespaces
-    )
+    assert ("devices", *(node.schema().node_type for node in COMFY_NODES)) == load_manifest(
+        "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+    ).namespaces

@@ -111,6 +111,7 @@ def test_manifest_links_decoded_masks_to_compositing_nodes(
             (tmp_path / "compositing_fixture_sources.py").write_text(
                 "from test_compositing_torch import CompositingInspect, CompositingSource\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, CompositingSource, CompositingInspect)\n",
                 encoding="ascii",
             )
@@ -119,6 +120,10 @@ def test_manifest_links_decoded_masks_to_compositing_nodes(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["compositing-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "compositing_fixture_sources:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "compositing_fixture_sources:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "compositing_fixture_sources:register_inference_types",
