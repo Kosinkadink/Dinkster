@@ -143,7 +143,9 @@ class ProducedScratchLease:
         folder = _lease_directory(root)
         self._lock = _lock(folder / f"owner-{uuid.uuid4().hex}.lock")
         try:
-            with _lock(folder / "gate.lock").acquire(timeout=0):
+            # Other producers briefly hold this gate while registering too.
+            # Only reconciliation attempts must be strictly nonblocking.
+            with _lock(folder / "gate.lock").acquire(timeout=5):
                 self._lock.acquire(timeout=0)
         except Timeout:
             raise AssetError("produced scratch is busy with reconciliation") from None

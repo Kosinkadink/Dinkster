@@ -9,6 +9,7 @@ import os
 import shutil
 import threading
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from multiprocessing.connection import Connection
 from multiprocessing.shared_memory import SharedMemory
@@ -234,6 +235,33 @@ def test_produced_scratch_refuses_missing_journal_without_reclassifying_bytes(
         with pytest.raises(AssetError, match="untracked data"):
             produced_output_scratch(env)
     assert ref.read_bytes() == b"keep recoverable source"
+
+
+def test_produced_scratch_parallel_invocations_share_job_without_losing_publications(
+    tmp_path: Path,
+) -> None:
+    env = {"DINKSTER_PACK_SCRATCH": str(tmp_path / "scratch")}
+    contents = [f"distinct intermediate {index}".encode() for index in range(8)]
+    ready = threading.Barrier(len(contents))
+
+    def produce(data: bytes) -> tuple[Path, AssetRef]:
+        ready.wait(20)
+        with use_produced_output_job("parallel job", 1):
+            vault = produced_output_scratch(env)
+            assert vault is not None
+            ref = _publish(vault, data)
+            offer_source_assets({"video": _value(ref)})
+            return vault.root, ref
+
+    with ThreadPoolExecutor(max_workers=len(contents)) as pool:
+        results = list(pool.map(produce, contents))
+    roots = {root for root, _ in results}
+    assert len(roots) == 1
+    for (_, ref), data in zip(results, contents, strict=True):
+        assert ref.read_bytes() == data
+    assert set(ProducedScratchState(roots.pop()).publications()) == {
+        (digest_bytes(data), len(data), True) for data in contents
+    }
 
 
 def test_produced_scratch_isolates_concurrent_jobs_and_attempts(tmp_path: Path) -> None:
