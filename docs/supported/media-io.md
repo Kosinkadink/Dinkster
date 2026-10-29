@@ -225,6 +225,8 @@
   counts, empty Gaussian tensors and floating dtype across ordinary worker
   boundaries; live tensors retain their device and storage. Empty splats can
   cross workers but cannot be exported to PLY.
+- Get Splat Count reports the total valid Gaussian count across a SPLAT batch,
+  honoring optional per-row counts and preserving the input splat value.
 - Native ImageOnlyCheckpointSave exports model, vision encoder and VAE weights
   to a selected writable mount, preserving checkpoint metadata and reserved
   counter names, and reports the host-validated saved file in execution results.
