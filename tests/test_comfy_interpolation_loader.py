@@ -42,10 +42,9 @@ def test_interpolation_loader_schema_and_registration() -> None:
     assert consumer.inputs[2].widget == NumberWidget(min=2, max=16)
     assert [(item.id, item.type.types) for item in consumer.outputs] == [("IMAGE", (IMAGE_TYPE,))]
     assert COMFY_NODES.count(FrameInterpolate) == 1
-    assert (
-        tuple(node.schema().node_type for node in COMFY_NODES)
-        == load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml").namespaces
-    )
+    assert ("devices", *(node.schema().node_type for node in COMFY_NODES)) == load_manifest(
+        "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+    ).namespaces
 
 
 def test_interpolation_loader_cold_import_does_not_load_torch() -> None:

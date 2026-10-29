@@ -339,6 +339,7 @@ def test_manifest_transports_model_sampling_patch_chain_in_both_hosting_modes(
             (tmp_path / "advanced_model_fixture_sources.py").write_text(
                 "from test_model_advanced_torch import ADVANCED_MODEL_FIXTURE_NODES\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, *ADVANCED_MODEL_FIXTURE_NODES)\n",
                 encoding="ascii",
             )
@@ -347,6 +348,10 @@ def test_manifest_transports_model_sampling_patch_chain_in_both_hosting_modes(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["advanced-model-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "advanced_model_fixture_sources:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "advanced_model_fixture_sources:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "advanced_model_fixture_sources:register_inference_types",

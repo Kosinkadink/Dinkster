@@ -176,6 +176,7 @@ def test_manifest_registers_model_types_for_graph_execution(
             (tmp_path / "merging_fixture_sources.py").write_text(
                 "from test_comfy_model_merging_nodes import PATCHER_NODES\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, *PATCHER_NODES)\n",
                 encoding="ascii",
             )
@@ -184,6 +185,10 @@ def test_manifest_registers_model_types_for_graph_execution(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["merge-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "merging_fixture_sources:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "merging_fixture_sources:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "merging_fixture_sources:register_inference_types",

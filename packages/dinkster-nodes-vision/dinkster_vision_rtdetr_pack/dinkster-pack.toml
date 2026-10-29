@@ -4,9 +4,9 @@ publisher = "dinkster"
 namespaces = []
 executes = ["dinkster.detection.detect"]
 requires = [
-    "numpy==2.5.1",
+    "numpy",
     "safetensors==0.8.0",
-    "torch==2.13.0",
+    "torch",
 ]
 
 [pack.sandbox]
