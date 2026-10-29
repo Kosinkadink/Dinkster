@@ -67,6 +67,45 @@ DEV_PACK_MANIFEST = TESTS_DIR.parent / "packages" / "dinkster-nodes-dev" / "dink
 ATTENTION_PROVIDER = TESTS_DIR / "fixtures/attention_provider"
 WORKER_ENV = {"PYTHONPATH": os.pathsep.join((str(ATTENTION_PROVIDER), str(TESTS_DIR)))}
 DEFAULT_NODES = [*FOUNDATION_NODES, *MEDIA_IO_NODES, *IMAGE_NODES]
+
+
+def test_image_pack_starts_with_canonical_inference_types() -> None:
+    async def scenario() -> None:
+        image = replace(default_pack_spec("dinkster-nodes-image"), require_catalog=True)
+        assert prepare_catalog(image.manifest, environment=os.environ).ok
+        composer = ServingComposer()
+        try:
+            specs = tuple(
+                image if load_manifest(spec.manifest).name == "dinkster-nodes-image" else spec
+                for spec in default_pack_specs()
+            )
+            for spec in composer.order_pack_entries(specs):
+                await composer.add_pack(spec)
+            result = await composer.composition.make_engine(lambda event: None).run(
+                Graph(
+                    nodes={
+                        "region": GraphNode(
+                            "dinkster.region.make",
+                            {"x": 2.0, "y": 3.0, "width": 4.0, "height": 5.0},
+                        )
+                    }
+                ),
+                ["region"],
+            )
+            assert result.executed == ("region",)
+            assert result.outputs["region"]["region"].meta.entries == {
+                "x": 2.0,
+                "y": 3.0,
+                "width": 4.0,
+                "height": 5.0,
+            }
+            assert result.diagnostics == ()
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
 STANDARD_OWNER_PACKS = {
     "dinkster-nodes-foundation",
     "dinkster-nodes-image",
@@ -1064,7 +1103,7 @@ def test_compose_serving_default_resolution_is_atomic(
         ),
         (
             "dinkster-nodes-image",
-            "blake3:e178af6017ac875f04dc785fe3369bd9d1b4a720d845aa0775fc706f35cbbc20",
+            "blake3:709482f832f53ce1a37de9caba53c3c174439f26b5520c50f57b344627892c12",
         ),
         (
             "dinkster-nodes-remote",
@@ -1399,7 +1438,7 @@ def test_vision_pack_license_checkout_endings_do_not_change_digest(tmp_path: Pat
     manifest = copied / "dinkster_vision_hed_pack/dinkster-pack.toml"
     module = copied / "src/dinkster_nodes_vision/hed"
     expected = compose._installed_pack_digest(manifest, module)
-    assert expected == ("blake3:bf77bad675bff0dd1e33d78af78ade49dc764a23d49f246808157a391a28aa8c")
+    assert expected == ("blake3:8d90dc771f53d8534f2867d0579d2836d7b521e27fe4e9eee4fa610ed712495d")
     license_file = manifest.parent / "MLSD_LICENSE"
     license_bytes = license_file.read_bytes().replace(b"\r\n", b"\n")
     license_file.write_bytes(license_bytes.replace(b"\n", b"\r\n"))

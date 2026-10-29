@@ -20,6 +20,8 @@
   reference latents with zero negative conditioning and fixed shape/camera noise targets.
 - Native `Trellis2UpsampleStage` cascades sparse shape latents through a VAE
   and prepares second-pass conditioning, projection features, and padded sparse latents.
+- Native `MoGePanoramaInference` estimates spherical geometry for a single
+  equirectangular image by merging perspective-view depth predictions.
 - Native `MoGeInference` predicts optional depth, points, camera intrinsics,
   masks, and normals from image batches with configurable chunking and camera hints.
 - Color strings, ordered color palettes, bounding boxes, and optional
@@ -82,6 +84,7 @@
 - Image compositing with placement, mask, common blend modes, Porter-Duff
   operations, explicit alpha polarity, and configurable batch reconciliation
 - Graph-native image composition with ordered `dinkster.layers` values, native
+  ImageDocument storage distinct from structural tensor `LAYERS`, and
   placement from image batches or regions/detections, digest-bound compositor
   edit commands, 26 blend modes plus dissolve, perceptual or linear-light
   rendering, per-layer previews, flatten/split, structural editing nodes, and

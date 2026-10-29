@@ -513,6 +513,7 @@ namespaces = [
     "CropByBBoxes",
     "CameraAngle",
     "Trellis2UpsampleStage",
+    "MoGePanoramaInference",
     "MoGeInference",
     "TripoSplatPreprocessImage",
     "TripoSplatConditioning",

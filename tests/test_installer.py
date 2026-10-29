@@ -84,7 +84,7 @@ def test_explicit_generation_sources_preserve_locks_hosting_and_retained_version
     tmp_path: Path,
 ) -> None:
     from dinkster.compose import CompositionError
-    from dinkster.generation_packs import generation_pack_specs, stage_generation_packs
+    from dinkster.generation_packs import load_generation_packs, stage_generation_packs
 
     pack = write_pack(tmp_path / "source", "example")
     archive = tmp_path / "example.zip"
@@ -107,11 +107,13 @@ def test_explicit_generation_sources_preserve_locks_hosting_and_retained_version
             json.dumps(
                 {
                     "format": "dinkster.generation/1",
+                    "variant": "linux-cpu" if in_process else "win-cpu",
                     "inProcessPacks": ["example"] if in_process else [],
                 }
             )
         )
-        (spec,) = generation_pack_specs(generation)
+        variant, (spec,) = load_generation_packs(generation)
+        assert variant == ("linux-cpu" if in_process else "win-cpu")
         assert spec.in_process is in_process
         assert spec.python == (None if in_process else str(python))
         assert spec.packs is not None
@@ -120,19 +122,20 @@ def test_explicit_generation_sources_preserve_locks_hosting_and_retained_version
         assert spec.trust_reserved is False
         assert Path(spec.manifest) == generation / "pack-sources/example/dinkster-pack.toml"
         generations.append(generation)
-    (retained,) = generation_pack_specs(generations[0])
+    variant, (retained,) = load_generation_packs(generations[0])
+    assert variant == "linux-cpu"
     assert retained.packs is not None
     assert retained.packs["example"].version == "1.2.3"
     python.unlink()
     with pytest.raises(CompositionError, match="interpreter is missing"):
-        generation_pack_specs(generations[1])
+        load_generation_packs(generations[1])
     python.write_text("prepared-interpreter")
     with pytest.raises(CompositionError, match="fresh, unsealed"):
         stage_generation_packs(generations[0], Lockfile.of([entry]), {"example": archive})
     changed = generations[1] / "pack-sources/example/example_nodes.py"
     changed.write_text("NODES = ['tampered']")
     with pytest.raises(CompositionError, match="artifact digest"):
-        generation_pack_specs(generations[1])
+        load_generation_packs(generations[1])
 
 
 def fake_provision(manifest: PackManifest, venv_root: Path, spec: VenvSpec | None = None) -> Path:
