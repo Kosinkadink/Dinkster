@@ -67,13 +67,13 @@ uv pip install --python .venv-torch/bin/python \
 if [ "$os" = "Darwin" ]; then
     # The mac torch wheel is one native arm64 build with MPS included;
     # PyPI is its canonical source (the cpu index mirrors it).
-    uv pip install --python .venv-torch/bin/python torch "torchvision==0.28.0"
+    uv pip install --python .venv-torch/bin/python "torch==2.14.1" "torchvision==0.29.1"
 else
     uv pip install --python .venv-torch/bin/python \
-        --index-url https://download.pytorch.org/whl/cpu torch "torchvision==0.28.0"
+        --torch-backend cpu "torch==2.14.1+cpu" "torchvision==0.29.1+cpu"
 fi
 # numpy is declared in the package's torch extra, not its base
-# dependencies, and torch 2.13 CPU wheels no longer depend on it.
+# dependencies, and CPU torch wheels do not depend on it.
 # The model node packs carry their own torch-side tests. Pillow supports
 # TripoSplat preprocessing, OpenCV supports HED preprocessing, and scipy
 # supports WanDancer audio features.

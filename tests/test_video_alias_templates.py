@@ -38,6 +38,8 @@ from tools.gen_video_media_comfy_aliases import (
     merge_video_registry,
 )
 
+pytestmark = pytest.mark.usefixtures("saved_artifact_context")
+
 NODES = {
     node.schema().node_type: node
     for node in (*MEDIA_IO_NODES, ValueConvert, StringToCombo, FloatPrimitive)

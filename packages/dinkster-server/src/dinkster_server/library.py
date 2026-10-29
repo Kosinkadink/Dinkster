@@ -68,10 +68,10 @@ import tempfile
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, BinaryIO, TypeVar, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, TypeVar, cast
 from urllib.parse import urlsplit, urlunsplit
 
 from aiohttp import web
@@ -108,7 +108,7 @@ from dinkster_assets import (
     probe_handle,
     valid_vae_hint,
 )
-from dinkster_protocol import AssetFolderContext
+from dinkster_protocol import AssetFolderContext, SavedArtifact
 from dinkster_values import (
     LATENT_UPLOAD_HEADROOM_BYTES,
     MEBIBYTE,
@@ -121,6 +121,11 @@ from dinkster_values import (
 from .asset_stream import open_verified_sized, stream_verified
 from .auth import LOCAL_PRINCIPAL, principal_for, resolve_scope
 from .paging import decode_cursor, encode_cursor
+
+if TYPE_CHECKING:
+    from dinkster_engine import RunResult
+
+    from .queue import Job
 
 __all__ = ["LIBRARY_KEY", "ServerLibrary", "add_library_routes"]
 
@@ -252,6 +257,90 @@ class ServerLibrary:
             except (AssetError, OSError):
                 continue
         return False
+
+    def record_saved_outputs(self, job: Job, result: RunResult) -> RunResult:
+        """Retain required encoded attachments and catalog saves before completion."""
+
+        def prepare(ref: AssetRef, node_id: str, journal: Path) -> None:
+            _write_asset_observation_journal(
+                journal,
+                {
+                    "scope": job.scope,
+                    "asset": ref.to_wire(),
+                    "originalName": ref.name,
+                    "kind": "asset/file",
+                    "extension": None,
+                    "project": job.project,
+                    "created": time.time(),
+                    "origin": {"kind": "produced", "job": job.run_id, "node": node_id},
+                },
+            )
+
+        artifacts: list[SavedArtifact] = []
+        for artifact in result.artifacts:
+            journal = self.vault.root / ".upload-observations" / f"{uuid.uuid4().hex}.json"
+            ref = AssetRef(
+                artifact.digest,
+                artifact.name,
+                artifact.size,
+                artifact.media_type,
+                artifact.virtual_path,
+            )
+            if artifact.virtual_path.startswith("previews/"):
+                if artifact.virtual_path != f"previews/{ref.digest[7:]}/{ref.name}":
+                    raise AssetError("encoded output does not name its published vault bytes")
+                if self.upload_writer is None or self.project_folders_for is None:
+                    raise AssetError("retaining encoded output requires a writable output folder")
+                folders = self.project_folders_for(job.project)
+                if folders.output_mount is None:
+                    raise AssetError(
+                        "select a writable output folder before keeping encoded output"
+                    )
+                target = SaveTarget(folders.output_mount, ref.name)
+
+                def before_publish(
+                    saved: AssetRef,
+                    expected: AssetRef = ref,
+                    target: SaveTarget = target,
+                    node_id: str = artifact.node_id,
+                    journal: Path = journal,
+                ) -> None:
+                    if saved.digest != expected.digest or saved.size != expected.size:
+                        raise AssetError("encoded output changed before retention")
+                    assert self.project_folders_for is not None
+                    current = self.project_folders_for(job.project)
+                    if target.mount not in current.mounts or current.output_mount != target.mount:
+                        raise AssetError("output folder changed before retention")
+                    prepare(saved, node_id, journal)
+
+                with AssetRef(
+                    ref.digest, ref.name, ref.size, ref.media_type, resolver=self.vault
+                ).open() as source:
+                    retained = self.upload_writer.save_named_stream(
+                        target,
+                        source,
+                        media_type=ref.media_type,
+                        limit=ref.size,
+                        before_publish=before_publish,
+                    )
+                artifact = replace(artifact, name=retained.name, virtual_path=retained.virtual_path)
+            else:
+                prepare(ref, artifact.node_id, journal)
+            recover_asset_observations(self, journals=(journal,))
+            if journal.exists():
+                raise AssetError(
+                    "saved output is unavailable or its catalog could not be committed"
+                )
+            if ref.virtual_path.startswith("previews/"):
+                vault_journal = (
+                    self.vault.root / ".upload-observations" / f"{uuid.uuid4().hex}.json"
+                )
+                prepare(replace(ref, virtual_path=""), artifact.node_id, vault_journal)
+                recover_asset_observations(self, journals=(vault_journal,))
+                if vault_journal.exists():
+                    raise AssetError("encoded output vault location could not be cataloged")
+            artifacts.append(artifact)
+        return replace(result, artifacts=tuple(artifacts))
 
 
 LIBRARY_KEY: web.AppKey[ServerLibrary] = web.AppKey("server_library")
@@ -961,6 +1050,19 @@ def recover_asset_observations(
                             continue
             if path is None:
                 continue
+            origin = payload.get("origin")
+            if (
+                isinstance(origin, dict)
+                and cast("dict[str, object]", origin).get("kind") == "produced"
+            ):
+                try:
+                    classification = classify_media_file(path)
+                except AssetError:
+                    classification = None
+                if classification is not None:
+                    ref = replace(ref, media_type=classification.media_type)
+                    payload["kind"] = classification.kind
+                    payload["extension"] = classification.extension
             if payload["extension"] is not None:
                 library.store.grant_media_result(
                     MediaGrant(

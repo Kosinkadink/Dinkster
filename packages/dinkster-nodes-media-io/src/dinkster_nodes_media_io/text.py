@@ -30,6 +30,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     SaveTargetWidget,
     TypeExpr,
+    attach_saved_artifact,
 )
 
 STRING = TypeExpr.concrete(CORE_STRING)
@@ -129,6 +130,7 @@ class SaveText(Node):
             media_type=media_type,
             limit=MAX_TEXT_BYTES,
         )
+        attach_saved_artifact(ref.to_wire())
         return cls.outputs(texts=[ref])
 
 

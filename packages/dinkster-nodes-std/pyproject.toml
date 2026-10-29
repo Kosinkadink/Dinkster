@@ -5,8 +5,8 @@ description = "Dinkster standard first-party node pack suite"
 requires-python = ">=3.12"
 dependencies = [
     "dinkster-nodes-foundation==0.0.1",
-    "dinkster-nodes-media-io==0.0.1",
     "dinkster-nodes-image==0.0.1",
+    "dinkster-nodes-media-io==0.0.1",
     "dinkster-nodes-remote==0.0.1",
     "dinkster-nodes-vision==0.0.1",
 ]

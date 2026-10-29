@@ -165,7 +165,7 @@ from .reload_api import add_reload_routes, apply_reload
 from .remote_reconnect import RemoteReconnectSupervisor
 from .remotes import RemotesError, RemoteSpec, load_remotes
 from .resolver_api import add_resolver_index_routes
-from .setup import ensure_import_mount
+from .setup import ensure_default_mounts
 from .storelock import hold_lock
 from .watch import PackWatcher
 from .workflow_requirements_api import VARIANTS, add_workflow_requirement_routes
@@ -1685,7 +1685,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.library_root:
         library_root = Path(args.library_root)
         if args.allow_mount_changes:
-            ensure_import_mount(library_root)
+            ensure_default_mounts(library_root)
         mounts_config = library_root / "mounts.toml"
         mounts_snapshot = library_root / "worker-state" / "mounts-snapshot.json"
         mount_table = MountTable(
@@ -2184,7 +2184,8 @@ def main(argv: list[str] | None = None) -> None:
         add_workflow_requirement_routes(
             app,
             manifests=lambda: {
-                name: load_manifest(spec.manifest) for name, spec in composer.pack_specs().items()
+                name: load_manifest(resolve_manifest_path(spec.manifest))
+                for name, spec in composer.pack_specs().items()
             },
             engine_variant=args.engine_variant,
         )

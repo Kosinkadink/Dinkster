@@ -94,7 +94,10 @@ def test_powershell_setup_pins_native_windows_test_environments() -> None:
         "triton-windows==3.7.1.post27",
     ]
     assert '"3.12"' in setup
-    assert '"torch==2.13.0+cpu", "torchvision==0.28.0+cpu"' in setup
+    assert '"torch==2.14.1+cpu", "torchvision==0.29.1+cpu"' in setup
+    assert '"--torch-backend", "cpu"' in setup
+    assert "assert torch.__version__ == '2.14.1+cpu'" in setup
+    assert "assert version('torchvision') == '0.29.1+cpu'" in setup
     assert '"torch==2.13.0+cu130"' in setup
     assert '"triton-windows==3.7.1.post27"' in setup
     assert (
@@ -119,6 +122,30 @@ def test_setup_math_dependency_matches_workspace_lock() -> None:
         POWERSHELL_SETUP.read_text(), "CpuDependencies"
     )
     assert f'"{requirement}"' in POSIX_SETUP.read_text()
+
+
+def test_cpu_setup_exact_dependencies_match_workspace_lock() -> None:
+    lock = tomllib.loads((REPO_ROOT / "uv.lock").read_text())
+    versions = {item["name"]: item["version"] for item in lock["package"]}
+    powershell = POWERSHELL_SETUP.read_text()
+    posix = POSIX_SETUP.read_text().split(
+        "# ------------------------------------------------------------ .venv-gpu"
+    )[0]
+    requirements = _powershell_dependency_array(powershell, "CpuDependencies")
+    for requirement in requirements:
+        if "==" not in requirement:
+            continue
+        name, version = requirement.split("==")
+        if name in versions:
+            assert version == versions[name], requirement
+        assert requirement in posix
+    for path in (REPO_ROOT / "packages/dinkster-nodes-vision").glob(
+        "dinkster_vision_*/dinkster-pack.toml"
+    ):
+        manifest = tomllib.loads(path.read_text())
+        for requirement in manifest["pack"].get("requires", []):
+            if requirement.startswith("transformers=="):
+                assert requirement == f"transformers=={versions['transformers']}", path
 
 
 def test_powershell_setup_limits_force_and_has_no_private_installer() -> None:

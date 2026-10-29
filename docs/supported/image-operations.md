@@ -12,6 +12,8 @@
   placement, rotation, opacity, blend mode, and stacking metadata.
 - Native `CameraAngle` produces an orbit-camera dictionary and shot description
   from horizontal angle, elevation, and zoom.
+- Native `CreateCameraInfo` builds cameras from orbit angles, a look-at position,
+  or an explicit quaternion, with roll, field of view, zoom, and projection.
 - Native `MoGeGeometryToFOV` derives horizontal, vertical, or diagonal field of
   view and focal length in pixels from MoGe geometry intrinsics.
 - Native `TripoSplatPreprocessImage` erodes alpha, crops foreground to a padded
@@ -20,12 +22,16 @@
   reference latents with zero negative conditioning and fixed shape/camera noise targets.
 - Native `Trellis2UpsampleStage` cascades sparse shape latents through a VAE
   and prepares second-pass conditioning, projection features, and padded sparse latents.
+- Native `MoGePanoramaInference` estimates spherical geometry for a single
+  equirectangular image by merging perspective-view depth predictions.
 - Native `MoGeInference` predicts optional depth, points, camera intrinsics,
   masks, and normals from image batches with configurable chunking and camera hints.
 - Color strings, ordered color palettes, bounding boxes, and optional
   resolution-preview metadata pass between node packs without rewriting their values.
 - Native `PrimitiveBoundingBox` constructs pixel bounding boxes; `ImageCropV2`
   crops each image in a batch to that box and reports a PNG preview.
+- Native `ImageCropToMask` crops images around foreground masks with adjustable
+  margin, mask growth, background color and output dimensions.
 - Native `CropByBBoxes` crops each frame to its bounding-box union and resizes
   with stretching or aspect-preserving black padding.
 - Native `SDPoseFaceBBoxes` converts canonical pose face keypoints into per-frame
@@ -82,6 +88,7 @@
 - Image compositing with placement, mask, common blend modes, Porter-Duff
   operations, explicit alpha polarity, and configurable batch reconciliation
 - Graph-native image composition with ordered `dinkster.layers` values, native
+  ImageDocument storage distinct from structural tensor `LAYERS`, and
   placement from image batches or regions/detections, digest-bound compositor
   edit commands, 26 blend modes plus dissolve, perceptual or linear-light
   rendering, per-layer previews, flatten/split, structural editing nodes, and
