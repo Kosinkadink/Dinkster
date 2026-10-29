@@ -137,7 +137,7 @@ def test_positional_family_requiredness_round_trips_and_uses_vocabulary(
     suffixes = ["c", "b"] if named else ["piece10", "piece2"]
     effective = elaborate(schema, [f"pieces.{suffix}" for suffix in suffixes])
     initial = ["z", "a"] if named else ["piece0", "piece1"]
-    expected = initial + list(reversed(suffixes)) if required else list(reversed(suffixes))
+    expected = suffixes + initial if required else suffixes
     assert [(spec.id, spec.required) for spec in effective.inputs] == [
         (f"pieces.{suffix}", required and suffix in initial) for suffix in expected
     ]

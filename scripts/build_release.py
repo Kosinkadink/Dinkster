@@ -218,8 +218,6 @@ def write_constraints(
     output: Path,
     wheels: list[Path],
     uv: str,
-    *,
-    verified_external: list[Path] | None = None,
 ) -> Path:
     constraints = output / "constraints.txt"
     with tempfile.TemporaryDirectory(prefix="dinkster-external-") as directory:
@@ -244,116 +242,12 @@ def write_constraints(
             check=True,
         )
         external = temporary.read_text(encoding="utf-8").rstrip()
-    if verified_external is not None:
-        from packaging.requirements import Requirement
-        from packaging.utils import canonicalize_name
-
-        lock = tomllib.loads((root / "uv.lock").read_text(encoding="utf-8"))
-        identities = {
-            (path.name, path.stat().st_size, "sha256:" + sha256(path)) for path in verified_external
-        }
-        lines = []
-        for line in external.replace("\\\n", "").splitlines():
-            if not line.strip():
-                lines.append(line)
-                continue
-            requirement = Requirement(line.split(" --hash=", 1)[0].strip())
-            if requirement.url is not None:
-                matches = [
-                    (package, wheel)
-                    for package in lock["package"]
-                    if canonicalize_name(package["name"]) == canonicalize_name(requirement.name)
-                    and package.get("source", {}).get("url") == requirement.url
-                    for wheel in package.get("wheels", [])
-                    if wheel["url"] == requirement.url
-                ]
-                if len(matches) != 1:
-                    raise ValueError("offline constraint requires one exact locked direct wheel")
-                package, wheel = matches[0]
-                size = direct_wheel_size(root, package, wheel)
-                filename = unquote(urlsplit(wheel["url"]).path).rsplit("/", 1)[-1]
-                hashes = set(re.findall(r"--hash=(sha256:[0-9a-f]{64})", line))
-                if hashes != {wheel["hash"]} or (filename, size, wheel["hash"]) not in identities:
-                    raise ValueError("offline constraint requires the verified direct wheel bytes")
-                # Keep acquisition URLs in the native export, never in offline install inputs.
-                line = line.replace(f"@ {requirement.url}", f"=={package['version']}", 1)
-            lines.append(line)
-        external = "\n".join(lines)
     local = []
     for wheel in sorted(wheels):
         name, version = wheel_metadata(wheel)
         local.append(f"{name}=={version} --hash=sha256:{sha256(wheel)}")
     constraints.write_text(external + "\n" + "\n".join(local) + "\n", encoding="utf-8")
     return constraints
-
-
-def direct_wheel_size(root: Path, package: dict, wheel: dict) -> int:
-    """Reconcile native uv direct-wheel identity with its producer's measured size."""
-    from packaging.utils import parse_wheel_filename
-
-    url = wheel["url"]
-    if (
-        package["name"] != "opentimelineio"
-        or package.get("source", {}).get("url") != url
-        or re.fullmatch(
-            r"https://github\.com/Kosinkadink/Dinkster/releases/download/"
-            r"opentimelineio-wheels-[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+\.whl",
-            url,
-        )
-        is None
-    ):
-        raise ValueError("unsupported direct wheel source")
-    filename = url.rsplit("/", 1)[1]
-    name, version, _, tags = parse_wheel_filename(filename)
-    pin = json.loads((root / "scripts/opentimelineio_source.json").read_text())
-    if (
-        name != "opentimelineio"
-        or str(version) != pin["version"]
-        or str(version) != package["version"]
-    ):
-        raise ValueError("direct wheel version disagrees with the source pin")
-    if all(tag.platform == "win_amd64" for tag in tags):
-        target = "windows"
-    elif all(
-        tag.platform.startswith("manylinux") and tag.platform in LINUX_PLATFORMS for tag in tags
-    ):
-        target = "linux"
-    else:
-        raise ValueError("unsupported direct wheel target")
-    if any(tag.interpreter != "cp314" or tag.abi != "cp314" for tag in tags):
-        raise ValueError("unsupported direct wheel ABI")
-    digest = wheel.get("hash", "")
-    if re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
-        raise ValueError("direct wheel requires a locked SHA256")
-    provenance_url = url.rsplit("/", 1)[0] + f"/opentimelineio-{target}.json"
-    with urlopen(provenance_url, timeout=60) as response:
-        provenance = json.load(response)
-    if (
-        any(provenance.get(key) != value for key, value in pin.items())
-        or provenance.get("target") != target
-        or not isinstance(provenance.get("submodules"), list)
-        or not provenance["submodules"]
-        or any(
-            not isinstance(line, str)
-            or re.fullmatch(r" [0-9a-f]{40} \S+(?: \([^\n]+\))?", line) is None
-            for line in provenance["submodules"]
-        )
-    ):
-        raise ValueError("direct wheel provenance disagrees with the source pin or target")
-    rows = provenance.get("wheels")
-    if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
-        raise ValueError("direct wheel provenance must name exactly one wheel")
-    row = rows[0]
-    size = row.get("size")
-    if (
-        row.get("filename") != filename
-        or row.get("sha256") != digest.removeprefix("sha256:")
-        or type(size) is not int
-        or size <= 0
-        or ("size" in wheel and wheel["size"] != size)
-    ):
-        raise ValueError("direct wheel provenance disagrees with the locked artifact")
-    return size
 
 
 def download_external_wheels(root: Path, output: Path, uv: str) -> list[Path]:
@@ -401,10 +295,7 @@ def download_external_wheels(root: Path, output: Path, uv: str) -> list[Path]:
                 raise ValueError(
                     f"external requirement must be an exact registry pin: {requirement.name}"
                 )
-            if (
-                requirement.url is not None
-                and canonicalize_name(requirement.name) != "opentimelineio"
-            ):
+            if requirement.url is not None:
                 raise ValueError(f"unsupported direct wheel requirement: {requirement.name}")
             hashes = set(re.findall(r"--hash=sha256:([0-9a-f]{64})", line))
             candidates = []
@@ -416,8 +307,6 @@ def download_external_wheels(root: Path, output: Path, uv: str) -> list[Path]:
                 if package.get("source", {}).get("url") != requirement.url:
                     continue
                 for wheel in package.get("wheels", []):
-                    if requirement.url is not None and wheel["url"] != requirement.url:
-                        continue
                     name = unquote(urlsplit(wheel["url"]).path).rsplit("/", 1)[-1]
                     wheel_name, wheel_version, _, wheel_tags = parse_wheel_filename(name)
                     if wheel_name != canonicalize_name(
@@ -430,7 +319,7 @@ def download_external_wheels(root: Path, output: Path, uv: str) -> list[Path]:
             if not candidates:
                 raise ValueError(f"no locked cp314 wheel for {requirement.name} on {platforms[0]}")
             _, name, package, wheel = min(candidates, key=lambda item: (item[0], item[1]))
-            size = direct_wheel_size(root, package, wheel) if requirement.url else wheel["size"]
+            size = wheel["size"]
             identity = (wheel["url"], size, wheel["hash"].removeprefix("sha256:"))
             if name in selected and selected[name][1:] != identity[1:]:
                 raise ValueError(f"conflicting locked artifact: {name}")
@@ -502,9 +391,7 @@ def stage_external_wheels(
             name = unquote(urlsplit(wheel["url"]).path).rsplit("/", 1)[-1]
             if name not in names or not wheel["hash"].startswith("sha256:"):
                 continue
-            if "url" in package.get("source", {}):
-                size = direct_wheel_size(root, package, wheel)
-            elif "size" in wheel:
+            if "size" in wheel:
                 size = wheel["size"]
             else:
                 continue
@@ -567,7 +454,7 @@ def build(
         external = stage_external_wheels(
             root, output, candidates, base_manifests or [], target_variants or set()
         )
-        constraints = write_constraints(root, output, wheels, uv, verified_external=candidates)
+        constraints = write_constraints(root, output, wheels, uv)
     source = build_source_archive(root, version, output)
     artifacts = sorted([*wheels, *external, constraints, source], key=lambda path: path.name)
     reserved = {path.name.casefold() for path in artifacts} | {

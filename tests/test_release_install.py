@@ -75,7 +75,6 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert workflow["jobs"]["release"]["if"] == "github.event_name == 'push'"
     assert workflow["jobs"]["release"]["permissions"] == {"contents": "write"}
     assert workflow["jobs"]["release"]["outputs"] == {
-        "pypi-ready": "${{ steps.projects.outputs.ready }}",
         "engine-id": "${{ steps.identity.outputs.engine-id }}",
         "engine-tag": "${{ steps.identity.outputs.tag }}",
     }
@@ -108,10 +107,9 @@ def test_release_publication_is_tag_only_and_uses_trusted_publishing() -> None:
     assert workflow["jobs"]["release"]["if"] == "github.event_name == 'push'"
     publish = workflow["jobs"]["publish"]
     assert publish["needs"] == "release"
-    assert publish["if"] == (
-        "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') "
-        "&& needs.release.outputs.pypi-ready == 'true'"
-    )
+    assert publish["if"] == ("github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')")
+    assert "pypi.org/pypi/" not in json.dumps(workflow)
+    assert "pypi-ready" not in json.dumps(workflow)
     assert publish["permissions"] == {"id-token": "write"}
     assert publish["environment"]["name"] == "pypi"
     action = publish["steps"][-1]
@@ -122,45 +120,6 @@ def test_release_publication_is_tag_only_and_uses_trusted_publishing() -> None:
         "latest" in row["runner"]
         for row in workflow["jobs"]["install"]["strategy"]["matrix"]["include"]
     )
-
-
-@pytest.mark.parametrize("status", [200, 404, 403])
-def test_pypi_bootstrap_gate_skips_missing_projects_and_refuses_other_errors(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: int
-) -> None:
-    import urllib.error
-    import urllib.request
-    from contextlib import nullcontext
-    from email.message import Message
-
-    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
-    step = next(
-        step for step in workflow["jobs"]["release"]["steps"] if step.get("id") == "projects"
-    )
-    assert step["if"] == "startsWith(github.ref, 'refs/tags/v')"
-    script = step["run"].split("python3 - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
-    (tmp_path / "dist").mkdir()
-    (tmp_path / "dist/release-manifest.json").write_text(
-        json.dumps({"workspaceWheels": ["dinkster_api-0.0.1-py3-none-any.whl"]})
-    )
-    output = tmp_path / "output"
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
-
-    def open_project(url: str, *, timeout: int) -> nullcontext[None]:
-        assert url == "https://pypi.org/pypi/dinkster-api/json"
-        if status != 200:
-            raise urllib.error.HTTPError(url, status, "test index response", Message(), None)
-        return nullcontext()
-
-    monkeypatch.setattr(urllib.request, "urlopen", open_project)
-    if status == 403:
-        with pytest.raises(urllib.error.HTTPError):
-            exec(compile(script, "pypi bootstrap workflow", "exec"), {})
-        assert not output.exists()
-    else:
-        exec(compile(script, "pypi bootstrap workflow", "exec"), {})
-        assert output.read_text() == ("ready=true\n" if status == 200 else "ready=false\n")
 
 
 def test_release_workflow_builds_all_wheels_and_checks_tag_metadata() -> None:
@@ -599,167 +558,6 @@ def test_external_downloads_select_target_wheels_and_enforce_exported_hashes(
     requirements[:] = ["shared @ https://example.invalid/shared.whl"]
     with pytest.raises(ValueError, match="unsupported direct wheel requirement"):
         download_external_wheels(tmp_path, tmp_path / "url-requirement", "uv")
-
-
-@pytest.mark.parametrize(
-    "fault",
-    [
-        None,
-        "export-url",
-        "source-url",
-        "foreign-host",
-        "source-pin",
-        "target",
-        "filename",
-        "hash",
-        "size",
-        "missing-provenance",
-        "duplicate",
-        "abi",
-        "archive",
-        "export-hash",
-        "corrupt",
-    ],
-)
-def test_direct_otio_acquisition_and_staging_require_native_lock_and_producer_agreement(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str | None
-) -> None:
-    from io import BytesIO
-
-    pin_path = tmp_path / "scripts/opentimelineio_source.json"
-    pin_path.parent.mkdir()
-    shutil.copyfile(ROOT / "scripts/opentimelineio_source.json", pin_path)
-    pin = json.loads(pin_path.read_text())
-    namespace = (
-        "https://github.com/Kosinkadink/Dinkster/releases/download/opentimelineio-wheels-test"
-    )
-    lock = ""
-    requirements = ['inactive @ https://example.invalid/source.tar.gz ; sys_platform == "darwin"']
-    responses: dict[str, bytes] = {}
-    expected: dict[str, bytes] = {}
-    candidates = []
-    for target, platform, marker in (
-        ("windows", "win_amd64", "win32"),
-        ("linux", "manylinux2014_x86_64.manylinux_2_17_x86_64", "linux"),
-    ):
-        filename = f"opentimelineio-0.19.0.dev1-cp314-cp314-{platform}.whl"
-        if target == "windows" and fault == "abi":
-            filename = filename.replace("cp314-cp314", "cp312-abi3")
-        if target == "windows" and fault == "archive":
-            filename = "opentimelineio-0.19.0.dev1.tar.gz"
-        payload = f"{target} fixture wheel bytes".encode()
-        digest = hashlib.sha256(payload).hexdigest()
-        url = f"{namespace}/{filename}"
-        if target == "windows" and fault == "foreign-host":
-            url = url.replace("github.com", "example.invalid")
-        source_url = url + "?changed" if target == "windows" and fault == "source-url" else url
-        export_url = url + "?changed" if target == "windows" and fault == "export-url" else url
-        export_hash = "0" * 64 if target == "windows" and fault == "export-hash" else digest
-        lock += (
-            '[[package]]\nname = "opentimelineio"\nversion = "0.19.0.dev1"\n'
-            f'source = {{url = "{source_url}"}}\n'
-            f'wheels = [{{url = "{url}", hash = "sha256:{digest}"}}]\n'
-        )
-        requirements.append(
-            f'opentimelineio @ {export_url} ; sys_platform == "{marker}" '
-            f"--hash=sha256:{export_hash}"
-        )
-        row = {"filename": filename, "size": len(payload), "sha256": digest}
-        provenance = {
-            **pin,
-            "target": target,
-            "submodules": [" " + "a" * 40 + " src/deps/example (heads/main)"],
-            "wheels": [row],
-        }
-        if target == "windows":
-            if fault == "source-pin":
-                provenance["commit"] = "0" * 40
-            elif fault == "target":
-                provenance["target"] = "linux"
-            elif fault == "filename":
-                row["filename"] = "other.whl"
-            elif fault == "hash":
-                row["sha256"] = "0" * 64
-            elif fault == "size":
-                del row["size"]
-            elif fault == "duplicate":
-                provenance["wheels"] = [row, row]
-            elif fault == "corrupt":
-                payload = b"x" * len(payload)
-        responses[url] = payload
-        if not (target == "windows" and fault == "missing-provenance"):
-            responses[f"{namespace}/opentimelineio-{target}.json"] = json.dumps(provenance).encode()
-        candidate = tmp_path / filename
-        candidate.write_bytes(payload)
-        candidates.append(candidate)
-        expected[filename] = payload
-    (tmp_path / "uv.lock").write_text(lock)
-
-    def fetch(url: str, *, timeout: int) -> BytesIO:
-        if url not in responses:
-            raise OSError(f"missing fixture: {url}")
-        return BytesIO(responses[url])
-
-    def export(root: Path, output: Path, wheels: list[Path], uv: str) -> Path:
-        path = output / "constraints.txt"
-        path.write_text("\n".join(requirements) + "\n")
-        return path
-
-    monkeypatch.setattr("scripts.build_release.urlopen", fetch)
-    monkeypatch.setattr("scripts.build_release.write_constraints", export)
-    downloads = tmp_path / "downloads"
-    release = tmp_path / "release"
-    release.mkdir()
-    if fault is None:
-        downloaded = download_external_wheels(tmp_path, downloads, "uv")
-        assert {path.name: path.read_bytes() for path in downloaded} == expected
-        staged = stage_external_wheels(tmp_path, release, downloaded, [], set())
-        assert {path.name: path.read_bytes() for path in staged} == expected
-
-        def uv_export(command: list[str], **kwargs: object) -> None:
-            Path(command[command.index("--output-file") + 1]).write_text(
-                "\n".join(requirements[1:]) + "\n"
-            )
-
-        with monkeypatch.context() as context:
-            context.setattr(subprocess, "run", uv_export)
-            offline = write_constraints(
-                tmp_path, release, [], "uv", verified_external=downloaded
-            ).read_text()
-            assert offline.splitlines() == [
-                f'opentimelineio ==0.19.0.dev1 ; sys_platform == "{marker}" '
-                f"--hash=sha256:{hashlib.sha256(payload).hexdigest()}"
-                for marker, payload in (
-                    ("win32", b"windows fixture wheel bytes"),
-                    ("linux", b"linux fixture wheel bytes"),
-                )
-            ] + [""]
-            with pytest.raises(ValueError, match="verified direct wheel bytes"):
-                write_constraints(tmp_path, release, [], "uv", verified_external=downloaded[:1])
-            original = requirements[1]
-            requirements[1] = original.replace(namespace, "https://example.invalid")
-            with pytest.raises(ValueError, match="exact locked direct wheel"):
-                write_constraints(tmp_path, release, [], "uv", verified_external=downloaded)
-            requirements[1] = original
-            downloaded[0].write_bytes(b"tampered")
-            with pytest.raises(ValueError, match="verified direct wheel bytes"):
-                write_constraints(tmp_path, release, [], "uv", verified_external=downloaded)
-            downloaded[0].write_bytes(expected[downloaded[0].name])
-            requirements[1] = requirements[1].replace("--hash=sha256:", "--hash=sha256:0")
-            with pytest.raises(ValueError, match="verified direct wheel bytes"):
-                write_constraints(tmp_path, release, [], "uv", verified_external=downloaded)
-    else:
-        with pytest.raises((ValueError, OSError)):
-            download_external_wheels(tmp_path, downloads, "uv")
-        assert {path.name: path.read_bytes() for path in downloads.iterdir()} == (
-            {name: payload for name, payload in expected.items() if "manylinux" in name}
-            if fault == "corrupt"
-            else {}
-        )
-        if fault not in {"export-url", "export-hash"}:
-            with pytest.raises((ValueError, OSError)):
-                stage_external_wheels(tmp_path, release, candidates, [], set())
-            assert not list(release.iterdir())
 
 
 def test_external_payload_omits_only_exact_members_shared_by_all_target_bases(
