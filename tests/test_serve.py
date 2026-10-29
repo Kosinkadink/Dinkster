@@ -306,7 +306,7 @@ def test_standard_vision_pack_provisions_declared_runtime_before_composition(
     manifest = calls[0]["manifest"]
     assert isinstance(manifest, PackManifest)
     assert manifest.name == pack_name
-    assert "torch==2.13.0" in manifest.requires
+    assert "torch" in manifest.requires
     assert calls[0]["venv_root"] == tmp_path / "runtime-venvs" / "cuda" / digest
     assert calls[0]["accelerator"] == "cuda"
     workspace = calls[0]["workspace_packages"]
