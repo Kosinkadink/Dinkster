@@ -223,7 +223,9 @@ def main() -> None:
     import comfy.model_management
     import folder_paths
     import nodes
+    import server
     import torch
+    from app.assets.manager import default_asset_manager
 
     get_filename_list = folder_paths.get_filename_list
 
@@ -241,6 +243,7 @@ def main() -> None:
     )
 
     async def dump() -> dict[str, Any]:
+        server.PromptServer(asyncio.get_running_loop(), default_asset_manager())
         base_names = set(nodes.NODE_CLASS_MAPPINGS)
         import_failures = await nodes.init_builtin_extra_nodes()
         dataset_cls = nodes.NODE_CLASS_MAPPINGS.get("LoadTrainingDataset")
