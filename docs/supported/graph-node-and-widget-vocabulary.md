@@ -16,6 +16,11 @@
   order to target naming positions instead of preserving suffix IDs. The option
   composes with historical-template metadata; omitted options retain their wire
   shape. This is a declaration contract, not a claim of frontend migration support.
+- Batch Images, Batch Masks, Batch Latents, And, Or, Create List and Math
+  Expression publish same-type rules for historical family member identities.
+  Rules preserve the math expression and output identities, and identify the
+  old flat boolean-family socket path. Node execution is unchanged. Automatic
+  application requires a frontend that supports positional family migrations.
 - Backend `list<*>` values retain independently typed child envelopes through
   ordinary worker and persistent-cache boundaries. Outputs collect existing
   typed values rather than guessing types from Python objects. Nested lists,
