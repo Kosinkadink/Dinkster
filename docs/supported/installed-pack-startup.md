@@ -14,6 +14,9 @@
   declarations without adding workspace project requirements at publication.
   Publishing can emit separate per-variant hashed dependency locks against the
   target interpreter and engine constraints, without resolving during setup.
+- Prepared official source catalogs preserve dependency-owned codecs without
+  claiming them as pack-owned declarations. Existing comfy and image node IDs
+  execute from these archives without rewriting saved workflows or pack bytes.
 - Core official pack manifests declare their existing third-party runtime
   requirements directly, including platform markers. Pack-to-pack dependencies
   and the host API contract remain separate from Python requirements.
