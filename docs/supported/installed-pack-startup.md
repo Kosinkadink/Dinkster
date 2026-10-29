@@ -34,6 +34,8 @@
   artifacts fail startup rather than falling back to installed distributions.
 - Environment-managed engine starts pass the selected generation explicitly,
   including candidate startup before activation and retained rollback starts.
+- Stopped engine bindings retain their assigned ports across update and rollback;
+  restarting an existing named binding defaults to its saved port.
 - Generation construction admits verified pack archives before sealing sources.
   A rejected source discards the incomplete target without changing the active
   generation or its running engine.

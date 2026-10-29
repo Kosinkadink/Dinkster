@@ -14,7 +14,7 @@ from urllib.request import urlopen
 
 import py7zr
 import pytest
-from dinkster_supervisor.environment_state import Journal, writer_lock
+from dinkster_supervisor.environment_state import Journal, content_digest, writer_lock
 from test_environment_artifacts import _artifact, _json, _mirror
 from test_environment_generations import _assert_shared, _standalone_tree, _wheel
 from test_environment_runtime import SERVE, free_port, make_generation
@@ -382,10 +382,18 @@ environment.main()
             == b"59"
         )
         retained = python.stat()
+        retained_digest = content_digest(python)
         code, rolled_back = _run(root, "rollback", "--yes")
         assert code == 0, rolled_back
         assert rolled_back["current"] == 1 and first.exists() and second.exists()
-        assert python.stat() == retained
+        after = python.stat()
+        assert (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) == (
+            retained.st_dev,
+            retained.st_ino,
+            retained.st_size,
+            retained.st_mtime_ns,
+        )
+        assert content_digest(python) == retained_digest
         assert _run(root, "doctor")[1]["status"] == "clean"
         _executable_release(mirror, base, "3.0", 61)
         engine = json.loads((mirror / "channels/main.json").read_bytes())["engine"]["release"][7:]

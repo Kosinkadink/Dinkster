@@ -246,6 +246,8 @@ payloads. `--plan` and unconfirmed JSON calls create nothing. Confirmed calls
 write a journal before registration/acquisition, sync offline, check the candidate
 engine's health, publish `current`, then stop the old engine. Update preserves
 existing engine bindings; setup accepts `--engine`, `--port` and repeatable `--gpu`.
+Stopped bindings keep their assigned ports; only running bindings need new ports
+for candidate health checks alongside their previous processes.
 Failed acquisition/build/startup retains the previous serving tree and a rolled-back
 journal. A confirmed retry first recovers interrupted activation.
 
@@ -281,8 +283,9 @@ and pack drift without repair and exits nonzero on drift or errors.
 `stop --engine <name>` share the same result envelope. They show a plan and
 require `--yes` or terminal confirmation; `--plan` and unconfirmed machine
 invocations do not launch/stop processes or create runtime/lock files. Main
-uses the configured port by default; another engine name requires an explicit
-port. An empty device list hides GPUs, including inherited host assignments.
+uses the configured port by default; a new engine name requires an explicit
+port. Existing bindings default to their saved port, including after update or
+rollback. An empty device list hides GPUs, including inherited host assignments.
 Identical ready assignments are idempotent; a changed assignment requires stop
 first. Applied results include observed engines and the started engine URL.
 

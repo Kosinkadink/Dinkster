@@ -141,7 +141,8 @@ def test_update_and_rollback_reactivate_retained_tree_without_rebuild(tmp_path: 
         )
     )
     start_engine(tmp_path, 1, "main", free_port(), ("GPU-aB12",))
-    start_engine(tmp_path, 1, "parked", free_port())
+    parked_port = free_port()
+    start_engine(tmp_path, 1, "parked", parked_port)
     parked_path = tmp_path / "runtime/1/parked.json"
     stale_parked = parked_path.read_bytes()
     stop_engine(tmp_path, "parked", generation=1)
@@ -160,8 +161,12 @@ def test_update_and_rollback_reactivate_retained_tree_without_rebuild(tmp_path: 
         assert read_current(tmp_path) == 2
         assert engine_status(tmp_path)[0]["state"] == "ready"
         assert engine_status(tmp_path)[0]["generation"] == 2
+        assert engine_status(tmp_path)[1]["url"] == f"http://127.0.0.1:{parked_port}"
         assert Journal.read(path).stage == "complete"
         assert (tmp_path / "generations/1").is_dir()
+        code, restarted = _run(tmp_path, "start", "--engine", "parked", "--yes")
+        assert code == 0 and restarted["url"] == f"http://127.0.0.1:{parked_port}"
+        assert _run(tmp_path, "stop", "--engine", "parked", "--yes")[0] == 0
         journals = sorted((tmp_path / "journal").glob("*.json"))
         code, planned = _run(tmp_path, "rollback", "--plan")
         assert code == 0 and planned["status"] == "planned"
@@ -173,6 +178,9 @@ def test_update_and_rollback_reactivate_retained_tree_without_rebuild(tmp_path: 
         assert read_current(tmp_path) == 1
         assert engine_status(tmp_path)[0]["state"] == "ready"
         assert engine_status(tmp_path)[1]["state"] == "stopped"
+        code, restarted = _run(tmp_path, "start", "--engine", "parked", "--yes")
+        assert code == 0 and restarted["url"] == f"http://127.0.0.1:{parked_port}"
+        assert _run(tmp_path, "stop", "--engine", "parked", "--yes")[0] == 0
         with urlopen(str(applied["engines"][0]["url"]) + "/api/generation") as response:  # noqa: S310
             assert json.loads(response.read()) == {"generation": str(tmp_path / "generations/1")}
         assert (retained / "generation.json").read_bytes() == before
@@ -192,6 +200,8 @@ def test_update_and_rollback_reactivate_retained_tree_without_rebuild(tmp_path: 
     finally:
         stop_engine(tmp_path, "main", generation=1)
         stop_engine(tmp_path, "main", generation=2)
+        stop_engine(tmp_path, "parked", generation=1)
+        stop_engine(tmp_path, "parked", generation=2)
 
 
 @pytest.mark.parametrize(

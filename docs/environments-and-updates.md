@@ -295,7 +295,9 @@ not permission to ignore a possibly interrupted operation.
 Activation records also retain `bindings`, an array of objects with `name`,
 `port`, `gpus` (device-id strings), `running` (boolean) and `targetPort`.
 These preserve previous assignments and candidate ports before construction
-or startup. Private process records live at
+or startup. Stopped bindings keep `targetPort` equal to `port`; only running
+bindings use new candidate ports, excluding the retained stopped assignments.
+Private process records live at
 `runtime/<generation>/<name>.json`; old and new same-name bindings can coexist
 without overwriting either process identity. Status follows `current`, but
 mutation safety checks inspect all recorded engines. Recovery restores the

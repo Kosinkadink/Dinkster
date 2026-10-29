@@ -322,14 +322,16 @@ def _runtime(args: argparse.Namespace, result: dict[str, object]) -> int:
         raise EnvironmentError("generation directory and recorded number disagree")
     port = args.port if args.operation == "start" else None
     if port is None:
-        if args.operation == "start" and args.engine != "main":
-            raise EnvironmentError("an additional engine binding requires --port")
         port = cast("int", settings["port"])
         if args.operation == "start":
-            for binding in engine_assignments(root, current):
-                if binding["name"] == args.engine:
-                    port = cast("int", binding["port"])
-                    break
+            binding = next(
+                (row for row in engine_assignments(root, current) if row["name"] == args.engine),
+                None,
+            )
+            if binding is not None:
+                port = cast("int", binding["port"])
+            elif args.engine != "main":
+                raise EnvironmentError("an additional engine binding requires --port")
     gpus = tuple(args.gpu) if args.operation == "start" else ()
     validate_assignment(current, args.engine, port, gpus)
     plan = [f"{args.operation} engine {args.engine} in generation {current}"]

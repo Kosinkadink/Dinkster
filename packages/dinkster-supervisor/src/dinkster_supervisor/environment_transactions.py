@@ -63,12 +63,19 @@ def begin_activation(root: Path, target: int, operation: str) -> Path:
         raise EnvironmentError("new generation target already exists")
     require_idle(root)
     bindings = engine_assignments(root, previous)
+    stopped_ports = {binding["port"] for binding in bindings if not binding["running"]}
     sockets: list[socket.socket] = []
     try:
         for binding in bindings:
-            sock = socket.socket()
-            sockets.append(sock)
-            sock.bind(("127.0.0.1", 0))
+            if not binding["running"]:
+                binding["targetPort"] = binding["port"]
+                continue
+            while True:
+                sock = socket.socket()
+                sockets.append(sock)
+                sock.bind(("127.0.0.1", 0))
+                if sock.getsockname()[1] not in stopped_ports:
+                    break
             binding["targetPort"] = sock.getsockname()[1]
         path = root / "journal" / f"{time.time_ns()}.json"
         Journal(operation, previous, target, "planned", bindings=tuple(bindings)).write(path)
