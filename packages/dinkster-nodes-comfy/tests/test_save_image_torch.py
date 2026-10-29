@@ -181,7 +181,8 @@ def test_image_savers_budget_live_conversion_copies(
     )
     # 192 source bytes plus float temporaries, byte frames and encoding scratch.
     monkeypatch.setattr(image_file_tools, "IMAGE_WORKING_SET_LIMIT_BYTES", 1152)
-    node.execute(images=images, filename_prefix="at-limit", **options)
+    with capture_saved_artifacts():
+        node.execute(images=images, filename_prefix="at-limit", **options)
     assert list(default.glob("at-limit_*"))
     monkeypatch.setattr(image_file_tools, "IMAGE_WORKING_SET_LIMIT_BYTES", 1151)
     with pytest.raises(ValueError, match="working-set limit"):
