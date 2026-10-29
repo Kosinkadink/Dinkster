@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import tomllib
 import zipfile
 from pathlib import Path
 
 import pytest
+from packaging.requirements import Requirement
 
 from scripts.record_opentimelineio_wheels import record
 
@@ -57,3 +59,45 @@ def test_opentimelineio_release_rejects_wrong_interpreter_or_metadata(
     with pytest.raises(ValueError, match="wheel identity|metadata disagrees"):
         record(tmp_path / "source", tmp_path, tmp_path / "output", "windows")
     assert not (tmp_path / "output").exists()
+
+
+@pytest.mark.parametrize(
+    "version,implementation,platform,machine,expected",
+    [
+        ("3.14", "cpython", "linux", "x86_64", "0.19.0.dev1"),
+        ("3.14", "cpython", "win32", "AMD64", "0.19.0.dev1"),
+        ("3.12", "cpython", "linux", "x86_64", "0.18.1"),
+        ("3.13", "cpython", "win32", "AMD64", "0.18.1"),
+        ("3.15", "cpython", "linux", "x86_64", "0.18.1"),
+        ("3.14", "pypy", "linux", "x86_64", "0.18.1"),
+        ("3.14", "cpython", "linux", "aarch64", "0.18.1"),
+        ("3.14", "cpython", "win32", "ARM64", "0.18.1"),
+        ("3.14", "cpython", "darwin", "arm64", "0.18.1"),
+    ],
+)
+def test_opentimelineio_requirements_select_one_publishable_target_version(
+    version: str, implementation: str, platform: str, machine: str, expected: str
+) -> None:
+    root = Path(__file__).parents[1]
+    environment = {
+        "python_version": version,
+        "implementation_name": implementation,
+        "sys_platform": platform,
+        "platform_machine": machine,
+    }
+    umbrella = tomllib.loads((root / "pyproject.toml").read_text())
+    video = tomllib.loads((root / "packages/dinkster-video/pyproject.toml").read_text())
+    for requirements in (
+        umbrella["dependency-groups"]["dev"],
+        video["project"]["dependencies"],
+    ):
+        candidates = [Requirement(value) for value in requirements]
+        selected = [
+            value
+            for value in candidates
+            if value.name == "opentimelineio"
+            and (value.marker is None or value.marker.evaluate(environment))
+        ]
+        assert len(selected) == 1
+        assert selected[0].url is None
+        assert str(selected[0].specifier) == f"=={expected}"
