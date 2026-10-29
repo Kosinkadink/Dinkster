@@ -72,9 +72,9 @@ def test_powershell_setup_pins_native_windows_test_environments() -> None:
         "opencv-contrib-python-headless==5.0.0.93",
         "pillow==12.0.0",
         "safetensors==0.8.0",
-        "sentencepiece==0.2.2",
-        "tokenizers==0.23.3",
-        "transformers==5.21.0",
+        "sentencepiece==0.2.1",
+        "tokenizers==0.23.1",
+        "transformers==5.16.1",
         "comfy-aimdo==0.6.0",
         "$KitchenCpuWheel",
     ]
@@ -139,6 +139,13 @@ def test_cpu_setup_exact_dependencies_match_workspace_lock() -> None:
         if name in versions:
             assert version == versions[name], requirement
         assert requirement in posix
+    for path in (REPO_ROOT / "packages/dinkster-nodes-vision").glob(
+        "dinkster_vision_*/dinkster-pack.toml"
+    ):
+        manifest = tomllib.loads(path.read_text())
+        for requirement in manifest["pack"].get("requires", []):
+            if requirement.startswith("transformers=="):
+                assert requirement == f"transformers=={versions['transformers']}", path
 
 
 def test_powershell_setup_limits_force_and_has_no_private_installer() -> None:

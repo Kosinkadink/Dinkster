@@ -83,8 +83,8 @@ fi
 uv pip install --python .venv-torch/bin/python pytest packaging "numpy>=1.26" "scipy>=1.11" \
     "simpleeval==1.0.8" \
     "onnxruntime==1.29.0" "opencv-contrib-python-headless==5.0.0.93" "pillow==12.0.0" \
-    "safetensors==0.8.0" "sentencepiece==0.2.2" "tokenizers==0.23.3" \
-    "transformers==5.21.0" \
+    "safetensors==0.8.0" "sentencepiece==0.2.1" "tokenizers==0.23.1" \
+    "transformers==5.16.1" \
     -e packages/dinkster-api \
     -e packages/dinkster-schema \
     -e packages/dinkster-values \
