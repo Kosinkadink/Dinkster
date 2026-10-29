@@ -75,7 +75,40 @@ def test_environment_options_remain_conditional_without_hiding_static_drift(
         {"nodes": {name: native}},
     )
     assert result["passed"] is passed
+    assert result["rows"][0]["status"] == ("conditional" if passed else "differs")
+    assert result["eligible_node_count"] == 1
     assert result["conditional_options"] == {name: {parameter: declaration}}
+
+
+def test_failed_reference_import_cannot_pass_an_incomplete_census() -> None:
+    from tools.compare_nodes import compare_registry
+
+    result = compare_registry(
+        {
+            "nodes": [{"class_name": "PresentNode", "input_types": {}}],
+            "environment": {"device_policy": "cpu", "torch_version": "2.14.1+cpu"},
+            "builtin_import_failures": ["nodes_glsl.py"],
+        },
+        {"nodes": {"PresentNode": {"nodeType": "PresentNode", "interface": []}}},
+    )
+    assert not result["passed"]
+    assert result["registry_errors"] == ["reference builtin imports failed: nodes_glsl.py"]
+    assert result["reference_environment"] == {
+        "device_policy": "cpu",
+        "torch_version": "2.14.1+cpu",
+    }
+
+
+@pytest.mark.parametrize("upload", ["image_upload", "audio_upload", "video_upload", "file_upload"])
+def test_reference_upload_choices_are_file_inputs(upload: str) -> None:
+    from tools.dump_comfy_nodes import annotate_files
+
+    assert annotate_files({"required": {"file": (["none"], {upload: True})}}) == {
+        "required": {"file": [["none"], {upload: True, "file_input": True}]}
+    }
+    assert annotate_files({"required": {"mode": (["none"], {})}}) == {
+        "required": {"mode": [["none"], {}]}
+    }
 
 
 @pytest.mark.parametrize(

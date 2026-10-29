@@ -105,21 +105,10 @@ def test_attention_backend_resolves_pytorch_only_when_executing(
     assert original.attention is None
 
 
-@pytest.mark.parametrize("attention", ("unknown",))
-def test_attention_backend_rejects_values_outside_its_widget(
-    monkeypatch: pytest.MonkeyPatch, attention: str
-) -> None:
-    def initialize() -> None:
-        pytest.fail("invalid attention must not initialize inference")
-
-    monkeypatch.setattr(model_advanced, "initialize_inference_process", initialize)
-    with pytest.raises(ValueError, match="Unknown attention backend"):
-        model_advanced.ModelAttentionBackend.execute(model=object(), attention=attention)
-
-
 @pytest.mark.parametrize("available", [False, True])
-def test_kitchen_attention_uses_available_backend_or_pytorch_fallback(
-    monkeypatch: pytest.MonkeyPatch, available: bool
+@pytest.mark.parametrize("attention", ["comfy kitchen attention", "unknown"])
+def test_portable_attention_uses_available_backend_or_pytorch_fallback(
+    monkeypatch: pytest.MonkeyPatch, available: bool, attention: str
 ) -> None:
     pytorch, kitchen = object(), object()
     functions = {"pytorch": pytorch}
@@ -135,11 +124,13 @@ def test_kitchen_attention_uses_available_backend_or_pytorch_fallback(
     clone = SimpleNamespace(attention=None)
     clone.set_model_optimized_attention = lambda callback: setattr(clone, "attention", callback)
     original = SimpleNamespace(attention=None, clone=lambda: clone)
-    result = model_advanced.ModelAttentionBackend.execute(
-        model=original, attention="comfy kitchen attention"
-    )["MODEL"]
+    result = model_advanced.ModelAttentionBackend.execute(model=original, attention=attention)[
+        "MODEL"
+    ]
     assert result is clone
-    assert clone.attention is (kitchen if available else pytorch)
+    assert clone.attention is (
+        kitchen if available and attention == "comfy kitchen attention" else pytorch
+    )
     assert original.attention is None
 
 

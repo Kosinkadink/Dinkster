@@ -492,7 +492,10 @@ class ModelAttentionBackend(Node):
                     _COMBO,
                     default="pytorch attention",
                     display_name="backend",
-                    doc="The dense attention backend.",
+                    doc=(
+                        "The dense attention backend. Comfy Kitchen attention uses quantized INT8 "
+                        "attention and is available only on Nvidia and AMD GPUs."
+                    ),
                     widget=ComboWidget(("pytorch attention", "comfy kitchen attention")),
                 ),
             ),
@@ -512,11 +515,9 @@ class ModelAttentionBackend(Node):
             "pytorch attention": "pytorch",
             "comfy kitchen attention": "comfy_kitchen_int8",
         }
-        if attention not in backends:
-            raise ValueError(f"Unknown attention backend: {attention!r}")
         initialize_inference_process()
         module = importlib.import_module("dinkster_inference.ldm.modules.attention")
-        function = module.get_attention_function(backends[attention], None)
+        function = module.get_attention_function(backends.get(attention), None)
         if function is None:
             logging.warning(
                 "Attention backend '%s' is unavailable; using PyTorch attention.", attention

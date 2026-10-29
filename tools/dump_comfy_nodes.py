@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import ast
 import asyncio
+import importlib.metadata
 import inspect
 import json
 import os
@@ -40,7 +41,8 @@ def annotate_files(value: Any) -> Any:
             if isinstance(options, dict):
                 choices = value[0] if isinstance(value[0], FileChoices) else options.get("options")
                 if isinstance(choices, FileChoices) or any(
-                    options.get(key) for key in ("image_upload", "audio_upload", "video_upload")
+                    options.get(key)
+                    for key in ("image_upload", "audio_upload", "video_upload", "file_upload")
                 ):
                     if len(converted) == 1:
                         converted.append({})
@@ -167,8 +169,10 @@ def main() -> None:
     import comfy.options
 
     comfy.options.enable_args_parsing()
+    import comfy.model_management
     import folder_paths
     import nodes
+    import torch
 
     get_filename_list = folder_paths.get_filename_list
 
@@ -187,7 +191,7 @@ def main() -> None:
 
     async def dump() -> dict[str, Any]:
         base_names = set(nodes.NODE_CLASS_MAPPINGS)
-        await nodes.init_builtin_extra_nodes()
+        import_failures = await nodes.init_builtin_extra_nodes()
         dataset_cls = nodes.NODE_CLASS_MAPPINGS.get("LoadTrainingDataset")
         if dataset_cls is not None:
             dataset_module = inspect.getmodule(dataset_cls)
@@ -238,6 +242,31 @@ def main() -> None:
             rows.append(row)
         return {
             "source_commit": commit,
+            "environment": {
+                "python": sys.version.split()[0],
+                "platform": sys.platform,
+                "device_policy": "cpu",
+                "cuda_visible_devices": os.environ["CUDA_VISIBLE_DEVICES"],
+                "argv": list(sys.argv),
+                "torch_version": str(torch.__version__),
+                "cuda_available": torch.cuda.is_available(),
+                "device_count": len(comfy.model_management.get_all_torch_devices()),
+                "packages": {
+                    distribution.metadata["Name"]: distribution.version
+                    for distribution in importlib.metadata.distributions()
+                    if distribution.metadata["Name"].lower().replace("_", "-")
+                    in {
+                        "comfy-kitchen",
+                        "comfy-aimdo",
+                        "comfy-angle",
+                        "kornia",
+                        "spandrel",
+                        "spandrel-extra-arches",
+                        "pyopengl",
+                    }
+                },
+            },
+            "builtin_import_failures": import_failures,
             "count_nodes_py": len(base_names),
             "count_total": len(rows),
             "engine_exclusions": {

@@ -413,6 +413,10 @@ def compare_registry(reference: dict[str, Any], registry: dict[str, Any]) -> dic
     served = registry["nodes"]
     results = []
     errors = []
+    if reference.get("builtin_import_failures"):
+        errors.append(
+            "reference builtin imports failed: " + ", ".join(reference["builtin_import_failures"])
+        )
     ids = set(classes)
     for key, schema in served.items():
         if key != schema.get("nodeType"):
@@ -447,7 +451,12 @@ def compare_registry(reference: dict[str, Any], registry: dict[str, Any]) -> dic
                 differences = compare(row, served[name])
             except (KeyError, TypeError, ValueError, IndexError) as exc:
                 differences = [f"invalid interface: {type(exc).__name__}: {exc}"]
-            status = "differs" if differences else "identical"
+            conditional = any(
+                isinstance(spec, list) and len(spec) > 1 and spec[1].get("conditional_options")
+                for group in ("required", "optional")
+                for spec in (row.get("input_types") or {}).get(group, {}).values()
+            )
+            status = "differs" if differences else "conditional" if conditional else "identical"
         results.append(
             {
                 "class_name": name,
@@ -470,8 +479,9 @@ def compare_registry(reference: dict[str, Any], registry: dict[str, Any]) -> dic
     counts = dict(Counter(row["status"] for row in results))
     return {
         "reference_commit": reference.get("source_commit"),
+        "reference_environment": reference.get("environment"),
         "eligible_node_count": sum(
-            row["status"] in ("identical", "differs", "absent") for row in results
+            row["status"] in ("identical", "conditional", "differs", "absent") for row in results
         ),
         "counts": counts,
         "engine_exclusions": {},
