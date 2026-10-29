@@ -412,12 +412,13 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     original_lock = hashlib.sha256((ROOT / "uv.lock").read_bytes()).hexdigest()
     output = tmp_path / "wheels"
     with versioned_sources(ROOT, version) as staged:
-        subprocess.run(
-            ["uv", "build", "--wheel", "--package", "dinkster", "--out-dir", str(output)],
-            cwd=staged,
-            check=True,
-        )
-    [wheel] = output.glob("*.whl")
+        for project in ("dinkster", "dinkster-api"):
+            subprocess.run(
+                ["uv", "build", "--wheel", "--package", project, "--out-dir", str(output)],
+                cwd=staged,
+                check=True,
+            )
+    [wheel] = output.glob("dinkster-*.whl")
     with zipfile.ZipFile(wheel) as archive:
         [name] = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
         metadata = archive.read(name).decode()
@@ -426,6 +427,56 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
             for name in archive.namelist()
             if name.startswith("dinkster/") and name.endswith(".py")
         }
+        for member in (
+            "graph",
+            "engine",
+            "server",
+            "native",
+            "collab",
+            "compat-comfy",
+            "nodes-generation",
+        ):
+            namespace = "dinkster_" + member.replace("-", "_")
+            source = ROOT / "packages" / f"dinkster-{member}" / "src"
+            assert {
+                name
+                for name in archive.namelist()
+                if name.startswith(namespace + "/") and name.endswith(".py")
+            } == {path.relative_to(source).as_posix() for path in source.rglob("*.py")}
+    [api_wheel] = output.glob("dinkster_api-*.whl")
+    with zipfile.ZipFile(api_wheel) as archive:
+        [name] = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
+        api_metadata = archive.read(name).decode()
+        assert "Requires-Dist: torch" not in api_metadata
+        assert "Requires-Dist: dinkster-" not in api_metadata
+        for member in (
+            "api",
+            "values",
+            "schema",
+            "protocol",
+            "memory",
+            "assets",
+            "caches",
+            "inference-wire",
+            "image-document",
+            "video",
+            "workers",
+            "registry",
+        ):
+            namespace = "dinkster_" + member.replace("-", "_")
+            source = ROOT / "packages" / f"dinkster-{member}" / "src"
+            assert {
+                name
+                for name in archive.namelist()
+                if name.startswith(namespace + "/")
+                and "/preview/" not in name
+                and name.endswith(".py")
+            } == {path.relative_to(source).as_posix() for path in source.rglob("*.py")}
+        assert "dinkster_video_preview/__init__.py" in archive.namelist()
+        assert (
+            "dinkster-doctor = dinkster_workers.doctor:main"
+            in archive.read(f"dinkster_api-{version}.dist-info/entry_points.txt").decode()
+        )
     source_archive = build_source_archive(ROOT, version, tmp_path)
     with zipfile.ZipFile(source_archive) as archive:
         source_modules = {
@@ -846,7 +897,7 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
     files = {
         "pyproject.toml": (
             '[project]\nname = "dinkster"\nversion = "1.2.3"\n'
-            '[tool.uv.workspace]\n'
+            "[tool.uv.workspace]\n"
             'members = ["packages/dinkster-api", "packages/dinkster-supervisor"]\n'
             "[dependency-groups]\nengine-base = []\n"
             '[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n'
