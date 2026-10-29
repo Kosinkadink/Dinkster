@@ -1207,8 +1207,7 @@ def _default_pack_lock() -> Lockfile:
     )
     if unexpected_publishers:
         raise CompositionError(
-            "default pack catalog contains non-Dinkster publishers for "
-            f"{unexpected_publishers!r}"
+            f"default pack catalog contains non-Dinkster publishers for {unexpected_publishers!r}"
         )
     return lock
 

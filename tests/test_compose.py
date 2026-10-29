@@ -81,7 +81,7 @@ def test_default_pack_specs_load_verified_bundled_official_sources(
     pack.mkdir()
     (pack / "dinkster-pack.toml").write_text(
         '[pack]\nname = "official-pack"\npublisher = "dinkster"\nnamespaces = ["official"]\n'
-        "[pack.entry]\nnodes = \"official_nodes:NODES\"\n",
+        '[pack.entry]\nnodes = "official_nodes:NODES"\n',
         encoding="utf-8",
     )
     (pack / "official_nodes.py").write_text("NODES = ()\n", encoding="utf-8")
@@ -162,7 +162,7 @@ def test_compat_manifest_uses_engine_distribution_when_carried(
     bundled = tmp_path / "bundle" / "dinkster_compat_comfy_pack"
     bundled.mkdir(parents=True)
     manifest = bundled / "dinkster-pack.toml"
-    manifest.write_text("[pack]\nname = \"dinkster-compat-comfy\"\n", encoding="utf-8")
+    manifest.write_text('[pack]\nname = "dinkster-compat-comfy"\n', encoding="utf-8")
     requested: list[str] = []
 
     def find_distribution(name: str) -> SimpleNamespace:
