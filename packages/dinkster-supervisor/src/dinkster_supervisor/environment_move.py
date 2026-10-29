@@ -11,6 +11,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast
 
+from .environment_collection import recover_store_collection
 from .environment_constraints import requirement_hashes
 from .environment_generations import build_generation, link_file, pack_operation
 from .environment_runtime import engine_assignments, require_idle, start_engine, stop_engine
@@ -194,6 +195,7 @@ def recover_moves(root: Path) -> None:
             for store in sorted(stores):
                 if store.exists():
                     locks.enter_context(writer_lock(store))
+                    recover_store_collection(store)
             locks.enter_context(writer_lock(source))
             _recover(path)
         if authoritative.stage == "complete" and source == root.resolve():
@@ -345,6 +347,7 @@ def execute_move(plan: MovePlan) -> None:
         for store in sorted({plan.source_store, plan.target_store}):
             store.mkdir(parents=True, exist_ok=True)
             locks.enter_context(writer_lock(store))
+            recover_store_collection(store)
         locks.enter_context(writer_lock(source))
         if plan_move(source, target, plan.target_store) != plan:
             raise EnvironmentError("project changed after planning; request a new plan")
