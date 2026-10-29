@@ -274,7 +274,9 @@ one zstd decoder into tar extraction with the data filter. The caller supplies t
 manifest's platform, interpreter path and part rows, and holds the store writer lock.
 Extraction accepts only `python/` and `wheels/`, rejects traversal, absolute paths,
 hardlinks, devices, Windows device names and exact duplicate paths. Internal relative
-symlinks are preserved, but later members cannot write through a symlink parent.
+symlinks are preserved where supported by the host filesystem; unsupported or dangling
+link graphs refuse extraction before promotion. Later members cannot write through
+a symlink parent.
 Case-ambiguous paths are refused for Windows/macOS targets or case-insensitive
 destination filesystems; Linux case-sensitive trees retain distinct spellings.
 Safe permission bits are preserved. A missing interpreter execute bit is restored

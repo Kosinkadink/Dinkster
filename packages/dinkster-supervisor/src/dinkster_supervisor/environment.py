@@ -498,7 +498,10 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
                 ):
                     raise EnvironmentError("repair refuses linked local base inputs")
             for path in entries:
-                if path.name == "__pycache__":
+                if (
+                    path.name == "__pycache__"
+                    or "__pycache__" in path.resolve().relative_to(base.resolve()).parts
+                ):
                     continue
                 if path.is_dir():
                     verify_directory(path, (*ancestors, resolved))

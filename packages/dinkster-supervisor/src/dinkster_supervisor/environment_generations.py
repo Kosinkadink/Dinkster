@@ -327,9 +327,24 @@ def build_generation(
         raise EnvironmentError("project and wheel store must be on the same volume")
     if not constraints.is_file():
         raise EnvironmentError("effective constraints.txt is missing")
+
+    def ignore_bytecode(directory: str, names: list[str]) -> set[str]:
+        return {
+            name
+            for name in names
+            if name == "__pycache__"
+            or "__pycache__"
+            in (Path(directory) / name).resolve().relative_to(source.resolve()).parts
+        }
+
     destination.mkdir(parents=True)
     try:
-        shutil.copytree(source, destination / "python", copy_function=link_file)
+        shutil.copytree(
+            source,
+            destination / "python",
+            copy_function=link_file,
+            ignore=ignore_bytecode,
+        )
         shutil.copyfile(constraints, destination / "constraints.txt")
         python = interpreter(destination)
         if not python.is_file():

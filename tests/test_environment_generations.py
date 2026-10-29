@@ -304,7 +304,8 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
             before = {
                 p.relative_to(root): content_digest(p)
                 for p in root.rglob("*")
-                if p.is_file() and not (p.is_relative_to(root / "runtime") and p.suffix == ".log")
+                if p.is_file()
+                and not (p.is_relative_to(root / "runtime") and p.suffix in {".log", ".lock"})
             }
             for flags in ((), ("--plan",)):
                 code, planned = _run(root, "move", str(destination), *flags)
@@ -314,7 +315,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                     p.relative_to(root): content_digest(p)
                     for p in root.rglob("*")
                     if p.is_file()
-                    and not (p.is_relative_to(root / "runtime") and p.suffix == ".log")
+                    and not (p.is_relative_to(root / "runtime") and p.suffix in {".log", ".lock"})
                 }
             if problem in {"move-interrupted", "move-running-interrupted"}:
                 script = """

@@ -70,7 +70,9 @@
   serving engine.
 - Base acquisition verifies ordered tar+zstd parts before streaming extraction.
   No external decoder executable or runtime decoder download is needed. Unsafe
-  members refuse extraction before promotion; internal symlinks are preserved.
+  members refuse extraction before promotion. Internal symlinks are preserved
+  where supported by the host filesystem; unsupported or dangling link graphs
+  refuse extraction before promotion.
 - Linux base archives preserve distinct case-sensitive interpreter paths, including
   terminfo entries. Windows targets and case-insensitive destinations reject
   case collisions. Archive permission bits are preserved. A missing interpreter

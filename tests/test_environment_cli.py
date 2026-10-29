@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
+import marshal
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import tarfile
@@ -350,7 +353,11 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
         monkeypatch.setenv(variable, str(tmp_path / "user-data"))
     for variable in ("HTTP_PROXY", "HTTPS_PROXY", "UV_INDEX_URL"):
         monkeypatch.setenv(variable, "http://127.0.0.1:1/unreachable")
-    mirror, root, store = tmp_path / "mirror", tmp_path / "project", tmp_path / "store"
+    mirror, root, store = (
+        tmp_path / "mirror",
+        tmp_path / "project",
+        tmp_path / "__pycache__/store",
+    )
     base, _, _ = _mirror(mirror)
     tree = tmp_path / "standalone"
     _standalone_tree(tree / "python")
@@ -495,7 +502,8 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
         before_selection = {
             p.relative_to(root): content_digest(p)
             for p in root.rglob("*")
-            if p.is_file() and p.suffix != ".log"
+            if p.is_file()
+            and not (p.is_relative_to(root / "runtime") and p.suffix in {".log", ".lock"})
         }
         code, selection_plan = _run(root, "update", "--channel", "stable", "--plan")
         assert code == 0 and any(
@@ -504,7 +512,8 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
         assert {
             p.relative_to(root): content_digest(p)
             for p in root.rglob("*")
-            if p.is_file() and p.suffix != ".log"
+            if p.is_file()
+            and not (p.is_relative_to(root / "runtime") and p.suffix in {".log", ".lock"})
         } == before_selection
         (root / "queue.json").write_text('{"running": ["real-job"], "queued": []}')
         before = sorted(path.name for path in (root / "journal").iterdir())
@@ -594,6 +603,39 @@ environment.main()
         bytecode = base_python / "__pycache__/runtime.cpython-312.pyc"
         bytecode.parent.mkdir(exist_ok=True)
         bytecode.write_bytes(b"disposable bytecode outside the sealed inventory")
+        source_module = next(base_python.rglob("colorsys.py"))
+        stale_cache = Path(importlib.util.cache_from_source(str(source_module)))
+        stale_cache.parent.mkdir(exist_ok=True)
+        module_stat = source_module.stat()
+        stale_cache.write_bytes(
+            importlib.util.MAGIC_NUMBER
+            + struct.pack("<III", 0, int(module_stat.st_mtime), module_stat.st_size)
+            + marshal.dumps(
+                compile(
+                    "raise RuntimeError('unverified bytecode executed')", str(source_module), "exec"
+                )
+            )
+        )
+        poisoned_import = subprocess.run(
+            [
+                str(base_python / ("python.exe" if os.name == "nt" else "bin/python3")),
+                "-I",
+                "-B",
+                "-c",
+                "import colorsys",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert poisoned_import.returncode != 0
+        assert "unverified bytecode executed" in poisoned_import.stderr
+        if os.name != "nt":
+            outside_cache = tmp_path / "outside-cache.pyc"
+            outside_cache.write_bytes(b"must not be traversed")
+            (stale_cache.parent / "external.pyc").symlink_to(outside_cache)
+            (base_python / "cache-alias").symlink_to(
+                os.path.relpath(stale_cache.parent, base_python), target_is_directory=True
+            )
 
         def snapshot() -> dict[Path, str | None]:
             return {
@@ -608,6 +650,8 @@ environment.main()
             assert code == 0 and repair_plan["status"] == "planned", repair_plan
             assert repair_plan["current"] == 1
             assert snapshot() == before
+        if os.name != "nt":
+            outside_cache.chmod(0)
         assert _run(root, "start", "--yes")[0] == 0
         cached_wheel = next((store / "wheels").glob("*/fixture_engine-1.0-*.whl"))
         verified = cached_wheel.read_bytes()
@@ -620,6 +664,29 @@ environment.main()
         code, repaired = _run(root, "doctor", "--repair", "--yes")
         assert code == 0 and repaired["current"] == 3, repaired
         assert _run(root, "doctor")[1]["status"] == "clean"
+        repaired_root = root / "generations/3"
+        assert not (repaired_root / "python" / stale_cache.relative_to(base_python)).exists()
+        assert not list((repaired_root / "python").rglob("external.pyc"))
+        assert not (repaired_root / "python/cache-alias").exists()
+        repaired_python = (
+            repaired_root / "python" / ("python.exe" if os.name == "nt" else "bin/python3")
+        )
+        assert (
+            subprocess.check_output(
+                [
+                    str(repaired_python),
+                    "-I",
+                    "-B",
+                    "-c",
+                    "import colorsys;print(colorsys.rgb_to_hsv(1,0,0))",
+                ]
+            ).strip()
+            == b"(0.0, 1.0, 1)"
+        )
+        if os.name != "nt":
+            outside_cache.chmod(0o600)
+            (stale_cache.parent / "external.pyc").unlink()
+            (base_python / "cache-alias").unlink()
         restored = next((root / "generations/3").rglob("fixture_engine.py"))
         assert restored.read_text() == "VALUE = 41\n"
         assert damaged.read_text() == "VALUE = 999\n"

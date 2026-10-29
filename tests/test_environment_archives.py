@@ -401,6 +401,18 @@ def test_symlink_parent_traversal_preserves_original_target_and_payload(tmp_path
         ],
     )
     destination = tmp_path / "bases/base-id"
+    if os.name == "nt":
+        # Windows cannot preserve POSIX '..' traversal through a directory symlink.
+        with pytest.raises(ArchiveError):
+            extract_base(
+                parts,
+                destination,
+                platform="windows",
+                executable="python/bin/python3",
+                expected_parts=expected_parts(parts),
+            )
+        assert_clean(destination)
+        return
     extract_base(
         parts,
         destination,
