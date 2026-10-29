@@ -56,7 +56,7 @@ async def _default_pack_names() -> tuple[str, ...]:
         await composer.close()
 
 
-def test_core_server_serves_real_catalog_without_optional_packages(tmp_path: Path) -> None:
+def test_folded_engine_serves_catalog_jobs_and_sessions_without_supervisor(tmp_path: Path) -> None:
     from dinkster_graph import Graph, GraphNode, graph_to_wire
 
     environment = tmp_path / "core-environment"
@@ -70,8 +70,12 @@ def test_core_server_serves_real_catalog_without_optional_packages(tmp_path: Pat
             "sync",
             "--locked",
             "--no-dev",
-            "--no-install-package",
-            "dinkster-collab",
+            "--package",
+            "dinkster",
+            "--package",
+            "dinkster-nodes-std",
+            "--package",
+            "dinkster-nodes-comfy",
             "--no-install-package",
             "dinkster-supervisor",
         ],
@@ -85,8 +89,8 @@ def test_core_server_serves_real_catalog_without_optional_packages(tmp_path: Pat
             str(python),
             "-c",
             "import importlib.metadata as m, importlib.util as u; "
-            "assert all(u.find_spec(n) is None for n in "
-            "('dinkster_collab', 'dinkster_supervisor')); "
+            "assert u.find_spec('dinkster_collab') is not None; "
+            "assert u.find_spec('dinkster_supervisor') is None; "
             "assert all(not any(d.metadata['Name'] == n for d in m.distributions()) for n in "
             "('dinkster-collab', 'dinkster-supervisor'))",
         ],
@@ -173,7 +177,7 @@ def test_core_server_serves_real_catalog_without_optional_packages(tmp_path: Pat
                     await asyncio.sleep(0.05)
             assert job["state"] == "completed", job
             async with session.get(base + "/api/sessions") as response:
-                assert response.status == 404
+                assert response.status == 200, await response.text()
 
     try:
         asyncio.run(scenario())
@@ -312,19 +316,7 @@ def test_standard_vision_pack_provisions_declared_runtime_before_composition(
     workspace = calls[0]["workspace_packages"]
     assert isinstance(workspace, tuple)
     workspace_names = {path.name for path in workspace}
-    assert workspace_names == {
-        "dinkster-api",
-        "dinkster-assets",
-        "dinkster-caches",
-        "dinkster-image-document",
-        "dinkster-inference-wire",
-        "dinkster-memory",
-        "dinkster-protocol",
-        "dinkster-schema",
-        "dinkster-values",
-        "dinkster-video",
-        "dinkster-workers",
-    }
+    assert workspace_names == {"dinkster-api"}
     package_names = {
         tomllib.loads(path.read_text(encoding="utf-8"))["project"]["name"]
         for path in (TESTS_DIR.parent / "packages").glob("*/pyproject.toml")
@@ -333,7 +325,6 @@ def test_standard_vision_pack_provisions_declared_runtime_before_composition(
         project = tomllib.loads((path / "pyproject.toml").read_text(encoding="utf-8"))["project"]
         dependencies = {Requirement(value).name for value in project.get("dependencies", ())}
         assert dependencies & package_names <= workspace_names
-    assert TESTS_DIR.parent / "packages" / "dinkster-video" in workspace
     if pack_name == "dinkster-vision-birefnet":
         assert "dinkster-inference==0.1.0" in manifest.requires
     assert str(manifest.root.parent / "src") in prepared.env["PYTHONPATH"].split(os.pathsep)

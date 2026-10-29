@@ -151,6 +151,7 @@ from dinkster_registry import (
     RequirementKind,
     ResolvedRequirement,
     build_artifact,
+    unpack_artifact,
 )
 from dinkster_registry import (
     CompositionMode as PackCompositionMode,
@@ -321,9 +322,13 @@ _FIRST_PARTY_PACK_DISTRIBUTIONS = MappingProxyType(
 _ISOLATED_FIRST_PARTY_PACKS = frozenset(
     pack_id for pack_id in _FIRST_PARTY_PACK_MODULES if pack_id.startswith("dinkster-vision-")
 )
+_ENGINE_CARRIED_PACKS = frozenset(
+    {"dinkster-native", "dinkster-compat-comfy", "dinkster-nodes-generation"}
+)
 _PACK_ARTIFACT_SIDECARS = ("comfy-aliases.json", "comfy-groups.json")
-_DEFAULT_SUITE_DISTRIBUTION = "dinkster-nodes-std"
-_DEFAULT_SUITE_LOCK = "dinkster_nodes_std_suite/dinkster.lock"
+_CHECKOUT_PACKS_LOCK = Path(__file__).with_name("checkout-packs.lock")
+_OFFICIAL_PACKS_DIRECTORY = Path(__file__).with_name("official_packs")
+_OFFICIAL_PACKS_LOCK = "official-packs.lock"
 _MODEL_PACK_IDS: tuple[str, ...] = ()
 
 
@@ -1178,45 +1183,84 @@ class PackSpec:
 
 @lru_cache(maxsize=1)
 def _default_pack_lock() -> Lockfile:
-    """Load the independently released standard-suite selection."""
-    try:
-        distribution = importlib.metadata.distribution(_DEFAULT_SUITE_DISTRIBUTION)
-    except importlib.metadata.PackageNotFoundError as exc:
-        raise CompositionError(
-            f"installed default suite {_DEFAULT_SUITE_DISTRIBUTION!r} is unavailable"
-        ) from exc
-    path = Path(str(distribution.locate_file(_DEFAULT_SUITE_LOCK)))
+    """Load packaged official packs, or checkout defaults during development."""
+    path = _OFFICIAL_PACKS_DIRECTORY / _OFFICIAL_PACKS_LOCK
     if not path.is_file():
-        raise CompositionError(
-            f"installed default suite {_DEFAULT_SUITE_DISTRIBUTION!r} has no {_DEFAULT_SUITE_LOCK}"
-        )
+        if not Path(__file__).resolve().parents[2].joinpath("pyproject.toml").is_file():
+            raise CompositionError(f"engine wheel has no bundled official pack catalog: {path}")
+        path = _CHECKOUT_PACKS_LOCK
     try:
         lock = Lockfile.from_record_json(path.read_text(encoding="utf-8"))
     except (InstallError, OSError) as exc:
-        raise CompositionError(f"installed default suite lock is invalid: {exc}") from exc
+        raise CompositionError(f"default pack catalog is invalid: {exc}") from exc
     if not lock.packs:
-        raise CompositionError("installed default suite lock selects no packs")
+        raise CompositionError("default pack catalog selects no packs")
     unsupported = tuple(
         entry.pack for entry in lock.packs if entry.pack not in _FIRST_PARTY_PACK_MODULES
     )
     if unsupported:
-        raise CompositionError(
-            f"installed default suite lock selects unsupported packs {unsupported!r}"
-        )
+        raise CompositionError(f"default pack catalog selects unsupported packs {unsupported!r}")
     unexpected_publishers = tuple(
         entry.pack for entry in lock.packs if entry.publisher != "dinkster"
     )
     if unexpected_publishers:
         raise CompositionError(
-            "installed default suite lock contains non-Dinkster publishers for "
-            f"{unexpected_publishers!r}"
+            f"default pack catalog contains non-Dinkster publishers for {unexpected_publishers!r}"
         )
     return lock
 
 
+@dataclass
+class _OfficialPackSources:
+    roots: Mapping[str, Path]
+    temporary_directory: tempfile.TemporaryDirectory[str] = field(repr=False)
+
+
+def _official_pack_manifest(root: Path, entry: LockedPack) -> PackManifest:
+    manifest = load_manifest(root / "dinkster-pack.toml")
+    if canonical_name(manifest.name) != entry.pack:
+        raise CompositionError(
+            f"bundled official pack {entry.pack!r} manifest names {manifest.name!r}"
+        )
+    if tuple(canonical_claim(claim) for claim in manifest.namespaces) != entry.claims:
+        raise CompositionError(f"bundled official pack {entry.pack!r} claims differ from catalog")
+    if canonical_name(manifest.publisher) != entry.publisher:
+        raise CompositionError(
+            f"bundled official pack {entry.pack!r} publisher differs from catalog"
+        )
+    return manifest
+
+
+@lru_cache(maxsize=1)
+def _official_pack_sources() -> _OfficialPackSources:
+    """Verify and unpack bundled official artifacts into writable runtime roots."""
+    directory = tempfile.TemporaryDirectory(prefix="dinkster-official-packs-")
+    roots: dict[str, Path] = {}
+    try:
+        for entry in _default_pack_lock().packs:
+            archive = _OFFICIAL_PACKS_DIRECTORY / f"{entry.pack}-{entry.version}.zip"
+            if not archive.is_file():
+                raise CompositionError(
+                    f"engine wheel has no bundled source archive for {entry.pack!r}: {archive.name}"
+                )
+            root = Path(directory.name) / entry.pack
+            unpack_artifact(archive, root, entry.artifact_digest)
+            _official_pack_manifest(root, entry)
+            roots[entry.pack] = root
+    except (ArtifactError, OSError) as exc:
+        directory.cleanup()
+        raise CompositionError(f"bundled official pack source is invalid: {exc}") from exc
+    except BaseException:
+        directory.cleanup()
+        raise
+    return _OfficialPackSources(MappingProxyType(roots), directory)
+
+
 def default_pack_ids() -> tuple[str, ...]:
-    """Return the locked first-party pack ids in composition order."""
-    return tuple(entry.pack for entry in _default_pack_lock().packs)
+    """Return defaults other than the separately configured core worker."""
+    return tuple(
+        entry.pack for entry in _default_pack_lock().packs if entry.pack != "dinkster-nodes-comfy"
+    )
 
 
 def _installed_pack_digest(manifest: Path, module_root: Path | None) -> str:
@@ -1285,7 +1329,11 @@ def _installed_pack_spec(
     asset_vault_write: bool = False,
 ) -> PackSpec:
     """Resolve one installed first-party pack and its exact provenance."""
-    distribution_id = _FIRST_PARTY_PACK_DISTRIBUTIONS.get(pack_id, pack_id)
+    distribution_id = (
+        "dinkster"
+        if pack_id in _ENGINE_CARRIED_PACKS
+        else _FIRST_PARTY_PACK_DISTRIBUTIONS.get(pack_id, pack_id)
+    )
     try:
         distribution = importlib.metadata.distribution(distribution_id)
     except importlib.metadata.PackageNotFoundError as exc:
@@ -1377,8 +1425,45 @@ def _installed_pack_spec(
     )
 
 
+def _official_pack_spec(pack_id: str) -> PackSpec:
+    """Compose a locked first-party pack from the engine wheel's verified sources."""
+    entry = _default_pack_lock().get(pack_id)
+    if entry is None:
+        raise CompositionError(f"unknown official pack {pack_id!r}")
+    root = _official_pack_sources().roots[pack_id]
+    manifest = _official_pack_manifest(root, entry)
+    info = replace(
+        pack_info_from_manifest(manifest),
+        display_name=pack_id,
+        version=entry.version,
+        artifact_digest=entry.artifact_digest,
+        source=entry.source,
+        publisher=entry.publisher,
+    )
+    return PackSpec(
+        manifest=manifest.path,
+        packs=MappingProxyType({pack_id: info}),
+        trust_reserved=True,
+        in_process=(
+            pack_id not in _ISOLATED_FIRST_PARTY_PACKS and pack_id != "dinkster-nodes-remote"
+        ),
+        env=(
+            {"DINKSTER_REMOTE_CATALOG_BASE": "", "DINKSTER_REMOTE_GATEWAY_BASE": ""}
+            if pack_id == "dinkster-nodes-remote"
+            else {}
+        ),
+        require_catalog=True,
+        asset_vault_write=pack_id == "dinkster-nodes-remote",
+    )
+
+
 def default_pack_spec(pack_id: str) -> PackSpec:
-    """Resolve one installed first-party pack and its exact provenance."""
+    """Resolve packaged official packs, or installed sources in a checkout."""
+    if (
+        pack_id not in _ENGINE_CARRIED_PACKS
+        and (_OFFICIAL_PACKS_DIRECTORY / _OFFICIAL_PACKS_LOCK).is_file()
+    ):
+        return _official_pack_spec(pack_id)
     module_name = _FIRST_PARTY_PACK_MODULES.get(pack_id)
     if module_name is None:
         raise CompositionError(f"unknown first-party pack {pack_id!r}")

@@ -91,10 +91,10 @@ def test_status_and_gating_before_ready() -> None:
         try:
             resp = await client.get(STATUS_PATH)
             assert resp.status == 200
-            assert await resp.json() == {
-                "protocol": PROTOCOL_VERSION,
-                "state": "starting",
-            }
+            status = await resp.json()
+            assert status["protocol"] == PROTOCOL_VERSION
+            assert status["state"] == "starting"
+            assert type(status["supervisor"]["pid"]) is int
 
             for path in ("/api/nodes", "/api/jobs", "/anything"):
                 resp = await client.get(path)
@@ -132,6 +132,44 @@ def test_status_echoes_launcher_instance() -> None:
         try:
             status = await (await client.get(STATUS_PATH)).json()
             assert status["instance"] == "desktop-launch-123"
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_shutdown_requires_matching_instance_and_token() -> None:
+    async def scenario() -> None:
+        stopped = asyncio.Event()
+        app = create_supervisor_app(
+            EngineLink(),
+            instance="launcher-instance",
+            shutdown_token="shutdown-token",
+            shutdown=stopped.set,
+        )
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            assert (await client.post("/supervisor/shutdown")).status == 403
+            assert (
+                await client.post(
+                    "/supervisor/shutdown",
+                    headers={
+                        "X-Dinkster-Instance": "launcher-instance",
+                        "X-Dinkster-Shutdown-Token": "wrong-token",
+                    },
+                )
+            ).status == 403
+            response = await client.post(
+                "/supervisor/shutdown",
+                headers={
+                    "X-Dinkster-Instance": "launcher-instance",
+                    "X-Dinkster-Shutdown-Token": "shutdown-token",
+                },
+            )
+            assert response.status == 200
+            assert await response.json() == {"state": "stopping"}
+            await asyncio.wait_for(stopped.wait(), timeout=1)
         finally:
             await client.close()
 

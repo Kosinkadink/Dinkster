@@ -22,6 +22,7 @@ from urllib.request import urlopen
 from scripts.download_frontend import verify_and_extract
 
 TAG_PATTERN = re.compile(r"v(?P<version>[0-9]+\.[0-9]+\.[0-9]+)")
+PUBLISHED_PROJECTS = ("dinkster", "dinkster-api", "dinkster-supervisor")
 TARGET_PYTHON = "3.14.10"
 LINUX_PLATFORMS = [f"manylinux_2_{n}_x86_64" for n in range(28, 4, -1)] + [
     "manylinux2014_x86_64",
@@ -101,9 +102,6 @@ def versioned_sources(root: Path, version: str) -> Iterator[Path]:
                     pinned = f"{match[1]}{match[2] or ''}=={version}{match[3] or ''}"
                     text = text.replace(json.dumps(dependency), json.dumps(pinned))
             if path == staged / "pyproject.toml":
-                text = text.replace(
-                    "dependencies = [", f'dependencies = [\n    "dinkster-frontend=={version}",', 1
-                )
                 module = staged / "src/dinkster/__init__.py"
                 module.write_text(
                     re.sub(
@@ -134,59 +132,6 @@ def wheel_metadata(path: Path) -> tuple[str, str]:
                 key, value = line.split(": ", 1)
                 fields.setdefault(key, value)
         return fields["Name"].lower(), fields["Version"]
-
-
-def build_frontend_wheel(
-    frontend_artifact: Path,
-    version: str,
-    sources: dict,
-    output: Path,
-    uv: str,
-) -> Path:
-    with tempfile.TemporaryDirectory(prefix="dinkster-frontend-wheel-") as directory:
-        project = Path(directory)
-        module = project / "src/dinkster_frontend"
-        module.mkdir(parents=True)
-        verify_and_extract(frontend_artifact.read_bytes(), sources, module / "static")
-        (module / "__init__.py").write_text(
-            '"""Installed Dinkster frontend bundle."""\n\n'
-            "from importlib.resources import files\n\n"
-            "def bundle_path():\n"
-            '    """Return the installed frontend resource directory."""\n'
-            '    return files("dinkster_frontend").joinpath("static")\n',
-            encoding="utf-8",
-        )
-        (project / "pyproject.toml").write_text(
-            "[project]\n"
-            'name = "dinkster-frontend"\n'
-            f'version = "{version}"\n'
-            'description = "Versioned Dinkster web application bundle"\n'
-            'requires-python = ">=3.12"\n\n'
-            "[build-system]\n"
-            'requires = ["hatchling"]\n'
-            'build-backend = "hatchling.build"\n\n'
-            "[tool.hatch.build.targets.wheel]\n"
-            'packages = ["src/dinkster_frontend"]\n',
-            encoding="utf-8",
-        )
-        subprocess.run([uv, "build", "--wheel", "--out-dir", str(output), str(project)], check=True)
-    wheels = sorted(output.glob(f"dinkster_frontend-{version}-*.whl"))
-    if len(wheels) != 1:
-        raise ValueError("frontend build did not produce exactly one wheel")
-    with zipfile.ZipFile(frontend_artifact) as artifact, zipfile.ZipFile(wheels[0]) as wheel:
-        manifest = json.loads(artifact.read("manifest.json"))
-        with zipfile.ZipFile(io.BytesIO(artifact.read("bundle.zip"))) as bundle:
-            expected = {f"dinkster_frontend/static/{name}" for name in bundle.namelist()}
-            actual = {
-                name for name in wheel.namelist() if name.startswith("dinkster_frontend/static/")
-            }
-            if actual != expected or any(
-                wheel.read(f"dinkster_frontend/static/{name}") != bundle.read(name)
-                for name in bundle.namelist()
-            ):
-                raise ValueError("frontend wheel files do not match the pinned bundle")
-    print(f"Packaged frontend bundle sha256:{manifest['sha256']} from {manifest['commit']}")
-    return wheels[0]
 
 
 def build_source_archive(root: Path, version: str, output: Path) -> Path:
@@ -345,6 +290,26 @@ def read_base_manifest(path: Path) -> dict:
     manifest = json.loads(path.read_text(encoding="utf-8"))
     if manifest.get("format") != "dinkster.base/1":
         raise ValueError(f"unsupported base manifest format: {path}")
+    archive = manifest.get("archive")
+    if (
+        "parts" in manifest
+        or not isinstance(archive, dict)
+        or set(archive) != {"format", "parts"}
+        or archive["format"] != "tar+zstd"
+        or not isinstance(archive["parts"], list)
+    ):
+        raise ValueError(f"unsupported base archive contract: {path}")
+    for number, part in enumerate(archive["parts"], 1):
+        if (
+            not isinstance(part, dict)
+            or set(part) != {"filename", "size", "sha256"}
+            or part["filename"] != f"base.tar.zst.{number:03d}"
+            or type(part["size"]) is not int
+            or not 0 < part["size"] < 2_000_000_000
+            or not isinstance(part["sha256"], str)
+            or re.fullmatch(r"[0-9a-f]{64}", part["sha256"]) is None
+        ):
+            raise ValueError(f"invalid base archive part identity: {path}")
     identity_fields = (
         "format",
         "variant",
@@ -357,6 +322,7 @@ def read_base_manifest(path: Path) -> dict:
         "nvidia",
     )
     payload = {key: manifest[key] for key in identity_fields}
+    payload["archive"] = {"format": archive["format"]}
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("ascii")
     if manifest.get("id") != "sha256:" + hashlib.sha256(canonical).hexdigest():
         raise ValueError(f"base manifest id does not match its payload: {path}")
@@ -379,7 +345,7 @@ def stage_external_wheels(
             raise ValueError(f"unexpected or duplicate base variant {variant!r}: {path}")
         bases[variant] = (
             {(wheel["filename"], wheel["size"], wheel["sha256"]) for wheel in manifest["wheels"]}
-            if manifest.get("parts")
+            if manifest["archive"]["parts"]
             else set()
         )
 
@@ -434,14 +400,29 @@ def build(
         raise ValueError("release output directory must be empty")
     output.mkdir(parents=True, exist_ok=True)
     with versioned_sources(root, version) as staged:
-        subprocess.run(
-            [uv, "build", "--all-packages", "--wheel", "--out-dir", str(output)],
-            cwd=staged,
-            check=True,
+        verify_and_extract(
+            frontend_artifact.read_bytes(), sources, staged / "src/dinkster/frontend_bundle/static"
         )
-    build_frontend_wheel(frontend_artifact, version, sources, output, uv)
+        catalog = next(
+            (path for path in payload_artifacts or [] if path.name == "official-packs.lock"), None
+        )
+        if catalog is not None:
+            bundled = staged / "src/dinkster/official_packs"
+            bundled.mkdir()
+            shutil.copyfile(catalog, bundled / catalog.name)
+            entries = json.loads(catalog.read_text(encoding="utf-8"))["packs"]
+            payloads = {path.name: path for path in payload_artifacts or []}
+            for entry in entries:
+                name = f"{entry['pack']}-{entry['version']}.zip"
+                shutil.copyfile(payloads[name], bundled / name)
+        for name in PUBLISHED_PROJECTS:
+            subprocess.run(
+                [uv, "build", "--package", name, "--wheel", "--out-dir", str(output)],
+                cwd=staged,
+                check=True,
+            )
     wheels = sorted(output.glob("*.whl"))
-    expected = set(workspace_projects(root)) | {"dinkster-frontend"}
+    expected = set(PUBLISHED_PROJECTS)
     actual = {wheel_metadata(wheel)[0] for wheel in wheels}
     if actual != expected:
         missing = sorted(expected - actual)
