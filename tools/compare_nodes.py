@@ -74,9 +74,14 @@ def _type(expr: dict[str, Any]) -> Any:
 def _reference_inputs(groups: dict[str, Any], list_inputs: bool = False) -> list[dict[str, Any]]:
     result = []
     for group in ("required", "optional"):
-        for name, spec in groups.get(group, {}).items():
+        parameters = groups.get(group, {})
+        if not isinstance(parameters, dict):
+            raise ValueError(f"{group}: input group must be an object")
+        for name, spec in parameters.items():
             value_type = spec[0] if isinstance(spec, list) else spec
             options = spec[1] if isinstance(spec, list) and len(spec) > 1 else {}
+            if not isinstance(options, dict):
+                raise ValueError(f"{name}: input options must be an object")
             entry: dict[str, Any] = {"name": name, "group": group, "type": value_type}
             if isinstance(value_type, list):
                 entry.update(type="COMBO", options=value_type)
@@ -221,25 +226,8 @@ def _differences(expected: Any, actual: Any, path: str) -> list[str]:
         return []
     if isinstance(expected, dict) and isinstance(actual, dict):
         expected, actual = dict(expected), dict(actual)
-        conditional = expected.pop("conditional_options", [])
-        if conditional:
-            for declaration in conditional:
-                if not declaration.get("condition") or (
-                    ("value" in declaration) == ("pattern" in declaration)
-                ):
-                    return [f"{path}: invalid conditional option declaration"]
-            for entry in (expected, actual):
-                entry["options"] = [
-                    option
-                    for option in entry.get("options", [])
-                    if not any(
-                        option == declaration["value"]
-                        if "value" in declaration
-                        else isinstance(option, str)
-                        and re.fullmatch(declaration["pattern"], option) is not None
-                        for declaration in conditional
-                    )
-                ]
+        if "conditional_options" in expected:
+            return [f"{path}: invalid conditional option declaration"]
         list_flag = expected.pop("_list_flag", False)
         native_type = actual.get("type")
         if (
@@ -358,6 +346,22 @@ def compare(row: dict[str, Any], schema: dict[str, Any]) -> list[str]:
             return ["reference V3 input sequence does not match public input groups"]
         expected = [by_name[name] for name in names]
     actual = _native_inputs(schema.get("interface", []))
+    for item in expected:
+        conditional = item.pop("conditional_options", [])
+        if not conditional:
+            continue
+        for entry in (item, *(other for other in actual if other["name"] == item["name"])):
+            entry["options"] = [
+                option
+                for option in entry.get("options", [])
+                if not any(
+                    option == declaration["value"]
+                    if "value" in declaration
+                    else isinstance(option, str)
+                    and re.fullmatch(declaration["pattern"], option) is not None
+                    for declaration in conditional
+                )
+            ]
     differences = []
     save_node = row.get("output_node") is True and any(
         item["name"] == "filename_prefix"
@@ -436,6 +440,7 @@ def compare_registry(reference: dict[str, Any], registry: dict[str, Any]) -> dic
     served = registry["nodes"]
     results = []
     errors = []
+    conditional_options = {}
     if reference.get("builtin_import_failures"):
         errors.append(
             "reference builtin imports failed: " + ", ".join(reference["builtin_import_failures"])
@@ -454,6 +459,21 @@ def compare_registry(reference: dict[str, Any], registry: dict[str, Any]) -> dic
                     errors.append(f"{key}: prefixed type name: {value}")
     for row in nodes:
         name = row["class_name"]
+        inputs = row.get("input_types")
+        if not isinstance(inputs, dict):
+            inputs = {}
+        row_conditionals = {
+            parameter: spec[1]["conditional_options"]
+            for group in ("required", "optional")
+            if isinstance(inputs.get(group), dict)
+            for parameter, spec in inputs[group].items()
+            if isinstance(spec, list)
+            and len(spec) > 1
+            and isinstance(spec[1], dict)
+            and spec[1].get("conditional_options")
+        }
+        if row_conditionals:
+            conditional_options[name] = row_conditionals
         exclusion = ""
         if row.get("api_node") or str(row.get("file", "")).startswith("comfy_api_nodes/"):
             exclusion = "API node"
@@ -474,12 +494,9 @@ def compare_registry(reference: dict[str, Any], registry: dict[str, Any]) -> dic
                 differences = compare(row, served[name])
             except (KeyError, TypeError, ValueError, IndexError) as exc:
                 differences = [f"invalid interface: {type(exc).__name__}: {exc}"]
-            conditional = any(
-                isinstance(spec, list) and len(spec) > 1 and spec[1].get("conditional_options")
-                for group in ("required", "optional")
-                for spec in (row.get("input_types") or {}).get(group, {}).values()
+            status = (
+                "differs" if differences else "conditional" if row_conditionals else "identical"
             )
-            status = "differs" if differences else "conditional" if conditional else "identical"
         results.append(
             {
                 "class_name": name,
@@ -508,20 +525,7 @@ def compare_registry(reference: dict[str, Any], registry: dict[str, Any]) -> dic
         ),
         "counts": counts,
         "engine_exclusions": {},
-        "conditional_options": {
-            row["class_name"]: {
-                name: spec[1]["conditional_options"]
-                for group in ("required", "optional")
-                for name, spec in (row.get("input_types") or {}).get(group, {}).items()
-                if isinstance(spec, list) and len(spec) > 1 and spec[1].get("conditional_options")
-            }
-            for row in nodes
-            if any(
-                isinstance(spec, list) and len(spec) > 1 and spec[1].get("conditional_options")
-                for group in ("required", "optional")
-                for spec in (row.get("input_types") or {}).get(group, {}).values()
-            )
-        },
+        "conditional_options": conditional_options,
         "registry_errors": sorted(set(errors)),
         "rows": results,
         "passed": not errors and not counts.get("differs") and not counts.get("absent"),

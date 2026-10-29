@@ -124,6 +124,43 @@ def test_conditional_metadata_cannot_remove_static_choices(declaration: object) 
     assert "invalid conditional option declaration" in result["rows"][0]["differences"]
 
 
+@pytest.mark.parametrize("status", ["differs", "absent", "excluded"])
+@pytest.mark.parametrize(
+    "inputs,message",
+    [
+        ({"required": {"device": [["default", "cpu"], None]}}, "input options must be an object"),
+        ("invalid", "reference input schema unavailable"),
+        ({"required": "invalid"}, "input group must be an object"),
+    ],
+)
+def test_malformed_reference_options_are_reported_without_crashing(
+    status: str, inputs: object, message: str
+) -> None:
+    from tools.compare_nodes import compare_registry
+
+    result = compare_registry(
+        {
+            "nodes": [
+                {
+                    "class_name": "SelectModelDevice",
+                    "api_node": status == "excluded",
+                    "input_types": inputs,
+                }
+            ]
+        },
+        {
+            "nodes": {}
+            if status == "absent"
+            else {"SelectModelDevice": {"nodeType": "SelectModelDevice", "interface": []}}
+        },
+    )
+    assert result["rows"][0]["status"] == status
+    assert result["conditional_options"] == {}
+    if status == "differs":
+        assert message in result["rows"][0]["differences"]
+    assert result["passed"] is (status == "excluded")
+
+
 def test_failed_reference_import_cannot_pass_an_incomplete_census() -> None:
     from tools.compare_nodes import compare_registry
 
@@ -1003,6 +1040,24 @@ def test_nested_inputs_preserve_file_slots_and_detect_child_drift(
     result = compare_registry(reference, registry)
     assert not result["passed"]
     assert "0.75 vs 0.5" in result["rows"][0]["differences"]
+
+    native_children[-1].update(
+        type={"kind": "concrete", "types": ["COMBO"]},
+        default="default",
+        widget={"type": "COMBO", "options": ["default"]},
+    )
+    for declaration in (
+        [{"value": "cpu", "condition": "anything"}],
+        [{"pattern": ".*", "condition": "anything"}],
+        ["bad"],
+    ):
+        reference_children["required"]["strength"] = [
+            ["default", "cpu"],
+            {"conditional_options": declaration},
+        ]
+        result = compare_registry(reference, registry)
+        assert not result["passed"]
+        assert "invalid conditional option declaration" in result["rows"][0]["differences"]
 
 
 def test_namespace_rejects_core_id_ownership_and_nested_type_prefixes() -> None:
