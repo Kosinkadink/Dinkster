@@ -142,6 +142,8 @@
   VIDEO_EDIT preservation, track composition, transitions, retiming, bounded
   audio mixing, CURVE parameters available in core-only registries, and
   deterministic CPU text effects
+- OTIO JSON import/export on CPython 3.14 Linux x86_64 and Windows x64 uses
+  prebuilt native wheels; installation needs no local OpenTimelineIO build.
 - Streamed media uploads and video encoding with explicit upload, decoded
   frame, decoded audio, and encoded output limits
 - Native VOID optical-flow-warped noise with 16 latent channels, even temporal
