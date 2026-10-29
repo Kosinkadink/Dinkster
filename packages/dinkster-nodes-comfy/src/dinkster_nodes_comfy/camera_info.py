@@ -45,7 +45,7 @@ def _number(
     )
 
 
-def _matrix_quaternion(torch: Any, matrix: Any) -> Any:
+def matrix_quaternion(torch: Any, matrix: Any) -> Any:
     # Pick the largest quaternion component to avoid unstable divisions near half turns.
     m00, m11, m22 = matrix[..., 0, 0], matrix[..., 1, 1], matrix[..., 2, 2]
     m21, m12 = matrix[..., 2, 1], matrix[..., 1, 2]
@@ -125,7 +125,7 @@ def _camera_info(
         x_axis = x_axis / x_axis.norm().clamp_min(1e-8)
         y_axis = torch.linalg.cross(z_axis, x_axis)
         matrix = torch.stack([x_axis, y_axis, z_axis], dim=1)
-        quaternion = _matrix_quaternion(torch, matrix[None])[0]
+        quaternion = matrix_quaternion(torch, matrix[None])[0]
         if roll:
             angle = math.radians(roll)
             qz = torch.tensor([math.cos(angle / 2), 0.0, 0.0, math.sin(angle / 2)], device=device)

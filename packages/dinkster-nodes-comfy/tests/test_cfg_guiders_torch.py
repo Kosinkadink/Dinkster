@@ -422,6 +422,34 @@ def test_basic_cfg_and_dual_model_build_pinned_guiders_and_default_negative() ->
     assert "cross_attn" not in dual.original_conds["negative"][0]
 
 
+def test_basic_guider_prepares_invocation_attention_without_mutating_source() -> None:
+    from dinkster_native.attention import create_attention_runtime
+    from dinkster_workers.execution import ExecutionContext, use_execution_context
+
+    model = _patcher()
+    runtime = create_attention_runtime()
+    context = ExecutionContext(
+        arm=None,
+        expected_execution_identity=None,
+        attention_route_token=runtime.route_token,
+        attention_runtime=runtime,
+    )
+    with use_execution_context(context):
+        basic = BasicGuider.execute(model=model, conditioning=_conditioning(2.0, "routed"))[
+            "GUIDER"
+        ]
+    assert basic.model_patcher is not model
+    assert basic.model_patcher.model is model.model
+    assert "optimized_attention_override" not in model.model_options["transformer_options"]
+    override = basic.model_patcher.model_options["transformer_options"][
+        "optimized_attention_override"
+    ]
+    query = torch.arange(12, dtype=torch.float32).reshape(1, 3, 4) / 10
+    expected = runtime.for_model(runtime.route_token)(query, query + 0.2, query - 0.1, 1)
+    torch.testing.assert_close(override(None, query, query + 0.2, query - 0.1, 1), expected)
+    assert set(basic.original_conds) == {"positive"}
+
+
 @pytest.mark.parametrize(
     ("style", "expected"),
     (("regular", 11.0), ("nested", 19.0)),

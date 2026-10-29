@@ -86,7 +86,7 @@ class BerniniConditioning(Node):
             input_families=(
                 InputFamilySpec(
                     "reference_images",
-                    (InputSpec("reference_image", _IMAGE),),
+                    (InputSpec("reference_image", _IMAGE, required=False),),
                     min_members=0,
                     max_members=8,
                     required=False,
