@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import inspect
+import os
 import threading
 import time
 import traceback
@@ -19,6 +20,8 @@ from dataclasses import replace
 from types import MappingProxyType
 from typing import cast
 
+from dinkster_assets import AssetError, AssetVault, resolver_from_env
+from dinkster_assets.declared import VAULT_ENV, use_produced_output_job
 from dinkster_memory import FullReleaseConsumer, Shedder
 from dinkster_memory.resident import ResidentPool
 from dinkster_protocol import (
@@ -104,6 +107,7 @@ from dinkster_values import (
 from .error_hints import hints_for
 from .execution import ExecutionContext, current_execution_context, use_execution_context
 from .media import apply_alpha_policy, coercion_drops_alpha, media_input_value, prepare_media_output
+from .produced_assets import ProducedAssetAuthority
 
 
 async def _run_sync(call: Callable[..., object], /, *args: object, **kwargs: object) -> object:
@@ -396,8 +400,32 @@ class InProcessWorker:
         on_event: OnInvocationEvent | None = None,
     ) -> InvocationResult:
         """Invoke with the pack context active across all worker-side work."""
-        with self._pack_context():
-            return await self._invoke_in_context(invocation, on_event)
+        with (
+            self._pack_context(),
+            use_produced_output_job(
+                invocation.job_ref or invocation.invocation_id, invocation.attempt_id
+            ) as owns_adoption,
+        ):
+            result = await self._invoke_in_context(invocation, on_event)
+            if (
+                owns_adoption
+                and result.outputs is not None
+                and os.environ.get("DINKSTER_PACK_SCRATCH")
+            ):
+                try:
+                    root = os.environ.get(VAULT_ENV)
+                    vault = AssetVault(root) if root else None
+                    existing_env = dict(os.environ)
+                    existing_env.pop("DINKSTER_PACK_SCRATCH", None)
+                    authority = ProducedAssetAuthority(
+                        vault, resolver_from_env(), resolver_from_env(existing_env)
+                    )
+                    await _run_sync(authority.capture, result.outputs, None, invocation.inputs)
+                except (AssetError, OSError) as error:
+                    return InvocationResult(
+                        error=NodeError(invocation.node_id, invocation.node_type, str(error))
+                    )
+            return result
 
     async def check_lazy_status(
         self,

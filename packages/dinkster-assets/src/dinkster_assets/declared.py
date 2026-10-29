@@ -63,13 +63,14 @@ _produced_job: ContextVar[tuple[str, int] | None] = ContextVar(
 
 
 @contextmanager
-def use_produced_output_job(job: str, attempt: int) -> Generator[None]:
-    """Keep publication and source lookup bound to the host's job attempt."""
+def use_produced_output_job(job: str, attempt: int) -> Generator[bool]:
+    """Bind source lookup to a job attempt, yielding whether this scope owns adoption."""
     if not job or type(attempt) is not int or attempt < 1:
         raise AssetError("produced output requires a job and positive attempt")
+    owns_adoption = _produced_job.get() != (job, attempt)
     token = _produced_job.set((job, attempt))
     try:
-        yield
+        yield owns_adoption
     finally:
         _produced_job.reset(token)
 

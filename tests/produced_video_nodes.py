@@ -8,7 +8,7 @@ from typing import Any, cast
 
 import av
 import numpy as np
-from dinkster_api.v1 import VIDEO_TYPE, Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_api.v1 import AUDIO_TYPE, VIDEO_TYPE, Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_assets import register_video_value_type, resolver_from_env
 from dinkster_values import TypeRegistry, video_from_source
 
@@ -48,6 +48,23 @@ class ProduceVideo(Node):
             for packet in stream.encode():
                 container.mux(packet)
         return cls.outputs(video=video_from_source(data.getvalue()))
+
+
+class ProduceAudio(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="aproducer.make",
+            display_name="Produce Audio",
+            category="test",
+            inputs=(),
+            outputs=(OutputSpec("audio", TypeExpr.concrete(AUDIO_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls) -> Mapping[str, object]:
+        pcm = np.arange(100_000, dtype=np.float32).reshape(1, 2, 50_000) / 100_000
+        return cls.outputs(audio={"waveform": pcm, "sample_rate": 8000})
 
 
 NODES = (ProduceVideo,)

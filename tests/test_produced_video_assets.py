@@ -21,6 +21,7 @@ from dinkster_assets import (
     AssetVault,
     LocalAssetRef,
     digest_bytes,
+    register_audio_value_type,
     register_video_value_type,
     resolver_from_env,
 )
@@ -29,7 +30,7 @@ from dinkster_caches import BudgetedDiskCAS
 from dinkster_protocol import Invocation, InvocationResult
 from dinkster_values import TypeRegistry, Value, ValueMeta, default_encode, make_list_value
 from dinkster_values.model import PyObjPayload
-from dinkster_workers import BoundaryDiagnostic, IsolatedWorker, RemoteWorker
+from dinkster_workers import BoundaryDiagnostic, InProcessWorker, IsolatedWorker, RemoteWorker
 from dinkster_workers import session as session_module
 from dinkster_workers.blobs import attribute_moved_wire
 from dinkster_workers.boundary import ValueCodec, encode_result, read_frame
@@ -38,6 +39,7 @@ from dinkster_workers.produced_assets import (
     result_asset_digests,
     source_asset_files,
 )
+from produced_video_nodes import ProduceAudio, ProduceVideo
 from test_remote import TOKEN, start_service, stop_service
 from test_reservations import core_registry, make_invocation
 
@@ -95,6 +97,64 @@ def test_produced_scratch_isolates_concurrent_jobs_and_attempts(tmp_path: Path) 
     with use_produced_output_job("../job with spaces", 1):
         assert resolver.resolve(digest) == paths[0]
     assert not (tmp_path / "job with spaces").exists()
+
+
+@pytest.mark.parametrize("configured_vault", [False, True])
+@pytest.mark.parametrize("media", ["audio", "video"])
+def test_in_process_produced_sources_require_durable_adoption(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, configured_vault: bool, media: str
+) -> None:
+    engine = AssetVault(tmp_path / "engine")
+    scratch = tmp_path / "scratch"
+    monkeypatch.setenv("DINKSTER_PACK_SCRATCH", str(scratch))
+    if configured_vault:
+        monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(engine.root))
+    else:
+        monkeypatch.delenv("DINKSTER_ASSET_VAULT", raising=False)
+    registry = TypeRegistry()
+    register_video_value_type(registry, VIDEO_TYPE, resolver_from_env())
+    register_audio_value_type(registry, AUDIO_TYPE, resolver_from_env())
+    node = ProduceVideo if media == "video" else ProduceAudio
+    node_type = node.define_schema().node_type
+    worker = InProcessWorker({node_type: node}, registry)
+
+    async def scenario() -> None:
+        result = await worker.invoke(
+            Invocation(
+                invocation_id="produce",
+                job_ref="local job",
+                attempt_id=3,
+                node_id="produce",
+                node_type=node_type,
+                inputs={},
+                effective_schema=worker.schemas[node_type],
+            )
+        )
+        with use_produced_output_job("local job", 3):
+            store = produced_output_scratch()
+            assert store is not None
+            digests = store.digests()
+            assert len(digests) == 1
+            produced = store.resolve(digests[0])
+            assert produced is not None
+            original = produced.read_bytes()
+            assert digest_bytes(original) == digests[0]
+        if not configured_vault:
+            assert result.error is not None
+            assert "require an engine DINKSTER_ASSET_VAULT" in result.error.message
+            assert produced.read_bytes() == original
+            assert not engine.digests()
+            return
+        assert result.error is None, result.error
+        assert result.outputs is not None
+        shutil.rmtree(scratch)
+        value = cast(Mapping[str, object], result.outputs[media].resolve())
+        source = cast(AssetRef, value["source"])
+        assert source.digest == digests[0]
+        assert source.local_path() == engine.resolve(digests[0])
+        assert source.read_bytes() == original
+
+    asyncio.run(scenario())
 
 
 def _value(ref: AssetRef, type_id: str = VIDEO_TYPE) -> Value:

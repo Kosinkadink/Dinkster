@@ -13,9 +13,12 @@ resolving without a worker restart. Unindexed selections retain invocation-local
 Admission never copies selected input files into the vault or worker scratch.
 `produced_output_scratch` is only the writable publication store for produced
 outputs; uploads, downloads and remote transfers retain their separate vault paths.
-With pack scratch configured, boundary-hosted invocations isolate produced bytes
-by job and attempt. The installed resolver follows that context during execution,
+With pack scratch configured, worker invocations isolate produced bytes by job
+and attempt. The installed resolver follows that context during execution,
 output wrapping, transfer, and engine adoption; job identifiers are not paths.
+Direct in-process results adopt produced sources before returning. Published
+AUDIO and VIDEO references use the store chain, so adopted bytes remain readable
+after scratch is removed.
 
 ## Setup
 

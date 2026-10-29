@@ -43,7 +43,7 @@ from dinkster_values.video_codec import VIDEO_INLINE_LIMIT, coerce_video, video_
 from dinkster_values.video_probe import probe_video
 
 from .audio import bind_audio_value
-from .declared import MOUNTS_ENV, produced_output_scratch
+from .declared import MOUNTS_ENV, produced_output_scratch, resolver_from_env
 from .identity import AssetError, digest_bytes, digest_file
 from .model import AssetRef, AssetResolver, LocalAssetRef, LocalAssetResolver
 from .mounts import MountSnapshotResolver
@@ -152,7 +152,10 @@ def _publish_video_source(source: bytes | Path) -> AssetRef:
                     writer.write(chunk)
         writer.commit()
     return AssetRef(
-        digest, source.name if isinstance(source, Path) else "video", size, resolver=vault
+        digest,
+        source.name if isinstance(source, Path) else "video",
+        size,
+        resolver=resolver_from_env(),
     )
 
 

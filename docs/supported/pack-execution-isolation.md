@@ -49,6 +49,10 @@
 - Boundary workers with configured pack scratch keep produced asset bytes
   separate for each job attempt. Returning a result still requires verified
   engine adoption before acknowledgement; this does not delete temporary files.
+- Direct in-process results also adopt produced sources before returning when
+  pack scratch is configured. Returned AUDIO and VIDEO sources remain readable
+  from the engine vault after scratch removal; failed adoption preserves scratch
+  bytes.
 - Worker conversations carry typed runtime-expansion results. Present
   values retain ordinary resource ownership, source adoption, saved-artifact
   validation and shared-memory/result acknowledgements. Carrying a fragment
