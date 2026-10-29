@@ -20,7 +20,7 @@ from dinkster_api.v1 import (
     TypeExpr,
     materialize_svg,
 )
-from dinkster_assets import MountDef, MountTable
+from dinkster_assets import MountDef, MountTable, digest_bytes
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.svg_save import SaveSVGNode
 
@@ -76,12 +76,13 @@ def test_svg_save_schema_uses_canonical_type_and_adjacent_mount() -> None:
 
 @pytest.mark.parametrize("in_process", (True, False))
 @pytest.mark.parametrize(
-    ("prompt", "with_snapshot"),
+    ("prompt", "with_snapshot", "check_artifacts"),
     (
-        pytest.param(None, False, id="no_snapshot"),
-        pytest.param({}, True, id="empty_prompt"),
-        pytest.param({"source": {"seed": 83}}, True, id="populated_prompt"),
-        pytest.param(None, True, id="extras_only"),
+        pytest.param(None, False, False, id="no_snapshot"),
+        pytest.param({}, True, False, id="empty_prompt"),
+        pytest.param({"source": {"seed": 83}}, True, False, id="populated_prompt"),
+        pytest.param(None, True, False, id="extras_only"),
+        pytest.param(None, False, True, id="saved_result"),
     ),
 )
 def test_svg_save_publishes_ordered_streams_and_submission_metadata(
@@ -90,6 +91,7 @@ def test_svg_save_publishes_ordered_streams_and_submission_metadata(
     in_process: bool,
     prompt: dict | None,
     with_snapshot: bool,
+    check_artifacts: bool,
 ) -> None:
     output, alternate = tmp_path / "output", tmp_path / "alternate"
     output.mkdir()
@@ -158,6 +160,19 @@ def test_svg_save_publishes_ordered_streams_and_submission_metadata(
             for attempt in range(2):
                 result = await engine.run(graph, ["inspect"], export_snapshot=submitted)
                 assert result.outputs["inspect"]["result"].resolve() == "SVG unchanged"
+                if check_artifacts:
+                    assert len(result.artifacts) == len(_VALUES)
+                    for batch, (artifact, value) in enumerate(
+                        zip(result.artifacts, _VALUES, strict=True)
+                    ):
+                        name = f"vector_{batch}_{batch + attempt + 1:05d}_.svg"
+                        assert artifact.node_id == "save"
+                        assert artifact.name == name
+                        assert artifact.virtual_path == f"mounts/alternate/chosen/{name}"
+                        assert artifact.digest == digest_bytes(value)
+                        assert artifact.size == len(value)
+                        assert artifact.media_type == "image/svg+xml"
+                        assert (alternate / "chosen" / name).read_bytes() == value
                 if attempt:
                     assert "source" in result.cached
                     assert not {"save", "inspect"} & set(result.cached)

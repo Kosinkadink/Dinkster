@@ -21,6 +21,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
+    attach_saved_artifact,
     current_export_snapshot,
     materialize_svg,
 )
@@ -98,11 +99,13 @@ class SaveSVGNode(Node):
                 with BytesIO(content.encode("utf-8")) as source:
                     yield source
 
-        writer.save_stream_batch(
+        refs = writer.save_stream_batch(
             writer.output_target(filename_prefix, mount=mount),
             sources(),
             suffix="_.svg",
             media_type="image/svg+xml",
             limit=ENCODED_MEDIA_LIMIT_BYTES,
         )
+        for ref in refs:
+            attach_saved_artifact(ref.to_wire())
         return cls.outputs(svg=svg)

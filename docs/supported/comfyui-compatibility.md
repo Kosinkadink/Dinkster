@@ -212,4 +212,5 @@
 - Native Save SVG writes ordered UTF-8 SVG streams to the selected output mount,
   retaining duplicate and empty streams, source batch counters, and submitted
   prompt/workflow metadata in source-compatible CDATA blocks. Invalid UTF-8 fails
-  rather than being replaced. The unchanged SVG value remains available downstream.
+  rather than being replaced. Saved files appear as host-validated run artifacts;
+  the unchanged SVG value remains available downstream.
