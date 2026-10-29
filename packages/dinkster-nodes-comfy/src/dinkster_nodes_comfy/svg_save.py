@@ -10,6 +10,7 @@ from io import BytesIO
 
 from dinkster_api.v1 import (
     CORE_STRING,
+    ENCODED_MEDIA_LIMIT_BYTES,
     SVG_TYPE,
     AssetError,
     AssetWriter,
@@ -25,7 +26,6 @@ from dinkster_api.v1 import (
     current_export_snapshot,
     materialize_svg,
 )
-from dinkster_values.limits import ENCODED_MEDIA_LIMIT_BYTES
 
 
 class SaveSVGNode(Node):
