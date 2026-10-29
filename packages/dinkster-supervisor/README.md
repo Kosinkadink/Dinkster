@@ -140,6 +140,23 @@ management and Desktop. Full layout: [environments and updates](../../docs/envir
   building, starting, switching, complete and rolled-back; the last two are
   terminal. Interrupted records must be recovered before another operation.
 
+`dinkster-env --root SOURCE move DESTINATION [--data STORE]` prints its plan
+before confirmation. Move keeps source data until destination doctor and engine
+health succeed, preserves named ports/devices and refuses an existing destination.
+Same-volume moves retain interpreter/package sharing and rewrite pack venv homes;
+cross-volume moves use local retained bases/wheels and offline pack rebuilding.
+Absolute or escaping project symlinks refuse planning. The old root retains
+diagnostic journals and reports the destination instead of starting stale engines.
+
+Optional `relocation` on a move journal contains absolute `sourceRoot`,
+`targetRoot`, `sourceStore`, `targetStore`, and `sourceFiles` (relative paths to
+SHA256 digests or `link:` plus relative link text). `setupRegistration` snapshots
+destination registration ownership too. A temporary `healthProbe: true` binding
+checks health when all original engines are stopped. Destination journal
+publication uses `.dinkster-move-<timestamp>` beside the destination; interrupted
+preparation rolls back before another confirmed operation. Cleanup refuses
+changed source files; the original diagnostic journal remains after success.
+
 All content identifiers are `sha256:` followed by 64 lowercase hexadecimal
 digits. Relative file paths use `/`, never absolute paths or parent traversal.
 Pointer and journal writes flush to disk before atomic replacement. The

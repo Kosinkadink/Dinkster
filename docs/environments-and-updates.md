@@ -351,6 +351,25 @@ wheels, and rebuilds the pack venvs, so the link sharing holds on the new
 volume. A store that no project references any more is deleted by garbage
 collection.
 
+Move confirmation includes a temporary stop of idle engines. The source stays
+authoritative until destination doctor and engine health succeed; the original
+named ports and device assignments are restored at the destination, or at the
+source after failure. If all bindings are stopped, a temporary engine performs
+the destination health check without changing their stopped assignments.
+Plans reject absolute or escaping project symlinks rather than copy broken links.
+
+Move journals optionally carry `relocation`, containing absolute `sourceRoot`,
+`targetRoot`, `sourceStore` and `targetStore` paths plus `sourceFiles` (relative
+paths mapped to SHA256 identities or `link:` plus the relative link text).
+The existing registration snapshot also applies to a move's destination.
+An internal probe binding is marked `healthProbe: true` and is removed after
+authenticated shutdown. Destination journal publication is staged in the
+destination parent's `.dinkster-move-<journal timestamp>` directory before
+publishing that directory. The original root retains its diagnostic journals
+after commit, and refuses stale engine startup with the destination path.
+Cleanup refuses source files that changed after copying. Completed historical
+move journals remain diagnostics when neither endpoint is the current root.
+
 An engine swap while a job is running is refused with a message to finish or
 cancel the job.
 

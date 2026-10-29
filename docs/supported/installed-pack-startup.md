@@ -75,6 +75,12 @@
   local wheels and retained base. Confirmation creates and health-checks a new
   generation without editing the drifted tree. Missing or corrupt local inputs
   refuse repair; failures keep the prior generation selected and serving.
+- `dinkster-env move` plans before confirmation, preserves project assets and
+  named engine assignments, and checks destination health before committing.
+  Same-volume relocation keeps shared packages; cross-volume relocation rebuilds
+  retained generations offline in the destination store. Old roots retain
+  diagnostic journals and refuse stale startup. Interrupted preparation recovers
+  the original project before another confirmed mutation.
 - A target-interpreter command stages sources from an existing registry lock
   and digest-addressed local archives, without network access or dependency
   resolution. JSON results report admission failures before activation.

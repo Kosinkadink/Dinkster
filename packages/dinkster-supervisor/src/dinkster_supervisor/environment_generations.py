@@ -22,7 +22,7 @@ from .environment_state import (
 )
 
 
-def _link_file(source: str, destination: str) -> str:
+def link_file(source: str, destination: str) -> str:
     # Dereference interpreter-internal aliases so every generation is self-contained.
     original = Path(source).resolve(strict=True)
     if sys.platform.startswith("linux"):
@@ -329,7 +329,7 @@ def build_generation(
         raise EnvironmentError("effective constraints.txt is missing")
     destination.mkdir(parents=True)
     try:
-        shutil.copytree(source, destination / "python", copy_function=_link_file)
+        shutil.copytree(source, destination / "python", copy_function=link_file)
         shutil.copyfile(constraints, destination / "constraints.txt")
         python = interpreter(destination)
         if not python.is_file():

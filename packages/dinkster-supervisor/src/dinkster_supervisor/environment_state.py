@@ -375,6 +375,7 @@ class Journal:
     collected_generations: tuple[int, ...] = ()
     collection_store: str | None = None
     collected_store_paths: tuple[str, ...] = ()
+    relocation: dict[str, object] | None = None
 
     @classmethod
     def read(cls, path: Path) -> Journal:
@@ -492,7 +493,11 @@ class Journal:
                     raise EnvironmentError("project settings snapshots require project documents")
         registration = value.get("setupRegistration")
         if registration is not None:
-            if operation != "setup" or previous is not None or not isinstance(registration, dict):
+            if (
+                operation not in {"setup", "move"}
+                or (operation == "setup" and previous is not None)
+                or not isinstance(registration, dict)
+            ):
                 raise EnvironmentError("registration snapshot requires initial setup")
             registration = cast("dict[str, object]", registration)
             for key in ("store", "registry"):
@@ -507,6 +512,30 @@ class Journal:
             for key in ("addedProject", "addedVolume", "hadProjects", "hadRegistry"):
                 if type(registration.get(key)) is not bool:
                     raise EnvironmentError("registration snapshot requires reference flags")
+        relocation = value.get("relocation")
+        if relocation is not None:
+            if (
+                operation != "move"
+                or previous != value.get("target")
+                or not isinstance(relocation, dict)
+            ):
+                raise EnvironmentError("relocation requires a move of the active generation")
+            relocation = cast("dict[str, object]", relocation)
+            for key in ("sourceRoot", "targetRoot", "sourceStore", "targetStore"):
+                text = relocation.get(key)
+                if not isinstance(text, str) or not Path(text).is_absolute():
+                    raise EnvironmentError("relocation requires absolute roots and stores")
+            source_root = Path(cast("str", relocation["sourceRoot"]))
+            target_root = Path(cast("str", relocation["targetRoot"]))
+            if source_root.is_relative_to(target_root) or target_root.is_relative_to(source_root):
+                raise EnvironmentError("relocation roots must be separate trees")
+            files = relocation.get("sourceFiles", {})
+            if not isinstance(files, dict):
+                raise EnvironmentError("relocation sourceFiles must be an object")
+            for name, identity in cast("dict[str, object]", files).items():
+                relative_file(name)
+                if not isinstance(identity, str):
+                    raise EnvironmentError("relocation source identities must be strings")
         return cls(
             operation,
             None if previous is None else generation_number(previous),
@@ -519,6 +548,7 @@ class Journal:
             numbers,
             store,
             store_paths,
+            relocation,
         )
 
     @property
@@ -546,6 +576,8 @@ class Journal:
         if self.collection_store is not None:
             value["collectionStore"] = self.collection_store
             value["collectedStorePaths"] = list(self.collected_store_paths)
+        if self.relocation is not None:
+            value["relocation"] = self.relocation
         write_document(path, value)
 
 

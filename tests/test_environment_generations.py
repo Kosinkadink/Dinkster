@@ -104,6 +104,8 @@ def _assert_shared(first: Path, second: Path) -> None:
         "repair",
         "repair-extra",
         "repair-missing",
+        "move",
+        "move-interrupted",
     ],
 )
 def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
@@ -213,7 +215,8 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
         source_generation=previous,
     )
     repairs = {"repair", "repair-extra", "repair-missing"}
-    if problem is not None and problem not in {"update", "extra"} | repairs:
+    moves = {"move", "move-interrupted"}
+    if problem is not None and problem not in {"update", "extra"} | repairs | moves:
         message = {
             "missing": "selected packs have no dependency lock: other",
             "variant": "variant wrong-variant does not match",
@@ -239,6 +242,112 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
             assert prepared is not None
             assert set(prepared.schemas) == {f"{name}.doubler", f"{name}.tagger"}
         assert sum("dinkster-schema-catalog" in name for name, _ in generation.files) == 2
+        if problem in moves:
+            from dinkster_supervisor.environment_state import (
+                Generation,
+                Journal,
+                content_digest,
+                write_document,
+            )
+            from test_environment_cli import _run
+
+            monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "user-data"))
+            monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "user-data"))
+            set_current(root, 1)
+            (root / "store").write_text(str(store) + "\n")
+            write_document(
+                root / "project.json",
+                {
+                    "format": "dinkster.project/1",
+                    "channel": "main",
+                    "variant": variant,
+                    "mirrors": [str(tmp_path / "unavailable-mirror")],
+                    "port": 3639,
+                },
+            )
+            write_document(
+                store / "projects.json", {"format": "dinkster.store/1", "projects": [str(root)]}
+            )
+            for cached in wheels.glob("*.whl"):
+                directory = wheels / hashlib.sha256(cached.read_bytes()).hexdigest()
+                directory.mkdir()
+                cached.rename(directory / cached.name)
+            shutil.copytree(artifacts, store / "engines" / ("b" * 64) / "artifacts")
+            (root / "library").mkdir()
+            (root / "library/asset").write_bytes(b"preserve this project asset")
+            destination = tmp_path / "moved project"
+            before = {
+                p.relative_to(root): content_digest(p) for p in root.rglob("*") if p.is_file()
+            }
+            for flags in ((), ("--plan",)):
+                code, planned = _run(root, "move", str(destination), *flags)
+                assert code == 0 and planned["status"] == "planned", planned
+                assert not destination.exists()
+                assert before == {
+                    p.relative_to(root): content_digest(p) for p in root.rglob("*") if p.is_file()
+                }
+            if problem == "move-interrupted":
+                script = """
+import os, sys
+from dinkster_supervisor import environment, environment_move
+original = environment_move._prepare
+def interrupt(*args):
+    original(*args)
+    os._exit(73)
+environment_move._prepare = interrupt
+sys.argv = ['dinkster-env', '--root', sys.argv[1], 'move', sys.argv[2], '--yes', '--json']
+environment.main()
+"""
+                child = subprocess.run(
+                    [sys.executable, "-c", script, str(root), str(destination)], timeout=60
+                )
+                assert child.returncode == 73
+                assert (root / "library/asset").read_bytes() == b"preserve this project asset"
+                assert _run(root, "stop", "--yes")[0] == 0
+                assert not destination.exists()
+                assert read_current(root) == 1
+                assert all(
+                    not Journal.read(p).incomplete for p in (root / "journal").glob("*.json")
+                )
+            code, moved = _run(root, "move", str(destination), "--yes")
+            assert code == 0 and moved["status"] == "applied", moved
+            assert read_current(destination) == 1 and read_current(root) is None
+            assert (destination / "library/asset").read_bytes() == b"preserve this project asset"
+            moved_store = Path((destination / "store").read_text().strip())
+            assert json.loads((moved_store / "projects.json").read_bytes())["projects"] == [
+                str(destination)
+            ]
+            if moved_store != store:
+                assert json.loads((store / "projects.json").read_bytes())["projects"] == []
+            assert _run(destination, "doctor")[1]["status"] == "clean"
+            assert "project moved to" in _run(root, "start", "--yes")[1]["error"]
+            moved_tree = destination / "generations/1"
+            assert Generation.read(moved_tree / "generation.json").drift(moved_tree) == ()
+            assert (
+                subprocess.check_output(
+                    [
+                        str(venv_python(moved_tree / "packs/other")),
+                        "-c",
+                        "import stable_fixture,sys; print(stable_fixture.VALUE); print(sys.prefix)",
+                    ],
+                    text=True,
+                ).strip()
+                == f"40\n{moved_tree / 'packs/other'}"
+            )
+            assert (
+                f"home = {moved_tree / 'python' / ('' if os.name == 'nt' else 'bin')}"
+                in (moved_tree / "packs/other/pyvenv.cfg").read_text()
+            )
+            _assert_shared(
+                next(moved_tree.rglob("stable_fixture.py")),
+                next((moved_store / "uv-cache").rglob("stable_fixture.py")),
+            )
+            again = destination.parent / "moved again"
+            code, second_move = _run(destination, "move", str(again), "--yes")
+            assert code == 0 and second_move["status"] == "applied", second_move
+            assert _run(again, "stop", "--yes")[0] == 0
+            assert _run(again, "doctor")[1]["status"] == "clean"
+            return
         if problem in repairs:
             from dataclasses import replace
 

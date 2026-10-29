@@ -20,6 +20,7 @@ from .environment_collection import (
     store_collection_plan,
 )
 from .environment_generations import build_generation, pack_operation, project_operation
+from .environment_move import execute_move, moved_to, plan_move, recover_moves
 from .environment_runtime import (
     engine_assignments,
     engine_status,
@@ -138,6 +139,8 @@ def _confirmed(args: argparse.Namespace, plan: list[str]) -> bool:
 
 
 def _recover_pending(root: Path, *, locked_store: Path | None = None) -> None:
+    if locked_store is None:
+        recover_moves(root)
     if locked_store is not None:
         recover_store_collection(locked_store, locked_root=root)
     elif (root / "store").exists():
@@ -149,6 +152,10 @@ def _recover_pending(root: Path, *, locked_store: Path | None = None) -> None:
                 recover_store_collection(store)
     for path in sorted((root / "journal").glob("*.json")):
         journal = Journal.read(path)
+        if journal.operation == "move":
+            if journal.incomplete:
+                raise EnvironmentError("move requires recovery before acquiring project locks")
+            continue
         if not journal.incomplete and not (
             journal.operation == "gc" and journal.stage == "complete"
         ):
@@ -686,6 +693,30 @@ def _runtime(args: argparse.Namespace, result: dict[str, object]) -> int:
     return 0
 
 
+def _move(args: argparse.Namespace, result: dict[str, object]) -> int:
+    root = Path(args.root).resolve()
+    if args.yes:
+        _recover_pending(root)
+    selected = plan_move(root, args.destination, args.data)
+    plan = [
+        f"move {root} to {selected.target}; store {selected.target_store}",
+        "stop idle engines temporarily; restore their named ports and GPU assignments",
+        "rebuild retained generations offline on the destination volume"
+        if selected.cross_volume
+        else "keep package sharing and rewrite pack venv homes",
+        "validate destination doctor and health before committing; retain source recovery journals",
+    ]
+    result.update(
+        current=selected.current, plan=plan, status="planned", destination=str(selected.target)
+    )
+    if not _confirmed(args, plan):
+        return 0
+    _recover_pending(root)
+    execute_move(selected)
+    result.update(status="applied", engines=list(engine_status(selected.target)))
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -722,13 +753,16 @@ def main() -> None:
     stop = commands.add_parser("stop", help="stop one identity-checked supervisor and engine")
     rollback = commands.add_parser("rollback", help="reactivate the previous successful generation")
     gc = commands.add_parser("gc", help="collect obsolete generation trees after confirmation")
+    move = commands.add_parser("move", help="relocate a project and validate retained generations")
+    move.add_argument("destination", type=Path)
+    move.add_argument("--data", type=Path)
     for command in (start, stop):
         command.add_argument("--engine", default="main")
-    for command in (doctor, setup, update, start, stop, rollback, gc):
+    for command in (doctor, setup, update, start, stop, rollback, gc, move):
         confirmation = command.add_mutually_exclusive_group()
         confirmation.add_argument("--yes", action="store_true", help="apply the printed plan")
         confirmation.add_argument("--plan", action="store_true", help="inspect without mutation")
-    for command in (catalog, status, doctor, setup, update, start, stop, rollback, gc):
+    for command in (catalog, status, doctor, setup, update, start, stop, rollback, gc, move):
         command.add_argument("--json", action="store_true", help="emit exactly one result object")
     args = parser.parse_args()
     if not args.root.is_absolute():
@@ -742,6 +776,11 @@ def main() -> None:
         "status": "clean",
     }
     try:
+        destination = moved_to(args.root)
+        if destination is not None:
+            if getattr(args, "yes", False):
+                recover_moves(args.root)
+            raise EnvironmentError(f"project moved to {destination}")
         if args.operation == "doctor" and args.repair:
             code = _repair(args, result)
         elif args.operation in {"setup", "update"}:
@@ -750,6 +789,8 @@ def main() -> None:
             code = _rollback(args, result)
         elif args.operation == "gc":
             code = _gc(args, result)
+        elif args.operation == "move":
+            code = _move(args, result)
         elif args.operation in {"start", "stop"}:
             code = _runtime(args, result)
         else:
