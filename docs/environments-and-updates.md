@@ -399,8 +399,15 @@ The workflow uses `--download-external-wheels` to select the locked compatible
 Windows/Linux x86_64 CPython 3.14.10 wheels, evaluating target requirement
 markers and preferring native interpreter tags over older stable ABI tags.
 Every download must match the lock size and SHA-256 and an exported requirement
-hash. Missing compatible wheels, URL requirements and corrupted downloads fail
-the build; acquisition never resolves dependencies or falls back to source.
+hash. The only direct-wheel exception is the pinned OpenTimelineIO cp314 build
+under `Kosinkadink/Dinkster`'s `opentimelineio-wheels-*` releases. Its native uv
+entry has no size: acquisition and staging require the matching target's
+`opentimelineio-windows.json` or `opentimelineio-linux.json` from that same
+release, with the pinned source identity, exact filename/hash and positive
+measured size. The export, lock source URL and wheel URL must agree. Other
+direct requirements, missing compatible wheels, mismatched provenance and
+corrupted downloads fail the build; acquisition never resolves dependencies
+or falls back to source. Target markers are evaluated before source admission.
 Repeated `--base-manifest PATH` inputs use the existing `dinkster.base/1`
 manifest, including its canonical id, and `--target-variant NAME` identifies
 the selected targets. Only an exact filename/size/SHA-256 member present in
