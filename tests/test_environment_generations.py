@@ -106,10 +106,14 @@ def _assert_shared(first: Path, second: Path) -> None:
         "repair-missing",
         "move",
         "move-interrupted",
+        "move-running-interrupted",
     ],
 )
 def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, problem: str | None
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+    problem: str | None,
 ) -> None:
     from dinkster_registry import LockedPack, Lockfile, build_artifact
     from dinkster_workers import load_manifest
@@ -215,7 +219,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
         source_generation=previous,
     )
     repairs = {"repair", "repair-extra", "repair-missing"}
-    moves = {"move", "move-interrupted"}
+    moves = {"move", "move-interrupted", "move-running-interrupted"}
     if problem is not None and problem not in {"update", "extra"} | repairs | moves:
         message = {
             "missing": "selected packs have no dependency lock: other",
@@ -276,42 +280,81 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
             (root / "library").mkdir()
             (root / "library/asset").write_bytes(b"preserve this project asset")
             destination = tmp_path / "moved project"
+            again = destination.parent / "moved again"
+            assignments = None
+            if problem == "move-running-interrupted":
+                from dinkster_supervisor.environment_runtime import (
+                    engine_assignments,
+                    start_engine,
+                    stop_engine,
+                )
+                from test_environment_runtime import free_port
+
+                for location in (root, destination, again):
+                    for name in ("main", "spare"):
+                        request.addfinalizer(partial(stop_engine, location, name, generation=1))
+                start_engine(root, 1, "main", free_port())
+                start_engine(root, 1, "spare", free_port())
+                stop_engine(root, "spare")
+                assignments = engine_assignments(root, 1)
+                assert {row["name"]: row["running"] for row in assignments} == {
+                    "main": True,
+                    "spare": False,
+                }
             before = {
-                p.relative_to(root): content_digest(p) for p in root.rglob("*") if p.is_file()
+                p.relative_to(root): content_digest(p)
+                for p in root.rglob("*")
+                if p.is_file() and not (p.is_relative_to(root / "runtime") and p.suffix == ".log")
             }
             for flags in ((), ("--plan",)):
                 code, planned = _run(root, "move", str(destination), *flags)
                 assert code == 0 and planned["status"] == "planned", planned
                 assert not destination.exists()
                 assert before == {
-                    p.relative_to(root): content_digest(p) for p in root.rglob("*") if p.is_file()
+                    p.relative_to(root): content_digest(p)
+                    for p in root.rglob("*")
+                    if p.is_file()
+                    and not (p.is_relative_to(root / "runtime") and p.suffix == ".log")
                 }
-            if problem == "move-interrupted":
+            if problem in {"move-interrupted", "move-running-interrupted"}:
                 script = """
 import os, sys
 from dinkster_supervisor import environment, environment_move
-original = environment_move._prepare
+hook = sys.argv[3]
+original = getattr(environment_move, hook)
 def interrupt(*args):
     original(*args)
     os._exit(73)
-environment_move._prepare = interrupt
+setattr(environment_move, hook, interrupt)
 sys.argv = ['dinkster-env', '--root', sys.argv[1], 'move', sys.argv[2], '--yes', '--json']
 environment.main()
 """
                 child = subprocess.run(
-                    [sys.executable, "-c", script, str(root), str(destination)], timeout=60
+                    [
+                        sys.executable,
+                        "-c",
+                        script,
+                        str(root),
+                        str(destination),
+                        "_resume" if assignments is not None else "_prepare",
+                    ],
+                    timeout=60,
                 )
                 assert child.returncode == 73
                 assert (root / "library/asset").read_bytes() == b"preserve this project asset"
-                assert _run(root, "stop", "--yes")[0] == 0
+                assert _run(root, "stop", "--engine", "spare", "--yes")[0] == 0
                 assert not destination.exists()
                 assert read_current(root) == 1
+                if assignments is not None:
+                    assert engine_assignments(root, 1) == assignments
                 assert all(
                     not Journal.read(p).incomplete for p in (root / "journal").glob("*.json")
                 )
             code, moved = _run(root, "move", str(destination), "--yes")
             assert code == 0 and moved["status"] == "applied", moved
             assert read_current(destination) == 1 and read_current(root) is None
+            if assignments is not None:
+                assert engine_assignments(destination, 1) == assignments
             assert (destination / "library/asset").read_bytes() == b"preserve this project asset"
             moved_store = Path((destination / "store").read_text().strip())
             assert json.loads((moved_store / "projects.json").read_bytes())["projects"] == [
@@ -342,9 +385,10 @@ environment.main()
                 next(moved_tree.rglob("stable_fixture.py")),
                 next((moved_store / "uv-cache").rglob("stable_fixture.py")),
             )
-            again = destination.parent / "moved again"
             code, second_move = _run(destination, "move", str(again), "--yes")
             assert code == 0 and second_move["status"] == "applied", second_move
+            if assignments is not None:
+                assert engine_assignments(again, 1) == assignments
             assert _run(again, "stop", "--yes")[0] == 0
             assert _run(again, "doctor")[1]["status"] == "clean"
             return
