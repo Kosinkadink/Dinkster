@@ -155,7 +155,7 @@ from .compose import (
     order_pack_entries_by_requirements,
     resolve_manifest_path,
 )
-from .frontend import install_frontend
+from .frontend import discover_frontend_bundle, install_frontend
 from .generation_api import GenerationModel, GenerationService, add_generation_routes
 from .generation_packs import load_generation_packs
 from .guess_api import add_guess_routes
@@ -2213,10 +2213,17 @@ def main(argv: list[str] | None = None) -> None:
                     await apply_reload(app[STATE_KEY], composer, name)
 
                 watcher = PackWatcher(composer.watch_targets, reload_changed)
-        if args.frontend_root or args.frontend_dev:
+        frontend_bundle = (
+            Path(args.frontend_root)
+            if args.frontend_root
+            else None
+            if args.frontend_dev
+            else discover_frontend_bundle()
+        )
+        if frontend_bundle is not None or args.frontend_dev:
             install_frontend(
                 app,
-                bundle=Path(args.frontend_root) if args.frontend_root else None,
+                bundle=frontend_bundle,
                 development_url=args.frontend_dev or None,
             )
 
