@@ -73,7 +73,7 @@ from .hypernetwork import HypernetworkLoader
 from .image_color_conversion import IMAGE_COLOR_CONVERSION_NODES
 from .image_control_patches import IMAGE_CONTROL_PATCH_NODES
 from .image_core import IMAGE_CORE_NODES
-from .image_crop import ImageCropV2, PrimitiveBoundingBox
+from .image_crop import ImageCropToMask, ImageCropV2, PrimitiveBoundingBox
 from .image_dimensions import IMAGE_DIMENSION_NODES
 from .image_filters import IMAGE_FILTER_NODES
 from .image_layers import AddLayer
@@ -180,6 +180,7 @@ from .stable_cascade import STABLE_CASCADE_NODES
 from .standard_sampling import STANDARD_SAMPLING_NODES
 from .style_model import STYLE_MODEL_NODES
 from .supir import SUPIRApply
+from .svg_save import SaveSVGNode
 from .switch import ComfySwitchNode
 from .text import TEXT_NODES
 from .text_generation import TextGenerate, TextGenerateLTX2Prompt
@@ -412,6 +413,7 @@ COMFY_NODES = (
     TextEncodeZImageOmni,
     PhotoMakerLoader,
     PhotoMakerEncode,
+    ImageCropToMask,
     ImageCropV2,
     PrimitiveBoundingBox,
     *RTDETR_NODES,
@@ -462,6 +464,7 @@ COMFY_NODES = (
     WanDancerVideo,
     VOIDWarpedNoise,
     LoadVideo,
+    SaveSVGNode,
 )
 
 
