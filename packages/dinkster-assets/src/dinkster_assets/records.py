@@ -243,7 +243,7 @@ def _retention_key(scope: object, owner_kind: object, owner_id: object) -> tuple
 def _retention_digests(raw: object) -> tuple[str, ...]:
     if not isinstance(raw, list) or len(cast(list[object], raw)) > 4096:
         raise AssetError("retained digests must be a list of at most 4096 identities")
-    return _canonical_digests(raw)
+    return _canonical_digests(cast(list[object], raw))
 
 
 def _canonical_digests(raw: object) -> tuple[str, ...]:
