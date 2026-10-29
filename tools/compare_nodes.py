@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -47,6 +48,7 @@ VALUE_OPTIONS = (
     "forceInput",
     "control_after_generate",
     "multiselect",
+    "conditional_options",
 )
 
 
@@ -219,6 +221,25 @@ def _differences(expected: Any, actual: Any, path: str) -> list[str]:
         return []
     if isinstance(expected, dict) and isinstance(actual, dict):
         expected, actual = dict(expected), dict(actual)
+        conditional = expected.pop("conditional_options", [])
+        if conditional:
+            for declaration in conditional:
+                if not declaration.get("condition") or (
+                    ("value" in declaration) == ("pattern" in declaration)
+                ):
+                    return [f"{path}: invalid conditional option declaration"]
+            for entry in (expected, actual):
+                entry["options"] = [
+                    option
+                    for option in entry.get("options", [])
+                    if not any(
+                        option == declaration["value"]
+                        if "value" in declaration
+                        else isinstance(option, str)
+                        and re.fullmatch(declaration["pattern"], option) is not None
+                        for declaration in conditional
+                    )
+                ]
         list_flag = expected.pop("_list_flag", False)
         native_type = actual.get("type")
         if (
@@ -454,6 +475,20 @@ def compare_registry(reference: dict[str, Any], registry: dict[str, Any]) -> dic
         ),
         "counts": counts,
         "engine_exclusions": {},
+        "conditional_options": {
+            row["class_name"]: {
+                name: spec[1]["conditional_options"]
+                for group in ("required", "optional")
+                for name, spec in (row.get("input_types") or {}).get(group, {}).items()
+                if isinstance(spec, list) and len(spec) > 1 and spec[1].get("conditional_options")
+            }
+            for row in nodes
+            if any(
+                isinstance(spec, list) and len(spec) > 1 and spec[1].get("conditional_options")
+                for group in ("required", "optional")
+                for spec in (row.get("input_types") or {}).get(group, {}).values()
+            )
+        },
         "registry_errors": sorted(set(errors)),
         "rows": results,
         "passed": not errors and not counts.get("differs") and not counts.get("absent"),

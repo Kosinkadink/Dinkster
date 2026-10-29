@@ -51,6 +51,18 @@ def _device_input(options: tuple[str, ...]) -> InputSpec:
     )
 
 
+def _device_options(*, include_cpu: bool = True) -> tuple[str, ...]:
+    try:
+        management = _model_management()
+    except ModuleNotFoundError as error:
+        if error.name not in {"torch", "dinkster_inference"}:
+            raise
+        # Host-only discovery has no inference environment to enumerate.
+        return ("default", "cpu") if include_cpu else ("default",)
+    options = management.get_gpu_device_options()
+    return tuple(option for option in options if include_cpu or option != "cpu")
+
+
 def _force_supported_compute_dtype(patcher: Any, device: object) -> None:
     management = _model_management()
     weight_dtype = patcher.model_dtype()
@@ -159,7 +171,7 @@ class SelectModelDevice(Node):
             node_type="SelectModelDevice",
             display_name="Select Model Device",
             category="advanced/multigpu",
-            inputs=(InputSpec("model", _MODEL), _device_input(("default", "cpu"))),
+            inputs=(InputSpec("model", _MODEL), _device_input(_device_options())),
             outputs=(OutputSpec("MODEL", _MODEL),),
             occupies=("gpu",),
         )
@@ -195,7 +207,7 @@ class SelectCLIPDevice(Node):
             node_type="SelectCLIPDevice",
             display_name="Select CLIP Device",
             category="advanced/multigpu",
-            inputs=(InputSpec("clip", _CLIP), _device_input(("default", "cpu"))),
+            inputs=(InputSpec("clip", _CLIP), _device_input(_device_options())),
             outputs=(OutputSpec("CLIP", _CLIP),),
             occupies=("gpu",),
         )
@@ -227,7 +239,7 @@ class SelectVAEDevice(Node):
             node_type="SelectVAEDevice",
             display_name="Select VAE Device",
             category="advanced/multigpu",
-            inputs=(InputSpec("vae", _VAE), _device_input(("default",))),
+            inputs=(InputSpec("vae", _VAE), _device_input(_device_options(include_cpu=False))),
             outputs=(OutputSpec("VAE", _VAE),),
             occupies=("gpu",),
         )

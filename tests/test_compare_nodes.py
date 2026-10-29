@@ -8,8 +8,74 @@ import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
+
+
+@pytest.mark.parametrize(
+    "name,parameter,baseline,observed,passed",
+    [
+        (
+            "ModelAttentionBackend",
+            "attention",
+            ["pytorch attention"],
+            ["pytorch attention", "comfy kitchen attention"],
+            True,
+        ),
+        (
+            "ModelAttentionBackend",
+            "attention",
+            ["pytorch attention"],
+            ["comfy kitchen attention"],
+            False,
+        ),
+        (
+            "ModelAttentionBackend",
+            "attention",
+            ["pytorch attention"],
+            ["pytorch attention", "unknown"],
+            False,
+        ),
+        (
+            "SelectModelDevice",
+            "device",
+            ["default", "cpu"],
+            ["default", "cpu", "gpu:0", "gpu:2"],
+            True,
+        ),
+        ("SelectModelDevice", "device", ["default", "cpu"], ["default", "cpu", "gpu:x"], False),
+        ("SelectVAEDevice", "device", ["default"], ["default", "cpu", "gpu:0"], False),
+    ],
+)
+def test_environment_options_remain_conditional_without_hiding_static_drift(
+    name: str, parameter: str, baseline: list[str], observed: list[str], passed: bool
+) -> None:
+    from dinkster_schema import ComboWidget, InputSpec, NodeSchema, TypeExpr, schema_to_wire
+
+    from tools.compare_nodes import compare_registry
+    from tools.dump_comfy_nodes import annotate_environment_options
+
+    inputs: dict[str, Any] = {"required": {parameter: [baseline]}}
+    annotate_environment_options(name, inputs)
+    declaration = inputs["required"][parameter][1]["conditional_options"]
+    assert declaration[0]["condition"]
+    native = schema_to_wire(
+        NodeSchema(
+            node_type=name,
+            inputs=(
+                InputSpec(
+                    parameter, TypeExpr.concrete("COMBO"), widget=ComboWidget(tuple(observed))
+                ),
+            ),
+        )
+    )
+    result = compare_registry(
+        {"nodes": [{"class_name": name, "input_types": inputs, "return_types": []}]},
+        {"nodes": {name: native}},
+    )
+    assert result["passed"] is passed
+    assert result["conditional_options"] == {name: {parameter: declaration}}
 
 
 @pytest.mark.parametrize(

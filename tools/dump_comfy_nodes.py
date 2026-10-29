@@ -121,6 +121,37 @@ def v3_contract(schema: Any) -> dict[str, Any]:
     }
 
 
+def annotate_environment_options(name: str, inputs: dict[str, Any]) -> None:
+    declarations: dict[str, tuple[str, dict[str, str]]] = {
+        "ModelAttentionBackend": (
+            "attention",
+            {
+                "value": "comfy kitchen attention",
+                "condition": "comfy_kitchen.int8_attention_is_available()",
+            },
+        ),
+        **{
+            node: (
+                "device",
+                {
+                    "pattern": r"gpu:[0-9]+",
+                    "condition": "len(comfy.model_management.get_all_torch_devices()) > 1",
+                },
+            )
+            for node in ("SelectModelDevice", "SelectCLIPDevice", "SelectVAEDevice")
+        },
+    }
+    if name not in declarations:
+        return
+    parameter, declaration = declarations[name]
+    for group in ("required", "optional"):
+        if parameter in inputs.get(group, {}):
+            spec = inputs[group][parameter]
+            if len(spec) == 1:
+                spec.append({})
+            spec[1]["conditional_options"] = [declaration]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("checkout", type=Path)
@@ -178,6 +209,7 @@ def main() -> None:
             row["engine_semantics"] = engine_semantics(cls, row["file"])
             try:
                 inputs = annotate_files(cls.INPUT_TYPES())
+                annotate_environment_options(name, inputs)
                 row["input_types"] = inputs
                 source_files = annotated_file_arguments(cls)
                 for group in ("required", "optional"):

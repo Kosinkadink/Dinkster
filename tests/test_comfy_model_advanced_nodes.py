@@ -5,8 +5,8 @@ import sys
 from types import SimpleNamespace
 
 import pytest
-from dinkster_api.v1 import MODEL_TYPE, NumberWidget, TypeExpr
-from dinkster_nodes_comfy import COMFY_NODES, model_advanced
+from dinkster_api.v1 import MODEL_TYPE, ComboOption, ComboWidget, NumberWidget, TypeExpr
+from dinkster_nodes_comfy import COMFY_NODES, device_routing, model_advanced
 from dinkster_nodes_comfy.device_routing import DEVICE_ROUTING_NODES
 from dinkster_nodes_comfy.model_advanced import MODEL_ADVANCED_NODES
 
@@ -105,7 +105,7 @@ def test_attention_backend_resolves_pytorch_only_when_executing(
     assert original.attention is None
 
 
-@pytest.mark.parametrize("attention", ("comfy kitchen attention", "unknown"))
+@pytest.mark.parametrize("attention", ("unknown",))
 def test_attention_backend_rejects_values_outside_its_widget(
     monkeypatch: pytest.MonkeyPatch, attention: str
 ) -> None:
@@ -115,6 +115,58 @@ def test_attention_backend_rejects_values_outside_its_widget(
     monkeypatch.setattr(model_advanced, "initialize_inference_process", initialize)
     with pytest.raises(ValueError, match="Unknown attention backend"):
         model_advanced.ModelAttentionBackend.execute(model=object(), attention=attention)
+
+
+@pytest.mark.parametrize("available", [False, True])
+def test_kitchen_attention_uses_available_backend_or_pytorch_fallback(
+    monkeypatch: pytest.MonkeyPatch, available: bool
+) -> None:
+    pytorch, kitchen = object(), object()
+    functions = {"pytorch": pytorch}
+    if available:
+        functions["comfy_kitchen_int8"] = kitchen
+    runtime = SimpleNamespace(
+        get_attention_function=lambda name, default=None: functions.get(name, default)
+    )
+    monkeypatch.setattr(model_advanced, "initialize_inference_process", lambda: None)
+    monkeypatch.setattr(
+        model_advanced, "importlib", SimpleNamespace(import_module=lambda name: runtime)
+    )
+    clone = SimpleNamespace(attention=None)
+    clone.set_model_optimized_attention = lambda callback: setattr(clone, "attention", callback)
+    original = SimpleNamespace(attention=None, clone=lambda: clone)
+    result = model_advanced.ModelAttentionBackend.execute(
+        model=original, attention="comfy kitchen attention"
+    )["MODEL"]
+    assert result is clone
+    assert clone.attention is (kitchen if available else pytorch)
+    assert original.attention is None
+
+
+@pytest.mark.parametrize("gpu_count", [0, 1, 3])
+def test_device_selector_options_follow_available_devices(
+    monkeypatch: pytest.MonkeyPatch, gpu_count: int
+) -> None:
+    options = ["default", "cpu"]
+    if gpu_count > 1:
+        options.extend(f"gpu:{index}" for index in range(gpu_count))
+    monkeypatch.setattr(
+        device_routing,
+        "_model_management",
+        lambda: SimpleNamespace(get_gpu_device_options=lambda: options),
+    )
+    for node in DEVICE_ROUTING_NODES[1:]:
+        schema = node.define_schema()
+        widget = schema.inputs[1].widget
+        assert isinstance(widget, ComboWidget)
+        expected = (
+            options
+            if schema.node_type != "SelectVAEDevice"
+            else [option for option in options if option != "cpu"]
+        )
+        assert [
+            option.value if isinstance(option, ComboOption) else option for option in widget.options
+        ] == expected
 
 
 _COLD_ATTENTION = """
@@ -133,8 +185,8 @@ from dinkster_schema import schema_to_wire
 schema = schema_to_wire(ModelAttentionBackend.schema())
 assert schema
 widget = ModelAttentionBackend.schema().inputs[1].widget
-# ModelAttentionBackend, F bc5f880d: finalized ordinary combo options.
-assert widget.options == ('pytorch attention',)
+# A host without the inference runtime retains both portable choices.
+assert widget.options == ('pytorch attention', 'comfy kitchen attention')
 assert not widget.remote_route
 assert not any(name.split('.')[0] in {'torch', 'dinkster_inference'} for name in sys.modules)
 """
