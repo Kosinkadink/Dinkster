@@ -14,8 +14,9 @@ whole workspace with:
 uv sync --all-packages
 ```
 
-The package is not published separately yet. Its workspace dependency includes
-numpy in addition to `dinkster-api`.
+The package is workspace-only and is excluded from engine release wheels and
+official pack artifacts. Its workspace dependency includes numpy in addition
+to `dinkster-api`.
 
 ## Use
 

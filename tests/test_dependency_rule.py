@@ -148,9 +148,6 @@ ALLOWED: dict[str, set[str]] = {
         "dinkster_image_document",
         "dinkster_workers",
     },
-    # The install suite contains metadata only; component packs author
-    # through the door exclusively and never import one another.
-    "dinkster_nodes_std": set(),
     "dinkster_nodes_comfy": {"dinkster_api"},
     "dinkster_nodes_foundation": {"dinkster_api"},
     "dinkster_nodes_media_io": {"dinkster_api"},

@@ -59,6 +59,8 @@
   binding; the core worker is selected once with its configured runtime options.
 - Checkout defaults retain their managed source lock without requiring an
   installed standard-suite distribution.
+- Development scaffolding is workspace-only and is excluded from engine and
+  official-pack releases.
 - Released engines discover the frontend bundled inside the engine wheel without a frontend
   checkout. Release installation checks require the browser application document
   at `/` as well as the engine API.
