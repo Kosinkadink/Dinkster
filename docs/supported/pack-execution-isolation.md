@@ -51,6 +51,9 @@
   engine adoption before acknowledgement; this does not delete temporary files.
 - Completed, failed and cancelled invocation scopes refuse further publication
   into their job-owned scratch, including from detached tasks and held writers.
+- Produced scratch claims refuse live invocations and open writers, including
+  in another process. Crashed-process locks release without age-based expiry;
+  this does not itself collect or discard produced data.
 - Direct in-process results also adopt produced sources before returning when
   pack scratch is configured. Returned AUDIO and VIDEO sources remain readable
   from the engine vault after scratch removal; failed adoption preserves scratch

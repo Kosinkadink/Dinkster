@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import multiprocessing
+import os
 import shutil
 import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
+from multiprocessing.connection import Connection
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
 from typing import Any, cast
@@ -26,6 +29,7 @@ from dinkster_assets import (
     resolver_from_env,
 )
 from dinkster_assets.declared import produced_output_scratch, use_produced_output_job
+from dinkster_assets.scratch import claim_inactive_produced_scratch
 from dinkster_caches import BudgetedDiskCAS
 from dinkster_engine.control import EngineRunContext, RunControlState
 from dinkster_graph import Graph, GraphNode
@@ -58,6 +62,119 @@ def _publish(vault: AssetVault, data: bytes) -> AssetRef:
         writer.write(data)
         writer.commit()
     return AssetRef(digest, "source.mkv", len(data), resolver=vault)
+
+
+def _hold_produced_scratch(channel: Connection, env: dict[str, str]) -> None:
+    with use_produced_output_job("process job", 1):
+        vault = produced_output_scratch(env)
+        assert vault is not None
+        _publish(vault, b"recoverable publication")
+        writer = vault.writer(digest_bytes(b"pending bytes"))
+        writer.write(b"pending bytes")
+        channel.send(str(vault.root))
+        command = channel.recv()
+        if command == "crash":
+            os._exit(0)
+        assert command == "close scope"
+    channel.send("scope closed")
+    assert channel.recv() == "close writer"
+    writer.__exit__(None, None, None)
+    channel.send("writer closed")
+    channel.close()
+
+
+@pytest.mark.parametrize("crash", [False, True])
+def test_produced_scratch_claim_protects_live_process_and_open_writer(
+    tmp_path: Path, crash: bool
+) -> None:
+    context = multiprocessing.get_context("spawn")
+    parent, child = context.Pipe()
+    env = {"DINKSTER_PACK_SCRATCH": str(tmp_path / "scratch")}
+    process = context.Process(target=_hold_produced_scratch, args=(child, env))
+    process.start()
+    child.close()
+
+    def receive() -> object:
+        assert parent.poll(20), "producer did not complete the requested transition"
+        return parent.recv()
+
+    try:
+        root = Path(cast(str, receive()))
+        with claim_inactive_produced_scratch(root) as inactive:
+            assert not inactive
+        parent.send("crash" if crash else "close scope")
+        if not crash:
+            assert receive() == "scope closed"
+            with claim_inactive_produced_scratch(root) as inactive:
+                assert not inactive
+            parent.send("close writer")
+            assert receive() == "writer closed"
+        process.join(20)
+        assert process.exitcode == 0
+        with claim_inactive_produced_scratch(root) as inactive:
+            assert inactive
+            with use_produced_output_job("process job", 1):
+                with pytest.raises(AssetError, match="busy with reconciliation"):
+                    produced_output_scratch(env)
+        with use_produced_output_job("process job", 1):
+            vault = produced_output_scratch(env)
+            assert vault is not None
+            assert _publish(vault, b"next invocation").read_bytes() == b"next invocation"
+        path = AssetVault(root).resolve(digest_bytes(b"recoverable publication"))
+        assert path is not None
+        assert path.read_bytes() == b"recoverable publication"
+    finally:
+        if process.is_alive():
+            process.terminate()
+        process.join(20)
+        parent.close()
+
+
+def test_produced_scratch_claim_refuses_escaping_lease_directory(tmp_path: Path) -> None:
+    root = tmp_path / "scratch"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "keep"
+    sentinel.write_bytes(b"untouched")
+    try:
+        (root.parent / ".leases").symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks unavailable")
+    with pytest.raises(AssetError, match="must not be a symlink"):
+        with claim_inactive_produced_scratch(root):
+            pytest.fail("unsafe lease directory was claimed")
+    assert sentinel.read_bytes() == b"untouched"
+    assert list(outside.iterdir()) == [sentinel]
+
+
+def test_produced_scratch_claim_refuses_unmanaged_data(tmp_path: Path) -> None:
+    vault = AssetVault(tmp_path / "unmanaged")
+    ref = _publish(vault, b"unknown owner")
+    with pytest.raises(AssetError, match="ownership state is unavailable"):
+        with claim_inactive_produced_scratch(vault.root):
+            pytest.fail("unmanaged data was claimed")
+    assert ref.read_bytes() == b"unknown owner"
+    assert not (tmp_path / ".leases").exists()
+
+
+def test_produced_scratch_claim_survives_data_directory_removal(tmp_path: Path) -> None:
+    env = {"DINKSTER_PACK_SCRATCH": str(tmp_path / "scratch")}
+    with use_produced_output_job("removed job", 1):
+        vault = produced_output_scratch(env)
+        assert vault is not None
+        root = vault.root
+    with claim_inactive_produced_scratch(root) as inactive:
+        assert inactive
+        shutil.rmtree(root)
+        with use_produced_output_job("removed job", 1):
+            with pytest.raises(AssetError, match="busy with reconciliation"):
+                produced_output_scratch(env)
+        assert not root.exists()
+    with use_produced_output_job("removed job", 1):
+        vault = produced_output_scratch(env)
+        assert vault is not None
+        assert _publish(vault, b"new invocation").read_bytes() == b"new invocation"
 
 
 def test_produced_scratch_isolates_concurrent_jobs_and_attempts(tmp_path: Path) -> None:

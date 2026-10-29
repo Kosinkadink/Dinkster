@@ -22,6 +22,11 @@ after scratch is removed.
 Job-owned publication stores and existing writers refuse further publication
 after the owning invocation scope closes, including in copied task contexts.
 Nested scopes for the same job attempt share that lifetime.
+Invocation scopes and open produced writers hold OS-backed leases. An exclusive
+scratch claim refuses live leases and blocks new users until released; a crashed
+process releases its OS locks without relying on a PID or age threshold. Lease
+metadata lives beside the data directory so the gate survives directory removal.
+These leases alone do not authorize deleting unpublished or referenced bytes.
 
 ## Setup
 

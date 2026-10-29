@@ -964,6 +964,7 @@ dependencies = [
     { name = "alembic" },
     { name = "blake3" },
     { name = "dinkster-values" },
+    { name = "filelock" },
     { name = "sqlalchemy" },
 ]
 
@@ -972,6 +973,7 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.16,<2" },
     { name = "blake3", specifier = ">=0.4" },
     { name = "dinkster-values", editable = "packages/dinkster-values" },
+    { name = "filelock", specifier = ">=4.2.4,<5" },
     { name = "sqlalchemy", specifier = ">=2.0,<3" },
 ]
 

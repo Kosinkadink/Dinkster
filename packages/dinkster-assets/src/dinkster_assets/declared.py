@@ -34,6 +34,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import TracebackType
 
 from .fetch import ChainResolver
 from .identity import AssetError, digest_bytes
@@ -42,6 +43,7 @@ from .library import IndexedAssetResolver
 from .model import AssetRef, AssetResolution, AssetResolver
 from .mounts import MountSnapshotResolver
 from .pack_assets import DeclaredAsset
+from .scratch import ProducedScratchLease
 from .vault import AssetVault, VaultWriter
 
 __all__ = [
@@ -64,6 +66,9 @@ class _ProducedJob:
     identity: tuple[str, int]
     active: bool = True
     lock: threading.RLock = field(default_factory=threading.RLock)
+    leases: dict[Path, ProducedScratchLease] = field(
+        default_factory=dict[Path, ProducedScratchLease]
+    )
 
     @contextmanager
     def publication(self) -> Generator[None]:
@@ -76,6 +81,8 @@ class _ProducedJob:
     def close(self) -> None:
         with self.lock:
             self.active = False
+            for lease in self.leases.values():
+                lease.close()
 
 
 _produced_job: ContextVar[_ProducedJob | None] = ContextVar("dinkster_produced_job", default=None)
@@ -84,7 +91,12 @@ _produced_job: ContextVar[_ProducedJob | None] = ContextVar("dinkster_produced_j
 class _ProducedWriter(VaultWriter):
     def __init__(self, root: Path, target: Path, digest: str, job: _ProducedJob) -> None:
         self._job = job
-        super().__init__(root, target, digest)
+        self._lease = ProducedScratchLease(root)
+        try:
+            super().__init__(root, target, digest)
+        except BaseException:
+            self._lease.close()
+            raise
 
     def write(self, chunk: bytes) -> None:
         with self._job.publication():
@@ -98,10 +110,23 @@ class _ProducedWriter(VaultWriter):
         with self._job.publication():
             return super().commit_with_result()
 
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        try:
+            super().__exit__(exc_type, exc, tb)
+        finally:
+            self._lease.close()
+
 
 class _ProducedVault(AssetVault):
     def __init__(self, root: Path, job: _ProducedJob) -> None:
         self._job = job
+        if root not in job.leases:
+            job.leases[root] = ProducedScratchLease(root)
         super().__init__(root)
 
     def writer(self, expected_digest: str) -> VaultWriter:
