@@ -114,7 +114,9 @@ def test_environment_remote_choices_still_require_same_default() -> None:
     registry = {"nodes": {"SelectModelDevice": schema}}
     result = compare_registry(reference, registry)
     assert result["passed"] and result["counts"] == {"conditional": 1}
-    schema["interface"][0]["default"] = "cpu"
+    interface = schema["interface"]
+    assert isinstance(interface, list)
+    interface[0]["default"] = "cpu"
     assert not compare_registry(reference, registry)["passed"]
 
 
