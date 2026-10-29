@@ -157,7 +157,7 @@ from .compose import (
 )
 from .frontend import install_frontend
 from .generation_api import GenerationModel, GenerationService, add_generation_routes
-from .generation_packs import generation_pack_specs
+from .generation_packs import load_generation_packs
 from .guess_api import add_guess_routes
 from .installer import Installer
 from .mounts_api import MountService, add_mount_routes
@@ -168,6 +168,7 @@ from .resolver_api import add_resolver_index_routes
 from .setup import ensure_import_mount
 from .storelock import hold_lock
 from .watch import PackWatcher
+from .workflow_requirements_api import VARIANTS, add_workflow_requirement_routes
 
 _PERMISSIVE_COMPUTE_DTYPES = frozenset({"float16", "bfloat16", "float32"})
 _SERVING_PYTHON_ENV = "DINKSTER_SERVING_PYTHON"
@@ -1121,6 +1122,12 @@ def main(argv: list[str] | None = None) -> None:
         help="hardware sampling interval for --benchmark (default: 0.5)",
     )
     parser.add_argument(
+        "--engine-variant",
+        choices=VARIANTS,
+        help="declared engine generation variant for workflow-open planning; "
+        "never inferred from hardware",
+    )
+    parser.add_argument(
         "--library-root",
         default=os.environ.get("DINKSTER_LIBRARY_ROOT", "dinkster-library"),
         metavar="PATH",
@@ -1793,7 +1800,13 @@ def main(argv: list[str] | None = None) -> None:
         specs.extend(compat_specs)
     if args.generation is not None:
         try:
-            for spec in generation_pack_specs(args.generation):
+            selected_variant, generation_specs = load_generation_packs(args.generation)
+            if selected_variant not in VARIANTS:
+                raise CompositionError(f"unsupported generation variant: {selected_variant}")
+            if args.engine_variant is not None and args.engine_variant != selected_variant:
+                raise CompositionError("--engine-variant differs from selected generation variant")
+            args.engine_variant = selected_variant
+            for spec in generation_specs:
                 if spec.packs and "dinkster-nodes-remote" in spec.packs:
                     spec = _with_remote_config(
                         spec,
@@ -2168,6 +2181,14 @@ def main(argv: list[str] | None = None) -> None:
             # GET routes serve everyone; the mutation half answers 403
             # mount-changes-disabled unless --allow-mount-changes opted in.
             add_mount_routes(app, mount_service)
+        add_workflow_requirement_routes(
+            app,
+            manifests=lambda: {
+                name: load_manifest(resolve_manifest_path(spec.manifest))
+                for name, spec in composer.pack_specs().items()
+            },
+            engine_variant=args.engine_variant,
+        )
         if installer is not None:
             # Live install activation: reconcile the served surface with
             # the install root's current generation without a restart.

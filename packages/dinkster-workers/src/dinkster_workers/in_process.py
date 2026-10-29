@@ -85,7 +85,11 @@ from dinkster_schema import (
     use_reporter,
 )
 from dinkster_schema.media import media_diagnostics
-from dinkster_schema.reporting import capture_preview_artifacts, capture_value_diagnostics
+from dinkster_schema.reporting import (
+    capture_preview_artifacts,
+    capture_saved_artifacts,
+    capture_value_diagnostics,
+)
 from dinkster_values import (
     TypeRegistry,
     UnresolvablePayload,
@@ -649,6 +653,7 @@ class InProcessWorker:
                 capture,
                 capture_value_diagnostics() as pack_diagnostics,
                 capture_preview_artifacts() as preview_artifacts,
+                capture_saved_artifacts() as saved_artifact_claims,
             ):
                 if inspect.iscoroutinefunction(cls.execute):
                     raw = await cls.execute(**kwargs)
@@ -696,6 +701,7 @@ class InProcessWorker:
                     result,
                     artifact_candidates=tuple(artifact_candidates),
                     preview_artifacts=tuple(preview_artifacts),
+                    saved_artifact_claims=tuple(saved_artifact_claims),
                 )
         finally:
             if close_reporter is not None:

@@ -210,25 +210,28 @@ class LibraryStore:
     via asyncio.to_thread, so one connection crosses threads behind a
     lock (sqlite serializes anyway; the lock keeps transactions whole)."""
 
-    def __init__(self, path: Path | str) -> None:
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, path: Path | str, *, read_only: bool = False) -> None:
+        if not read_only:
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+        database = Path(path).resolve().as_uri() + "?mode=ro" if read_only else str(path)
         self._engine = sa.create_engine(
             "sqlite://",
-            creator=lambda: sqlite3.connect(str(path), check_same_thread=False),
+            creator=lambda: sqlite3.connect(database, uri=read_only, check_same_thread=False),
             poolclass=StaticPool,
         )
         try:
-            with _migration_lock, self._engine.connect() as connection:
-                connection.exec_driver_sql("PRAGMA journal_mode=WAL")
-                connection.commit()
-                config = migration_config()
-                config.attributes["connection"] = connection
-                command.upgrade(config, "head")
-                connection.commit()
+            if not read_only:
+                with _migration_lock, self._engine.connect() as connection:
+                    connection.exec_driver_sql("PRAGMA journal_mode=WAL")
+                    connection.commit()
+                    config = migration_config()
+                    config.attributes["connection"] = connection
+                    command.upgrade(config, "head")
+                    connection.commit()
+            self._database = self._engine.raw_connection()
         except BaseException:
             self._engine.dispose()
             raise
-        self._database = self._engine.raw_connection()
         self._conn = cast(sqlite3.Connection, self._database.driver_connection)
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.Lock()

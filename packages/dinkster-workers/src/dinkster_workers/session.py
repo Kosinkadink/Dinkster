@@ -1666,6 +1666,7 @@ class BoundarySession:
             artifacts=artifacts,
             expansion=decoded.expansion,
             preview_artifacts=decoded.preview_artifacts,
+            saved_artifact_claims=decoded.saved_artifact_claims,
         )
 
     async def validate_admission(

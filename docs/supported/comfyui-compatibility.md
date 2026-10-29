@@ -164,6 +164,9 @@
 - Native WanDancer audio encoding extracts onset, MFCC, chroma, peak and beat
   features with frame-rate metadata and matching prompt text. This CPU feature
   extraction does not establish full-model generation quality.
+- Native WanDancer video conditioning combines optional image starts and masks,
+  first-frame and reference vision states, and encoded audio features with an
+  empty video latent. CPU tensor coverage does not certify model quality or GPU parity.
 - Native SCAIL-2 colored masks render packed SAM3 tracks with identity selection,
   appearance/area ordering, palette controls and background masks. Source
   experimental presentation badges are not preserved.

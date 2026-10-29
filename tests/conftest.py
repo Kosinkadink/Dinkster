@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import os
+import uuid
 from collections.abc import Iterator
 from contextlib import AbstractAsyncContextManager, nullcontext
+from multiprocessing.shared_memory import SharedMemory
 from typing import TYPE_CHECKING
 
 import pytest
@@ -28,6 +30,31 @@ def _isolate_remote_endpoints(monkeypatch: pytest.MonkeyPatch) -> None:
 def unrestricted_cuda_devices(monkeypatch: pytest.MonkeyPatch) -> None:
     # Synthetic replica indices must not inherit the runner's GPU visibility mask.
     monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+
+
+@pytest.fixture
+def shm_segments(monkeypatch: pytest.MonkeyPatch) -> set[str]:
+    from dinkster_workers import boundary
+
+    names: set[str] = set()
+    prefix = "dinkster" + uuid.uuid4().hex[:8]
+    attach = boundary._attach_segment
+
+    def create_owned(size: int) -> SharedMemory:
+        segment = SharedMemory(name=prefix + uuid.uuid4().hex[:8], create=True, size=size)
+        names.add(segment.name)
+        return segment
+
+    def attach_owned(name: str) -> SharedMemory:
+        segment = attach(name)
+        names.add(segment.name)
+        return segment
+
+    # UUID names identify both host-created and child-created payloads without
+    # observing segments belonging to concurrent workers in other tests.
+    monkeypatch.setattr(boundary, "_create_empty_segment", create_owned)
+    monkeypatch.setattr(boundary, "_attach_segment", attach_owned)
+    return names
 
 
 @pytest.fixture(scope="session")
