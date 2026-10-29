@@ -122,6 +122,7 @@ def test_empty_audio_executes_twice_through_both_production_hosts(
             (tmp_path / "ltx_empty_audio_fixture.py").write_text(
                 "from test_ltx_empty_audio_torch import LTXLatentInspect, LTXVAESource\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, LTXVAESource, LTXLatentInspect)\n",
                 encoding="ascii",
             )
@@ -130,6 +131,10 @@ def test_empty_audio_executes_twice_through_both_production_hosts(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["ltx-empty-audio-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "ltx_empty_audio_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "ltx_empty_audio_fixture:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "ltx_empty_audio_fixture:register_inference_types",

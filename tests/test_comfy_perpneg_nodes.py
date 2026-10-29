@@ -31,6 +31,6 @@ def test_perpneg_nodes_are_registered_with_expected_ports() -> None:
         assert node.schema().category == "experimental"
     assert PERPNEG_NODES[0].schema().deprecation is not None
     assert PERPNEG_NODES[0].schema().search_visibility == "deprecated"
-    assert tuple(node.schema().node_type for node in COMFY_NODES) == tuple(
+    assert ("devices", *(node.schema().node_type for node in COMFY_NODES)) == tuple(
         manifest["pack"]["namespaces"]
     )

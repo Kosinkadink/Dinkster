@@ -126,6 +126,7 @@ def test_hunyuan_ordinary_manifest(tmp_path: Path, in_process: bool) -> None:
             (tmp_path / "hunyuan_fixture.py").write_text(
                 "from test_hunyuan3d_torch import VisionSource, InspectConditioning\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, VisionSource, InspectConditioning)\n",
                 encoding="ascii",
             )
@@ -135,6 +136,10 @@ def test_hunyuan_ordinary_manifest(tmp_path: Path, in_process: bool) -> None:
                 .read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["hunyuan-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "hunyuan_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "hunyuan_fixture:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "hunyuan_fixture:register_inference_types",

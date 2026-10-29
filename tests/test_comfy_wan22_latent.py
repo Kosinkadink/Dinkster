@@ -41,5 +41,5 @@ def test_wan22_schema_and_cold_native_discovery() -> None:
     assert [(o.id, o.type) for o in schema.outputs] == [("LATENT", TypeExpr.concrete(LATENT_TYPE))]
     assert schema_from_wire(schema_to_wire(schema)) == schema
     manifest = load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml")
-    assert tuple(n.schema().node_type for n in COMFY_NODES) == manifest.namespaces
+    assert ("devices", *(n.schema().node_type for n in COMFY_NODES)) == manifest.namespaces
     assert Wan22ImageToVideoLatent in COMFY_NODES

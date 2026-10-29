@@ -126,6 +126,7 @@ def test_save_text_executes_through_the_ordinary_manifest(
         )
         (tmp_path / "save_text_fixture.py").write_text(
             "from dinkster_nodes_comfy.save_text import SaveText\n"
+            "from dinkster_nodes_comfy.device_routing import device_choices\n"
             "NODES = (SaveText,)\n"
             "def register_types(_registry):\n"
             "    return None\n",
@@ -135,6 +136,10 @@ def test_save_text_executes_through_the_ordinary_manifest(
         fixture_manifest.write_text(
             manifest.read_text(encoding="ascii")
             .replace("dinkster_nodes_comfy:COMFY_NODES", "save_text_fixture:NODES")
+            .replace(
+                "dinkster_nodes_comfy.device_routing:device_choices",
+                "save_text_fixture:device_choices",
+            )
             .replace(
                 "dinkster_nodes_comfy:register_inference_types", "save_text_fixture:register_types"
             ),
