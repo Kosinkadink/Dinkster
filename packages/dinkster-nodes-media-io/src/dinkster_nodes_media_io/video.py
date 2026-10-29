@@ -54,6 +54,7 @@ from dinkster_api.v1 import (
     SourceFilenameSpec,
     StringWidget,
     TypeExpr,
+    attach_saved_artifact,
     read_video_metadata,
     report_value_diagnostic,
     save_video_frames,
@@ -167,13 +168,15 @@ def _save_video_asset(
             on_diagnostic=lambda record: _report_saved_format(record, output_id=output_id),
         )
         encoded.seek(0)
-        return _mount_writer().save_stream(
+        ref = _mount_writer().save_stream(
             target or {"mount": "comfy-output", "prefix": "video/ComfyUI"},
             cast(BinaryIO, encoded),
             suffix=suffix,
             media_type=media_type,
             limit=MAX_ENCODED_VIDEO_BYTES,
         )
+        attach_saved_artifact(ref.to_wire())
+        return ref
 
 
 def _frame_timestamp(frame: Any, stream: Any) -> Fraction:
@@ -900,6 +903,7 @@ class SaveVideoFrames(Node):
                 media_type=mime,
                 limit=MAX_ENCODED_VIDEO_BYTES,
             )
+        attach_saved_artifact(ref.to_wire())
         return cls.outputs(asset=ref)
 
 

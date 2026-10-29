@@ -2,7 +2,7 @@
 
 import asyncio
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast
 
@@ -12,10 +12,11 @@ import pytest
 from dinkster_api.v1 import VIDEO_TYPE
 from dinkster_assets import AssetRef
 from dinkster_caches import MemoryLRUCache
-from dinkster_engine import Engine, EngineEvent
+from dinkster_engine import Engine, EngineEvent, ExecutionRuntime
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_media_io import register_media_types
 from dinkster_nodes_media_io.video import SaveVideo, SaveVideoFrames, SaveVideoValue
+from dinkster_protocol import SavedArtifact
 from dinkster_schema import (
     InputSpec,
     Node,
@@ -29,6 +30,7 @@ from dinkster_server.events import engine_event_to_wire
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_video import assemble_video
 from dinkster_workers import InProcessWorker, IsolatedWorker
+from dinkster_workers.saved_artifacts import SavedArtifactAuthority
 from PIL import Image
 
 from tests.test_formats_audio_components import _stereo_samples, _wav_audio
@@ -97,10 +99,21 @@ def test_native_saver_emits_actual_format_facts_on_its_output_port(worker_setup,
             await boundary.start()
         try:
             events: list[EngineEvent] = []
+            worker = boundary or InProcessWorker(build_node_types(DIAGNOSTIC_NODES), registry)
+
+            async def validate_saved(
+                node_id: str, claims: Sequence[Mapping[str, object]], started_at_ns: int
+            ) -> tuple[SavedArtifact, ...]:
+                return SavedArtifactAuthority(snapshot).capture_mounted(
+                    claims, node_id, started_at_ns
+                )
+
+            runtime = ExecutionRuntime(worker=worker, validate_saved_artifacts=validate_saved)
             engine = Engine(
                 schemas=boundary.schemas if boundary else build_schemas(DIAGNOSTIC_NODES),
                 registry=registry,
-                worker=boundary or InProcessWorker(build_node_types(DIAGNOSTIC_NODES), registry),
+                worker=worker,
+                pin_execution=lambda: runtime,
                 cache=MemoryLRUCache(),
                 on_event=events.append,
             )

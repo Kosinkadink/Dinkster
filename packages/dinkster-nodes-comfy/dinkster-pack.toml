@@ -529,6 +529,7 @@ namespaces = [
     "LoraLoaderBypassModelOnly",
     "CropByBBoxes",
     "CameraAngle",
+    "CreateCameraInfo",
     "Trellis2UpsampleStage",
     "MoGePanoramaInference",
     "MoGeInference",

@@ -27,6 +27,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
+    attach_saved_artifact,
     initialize_inference_process,
     materialize_audio,
 )
@@ -114,13 +115,14 @@ def _save_audio(
             if size > _MAX_ENCODED_BYTES:
                 raise ValueError("encoded audio exceeds the 256 MiB output limit")
             output.seek(0)
-            writer.save_stream(
+            ref = writer.save_stream(
                 batch_target,
                 cast(BinaryIO, output),
                 suffix=_SUFFIXES[format],
                 media_type=_MEDIA_TYPES[format],
                 limit=size,
             )
+            attach_saved_artifact(ref.to_wire())
 
 
 def _mount_input() -> InputSpec:

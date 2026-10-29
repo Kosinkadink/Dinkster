@@ -9,6 +9,14 @@ import pytest
 from tools.pytest_file_shard import ALL_FILE_SHARDS_MARKER
 
 
+@pytest.fixture
+def saved_artifact_context() -> Iterator[None]:
+    from dinkster_schema.reporting import capture_saved_artifacts
+
+    with capture_saved_artifacts():
+        yield
+
+
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
         "--p2p", action="store_true", help="run optional P2P tests (requires p2p extra)"

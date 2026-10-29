@@ -58,16 +58,21 @@ def test_setup_creates_the_default_launch_roots(tmp_path: Path, monkeypatch, cap
 
 def test_setup_preserves_a_selected_alternate_output_mount(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "state"))
-    setup.main([])
     library, _ = setup.default_roots()
+    library.mkdir(parents=True)
     alternate = library / "renders"
     alternate.mkdir()
-    mounts = (*load_mounts(library / "mounts.toml"), MountDef("renders", alternate, "readwrite"))
+    mounts = (MountDef("renders", alternate, "readwrite"),)
     (library / "mounts.toml").write_text(dump_mounts(mounts, output_mount="renders"), "utf-8")
 
     setup.main([])
 
     assert load_output_mount(library / "mounts.toml") == "renders"
+    assert load_mounts(library / "mounts.toml") == (
+        MountDef("imports", library / "imports", "readwrite"),
+        *mounts,
+    )
+    assert not (library / "output").exists()
 
 
 def test_setup_reuses_an_existing_mount_for_the_default_output_path(
@@ -82,10 +87,50 @@ def test_setup_reuses_an_existing_mount_for_the_default_output_path(
     setup.main([])
 
     assert load_mounts(library / "mounts.toml") == (
-        MountDef("existing-output", library / "output", "readwrite"),
+        existing,
         MountDef("imports", library / "imports", "readwrite"),
     )
-    assert load_output_mount(library / "mounts.toml") == "existing-output"
+    assert load_output_mount(library / "mounts.toml") is None
+    assert not (library / "output").exists()
+
+
+@pytest.mark.parametrize("custom_id", [False, True])
+def test_setup_preserves_existing_offline_output_grants(
+    tmp_path: Path, monkeypatch, custom_id: bool
+) -> None:
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "state"))
+    library, _ = setup.default_roots()
+    library.mkdir(parents=True)
+    root = library / "output" if custom_id else tmp_path / "offline-output"
+    existing = MountDef("renders" if custom_id else "output", root, "read", priority=7)
+    config = library / "mounts.toml"
+    config.write_text(dump_mounts((existing,)), "utf-8")
+
+    setup.main([])
+    saved = config.read_bytes()
+    setup.main([])
+
+    assert config.read_bytes() == saved
+    assert existing in load_mounts(config)
+    assert load_output_mount(config) is None
+    assert not root.exists()
+    assert not (library / "output").exists()
+
+
+def test_setup_does_not_restore_a_removed_output_grant(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "state"))
+    setup.main([])
+    library, _ = setup.default_roots()
+    config = library / "mounts.toml"
+    remaining = tuple(mount for mount in load_mounts(config) if mount.id != "output")
+    config.write_text(dump_mounts(remaining), "utf-8")
+    (library / "output").rmdir()
+
+    setup.main([])
+
+    assert load_mounts(config) == remaining
+    assert load_output_mount(config) is None
+    assert not (library / "output").exists()
 
 
 @pytest.mark.parametrize("custom_id", [False, True])
@@ -104,7 +149,7 @@ def test_setup_preserves_existing_import_grants(
     projects.initialize((existing.id,))
     projects.register(existing.id, project="film", shared=False)
     projects.update("other", [], available=(existing.id,), output=None)
-    preferences = project_path.read_bytes()
+    preferences = json.loads(project_path.read_text("utf-8"))
 
     setup.main([])
     saved = config.read_bytes()
@@ -116,7 +161,7 @@ def test_setup_preserves_existing_import_grants(
     assert not root.exists()
     assert not (library / "imports").exists()
     assert load_output_mount(config) == "output"
-    assert project_path.read_bytes() == preferences
+    assert json.loads(project_path.read_text("utf-8")) == {**preferences, "shared": ["output"]}
 
 
 def test_setup_does_not_restore_a_removed_import_grant(tmp_path: Path, monkeypatch) -> None:

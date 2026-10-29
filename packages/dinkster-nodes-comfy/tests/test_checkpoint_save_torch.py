@@ -36,6 +36,8 @@ from dinkster_nodes_comfy.checkpoint_save import ImageOnlyCheckpointSave
 from safetensors import safe_open
 from safetensors.torch import load_file
 
+pytestmark = pytest.mark.usefixtures("saved_artifact_context")
+
 
 class _Weights:
     def __init__(self, values: dict[str, torch.Tensor]) -> None:
@@ -322,7 +324,7 @@ def test_checkpoint_save_graph_writes_mounted_safetensors_and_only_caches_source
                 "DINKSTER_ACCELERATOR": "cpu",
                 "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
                 "PYTHONPATH": os.pathsep.join(
-                    (str(tmp_path), str(Path(__file__).parent), str(package / "src"))
+                    (str(tmp_path), str(Path(__file__).parent), str(package / "src"), *sys.path)
                 ),
             }
         )
@@ -351,12 +353,18 @@ def test_checkpoint_save_graph_writes_mounted_safetensors_and_only_caches_source
                     ),
                 }
             )
+            from dinkster_assets import digest_file
+
             engine = composer.composition.make_engine(lambda _: None)
             for attempt in range(2):
                 result = await engine.run(graph, ["save"])
                 assert set(result.cached) == ({"source"} if attempt else set())
                 saved = root / "checkpoints" / f"image_{attempt + 1:05}_.safetensors"
                 assert saved.is_relative_to(root)
+                assert len(result.artifacts) == 1
+                assert result.artifacts[0].digest == digest_file(saved)
+                assert result.artifacts[0].node_id == "save"
+                assert result.artifacts[0].virtual_path == f"mounts/out/checkpoints/{saved.name}"
                 assert torch.equal(
                     load_file(saved)["weight"],
                     torch.tensor([[1.0, -2.0], [3.0, 4.0]]),
