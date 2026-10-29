@@ -606,20 +606,13 @@ The workflow uses `--download-external-wheels` to select the locked compatible
 Windows/Linux x86_64 CPython 3.14.10 wheels, evaluating target requirement
 markers and preferring native interpreter tags over older stable ABI tags.
 Every download must match the lock size and SHA-256 and an exported requirement
-hash. The only direct-wheel exception is the pinned OpenTimelineIO cp314 build
-under `Kosinkadink/Dinkster`'s `opentimelineio-wheels-*` releases. Its native uv
-entry has no size: acquisition and staging require the matching target's
-`opentimelineio-windows.json` or `opentimelineio-linux.json` from that same
-release, with the pinned source identity, exact filename/hash and positive
-measured size. The export, lock source URL and wheel URL must agree. Other
-direct requirements, missing compatible wheels, mismatched provenance and
-corrupted downloads fail the build; acquisition never resolves dependencies
-or falls back to source. Target markers are evaluated before source admission.
-After staging verifies the actual bytes, the final `constraints.txt` replaces
-each approved direct-wheel URL with its exact locked version, preserving the
-target marker and hash. Missing or mismatched bytes fail the build. Acquisition
-still uses the unchanged native lock and URL-bearing export; offline consumers
-use only the version/hash requirements and supplied wheel files.
+hash. Direct requirements, missing compatible wheels and corrupted downloads
+fail the build; acquisition never resolves dependencies or falls back to source.
+Target markers are evaluated before source admission. OpenTimelineIO uses the
+`dinkster-opentimelineio==0.19.0` PyPI distribution through the same registry
+wheel path as other dependencies; the import namespace remains `opentimelineio`.
+Acquisition uses the unchanged native lock and export; offline consumers use
+exact version/hash requirements and supplied wheel files.
 Repeated `--base-manifest PATH` inputs use the existing `dinkster.base/1`
 manifest, including its canonical id, and `--target-variant NAME` identifies
 the selected targets. Only an exact filename/size/SHA-256 member present in
@@ -670,12 +663,13 @@ checks without creating a GitHub release or invoking PyPI. Tag publication
 waits for all clean-install checks, attaches the checked assets to GitHub,
 then uploads only `workspaceWheels` to PyPI through OIDC trusted publishing
 in the protected `pypi` environment. No PyPI API token is stored.
-If any workspace project is absent from PyPI, the publication job is
-skipped without blocking the checked GitHub release or build artifact.
-The repository owner bootstraps the entire wheel set once from an approved
-artifact on their own machine, using a short-lived PyPI token that is
-revoked afterwards, then adds trusted publishers to the existing projects.
-Subsequent tag uploads skip versions already uploaded out of band.
+Before the first upload, the repository owner registers a pending trusted
+publisher on PyPI for each distribution, naming `Kosinkadink/Dinkster`,
+workflow `release.yml` and environment `pypi`. A pending publisher does not
+create the project; the first trusted upload creates it. Tag publication
+does not require the project to exist beforehand. Missing or mismatched
+publisher registration fails the upload rather than silently skipping it.
+Subsequent tag uploads skip versions already uploaded.
 
 The tag workflow uploads every workspace wheel and the frontend wheel to
 PyPI with trusted publishing, so `pip install dinkster` and the `stable`

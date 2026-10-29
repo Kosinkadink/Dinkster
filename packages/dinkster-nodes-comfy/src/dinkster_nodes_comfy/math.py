@@ -81,6 +81,7 @@ class ComfyMathExpression(Node):
                     TypeExpr.union(CORE_FLOAT, CORE_INT, CORE_BOOLEAN),
                     min_members=1,
                     member_names=tuple(string.ascii_lowercase),
+                    optional_after_minimum=True,
                 ),
             ),
             outputs=(

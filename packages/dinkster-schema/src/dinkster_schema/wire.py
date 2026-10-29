@@ -833,6 +833,8 @@ def _dynamic_entry_to_wire(
         }
         if spec.independent_types:
             entry["independentTypes"] = True
+        if spec.optional_after_minimum:
+            entry["optionalAfterMinimum"] = True
         if spec.member_prefix is not None:
             entry["memberPrefix"] = spec.member_prefix
         if spec.member_names is not None:
@@ -1158,6 +1160,7 @@ def schema_signature(schema: NodeSchema) -> str:
                 member_prefix=entry.member_prefix,
                 member_names=entry.member_names,
                 independent_types=entry.independent_types,
+                optional_after_minimum=entry.optional_after_minimum,
             )
         if isinstance(entry, DynamicComboSpec):
             options = tuple(
@@ -1429,6 +1432,9 @@ def _dynamic_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Dynami
             required=_expect_bool(entry.get("required", True), "inputFamily.required"),
             independent_types=_expect_bool(
                 entry.get("independentTypes", False), "inputFamily.independentTypes"
+            ),
+            optional_after_minimum=_expect_bool(
+                entry.get("optionalAfterMinimum", False), "inputFamily.optionalAfterMinimum"
             ),
             member_prefix=None
             if prefix is None
