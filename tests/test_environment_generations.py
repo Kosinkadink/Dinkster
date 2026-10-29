@@ -111,6 +111,7 @@ def _assert_shared(first: Path, second: Path) -> None:
         "move-cross-volume-aliases",
         "move-cross-volume-cached-aliases",
         "move-cross-volume-missing-resource",
+        "move-cross-volume-corrupt-wheel-cache",
     ],
 )
 def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
@@ -246,6 +247,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
         "move-cross-volume-aliases",
         "move-cross-volume-cached-aliases",
         "move-cross-volume-missing-resource",
+        "move-cross-volume-corrupt-wheel-cache",
     }
     if problem is not None and problem not in {"update", "extra"} | repairs | moves:
         message = {
@@ -342,9 +344,21 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                 if problem in {
                     "move-cross-volume-cached-aliases",
                     "move-cross-volume-missing-resource",
+                    "move-cross-volume-corrupt-wheel-cache",
                 }:
                     for category in ("bases", "engines", "wheels"):
                         shutil.copytree(store / category, target_store / category, symlinks=True)
+                if problem == "move-cross-volume-corrupt-wheel-cache":
+                    warm = tmp_path / "warm-cache-project"
+                    warm.mkdir()
+                    invoke(root=warm, store=target_store)
+                    cached = next((target_store / "uv-cache").rglob("stable_fixture.py"))
+                    cached.write_text("VALUE = 999\n")
+                    assert cached.read_text() == "VALUE = 999\n"
+                    assert (
+                        next((root / "generations/1").rglob("stable_fixture.py")).read_text()
+                        == "VALUE = 40\n"
+                    )
                 if problem == "move-cross-volume-missing-resource":
                     assert missing.as_posix() in dict(generation.files)
                     (target_store / "bases" / ("a" * 64) / missing).unlink()

@@ -309,6 +309,7 @@ def _prepare(plan: MovePlan, path: Path, journal: Journal) -> None:
                 ),
                 catalog_lock=tree / "dinkster.lock" if (tree / "dinkster.lock").exists() else None,
                 artifacts=release / "artifacts" if (tree / "dinkster.lock").exists() else None,
+                refresh_cache=True,
             )
         else:
             for cfg in (destination / "packs").glob("*/pyvenv.cfg"):

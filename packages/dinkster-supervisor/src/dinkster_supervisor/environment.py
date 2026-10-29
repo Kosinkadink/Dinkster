@@ -525,7 +525,7 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
                 ),
                 catalog_lock=catalog,
                 artifacts=release / "artifacts" if catalog is not None else None,
-                repair=True,
+                refresh_cache=True,
             )
             added_locks = {
                 name

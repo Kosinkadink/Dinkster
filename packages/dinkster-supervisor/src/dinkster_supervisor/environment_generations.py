@@ -338,7 +338,7 @@ def build_generation(
     catalog_lock: Path | None = None,
     artifacts: Path | None = None,
     prepare_packs: Callable[[Path], None] | None = None,
-    repair: bool = False,
+    refresh_cache: bool = False,
     uv: str = "uv",
 ) -> Generation:
     """Build a target without activating it or touching another generation.
@@ -418,13 +418,13 @@ def build_generation(
             "UV_PYTHON_DOWNLOADS": "never",
             "PYTHONDONTWRITEBYTECODE": "1",
         }
-        if repair:
+        if refresh_cache:
             # A hand-edited hardlink can also corrupt uv's extracted cache.
             cleaned = subprocess.run(
                 [uv, "cache", "clean"], env=environment, capture_output=True, text=True
             )
             if cleaned.returncode:
-                raise EnvironmentError(f"cannot refresh repair cache: {cleaned.stderr.strip()}")
+                raise EnvironmentError(f"cannot refresh generation cache: {cleaned.stderr.strip()}")
         result = subprocess.run(command, env=environment, capture_output=True, text=True)
         if result.returncode:
             raise EnvironmentError(f"offline generation sync failed: {result.stderr.strip()}")
