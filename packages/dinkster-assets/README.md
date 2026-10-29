@@ -44,6 +44,17 @@ already verified destination bytes can complete a pending entry after restart.
 Existing untracked inputs and mounted sources are not added to this inventory.
 Inventory entries describe adoption, not reachability or permission to delete.
 
+The library stores explicit scoped reference manifests for document, history,
+shown-result and preview owners. Replacement and release require the current
+revision. Release preserves an empty owner with a newer revision, preventing a
+stale client from releasing values after the owner identifier is reused.
+`LibraryStore.hold_asset_references()` holds a SQLite write transaction while
+reading explicit associations, records, media grants and observations in every
+scope, then follows their adopted dependency manifests transitively. Corrupt
+reachable state refuses inspection. This is not a complete collector barrier:
+caches, history, publishers and callers have independent lifetimes, and opaque
+documents without declared associations cannot be assumed reference-free.
+
 ## Setup
 
 This package is a uv workspace member and is not published separately yet.

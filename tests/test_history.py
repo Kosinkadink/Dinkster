@@ -19,6 +19,7 @@ from typing import cast
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
+from dinkster_assets import AssetError
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EventListener, ExecutionSelection, PlanExecution
 from dinkster_graph import Graph, GraphNode, graph_to_wire
@@ -279,6 +280,36 @@ def test_store_survives_reopen(tmp_path: Path) -> None:
     assert record is not None
     assert record.source_document == SOURCE_DIGEST
     reopened.close()
+
+
+def test_history_asset_roots_cover_accepted_terminal_and_other_scopes(tmp_path: Path) -> None:
+    path = tmp_path / "history.sqlite"
+    other = "blake3:" + "cd" * 32
+    store = HistoryStore(path)
+    store.put(make_record("finished", scope="private", source_document=SOURCE_DIGEST))
+    store.job_accepted(make_job("queued", scope="another", source_document=other))
+    store.put(make_record("no-document"))
+    store.close()
+    store = HistoryStore(path)
+    try:
+        with store.hold_asset_references() as roots:
+            assert roots == {SOURCE_DIGEST, other}
+            with sqlite3.connect(path, timeout=0) as connection:
+                with pytest.raises(sqlite3.OperationalError, match="locked"):
+                    connection.execute("BEGIN IMMEDIATE")
+        store.recover_interrupted()
+        assert store.delete("private", "finished")
+        with store.hold_asset_references() as roots:
+            assert roots == {other}
+        with sqlite3.connect(path) as connection:
+            connection.execute(
+                "UPDATE history SET source_document = 'broken' WHERE run_id = 'queued'"
+            )
+        with pytest.raises(AssetError):
+            with store.hold_asset_references():
+                pytest.fail("unreadable history roots were ignored")
+    finally:
+        store.close()
 
 
 def test_store_migrates_old_schema_with_attempt_default(tmp_path: Path) -> None:

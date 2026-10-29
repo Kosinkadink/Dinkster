@@ -61,11 +61,14 @@ import json
 import sqlite3
 import threading
 import time
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from aiohttp import web
+from dinkster_assets import AssetError, require_digest
 
 from .auth import LOCAL_PRINCIPAL, principal_for, resolve_scope
 from .paging import decode_cursor, encode_cursor
@@ -248,6 +251,30 @@ class HistoryStore:
     def close(self) -> None:
         with self._lock:
             self._conn.close()
+
+    @contextmanager
+    def hold_asset_references(self) -> Generator[frozenset[str]]:
+        """Hold every scope's accepted and terminal workflow roots behind their write barrier.
+
+        Output values and references inside opaque documents have other owners.
+        """
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                rows = self._conn.execute(
+                    "SELECT source_document FROM history UNION SELECT source_document FROM accepted"
+                ).fetchall()
+                roots: set[str] = set()
+                for (digest,) in rows:
+                    if not isinstance(digest, str):
+                        raise AssetError("history asset reference is invalid")
+                    if digest:
+                        roots.add(require_digest(digest))
+                yield frozenset(roots)
+            except sqlite3.Error as exc:
+                raise AssetError("history asset reference state is unavailable") from exc
+            finally:
+                self._conn.rollback()
 
     def put(self, record: HistoryRecord) -> None:
         """Idempotent by run_id: recording the same terminal job twice

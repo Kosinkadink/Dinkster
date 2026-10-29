@@ -108,6 +108,28 @@ The main protocol routes include:
   machine identity or filesystem authority. Verified bytes and their scoped
   transfer observation publish through the same recoverable streaming path
   as named uploads; generic transfers create no classified media authority.
+- `GET`, `PUT`, and `DELETE /api/library/retentions/{owner_kind}/{owner_id}?scope=`
+  persist explicit references for `document`, `history`, `shown-result`, or
+  `preview` owners. `owner_id` is an opaque non-empty identifier of at most
+  512 characters. Reads require `assets:read` in scope; writes require
+  `assets:write`. PUT accepts exactly `{revision, digests}`, with at most
+  4096 canonical asset digests. Revision zero creates an owner; replacements
+  require the current revision. DELETE requires `revision` in the query and
+  publishes an empty manifest with a newer revision, preserving stale-tab
+  protection even when an identifier is reused. All successful operations
+  return `{scope, ownerKind, ownerId, revision, digests}` with HTTP 200.
+  Missing owners return 404, stale revisions 409, invalid requests 400 and
+  unavailable storage 503. Digests are deduplicated and sorted. Missing bytes
+  may be retained without fetching, copying, cataloging, or granting media
+  access. Associations persist until explicitly replaced or released; there
+  is no age expiry. They do not parse opaque workflow documents, register
+  existing history automatically, or authorize cleanup on their own. Clients
+  must declare complete reference sets; absent associations are not evidence
+  that older documents contain no asset values. Cleanup remains disabled.
+  `HistoryStore.hold_asset_references()` separately holds the history write
+  barrier and reads source-document roots from accepted and terminal jobs in
+  every scope. This includes interrupted jobs after restart; it does not
+  inspect workflow bytes or retain their nested values automatically.
 - `GET /api/assets/catalog?scope=&project=` lists persistent upload observations,
   grouped by digest, separately from workflow records. `q` searches original
   and stored names and recorded origin details; `kind` and `origin` filter

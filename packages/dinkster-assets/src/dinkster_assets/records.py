@@ -37,7 +37,8 @@ import sqlite3
 import threading
 import time
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Generator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -205,6 +206,62 @@ class AssetObservation:
         }
 
 
+@dataclass(frozen=True)
+class AssetRetention:
+    """An explicit owner of asset identities, not read authority or a catalog entry."""
+
+    scope: str
+    owner_kind: str
+    owner_id: str
+    revision: int
+    digests: tuple[str, ...]
+
+    def to_wire(self) -> dict[str, object]:
+        return {
+            "scope": self.scope,
+            "ownerKind": self.owner_kind,
+            "ownerId": self.owner_id,
+            "revision": self.revision,
+            "digests": list(self.digests),
+        }
+
+
+def _retention_key(scope: object, owner_kind: object, owner_id: object) -> tuple[str, str, str]:
+    scope = _clean_scope(scope)
+    if owner_kind not in ("document", "history", "shown-result", "preview"):
+        raise AssetError("invalid asset retention owner kind")
+    if (
+        not isinstance(owner_id, str)
+        or not owner_id
+        or owner_id != owner_id.strip()
+        or len(owner_id) > _NAME_LIMIT
+    ):
+        raise AssetError("asset retention owner id must be non-empty and at most 512 characters")
+    return scope, cast(str, owner_kind), owner_id
+
+
+def _retention_digests(raw: object) -> tuple[str, ...]:
+    if not isinstance(raw, list) or len(raw) > 4096:
+        raise AssetError("retained digests must be a list of at most 4096 identities")
+    digests: set[str] = set()
+    for digest in cast(list[object], raw):
+        if not isinstance(digest, str):
+            raise AssetError("retained digest must be a canonical asset identity")
+        digests.add(require_digest(digest))
+    return tuple(sorted(digests))
+
+
+def _retention_from_row(row: sqlite3.Row) -> AssetRetention:
+    key = _retention_key(row["scope"], row["owner_kind"], row["owner_id"])
+    if type(row["revision"]) is not int or row["revision"] < 1:
+        raise AssetError("asset retention revision is invalid")
+    try:
+        digests = _retention_digests(json.loads(row["digests"]))
+    except (TypeError, ValueError) as exc:
+        raise AssetError("asset retention state is unreadable") from exc
+    return AssetRetention(*key, row["revision"], digests)
+
+
 class LibraryStore:
     """SQLite-backed scoped record store. Thread-safe: handlers call it
     via asyncio.to_thread, so one connection crosses threads behind a
@@ -253,6 +310,121 @@ class LibraryStore:
         with self._lock:
             self._database.close()
             self._engine.dispose()
+
+    def retain_assets(
+        self, scope: str, owner_kind: str, owner_id: str, digests: list[str], *, revision: int
+    ) -> AssetRetention:
+        """Replace an owner's manifest atomically; revision zero creates a new owner.
+
+        Missing bytes are allowed: reopening a document must retain its missing
+        identities too, without granting permission to fetch or read them.
+        """
+        key = _retention_key(scope, owner_kind, owner_id)
+        cleaned = _retention_digests(digests)
+        if type(revision) is not int or revision < 0:
+            raise AssetError("asset retention revision must be a nonnegative integer")
+        with self._lock, self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            row = self._conn.execute(
+                "SELECT * FROM asset_retentions "
+                "WHERE scope = ? AND owner_kind = ? AND owner_id = ?",
+                key,
+            ).fetchone()
+            current = _retention_from_row(row) if row is not None else None
+            if revision != (current.revision if current is not None else 0):
+                raise StaleRevision("retained asset values changed")
+            retained = AssetRetention(*key, revision + 1, cleaned)
+            self._conn.execute(
+                "INSERT INTO asset_retentions VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(scope, owner_kind, owner_id) DO UPDATE SET "
+                "revision = excluded.revision, digests = excluded.digests",
+                (*key, retained.revision, json.dumps(cleaned)),
+            )
+        return retained
+
+    def retained_assets(self, scope: str, owner_kind: str, owner_id: str) -> AssetRetention | None:
+        key = _retention_key(scope, owner_kind, owner_id)
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM asset_retentions "
+                "WHERE scope = ? AND owner_kind = ? AND owner_id = ?",
+                key,
+            ).fetchone()
+        return None if row is None else _retention_from_row(row)
+
+    def release_assets(
+        self, scope: str, owner_kind: str, owner_id: str, *, revision: int
+    ) -> AssetRetention | None:
+        key = _retention_key(scope, owner_kind, owner_id)
+        if type(revision) is not int or revision < 1:
+            raise AssetError("asset retention revision must be a positive integer")
+        with self._lock, self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            row = self._conn.execute(
+                "SELECT * FROM asset_retentions "
+                "WHERE scope = ? AND owner_kind = ? AND owner_id = ?",
+                key,
+            ).fetchone()
+            if row is None:
+                return None
+            if _retention_from_row(row).revision != revision:
+                raise StaleRevision("retained asset values changed")
+            retained = AssetRetention(*key, revision + 1, ())
+            # Retain the revision even when empty so reusing an owner cannot
+            # let a stale tab release its newer values.
+            self._conn.execute(
+                "UPDATE asset_retentions SET revision = ?, digests = '[]' "
+                "WHERE scope = ? AND owner_kind = ? AND owner_id = ?",
+                (retained.revision, *key),
+            )
+        return retained
+
+    @contextmanager
+    def hold_asset_references(self) -> Generator[frozenset[str]]:
+        """Inspect catalog and explicit roots in every scope behind their write barrier.
+
+        This excludes other SQLite writers, not cache or history publishers.
+        Missing associations for opaque documents cannot establish emptiness.
+        """
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                rows = self._conn.execute("SELECT * FROM asset_retentions").fetchall()
+                roots = set(digest for row in rows for digest in _retention_from_row(row).digests)
+                for table in ("records", "media_grants", "asset_observations"):
+                    for (digest,) in self._conn.execute(f"SELECT digest FROM {table}"):
+                        if not isinstance(digest, str):
+                            raise AssetError("catalog reference identity is invalid")
+                        roots.add(require_digest(digest))
+                manifests = {
+                    row["digest"]: row["manifest"]
+                    for row in self._conn.execute("SELECT digest, manifest FROM asset_dependencies")
+                }
+                pending = list(roots)
+                while pending:
+                    digest = pending.pop()
+                    if digest not in manifests:
+                        continue
+                    try:
+                        dependencies = json.loads(manifests[digest])
+                    except (TypeError, ValueError) as exc:
+                        raise AssetError("asset dependency state is unreadable") from exc
+                    if not isinstance(dependencies, list):
+                        raise AssetError("asset dependencies must be a list")
+                    for dependency in cast(list[object], dependencies):
+                        if not isinstance(dependency, dict) or not isinstance(
+                            child := cast(dict[str, object], dependency).get("digest"), str
+                        ):
+                            raise AssetError("asset dependency identity is unavailable")
+                        require_digest(child)
+                        if child not in roots:
+                            roots.add(child)
+                            pending.append(child)
+                yield frozenset(roots)
+            except sqlite3.Error as exc:
+                raise AssetError("retained asset state is unavailable") from exc
+            finally:
+                self._conn.rollback()
 
     def record_asset(
         self,

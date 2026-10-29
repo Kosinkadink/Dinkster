@@ -19,6 +19,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import threading
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -154,7 +155,7 @@ def test_catalog_alembic_head_preserves_records(tmp_path: Path, catalog: str) ->
         f"catalog={path}",
     ]
     current = subprocess.run([*args, "current"], text=True, capture_output=True, check=True)
-    assert "0002_asset_observations (head)" in current.stdout
+    assert "0003_asset_retentions (head)" in current.stdout
     checked = subprocess.run([*args, "check"], text=True, capture_output=True, check=True)
     assert "No new upgrade operations detected" in checked.stdout
     LibraryStore(path).close()
@@ -367,6 +368,173 @@ async def make_client(tmp_path: Path, **library_overrides: object) -> TestClient
     client = TestClient(TestServer(app))
     await client.start_server()
     return client
+
+
+@pytest.mark.parametrize("kind", ["document", "history", "shown-result", "preview"])
+def test_retained_assets_http_survive_restart_and_reject_stale_release(
+    tmp_path: Path, kind: str
+) -> None:
+    async def scenario() -> None:
+        url = f"/api/library/retentions/{kind}/owner?scope=local"
+        client = await make_client(tmp_path)
+        try:
+            response = await client.put(
+                url, json={"revision": 0, "digests": [DIGEST_B, DIGEST_A, DIGEST_A]}
+            )
+            assert response.status == 200
+            assert (await response.json()) == {
+                "scope": "local",
+                "ownerKind": kind,
+                "ownerId": "owner",
+                "revision": 1,
+                "digests": sorted([DIGEST_A, DIGEST_B]),
+            }
+        finally:
+            await client.close()
+        client = await make_client(tmp_path)
+        try:
+            assert (await (await client.get(url)).json())["revision"] == 1
+            assert (await client.head(url + "&revision=1")).status == 200
+            assert (await (await client.get(url)).json())["digests"] == sorted([DIGEST_A, DIGEST_B])
+            assert (await client.get(url.replace("local", "other"))).status == 404
+            assert (await client.delete(url + "&revision=0")).status == 400
+            response = await client.put(url, json={"revision": 1, "digests": [DIGEST_B]})
+            assert response.status == 200
+            assert (await response.json())["revision"] == 2
+            assert (await client.delete(url + "&revision=1")).status == 409
+            response = await client.delete(url + "&revision=2")
+            assert response.status == 200
+            assert (await response.json())["digests"] == []
+            # Reusing the owner must not reset revisions and accept an old tab.
+            assert (
+                await client.put(url, json={"revision": 0, "digests": [DIGEST_A]})
+            ).status == 409
+            response = await client.put(url, json={"revision": 3, "digests": [DIGEST_A]})
+            assert response.status == 200
+            assert (await response.json())["revision"] == 4
+            assert (await client.delete(url + "&revision=1")).status == 409
+            assert (await (await client.get(url)).json())["digests"] == [DIGEST_A]
+            store = client.app[LIBRARY_KEY].store
+            assert store.query("local") == []
+            assert store.query_assets("local") == []
+            assert store.media_grant("local", DIGEST_A, "media/image") is None
+            # Retention can name missing bytes without materializing them.
+            assert client.app[LIBRARY_KEY].vault.resolve(DIGEST_A) is None
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_retained_assets_cross_store_revisions_and_all_scope_write_barrier(tmp_path: Path) -> None:
+    first, second = make_store(tmp_path), make_store(tmp_path)
+    try:
+        first.retain_assets("one", "document", "owner", [DIGEST_A], revision=0)
+        second.retain_assets("two", "preview", "owner", [DIGEST_B], revision=0)
+        with first.hold_asset_references() as roots:
+            assert roots == {DIGEST_A, DIGEST_B}
+            with sqlite3.connect(tmp_path / "library.sqlite", timeout=0) as connection:
+                with pytest.raises(sqlite3.OperationalError, match="locked"):
+                    connection.execute("BEGIN IMMEDIATE")
+        barrier = threading.Barrier(2)
+
+        def update(store: LibraryStore) -> str:
+            barrier.wait(timeout=10)
+            try:
+                store.retain_assets("one", "document", "owner", [DIGEST_B], revision=1)
+            except StaleRevision:
+                return "stale"
+            return "updated"
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(update, (first, second)))
+        assert sorted(results) == ["stale", "updated"]
+        with second.hold_asset_references() as roots:
+            assert roots == {DIGEST_B}
+        with sqlite3.connect(tmp_path / "library.sqlite") as connection:
+            connection.execute("UPDATE asset_retentions SET digests = 'broken' WHERE scope = 'two'")
+        with pytest.raises(AssetError):
+            with first.hold_asset_references():
+                pytest.fail("corrupt associations were treated as empty")
+    finally:
+        first.close()
+        second.close()
+
+
+def test_catalog_asset_roots_include_other_scopes_and_reachable_dependencies(
+    tmp_path: Path,
+) -> None:
+    store = make_store(tmp_path)
+    observed = digest_bytes(b"kept output")
+    orphan = digest_bytes(b"orphaned document")
+    unrelated = digest_bytes(b"unreferenced dependency")
+    try:
+        store.create("private", "Document", DIGEST_A, WORKFLOW_MEDIA_TYPE)
+        store.record_asset(
+            "another",
+            AssetRef(observed, "output.txt", 11),
+            original_name="output.txt",
+            kind="asset/file",
+            origin={"kind": "produced", "job": "run", "node": "save"},
+        )
+        store.put_dependencies(DIGEST_A, [{"digest": DIGEST_B}])
+        store.put_dependencies(DIGEST_B, [{"digest": DIGEST_A}])
+        store.put_dependencies(orphan, [{"digest": unrelated}])
+        with store.hold_asset_references() as roots:
+            assert roots == {DIGEST_A, DIGEST_B, observed}
+        with sqlite3.connect(tmp_path / "library.sqlite") as connection:
+            connection.execute(
+                "UPDATE asset_dependencies SET manifest = 'broken' WHERE digest = ?", (DIGEST_A,)
+            )
+        with pytest.raises(AssetError):
+            with store.hold_asset_references():
+                pytest.fail("unreadable dependency state was ignored")
+    finally:
+        store.close()
+
+
+def test_retained_assets_http_enforce_scope_and_validate_manifest(tmp_path: Path) -> None:
+    from dinkster_server.auth import Principal, StaticBearerAuthenticator
+
+    async def scenario() -> None:
+        library = ServerLibrary(AssetVault(tmp_path / "vault"), make_store(tmp_path))
+        auth = StaticBearerAuthenticator(
+            {
+                "writer": Principal("writer", {"one": frozenset({"assets:read", "assets:write"})}),
+                "reader": Principal("reader", {"one": frozenset({"assets:read"})}),
+            }
+        )
+        client = TestClient(
+            TestServer(create_app(make_engine, SCHEMAS, library=library, authenticator=auth))
+        )
+        await client.start_server()
+        url = "/api/library/retentions/document/owner?scope=one"
+        writer = {"Authorization": "Bearer writer"}
+        reader = {"Authorization": "Bearer reader"}
+        try:
+            valid = {"revision": 0, "digests": [DIGEST_A]}
+            assert (await client.put(url, json=valid)).status == 401
+            assert (await client.put(url, json=valid, headers=reader)).status == 403
+            assert (
+                await client.put(url.replace("one", "two"), json=valid, headers=writer)
+            ).status == 403
+            for invalid in (
+                {"revision": True, "digests": []},
+                {"revision": -1, "digests": []},
+                {"revision": 0, "digests": ["not-a-digest"]},
+                {"revision": 0, "digests": [None]},
+                {"revision": 0, "digests": [DIGEST_A] * 4097},
+                {"digests": []},
+            ):
+                assert (await client.put(url, json=invalid, headers=writer)).status == 400
+            assert (await client.put(url, json=valid, headers=writer)).status == 200
+            assert (await client.get(url, headers=reader)).status == 200
+            assert (await client.get(url.replace("one", "two"), headers=reader)).status == 403
+            assert (await client.delete(url + "&revision=1", headers=reader)).status == 403
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("kind", ("media/image", "media/audio", "media/video", "asset/file"))

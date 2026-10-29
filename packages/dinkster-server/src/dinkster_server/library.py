@@ -1595,6 +1595,45 @@ async def handle_library_delete(request: web.Request) -> web.Response:
     return web.Response(status=204)
 
 
+async def handle_retained_assets(request: web.Request) -> web.Response:
+    """Explicit scoped reference manifests; document contents remain opaque."""
+    scope = resolve_scope(
+        principal_for(request),
+        "assets:read" if request.method in {"GET", "HEAD"} else "assets:write",
+        request.query.get("scope"),
+    )
+    store = request.app[LIBRARY_KEY].store
+    key = (scope, request.match_info["owner_kind"], request.match_info["owner_id"])
+    try:
+        if request.method in {"GET", "HEAD"}:
+            retained = await asyncio.to_thread(store.retained_assets, *key)
+        elif request.method == "PUT":
+            body = await _json_body(request)
+            if set(body) != {"revision", "digests"}:
+                return _json_error(400, "retained values require revision and digests only")
+            revision, digests = body["revision"], body["digests"]
+            if type(revision) is not int or not isinstance(digests, list):
+                return _json_error(400, "revision must be an integer and digests must be a list")
+            retained = await asyncio.to_thread(
+                store.retain_assets, *key, cast(list[str], digests), revision=revision
+            )
+        else:
+            try:
+                revision = int(request.query.get("revision", ""))
+            except ValueError:
+                return _json_error(400, "release requires a positive revision")
+            retained = await asyncio.to_thread(store.release_assets, *key, revision=revision)
+    except StaleRevision as exc:
+        return _json_error(409, str(exc))
+    except AssetError as exc:
+        return _json_error(400, str(exc))
+    except sqlite3.Error:
+        return _json_error(503, "retained asset state is unavailable")
+    if retained is None:
+        return _json_error(404, "no such retained asset owner")
+    return web.json_response(retained.to_wire())
+
+
 def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
     from .image_document import handle_dependencies, handle_image_document, handle_render
 
@@ -1618,6 +1657,10 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
         app.router.add_post("/api/assets/{digest}/sources", handle_asset_sources_add)
     app.router.add_post("/api/library", handle_library_create)
     app.router.add_get("/api/library", handle_library_list)
+    retention_path = "/api/library/retentions/{owner_kind}/{owner_id}"
+    app.router.add_get(retention_path, handle_retained_assets)
+    app.router.add_put(retention_path, handle_retained_assets)
+    app.router.add_delete(retention_path, handle_retained_assets)
     app.router.add_get("/api/library/{record_id}", handle_library_get)
     app.router.add_patch("/api/library/{record_id}", handle_library_update)
     app.router.add_delete("/api/library/{record_id}", handle_library_delete)

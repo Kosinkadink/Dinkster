@@ -20,6 +20,12 @@
 - Asset record catalogs upgrade automatically with versioned migrations.
   Matching unversioned catalogs retain scoped records, verified media grants,
   dependency manifests, and derivations; incompatible schemas are refused.
+- Scoped retained-value associations persist explicit asset identities for
+  documents, history, shown results and previews without parsing workflow
+  contents or granting access to bytes. Revision-checked replacement and
+  release prevent stale clients from removing newer associations, including
+  after restart or owner reuse. Association registration is explicit, not
+  automatic history or preview integration; it does not enable cleanup.
 - Host-validated saved-file artifacts are cataloged in the submitted project
   with job and node provenance before the job reports completion. Unavailable
   or revoked files and catalog failures fail the job rather than report a
