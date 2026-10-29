@@ -123,8 +123,8 @@ try {
     )
     Invoke-Native "uv" @(
         "pip", "install", "--python", $TorchPython,
-        "--index-url", "https://download.pytorch.org/whl/cpu",
-        "torch==2.13.0+cpu", "torchvision==0.28.0+cpu"
+        "--torch-backend", "cpu",
+        "torch==2.14.1+cpu", "torchvision==0.29.1+cpu"
     )
     $CpuDependencies = @(
         "pytest", "packaging", "numpy>=1.26", "scipy>=1.11",

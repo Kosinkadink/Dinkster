@@ -47,8 +47,8 @@ runs:
       run: >
         uv pip install --python .venv-torch/bin/python
         --constraint "${{ runner.temp }}/torch-constraints.txt"
-        --index-url https://download.pytorch.org/whl/cpu
-        torch==2.13.0+cpu
+        --torch-backend cpu
+        torch==2.14.1+cpu
     - name: Assert pinned AVX2 dispatch
       shell: bash
       run: |
