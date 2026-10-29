@@ -349,7 +349,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                     "move-cross-volume-corrupt-wheel-cache",
                 }:
                     for category in ("bases", "engines", "wheels"):
-                        shutil.copytree(store / category, target_store / category, symlinks=True)
+                        environment_move.copy_tree(store / category, target_store / category)
                 if problem == "move-cross-volume-corrupt-wheel-cache":
                     warm = tmp_path / "warm-cache-project"
                     warm.mkdir()
