@@ -5,6 +5,10 @@
 - Pack dependency provisioning can consume per-variant hashed locks, reject
   shared-package conflicts and layer only extra wheels over an engine
   interpreter without copying torch or opencv into the pack venv.
+- The BiRefNet, Depth Anything v2/v3, DETR, EfficientSAM, HED, RT-DETR,
+  SAM 3.1 and upscale packs declare base-carried dependencies without exact pins.
+  The generation's effective constraints select those versions; incompatible
+  requirements still fail rather than shadowing the engine's packages.
 - In-process pack dependencies stage only into a fresh, inactive generation;
   their terminals use scratch venvs and doctor reports dependency drift.
 - The official pack artifact builder produces deterministic source archives and
@@ -14,6 +18,9 @@
   declarations without adding workspace project requirements at publication.
   Publishing can emit separate per-variant hashed dependency locks against the
   target interpreter and engine constraints, without resolving during setup.
+- Prepared official source catalogs preserve dependency-owned codecs without
+  claiming them as pack-owned declarations. Existing comfy and image node IDs
+  execute from these archives without rewriting saved workflows or pack bytes.
 - Core official pack manifests declare their existing third-party runtime
   requirements directly, including platform markers. Pack-to-pack dependencies
   and the host API contract remain separate from Python requirements.

@@ -56,6 +56,11 @@ Remote clients use `current_execution_context()` to read the worker's current
 invocation and its cooperative `cancelled()` callback; outside an invocation it
 returns `None`. Packs do not create or replace the host's execution context.
 
+Sampling consumers call `prepare_sampling_model(model)` once before constructing
+their sampler or guider. The host prepares the invocation's model clone and
+attention route; outside a routed invocation the input object is returned
+unchanged. Preparation failures propagate to the caller.
+
 `OutputDescriptorsSpec` declares ordered heterogeneous outputs from a stored
 JSON input. Execution receives `OutputInterface.outputs`; use
 `output_descriptor_entries` to read node-owned entry fields and return a plain
@@ -198,6 +203,10 @@ active invocation; it is not a droppable event. The host independently checks
 the mounted file and writer publication before returning a `SavedArtifact` in
 the run result. Failed executions return no attachments. Ordinary ASSET outputs
 do not imply a saved-file attachment, and no bytes are copied to a second store.
+Attach every published file in a batch; an invocation admits up to 4096 saved-file
+claims, independently of the encoded-preview and legacy-candidate limits.
+The nonnegative integer `size` describes the mounted file, not an encoded payload
+carried by the claim. Host validation streams the file without materializing it.
 
 - [Pack authoring](../../docs/pack-authoring.md) describes manifests, nodes,
   custom value types, and the compatibility contract.

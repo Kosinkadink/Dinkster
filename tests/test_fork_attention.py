@@ -306,3 +306,49 @@ def test_workgroup_attempt_gates_one_invocation_and_releases_attention(
 
     asyncio.run(scenario())
     assert events == [("activate", "single-job", 1), ("release", "single-job", 1)]
+
+
+def test_sampling_clone_resolves_distributed_activation_at_consumption(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_api.v1 import prepare_sampling_model
+    from dinkster_native import multigpu
+    from dinkster_workers.execution import ExecutionContext, use_execution_context
+
+    class Model:
+        def __init__(self) -> None:
+            self.selected: object | None = None
+            self.distributed = False
+
+        def clone(self) -> Model:
+            return Model()
+
+        def set_model_optimized_attention(self, selected: object) -> None:
+            self.selected = selected
+
+    monkeypatch.setenv("DINKSTER_ACCELERATOR", "cpu")
+    runtime = attention.create_attention_runtime()
+    selected = object()
+    active = False
+    monkeypatch.setattr(runtime, "for_model", lambda _token: selected)
+    monkeypatch.setattr(runtime, "distributed_active", lambda: active)
+
+    def configure(model: Model) -> None:
+        model.distributed = True
+
+    monkeypatch.setattr(multigpu, "configure_distributed_model", configure)
+    model = Model()
+    context = ExecutionContext(
+        arm=None,
+        expected_execution_identity=None,
+        attention_route_token=runtime.route_token,
+        attention_runtime=runtime,
+    )
+    with use_execution_context(context):
+        ordinary = cast("Model", prepare_sampling_model(model))
+        active = True
+        distributed = cast("Model", prepare_sampling_model(model))
+    assert ordinary is not model and distributed is not model and ordinary is not distributed
+    assert ordinary.selected is selected and distributed.selected is selected
+    assert not ordinary.distributed and distributed.distributed
+    assert model.selected is None and not model.distributed

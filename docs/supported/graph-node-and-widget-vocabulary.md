@@ -2,6 +2,11 @@
 
 - Input types: concrete, union, wildcard, variable, list, asset;
   scalar/list cardinality; required/advanced/hidden/lazy input flags
+- Backend input families can require only the initial declared positions,
+  leaving later members optional. Missing initial required slots remain
+  validation errors even when later slots are connected. Ordinary families
+  retain their stored order and uniform requiredness. Frontend support is
+  not claimed here.
 - Replacement input-family copies can declare historical template input IDs
   and a flat member-port path without retaining a predecessor schema. Existing
   mappings without that metadata retain their wire shape. Historical same-type

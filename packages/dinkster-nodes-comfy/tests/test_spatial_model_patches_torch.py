@@ -290,6 +290,7 @@ def test_complete_manifest_transports_an_ordinary_tome_model_graph_in_both_hosts
             (tmp_path / "spatial_fixture_sources.py").write_text(
                 "from test_spatial_model_patches_torch import FIXTURE_NODES\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, *FIXTURE_NODES)\n",
                 encoding="ascii",
             )
@@ -298,6 +299,10 @@ def test_complete_manifest_transports_an_ordinary_tome_model_graph_in_both_hosts
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["spatial-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "spatial_fixture_sources:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "spatial_fixture_sources:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "spatial_fixture_sources:register_inference_types",

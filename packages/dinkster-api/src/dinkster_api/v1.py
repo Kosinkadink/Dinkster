@@ -115,6 +115,7 @@ from dinkster_protocol import (
     canonical_extension_snapshot,
     current_export_snapshot,
     extension_behavior_hash,
+    prepare_sampling_model,
 )
 from dinkster_protocol.frontend_modules import FrontendContribution, FrontendModule
 from dinkster_protocol.pack_surfaces import (
@@ -371,6 +372,7 @@ from dinkster_values import (
     register_curve_type,
     register_model3d_type,
     register_resource_handle_type,
+    register_splat_type,
     register_video_edit_type,
     render_audio_wav,
     render_image_png,
@@ -460,6 +462,7 @@ def __getattr__(name: str) -> object:
         "materialize_image",
         "materialize_latent",
         "materialize_clip_vision_output",
+        "materialize_splat",
         "materialize_voxel",
     }:
         from dinkster_inference_wire import types
@@ -488,6 +491,7 @@ def __dir__() -> list[str]:
             "materialize_image",
             "materialize_latent",
             "materialize_clip_vision_output",
+            "materialize_splat",
             "materialize_voxel",
             "initialize_inference_process",
         }
@@ -524,6 +528,7 @@ if TYPE_CHECKING:
         materialize_clip_vision_output,
         materialize_image,
         materialize_latent,
+        materialize_splat,
         materialize_voxel,
         register_inference_types,
     )
@@ -564,10 +569,12 @@ __all__ = [
     "LatentStream",
     "MultiStreamLatent",
     "initialize_inference_process",
+    "prepare_sampling_model",
     "materialize_audio",
     "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
+    "materialize_splat",
     "materialize_svg",
     "materialize_voxel",
     "register_inference_types",
@@ -863,6 +870,7 @@ __all__ = [
     "region_meta",
     "register_model3d_type",
     "register_resource_handle_type",
+    "register_splat_type",
     "render_audio_wav",
     "render_image_png",
     "render_mask_png",

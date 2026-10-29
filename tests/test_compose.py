@@ -1101,7 +1101,7 @@ def test_compose_serving_default_resolution_is_atomic(
         ),
         (
             "dinkster-nodes-media-io",
-            "blake3:5e58e5125276e9f2fd12b842ebd6ab86264f71fb4163c0fa598c704597496177",
+            "blake3:62f4b5905d372f5a68471935e9c558b5e2f76584f6e52d94bb398fcc519f7f2b",
         ),
         (
             "dinkster-nodes-image",
@@ -1440,7 +1440,7 @@ def test_vision_pack_license_checkout_endings_do_not_change_digest(tmp_path: Pat
     manifest = copied / "dinkster_vision_hed_pack/dinkster-pack.toml"
     module = copied / "src/dinkster_nodes_vision/hed"
     expected = compose._installed_pack_digest(manifest, module)
-    assert expected == ("blake3:8d90dc771f53d8534f2867d0579d2836d7b521e27fe4e9eee4fa610ed712495d")
+    assert expected == ("blake3:189f1e12c17fd137290d2c061e78bd82b0680d95e14b547553a5f0a166613efd")
     license_file = manifest.parent / "MLSD_LICENSE"
     license_bytes = license_file.read_bytes().replace(b"\r\n", b"\n")
     license_file.write_bytes(license_bytes.replace(b"\n", b"\r\n"))
@@ -1921,7 +1921,10 @@ def test_rootless_native_runtime_configuration(
     assert not spec.trust_reserved
 
 
-def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(tmp_path: Path) -> None:
+@pytest.mark.parametrize("in_process", (False, True))
+def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(
+    tmp_path: Path, in_process: bool
+) -> None:
     from dinkster_nodes_comfy import COMFY_NODES
 
     claims = tuple(node.schema().node_type for node in COMFY_NODES)
@@ -1940,10 +1943,16 @@ def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(tmp_pa
     async def scenario() -> None:
         composer = ServingComposer()
         try:
-            await composer.add_pack(PackSpec(manifest=manifest))
+            await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
             assert set(composer.composition.schemas) == set(claims)
             assert set(composer.composition.node_packs.values()) == {"dinkster-nodes-comfy"}
-            await composer.reload_pack("dinkster-nodes-comfy")
+            assert set(composer.composition.lazy_choices) == {"devices.gpu", "devices.vae"}
+            if in_process:
+                with pytest.raises(CompositionError, match="cannot reload in-process pack"):
+                    await composer.reload_pack("dinkster-nodes-comfy")
+            else:
+                await composer.reload_pack("dinkster-nodes-comfy")
+            assert set(composer.composition.lazy_choices) == {"devices.gpu", "devices.vae"}
             result = await composer.composition.make_engine(lambda _event: None).run(
                 Graph(
                     nodes={
