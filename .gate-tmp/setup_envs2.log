@@ -1,0 +1,98 @@
+==> .venv (torch-free root env)
+Resolved 136 packages in 199ms
+Checked 90 packages in 2ms
+==> .venv-torch (CPU torch test env)
+Using Python 3.12.3 environment at: .venv-torch
+Checked 2 packages in 4ms
+Using Python 3.12.3 environment at: .venv-torch
+Resolved 74 packages in 14ms
+   Building dinkster-api @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-api
+   Building dinkster-compat-comfy @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-compat-comfy
+   Building dinkster-model-triposplat @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-model-triposplat
+   Building dinkster-video @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-video
+   Building dinkster-inference @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-inference
+   Building dinkster-model-ipadapter @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-model-ipadapter
+   Building dinkster-nodes-vision @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-nodes-vision
+   Building dinkster-schema @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-schema
+   Building dinkster-assets @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-assets
+   Building dinkster-inference-torch @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-inference-torch
+   Building dinkster-values @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-values
+   Building dinkster-native @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-native
+   Building dinkster-model-qwen-image @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-model-qwen-image
+   Building dinkster-graph @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-graph
+   Building dinkster-engine @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-engine
+   Building dinkster-memory @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-memory
+   Building dinkster-caches @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-caches
+   Building dinkster-nodes-generation @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-nodes-generation
+   Building dinkster-workers @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-workers
+   Building dinkster-protocol @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-protocol
+      Built dinkster-caches @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-caches
+      Built dinkster-model-triposplat @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-model-triposplat
+      Built dinkster-protocol @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-protocol
+      Built dinkster-graph @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-graph
+      Built dinkster-api @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-api
+      Built dinkster-model-qwen-image @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-model-qwen-image
+      Built dinkster-schema @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-schema
+      Built dinkster-compat-comfy @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-compat-comfy
+      Built dinkster-video @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-video
+      Built dinkster-memory @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-memory
+      Built dinkster-inference @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-inference
+      Built dinkster-engine @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-engine
+      Built dinkster-assets @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-assets
+      Built dinkster-nodes-vision @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-nodes-vision
+      Built dinkster-inference-torch @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-inference-torch
+      Built dinkster-workers @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-workers
+      Built dinkster-model-ipadapter @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-model-ipadapter
+      Built dinkster-values @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-values
+      Built dinkster-nodes-generation @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-nodes-generation
+      Built dinkster-native @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-native
+Prepared 20 packages in 360ms
+Uninstalled 20 packages in 12ms
+Installed 20 packages in 4ms
+ ~ dinkster-api==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-api)
+ ~ dinkster-assets==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-assets)
+ ~ dinkster-caches==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-caches)
+ ~ dinkster-compat-comfy==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-compat-comfy)
+ ~ dinkster-engine==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-engine)
+ ~ dinkster-graph==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-graph)
+ ~ dinkster-inference==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-inference)
+ ~ dinkster-inference-torch==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-inference-torch)
+ ~ dinkster-memory==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-memory)
+ ~ dinkster-model-ipadapter==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-model-ipadapter)
+ ~ dinkster-model-qwen-image==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-model-qwen-image)
+ ~ dinkster-model-triposplat==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-model-triposplat)
+ ~ dinkster-native==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-native)
+ ~ dinkster-nodes-generation==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-nodes-generation)
+ ~ dinkster-nodes-vision==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-nodes-vision)
+ ~ dinkster-protocol==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-protocol)
+ ~ dinkster-schema==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-schema)
+ ~ dinkster-values==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-values)
+ ~ dinkster-video==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-video)
+ ~ dinkster-workers==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/packages/dinkster-workers)
+Using Python 3.12.3 environment at: .venv-torch
+Resolved 1 package in 1ms
+   Building dinkster-acceptance @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/.evidence-source/packages/dinkster-acceptance
+      Built dinkster-acceptance @ file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/.evidence-source/packages/dinkster-acceptance
+Prepared 1 package in 239ms
+Installed 1 package in 1ms
+ + dinkster-acceptance==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-391-pr207-parity-gate/.evidence-source/packages/dinkster-acceptance)
+Using Python 3.12.3 environment at: .venv-torch
+Checked 1 package in 2ms
+Using Python 3.12.3 environment at: .venv-torch
+Checked 1 package in 2ms
+==> Python.h present in the Python 3.12 base interpreter
+==> no NVIDIA GPU detected - skipping .venv-gpu (the GPU gate
+    applies only on GPU machines, AGENTS.md 'Validation gate')
+==> done. Gates:
+  .venv/bin/ruff check .
+  .venv/bin/pyright
+  .venv/bin/python -m pytest -q
+  .venv/bin/pyright -p packages/dinkster-inference-torch
+  CPATH="$PWD/.venv-gpu-extras/pyheaders/usr/include/python3.12:$PWD/.venv-gpu-extras/pyheaders/usr/include${CPATH:+:$CPATH}" \
+    .venv-torch/bin/python -m pytest -q packages/dinkster-inference-torch/tests
+  .venv/bin/pyright -p packages/dinkster-nodes-vision
+  .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests
+GPU machines additionally:
+  DINKSTER_ENABLE_GPU_TESTS=1 DINKSTER_VALIDATE_REFERENCE_GOLDENS=1 \
+  CPATH="$PWD/.venv-gpu-extras/pyheaders/usr/include/python3.12:$PWD/.venv-gpu-extras/pyheaders/usr/include${CPATH:+:$CPATH}" \
+    .venv-gpu/bin/python -m pytest -q packages/dinkster-inference-torch/tests
