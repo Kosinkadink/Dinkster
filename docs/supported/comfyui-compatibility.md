@@ -206,6 +206,7 @@
   workflow metadata unless metadata is disabled. Animated PNG omits empty prompts.
 - Native CLIP and VAE exports preserve tensor keys and dtypes in safetensors
   on the selected output mount. CLIP weights split by encoder prefix.
+  Submitted prompt and workflow metadata are retained unless metadata is disabled.
 - Native latent files load verified safetensors, convert samples to float32,
   and apply legacy scaling only when the format marker is absent. Saving
   writes contiguous samples and the format marker to the selected output mount.
@@ -219,7 +220,9 @@
   animated WebP uses a bounded Pillow fallback because FFmpeg cannot decode it.
 - Native CheckpointSave and ModelSave export model weights through the selected
   output mount, retaining architecture and prediction metadata, auxiliary sampling
-  tensors, and the reserved filename in supported model-spec titles. Tiny CPU
+  tensors, and the reserved filename in supported model-spec titles. Submitted prompt
+  and workflow fields are included unless disabled; architecture metadata remains.
+  Submitted extra fields override matching metadata keys. Tiny CPU
   checks use controlled model state, not full-model or GPU execution.
 - Native SaveImageAdvanced writes 8/16-bit PNG and half/full-float EXR through
   the selected output mount, preserving source counters and straight alpha.

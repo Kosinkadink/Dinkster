@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -13,6 +15,7 @@ from dinkster_api.v1 import (
     CLIP_TYPE,
     MODEL_TYPE,
     VAE_TYPE,
+    ExportSnapshot,
     Node,
     NodeSchema,
     OutputSpec,
@@ -365,3 +368,139 @@ def test_checkpoint_exports_write_exact_files_through_native_manifest(tmp_path: 
                     torch.testing.assert_close(actual, tensor, rtol=0, atol=0)
     assert not list(output.glob("checkpoints/*"))
     assert not list(alternate.glob("diffusion_models/*"))
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("disabled", (False, True))
+@pytest.mark.parametrize("prompt", ({"source": {"inputs": {"seed": 71}}}, {}, None))
+def test_model_and_encoder_exports_consume_submission_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    in_process: bool,
+    disabled: bool,
+    prompt: dict | None,
+) -> None:
+    initialize_inference_process()
+    from dinkster_inference.cli_args import args
+
+    monkeypatch.setattr(args, "disable_metadata", disabled)
+    output = tmp_path / "output"
+    output.mkdir()
+    mounts = tmp_path / "mounts.json"
+    table = MountTable(mounts, index_root=tmp_path / "index")
+    table.add(MountDef("output", output, mode="readwrite"))
+    table.scan("output")
+    table.select_output_mount("output")
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(mounts))
+    extra = {
+        "workflow": {"nodes": [{"id": 41, "title": "model: caf\u00e9"}]},
+        "seed": 149,
+        "format": "submitted format",
+        "modelspec.title": "submitted title",
+    }
+
+    async def scenario():
+        native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+        module = f"model_metadata_fixture_{tmp_path.name.replace('-', '_')}"
+        (tmp_path / f"{module}.py").write_text(
+            "from test_model_file_savers_torch import CheckpointSource\n"
+            "from dinkster_nodes_comfy import register_inference_types\n"
+            "from dinkster_api.v1 import initialize_inference_process\n"
+            "initialize_inference_process()\n"
+            "from dinkster_inference.cli_args import args\n"
+            f"args.disable_metadata = {disabled!r}\n"
+            "NODES = (CheckpointSource,)\n",
+            encoding="ascii",
+        )
+        fixture = tmp_path / "dinkster-pack.toml"
+        fixture.write_text(
+            '[pack]\nname="model-metadata-fixture"\npublisher="dinkster"\n'
+            'namespaces=["checkpoint-save-fixture"]\n[pack.entry]\n'
+            f'nodes="{module}:NODES"\ntypes="{module}:register_inference_types"\n',
+            encoding="ascii",
+        )
+        paths = (str(tmp_path), str(Path(__file__).parent), *(p for p in sys.path if p))
+        composer = ServingComposer(
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "DINKSTER_MOUNTS_SNAPSHOT": str(mounts),
+                "PYTHONPATH": os.pathsep.join(paths),
+            }
+        )
+        try:
+            manifests = (native, fixture)
+            for manifest in manifests:
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=manifest,
+                        in_process=in_process,
+                        worker_group=None if in_process else "model-metadata-fixture",
+                        group_manifests=() if in_process else manifests,
+                    )
+                )
+            nodes = {"source": GraphNode("checkpoint-save-fixture.source")}
+            for kind, node_type, inputs in (
+                ("model", "ModelSave", ("model",)),
+                ("checkpoint", "CheckpointSave", ("model", "clip", "vae")),
+                ("clip", "CLIPSave", ("clip",)),
+                ("vae", "VAESave", ("vae",)),
+            ):
+                nodes[kind] = GraphNode(
+                    node_type,
+                    {"filename_prefix": kind, **{key: Link("source", key) for key in inputs}},
+                )
+            engine = composer.composition.make_engine(lambda _event: None)
+            await engine.run(
+                Graph(nodes=nodes),
+                ["model", "checkpoint", "clip", "vae"],
+                export_snapshot=ExportSnapshot(prompt=prompt, extra_pnginfo=extra),
+            )
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+    for kind in ("model", "checkpoint", "clip", "vae"):
+        paths = list(output.glob(f"{kind}_*.safetensors"))
+        assert len(paths) == 1
+        expected = {}
+        if kind in ("model", "checkpoint"):
+            expected.update(
+                {
+                    "modelspec.architecture": "stable-diffusion-xl-v1-base",
+                    "modelspec.sai_model_spec": "1.0.0",
+                    "modelspec.implementation": "sgm",
+                    "modelspec.title": f"{kind} 1",
+                    "modelspec.predict_key": "epsilon",
+                }
+            )
+        if not disabled:
+            if kind == "clip":
+                expected["format"] = "pt"
+            expected["prompt"] = json.dumps(prompt) if prompt is not None else ""
+            expected.update({key: json.dumps(value) for key, value in extra.items()})
+        tensors = {
+            "model.weight": torch.tensor(
+                [[1.25, -3.5, 9.75], [-0.5, 7.0, 2.0]], dtype=torch.float64
+            )
+        }
+        if kind == "checkpoint":
+            tensors.update(
+                {
+                    "clip.weight": torch.tensor([[-7.0, 1.5]]),
+                    "vae.weight": torch.tensor([[0.125], [-2.5]], dtype=torch.float64),
+                }
+            )
+        elif kind in ("clip", "vae"):
+            tensors = {
+                "weight": torch.tensor([[-7.0, 1.5]])
+                if kind == "clip"
+                else torch.tensor([[0.125], [-2.5]], dtype=torch.float64)
+            }
+        with safe_open(paths[0], framework="pt", device="cpu") as handle:
+            assert handle.metadata() == expected
+            assert set(handle.keys()) == set(tensors)
+            for key, tensor in tensors.items():
+                actual = handle.get_tensor(key)
+                assert actual.dtype == tensor.dtype
+                torch.testing.assert_close(actual, tensor, rtol=0, atol=0)

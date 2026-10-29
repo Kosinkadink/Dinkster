@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import sys
 import tempfile
@@ -24,6 +25,7 @@ from dinkster_api.v1 import (
     Node,
     NodeSchema,
     TypeExpr,
+    current_export_snapshot,
     initialize_inference_process,
 )
 
@@ -38,6 +40,20 @@ _MOUNT = InputSpec(
 )
 
 
+def _export_metadata() -> dict[str, str]:
+    if importlib.import_module("dinkster_inference.cli_args").args.disable_metadata:
+        return {}
+    submitted = current_export_snapshot()
+    metadata = {
+        "prompt": json.dumps(dict(submitted.prompt))
+        if submitted is not None and submitted.prompt is not None
+        else ""
+    }
+    if submitted is not None and submitted.extra_pnginfo is not None:
+        metadata.update({key: json.dumps(value) for key, value in submitted.extra_pnginfo.items()})
+    return metadata
+
+
 def _save_tensors(
     tensors: Mapping[str, Any], metadata: dict[str, str], prefix: str, mount: str | None
 ) -> None:
@@ -48,7 +64,7 @@ def _save_tensors(
     utils = importlib.import_module("dinkster_inference.utils")
     with tempfile.TemporaryDirectory(prefix="dinkster-model-save-") as directory:
         path = Path(directory) / "weights.safetensors"
-        utils.save_torch_file(tensors, str(path), metadata=metadata)
+        utils.save_torch_file(tensors, str(path), metadata={**metadata, **_export_metadata()})
         with path.open("rb") as source:
             writer.save_stream(
                 writer.output_target(prefix, mount=mount),
@@ -67,7 +83,6 @@ def _save_checkpoint(model: Any, clip: Any, vae: Any, prefix: str, mount: str | 
     model_base = importlib.import_module("dinkster_inference.model_base")
     model_sampling = importlib.import_module("dinkster_inference.model_sampling")
     sd = importlib.import_module("dinkster_inference.sd")
-    args = importlib.import_module("dinkster_inference.cli_args").args
     torch = importlib.import_module("torch")
     metadata: dict[str, str] = {}
     for model_class, architecture in (
@@ -96,8 +111,6 @@ def _save_checkpoint(model: Any, clip: Any, vae: Any, prefix: str, mount: str | 
         extra_keys["v_pred"] = torch.tensor([])
         if getattr(sampling, "zsnr", False):
             extra_keys["ztsnr"] = torch.tensor([])
-    if not args.disable_metadata:
-        metadata["prompt"] = ""
     with (
         tempfile.TemporaryDirectory(prefix="dinkster-checkpoint-save-") as directory,
         ExitStack() as streams,
@@ -107,6 +120,7 @@ def _save_checkpoint(model: Any, clip: Any, vae: Any, prefix: str, mount: str | 
         def encode(stem: str, counter: int) -> BinaryIO:
             if "modelspec.architecture" in metadata:
                 metadata["modelspec.title"] = f"{stem} {counter}"
+            metadata.update(_export_metadata())
             sd.save_checkpoint(
                 str(path), model, clip, vae, metadata=metadata, extra_keys=extra_keys
             )
@@ -225,7 +239,12 @@ class CLIPSave(Node):
             replacements["transformer."] = ""
             selected = utils.state_dict_prefix_replace(selected, replacements)
             target_prefix = f"{filename_prefix}_{prefix[:-1]}" if prefix else filename_prefix
-            _save_tensors(selected, {"format": "pt", "prompt": ""}, target_prefix, mount)
+            metadata = (
+                {}
+                if importlib.import_module("dinkster_inference.cli_args").args.disable_metadata
+                else {"format": "pt"}
+            )
+            _save_tensors(selected, metadata, target_prefix, mount)
         return cls.outputs()
 
 
@@ -249,7 +268,7 @@ class VAESave(Node):
         cls, *, vae: Any, filename_prefix: str = "vae/ComfyUI_vae", mount: str | None = None
     ) -> Mapping[str, object]:
         initialize_inference_process()
-        _save_tensors(vae.get_sd(), {"prompt": ""}, filename_prefix, mount)
+        _save_tensors(vae.get_sd(), {}, filename_prefix, mount)
         return cls.outputs()
 
 
