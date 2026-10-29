@@ -888,6 +888,24 @@ listings remain browsable without disclosing host paths or path-bearing errors
 to non-operators. Location listings and mutations require a human operator
 with `settings:write`, not just `assets:write`; delegated agents cannot grant
 filesystem authority.
+The location response advertises `resolvePath: true` when
+`POST /api/mounts/resolve-path` is available. A trusted local desktop host can
+send exactly `{"path": "<absolute-native-path>", "project": "<id>", "scope": "local"}`
+without query fields. The route also requires `assets:read` in that scope.
+It verifies the current bytes of a regular file in a live selected project
+folder, including read-only folders, and catalogs an unindexed or changed file
+without copying it. HTTP 200 returns either `{"status":"resolved","asset":...}`
+with the five-field mounted AssetRef, or
+`{"status":"refused","reason":"not-resolvable"}` for an outside, excluded,
+revoked, missing, unavailable, unsafe or unstable file. An absolute path for
+another operating system is refused. Malformed requests, empty/NUL/relative
+paths and invalid project IDs return HTTP 400 `invalid-path-request`;
+authentication/scope failures remain 401/403; unexpected catalog/storage
+failures return HTTP 500 `mount-resolution-failed`. Responses are no-store and
+never echo the host path. Only an explicit refusal permits the client to fall
+back to uploading bytes. Older location responses without the capability
+advertisement mean unsupported; a missing route after advertisement, malformed
+response or server error is not an ordinary refusal.
 The location response includes `vault` when a library is configured. Optional
 `digest`, `scope` and `project` query fields add `locations` for that cataloged
 identity in the selected scope and project; this also requires `assets:read`.

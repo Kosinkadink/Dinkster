@@ -492,6 +492,55 @@ class LocalAssetLibrary:
                 current = {relative: dict(row) for relative, row in self._current_index.items()}
             self._save_index(current)
 
+    def index_file(self, relative: str) -> AssetRef | None:
+        """Verify and catalog one selected file without rescanning its directory."""
+        try:
+            validate_virtual_path(relative)
+            if any(part.startswith(".") for part in Path(relative).parts) or self._ignore.matches(
+                relative, Path(relative).name
+            ):
+                return None
+            root = self._root.resolve(strict=True)
+            path = root / relative
+            if (
+                not path.is_file()
+                or not path.resolve(strict=True).is_relative_to(root)
+                or path == self._index_path.resolve()
+            ):
+                return None
+            digest, record = digest_file_with_record(path)
+            stat = path.stat()
+            if (
+                record is None
+                or not record.matches(stat)
+                or not path.resolve(strict=True).is_relative_to(root)
+            ):
+                return None
+        except (AssetError, OSError, RuntimeError):
+            return None
+        with self._index_write_lock:
+            with self._lock:
+                index = dict(self._current_index)
+                index[relative] = _retain_missing_versions(
+                    {
+                        "size": stat.st_size,
+                        "mtimeNs": stat.st_mtime_ns,
+                        "digest": digest,
+                        "verification": record.to_json(),
+                    },
+                    index.get(relative),
+                )
+            if not self._save_index(index):
+                raise OSError("asset index publication failed")
+            with self._lock:
+                self._current_index = index
+                self._publish_entry(path, relative, stat.st_size, digest, record)
+                self._paths_by_digest[digest] = path
+                self._resolutions_by_digest[digest] = AssetResolution(path, record)
+                entry = self._catalog.get(f"{self._namespace}/{relative}")
+                assert entry is not None
+                return entry.ref(resolver=self)
+
     def _prune_sidecar(self, fresh_index: dict[str, dict[str, object]]) -> None:
         """Drop only publications fully covered by the successfully persisted index."""
         sidecar = self._root / WRITES_SIDECAR_NAME
@@ -573,6 +622,8 @@ class LocalAssetLibrary:
             ):
                 continue
             record = AssetVerificationRecord.from_json(digest, row.get("verification"))
+            if record is not None and not record.matches(stat):
+                continue
             self._publish_entry(path, relative, size, digest, record)
 
     def entries(self) -> tuple[AssetEntry, ...]:
