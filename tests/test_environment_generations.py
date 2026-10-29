@@ -92,6 +92,134 @@ def _assert_shared(first: Path, second: Path) -> None:
     assert extents[0] == extents[1]
 
 
+@pytest.mark.parametrize("problem", [None, "update", "missing", "variant", "wheel"])
+def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
+    tmp_path: Path, problem: str | None
+) -> None:
+    from dinkster_registry import LockedPack, Lockfile, build_artifact
+    from dinkster_workers import load_manifest
+    from dinkster_workers.boundary import PROTOCOL_VERSION
+    from dinkster_workers.catalog import read_catalog
+    from dinkster_workers.pack_environment import venv_python
+    from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
+    from test_doctor import HEALTHY_MANIFEST, HEALTHY_NODES
+
+    root, store = tmp_path / "project", tmp_path / "store"
+    root.mkdir()
+    base = store / "bases" / ("a" * 64) / "python"
+    _standalone_tree(base)
+    site = Path(
+        subprocess.check_output(
+            [
+                str(interpreter(base.parent)),
+                "-c",
+                "import sysconfig; print(sysconfig.get_path('purelib'))",
+            ],
+            text=True,
+        ).strip()
+    )
+    site.mkdir(parents=True, exist_ok=True)
+    (site / "fixture.pth").write_text(
+        "\n".join(str(Path(path).resolve()) for path in sys.path if path) + "\n"
+    )
+    wheels = store / "wheels"
+    wheels.mkdir()
+    _, sha = _wheel(wheels, "stable_fixture", "1.0", 40)
+    constraints = tmp_path / "constraints.txt"
+    constraints.write_text(f"stable-fixture==1.0 --hash=sha256:{sha}\n")
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    entries, locks = [], []
+    variant = "win-cpu" if os.name == "nt" else "linux-cpu"
+    for name in ("healthy", "other"):
+        source = tmp_path / name
+        source.mkdir()
+        (source / "dinkster-pack.toml").write_text(HEALTHY_MANIFEST.replace("healthy", name))
+        (source / f"{name}_nodes.py").write_text(HEALTHY_NODES.replace("healthy", name))
+        archive = artifacts / "staging.zip"
+        identity = build_artifact(source, archive)
+        archive.rename(artifacts / f"{identity.removeprefix('blake3:')}.zip")
+        entries.append(LockedPack(name, "1.0.0", identity, "local", (name,)))
+        if name == "healthy" or problem != "missing":
+            path = tmp_path / f"{name}-1.0.0-{variant}.pack-lock.json"
+            locked_variant = (
+                "wrong-variant" if problem == "variant" and name == "other" else variant
+            )
+            packages = ()
+            if problem == "wheel" and name == "other":
+                wheel, wheel_sha = _wheel(tmp_path, "unavailable_extra", "1.0", 73)
+                packages = (
+                    LockedDistribution(
+                        "unavailable-extra",
+                        "1.0",
+                        (LockedWheel(wheel.name, wheel.stat().st_size, wheel_sha, wheel.as_uri()),),
+                    ),
+                )
+            PackLock(name, locked_variant, ">=3.12", (), (), packages).write(path)
+            locks.append(path)
+    catalog = tmp_path / "official-packs.lock"
+    catalog.write_text(Lockfile.of(entries).record_json())
+    previous = None
+    number = 1
+    if problem == "update":
+        previous = root / "generations/1"
+        build_generation(
+            root=root,
+            number=1,
+            store=store,
+            base="sha256:" + "a" * 64,
+            engine_version="1.0.0",
+            engine_release="sha256:" + "b" * 64,
+            constraints=constraints,
+            variant=variant,
+            worker_protocol=PROTOCOL_VERSION,
+        )
+        assert not (previous / "packs").exists()
+        set_current(root, 1)
+        number = 2
+    invoke = partial(
+        build_generation,
+        root=root,
+        number=number,
+        store=store,
+        base="sha256:" + "a" * 64,
+        engine_version="1.0.0",
+        engine_release="sha256:" + "b" * 64,
+        constraints=constraints,
+        variant=variant,
+        worker_protocol=PROTOCOL_VERSION,
+        in_process_packs=("healthy",),
+        pack_locks=tuple(locks),
+        own_environment_size=1000,
+        catalog_lock=catalog,
+        artifacts=artifacts,
+        source_generation=previous,
+    )
+    if problem is not None and problem != "update":
+        message = {
+            "missing": "selected packs have no dependency lock: other",
+            "variant": "variant wrong-variant does not match",
+            "wheel": "offline pack wheel missing or corrupt",
+        }[problem]
+        with pytest.raises(EnvironmentError, match=message):
+            invoke()
+        assert not (root / "generations/1").exists()
+    else:
+        generation = invoke()
+        target = root / "generations" / str(number)
+        assert generation.drift(target) == ()
+        assert not (target / "packs/healthy/bin").exists()
+        assert venv_python(target / "packs/other").is_file()
+        for name in ("healthy", "other"):
+            assert PackLock.read(target / "packs" / name / "pack-lock.json").packages == ()
+            manifest = load_manifest(target / "pack-sources" / name / "dinkster-pack.toml")
+            prepared = read_catalog(manifest)
+            assert prepared is not None
+            assert set(prepared.schemas) == {f"{name}.doubler", f"{name}.tagger"}
+        assert sum("dinkster-schema-catalog" in name for name, _ in generation.files) == 2
+    assert read_current(root) == (1 if problem == "update" else None)
+
+
 def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_active(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -233,6 +361,24 @@ def test_offline_generations_share_unchanged_wheels_and_failed_sync_preserves_ac
             build(6, "2.0", second_hash, source_inputs=True)
     assert read_current(root) == 1
     assert not (root / "generations" / "6").exists()
+
+    def missing_lock(command, *args, **kwargs):
+        if command[1:4] == ["-B", "-m", "dinkster.generation_packs"]:
+            target = Path(command[command.index("--generation") + 1])
+            (target / "dinkster.lock").write_text("admitted source inventory\n")
+            return subprocess.CompletedProcess(
+                command, 0, '{"packs": ["example"], "errors": []}', ""
+            )
+        return run(command, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(subprocess, "run", missing_lock)
+        with pytest.raises(
+            EnvironmentError, match="selected packs have no dependency lock: example"
+        ):
+            build(7, "2.0", second_hash, source_inputs=True)
+    assert read_current(root) == 1
+    assert not (root / "generations" / "7").exists()
     assert first.drift(first_dir) == ()
     assert (
         subprocess.check_output([str(interpreter(first_dir)), "-B", "-c", script]).strip() == b"53"

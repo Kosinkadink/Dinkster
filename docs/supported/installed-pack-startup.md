@@ -50,10 +50,13 @@
   rollback. Setup plans show the selected engine binding, port and ordered GPU
   assignment before confirmation. Releases carrying an official source lock feed
   their verified source ZIPs into target-interpreter admission automatically;
-  missing admission support refuses activation. Automatic default dependency
-  provisioning is not connected yet. Confirmed updates can select another channel
-  or variant, retaining the old selection until candidate health and requirement
-  revalidation succeed. Failure recovers the prior selection and serving engine.
+  missing admission support refuses activation. Selected-variant dependency locks
+  are acquired from release artifacts unless explicitly overridden. Every selected
+  source pack needs a dependency lock, including empty closures; missing local
+  dependency wheels refuse offline construction. Confirmed updates can select
+  another channel or variant, retaining the old selection until candidate health
+  and requirement revalidation succeed. Failure recovers the prior selection and
+  serving engine.
 - Update plans include explicit-addition needs through the
   active generation's read-only planner. Selected release sources must already be
   verified in the local cache, or supplied through explicit catalog/cache inputs.

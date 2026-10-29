@@ -80,7 +80,13 @@ parse the registry lock or extract sources. Target-interpreter source admission
 consumes that lock/cache pair, verifies artifact identity and claims, and refuses
 the whole candidate on errors. Explicit paired `--catalog-lock`/`--artifacts`
 inputs override release-source acquisition. Dependency locks remain distinct from
-source identities and are supplied through the existing pack-provisioning path.
+source identities. Unless repeated `--pack-lock` inputs override bundled selection,
+setup/update acquire the selected release's existing
+`<pack>-<public-version>-<variant>.pack-lock.json` artifact rows, verify size/SHA256
+and retain original bytes under `engines/<release-id>/`. The target provisioner
+owns their schema and conflict checks; dependency installation is offline, from
+verified local wheels only. Every admitted source pack must have a dependency
+record, including empty closures and in-process packs.
 After dependency doctor and source admission, the target interpreter runs
 `dinkster-pack prepare-catalogs --generation ABS` with its in-process pack ids.
 This selects only admitted generation sources and already-provisioned pack

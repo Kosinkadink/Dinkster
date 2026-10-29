@@ -16,6 +16,7 @@ from urllib.parse import quote, urlparse
 
 from blake3 import blake3
 from packaging.utils import InvalidWheelFilename, parse_wheel_filename
+from packaging.version import Version
 
 from .environment_archives import extract_base
 from .environment_constraints import effective_constraints
@@ -326,6 +327,25 @@ def acquire(catalog: EnvironmentCatalog, variant: str, store: Path) -> Path:
     constraints = release_root / f"constraints-{variant}.txt"
     atomic_write(constraints, merged)
     return constraints
+
+
+def acquire_pack_locks(catalog: EnvironmentCatalog, variant: str, store: Path) -> tuple[Path, ...]:
+    """Transport selected dependency locks without interpreting their producer-owned schema."""
+    catalog.channel.base_for(variant)
+    version = Version(cast("str", catalog.engine["version"])).public
+    suffix = f"-{version}-{variant}.pack-lock.json"
+    release = store / "engines" / catalog.channel.engine_release[7:]
+    return tuple(
+        fetch_artifact(
+            catalog.engine_sources,
+            cast("str", row["name"]),
+            release / cast("str", row["name"]),
+            cast("str", row["sha256"]),
+            cast("int", row["size"]),
+        )
+        for row in artifact_rows(catalog.engine["artifacts"], "name")
+        if cast("str", row["name"]).endswith(suffix)
+    )
 
 
 def acquire_sources(

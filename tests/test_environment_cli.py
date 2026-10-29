@@ -419,7 +419,13 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
     root.mkdir()
     (root / "queue.json").write_text('{"running": [], "queued": []}')
     failed_store = tmp_path / "failed-store"
-    engine_wheel = next((mirror / "engine").rglob("*.whl"))
+    selected_release = discover((str(mirror),), "main")
+    engine_wheel = (
+        mirror
+        / "engine"
+        / selected_release.channel.engine_release[7:]
+        / "fixture_engine-1.0-py3-none-any.whl"
+    )
     original_wheel = engine_wheel.read_bytes()
     engine_wheel.write_bytes(b"damaged release wheel")
     failed_arguments = list(arguments)

@@ -229,7 +229,9 @@ replaced by `--lock`; the adapter owns lock parsing and provisioning. The caller
 supplies variant, worker protocol, measured own-environment size and shared store
 paths explicitly. A nonzero exit, conflicting pack, doctor drift or malformed
 single-object JSON result fails construction and removes the target. Supervisor
-never imports the engine's worker packages to perform these operations.
+never imports the engine's worker packages to perform these operations. The
+provisioner receives `--offline`: all extra wheels must already be verified in
+the store, with no fallback to a dependency lock's URL.
 
 When supplied together, `catalog_lock` and `artifacts` run the target interpreter
 with `-B -m dinkster.generation_packs --generation ABS --catalog-lock ABS
@@ -237,7 +239,9 @@ with `-B -m dinkster.generation_packs --generation ABS --catalog-lock ABS
 admission owns the existing registry lock and digest-named archives; the caller
 does not parse a second catalog. Success requires a single object containing
 distinct pack ids, an empty errors array, zero exit status and the written
-`dinkster.lock`. An admission error, malformed result or missing inventory removes
+`dinkster.lock`. Every admitted pack must appear in dependency doctor's result,
+including packs with an empty extra dependency closure. An admission error,
+missing dependency coverage, malformed result or missing inventory removes
 the entire target, including any partial sources or interpreter changes. The
 target interpreter then runs `-B -m dinkster.manager --root "" prepare-catalogs
 --generation ABS` with repeated `--in-process-pack` selections. This command
@@ -280,8 +284,13 @@ that lock and the release's ZIP payloads with the manifest's SHA256/size checks,
 then caches each ZIP as `engines/<release-id>/artifacts/<blake3-hex>.zip`.
 It does not parse the registry lock or unpack sources; target-interpreter admission
 still verifies identity and claims before sealing. A missing admission command
-refuses the generation rather than omitting sources. Automatic default dependency
-lock provisioning remains separate from source acquisition.
+refuses the generation rather than omitting sources. Without explicit `--pack-lock`
+inputs, the client acquires release artifacts named
+`<pack>-<public-version>-<variant>.pack-lock.json` for its selected variant with
+manifest SHA256/size verification. It stores original bytes under
+`engines/<release-id>/` and passes their paths to the existing provisioner.
+Explicit lock inputs replace this bundled selection; no supervisor dependency
+parser or resolver is involved.
 Update plans with registered workflows or explicit additions call the active generation's
 `dinkster.workflow_requirements project-plan` adapter. Explicit catalog/cache
 inputs take precedence; otherwise selected-release sources must already exist in

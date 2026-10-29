@@ -13,7 +13,12 @@ from pathlib import Path
 import py7zr
 import pytest
 from dinkster_registry import LockedPack, Lockfile, build_artifact
-from dinkster_supervisor.environment_artifacts import acquire, acquire_sources, discover
+from dinkster_supervisor.environment_artifacts import (
+    acquire,
+    acquire_pack_locks,
+    acquire_sources,
+    discover,
+)
 from dinkster_supervisor.environment_channels import write_channel
 from dinkster_supervisor.environment_downloads import DownloadError
 from dinkster_supervisor.environment_state import EnvironmentError
@@ -127,7 +132,9 @@ def _mirror(
     return base, engine, channel
 
 
-def _release_sources(mirror: Path) -> tuple[Path, dict[str, bytes]]:
+def _release_sources(
+    mirror: Path, *, dependency_locks: dict[str, bytes] | None = None
+) -> tuple[Path, dict[str, bytes]]:
     channel_path = mirror / "channels/main.json"
     channel = json.loads(channel_path.read_bytes())
     previous = mirror / "engine" / channel["engine"]["release"][7:]
@@ -146,6 +153,7 @@ def _release_sources(mirror: Path) -> tuple[Path, dict[str, bytes]]:
         entries.append(LockedPack(name, "1.0", identity, "dinkster", (name,)))
         payloads[archive.name] = archive.read_bytes()
     payloads["official-packs.lock"] = (Lockfile.of(entries).record_json() + "\n").encode()
+    payloads.update(dependency_locks or {})
     engine["artifacts"].extend(_artifact(name, data) for name, data in payloads.items())
     data = _json(engine) + b"\n"
     identity = hashlib.sha256(data).hexdigest()
@@ -160,6 +168,40 @@ def _release_sources(mirror: Path) -> tuple[Path, dict[str, bytes]]:
     ]
     channel_path.write_bytes(_json(channel))
     return release, payloads
+
+
+def test_acquires_only_selected_variant_dependency_locks(tmp_path: Path):
+    from dinkster_workers.pack_lock import PackLock
+
+    mirror, store = tmp_path / "mirror", tmp_path / "store"
+    _mirror(mirror)
+    payloads = {}
+    for pack, variant in (
+        ("first-pack", "fixture-cpu"),
+        ("second-pack", "fixture-cpu"),
+        ("first-pack", "win-cpu"),
+    ):
+        path = tmp_path / f"{pack}-0.4.0.dev1-{variant}.pack-lock.json"
+        PackLock(pack, variant, ">=3.12", (), (), ()).write(path)
+        payloads[path.name] = path.read_bytes()
+    release, _ = _release_sources(mirror, dependency_locks=payloads)
+    (release / "first-pack-0.4.0.dev1-win-cpu.pack-lock.json").write_bytes(b"unselected corruption")
+    catalog = discover((str(mirror),), "main")
+    acquired = acquire_pack_locks(catalog, "fixture-cpu", store)
+    assert {path.name for path in acquired} == {
+        "first-pack-0.4.0.dev1-fixture-cpu.pack-lock.json",
+        "second-pack-0.4.0.dev1-fixture-cpu.pack-lock.json",
+    }
+    for path in acquired:
+        assert path.read_bytes() == payloads[path.name]
+        assert PackLock.read(path).packages == ()
+    assert not list(store.rglob("*win-cpu.pack-lock.json"))
+    acquired[0].write_bytes(b"damaged cache")
+    acquire_pack_locks(catalog, "fixture-cpu", store)
+    assert acquired[0].read_bytes() == payloads[acquired[0].name]
+    (release / acquired[0].name).write_bytes(b"damaged selected release")
+    with pytest.raises(DownloadError):
+        acquire_pack_locks(catalog, "fixture-cpu", tmp_path / "fresh-store")
 
 
 def test_acquires_release_sources_into_the_existing_artifact_identity_cache(tmp_path: Path):

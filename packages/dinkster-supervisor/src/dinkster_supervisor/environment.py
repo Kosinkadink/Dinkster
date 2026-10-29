@@ -10,7 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
-from .environment_artifacts import acquire, acquire_sources, discover
+from .environment_artifacts import acquire, acquire_pack_locks, acquire_sources, discover
 from .environment_collection import (
     cleanup_collection,
     collect_generations,
@@ -349,6 +349,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     acquired_sources = acquire_sources(catalog, store)
                     if acquired_sources is not None:
                         catalog_lock, source_artifacts = acquired_sources
+                pack_locks = tuple(args.pack_lock) or acquire_pack_locks(catalog, variant, store)
                 measured = sum(
                     path.stat().st_size
                     for path in (store / "bases" / base_id[7:] / "python").rglob("*")
@@ -366,10 +367,11 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     worker_protocol=cast("int", base["workerProtocol"]),
                     source_generation=(
                         previous_root
-                        if previous_root is not None and (previous_root / "packs").exists()
+                        if previous_root is not None
+                        and ((previous_root / "packs").exists() or pack_locks or in_process)
                         else None
                     ),
-                    pack_locks=tuple(args.pack_lock),
+                    pack_locks=pack_locks,
                     in_process_packs=in_process,
                     own_environment_size=measured,
                     catalog_lock=catalog_lock,

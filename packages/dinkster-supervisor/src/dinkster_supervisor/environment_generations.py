@@ -208,7 +208,7 @@ def project_operation(
     return document
 
 
-def stage_pack_sources(generation: Path, *, catalog_lock: Path, artifacts: Path) -> None:
+def stage_pack_sources(generation: Path, *, catalog_lock: Path, artifacts: Path) -> tuple[str, ...]:
     """Run source admission in the unsealed target, never in the supervisor interpreter."""
     if not all(path.is_absolute() for path in (generation, catalog_lock, artifacts)):
         raise EnvironmentError("source staging requires absolute generation, lock and cache paths")
@@ -252,6 +252,7 @@ def stage_pack_sources(generation: Path, *, catalog_lock: Path, artifacts: Path)
         raise EnvironmentError(f"pack source staging refused: {details}")
     if not (generation / "dinkster.lock").is_file():
         raise EnvironmentError("pack source staging did not write the installed source lock")
+    return tuple(cast("list[str]", names))
 
 
 def prepare_pack_catalogs(generation: Path, in_process_packs: tuple[str, ...]) -> None:
@@ -374,11 +375,12 @@ def build_generation(
         result = subprocess.run(command, env=environment, capture_output=True, text=True)
         if result.returncode:
             raise EnvironmentError(f"offline generation sync failed: {result.stderr.strip()}")
+        provisioned: set[str] = set()
         if source_generation is not None or pack_locks or in_process_packs:
             if own_environment_size is None:
                 raise EnvironmentError("pack planning requires the measured own-environment size")
             for operation in ("preflight", "rebuild", "doctor"):
-                pack_operation(
+                provision = pack_operation(
                     operation,
                     generation=destination,
                     store=store,
@@ -388,11 +390,22 @@ def build_generation(
                     source_generation=source_generation if operation != "doctor" else None,
                     locks=pack_locks if operation != "doctor" else (),
                     in_process_packs=in_process_packs,
-                    offline=repair,
+                    offline=True,
                     uv=uv,
                 )
+                provisioned = {
+                    cast("str", row["pack"])
+                    for row in cast("list[dict[str, object]]", provision["packs"])
+                }
         if catalog_lock is not None and artifacts is not None:
-            stage_pack_sources(destination, catalog_lock=catalog_lock, artifacts=artifacts)
+            selected = stage_pack_sources(
+                destination, catalog_lock=catalog_lock, artifacts=artifacts
+            )
+            missing = set(selected) - provisioned
+            if missing:
+                raise EnvironmentError(
+                    f"selected packs have no dependency lock: {', '.join(sorted(missing))}"
+                )
             prepare_pack_catalogs(destination, in_process_packs)
         if prepare_packs is not None:
             prepare_packs(destination)
