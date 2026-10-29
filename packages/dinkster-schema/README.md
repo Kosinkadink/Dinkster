@@ -69,6 +69,14 @@ variables. `TypeExpr.tuple_from_family("items")` on an output projects that
 family's effective member types in document order. Ordinary families retain
 shared variables and therefore homogeneous list binding.
 
+`InputFamilySpec(optional_after_minimum=True)` requires a single input template
+and either `member_prefix` or `member_names`. Members use canonical numeric
+suffix order or declared name order. A required template requires positions
+below `min_members`, even if their stored keys are missing; later members are
+optional. An optional template never creates required inputs. The wire field
+is `optionalAfterMinimum`. Without this opt-in, families retain document order
+and uniform template requiredness.
+
 `TypeExpr.tuple_element("value", "index")` projects an output from a named
 tuple input and a document-stored integer selector. Elaboration uses a missing
 selector's integer default; a non-integer stored selector is rejected. Type

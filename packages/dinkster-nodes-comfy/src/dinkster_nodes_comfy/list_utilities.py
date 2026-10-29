@@ -34,6 +34,7 @@ class CreateList(Node):
                     min_members=1,
                     max_members=10,
                     member_prefix="input",
+                    optional_after_minimum=True,
                 ),
             ),
             outputs=(OutputSpec("list", _ITEMS),),
