@@ -32,6 +32,9 @@
   and recorded in-process or isolated hosting. Retained generations keep their
   own pack selection for rollback. Missing interpreters or changed source
   artifacts fail startup rather than falling back to installed distributions.
+- A target-interpreter command stages sources from an existing registry lock
+  and digest-addressed local archives, without network access or dependency
+  resolution. JSON results report admission failures before activation.
 - Managed workflow plans default to the selected generation's recorded variant.
   A conflicting launch variant refuses startup; an explicit request variant
   remains a read-only compatibility comparison, not an environment switch.
