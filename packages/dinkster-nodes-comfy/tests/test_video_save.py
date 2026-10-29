@@ -29,6 +29,8 @@ from dinkster_schema import elaborate
 
 from dinkster.compose import PackSpec, ServingComposer
 
+pytestmark = pytest.mark.usefixtures("saved_artifact_context")
+
 
 def _mounts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path, Path]:
     default, alternate, readonly = (

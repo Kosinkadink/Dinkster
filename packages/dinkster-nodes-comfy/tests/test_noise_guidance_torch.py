@@ -196,6 +196,7 @@ def test_noise_guidance_runs_twice_in_both_ordinary_manifest_hosts(
             (tmp_path / "noise_guidance_fixture.py").write_text(
                 "from test_noise_guidance_torch import FIXTURE_NODES\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, *FIXTURE_NODES)\n",
                 encoding="ascii",
             )
@@ -204,6 +205,10 @@ def test_noise_guidance_runs_twice_in_both_ordinary_manifest_hosts(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["noise-guidance-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "noise_guidance_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "noise_guidance_fixture:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "noise_guidance_fixture:register_inference_types",

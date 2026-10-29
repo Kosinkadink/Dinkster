@@ -9,13 +9,60 @@ on:
       - scripts/setup_envs.ps1
       - tools/minimax_h3_multigpu_receipt.py
       - tests/test_minimax_h3_multigpu_receipt.py
+      - packages/dinkster-nodes-comfy/tests/test_model_advanced_torch.py
+      - packages/dinkster-nodes-comfy/tests/test_void_sampler_torch.py
       - pyproject.toml
       - uv.lock
+      - packages/dinkster-video/pyproject.toml
 
 permissions:
   contents: read
 
 jobs:
+  opentimelineio:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install the locked released OpenTimelineIO wheel
+        run: uv sync --locked --package dinkster-video --no-dev
+        env:
+          UV_NO_BUILD_PACKAGE: opentimelineio
+      - name: Verify released native extension and external timelines
+        shell: bash
+        run: |
+          uv run --no-sync python - <<'PY'
+          import importlib.metadata
+          from pathlib import Path
+
+          import opentimelineio as otio
+          import opentimelineio._otio
+          from dinkster_values.video_document import decode_document, encode_document
+          from dinkster_video.document import export_otio, import_otio
+
+          assert importlib.metadata.version('opentimelineio') == '0.19.0.dev1'
+          for name in ['effects', 'clip_example', 'nested_example', 'multiple_track']:
+              text = (Path('tests/fixtures/otio') / f'{name}.otio').read_text()
+              original = otio.adapters.read_from_string(text, 'otio_json')
+              imported = import_otio(text)
+              assert imported['sources'] == {}, name
+              exported = export_otio(decode_document(encode_document(imported)))
+              actual = otio.adapters.read_from_string(exported, 'otio_json')
+              assert original.is_equivalent_to(actual), name
+              print(f'{name}: released wheel external timeline roundtrip passed')
+          PY
+
   receipt:
     strategy:
       fail-fast: false
@@ -26,6 +73,8 @@ jobs:
     env:
       OMP_NUM_THREADS: "4"
       MKL_NUM_THREADS: "4"
+      ATEN_CPU_CAPABILITY: avx2
+      ONEDNN_MAX_CPU_ISA: AVX2
     steps:
       - uses: actions/checkout@v4
         with:
@@ -60,3 +109,12 @@ jobs:
           assert torchvision.ops.nms(boxes, scores, 0.2).tolist() == [0, 2]
           print('Constrained CPU torch/torchvision imports and NMS passed')
           PY
+      - name: Test public CPU sampler and attention contracts
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          uv pip install --python .venv-torch/bin/python \
+            --constraint "$RUNNER_TEMP/torch-constraints.txt" -e . -e packages/dinkster-nodes-comfy
+          .venv-torch/bin/python -m pytest -q \
+            packages/dinkster-nodes-comfy/tests/test_void_sampler_torch.py \
+            packages/dinkster-nodes-comfy/tests/test_model_advanced_torch.py

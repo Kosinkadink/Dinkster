@@ -20,6 +20,9 @@
 - Qwen Image, Ming, MageFlow, JoyImage, Boogu and Fibo 2 image conditioning
   retain model-specific reference sizing, prompt templates and prior latent
   references. Qwen Image 2.1 also supports precomputed reference caches.
+  JoyImage accepts up to six optional image references, including authored
+  image sockets left unconnected. Boogu's sixteen named image references
+  also allow authored sockets to remain unconnected.
 - Z-Image Omni conditioning combines up to three vision/image references,
   optional image resizing and VAE latents with its image prompt template.
 - PhotoMaker loads identity checkpoints from admitted assets and fuses identity

@@ -35,6 +35,7 @@ from .bernini_conditioning import BERNINI_CONDITIONING_NODES
 from .boogu_encoders import TextEncodeBooguEdit
 from .cache import CACHE_NODES
 from .camera_angle import CameraAngle
+from .camera_info import CreateCameraInfo
 from .cfg_guidance import CFG_GUIDANCE_NODES
 from .cfg_guiders import CFG_GUIDER_NODES
 from .checkpoint_save import ImageOnlyCheckpointSave
@@ -59,6 +60,7 @@ from .fibo2_encoders import TextEncodeFibo2
 from .flux_conditioning import FLUX_CONDITIONING_NODES
 from .flux_image_layout import FLUX_IMAGE_LAYOUT_NODES
 from .freeu import FREEU_NODES
+from .gaussian_splat import GetSplatCount
 from .gligen_conditioning import GLIGENTextBoxApply
 from .hidream_patches import HiDreamO1PatchSeamSmoothing, HiDreamO1ReferenceImages
 from .hook_checkpoint import HOOK_CHECKPOINT_NODES
@@ -442,6 +444,8 @@ COMFY_NODES = (
     *LORA_FILE_LOADER_NODES,
     CropByBBoxes,
     CameraAngle,
+    CreateCameraInfo,
+    GetSplatCount,
     Trellis2UpsampleStage,
     MoGePanoramaInference,
     MoGeInference,
