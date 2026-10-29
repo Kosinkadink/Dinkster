@@ -62,7 +62,7 @@ def test_produced_scratch_isolates_concurrent_jobs_and_attempts(tmp_path: Path) 
     data = b"identical produced bytes"
     digest = digest_bytes(data)
 
-    async def scenario() -> list[Path]:
+    async def scenario() -> Sequence[Path]:
         ready = [asyncio.Event() for _ in range(3)]
 
         async def publish(index: int, job: str, attempt: int) -> Path:
