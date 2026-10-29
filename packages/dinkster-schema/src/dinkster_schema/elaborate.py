@@ -438,7 +438,7 @@ def _elaborate_family(
                     else f"{family.member_prefix}{position}"
                 )
                 positions[suffix] = position
-        suffixes = sorted(positions, key=positions.__getitem__)
+        suffixes = list(positions)
     if len(suffixes) > MAX_FAMILY_MEMBERS:
         raise ElaborationError(
             f"input family '{path}' has {len(suffixes)} members, budget is {MAX_FAMILY_MEMBERS}"
