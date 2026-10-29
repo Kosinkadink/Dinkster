@@ -17,13 +17,12 @@ from dinkster_assets import (
 )
 from dinkster_assets.declared import offer_produced_outputs
 from dinkster_assets.produced import ProducedAssetInventory
+from dinkster_assets.value import value_asset_references
 from dinkster_values import (
-    ASSET_BASE_TYPE,
     MEBIBYTE,
     Value,
     default_decode,
     iter_value_tree,
-    parse_asset_type_id,
 )
 
 _COPY_BYTES = MEBIBYTE
@@ -86,31 +85,9 @@ def result_asset_digests(header: Mapping[str, object], blobs: Sequence[bytes]) -
     return digests
 
 
-def _source_references(
-    values: Mapping[str, Value], *, include_asset_inputs: bool = False
-) -> dict[str, AssetRef]:
-    references: dict[str, AssetRef] = {}
-    for value in values.values():
-        for child in iter_value_tree(value):
-            refs = list(_references(child.meta.get("asset_refs", [])))
-            if include_asset_inputs and (
-                child.type_id == ASSET_BASE_TYPE or parse_asset_type_id(child.type_id) is not None
-            ):
-                wire = child.meta.entries
-                if wire.get("verification") == "unverified":
-                    LocalAssetRef.from_wire(wire)
-                else:
-                    refs.append(AssetRef.from_wire(wire))
-            for ref in refs:
-                previous = references.setdefault(ref.digest, ref)
-                if previous.size != ref.size:
-                    raise AssetError("source references disagree about byte size")
-    return references
-
-
 def offer_source_assets(outputs: Mapping[str, Value]) -> None:
     """Record publication handoff before transfer or direct engine adoption."""
-    offer_produced_outputs(_source_references(outputs))
+    offer_produced_outputs(value_asset_references(outputs, include_asset_values=False))
 
 
 def source_asset_files(
@@ -145,9 +122,9 @@ class ProducedAssetAuthority:
         transferred: AssetResolver | None = None,
         inputs: Mapping[str, Value] | None = None,
     ) -> None:
-        incoming = _source_references(inputs or {}, include_asset_inputs=True)
+        incoming = value_asset_references(inputs or {})
         offer_source_assets(outputs)
-        for ref in _source_references(outputs).values():
+        for ref in value_asset_references(outputs, include_asset_values=False).values():
             if ref.digest in incoming:
                 if incoming[ref.digest].size != ref.size:
                     raise AssetError("source references disagree about byte size")

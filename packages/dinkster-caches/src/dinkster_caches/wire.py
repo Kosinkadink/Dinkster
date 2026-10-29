@@ -25,6 +25,8 @@ from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
+from dinkster_assets import AssetError
+from dinkster_assets.value import metadata_asset_references
 from dinkster_protocol import CachedResult, ExpandedReturn
 from dinkster_protocol.result_document import return_unit_from_document, return_unit_to_document
 from dinkster_values import (
@@ -187,6 +189,45 @@ def iter_manifest_payloads(manifest: Mapping[str, Any]) -> Iterator[Mapping[str,
             stack.extend(cast("Sequence[Any]", elements))
         elif "digest" in entry_map:
             yield entry_map
+
+
+def manifest_asset_references(manifest: Mapping[str, object]) -> frozenset[str]:
+    """External asset roots in persisted values; malformed state refuses collection.
+
+    Payload digests belong to the cache's own CAS, not the asset vault. Read
+    only the value envelopes, including container metadata and nested leaves.
+    """
+    if type(manifest.get("version")) is not int or manifest["version"] not in _ACCEPTED_VERSIONS:
+        raise AssetError("cache reference manifest version is unavailable")
+    outputs = manifest.get("outputs")
+    if not isinstance(outputs, Mapping):
+        raise AssetError("cache reference outputs are unavailable")
+    stack = list(cast("Mapping[str, object]", outputs).values())
+    references: dict[str, int] = {}
+    while stack:
+        raw = stack.pop()
+        if not isinstance(raw, Mapping):
+            raise AssetError("cache reference value is invalid")
+        value = cast("Mapping[str, object]", raw)
+        type_id, metadata = value.get("typeId"), value.get("metaB64")
+        if not isinstance(type_id, str) or not isinstance(metadata, str):
+            raise AssetError("cache reference metadata is unavailable")
+        try:
+            decoded = default_decode(base64.b64decode(metadata, validate=True))
+        except Exception as exc:
+            raise AssetError("cache reference metadata is unreadable") from exc
+        if not isinstance(decoded, Mapping):
+            raise AssetError("cache reference metadata must be a mapping")
+        for ref in metadata_asset_references(type_id, cast("Mapping[str, object]", decoded)):
+            previous = references.setdefault(ref.digest, ref.size)
+            if previous != ref.size:
+                raise AssetError("source references disagree about byte size")
+        if "elements" in value:
+            elements = value["elements"]
+            if not isinstance(elements, list):
+                raise AssetError("cache reference elements must be a list")
+            stack.extend(cast("list[object]", elements))
+    return frozenset(references)
 
 
 async def _value_from_wire(

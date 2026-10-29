@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable, Iterable, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Mapping
+from contextlib import asynccontextmanager
 from typing import cast
 
+from dinkster_assets.value import value_asset_references
 from dinkster_memory import PressureSignal, system_memory_snapshot
 from dinkster_protocol import CachedResult, CacheKey
 from dinkster_values import (
@@ -78,6 +80,16 @@ class MemoryLRUCache:
     @property
     def max_bytes(self) -> int:
         return self._max_bytes
+
+    @asynccontextmanager
+    async def hold_asset_references(self) -> AsyncGenerator[frozenset[str]]:
+        """Keep admissions and spill mutations outside a retained-root inspection."""
+        async with self._mutation_lock:
+            yield frozenset(
+                digest
+                for entry in self._entries.values()
+                for digest in value_asset_references(entry)
+            )
 
     def set_persistence_handler(
         self, handler: Callable[[CacheKey, Mapping[str, Value], bool], Awaitable[bool]]
