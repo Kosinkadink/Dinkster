@@ -104,9 +104,12 @@ from dinkster_inference import (
     sampling_execution_context,
     sampling_sigmas,
 )
+from dinkster_inference.component_catalog import default_component_registry
+from dinkster_inference.component_checkpoint import ComponentCheckpointPlan
 from dinkster_inference.runtime import (
     AssemblyRegistration,
     NativeAssemblyPlan,
+    NativeAssemblyResolution,
 )
 from dinkster_inference_torch import (
     AssembledFlux,
@@ -497,6 +500,56 @@ def test_load_runtime_uses_family_from_active_registry(
             assembly_registry=assembly_registry,
             family_registry=family_registry,
             registry_token="active-family",
+        )
+        is runtime
+    )
+
+
+@pytest.mark.parametrize(
+    ("descriptor_id", "roles"),
+    (
+        ("dinkster.ltxv", ("diffusion", "t5xxl", "vae")),
+        ("dinkster.lumina2", ("diffusion", "gemma2_2b", "vae")),
+    ),
+)
+def test_load_runtime_preserves_component_checkpoint_derived_family(
+    runtime: FluxRuntime,
+    monkeypatch: pytest.MonkeyPatch,
+    descriptor_id: str,
+    roles: tuple[str, ...],
+) -> None:
+    descriptor = default_component_registry().get(descriptor_id)
+    assert descriptor is not None
+    plan = ComponentCheckpointPlan(
+        descriptor,
+        tuple((role, component_plan(role, object())) for role in roles),
+    )
+    family_registry: Registry[ModelFamily] = Registry()
+    family_registry.register(plan.family)
+
+    def planned(**_options: object) -> NativeAssemblyPlan:
+        return plan
+
+    registration = AssemblyRegistration(
+        descriptor_id,
+        planned,
+        f"{__name__}:synthetic_loader",
+    )
+
+    def resolve(*_args: object, **_kwargs: object) -> NativeAssemblyResolution:
+        return NativeAssemblyResolution(registration, plan)
+
+    def load(planned: NativeAssemblyPlan, **_kwargs: object) -> FluxRuntime:
+        assert planned is plan
+        return runtime
+
+    monkeypatch.setattr(wiring, "resolve_native_assembly", resolve)
+    monkeypatch.setattr(sys.modules[__name__], "synthetic_loader", load)
+
+    assert (
+        load_runtime(
+            FakeSource(Path(f"/fake/{descriptor_id}.safetensors"), {}),
+            family_registry=family_registry,
         )
         is runtime
     )
