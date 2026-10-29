@@ -43,6 +43,7 @@ from dinkster.installer import (
     lock_git_pack,
     lock_local_pack,
 )
+from tests.fixtures.environments.build import standalone_tree
 
 MANIFEST_TEMPLATE = '[pack]\nname = "{name}"\n\n[pack.entry]\nnodes = "{name}_nodes:NODES"\n'
 
@@ -243,9 +244,12 @@ def test_unsealed_generation_catalog_preparation(tmp_path: Path, problem: str | 
     generation.mkdir()
     stage_generation_packs(generation, Lockfile.of([entry]), {"healthy": archive})
     for environment in {generation / "python", pack_python}:
-        subprocess.run(
-            [sys.executable, "-m", "venv", "--without-pip", str(environment)], check=True
-        )
+        if environment == generation / "python":
+            standalone_tree(environment)
+        else:
+            subprocess.run(
+                [sys.executable, "-m", "venv", "--without-pip", str(environment)], check=True
+            )
         python = (
             interpreter(generation) if environment.name == "python" else venv_python(environment)
         )
@@ -255,6 +259,7 @@ def test_unsealed_generation_catalog_preparation(tmp_path: Path, problem: str | 
                 text=True,
             ).strip()
         )
+        site.mkdir(parents=True, exist_ok=True)
         (site / "fixture.pth").write_text(
             "\n".join(str(Path(path).resolve()) for path in sys.path if path) + "\n"
         )

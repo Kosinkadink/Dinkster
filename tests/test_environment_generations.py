@@ -75,21 +75,23 @@ def _standalone_tree(root: Path) -> None:
 def _assert_shared(first: Path, second: Path) -> None:
     if first.samefile(second):
         return
-    assert sys.platform.startswith("linux"), "expected shared inode or Linux CoW extents"
-    import fcntl
+    if sys.platform == "linux":
+        import fcntl
 
-    extents = []
-    for path in (first, second):
-        # FIEMAP with SYNC: one extent suffices to distinguish clones from plain copies.
-        mapping = bytearray(struct.pack("=QQIIII", 0, 2**64 - 1, 1, 0, 1, 0) + bytes(56))
-        with path.open("rb") as handle:
-            fcntl.ioctl(handle.fileno(), 0xC020660B, mapping, True)
-        assert struct.unpack_from("=I", mapping, 20)[0] == 1
-        physical = struct.unpack_from("=Q", mapping, 40)[0]
-        flags = struct.unpack_from("=I", mapping, 72)[0]
-        assert physical > 0 and flags & 0x2000, "expected a shared CoW extent"
-        extents.append(physical)
-    assert extents[0] == extents[1]
+        extents = []
+        for path in (first, second):
+            # FIEMAP with SYNC: one extent suffices to distinguish clones from plain copies.
+            mapping = bytearray(struct.pack("=QQIIII", 0, 2**64 - 1, 1, 0, 1, 0) + bytes(56))
+            with path.open("rb") as handle:
+                fcntl.ioctl(handle.fileno(), 0xC020660B, mapping, True)
+            assert struct.unpack_from("=I", mapping, 20)[0] == 1
+            physical = struct.unpack_from("=Q", mapping, 40)[0]
+            flags = struct.unpack_from("=I", mapping, 72)[0]
+            assert physical > 0 and flags & 0x2000, "expected a shared CoW extent"
+            extents.append(physical)
+        assert extents[0] == extents[1]
+    else:
+        pytest.fail("expected shared inode or Linux CoW extents")
 
 
 @pytest.mark.parametrize(
