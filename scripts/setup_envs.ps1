@@ -134,7 +134,7 @@ try {
         "safetensors==0.8.0", "sentencepiece==0.2.1", "transformers==5.16.1",
         $KitchenCpuWheel,
         "dinkster-aimdo==0.5.5.post2"
-    ) + (Get-EditableArguments $CpuEditablePackages)
+    ) + (Get-EditableArguments $CpuEditablePackages) + @("-e", $RepoRoot)
     Invoke-Native "uv" (@("pip", "install", "--python", $TorchPython) + $CpuDependencies)
     if ($InstallAcceptance) {
         Invoke-Native "uv" @(
@@ -143,8 +143,9 @@ try {
         )
     }
     Invoke-Native $TorchPython @(
+        "-I",
         "-c",
-        "from importlib.metadata import version; import torch; assert torch.__version__ == '2.13.0+cpu'; assert version('torchvision') == '0.28.0+cpu'; assert version('dinkster-kitchen') == '0.2.35.post1'; assert version('dinkster-aimdo') == '0.5.5.post2'"
+        "from importlib.metadata import version; import site; import dinkster.serve, torch; assert site.ENABLE_USER_SITE is False; assert torch.__version__ == '2.13.0+cpu'; assert version('torchvision') == '0.28.0+cpu'; assert version('dinkster-kitchen') == '0.2.35.post1'; assert version('dinkster-aimdo') == '0.5.5.post2'"
     )
 
     $PythonInclude = (& $TorchPython -c "import sysconfig; print(sysconfig.get_paths()['include'])")
@@ -171,14 +172,14 @@ try {
         Invoke-Native "uv" @(
             "pip", "install", "--python", $GpuPython,
             "--index-url", "https://download.pytorch.org/whl/cu130",
-            "torch==2.13.0+cu130"
+            "torch==2.13.0+cu130", "torchvision==0.28.0+cu130"
         )
         $GpuDependencies = @(
             "pytest", "numpy", "scipy", "torchsde", "tqdm", "pillow", "packaging",
-            "safetensors==0.8.0", "sentencepiece==0.2.1",
+            "safetensors==0.8.0", "sentencepiece==0.2.1", "tokenizers==0.23.1",
             "dinkster-kitchen==0.2.35.post1", "dinkster-aimdo==0.5.5.post2",
             "triton-windows==3.7.1.post27"
-        ) + (Get-EditableArguments $GpuEditablePackages)
+        ) + (Get-EditableArguments $GpuEditablePackages) + @("-e", $RepoRoot)
         Invoke-Native "uv" (@("pip", "install", "--python", $GpuPython) + $GpuDependencies)
         if ($InstallAcceptance) {
             Invoke-Native "uv" @(
@@ -187,8 +188,9 @@ try {
             )
         }
         Invoke-Native $GpuPython @(
+            "-I",
             "-c",
-            "import torch, triton; assert torch.__version__ == '2.13.0+cu130'; assert triton.__version__ == '3.7.1'"
+            "from importlib.metadata import version; import site; import dinkster.serve, torch, triton; assert site.ENABLE_USER_SITE is False; assert torch.__version__ == '2.13.0+cu130'; assert version('torchvision') == '0.28.0+cu130'; assert version('tokenizers') == '0.23.1'; assert triton.__version__ == '3.7.1'"
         )
     }
     else {
