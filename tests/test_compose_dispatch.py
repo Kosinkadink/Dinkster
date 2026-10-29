@@ -3221,6 +3221,11 @@ def test_replica_topology_exposes_one_native_arm_per_requested_device(
     async def scenario() -> None:
         root = tmp_path / "replicas"
         root.mkdir(parents=True)
+        # The three replica indices describe synthetic workers, not physical GPUs.
+        (root / "torch.py").write_text(
+            "raise ModuleNotFoundError('No module named torch', name='torch')\n",
+            encoding="utf-8",
+        )
         manifest = _write_pack(root, "same", "same.echo", body_arm="native")
         composer = ServingComposer(worker_env=_env(root))
         try:

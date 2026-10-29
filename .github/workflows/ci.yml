@@ -40,10 +40,6 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
       - run: uv sync --locked --all-packages
-      - name: Install the pinned inference package
-        run: |
-          requirement=$(uv run --no-sync python tools/verify_pinned_inference.py --print-requirement)
-          uv pip install --python .venv/bin/python --no-deps "$requirement"
       - name: Verify pinned inference APIs
         run: uv run --no-sync python tools/verify_pinned_inference.py
       - run: bash scripts/ci-fast.sh
