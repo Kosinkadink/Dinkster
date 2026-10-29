@@ -4,7 +4,7 @@ process (via a manifest entry), never by the test process's engine side.
 ``res.heavy`` values contain a threading.Lock, so any attempt to move them
 across the boundary with the default pickle codec would raise - the tests
 pass only if the resident codec keeps the object in this process and sends
-a stub instead (the compat pack's MODEL/CLIP/VAE story, minus torch).
+a stub instead, without requiring the tensor runtime.
 """
 
 from __future__ import annotations
@@ -12,9 +12,14 @@ from __future__ import annotations
 import threading
 from collections.abc import Mapping
 
-from dinkster_compat_comfy import register_resident_type
 from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
-from dinkster_values import CORE_BOOLEAN, CORE_INT, CORE_STRING, TypeRegistry
+from dinkster_values import (
+    CORE_BOOLEAN,
+    CORE_INT,
+    CORE_STRING,
+    TypeRegistry,
+    register_resident_type,
+)
 
 HEAVY = TypeExpr.concrete("res.heavy")
 INT = TypeExpr.concrete(CORE_INT)

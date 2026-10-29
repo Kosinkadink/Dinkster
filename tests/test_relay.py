@@ -1,4 +1,4 @@
-"""M3: the isolated-worker memory relay. A governor in the engine process
+"""The isolated-worker memory relay. A governor in the engine process
 governs a ResidentPool living in a worker child: footprints and details
 arrive as pushed snapshots, vram pressure crosses as a live shed round
 trip, and ram pressure crosses only through the two-phase release gate -
@@ -17,7 +17,6 @@ from typing import Any, cast
 
 import pytest
 from dinkster_caches import MemoryLRUCache
-from dinkster_compat_comfy import ResidentPool, resident_resource_id
 from dinkster_engine import Engine, Invocation
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_memory import (
@@ -28,8 +27,9 @@ from dinkster_memory import (
     PressureSignal,
     ReleaseCandidate,
 )
+from dinkster_native.pool import ResidentPool
 from dinkster_schema import Node, NodeSchema, OutputSpec, TypeExpr
-from dinkster_values import ResourcePins, TypeRegistry, register_core_types
+from dinkster_values import ResourcePins, TypeRegistry, register_core_types, resident_resource_id
 from dinkster_workers import DeviceMap, GroupIsolatedWorker, IsolatedWorker, ReleaseGuard
 from dinkster_workers.boundary import ValueCodec, read_frame, write_frame
 from dinkster_workers.execution import current_execution_context

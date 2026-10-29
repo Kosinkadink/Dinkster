@@ -19,9 +19,9 @@ from pathlib import Path
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
-from dinkster_compat_comfy import ResidentPool
 from dinkster_engine import Engine, EventListener
 from dinkster_memory import FullReleaseResult
+from dinkster_native.pool import ResidentPool
 from dinkster_protocol import CompatGateDiagnostic
 from dinkster_schema import ComboWidget, InputSpec, NodeSchema, TypeExpr
 from dinkster_server import STATE_KEY, ChoiceOwnerGone, PackInfo, create_app

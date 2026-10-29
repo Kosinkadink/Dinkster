@@ -30,7 +30,6 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import AssetRef, AssetVault, LibraryStore, digest_bytes
 from dinkster_caches import LayeredCache, MemoryLRUCache
-from dinkster_compat_comfy import ResidentPool
 from dinkster_engine import EngineEvent
 from dinkster_graph import Graph, GraphNode, Link, graph_to_wire
 from dinkster_memory import (
@@ -39,6 +38,7 @@ from dinkster_memory import (
     MemoryGovernor,
     ReportedTelemetry,
 )
+from dinkster_native.pool import ResidentPool
 from dinkster_nodes_foundation import FOUNDATION_NODES
 from dinkster_nodes_image import IMAGE_NODES
 from dinkster_nodes_media_io import MEDIA_IO_NODES
