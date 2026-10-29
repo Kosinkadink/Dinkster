@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 from typing import Any, cast
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 
 from .environment_process import cancel_pending_process, prepare_process, process_state
 from .environment_state import EnvironmentError, Generation, atomic_write, interpreter, read_current
@@ -482,5 +482,6 @@ def _public_row(record: dict[str, object]) -> dict[str, object]:
 
 def _request(url: str, *, method: str = "GET", headers: dict[str, str] | None = None) -> object:
     request = Request(url, method=method, headers=headers or {})
-    with urlopen(request, timeout=2) as response:  # noqa: S310 - loopback URL from validated record
+    # Supervisor identity and shutdown credentials must never traverse an ambient proxy.
+    with build_opener(ProxyHandler({})).open(request, timeout=2) as response:
         return json.loads(response.read().decode("utf-8"))

@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import subprocess
 import sys
+import time
+import zipfile
 from pathlib import Path
 from urllib.request import urlopen
 
+import py7zr
 import pytest
 from dinkster_supervisor.environment_state import Journal, writer_lock
-from test_environment_artifacts import _mirror
-from test_environment_runtime import free_port, make_generation
+from test_environment_artifacts import _artifact, _json, _mirror
+from test_environment_generations import _assert_shared, _standalone_tree, _wheel
+from test_environment_runtime import SERVE, free_port, make_generation
 from test_environment_state import _generation
 
 
@@ -200,3 +206,195 @@ def test_named_engine_requires_port_and_invalid_assignment_does_not_mutate(tmp_p
     assert "GPU ids" in refused["error"]
     assert not (tmp_path / "runtime").exists()
     assert not (tmp_path / ".lock").exists()
+
+
+def _executable_release(mirror: Path, base: dict, version: str, value: int) -> None:
+    scratch = mirror / "build"
+    scratch.mkdir(exist_ok=True)
+    wheel, _ = _wheel(scratch, "fixture_engine", version, value)
+    with zipfile.ZipFile(wheel, "a") as archive:
+        archive.writestr("dinkster/__init__.py", "")
+        archive.writestr("dinkster/serve.py", SERVE)
+    payload = wheel.read_bytes()
+    constraints = (
+        f"fixture-base==1.0 --hash=sha256:{base['wheels'][0]['sha256']}\n"
+        f"fixture-engine=={version} --hash=sha256:{hashlib.sha256(payload).hexdigest()}\n"
+    ).encode()
+    engine = {
+        "format": "dinkster.engine/1",
+        "repository": "Kosinkadink/Dinkster",
+        "tag": "main-" + "d" * 40,
+        "commit": "d" * 40,
+        "version": version,
+        "workerProtocol": 11,
+        "artifacts": [_artifact("constraints.txt", constraints), _artifact(wheel.name, payload)],
+    }
+    data = _json(engine) + b"\n"
+    release = hashlib.sha256(data).hexdigest()
+    directory = mirror / "engine" / release
+    directory.mkdir(parents=True)
+    (directory / "release-manifest.json").write_bytes(data)
+    (directory / "constraints.txt").write_bytes(constraints)
+    (directory / wheel.name).write_bytes(payload)
+    channel = json.loads((mirror / "channels/main.json").read_bytes())
+    channel["engine"] = {
+        "version": version,
+        "release": "sha256:" + release,
+        "locations": [
+            {"type": "mirror", "path": f"engine/{release}/release-manifest.json"},
+        ],
+    }
+    (mirror / "channels/main.json").write_bytes(_json(channel))
+
+
+def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    for variable in ("HTTP_PROXY", "HTTPS_PROXY", "UV_INDEX_URL"):
+        monkeypatch.setenv(variable, "http://127.0.0.1:1/unreachable")
+    mirror, root, store = tmp_path / "mirror", tmp_path / "project", tmp_path / "store"
+    base, _, _ = _mirror(mirror)
+    tree = tmp_path / "standalone"
+    _standalone_tree(tree / "python")
+    (tree / "wheels").mkdir()
+    wheel, _ = _wheel(tree / "wheels", "fixture_base", "1.0", 37)
+    base["wheels"][0].update(_artifact(wheel.name, wheel.read_bytes(), key="filename"))
+    base["python"] = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    identity = {
+        key: value for key, value in base.items() if key not in {"id", "parts", "signature"}
+    }
+    base_id = hashlib.sha256(_json(identity)).hexdigest()
+    directory = mirror / "base/fixture-cpu" / base_id
+    directory.mkdir()
+    part = directory / "base.7z.001"
+    with py7zr.SevenZipFile(part, "w", filters=[{"id": py7zr.FILTER_COPY}]) as archive:
+        archive.writeall(tree / "python", "python")
+        archive.writeall(tree / "wheels", "wheels")
+    base.update(
+        id="sha256:" + base_id, parts=[_artifact(part.name, part.read_bytes(), key="filename")]
+    )
+    (directory / "manifest.json").write_bytes(_json(base))
+    channel_path = mirror / "channels/main.json"
+    channel = json.loads(channel_path.read_bytes())
+    channel["base"]["fixture-cpu"] = {
+        "id": base["id"],
+        "locations": [
+            {"type": "mirror", "path": f"base/fixture-cpu/{base_id}/manifest.json"},
+        ],
+    }
+    channel_path.write_bytes(_json(channel))
+    _executable_release(mirror, base, "1.0", 41)
+    port = free_port()
+    arguments = (
+        "setup",
+        "--mirror",
+        str(mirror),
+        "--channel",
+        "main",
+        "--variant",
+        "fixture-cpu",
+        "--data",
+        str(store),
+        "--port",
+        str(port),
+    )
+    for flags in ((), ("--plan",)):
+        code, planned = _run(root, *arguments, *flags)
+        assert code == 0, planned
+        assert planned["downloadBytes"] > 0 and planned["status"] == "planned"
+        assert not root.exists() and not store.exists() and not (tmp_path / "user-data").exists()
+    root.mkdir()
+    (root / "queue.json").write_text('{"running": [], "queued": []}')
+    code, installed = _run(root, *arguments, "--yes")
+    assert code == 0, installed
+    try:
+        assert installed["current"] == 1 and installed["status"] == "applied"
+        assert installed["url"] == f"http://127.0.0.1:{port}"
+        assert _run(root, "doctor")[1]["status"] == "clean"
+        assert json.loads((store / "projects.json").read_bytes())["projects"] == [str(root)]
+        other = tmp_path / "second project"
+        code, second_plan = _run(
+            other,
+            "setup",
+            "--mirror",
+            str(mirror),
+            "--channel",
+            "main",
+            "--variant",
+            "fixture-cpu",
+            "--plan",
+        )
+        assert code == 0, second_plan
+        assert second_plan["store"] == str(store) and not other.exists()
+        code, conflict = _run(
+            other,
+            "setup",
+            "--mirror",
+            str(mirror),
+            "--channel",
+            "main",
+            "--variant",
+            "fixture-cpu",
+            "--data",
+            str(tmp_path / "another-store"),
+            "--yes",
+        )
+        assert code == 1 and "volume already uses store" in conflict["error"]
+        assert not other.exists() and not (tmp_path / "another-store").exists()
+        _executable_release(mirror, base, "2.0", 59)
+        (root / "queue.json").write_text('{"running": ["real-job"], "queued": []}')
+        before = sorted(path.name for path in (root / "journal").iterdir())
+        code, busy = _run(root, "update", "--yes")
+        assert code == 1 and "Finish or cancel" in busy["error"]
+        assert sorted(path.name for path in (root / "journal").iterdir()) == before
+        assert (root / "current").read_text() == "1\n"
+        (root / "queue.json").write_text('{"running": [], "queued": []}')
+        script = """
+import os
+import sys
+from dinkster_supervisor import environment
+def interrupt(**kwargs):
+    os._exit(73)
+environment.build_generation = interrupt
+sys.argv = ['dinkster-env', '--root', sys.argv[1], 'update', '--yes', '--json']
+environment.main()
+"""
+        interrupted = subprocess.run([sys.executable, "-c", script, str(root)], timeout=30)
+        assert interrupted.returncode == 73
+        journals = sorted((root / "journal").glob("*.json"))
+        assert Journal.read(journals[-1]).stage == "building"
+        assert (root / "current").read_text() == "1\n"
+        started = time.monotonic()
+        code, updated = _run(root, "update", "--yes")
+        elapsed = time.monotonic() - started
+        assert code == 0, updated
+        assert Journal.read(journals[-1]).stage == "rolled-back"
+        assert updated["current"] == 2 and updated["url"] != installed["url"]
+        first, second = (root / "generations" / str(n) for n in (1, 2))
+        _assert_shared(next(first.rglob("fixture_base.py")), next(second.rglob("fixture_base.py")))
+        python = second / "python" / ("python.exe" if os.name == "nt" else "bin/python3")
+        assert (
+            subprocess.check_output(
+                [str(python), "-B", "-c", "import fixture_engine; print(fixture_engine.VALUE)"]
+            ).strip()
+            == b"59"
+        )
+        retained = python.stat()
+        code, rolled_back = _run(root, "rollback", "--yes")
+        assert code == 0, rolled_back
+        assert rolled_back["current"] == 1 and first.exists() and second.exists()
+        assert python.stat() == retained
+        assert _run(root, "doctor")[1]["status"] == "clean"
+        _executable_release(mirror, base, "3.0", 61)
+        engine = json.loads((mirror / "channels/main.json").read_bytes())["engine"]["release"][7:]
+        (mirror / "engine" / engine / "fixture_engine-3.0-py3-none-any.whl").write_bytes(b"corrupt")
+        code, refused = _run(root, "update", "--yes")
+        assert code == 1 and refused["status"] == "error"
+        assert (root / "current").read_text() == "1\n" and not (root / "generations/3").exists()
+        assert _run(root, "status")[1]["engines"][0]["state"] == "ready"
+        assert Journal.read(sorted((root / "journal").glob("*.json"))[-1]).stage == "rolled-back"
+        print(f"fixture update including sync/health took {elapsed:.3f}s")
+    finally:
+        assert _run(root, "stop", "--yes")[0] == 0

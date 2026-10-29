@@ -239,6 +239,36 @@ reconstruction or extraction removes temporary archives and staging trees.
 
 ## Environment queries and runtime
 
+`setup --mirror PATH --channel main --variant VARIANT --data PATH` plans a first
+generation; `update` plans the configured channel's next generation. Both require
+`--yes` or terminal confirmation before creating project/store state or acquiring
+payloads. `--plan` and unconfirmed JSON calls create nothing. Confirmed calls
+write a journal before registration/acquisition, sync offline, check the candidate
+engine's health, publish `current`, then stop the old engine. Update preserves
+existing engine bindings; setup accepts `--engine`, `--port` and repeatable `--gpu`.
+Failed acquisition/build/startup retains the previous serving tree and a rolled-back
+journal. A confirmed retry first recovers interrupted activation.
+
+Existing per-variant dependency locks can be supplied with repeated `--pack-lock`,
+and in-process placement with repeated `--in-process-pack`. Paired absolute
+`--catalog-lock` and `--artifacts` inputs feed verified source admission in the
+target interpreter. Automatic release source-payload acquisition is not connected
+yet. Projects with registered workflows/additions and channel/variant changes
+currently refuse rather than bypass their pending combined-execution/migration
+paths. These commands are not a complete released-engine setup claim.
+
+`stores.json` lives under `dinkster/` in `LOCALAPPDATA` on Windows or
+`XDG_DATA_HOME` (default `~/.local/share`) on Linux. It has
+`{format: "dinkster.stores/1", volumes: {"<st_dev>": "<absolute data path>"}}`.
+The first plan defaults to `dinkster-data` beside the project; later projects on
+the same volume reuse the registered store. A conflicting `--data`, cross-volume
+store or overlapping project/data paths is refused. The store's `projects.json`
+has `{format: "dinkster.store/1", projects: ["<absolute project root>"]}`.
+Registry, store and project writers hold OS locks while registering references.
+Failed installs may retain these references for safe diagnosis and retry.
+Identity/health/shutdown requests use direct loopback connections, never inherited
+HTTP proxies.
+
 `dinkster-env --root <absolute-path> catalog|status|doctor --json` emits one
 `dinkster.environment-result/1` object with `operation`, `root`, `current`,
 `plan` and `status`. Catalog accepts repeatable `--mirror` and `--channel`

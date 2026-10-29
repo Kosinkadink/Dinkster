@@ -100,6 +100,17 @@ objects are UTF-8, ASCII-escaped, sorted by key and newline-terminated. These
 records are shared by the command-line client, Desktop and pack provisioning;
 none of those clients defines a second generation format.
 
+The per-user `dinkster/stores.json` lives below `LOCALAPPDATA` on Windows or
+`XDG_DATA_HOME` (default `~/.local/share`) on Linux. Its format is
+`dinkster.stores/1`, with `volumes` mapping decimal platform `st_dev` identities
+to absolute data-directory paths. An unregistered volume defaults to
+`dinkster-data` beside the project. An explicit conflicting store, another
+volume or overlapping project/store paths is refused. A store's `projects.json`
+uses `dinkster.store/1` and a sorted `projects` array of absolute project roots.
+These references are atomically updated under registry/store/project OS locks
+after confirmation and journal publication. Failed installs may retain references
+for recovery and safe garbage collection; they do not authorize data deletion.
+
 ## Channels
 
 `channels/<name>.json` on the mirror:

@@ -37,6 +37,10 @@
 - Generation construction admits verified pack archives before sealing sources.
   A rejected source discards the incomplete target without changing the active
   generation or its running engine.
+- The environment CLI can acquire an explicit mirror selection, build an offline
+  generation and health-check it before activation, with confirmation and retained
+  rollback. Registered workflow/addition execution and automatic release source
+  acquisition are not connected yet; channel or variant migration is refused.
 - The default local launcher prepares missing or stale catalogs before binding,
   then serves the browser application and engine API from one loopback origin.
 - Released engines discover the installed frontend wheel without a frontend
