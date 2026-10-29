@@ -166,7 +166,7 @@ def test_positional_family_validation_requires_first_slots_not_tail() -> None:
         return [
             d.message
             for d in validate(graph, {schema.node_type: schema}, ["n"])
-            if d.code == "missing-input"
+            if d.severity == "error"
         ]
 
     assert (
@@ -195,6 +195,8 @@ def test_positional_family_allows_empty_optional_template(minimum: int) -> None:
     )
     assert elaborate(schema, []).inputs == ()
     assert not elaborate(schema, ["pieces.piece10"]).inputs[0].required
+    graph = Graph(nodes={"n": GraphNode(schema.node_type, {})})
+    assert validate(graph, {schema.node_type: schema}, ["n"]) == []
 
 
 @pytest.mark.parametrize("declaration", ["missing-vocabulary", "grouped", "not-bool"])
@@ -210,7 +212,9 @@ def test_positional_family_rejects_invalid_declarations(declaration: str) -> Non
         )
 
 
-@pytest.mark.parametrize("suffix", ["piece01", "piece-1", "other2", "piece99"])
+@pytest.mark.parametrize(
+    "suffix", ["piece01", "piece-1", "other2", "piece99", "piece" + "9" * 4301]
+)
 def test_positional_family_rejects_noncanonical_or_out_of_range_members(suffix: str) -> None:
     schema = NodeSchema(
         "test.positional",
@@ -227,6 +231,10 @@ def test_positional_family_rejects_noncanonical_or_out_of_range_members(suffix: 
     )
     with pytest.raises(ElaborationError):
         elaborate(schema, [f"pieces.{suffix}"])
+    graph = Graph(nodes={"n": GraphNode(schema.node_type, {f"pieces.{suffix}": "value"})})
+    assert any(
+        d.code == "elaboration-failed" for d in validate(graph, {schema.node_type: schema}, ["n"])
+    )
 
 
 def test_elaboration_is_deterministic_and_ignores_unknown_keys() -> None:

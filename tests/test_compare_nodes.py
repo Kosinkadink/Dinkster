@@ -1036,6 +1036,12 @@ def test_autogrow_member_requiredness_matches_expanded_reference(
         assert not compare_registry(reference, registry)["passed"]
         family["optionalAfterMinimum"] = True
     leaf = family["template"][0]
+    if minimum == 0:
+        leaf["required"] = True
+        family["optionalAfterMinimum"] = True
+        assert compare_registry(reference, registry)["passed"]
+        family["optionalAfterMinimum"] = False
+        leaf["required"] = False
     leaf["required"] = not leaf["required"]
     assert not compare_registry(reference, registry)["passed"]
     leaf["required"] = not leaf["required"]

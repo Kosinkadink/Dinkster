@@ -407,15 +407,20 @@ def _elaborate_family(
             else:
                 assert family.member_prefix is not None
                 number = suffix.removeprefix(family.member_prefix)
+                try:
+                    position = int(number)
+                except ValueError as exc:
+                    raise ElaborationError(
+                        f"input family '{path}' has invalid numeric member {suffix!r}"
+                    ) from exc
                 if (
                     not number.isascii()
                     or not number.isdecimal()
-                    or suffix != family.member_prefix + str(int(number))
+                    or suffix != family.member_prefix + str(position)
                 ):
                     raise ElaborationError(
                         f"input family '{path}' has noncanonical member {suffix!r}"
                     )
-                position = int(number)
             if family.max_members is not None and position >= family.max_members:
                 raise ElaborationError(
                     f"input family '{path}' member {suffix!r} exceeds its maximum"
