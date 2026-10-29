@@ -531,6 +531,8 @@ namespaces = [
     "CropByBBoxes",
     "CameraAngle",
     "CreateCameraInfo",
+    "GetSplatCount",
+    "TransformSplat",
     "Trellis2UpsampleStage",
     "MoGePanoramaInference",
     "MoGeInference",

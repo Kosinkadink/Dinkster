@@ -9,6 +9,8 @@ on:
       - scripts/setup_envs.ps1
       - tools/minimax_h3_multigpu_receipt.py
       - tests/test_minimax_h3_multigpu_receipt.py
+      - packages/dinkster-nodes-comfy/tests/test_model_advanced_torch.py
+      - packages/dinkster-nodes-comfy/tests/test_void_sampler_torch.py
       - pyproject.toml
       - uv.lock
       - packages/dinkster-video/pyproject.toml
@@ -71,6 +73,8 @@ jobs:
     env:
       OMP_NUM_THREADS: "4"
       MKL_NUM_THREADS: "4"
+      ATEN_CPU_CAPABILITY: avx2
+      ONEDNN_MAX_CPU_ISA: AVX2
     steps:
       - uses: actions/checkout@v4
         with:
@@ -105,3 +109,12 @@ jobs:
           assert torchvision.ops.nms(boxes, scores, 0.2).tolist() == [0, 2]
           print('Constrained CPU torch/torchvision imports and NMS passed')
           PY
+      - name: Test public CPU sampler and attention contracts
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          uv pip install --python .venv-torch/bin/python \
+            --constraint "$RUNNER_TEMP/torch-constraints.txt" -e . -e packages/dinkster-nodes-comfy
+          .venv-torch/bin/python -m pytest -q \
+            packages/dinkster-nodes-comfy/tests/test_void_sampler_torch.py \
+            packages/dinkster-nodes-comfy/tests/test_model_advanced_torch.py

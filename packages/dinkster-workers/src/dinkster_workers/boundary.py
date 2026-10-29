@@ -1218,9 +1218,10 @@ def _decode_preview_artifacts(
 
 def decode_saved_artifact_claims(header: Mapping[str, Any]) -> tuple[Mapping[str, object], ...]:
     from dinkster_schema.reporting import attach_saved_artifact, capture_saved_artifacts
+    from dinkster_values import SAVED_ARTIFACT_CLAIM_LIMIT
 
     raw = header.get("savedArtifactClaims", [])
-    if type(raw) is not list or len(raw) > 64:
+    if type(raw) is not list or len(raw) > SAVED_ARTIFACT_CLAIM_LIMIT:
         raise BoundaryError("savedArtifactClaims must be a bounded list")
     try:
         with capture_saved_artifacts() as claims:

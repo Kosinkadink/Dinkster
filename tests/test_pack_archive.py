@@ -318,3 +318,97 @@ def test_official_artifacts_require_public_pack_versions(tmp_path: Path, version
     with pytest.raises(ValueError, match="pack version"):
         build_official_packs(Path(__file__).resolve().parents[1], tmp_path, version=version)
     assert not list(tmp_path.iterdir())
+
+
+def test_official_sources_prepare_catalogs_and_execute_existing_node_ids(tmp_path: Path) -> None:
+    import asyncio
+    import json
+    from dataclasses import replace
+
+    from dinkster_graph import graph_from_wire
+    from dinkster_registry import Lockfile, build_artifact, unpack_artifact
+    from dinkster_workers import load_manifest
+    from dinkster_workers.catalog import read_catalog
+    from dinkster_workers.doctor import prepare_catalog
+
+    from dinkster.compose import CompositionError, PackSpec, ServingComposer
+    from dinkster.packs import pack_info_from_manifest
+
+    saved = tmp_path / "workflow.json"
+    original = (
+        b'{"nodes":{"length":{"nodeType":"StringLength","inputs":{"string":"source packs"}},'
+        b'"region":{"nodeType":"dinkster.region.make",'
+        b'"inputs":{"x":2.0,"y":3.0,"width":4.0,"height":5.0}}}}'
+    )
+    saved.write_bytes(original)
+    payloads = build_official_packs(
+        Path(__file__).resolve().parents[1], tmp_path / "payloads", version="0.1.2"
+    )
+    lock = Lockfile.from_record_json(payloads[-1].read_text())
+    specs = []
+    for entry in lock.packs:
+        source = unpack_artifact(
+            payloads[-1].parent / f"{entry.pack}-0.1.2.zip",
+            tmp_path / "sources" / entry.pack,
+            entry.artifact_digest,
+        )
+        manifest = load_manifest(source / "dinkster-pack.toml")
+        assert read_catalog(manifest) is None
+        report = prepare_catalog(manifest.path, environment={"PYTHONPATH": str(source)})
+        assert report.ok, report
+        assert read_catalog(manifest) is not None
+        assert build_artifact(source, tmp_path / "repacked.zip") == entry.artifact_digest
+        info = replace(
+            pack_info_from_manifest(manifest),
+            version=entry.version,
+            artifact_digest=entry.artifact_digest,
+            source=entry.source,
+            publisher=entry.publisher,
+        )
+        specs.append(
+            PackSpec(
+                manifest=manifest.path,
+                python=sys.executable,
+                env={
+                    "PYTHONPATH": str(source),
+                    "DINKSTER_REMOTE_CATALOG_BASE": "",
+                    "DINKSTER_REMOTE_GATEWAY_BASE": "",
+                },
+                packs={entry.pack: info},
+                trust_reserved=True,
+                require_catalog=True,
+            )
+        )
+
+    async def execute() -> None:
+        composer = ServingComposer()
+        try:
+            ordered = composer.order_pack_entries(specs)
+            composer.validate_catalogs(ordered)
+            for spec in ordered:
+                await composer.add_pack(spec)
+            composition = composer.composition
+            assert composition.node_packs["StringLength"] == "dinkster-nodes-comfy"
+            assert composition.node_packs["dinkster.region.make"] == "dinkster-nodes-image"
+            assert composition.packs["dinkster-nodes-comfy"].version == "0.1.2"
+            assert composition.packs["dinkster-nodes-image"].version == "0.1.2"
+            result = await composition.make_engine(lambda _event: None).run(
+                graph_from_wire(json.loads(saved.read_bytes())), ["length", "region"]
+            )
+            assert result.diagnostics == ()
+            assert result.outputs["length"]["length"].resolve() == 12
+            assert result.outputs["region"]["region"].meta.entries == {
+                "x": 2.0,
+                "y": 3.0,
+                "width": 4.0,
+                "height": 5.0,
+            }
+            assert saved.read_bytes() == original
+            source = tmp_path / "sources" / "dinkster-nodes-comfy"
+            (source / "changed.txt").write_text("source drift")
+            with pytest.raises(CompositionError, match="missing or stale"):
+                composer.validate_catalogs(ordered)
+        finally:
+            await composer.close()
+
+    asyncio.run(execute())

@@ -54,12 +54,9 @@ def test_void_sampler_schema_is_torch_free() -> None:
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize(
-    ("schedule_dtype", "positive_result"),
-    (("float32", 0.29626840353012085), ("float64", 0.2962684631347656)),
-)
+@pytest.mark.parametrize("schedule_dtype", ("float32", "float64"))
 def test_void_sampler_runs_alpha_space_ddim_through_public_sampler_boundary(
-    schedule_dtype: str, positive_result: float
+    schedule_dtype: str,
 ) -> None:
     import torch
 
@@ -99,15 +96,52 @@ def test_void_sampler_runs_alpha_space_ddim_through_public_sampler_boundary(
     # nodes_void.py:411-445. Eliminating epsilon gives an affine update:
     # x1 = ((sqrt(5)/2 + 1/8)*x0 + 1/8)/sqrt(2),
     # x2 = ((sqrt(2) + 3/4)*x1 + 3/8)/sqrt(17), x3 = x2/4 + 1/32.
-    # Independently round scalar operations via struct.pack, using alpha=1/5,1/2,16/17.
-    # Float32 torch.pow roots are 0.44721361994743347,0.7071067690849304,0.9701425433158875;
-    # float64 scalars use double roots before conversion. No second sampler is the oracle.
-    expected = torch.tensor([positive_result, -0.2804364860057831]).reshape_as(noise)
+    # Independently round each elementary operation to binary32, not the reduced formula.
+    # CPU pow kernels differ in their last root bit even under AVX2. Probe only those
+    # primitives; select one fixed derived trajectory, never either result unconditionally.
+    expected_states = (
+        (1.846303939819336, -2.5484848022460938),
+        (1.0600738525390625, -1.2467459440231323),
+        (0.2962684631347656, -0.2804364860057831),
+    )
+    if schedule_dtype == "float32":
+        root_bits = tuple(
+            int(
+                (torch.tensor(value, dtype=torch.float32, device="cpu") ** 0.5)
+                .view(torch.int32)
+                .item()
+            )
+            for value in (
+                0.20000000298023224,
+                0.800000011920929,
+                0.5,
+                0.9411764740943909,
+                0.05882352590560913,
+            )
+        )
+        trajectories = {
+            (0x3EE4F92F, 0x3F64F92F, 0x3F3504F3, 0x3F785B43, 0x3E785B42): (
+                (1.8463037014007568, -2.5484845638275146),
+                (1.0600736141204834, -1.2467459440231323),
+                (0.29626840353012085, -0.2804364860057831),
+            ),
+            (0x3EE4F92E, 0x3F64F92E, 0x3F3504F3, 0x3F785B42, 0x3E785B42): expected_states,
+        }
+        assert root_bits in trajectories, (
+            f"Unqualified CPU pow roots: {tuple(hex(value) for value in root_bits)}, "
+            f"torch={torch.__version__}, platform={sys.platform}"
+        )
+        expected_states = trajectories[root_bits]
+    expected = torch.tensor(expected_states[-1], dtype=torch.float32).reshape_as(noise)
     torch.testing.assert_close(result, expected, rtol=0, atol=0)
     assert result.dtype is torch.float32
     assert torch.equal(noise, original_noise)
     assert [(index, total) for index, _, _, total in callbacks] == [(0, 3), (1, 3), (2, 3)]
     for index, denoised, x, _total in callbacks:
+        expected_x = (2.0, -3.0) if index == 0 else expected_states[index - 1]
+        torch.testing.assert_close(
+            x, torch.tensor(expected_x, dtype=torch.float32).reshape_as(x), rtol=0, atol=0
+        )
         torch.testing.assert_close(x, calls[index][0], rtol=0, atol=0)
         torch.testing.assert_close(
             denoised,
