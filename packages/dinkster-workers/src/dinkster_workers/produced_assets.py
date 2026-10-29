@@ -15,6 +15,7 @@ from dinkster_assets import (
     LocalAssetRef,
     open_verified,
 )
+from dinkster_assets.produced import ProducedAssetInventory
 from dinkster_values import (
     ASSET_BASE_TYPE,
     MEBIBYTE,
@@ -150,6 +151,8 @@ class ProducedAssetAuthority:
                 with open_verified(held, ref.digest) as handle:
                     if os.fstat(handle.fileno()).st_size != ref.size:
                         raise AssetError("source byte size does not match engine vault")
+                if self._vault is not None and self._vault.resolve(ref.digest) == held:
+                    ProducedAssetInventory(self._vault.root).confirm_existing(ref.digest, ref.size)
                 continue
             if self._vault is None:
                 raise AssetError("produced sources require an engine DINKSTER_ASSET_VAULT")
@@ -158,6 +161,8 @@ class ProducedAssetAuthority:
                 path = self._source.resolve(ref.digest)
             if path is None:
                 raise AssetError(f"source {ref.digest} did not reach the engine")
+            inventory = ProducedAssetInventory(self._vault.root)
+            inventory.pending(ref.digest, ref.size)
             with path.open("rb") as handle, self._vault.writer(ref.digest) as writer:
                 count = 0
                 while chunk := handle.read(_COPY_BYTES):
@@ -168,3 +173,4 @@ class ProducedAssetAuthority:
                 if count != ref.size:
                     raise AssetError("source transfer is truncated")
                 writer.commit()
+            inventory.adopted(ref.digest, ref.size)

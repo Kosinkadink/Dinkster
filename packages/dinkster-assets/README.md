@@ -27,6 +27,12 @@ scratch claim refuses live leases and blocks new users until released; a crashed
 process releases its OS locks without relying on a PID or age threshold. Lease
 metadata lives beside the data directory so the gate survives directory removal.
 These leases alone do not authorize deleting unpublished or referenced bytes.
+Engine adoption records a pending digest and byte size before copying produced
+sources into the vault, then marks the inventory entry adopted after verified
+publication. Retrying an interrupted copy preserves the first adoption order;
+already verified destination bytes can complete a pending entry after restart.
+Existing untracked inputs and mounted sources are not added to this inventory.
+Inventory entries describe adoption, not reachability or permission to delete.
 
 ## Setup
 

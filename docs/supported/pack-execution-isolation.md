@@ -54,6 +54,10 @@
 - Produced scratch claims refuse live invocations and open writers, including
   in another process. Crashed-process locks release without age-based expiry;
   this does not itself collect or discard produced data.
+- Copying produced sources into the engine vault records pending and verified
+  adoption across restarts. An interrupted inventory commit can be completed
+  from verified destination bytes without the producer. Existing untracked
+  inputs and mounted sources are not reclassified, and no deletion is enabled.
 - Direct in-process results also adopt produced sources before returning when
   pack scratch is configured. Returned AUDIO and VIDEO sources remain readable
   from the engine vault after scratch removal; failed adoption preserves scratch

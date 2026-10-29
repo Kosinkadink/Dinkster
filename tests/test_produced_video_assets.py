@@ -29,6 +29,7 @@ from dinkster_assets import (
     resolver_from_env,
 )
 from dinkster_assets.declared import produced_output_scratch, use_produced_output_job
+from dinkster_assets.produced import ProducedAssetInventory
 from dinkster_assets.scratch import claim_inactive_produced_scratch
 from dinkster_caches import BudgetedDiskCAS
 from dinkster_engine.control import EngineRunContext, RunControlState
@@ -487,6 +488,11 @@ def test_adoption_rejects_size_mismatch_without_publishing(
     with pytest.raises(AssetError, match="byte size|truncated"):
         authority.capture({"video": _value(AssetRef(digest, "source", declared_size))})
     assert engine.resolve(digest) is None
+    authority.capture({"video": _value(AssetRef(digest, "source", 3))})
+    adopted = ProducedAssetInventory(engine.root).entries()
+    assert len(adopted) == 1 and adopted[0].size == 3
+    assert adopted[0].adopted_at_ns is not None
+    assert AssetRef(digest, "source", 3, resolver=engine).read_bytes() == b"123"
 
 
 def test_adoption_rejects_corrupt_content_and_missing_sources(
@@ -505,6 +511,81 @@ def test_adoption_rejects_corrupt_content_and_missing_sources(
     path.unlink()
     with pytest.raises(AssetError, match="did not reach the engine"):
         authority.capture(outputs)
+
+
+def test_produced_adoption_inventory_survives_restart_and_failed_copy(
+    vaults: tuple[AssetVault, AssetVault],
+) -> None:
+    producer, engine = vaults
+    ref = _publish(producer, b"recoverable original")
+    source = ref.local_path()
+    source.write_bytes(b"incorrect source----")
+    outputs = {"video": _value(ref)}
+    with pytest.raises(AssetError, match="ingest did not verify"):
+        ProducedAssetAuthority(engine, producer).capture(outputs)
+    pending = ProducedAssetInventory(engine.root).entries()
+    assert [(row.digest, row.size, row.adopted_at_ns) for row in pending] == [
+        (ref.digest, ref.size, None)
+    ]
+    assert engine.resolve(ref.digest) is None
+    assert source.read_bytes() == b"incorrect source----"
+    source.write_bytes(b"recoverable original")
+    ProducedAssetAuthority(engine, producer).capture(outputs)
+    adopted = ProducedAssetInventory(engine.root).entries()
+    assert len(adopted) == 1
+    assert adopted[0].digest == ref.digest
+    assert adopted[0].size == ref.size
+    assert adopted[0].adopted_at_ns is not None
+    source.unlink()
+    ProducedAssetAuthority(AssetVault(engine.root)).capture(outputs)
+    assert ProducedAssetInventory(engine.root).entries() == adopted
+    assert replace(ref, resolver=engine).read_bytes() == b"recoverable original"
+
+
+def test_produced_adoption_repairs_copy_completed_before_inventory_commit(
+    vaults: tuple[AssetVault, AssetVault], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    producer, engine = vaults
+    ref = _publish(producer, b"adopted before interruption")
+    outputs = {"video": _value(ref)}
+
+    def interrupted(self: ProducedAssetInventory, digest: str, size: int) -> None:
+        raise AssetError("interrupted inventory commit")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(ProducedAssetInventory, "adopted", interrupted)
+        with pytest.raises(AssetError, match="interrupted inventory commit"):
+            ProducedAssetAuthority(engine, producer).capture(outputs)
+    assert replace(ref, resolver=engine).read_bytes() == b"adopted before interruption"
+    assert ProducedAssetInventory(engine.root).entries()[0].adopted_at_ns is None
+    ref.local_path().unlink()
+    ProducedAssetAuthority(AssetVault(engine.root)).capture(outputs)
+    assert ProducedAssetInventory(engine.root).entries()[0].adopted_at_ns is not None
+
+
+def test_produced_adoption_does_not_inventory_existing_inputs_or_mounts(
+    vaults: tuple[AssetVault, AssetVault],
+) -> None:
+    producer, engine = vaults
+    mounted = _publish(producer, b"mounted input")
+    existing = _publish(engine, b"downloaded input")
+    authority = ProducedAssetAuthority(engine, existing=producer)
+    authority.capture({"video": _value(mounted)})
+    ProducedAssetAuthority(engine).capture({"video": _value(existing)})
+    assert not (engine.root / ".produced-assets.sqlite").exists()
+    assert not engine.has(mounted.digest)
+    assert mounted.read_bytes() == b"mounted input"
+    assert existing.read_bytes() == b"downloaded input"
+
+
+def test_produced_inventory_refuses_missing_or_corrupt_state(tmp_path: Path) -> None:
+    inventory = ProducedAssetInventory(tmp_path)
+    with pytest.raises(AssetError, match="inventory is unavailable"):
+        inventory.entries()
+    assert not (tmp_path / ".produced-assets.sqlite").exists()
+    (tmp_path / ".produced-assets.sqlite").write_bytes(b"not a database")
+    with pytest.raises(AssetError, match="inventory is unavailable"):
+        inventory.entries()
 
 
 @pytest.mark.parametrize("recorded", [False, True])
