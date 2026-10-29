@@ -6,7 +6,6 @@ is visible as diagnostics (DESIGN 3.9)."""
 from __future__ import annotations
 
 import asyncio
-import glob
 import importlib
 import json
 import logging
@@ -2317,7 +2316,7 @@ def test_isolated_host_supplies_export_snapshot(
     asyncio.run(scenario())
 
 
-def test_shm_transport_for_large_payloads_and_cleanup() -> None:
+def test_shm_transport_for_large_payloads_and_cleanup(shm_segments: set[str]) -> None:
     if not sys.platform.startswith(("linux",)):
         pytest.skip("shm leftovers check relies on /dev/shm")
 
@@ -2355,8 +2354,8 @@ def test_shm_transport_for_large_payloads_and_cleanup() -> None:
             assert blend_inputs["ratio"].transport == "inline"
         finally:
             await worker.close()
-        # Single-hop handoff (hazard H14): nothing left in /dev/shm.
-        assert glob.glob("/dev/shm/dinkster*") == []
+        assert shm_segments
+        assert not [name for name in shm_segments if (Path("/dev/shm") / name).exists()]
 
     asyncio.run(scenario())
 

@@ -28,6 +28,13 @@ tokens documented in [auth.md](auth.md), not a separate server secret.
 
 Default: `3639`. TCP port for the HTTP server.
 
+### --engine-variant
+
+Optional declared generation target: `linux-cpu`, `win-cpu`, `win-nvidia`, or
+`win-nvidia-cu126`. Workflow-open planning uses this value when its request
+omits `variant`. It does not select GPUs, change execution, or infer hardware.
+Without a declared target, plan requests must supply their variant explicitly.
+
 ### --allow-host
 
 Syntax: `--allow-host HOST` (repeatable).
