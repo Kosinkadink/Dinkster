@@ -1,6 +1,22 @@
 [pack]
 name = "dinkster-nodes-comfy"
 publisher = "dinkster"
+requires = [
+    "simpleeval==1.0.8",
+    "numpy",
+    "pillow",
+    "torch",
+    "torchvision",
+    "dinkster-inference==0.1.0",
+    "av",
+    "scipy",
+    "einops",
+    "kornia",
+    "safetensors",
+    "tqdm",
+    "spandrel",
+    "comfy-kitchen",
+]
 namespaces = [
     "AudioEncoderLoader",
     "AudioEncoderEncode",
