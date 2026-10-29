@@ -73,16 +73,13 @@ def test_attention_schema_discovery_never_requests_torch_or_inference() -> None:
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize("available", (False, True))
-def test_attention_backend_resolves_availability_only_when_executing(
-    monkeypatch: pytest.MonkeyPatch, available: bool
+def test_attention_backend_resolves_pytorch_only_when_executing(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     state = SimpleNamespace(initialized=False)
-    pytorch, kitchen = object(), object()
+    pytorch = object()
     runtime = SimpleNamespace(
-        get_attention_function=lambda name, default=None: (
-            pytorch if name == "pytorch" else kitchen if available else default
-        )
+        get_attention_function=lambda name, default=None: pytorch if name == "pytorch" else default
     )
 
     def initialize() -> None:
@@ -101,12 +98,23 @@ def test_attention_backend_resolves_availability_only_when_executing(
     model_advanced.ModelAttentionBackend.schema()
     assert not state.initialized
     result = model_advanced.ModelAttentionBackend.execute(
-        model=original, attention="comfy kitchen attention"
+        model=original, attention="pytorch attention"
     )["MODEL"]
-    # Hand-derived callback identity: available kernel wins; otherwise fallback.
     assert result is clone
-    assert clone.attention is (kitchen if available else pytorch)
+    assert clone.attention is pytorch
     assert original.attention is None
+
+
+@pytest.mark.parametrize("attention", ("comfy kitchen attention", "unknown"))
+def test_attention_backend_rejects_values_outside_its_widget(
+    monkeypatch: pytest.MonkeyPatch, attention: str
+) -> None:
+    def initialize() -> None:
+        pytest.fail("invalid attention must not initialize inference")
+
+    monkeypatch.setattr(model_advanced, "initialize_inference_process", initialize)
+    with pytest.raises(ValueError, match="Unknown attention backend"):
+        model_advanced.ModelAttentionBackend.execute(model=object(), attention=attention)
 
 
 _COLD_ATTENTION = """
@@ -125,9 +133,8 @@ from dinkster_schema import schema_to_wire
 schema = schema_to_wire(ModelAttentionBackend.schema())
 assert schema
 widget = ModelAttentionBackend.schema().inputs[1].widget
-# ModelAttentionBackend, F bc5f880d: union of define_schema() choices with
-# and without the supported GPU/kernel. Availability is deferred to execute.
-assert widget.options == ('pytorch attention', 'comfy kitchen attention')
+# ModelAttentionBackend, F bc5f880d: finalized ordinary combo options.
+assert widget.options == ('pytorch attention',)
 assert not widget.remote_route
 assert not any(name.split('.')[0] in {'torch', 'dinkster_inference'} for name in sys.modules)
 """
