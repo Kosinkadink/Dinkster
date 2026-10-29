@@ -53,6 +53,14 @@ def test_powershell_setup_matches_posix_editable_package_closure() -> None:
 
 def test_powershell_setup_pins_native_windows_test_environments() -> None:
     setup = POWERSHELL_SETUP.read_text()
+    assert '"pip", "uninstall", "--python", $TorchPython, "opencv-python-headless"' in setup
+    assert '"--reinstall-package", "opencv-contrib-python-headless"' in setup
+    posix = POSIX_SETUP.read_text()
+    assert "uv pip uninstall --python .venv-torch/bin/python opencv-python-headless" in posix
+    assert (
+        '--reinstall-package opencv-contrib-python-headless "opencv-contrib-python-headless=='
+        in posix
+    )
 
     assert _powershell_dependency_array(setup, "CpuDependencies") == [
         "pytest",
@@ -61,7 +69,7 @@ def test_powershell_setup_pins_native_windows_test_environments() -> None:
         "scipy>=1.11",
         "simpleeval==1.0.8",
         "onnxruntime==1.29.0",
-        "opencv-python-headless==5.0.0.93",
+        "opencv-contrib-python-headless==5.0.0.93",
         "pillow==12.0.0",
         "safetensors==0.8.0",
         "sentencepiece==0.2.1",
@@ -145,7 +153,7 @@ def test_setup_scripts_skip_optional_acceptance_package_when_absent() -> None:
 
 def test_powershell_setup_isolates_root_sync_and_prints_runnable_gates() -> None:
     setup = POWERSHELL_SETUP.read_text()
-    sync = setup.split('Write-Host "==> .venv (torch-free root env)"', 1)[1].split(
+    sync = setup.split('Write-Host "==> .venv (locked workspace env)"', 1)[1].split(
         'Write-Host "==> .venv-torch', 1
     )[0]
 
