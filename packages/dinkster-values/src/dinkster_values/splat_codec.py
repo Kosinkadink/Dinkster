@@ -1,4 +1,4 @@
-"""The dinkster.splat codec: activated world-space gaussian splat tensors.
+"""The SPLAT codec: activated world-space gaussian splat tensors.
 
 The torch-free runtime form is a mapping of batch-first tensor-likes in the
 activated world-space layout ComfyUI uses for its SPLAT type:
@@ -9,6 +9,9 @@ activated world-space layout ComfyUI uses for its SPLAT type:
 - ``opacities`` (B, N, 1): values in [0, 1] (post-sigmoid)
 - ``sh`` (B, N, K, 3): spherical-harmonic coefficients, band 0 first
 - ``counts`` (B,), optional: valid gaussian count per batch item
+
+Source attribute objects use the same fields. Missing or None counts mean
+uniform rows; an empty gaussian dimension remains a valid tensor value.
 
 Tensor values are duck-typed the same way as latents: live torch tensors,
 numpy arrays, or :class:`EncodedLatentTensor` records all work, so encoded
@@ -29,8 +32,10 @@ import struct
 from collections.abc import Callable, Mapping
 from typing import Any, cast
 
+from .builtin_types import SPLAT_TYPE
 from .latent_codec import EncodedLatentTensor, tensor_record
 from .model import stable_hash
+from .registry import TypeRegistry, TypeSpec
 
 __all__ = [
     "SPLAT_CODEC_MAGIC",
@@ -41,6 +46,7 @@ __all__ = [
     "decode_splat_file",
     "encode_splat",
     "parse_ply_splat",
+    "register_splat_type",
     "render_splat_ply",
     "splat_fingerprint",
     "splat_meta",
@@ -57,7 +63,7 @@ _HEADER_LIMIT = 64 * 1024
 _PLY_HEADER_LIMIT = 64 * 1024
 
 _FLOAT_KEYS = ("positions", "scales", "rotations", "opacities", "sh")
-_FLOAT_DTYPES = {"float16": 2, "bfloat16": 2, "float32": 4}
+_FLOAT_DTYPES = {"float16": 2, "bfloat16": 2, "float32": 4, "float64": 8}
 _COUNT_DTYPES = {"int32": 4, "int64": 8}
 _COUNT_STRUCT = {"int32": "i", "int64": "q"}
 
@@ -70,7 +76,10 @@ TensorDecoder = Callable[[EncodedLatentTensor], object]
 def _records(obj: object) -> dict[str, EncodedLatentTensor]:
     """Validate the runtime form and return its arrays in canonical order."""
     if not isinstance(obj, Mapping):
-        raise TypeError("splat value must be a mapping of gaussian tensors")
+        try:
+            obj = vars(obj)
+        except TypeError as exc:
+            raise TypeError("splat value must be a mapping or an attribute object") from exc
     mapping = cast("Mapping[str, object]", obj)
     keys = set(mapping)
     if not keys.issuperset(_FLOAT_KEYS) or not keys.issubset((*_FLOAT_KEYS, "counts")):
@@ -79,7 +88,7 @@ def _records(obj: object) -> dict[str, EncodedLatentTensor]:
             "opacities, sh, and optionally counts"
         )
     records: dict[str, EncodedLatentTensor] = {}
-    for key in (*_FLOAT_KEYS, *(("counts",) if "counts" in keys else ())):
+    for key in (*_FLOAT_KEYS, *(("counts",) if mapping.get("counts") is not None else ())):
         record = tensor_record(mapping[key])
         if record is None:
             raise TypeError(f"splat {key} must be a tensor-like array")
@@ -93,8 +102,8 @@ def _check_layout(records: Mapping[str, EncodedLatentTensor]) -> None:
     if len(positions.shape) != 3 or positions.shape[2] != 3:
         raise ValueError("splat positions must have shape (batch, gaussians, 3)")
     batch, gaussians = positions.shape[0], positions.shape[1]
-    if batch < 1 or gaussians < 1:
-        raise ValueError("splat batch and gaussian dimensions must be at least 1")
+    if batch < 1:
+        raise ValueError("splat batch dimension must be at least 1")
     expected: dict[str, tuple[int, ...]] = {
         "positions": (batch, gaussians, 3),
         "scales": (batch, gaussians, 3),
@@ -104,7 +113,9 @@ def _check_layout(records: Mapping[str, EncodedLatentTensor]) -> None:
     for key in _FLOAT_KEYS:
         record = records[key]
         if record.dtype not in _FLOAT_DTYPES:
-            raise ValueError(f"splat {key} dtype must be one of: float16, bfloat16, float32")
+            raise ValueError(
+                f"splat {key} dtype must be one of: float16, bfloat16, float32, float64"
+            )
         if key == "sh":
             shape = record.shape
             if len(shape) != 4 or shape[0] != batch or shape[1] != gaussians or shape[3] != 3:
@@ -255,7 +266,7 @@ def _as_float32(record: EncodedLatentTensor, numpy: Any) -> Any:
     if record.dtype == "bfloat16":
         raw = numpy.frombuffer(record.data, dtype="<u2").astype(numpy.uint32) << 16
         return raw.view(numpy.float32).reshape(record.shape)
-    kind = {"float16": "<f2", "float32": "<f4"}[record.dtype]
+    kind = {"float16": "<f2", "float32": "<f4", "float64": "<f8"}[record.dtype]
     return numpy.frombuffer(record.data, dtype=kind).reshape(record.shape).astype(numpy.float32)
 
 
@@ -444,3 +455,23 @@ def decode_splat_file(asset: object) -> object:
     except ValueError as exc:
         name = getattr(asset, "name", "") or "asset"
         raise ValueError(f"cannot decode '{name}' as a gaussian splat: {exc}") from exc
+
+
+def register_splat_type(registry: TypeRegistry) -> TypeSpec:
+    """Idempotently register the canonical SPLAT codec and PLY interchange."""
+    if SPLAT_TYPE not in registry:
+        registry.register(
+            SPLAT_TYPE,
+            encode=encode_splat,
+            decode=decode_splat,
+            fingerprint=splat_fingerprint(SPLAT_TYPE),
+            meta=splat_meta,
+            validate_encoded_buffer=validate_splat_encoded,
+        )
+    if not any(spec.kind == "ply" for spec in registry.renditions_of(SPLAT_TYPE)):
+        registry.register_rendition(SPLAT_TYPE, "ply", mime=SPLAT_PLY_MIME, render=render_splat_ply)
+    if registry.asset_decoder_for(SPLAT_TYPE) is None:
+        registry.register_asset_decoder(
+            SPLAT_TYPE, provider_id=SPLAT_FILE_DECODER_ID, decode=decode_splat_file
+        )
+    return registry.spec(SPLAT_TYPE)
