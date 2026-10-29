@@ -20,6 +20,8 @@ def artifact(*, entry: str = "assets/app.js", **overrides: object) -> tuple[byte
     with zipfile.ZipFile(archive, "w") as bundle:
         for name, data in [("index.html", b'<div id="app"></div>'), (entry, b"app();")]:
             info = zipfile.ZipInfo(name)
+            # Preserve unsafe input that ZipInfo otherwise normalizes on Windows.
+            info.filename = name
             info.external_attr = 0o100644 << 16
             bundle.writestr(info, data)
     data = archive.getvalue()
@@ -92,6 +94,9 @@ def test_pinned_hash_is_checked_independently_of_manifest(tmp_path: Path) -> Non
 @pytest.mark.parametrize("entry", ["../escape.js", "/absolute.js", "assets\\escape.js"])
 def test_archive_paths_cannot_escape_the_bundle(tmp_path: Path, entry: str) -> None:
     payload, pin = artifact(entry=entry)
+    with zipfile.ZipFile(io.BytesIO(payload)) as wrapper:
+        with zipfile.ZipFile(io.BytesIO(wrapper.read("bundle.zip"))) as bundle:
+            assert bundle.infolist()[1].orig_filename == entry
     with pytest.raises(ValueError, match="unsafe frontend bundle entry"):
         verify_and_extract(payload, pin, tmp_path / "bundle")
     assert list(tmp_path.iterdir()) == []
