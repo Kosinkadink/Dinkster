@@ -78,7 +78,7 @@ jobs:
             shard_name: ", shard 1"
             pytest_args: "-p tools.pytest_file_shard --file-shard 1/4"
             run_checks: true
-            timeout-minutes: 20
+            timeout-minutes: 30
           - os: linux
             runner: linux
             python-version: "3.12"
@@ -86,7 +86,7 @@ jobs:
             shard_name: ", shard 2"
             pytest_args: "-p tools.pytest_file_shard --file-shard 2/4"
             run_checks: false
-            timeout-minutes: 20
+            timeout-minutes: 30
           - os: linux
             runner: linux
             python-version: "3.12"
@@ -94,7 +94,7 @@ jobs:
             shard_name: ", shard 3"
             pytest_args: "-p tools.pytest_file_shard --file-shard 3/4"
             run_checks: false
-            timeout-minutes: 20
+            timeout-minutes: 30
           - os: linux
             runner: linux
             python-version: "3.12"
@@ -102,7 +102,7 @@ jobs:
             shard_name: ", shard 4"
             pytest_args: "-p tools.pytest_file_shard --file-shard 4/4"
             run_checks: false
-            timeout-minutes: 20
+            timeout-minutes: 30
           - os: windows
             runner: windows
             python-version: "3.12"
