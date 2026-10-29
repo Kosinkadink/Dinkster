@@ -220,7 +220,8 @@ def write_constraints(
     verified_external: list[Path] | None = None,
 ) -> Path:
     constraints = output / "constraints.txt"
-    with tempfile.NamedTemporaryFile(prefix="dinkster-external-", suffix=".txt") as temporary:
+    with tempfile.TemporaryDirectory(prefix="dinkster-external-") as directory:
+        temporary = Path(directory) / "constraints.txt"
         subprocess.run(
             [
                 uv,
@@ -235,12 +236,12 @@ def write_constraints(
                 "--no-annotate",
                 "--no-header",
                 "--output-file",
-                temporary.name,
+                str(temporary),
             ],
             cwd=root,
             check=True,
         )
-        external = Path(temporary.name).read_text(encoding="utf-8").rstrip()
+        external = temporary.read_text(encoding="utf-8").rstrip()
     if verified_external is not None:
         from packaging.requirements import Requirement
         from packaging.utils import canonicalize_name
