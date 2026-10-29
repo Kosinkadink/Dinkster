@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 from urllib.request import urlopen
 
@@ -160,6 +162,77 @@ def test_stop_refuses_wrong_instance(tmp_path: Path) -> None:
     finally:
         record_path.write_text(json.dumps(original))
         stop_engine(tmp_path, "main")
+
+
+@pytest.mark.skipif(os.name != "posix", reason="SIGTERM cleanup is a POSIX contract")
+def test_sigterm_stops_managed_engine_and_allows_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_popen = subprocess.Popen
+    supervisors: list[subprocess.Popen] = []
+
+    def launch(command, **kwargs):
+        process = original_popen(command, **kwargs)
+        if command[1:3] == ["-m", "dinkster_supervisor.supervisor"]:
+            supervisors.append(process)
+        return process
+
+    def process_field(pid: int, field: str) -> str:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", f"{field}="],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode in {0, 1}
+        return result.stdout.strip()
+
+    def child_alive(pid: int) -> bool:
+        state = process_field(pid, "stat")
+        return bool(state) and not state.startswith("Z")
+
+    monkeypatch.setattr("dinkster_supervisor.environment_runtime.subprocess.Popen", launch)
+    make_generation(tmp_path)
+    port = free_port()
+    child_pid = 0
+    child_command = ""
+    try:
+        row = start_engine(tmp_path, 1, "main", port)
+        record = json.loads((tmp_path / "runtime/1/main.json").read_text())
+        with urlopen(f"http://127.0.0.1:{port}/supervisor/status") as response:  # noqa: S310
+            status = json.loads(response.read())
+        assert status["instance"] == record["instance"]
+        assert status["supervisor"]["pid"] == record["pid"] == supervisors[0].pid
+        child_pid = status["engine"]["pid"]
+        child_command = process_field(child_pid, "args")
+        assert str(tmp_path / "generations/1") in child_command
+        lifecycle = next((tmp_path / "runtime/1/main.process").glob("*/state.json"))
+        assert json.loads(lifecycle.read_text())["state"] == "running"
+
+        os.kill(supervisors[0].pid, signal.SIGTERM)
+        exit_code = supervisors[0].wait(timeout=10)
+        deadline = time.monotonic() + 10
+        while child_alive(child_pid) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        receipt = json.loads(lifecycle.read_text())["state"]
+        assert not child_alive(child_pid), f"engine child survived SIGTERM; receipt={receipt}"
+        assert exit_code == 0
+        assert receipt == "stopped"
+        assert engine_status(tmp_path)[0]["state"] == "stopped"
+        assert start_engine(tmp_path, 1, "main", port) == row
+        stop_engine(tmp_path, "main")
+    finally:
+        for process in supervisors:
+            if process.poll() is None:
+                stop_engine(tmp_path, "main")
+            process.wait(timeout=10)
+        if child_pid and child_alive(child_pid):
+            assert process_field(child_pid, "args") == child_command
+            os.kill(child_pid, signal.SIGTERM)
+            deadline = time.monotonic() + 10
+            while child_alive(child_pid) and time.monotonic() < deadline:
+                time.sleep(0.05)
+            assert not child_alive(child_pid), "owned fixture child did not exit during cleanup"
 
 
 def test_status_rejects_malformed_record_without_mutating(tmp_path: Path) -> None:

@@ -77,6 +77,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import signal
 import socket
 import sys
 import time
@@ -661,6 +662,9 @@ def main() -> None:
 
     async def serve() -> None:
         stopped = asyncio.Event()
+        if os.name == "posix":
+            # Exit through cleanup and the lifecycle receipt, not SystemExit.
+            asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, stopped.set)
         app = create_supervisor_app(
             link,
             restart=engine.restart,
