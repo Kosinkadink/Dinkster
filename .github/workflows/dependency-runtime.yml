@@ -22,10 +22,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-2022]
+        os: [ubuntu-24.04, windows-2022]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     env:
+      OMP_NUM_THREADS: "4"
+      MKL_NUM_THREADS: "4"
       ATEN_CPU_CAPABILITY: avx2
       ONEDNN_MAX_CPU_ISA: AVX2
     steps:
@@ -62,40 +64,12 @@ jobs:
           assert torchvision.ops.nms(boxes, scores, 0.2).tolist() == [0, 2]
           print('Constrained CPU torch/torchvision imports and NMS passed')
           PY
-      - name: Trace CPU sampler scalar arithmetic
+      - name: Test public CPU sampler and attention contracts
         if: runner.os == 'Linux'
         shell: bash
         run: |
           uv pip install --python .venv-torch/bin/python \
             --constraint "$RUNNER_TEMP/torch-constraints.txt" -e . -e packages/dinkster-nodes-comfy
-          .venv-torch/bin/python - <<'PY'
-          import sys
-          import torch
-          import pytest
-
-          def trace(frame, event, arg):
-              if frame.f_code.co_name == 'sample' and frame.f_code.co_filename.endswith('void_sampler.py'):
-                  if event == 'line':
-                      print(frame.f_lineno, {k: v.tolist() if isinstance(v, torch.Tensor) else v
-                            for k, v in frame.f_locals.items()
-                            if k in ('index', 'sigma', 'alpha_t', 'alpha_prev', 'pred_eps', 'x', 'denoised')})
-                  return trace
-
-          print('threads', torch.get_num_threads(), torch.get_num_interop_threads())
-          print(open('/proc/cpuinfo').read().split('model name')[1].splitlines()[0])
-          for dtype in (torch.float32, torch.float64):
-              sigmas = torch.tensor([2., 1., .25, 0.], dtype=dtype)
-              alpha = 1. / (1. + sigmas**2)
-              print(dtype, alpha.tolist(), [(a**.5).item() for a in alpha],
-                    [((1.-a)**.5).item() for a in alpha])
-          sys.settrace(trace)
-          raise SystemExit(pytest.main(['-q', '-s', 'packages/dinkster-nodes-comfy/tests',
-                                       '-p', 'tools.pytest_file_shard', '--file-shard', '3/4']))
-          PY
-      - name: Test public CPU sampler and attention contracts
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
           .venv-torch/bin/python -m pytest -q \
             packages/dinkster-nodes-comfy/tests/test_void_sampler_torch.py \
             packages/dinkster-nodes-comfy/tests/test_model_advanced_torch.py
