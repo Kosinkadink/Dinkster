@@ -43,7 +43,9 @@ jobs:
         shell: bash
         run: |
           uv export --locked --all-packages --no-emit-project --no-emit-workspace \
-            --output-file "$RUNNER_TEMP/torch-constraints.txt"
+            --no-hashes --output-file "$RUNNER_TEMP/torch-versions.txt"
+          uv pip compile --python-version 3.12 --torch-backend cpu --generate-hashes \
+            --output-file "$RUNNER_TEMP/torch-constraints.txt" "$RUNNER_TEMP/torch-versions.txt"
           uv venv --python 3.12 "$RUNNER_TEMP/cpu-runtime"
           uv pip install --python "$RUNNER_TEMP/cpu-runtime/bin/python" \
             --constraint "$RUNNER_TEMP/torch-constraints.txt" --torch-backend cpu \

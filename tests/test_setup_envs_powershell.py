@@ -96,6 +96,8 @@ def test_powershell_setup_pins_native_windows_test_environments() -> None:
     assert '"3.12"' in setup
     assert '"torch==2.14.1+cpu", "torchvision==0.29.1+cpu"' in setup
     assert '"--torch-backend", "cpu"' in setup
+    assert "assert torch.__version__ == '2.14.1+cpu'" in setup
+    assert "assert version('torchvision') == '0.29.1+cpu'" in setup
     assert '"torch==2.13.0+cu130"' in setup
     assert '"triton-windows==3.7.1.post27"' in setup
     assert (

@@ -37,10 +37,12 @@ runs:
       with:
         python-version: "3.12"
     - shell: bash
-      run: >
-        uv export --locked --all-packages
-        --no-emit-project --no-emit-workspace
-        --output-file "${{ runner.temp }}/torch-constraints.txt"
+      run: |
+        uv export --locked --all-packages \
+          --no-emit-project --no-emit-workspace --no-hashes \
+          --output-file "$RUNNER_TEMP/torch-versions.txt"
+        uv pip compile --python-version 3.12 --torch-backend cpu --generate-hashes \
+          --output-file "$RUNNER_TEMP/torch-constraints.txt" "$RUNNER_TEMP/torch-versions.txt"
     - shell: bash
       run: UV_CONSTRAINT="$RUNNER_TEMP/torch-constraints.txt" ./scripts/setup_envs.sh
     - shell: bash
