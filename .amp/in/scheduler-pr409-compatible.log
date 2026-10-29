@@ -1,0 +1,16 @@
+
+==================================== ERRORS ====================================
+_ ERROR collecting packages/dinkster-nodes-comfy/tests/test_sigma_schedulers_torch.py _
+ImportError while importing test module '/home/jed/comfy-vibe-station/lanes/dinkster-pr409-product-verify-270k-plus2-20261024/packages/dinkster-nodes-comfy/tests/test_sigma_schedulers_torch.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/usr/lib/python3.12/importlib/__init__.py:90: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+packages/dinkster-nodes-comfy/tests/test_sigma_schedulers_torch.py:26: in <module>
+    from dinkster_nodes_comfy.sigma_schedulers import (
+E   ModuleNotFoundError: No module named 'dinkster_nodes_comfy'
+=========================== short test summary info ============================
+ERROR packages/dinkster-nodes-comfy/tests/test_sigma_schedulers_torch.py
+!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+1 error in 1.22s
