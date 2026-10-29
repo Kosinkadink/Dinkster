@@ -69,6 +69,7 @@ def test_svg_save_schema_uses_canonical_type_and_adjacent_mount() -> None:
     assert [input.id for input in schema.inputs] == ["svg", "filename_prefix", "mount"]
     assert schema.inputs[-1].adjacent_to == "filename_prefix"
     assert schema.inputs[0].type == TypeExpr.concrete(SVG_TYPE)
+    assert schema.inputs[1].widget is not None and schema.inputs[1].widget.multiline is False
     assert schema.outputs[0].type == TypeExpr.concrete(SVG_TYPE)
     assert schema.output_node and not schema.idempotent
 

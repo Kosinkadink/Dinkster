@@ -19,6 +19,7 @@ from dinkster_api.v1 import (
     Node,
     NodeSchema,
     OutputSpec,
+    StringWidget,
     TypeExpr,
     current_export_snapshot,
     materialize_svg,
@@ -41,6 +42,7 @@ class SaveSVGNode(Node):
                     "filename_prefix",
                     TypeExpr.concrete(CORE_STRING),
                     default="svg/ComfyUI",
+                    widget=StringWidget(multiline=False),
                     doc=(
                         "The prefix for the file to save. This may include formatting information "
                         "such as %date:yyyy-MM-dd% or %Empty Latent Image.width% to include values "
