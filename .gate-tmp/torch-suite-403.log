@@ -1,0 +1,659 @@
+........................................................................ [  1%]
+........................................................................ [  2%]
+........................................................................ [  3%]
+............................................................s........... [  4%]
+.........s...sss........................................................ [  5%]
+..........ss............................................................ [  7%]
+........................................................................ [  8%]
+...............s..........................................s.....s....... [  9%]
+................................................s....................... [ 10%]
+..............................................................ss.s.s.s.s [ 11%]
+.s.s.....................................s.............................. [ 12%]
+........................................................................ [ 14%]
+..............................FFFFFF.................................... [ 15%]
+........................................................................ [ 16%]
+........................................................................ [ 17%]
+........................................................................ [ 18%]
+........................................................................ [ 19%]
+........................................................................ [ 21%]
+........................................................................ [ 22%]
+........................................................................ [ 23%]
+.............................................................sss........ [ 24%]
+...................ss.....s.sss......................................... [ 25%]
+........................................................................ [ 26%]
+..........ss............................................................ [ 28%]
+........................................................................ [ 29%]
+........................................................................ [ 30%]
+.............................................................ssss....... [ 31%]
+.......ss............................................................... [ 32%]
+..................................sss................................... [ 33%]
+........................................................................ [ 35%]
+........................................................................ [ 36%]
+........................................................................ [ 37%]
+........................................................................ [ 38%]
+.........................................s.............................. [ 39%]
+......................................................ssss..ssssssss.... [ 41%]
+........................................s............................... [ 42%]
+.....................................................................s.. [ 43%]
+.........s.....................................ss....................... [ 44%]
+........................................................................ [ 45%]
+........................................................................ [ 46%]
+........................................................................ [ 48%]
+........................................................................ [ 49%]
+.........................sssssssssssssssssssssssssssssss................ [ 50%]
+.....................s.s.........s...................................... [ 51%]
+........................................................................ [ 52%]
+........................................................................ [ 53%]
+........................................................................ [ 55%]
+........................................................................ [ 56%]
+....................................s................................... [ 57%]
+...........s............................................................ [ 58%]
+........................................................................ [ 59%]
+...ssss................................................sssssssssssssssss [ 60%]
+sssssssssssssssssssssss.........................................s......s [ 62%]
+ssssssss................................................................ [ 63%]
+.........................................s.............................. [ 64%]
+........................................................................ [ 65%]
+............s.......s..............ssssssss............................. [ 66%]
+........................................................................ [ 67%]
+........................................................................ [ 69%]
+....................................................................s... [ 70%]
+...................................ssssssssssssssssss................... [ 71%]
+.....................................................ss................. [ 72%]
+..........................................ss............................ [ 73%]
+........................................................................ [ 75%]
+........................................................................ [ 76%]
+........................................................................ [ 77%]
+.....................................................................sss [ 78%]
+ssss.................................................................... [ 79%]
+s....................................................................... [ 80%]
+........................................................................ [ 82%]
+...........................................s......ss.................... [ 83%]
+........................................................................ [ 84%]
+........................s............................................... [ 85%]
+.....................s.s................................................ [ 86%]
+...........................................sssssssss.................... [ 87%]
+........................................................................ [ 89%]
+........................................................................ [ 90%]
+........................................................................ [ 91%]
+........................................................................ [ 92%]
+........................................................................ [ 93%]
+........................................................................ [ 94%]
+.............................................s..s....................... [ 96%]
+.......s................................................................ [ 97%]
+.................................................................s...s.. [ 98%]
+........................................................................ [ 99%]
+.......................                                                  [100%]
+=================================== FAILURES ===================================
+___________ test_complete_checkpoint_sampling_shift_reference[case0] ___________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7379315c7290>
+case = {'family': 'flux2', 'shift': None, 'sigmas': [1.0, 0.9378067255020142, 0.7903692126274109, 0.0], 'noise_hash': '648035ec8abd4a891cb35169c4c2d3a558791149188016481ce0bedd060b6de7', ...}
+
+    @pytest.mark.parametrize("case", GOLDEN["cases"])
+    def test_complete_checkpoint_sampling_shift_reference(
+        monkeypatch: pytest.MonkeyPatch, case: dict[str, Any]
+    ) -> None:
+        flux = case["family"] == "flux2"
+        runtime: Any = object.__new__(Flux2Runtime if flux else Lumina2Runtime)
+    
+        def compute_dtype(role: str) -> torch.dtype:
+            return torch.float32
+    
+        def stage(*args: object, **kwargs: object) -> nullcontext[None]:
+            return nullcontext()
+    
+        def preview(*args: object, **kwargs: object) -> None:
+            return None
+    
+        runtime.assembled = SimpleNamespace(
+            family=FLUX2_DEV if flux else LUMINA2,
+            diffusion=ArithmeticDiffusion(),
+            compute_dtype=compute_dtype,
+        )
+        runtime._runtime_identity = "native:complete-sampling-test"
+        runtime._samplers = torch_sampler_registry()
+        runtime._schedulers = torch_scheduler_registry()
+        runtime._guidance = None
+        handle = SimpleNamespace(
+            runtime=runtime,
+            recipe=SimpleNamespace(
+                family_id=runtime.family.id, sources=(SimpleNamespace(role="checkpoint"),)
+            ),
+            load_device=torch.device("cpu"),
+            stage=stage,
+        )
+    
+        def native_model(*args: object) -> Any:
+            return handle, (), {}, None, case["shift"], (), None, ()
+    
+        monkeypatch.setattr(arm, "_native_model", native_model)
+        monkeypatch.setattr(arm, "sampling_preview_emitter", preview)
+        original = runtime.sample_custom
+        calls = []
+    
+        def sample_custom(*args: Any, **kwargs: Any) -> Any:
+            request, noise = kwargs["request"], kwargs["noise"]
+            assert list(request.sigmas) == case["sigmas"]
+            assert hashlib.sha256(noise.numpy().tobytes()).hexdigest() == case["noise_hash"]
+            calls.append(request)
+            return original(*args, **kwargs)
+    
+        runtime.sample_custom = sample_custom
+        rows = [[torch.ones((1, 3, 8 if flux else 2304)), {}]]
+>       output = cast("Any", arm.NativeKSampler).execute(
+            model=object(),
+            seed=7,
+            steps=3,
+            cfg=1.0,
+            sampler_name="euler",
+            scheduler="simple",
+            positive=rows,
+            negative=rows,
+            latent_image={"samples": torch.zeros((1, 128 if flux else 16, 2, 2))},
+            denoise=1.0,
+        )["latent"]["samples"]
+
+packages/dinkster-inference-torch/tests/test_complete_sampling_shifts.py:95: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+packages/dinkster-native/src/dinkster_native/nodes_sampling_runtime.py:433: in execute
+    unload_text_before_diffusion = _diffusion_unload_roles(handle)
+                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+handle = namespace(runtime=<dinkster_inference_torch.flux2_runtime.Flux2Runtime object at 0x7379315c52b0>, recipe=namespace(fam...evice(type='cpu'), stage=<function test_complete_checkpoint_sampling_shift_reference.<locals>.stage at 0x73791329aac0>)
+
+    def _diffusion_unload_roles(handle: NativeRuntimeHandle) -> tuple[str, ...]:
+        source_roles = frozenset(source.role for source in handle.recipe.sources)
+        return (
+            ("text",)
+>           if source_roles & _TEXT_RUNTIME_SOURCE_ROLES and handle.has_residency_stage("text")
+                                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^
+            else ()
+        )
+E       AttributeError: 'types.SimpleNamespace' object has no attribute 'has_residency_stage'
+
+packages/dinkster-native/src/dinkster_native/native_arm_core.py:193: AttributeError
+___________ test_complete_checkpoint_sampling_shift_reference[case1] ___________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7379132c1fa0>
+case = {'family': 'flux2', 'shift': 0.4, 'sigmas': [1.0, 0.7490020394325256, 0.42730700969696045, 0.0], 'noise_hash': '648035ec8abd4a891cb35169c4c2d3a558791149188016481ce0bedd060b6de7', ...}
+
+    @pytest.mark.parametrize("case", GOLDEN["cases"])
+    def test_complete_checkpoint_sampling_shift_reference(
+        monkeypatch: pytest.MonkeyPatch, case: dict[str, Any]
+    ) -> None:
+        flux = case["family"] == "flux2"
+        runtime: Any = object.__new__(Flux2Runtime if flux else Lumina2Runtime)
+    
+        def compute_dtype(role: str) -> torch.dtype:
+            return torch.float32
+    
+        def stage(*args: object, **kwargs: object) -> nullcontext[None]:
+            return nullcontext()
+    
+        def preview(*args: object, **kwargs: object) -> None:
+            return None
+    
+        runtime.assembled = SimpleNamespace(
+            family=FLUX2_DEV if flux else LUMINA2,
+            diffusion=ArithmeticDiffusion(),
+            compute_dtype=compute_dtype,
+        )
+        runtime._runtime_identity = "native:complete-sampling-test"
+        runtime._samplers = torch_sampler_registry()
+        runtime._schedulers = torch_scheduler_registry()
+        runtime._guidance = None
+        handle = SimpleNamespace(
+            runtime=runtime,
+            recipe=SimpleNamespace(
+                family_id=runtime.family.id, sources=(SimpleNamespace(role="checkpoint"),)
+            ),
+            load_device=torch.device("cpu"),
+            stage=stage,
+        )
+    
+        def native_model(*args: object) -> Any:
+            return handle, (), {}, None, case["shift"], (), None, ()
+    
+        monkeypatch.setattr(arm, "_native_model", native_model)
+        monkeypatch.setattr(arm, "sampling_preview_emitter", preview)
+        original = runtime.sample_custom
+        calls = []
+    
+        def sample_custom(*args: Any, **kwargs: Any) -> Any:
+            request, noise = kwargs["request"], kwargs["noise"]
+            assert list(request.sigmas) == case["sigmas"]
+            assert hashlib.sha256(noise.numpy().tobytes()).hexdigest() == case["noise_hash"]
+            calls.append(request)
+            return original(*args, **kwargs)
+    
+        runtime.sample_custom = sample_custom
+        rows = [[torch.ones((1, 3, 8 if flux else 2304)), {}]]
+>       output = cast("Any", arm.NativeKSampler).execute(
+            model=object(),
+            seed=7,
+            steps=3,
+            cfg=1.0,
+            sampler_name="euler",
+            scheduler="simple",
+            positive=rows,
+            negative=rows,
+            latent_image={"samples": torch.zeros((1, 128 if flux else 16, 2, 2))},
+            denoise=1.0,
+        )["latent"]["samples"]
+
+packages/dinkster-inference-torch/tests/test_complete_sampling_shifts.py:95: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+packages/dinkster-native/src/dinkster_native/nodes_sampling_runtime.py:433: in execute
+    unload_text_before_diffusion = _diffusion_unload_roles(handle)
+                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+handle = namespace(runtime=<dinkster_inference_torch.flux2_runtime.Flux2Runtime object at 0x7379132c2240>, recipe=namespace(fam...evice(type='cpu'), stage=<function test_complete_checkpoint_sampling_shift_reference.<locals>.stage at 0x737913298360>)
+
+    def _diffusion_unload_roles(handle: NativeRuntimeHandle) -> tuple[str, ...]:
+        source_roles = frozenset(source.role for source in handle.recipe.sources)
+        return (
+            ("text",)
+>           if source_roles & _TEXT_RUNTIME_SOURCE_ROLES and handle.has_residency_stage("text")
+                                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^
+            else ()
+        )
+E       AttributeError: 'types.SimpleNamespace' object has no attribute 'has_residency_stage'
+
+packages/dinkster-native/src/dinkster_native/native_arm_core.py:193: AttributeError
+___________ test_complete_checkpoint_sampling_shift_reference[case2] ___________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7379132abe90>
+case = {'family': 'flux2', 'shift': 2.0, 'sigmas': [1.0, 0.9366300106048584, 0.7870363593101501, 0.0], 'noise_hash': '648035ec8abd4a891cb35169c4c2d3a558791149188016481ce0bedd060b6de7', ...}
+
+    @pytest.mark.parametrize("case", GOLDEN["cases"])
+    def test_complete_checkpoint_sampling_shift_reference(
+        monkeypatch: pytest.MonkeyPatch, case: dict[str, Any]
+    ) -> None:
+        flux = case["family"] == "flux2"
+        runtime: Any = object.__new__(Flux2Runtime if flux else Lumina2Runtime)
+    
+        def compute_dtype(role: str) -> torch.dtype:
+            return torch.float32
+    
+        def stage(*args: object, **kwargs: object) -> nullcontext[None]:
+            return nullcontext()
+    
+        def preview(*args: object, **kwargs: object) -> None:
+            return None
+    
+        runtime.assembled = SimpleNamespace(
+            family=FLUX2_DEV if flux else LUMINA2,
+            diffusion=ArithmeticDiffusion(),
+            compute_dtype=compute_dtype,
+        )
+        runtime._runtime_identity = "native:complete-sampling-test"
+        runtime._samplers = torch_sampler_registry()
+        runtime._schedulers = torch_scheduler_registry()
+        runtime._guidance = None
+        handle = SimpleNamespace(
+            runtime=runtime,
+            recipe=SimpleNamespace(
+                family_id=runtime.family.id, sources=(SimpleNamespace(role="checkpoint"),)
+            ),
+            load_device=torch.device("cpu"),
+            stage=stage,
+        )
+    
+        def native_model(*args: object) -> Any:
+            return handle, (), {}, None, case["shift"], (), None, ()
+    
+        monkeypatch.setattr(arm, "_native_model", native_model)
+        monkeypatch.setattr(arm, "sampling_preview_emitter", preview)
+        original = runtime.sample_custom
+        calls = []
+    
+        def sample_custom(*args: Any, **kwargs: Any) -> Any:
+            request, noise = kwargs["request"], kwargs["noise"]
+            assert list(request.sigmas) == case["sigmas"]
+            assert hashlib.sha256(noise.numpy().tobytes()).hexdigest() == case["noise_hash"]
+            calls.append(request)
+            return original(*args, **kwargs)
+    
+        runtime.sample_custom = sample_custom
+        rows = [[torch.ones((1, 3, 8 if flux else 2304)), {}]]
+>       output = cast("Any", arm.NativeKSampler).execute(
+            model=object(),
+            seed=7,
+            steps=3,
+            cfg=1.0,
+            sampler_name="euler",
+            scheduler="simple",
+            positive=rows,
+            negative=rows,
+            latent_image={"samples": torch.zeros((1, 128 if flux else 16, 2, 2))},
+            denoise=1.0,
+        )["latent"]["samples"]
+
+packages/dinkster-inference-torch/tests/test_complete_sampling_shifts.py:95: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+packages/dinkster-native/src/dinkster_native/nodes_sampling_runtime.py:433: in execute
+    unload_text_before_diffusion = _diffusion_unload_roles(handle)
+                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+handle = namespace(runtime=<dinkster_inference_torch.flux2_runtime.Flux2Runtime object at 0x7379132ab4d0>, recipe=namespace(fam...evice(type='cpu'), stage=<function test_complete_checkpoint_sampling_shift_reference.<locals>.stage at 0x737913298400>)
+
+    def _diffusion_unload_roles(handle: NativeRuntimeHandle) -> tuple[str, ...]:
+        source_roles = frozenset(source.role for source in handle.recipe.sources)
+        return (
+            ("text",)
+>           if source_roles & _TEXT_RUNTIME_SOURCE_ROLES and handle.has_residency_stage("text")
+                                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^
+            else ()
+        )
+E       AttributeError: 'types.SimpleNamespace' object has no attribute 'has_residency_stage'
+
+packages/dinkster-native/src/dinkster_native/native_arm_core.py:193: AttributeError
+___________ test_complete_checkpoint_sampling_shift_reference[case3] ___________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x737931bc6660>
+case = {'family': 'lumina2', 'shift': None, 'sigmas': [1.0, 0.9231833219528198, 0.7505617737770081, 0.0], 'noise_hash': 'aa7d32a6f35d724d9dd5044a7f572e1bdefd9b35422eaffc01b8ba76a4b3d985', ...}
+
+    @pytest.mark.parametrize("case", GOLDEN["cases"])
+    def test_complete_checkpoint_sampling_shift_reference(
+        monkeypatch: pytest.MonkeyPatch, case: dict[str, Any]
+    ) -> None:
+        flux = case["family"] == "flux2"
+        runtime: Any = object.__new__(Flux2Runtime if flux else Lumina2Runtime)
+    
+        def compute_dtype(role: str) -> torch.dtype:
+            return torch.float32
+    
+        def stage(*args: object, **kwargs: object) -> nullcontext[None]:
+            return nullcontext()
+    
+        def preview(*args: object, **kwargs: object) -> None:
+            return None
+    
+        runtime.assembled = SimpleNamespace(
+            family=FLUX2_DEV if flux else LUMINA2,
+            diffusion=ArithmeticDiffusion(),
+            compute_dtype=compute_dtype,
+        )
+        runtime._runtime_identity = "native:complete-sampling-test"
+        runtime._samplers = torch_sampler_registry()
+        runtime._schedulers = torch_scheduler_registry()
+        runtime._guidance = None
+        handle = SimpleNamespace(
+            runtime=runtime,
+            recipe=SimpleNamespace(
+                family_id=runtime.family.id, sources=(SimpleNamespace(role="checkpoint"),)
+            ),
+            load_device=torch.device("cpu"),
+            stage=stage,
+        )
+    
+        def native_model(*args: object) -> Any:
+            return handle, (), {}, None, case["shift"], (), None, ()
+    
+        monkeypatch.setattr(arm, "_native_model", native_model)
+        monkeypatch.setattr(arm, "sampling_preview_emitter", preview)
+        original = runtime.sample_custom
+        calls = []
+    
+        def sample_custom(*args: Any, **kwargs: Any) -> Any:
+            request, noise = kwargs["request"], kwargs["noise"]
+            assert list(request.sigmas) == case["sigmas"]
+            assert hashlib.sha256(noise.numpy().tobytes()).hexdigest() == case["noise_hash"]
+            calls.append(request)
+            return original(*args, **kwargs)
+    
+        runtime.sample_custom = sample_custom
+        rows = [[torch.ones((1, 3, 8 if flux else 2304)), {}]]
+>       output = cast("Any", arm.NativeKSampler).execute(
+            model=object(),
+            seed=7,
+            steps=3,
+            cfg=1.0,
+            sampler_name="euler",
+            scheduler="simple",
+            positive=rows,
+            negative=rows,
+            latent_image={"samples": torch.zeros((1, 128 if flux else 16, 2, 2))},
+            denoise=1.0,
+        )["latent"]["samples"]
+
+packages/dinkster-inference-torch/tests/test_complete_sampling_shifts.py:95: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+packages/dinkster-native/src/dinkster_native/nodes_sampling_runtime.py:433: in execute
+    unload_text_before_diffusion = _diffusion_unload_roles(handle)
+                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+handle = namespace(runtime=<dinkster_inference_torch.lumina2_runtime.Lumina2Runtime object at 0x737931bc5370>, recipe=namespace...evice(type='cpu'), stage=<function test_complete_checkpoint_sampling_shift_reference.<locals>.stage at 0x73791329a660>)
+
+    def _diffusion_unload_roles(handle: NativeRuntimeHandle) -> tuple[str, ...]:
+        source_roles = frozenset(source.role for source in handle.recipe.sources)
+        return (
+            ("text",)
+>           if source_roles & _TEXT_RUNTIME_SOURCE_ROLES and handle.has_residency_stage("text")
+                                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^
+            else ()
+        )
+E       AttributeError: 'types.SimpleNamespace' object has no attribute 'has_residency_stage'
+
+packages/dinkster-native/src/dinkster_native/native_arm_core.py:193: AttributeError
+___________ test_complete_checkpoint_sampling_shift_reference[case4] ___________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x737931b75640>
+case = {'family': 'lumina2', 'shift': 0.4, 'sigmas': [1.0000001192092896, 0.4448149800300598, 0.1670835316181183, 0.0], 'noise_hash': 'aa7d32a6f35d724d9dd5044a7f572e1bdefd9b35422eaffc01b8ba76a4b3d985', ...}
+
+    @pytest.mark.parametrize("case", GOLDEN["cases"])
+    def test_complete_checkpoint_sampling_shift_reference(
+        monkeypatch: pytest.MonkeyPatch, case: dict[str, Any]
+    ) -> None:
+        flux = case["family"] == "flux2"
+        runtime: Any = object.__new__(Flux2Runtime if flux else Lumina2Runtime)
+    
+        def compute_dtype(role: str) -> torch.dtype:
+            return torch.float32
+    
+        def stage(*args: object, **kwargs: object) -> nullcontext[None]:
+            return nullcontext()
+    
+        def preview(*args: object, **kwargs: object) -> None:
+            return None
+    
+        runtime.assembled = SimpleNamespace(
+            family=FLUX2_DEV if flux else LUMINA2,
+            diffusion=ArithmeticDiffusion(),
+            compute_dtype=compute_dtype,
+        )
+        runtime._runtime_identity = "native:complete-sampling-test"
+        runtime._samplers = torch_sampler_registry()
+        runtime._schedulers = torch_scheduler_registry()
+        runtime._guidance = None
+        handle = SimpleNamespace(
+            runtime=runtime,
+            recipe=SimpleNamespace(
+                family_id=runtime.family.id, sources=(SimpleNamespace(role="checkpoint"),)
+            ),
+            load_device=torch.device("cpu"),
+            stage=stage,
+        )
+    
+        def native_model(*args: object) -> Any:
+            return handle, (), {}, None, case["shift"], (), None, ()
+    
+        monkeypatch.setattr(arm, "_native_model", native_model)
+        monkeypatch.setattr(arm, "sampling_preview_emitter", preview)
+        original = runtime.sample_custom
+        calls = []
+    
+        def sample_custom(*args: Any, **kwargs: Any) -> Any:
+            request, noise = kwargs["request"], kwargs["noise"]
+            assert list(request.sigmas) == case["sigmas"]
+            assert hashlib.sha256(noise.numpy().tobytes()).hexdigest() == case["noise_hash"]
+            calls.append(request)
+            return original(*args, **kwargs)
+    
+        runtime.sample_custom = sample_custom
+        rows = [[torch.ones((1, 3, 8 if flux else 2304)), {}]]
+>       output = cast("Any", arm.NativeKSampler).execute(
+            model=object(),
+            seed=7,
+            steps=3,
+            cfg=1.0,
+            sampler_name="euler",
+            scheduler="simple",
+            positive=rows,
+            negative=rows,
+            latent_image={"samples": torch.zeros((1, 128 if flux else 16, 2, 2))},
+            denoise=1.0,
+        )["latent"]["samples"]
+
+packages/dinkster-inference-torch/tests/test_complete_sampling_shifts.py:95: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+packages/dinkster-native/src/dinkster_native/nodes_sampling_runtime.py:433: in execute
+    unload_text_before_diffusion = _diffusion_unload_roles(handle)
+                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+handle = namespace(runtime=<dinkster_inference_torch.lumina2_runtime.Lumina2Runtime object at 0x737931b76d50>, recipe=namespace...evice(type='cpu'), stage=<function test_complete_checkpoint_sampling_shift_reference.<locals>.stage at 0x73791329b920>)
+
+    def _diffusion_unload_roles(handle: NativeRuntimeHandle) -> tuple[str, ...]:
+        source_roles = frozenset(source.role for source in handle.recipe.sources)
+        return (
+            ("text",)
+>           if source_roles & _TEXT_RUNTIME_SOURCE_ROLES and handle.has_residency_stage("text")
+                                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^
+            else ()
+        )
+E       AttributeError: 'types.SimpleNamespace' object has no attribute 'has_residency_stage'
+
+packages/dinkster-native/src/dinkster_native/native_arm_core.py:193: AttributeError
+___________ test_complete_checkpoint_sampling_shift_reference[case5] ___________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7379132aa0f0>
+case = {'family': 'lumina2', 'shift': 2.0, 'sigmas': [1.0, 0.8002399206161499, 0.5007495880126953, 0.0], 'noise_hash': 'aa7d32a6f35d724d9dd5044a7f572e1bdefd9b35422eaffc01b8ba76a4b3d985', ...}
+
+    @pytest.mark.parametrize("case", GOLDEN["cases"])
+    def test_complete_checkpoint_sampling_shift_reference(
+        monkeypatch: pytest.MonkeyPatch, case: dict[str, Any]
+    ) -> None:
+        flux = case["family"] == "flux2"
+        runtime: Any = object.__new__(Flux2Runtime if flux else Lumina2Runtime)
+    
+        def compute_dtype(role: str) -> torch.dtype:
+            return torch.float32
+    
+        def stage(*args: object, **kwargs: object) -> nullcontext[None]:
+            return nullcontext()
+    
+        def preview(*args: object, **kwargs: object) -> None:
+            return None
+    
+        runtime.assembled = SimpleNamespace(
+            family=FLUX2_DEV if flux else LUMINA2,
+            diffusion=ArithmeticDiffusion(),
+            compute_dtype=compute_dtype,
+        )
+        runtime._runtime_identity = "native:complete-sampling-test"
+        runtime._samplers = torch_sampler_registry()
+        runtime._schedulers = torch_scheduler_registry()
+        runtime._guidance = None
+        handle = SimpleNamespace(
+            runtime=runtime,
+            recipe=SimpleNamespace(
+                family_id=runtime.family.id, sources=(SimpleNamespace(role="checkpoint"),)
+            ),
+            load_device=torch.device("cpu"),
+            stage=stage,
+        )
+    
+        def native_model(*args: object) -> Any:
+            return handle, (), {}, None, case["shift"], (), None, ()
+    
+        monkeypatch.setattr(arm, "_native_model", native_model)
+        monkeypatch.setattr(arm, "sampling_preview_emitter", preview)
+        original = runtime.sample_custom
+        calls = []
+    
+        def sample_custom(*args: Any, **kwargs: Any) -> Any:
+            request, noise = kwargs["request"], kwargs["noise"]
+            assert list(request.sigmas) == case["sigmas"]
+            assert hashlib.sha256(noise.numpy().tobytes()).hexdigest() == case["noise_hash"]
+            calls.append(request)
+            return original(*args, **kwargs)
+    
+        runtime.sample_custom = sample_custom
+        rows = [[torch.ones((1, 3, 8 if flux else 2304)), {}]]
+>       output = cast("Any", arm.NativeKSampler).execute(
+            model=object(),
+            seed=7,
+            steps=3,
+            cfg=1.0,
+            sampler_name="euler",
+            scheduler="simple",
+            positive=rows,
+            negative=rows,
+            latent_image={"samples": torch.zeros((1, 128 if flux else 16, 2, 2))},
+            denoise=1.0,
+        )["latent"]["samples"]
+
+packages/dinkster-inference-torch/tests/test_complete_sampling_shifts.py:95: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+packages/dinkster-native/src/dinkster_native/nodes_sampling_runtime.py:433: in execute
+    unload_text_before_diffusion = _diffusion_unload_roles(handle)
+                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+handle = namespace(runtime=<dinkster_inference_torch.lumina2_runtime.Lumina2Runtime object at 0x7379132aabd0>, recipe=namespace...evice(type='cpu'), stage=<function test_complete_checkpoint_sampling_shift_reference.<locals>.stage at 0x73791321f880>)
+
+    def _diffusion_unload_roles(handle: NativeRuntimeHandle) -> tuple[str, ...]:
+        source_roles = frozenset(source.role for source in handle.recipe.sources)
+        return (
+            ("text",)
+>           if source_roles & _TEXT_RUNTIME_SOURCE_ROLES and handle.has_residency_stage("text")
+                                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^
+            else ()
+        )
+E       AttributeError: 'types.SimpleNamespace' object has no attribute 'has_residency_stage'
+
+packages/dinkster-native/src/dinkster_native/native_arm_core.py:193: AttributeError
+=============================== warnings summary ===============================
+packages/dinkster-inference-torch/tests/test_grouped_regional.py:575
+  /home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-inference-torch/tests/test_grouped_regional.py:575: UserWarning: Sparse invariant checks are implicitly disabled. Memory errors (e.g. SEGFAULT) will occur when operating on a sparse tensor which violates the invariants, but checks incur performance overhead. To silence this warning, explicitly opt in or out. See `torch.sparse.check_sparse_tensor_invariants.__doc__` for guidance.  (Triggered internally at /__w/pytorch/pytorch/aten/src/ATen/Context.cpp:816.)
+    "x": torch.sparse_coo_tensor(
+
+packages/dinkster-inference-torch/tests/test_attention.py: 14 warnings
+  /home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/.venv-torch/lib/python3.12/site-packages/torch/jit/_script.py:365: DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`.
+    warnings.warn(
+
+packages/dinkster-inference-torch/tests/test_ltx_text_recipe.py::test_tiny_native_ordered_ltx_load_encode_rebuild_and_projection_overlay[False-False-single_linear]
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+packages/dinkster-inference-torch/tests/test_ltx_text_recipe.py::test_tiny_native_ordered_ltx_load_encode_rebuild_and_projection_overlay[False-False-single_linear]
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+packages/dinkster-inference-torch/tests/test_minimax_h3_dit.py::test_reduced_mixed_bf16_fp32_storage_executes_each_dtype_island
+  /home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/.venv-torch/lib/python3.12/site-packages/torch/nn/functional.py:3006: UserWarning: Mismatch dtype between input and weight: input dtype = c10::BFloat16, weight dtype = float, Cannot dispatch to fused implementation. (Triggered internally at /__w/pytorch/pytorch/aten/src/ATen/native/layer_norm.cpp:346.)
+    return torch.rms_norm(input, normalized_shape, weight, eps)
+
+packages/dinkster-inference-torch/tests/test_payloads.py::test_scalar_sparse_quantized_complex_unsigned_and_unknown_refuse_without_casts
+  /home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-inference-torch/tests/test_payloads.py:107: UserWarning: torch.quantize_per_tensor, torch.quantize_per_channel and other quantized tensor creation functions that produce tensors with dtype torch.quint8, torch.qint8, and torch.qint32 are deprecated and will be removed in a future PyTorch release. Please see https://github.com/pytorch/pytorch/issues/184982 for more information. (Triggered internally at /__w/pytorch/pytorch/aten/src/ATen/quantized/Quantizer.cpp:111.)
+    torch.quantize_per_tensor(torch.tensor([1.0]), 0.1, 0, torch.qint8),
+
+packages/dinkster-inference-torch/tests/test_wiring_sd.py::TestSample::test_off_grid_control_sampler_accepts_only_constant_gain[dinkster.dpm_adaptive]
+  /home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-inference-torch/src/dinkster_inference_torch/_portable_solvers.py:497: UserWarning: Converting a tensor with requires_grad=True to a scalar may lead to unexpected behavior.
+  Consider using tensor.detach() first. (Triggered internally at /__w/pytorch/pytorch/torch/csrc/autograd/generated/python_variable_methods.cpp:822.)
+    error = math.sqrt(float(squared_ops.sum())) / math.sqrt(x_ops.numel())
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED packages/dinkster-inference-torch/tests/test_complete_sampling_shifts.py::test_complete_checkpoint_sampling_shift_reference[case0]
+FAILED packages/dinkster-inference-torch/tests/test_complete_sampling_shifts.py::test_complete_checkpoint_sampling_shift_reference[case1]
+FAILED packages/dinkster-inference-torch/tests/test_complete_sampling_shifts.py::test_complete_checkpoint_sampling_shift_reference[case2]
+FAILED packages/dinkster-inference-torch/tests/test_complete_sampling_shifts.py::test_complete_checkpoint_sampling_shift_reference[case3]
+FAILED packages/dinkster-inference-torch/tests/test_complete_sampling_shifts.py::test_complete_checkpoint_sampling_shift_reference[case4]
+FAILED packages/dinkster-inference-torch/tests/test_complete_sampling_shifts.py::test_complete_checkpoint_sampling_shift_reference[case5]
+6 failed, 5927 passed, 216 skipped, 20 warnings in 610.01s (0:10:10)
+sys:1: DeprecationWarning: builtin type swigvarlink has no __module__ attribute

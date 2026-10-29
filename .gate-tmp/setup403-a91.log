@@ -1,0 +1,92 @@
+==> dinkster-evidence not found - skipping optional dinkster-acceptance
+==> .venv (torch-free root env)
+Resolved 136 packages in 222ms
+Checked 90 packages in 2ms
+==> .venv-torch (CPU torch test env)
+Using Python 3.12.3 environment at: .venv-torch
+Checked 2 packages in 4ms
+Using Python 3.12.3 environment at: .venv-torch
+Resolved 74 packages in 316ms
+   Building dinkster-nodes-vision @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-nodes-vision
+   Building dinkster-workers @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-workers
+   Building dinkster-model-qwen-image @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-model-qwen-image
+   Building dinkster-values @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-values
+   Building dinkster-native @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-native
+   Building dinkster-inference @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-inference
+   Building dinkster-memory @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-memory
+   Building dinkster-engine @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-engine
+   Building dinkster-nodes-generation @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-nodes-generation
+   Building dinkster-video @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-video
+   Building dinkster-graph @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-graph
+   Building dinkster-model-triposplat @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-model-triposplat
+   Building dinkster-compat-comfy @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-compat-comfy
+   Building dinkster-protocol @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-protocol
+   Building dinkster-schema @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-schema
+   Building dinkster-assets @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-assets
+   Building dinkster-inference-torch @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-inference-torch
+   Building dinkster-api @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-api
+   Building dinkster-caches @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-caches
+   Building dinkster-model-ipadapter @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-model-ipadapter
+      Built dinkster-model-ipadapter @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-model-ipadapter
+      Built dinkster-api @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-api
+      Built dinkster-assets @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-assets
+      Built dinkster-model-triposplat @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-model-triposplat
+      Built dinkster-video @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-video
+      Built dinkster-engine @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-engine
+      Built dinkster-workers @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-workers
+      Built dinkster-inference @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-inference
+      Built dinkster-caches @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-caches
+      Built dinkster-values @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-values
+      Built dinkster-model-qwen-image @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-model-qwen-image
+      Built dinkster-inference-torch @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-inference-torch
+      Built dinkster-memory @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-memory
+      Built dinkster-protocol @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-protocol
+      Built dinkster-nodes-generation @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-nodes-generation
+      Built dinkster-graph @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-graph
+      Built dinkster-schema @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-schema
+      Built dinkster-native @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-native
+      Built dinkster-compat-comfy @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-compat-comfy
+      Built dinkster-nodes-vision @ file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-nodes-vision
+Prepared 20 packages in 403ms
+Uninstalled 20 packages in 13ms
+Installed 20 packages in 4ms
+ ~ dinkster-api==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-api)
+ ~ dinkster-assets==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-assets)
+ ~ dinkster-caches==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-caches)
+ ~ dinkster-compat-comfy==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-compat-comfy)
+ ~ dinkster-engine==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-engine)
+ ~ dinkster-graph==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-graph)
+ ~ dinkster-inference==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-inference)
+ ~ dinkster-inference-torch==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-inference-torch)
+ ~ dinkster-memory==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-memory)
+ ~ dinkster-model-ipadapter==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-model-ipadapter)
+ ~ dinkster-model-qwen-image==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-model-qwen-image)
+ ~ dinkster-model-triposplat==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-model-triposplat)
+ ~ dinkster-native==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-native)
+ ~ dinkster-nodes-generation==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-nodes-generation)
+ ~ dinkster-nodes-vision==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-nodes-vision)
+ ~ dinkster-protocol==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-protocol)
+ ~ dinkster-schema==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-schema)
+ ~ dinkster-values==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-values)
+ ~ dinkster-video==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-video)
+ ~ dinkster-workers==0.0.1 (from file:///home/kosin/comfy-vibe-station/lanes/issue-403-lora-golden-divergence/packages/dinkster-workers)
+Using Python 3.12.3 environment at: .venv-torch
+Checked 1 package in 3ms
+Using Python 3.12.3 environment at: .venv-torch
+Checked 1 package in 2ms
+==> Python.h present in the Python 3.12 base interpreter
+==> no NVIDIA GPU detected - skipping .venv-gpu (the GPU gate
+    applies only on GPU machines, AGENTS.md 'Validation gate')
+==> done. Gates:
+  .venv/bin/ruff check .
+  .venv/bin/pyright
+  .venv/bin/python -m pytest -q
+  .venv/bin/pyright -p packages/dinkster-inference-torch
+  CPATH="$PWD/.venv-gpu-extras/pyheaders/usr/include/python3.12:$PWD/.venv-gpu-extras/pyheaders/usr/include${CPATH:+:$CPATH}" \
+    .venv-torch/bin/python -m pytest -q packages/dinkster-inference-torch/tests
+  .venv/bin/pyright -p packages/dinkster-nodes-vision
+  .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests
+GPU machines additionally:
+  DINKSTER_ENABLE_GPU_TESTS=1 DINKSTER_VALIDATE_REFERENCE_GOLDENS=1 \
+  CPATH="$PWD/.venv-gpu-extras/pyheaders/usr/include/python3.12:$PWD/.venv-gpu-extras/pyheaders/usr/include${CPATH:+:$CPATH}" \
+    .venv-gpu/bin/python -m pytest -q packages/dinkster-inference-torch/tests
