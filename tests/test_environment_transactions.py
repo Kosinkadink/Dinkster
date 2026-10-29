@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -12,6 +13,8 @@ from pathlib import Path
 from urllib.request import urlopen
 
 import pytest
+from dinkster_assets import AssetRef, AssetVault, LibraryStore, digest_bytes
+from dinkster_registry import LockedPack, Lockfile, build_artifact
 from dinkster_supervisor.environment_runtime import engine_status, start_engine, stop_engine
 from dinkster_supervisor.environment_state import (
     EnvironmentError,
@@ -34,6 +37,7 @@ from dinkster_supervisor.environment_transactions import (
     begin_setup,
     recover_activation,
 )
+from test_environment_artifacts import _mirror
 from test_environment_cli import _run
 from test_environment_generations import _standalone_tree
 from test_environment_runtime import free_port, make_generation
@@ -285,6 +289,179 @@ def test_update_and_rollback_reactivate_retained_tree_without_rebuild(tmp_path: 
         stop_engine(tmp_path, "main", generation=2)
         stop_engine(tmp_path, "parked", generation=1)
         stop_engine(tmp_path, "parked", generation=2)
+
+
+@pytest.mark.parametrize(
+    "interruption", ["none", "unavailable", "asset-removed", "workflow-edited"]
+)
+def test_confirmed_workflow_update_checks_inputs_after_candidate_health(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    interruption: str,
+) -> None:
+    from dinkster_supervisor import environment, environment_transactions
+
+    from dinkster.generation_packs import stage_generation_packs
+
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join(str(Path(p).resolve()) for p in sys.path))
+    root, store, mirror = (tmp_path / name for name in ("project", "store", "mirror"))
+    _mirror(mirror, variant="linux-cpu")
+    old = _target(root, 1)
+    (old / "dinkster.lock").write_text(Lockfile().record_json())
+    (root / "store").write_text(str(store) + "\n")
+    payload = b"verified model from selected pack"
+    identity = digest_bytes(payload)
+    asset = AssetRef(
+        digest_bytes(b"unavailable") if interruption == "unavailable" else identity,
+        "model.bin",
+        len(payload),
+    )
+    vault = AssetVault(root / "library/vault")
+    document = {
+        "format": "dinkster-workflow",
+        "formatVersion": 1,
+        "graphs": {"main": {"nodes": {}, "valueSources": {"model": {"value": asset.to_wire()}}}},
+    }
+    data = json.dumps(document).encode()
+    workflow_digest = digest_bytes(data)
+    with vault.writer(workflow_digest) as writer:
+        writer.write(data)
+        writer.commit()
+    library = LibraryStore(root / "library/library.sqlite")
+    record = library.create(
+        "local", "Workflow", workflow_digest, "application/x-dinkster-workflow+json"
+    )
+    library.close()
+    port = free_port()
+    settings = {
+        "format": "dinkster.project/1",
+        "channel": "main",
+        "variant": "linux-cpu",
+        "mirrors": [str(mirror)],
+        "port": port,
+        "workflows": [{"scope": "local", "id": record.id}],
+        "additions": {"packs": [{"pack": "example", "version": "1.0.0"}]},
+    }
+    (root / "project.json").write_text(json.dumps(settings))
+    original_settings = (root / "project.json").read_bytes()
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    (pack / "dinkster-pack.toml").write_text(
+        '[pack]\nname = "example"\n[pack.entry]\nnodes = "poison:NODES"\n'
+        '\n[[pack.assets]]\nid = "model"\nname = "Model"\n'
+        f'digest = "{identity}"\nfile = "model.bin"\n'
+    )
+    (pack / "model.bin").write_bytes(payload)
+    (pack / "poison.py").write_text('raise RuntimeError("must not import pack nodes")\n')
+    archives = tmp_path / "artifacts"
+    archives.mkdir()
+    archive = archives / "building.zip"
+    artifact_digest = build_artifact(pack, archive)
+    archive = archive.rename(archives / f"{artifact_digest.split(':')[1]}.zip")
+    lock = Lockfile.of([LockedPack("example", "1.0.0", artifact_digest, "author", ("example",))])
+    catalog = tmp_path / "official-packs.lock"
+    catalog.write_text(lock.record_json())
+    core = Path(__file__).resolve().parents[1] / "src/dinkster"
+
+    def fixture_build(**kwargs: object) -> None:
+        # Admission, acquisition and activation use the real paths over fixture generations.
+        target = _target(root, int(str(kwargs["number"])))
+        generation = Generation.read(target / "generation.json")
+        (target / "generation.json").unlink()
+        stage_generation_packs(target, lock, {"example": archive})
+        files = tuple(
+            sorted(
+                (p.relative_to(target).as_posix(), content_digest(p))
+                for p in target.rglob("*")
+                if p.is_file()
+            )
+        )
+        replace(generation, files=files, in_process_packs=("example",)).write(
+            target / "generation.json"
+        )
+        (root / "dinkster/__init__.py").write_text(f"__path__.append({str(core)!r})\n")
+
+    monkeypatch.setattr(environment, "build_generation", fixture_build)
+    (root / "dinkster/__init__.py").write_text(f"__path__.append({str(core)!r})\n")
+    prior = start_engine(root, 1, "main", port)
+    original_start = environment_transactions.start_engine
+
+    def candidate_start(
+        root: Path,
+        generation: int,
+        name: str,
+        port: int,
+        gpus: tuple[str, ...] = (),
+    ) -> dict[str, object]:
+        result = original_start(root, generation, name, port, gpus)
+        if generation != 2:
+            return result
+        if interruption == "asset-removed":
+            replace(asset, resolver=vault).local_path().unlink()
+        elif interruption == "workflow-edited":
+            index = LibraryStore(root / "library/library.sqlite")
+            try:
+                index.update("local", record.id, record.revision, name="Concurrent edit")
+            finally:
+                index.close()
+        return result
+
+    monkeypatch.setattr(environment_transactions, "start_engine", candidate_start)
+    try:
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "dinkster-env",
+                "--root",
+                str(root),
+                "update",
+                "--yes",
+                "--json",
+                "--catalog-lock",
+                str(catalog),
+                "--artifacts",
+                str(archives),
+            ],
+        )
+        with pytest.raises(SystemExit) as exited:
+            environment.main()
+        code = exited.value.code
+        result = json.loads(capsys.readouterr().out)
+        journals = list((root / "journal").glob("*.json"))
+        assert len(journals) == 1
+        if interruption == "none":
+            assert code == 0, result
+            assert result["status"] == "applied" and read_current(root) == 2
+            assert (
+                AssetRef(identity, "model.bin", len(payload), resolver=vault).read_bytes()
+                == payload
+            )
+            assert Journal.read(journals[0]).stage == "complete"
+        else:
+            assert code == 1, result
+            expected = (
+                "no usable sources"
+                if interruption == "unavailable"
+                else "requirements failed revalidation"
+                if interruption == "asset-removed"
+                else "workflow inputs changed"
+            )
+            assert expected in result["error"]
+            assert read_current(root) == 1
+            assert engine_status(root) == (prior,)
+            assert not (root / "generations/2").exists()
+            assert Journal.read(journals[0]).stage == "rolled-back"
+            with urlopen(f"{prior['url']}/api/health") as response:  # noqa: S310
+                assert json.loads(response.read()) == {"ok": True}
+        assert (root / "project.json").read_bytes() == original_settings
+        assert (old / "dinkster.lock").read_text() == Lockfile().record_json()
+    finally:
+        stop_engine(root, "main", generation=1)
+        stop_engine(root, "main", generation=2)
 
 
 @pytest.mark.parametrize(

@@ -111,5 +111,8 @@
   leads, verifies the target's admitted pack sources and variant, and materializes
   only approved assets. Concurrent workflow edits abort publication; workflow
   records are never rewritten. This core adapter does not activate a generation;
-  confirmed managed workflow updates still refuse until lifecycle integration is
-  complete.
+  `dinkster-env update --yes` owns candidate construction and activation, rechecking
+  registered workflow inputs and target requirements after candidate health checks.
+  Failed acquisition or revalidation retains the previous serving generation and
+  diagnostic journal. First setup with requirements still needs an existing
+  generation interpreter; channel/variant migration is not available.

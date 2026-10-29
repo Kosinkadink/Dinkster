@@ -236,8 +236,6 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         workflow_catalog_digest = content_digest(catalog_lock) if catalog_lock is not None else None
     if not _confirmed(args, plan):
         return 0
-    if has_requirements:
-        raise EnvironmentError("registered workflow/addition execution is not available yet")
 
     def revalidate() -> None:
         actual = (root / "project.json").read_bytes() if (root / "project.json").exists() else None

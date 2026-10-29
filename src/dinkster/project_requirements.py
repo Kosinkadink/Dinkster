@@ -244,12 +244,24 @@ def apply_project_requirements(
     if target_variant != variant:
         raise RequirementError("target generation variant differs from approved plan")
     target = Lockfile.from_record_json((generation / "dinkster.lock").read_text("utf-8"))
+    selected = (
+        Lockfile.from_record_json(catalog_lock.read_text("utf-8"))
+        if catalog_lock is not None
+        else Lockfile()
+    )
     required = _object(current["requirements"], "project requirements")
     for raw in cast("list[object]", required["packs"]):
         pack = _object(raw, "required pack")
         installed = target.get(cast(str, pack["pack"]))
         if installed is None or installed.version != pack["version"]:
             raise RequirementError(f"target generation lacks approved pack {pack['pack']}")
+        if installed != selected.get(installed.pack):
+            raise RequirementError(f"target pack {installed.pack} differs from selected catalog")
+    for raw in cast("list[object]", actions["assets"]):
+        action = _object(raw, "asset action")
+        for name in cast("list[str]", action.get("packagedFrom", [])):
+            if target.get(name) is None or target.get(name) != selected.get(name):
+                raise RequirementError(f"target pack {name} differs from selected catalog")
     declared = PackAssetCatalog()
     declared.replace_all(
         (canonical_name(manifest.name), manifest.path.parent, manifest.assets)

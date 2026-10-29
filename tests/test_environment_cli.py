@@ -166,10 +166,6 @@ def test_update_workflow_plan_uses_core_adapter_without_mutating_project_or_cach
         assert json.loads(actions[0].split(": ", 1)[1]) == {**asset, "sources": []}
         assert snapshot() == before
 
-    code, refused = _run(root, "update", "--yes")
-    assert code == 1 and "execution is not available yet" in refused["error"]
-    assert snapshot() == before
-
     workflow_asset = AssetRef(digest_bytes(b"workflow bytes"), "workflow.bin", 14).to_wire()
     document = {
         "format": "dinkster-workflow",

@@ -833,6 +833,14 @@ def test_confirmed_project_apply_revalidates_and_materializes_only_approved_asse
         project_operation(root, **arguments, approved=approved, target_generation=target)
     assert not (root / "library").exists()
     failed.write_bytes(verified)
+    target_lock = target / "dinkster.lock"
+    target_lock.write_text(
+        Lockfile.of([replace(lock.packs[0], publisher="different")]).record_json()
+    )
+    with pytest.raises(EnvironmentError, match="differs from selected catalog"):
+        project_operation(root, **arguments, approved=approved, target_generation=target)
+    assert not (root / "library").exists()
+    target_lock.write_text(lock.record_json())
     applied = project_operation(root, **arguments, approved=approved, target_generation=target)
     assert applied["plan"] == {"packs": [], "assets": [], "errors": []}
     assert applied["requirements"] == approved["requirements"]
