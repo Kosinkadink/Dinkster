@@ -52,6 +52,7 @@ def pack_operation(
     source_generation: Path | None = None,
     locks: tuple[Path, ...] = (),
     in_process_packs: tuple[str, ...] = (),
+    offline: bool = False,
     uv: str = "uv",
 ) -> dict[str, object]:
     """Invoke the generation-owned provisioner without importing engine packages."""
@@ -84,6 +85,8 @@ def pack_operation(
     ]
     if source_generation is not None:
         command.extend(["--source-generation", str(source_generation)])
+    if offline:
+        command.append("--offline")
     for lock in locks:
         command.extend(["--lock", str(lock)])
     for pack in in_process_packs:
@@ -261,6 +264,7 @@ def build_generation(
     catalog_lock: Path | None = None,
     artifacts: Path | None = None,
     prepare_packs: Callable[[Path], None] | None = None,
+    repair: bool = False,
     uv: str = "uv",
 ) -> Generation:
     """Build a target without activating it or touching another generation.
@@ -325,6 +329,13 @@ def build_generation(
             "UV_PYTHON_DOWNLOADS": "never",
             "PYTHONDONTWRITEBYTECODE": "1",
         }
+        if repair:
+            # A hand-edited hardlink can also corrupt uv's extracted cache.
+            cleaned = subprocess.run(
+                [uv, "cache", "clean"], env=environment, capture_output=True, text=True
+            )
+            if cleaned.returncode:
+                raise EnvironmentError(f"cannot refresh repair cache: {cleaned.stderr.strip()}")
         result = subprocess.run(command, env=environment, capture_output=True, text=True)
         if result.returncode:
             raise EnvironmentError(f"offline generation sync failed: {result.stderr.strip()}")
@@ -342,6 +353,7 @@ def build_generation(
                     source_generation=source_generation if operation != "doctor" else None,
                     locks=pack_locks if operation != "doctor" else (),
                     in_process_packs=in_process_packs,
+                    offline=repair,
                     uv=uv,
                 )
         if catalog_lock is not None and artifacts is not None:

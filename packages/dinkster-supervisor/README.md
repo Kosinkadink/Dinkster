@@ -300,6 +300,20 @@ Status returns configured `channel`/`variant` and observed `engines`, never
 starts a process and never creates a prospective root. Doctor reports content
 and pack drift without repair and exits nonzero on drift or errors.
 
+`doctor --repair [--plan | --yes]` rebuilds the same release offline into a new
+generation using the existing `repair` activation journal. Plans are read-only;
+apply requires confirmation. It rejects linked base inputs and verifies retained files against sealed file
+hashes, selects constraints with the recorded digest, and admits retained source
+locks from the release's cached archives. Missing or corrupt local inputs refuse
+instead of fetching a channel or reading an index. The shared store lock protects
+uv cache cleanup and reconstruction: hand edits to installed hardlinks can also
+corrupt extracted cache entries, so repair repopulates that disposable cache from
+hash-verified wheels. Pack rebuilding receives explicit `--offline`, refusing
+missing or corrupt dependency wheels before any URL access. Retained generations
+are not edited. Candidate file names
+must match the original inventory, and normal health/activation checks run before
+switching current. Failure keeps the previous selection and diagnostic journal.
+
 `start --engine <name> [--port <port>] [--gpu <device> ...]` and
 `stop --engine <name>` share the same result envelope. They show a plan and
 require `--yes` or terminal confirmation; `--plan` and unconfirmed machine

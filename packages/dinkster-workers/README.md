@@ -207,6 +207,11 @@ unassessed meaning; its timing-outlier flag is not a spill verdict either.
 
 ## Learn more
 
+The pack environment CLI accepts `--offline` for generation repair. Its
+provisioner then uses only size/hash-verified local wheel-store entries; missing
+or corrupt wheels refuse before creating a download directory or opening a URL.
+Normal pack installs retain their declared-source acquisition behavior.
+
 Nodes declaring `input_values=True` receive a read-only `input_values`
 mapping of input envelopes alongside ordinary decoded arguments. This permits
 metadata-preserving forwarding without live run-control access and retains

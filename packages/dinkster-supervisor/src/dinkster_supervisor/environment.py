@@ -25,6 +25,7 @@ from .environment_state import (
     Generation,
     Journal,
     atomic_write,
+    content_digest,
     read_current,
     read_document,
     write_document,
@@ -336,6 +337,130 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     return 0
 
 
+def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
+    root = Path(args.root).resolve()
+    if args.yes:
+        _recover_pending(root)
+    current = read_current(root)
+    if current is None:
+        raise EnvironmentError("project has no active generation")
+    previous = root / "generations" / str(current)
+    record = previous / "generation.json"
+    snapshot = record.read_bytes()
+    generation = Generation.read(record)
+    if generation.number != current:
+        raise EnvironmentError("generation directory and recorded number disagree")
+    pointer = root / "store"
+    store_snapshot = pointer.read_bytes()
+    store = Path(store_snapshot.decode("utf-8").strip())
+    if not store.is_absolute():
+        raise EnvironmentError("project store must be absolute")
+    select_store(root, store)
+    settings = (root / "project.json").read_bytes()
+    expected = dict(generation.files)
+    base = store / "bases" / generation.base[7:] / "python"
+    release = store / "engines" / generation.engine_release[7:]
+    constraints = previous / "constraints.txt"
+    if (
+        not constraints.is_file()
+        or constraints.is_symlink()
+        or content_digest(constraints) != generation.constraints
+    ):
+        constraints = release / f"constraints-{generation.variant}.txt"
+    catalog = previous / "dinkster.lock" if "dinkster.lock" in expected else None
+
+    def revalidate() -> None:
+        if (
+            read_current(root) != current
+            or record.read_bytes() != snapshot
+            or pointer.read_bytes() != store_snapshot
+            or (root / "project.json").read_bytes() != settings
+        ):
+            raise EnvironmentError("project changed after planning; request a new plan")
+        if not base.is_dir():
+            raise EnvironmentError("repair requires the retained base in the local store")
+        if base.is_symlink():
+            raise EnvironmentError("repair refuses linked local base inputs")
+        if (
+            not constraints.is_file()
+            or constraints.is_symlink()
+            or content_digest(constraints) != generation.constraints
+        ):
+            raise EnvironmentError("repair requires intact cached effective constraints")
+        for path in base.rglob("*"):
+            if path.is_symlink():
+                raise EnvironmentError("repair refuses linked local base inputs")
+            if path.is_file():
+                name = "python/" + path.relative_to(base).as_posix()
+                if content_digest(path) != expected.get(name):
+                    raise EnvironmentError(f"repair requires intact local base input: {name}")
+        if catalog is not None and (
+            catalog.is_symlink() or content_digest(catalog) != expected["dinkster.lock"]
+        ):
+            raise EnvironmentError("repair requires intact retained source inventory")
+
+    revalidate()
+    require_idle(root)
+    plan = [
+        f"repair generation {current} offline from retained base {generation.base}",
+        "clear the disposable uv cache and rebuild from local hash-verified wheels",
+        "check target health before activation; retain the drifted tree for diagnosis",
+    ]
+    result.update(current=current, plan=plan, status="planned", store=str(store))
+    if not _confirmed(args, plan):
+        return 0
+    with writer_lock(store), writer_lock(root):
+        revalidate()
+        target = (
+            max(
+                (
+                    int(path.name)
+                    for path in (root / "generations").iterdir()
+                    if path.name.isdecimal()
+                ),
+                default=0,
+            )
+            + 1
+        )
+        journal = begin_activation(root, target, "repair")
+        try:
+            replace(Journal.read(journal), stage="building").write(journal)
+            repaired = build_generation(
+                root=root,
+                number=target,
+                store=store,
+                base=generation.base,
+                engine_version=generation.engine_version,
+                engine_release=generation.engine_release,
+                constraints=constraints,
+                variant=generation.variant,
+                worker_protocol=generation.worker_protocol,
+                in_process_packs=generation.in_process_packs,
+                source_generation=previous if (previous / "packs").exists() else None,
+                own_environment_size=sum(
+                    path.stat().st_size for path in base.rglob("*") if path.is_file()
+                ),
+                catalog_lock=catalog,
+                artifacts=release / "artifacts" if catalog is not None else None,
+                repair=True,
+            )
+            if set(dict(repaired.files)) != set(expected):
+                raise EnvironmentError(
+                    "repaired file inventory differs from the retained generation"
+                )
+            activate(root, journal, revalidate=revalidate)
+        except Exception as exc:
+            replace(Journal.read(journal), error=str(exc)).write(journal)
+            recover_activation(root, journal)
+            raise
+        engines = list(engine_status(root))
+        result.update(current=target, status="applied", engines=engines)
+        ready = next((row for row in engines if row["state"] == "ready"), None)
+        if ready is not None:
+            result["url"] = ready["url"]
+    return 0
+
+
 def _rollback(args: argparse.Namespace, result: dict[str, object]) -> int:
     root = Path(args.root)
     current = read_current(root)
@@ -433,6 +558,9 @@ def main() -> None:
         "status", help="read configured project and observed engine status"
     )
     doctor = commands.add_parser("doctor", help="report active generation and pack drift")
+    doctor.add_argument(
+        "--repair", action="store_true", help="rebuild offline from the local store"
+    )
     setup = commands.add_parser("setup", help="build and activate a first offline generation")
     update = commands.add_parser("update", help="build and activate a channel's next generation")
     for command in (setup, update):
@@ -454,7 +582,7 @@ def main() -> None:
     rollback = commands.add_parser("rollback", help="reactivate the previous successful generation")
     for command in (start, stop):
         command.add_argument("--engine", default="main")
-    for command in (setup, update, start, stop, rollback):
+    for command in (doctor, setup, update, start, stop, rollback):
         confirmation = command.add_mutually_exclusive_group()
         confirmation.add_argument("--yes", action="store_true", help="apply the printed plan")
         confirmation.add_argument("--plan", action="store_true", help="inspect without mutation")
@@ -472,7 +600,9 @@ def main() -> None:
         "status": "clean",
     }
     try:
-        if args.operation in {"setup", "update"}:
+        if args.operation == "doctor" and args.repair:
+            code = _repair(args, result)
+        elif args.operation in {"setup", "update"}:
             code = _install(args, result)
         elif args.operation == "rollback":
             code = _rollback(args, result)

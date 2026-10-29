@@ -311,7 +311,7 @@ def test_publisher_resolution_rejects_source_only_packages(tmp_path: Path) -> No
 
 
 def test_generation_adapter_preflights_rebuilds_and_reports_drift(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     extra = _wheel(tmp_path, "fixture-extra", "1.2", "fixture_extra", "value = 23\n")
     lock = PackLock(
@@ -362,7 +362,26 @@ def test_generation_adapter_preflights_rebuilds_and_reports_drift(
         rebuild_generation(context, plans)
     unrelated.rmdir()
     assert not context.wheel_store.exists()
-    assert rebuild_generation(context, plans) == ("rebuilt pack example from its dependency lock",)
+    context = replace(context, offline=True)
+
+    def refuse_network(*args, **kwargs):
+        pytest.fail("offline pack rebuilding attempted a download")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(urllib.request, "urlopen", refuse_network)
+        with pytest.raises(ProvisionError, match="offline pack wheel missing or corrupt"):
+            rebuild_generation(context, plans)
+        assert not context.wheel_store.exists()
+        context.wheel_store.mkdir()
+        cached = context.wheel_store / extra.filename
+        cached.write_bytes(b"corrupt cached pack wheel")
+        with pytest.raises(ProvisionError, match="offline pack wheel missing or corrupt"):
+            rebuild_generation(context, plans)
+        assert cached.read_bytes() == b"corrupt cached pack wheel"
+        cached.write_bytes((tmp_path / extra.filename).read_bytes())
+        assert rebuild_generation(context, plans) == (
+            "rebuilt pack example from its dependency lock",
+        )
     assert doctor_generation(context) == ()
     assert current.read_text() == "1\n"
     assert (old / "packs/example/pack-lock.json").is_file()

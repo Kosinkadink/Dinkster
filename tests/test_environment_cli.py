@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -544,6 +545,73 @@ environment.main()
         assert (root / "current").read_text() == "1\n" and not (root / "generations/3").exists()
         assert _run(root, "status")[1]["engines"][0]["state"] == "ready"
         assert Journal.read(sorted((root / "journal").glob("*.json"))[-1]).stage == "rolled-back"
+        mirror.rename(tmp_path / "unavailable-mirror")
+        damaged = next(first.rglob("fixture_engine.py"))
+        damaged.write_text("VALUE = 999\n")
+        (first / "constraints.txt").unlink()
+        code, drift = _run(root, "doctor")
+        assert code == 1 and drift["status"] == "drift"
+        assert "missing: constraints.txt" in drift["changes"]
+        assert _run(root, "stop", "--yes")[0] == 0
+
+        def snapshot() -> dict[Path, str | None]:
+            return {
+                path.relative_to(tmp_path): content_digest(path) if path.is_file() else None
+                for directory in (root, store)
+                for path in directory.rglob("*")
+            }
+
+        before = snapshot()
+        for flags in ((), ("--plan",)):
+            code, repair_plan = _run(root, "doctor", "--repair", *flags)
+            assert code == 0 and repair_plan["status"] == "planned", repair_plan
+            assert repair_plan["current"] == 1
+            assert snapshot() == before
+        assert _run(root, "start", "--yes")[0] == 0
+        cached_wheel = next((store / "wheels").glob("*/fixture_engine-1.0-*.whl"))
+        verified = cached_wheel.read_bytes()
+        cached_wheel.write_bytes(b"corrupt local wheel")
+        code, repair_failed = _run(root, "doctor", "--repair", "--yes")
+        assert code == 1 and "offline generation sync failed" in repair_failed["error"]
+        assert (root / "current").read_text() == "1\n" and not (root / "generations/3").exists()
+        assert _run(root, "status")[1]["engines"][0]["state"] == "ready"
+        cached_wheel.write_bytes(verified)
+        code, repaired = _run(root, "doctor", "--repair", "--yes")
+        assert code == 0 and repaired["current"] == 3, repaired
+        assert _run(root, "doctor")[1]["status"] == "clean"
+        restored = next((root / "generations/3").rglob("fixture_engine.py"))
+        assert restored.read_text() == "VALUE = 41\n"
+        assert damaged.read_text() == "VALUE = 999\n"
+        assert not (first / "constraints.txt").exists()
+        assert Journal.read(sorted((root / "journal").glob("*.json"))[-1]).operation == "repair"
+        base_python = store / "bases" / base_id / "python"
+        base_module = next(base_python.rglob("antigravity.py"))
+        original = base_module.read_bytes()
+        base_module.write_bytes(b"corrupt retained base")
+        journals = sorted((root / "journal").glob("*.json"))
+        try:
+            code, corrupt_base = _run(root, "doctor", "--repair", "--yes")
+            assert code == 1 and "intact local base input" in corrupt_base["error"]
+            assert sorted((root / "journal").glob("*.json")) == journals
+            assert (root / "current").read_text() == "3\n"
+        finally:
+            base_module.write_bytes(original)
+        if os.name != "nt":
+            original_directory = base_module.parent
+            parked = original_directory.with_name("parked-stdlib")
+            original_directory.rename(parked)
+            external = tmp_path / "same-shaped-stdlib"
+            shutil.copytree(parked, external)
+            (external / base_module.name).write_bytes(b"same names, unverified base code")
+            original_directory.symlink_to(external, target_is_directory=True)
+            try:
+                code, linked_base = _run(root, "doctor", "--repair", "--yes")
+                assert code == 1 and "linked local base inputs" in linked_base["error"]
+                assert sorted((root / "journal").glob("*.json")) == journals
+                assert (root / "current").read_text() == "3\n"
+            finally:
+                original_directory.unlink()
+                parked.rename(original_directory)
         print(f"fixture update including sync/health took {elapsed:.3f}s")
     finally:
         assert _run(root, "stop", "--yes")[0] == 0

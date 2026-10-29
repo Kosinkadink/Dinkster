@@ -56,6 +56,10 @@
 - Failed initial setup releases its own metadata and store registrations so a
   retry can select another data directory. Cached content, pre-existing settings,
   other projects' references and the diagnostic journal remain intact.
+- `dinkster-env doctor --repair` plans an offline rebuild from the active release's
+  local wheels and retained base. Confirmation creates and health-checks a new
+  generation without editing the drifted tree. Missing or corrupt local inputs
+  refuse repair; failures keep the prior generation selected and serving.
 - Managed workflow plans default to the selected generation's recorded variant.
   A conflicting launch variant refuses startup; an explicit request variant
   remains a read-only compatibility comparison, not an environment switch.
