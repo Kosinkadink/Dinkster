@@ -60,6 +60,7 @@ from .fibo2_encoders import TextEncodeFibo2
 from .flux_conditioning import FLUX_CONDITIONING_NODES
 from .flux_image_layout import FLUX_IMAGE_LAYOUT_NODES
 from .freeu import FREEU_NODES
+from .gaussian_splat import GetSplatCount
 from .gligen_conditioning import GLIGENTextBoxApply
 from .hidream_patches import HiDreamO1PatchSeamSmoothing, HiDreamO1ReferenceImages
 from .hook_checkpoint import HOOK_CHECKPOINT_NODES
@@ -431,6 +432,7 @@ COMFY_NODES = (
     CropByBBoxes,
     CameraAngle,
     CreateCameraInfo,
+    GetSplatCount,
     Trellis2UpsampleStage,
     MoGePanoramaInference,
     MoGeInference,
