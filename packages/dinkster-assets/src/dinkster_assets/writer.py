@@ -97,12 +97,31 @@ class MountSnapshotWriter:
             "revoked, or has not finished scanning"
         )
 
+    def output_mount(self) -> str:
+        try:
+            loaded: object = json.loads(self._path.read_text("utf-8"))
+        except (OSError, ValueError):
+            raise AssetError(f"no readable mounts snapshot at {self._path}") from None
+        selected = (
+            cast("dict[str, object]", loaded).get("outputMount")
+            if isinstance(loaded, dict)
+            else None
+        )
+        if not isinstance(selected, str) or not selected:
+            raise AssetError("no default output mount is configured")
+        return selected
+
 
 class AssetWriter:
     """Save bytes into a readwrite mount and get back an AssetRef."""
 
     def __init__(self, authority: MountWriteAuthority) -> None:
         self._authority = authority
+
+    def output_target(self, prefix: str) -> dict[str, str]:
+        if not isinstance(self._authority, MountSnapshotWriter):
+            raise AssetError("default output selection requires a mounts snapshot")
+        return {"mount": self._authority.output_mount(), "prefix": prefix}
 
     def save_bytes(
         self,
