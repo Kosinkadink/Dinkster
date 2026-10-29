@@ -1,6 +1,22 @@
 [pack]
 name = "dinkster-nodes-comfy"
 publisher = "dinkster"
+requires = [
+    "simpleeval==1.0.8",
+    "numpy",
+    "pillow",
+    "torch",
+    "torchvision",
+    "dinkster-inference==0.1.0",
+    "av",
+    "scipy",
+    "einops",
+    "kornia",
+    "safetensors",
+    "tqdm",
+    "spandrel",
+    "comfy-kitchen",
+]
 namespaces = [
     "devices",
     "AudioEncoderLoader",
@@ -477,6 +493,7 @@ namespaces = [
     "TextEncodeZImageOmni",
     "PhotoMakerLoader",
     "PhotoMakerEncode",
+    "ImageCropToMask",
     "ImageCropV2",
     "PrimitiveBoundingBox",
     "RTDETR_detect",
@@ -513,6 +530,7 @@ namespaces = [
     "LoraLoaderBypassModelOnly",
     "CropByBBoxes",
     "CameraAngle",
+    "CreateCameraInfo",
     "Trellis2UpsampleStage",
     "MoGePanoramaInference",
     "MoGeInference",
@@ -549,6 +567,7 @@ namespaces = [
     "WanDancerVideo",
     "VOIDWarpedNoise",
     "LoadVideo",
+    "SaveSVGNode",
 ]
 
 [pack.sandbox]

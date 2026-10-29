@@ -24,6 +24,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
+    attach_saved_artifact,
     bind_video_value,
     current_export_snapshot,
     effective_video_facts,
@@ -206,11 +207,12 @@ class SaveVideo(Node):
                 source_components="components" in value and not value["edits"],
             )
             encoded.seek(0)
-            writer.save_stream(
+            ref = writer.save_stream(
                 target,
                 cast(BinaryIO, encoded),
                 suffix=suffix,
                 media_type=mime,
                 limit=ENCODED_MEDIA_LIMIT_BYTES,
             )
+            attach_saved_artifact(ref.to_wire())
         return cls.outputs(video=video)

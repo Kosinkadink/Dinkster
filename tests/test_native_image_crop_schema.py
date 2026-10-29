@@ -6,12 +6,14 @@ from typing import Any, cast
 
 from dinkster_api.v1 import (
     BOUNDING_BOX_TYPE,
+    COLOR_TYPE,
     CORE_INT,
     IMAGE_TYPE,
+    MASK_TYPE,
     schema_from_wire,
     schema_to_wire,
 )
-from dinkster_nodes_comfy.image_crop import ImageCropV2, PrimitiveBoundingBox
+from dinkster_nodes_comfy.image_crop import ImageCropToMask, ImageCropV2, PrimitiveBoundingBox
 
 
 def _entry(wire: dict[str, object], entry_id: str) -> dict[str, Any]:
@@ -19,6 +21,22 @@ def _entry(wire: dict[str, object], entry_id: str) -> dict[str, Any]:
         if entry["id"] == entry_id:
             return entry
     raise AssertionError(f"missing {entry_id}")
+
+
+def test_mask_crop_schema_uses_portable_media_and_color() -> None:
+    schema = ImageCropToMask.schema()
+    wire = schema_to_wire(schema)
+    assert schema_from_wire(wire) == schema
+    for name, type_id in (("images", IMAGE_TYPE), ("masks", MASK_TYPE), ("background", COLOR_TYPE)):
+        assert _entry(wire, name)["type"] == {"kind": "concrete", "types": [type_id]}
+    assert _entry(wire, "background")["default"] == "#000000"
+    assert _entry(wire, "width")["widget"] == {"type": "NUMBER", "min": 64, "max": 4096, "step": 8}
+    assert _entry(wire, "grow_mask")["widget"] == {
+        "type": "NUMBER",
+        "min": -32,
+        "max": 32,
+        "step": 1,
+    }
 
 
 def test_image_crop_v2_schema_uses_canonical_image_and_bounding_box_contracts() -> None:

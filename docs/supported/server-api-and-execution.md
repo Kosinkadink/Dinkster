@@ -20,20 +20,48 @@
 - Asset record catalogs upgrade automatically with versioned migrations.
   Matching unversioned catalogs retain scoped records, verified media grants,
   dependency manifests, and derivations; incompatible schemas are refused.
+- Host-validated saved-file artifacts are cataloged in the submitted project
+  with job and node provenance before the job reports completion. Unavailable
+  or revoked files and catalog failures fail the job rather than report a
+  successful save; recoverable catalog writes are retried on restart without
+  copying files into the vault.
+  Native writer saves include exact saved-file descriptors in both in-process
+  and isolated execution, including custom mounted destinations and empty
+  text files. The host verifies the current writable mount, safe file location,
+  content digest and byte size before exposing the descriptor. Returning an
+  existing asset without writing it does not report a new saved file.
+  Saved images, audio and video are classified from verified bytes for scoped
+  media authority and kind-filtered browsing. Text and unrecognized files stay
+  generic; a worker-provided media type alone never grants media authority.
+  Required encoded result attachments published into the vault are retained
+  as collision-safe named files in the project's selected output folder before
+  completion. Their result descriptors name the visible files; the catalog
+  records both mounted and vault locations with job/node provenance. Transient
+  preview events are not retained. A missing writable destination fails the job
+  instead of silently redirecting the output.
 - Filesystem mount scans report file, byte, and elapsed progress; publish
   indexed assets before the scan finishes; reuse unchanged-file indexes; and
   keep per-mount indexes under the configured library root
+- Operators can resolve an absolute local file path to a mounted asset in the
+  selected project's live folders without copying bytes. Changed or unindexed
+  files are verified and cataloged on demand, including read-only inputs.
+  Outside, revoked, excluded, missing and unsafe paths return an explicit
+  refusal without revealing host paths. Authentication, malformed requests and
+  server failures remain distinct errors, not upload-fallback signals.
 - Setup and serving with mount changes enabled initialize a writable
-  `<library-root>/imports` folder when no imports grant is configured.
-  Existing import paths and read-only grants are preserved; unavailable
+  `<library-root>/imports` folder and a selected writable
+  `<library-root>/output` folder when those defaults are not configured.
+  Existing output selections, folder paths and read-only grants are preserved; unavailable
   configured directories are not recreated or replaced. Removing the import
-  grant remains effective across restarts and repeated setup.
-  New default imports become available to existing projects without resetting
+  or output grant remains effective across restarts and repeated setup.
+  New default folders become available to existing projects without resetting
   folder order, exclusions, project-only grants or output selections.
 - Named file and classified media uploads in the managed server use original
   filenames in the configured imports folder, with collision-safe numbering and no durable
   vault duplicate. Requests can select another writable project folder and
   relative subfolder; the returned asset records the actual virtual path.
+  Operator location details identify the exact default import mount independently
+  of output selection, including custom mount IDs and unavailable defaults.
   Read-only, unavailable, revoked, escaping, or other-project destinations
   fail without silently redirecting the upload.
   Named model/file uploads stream under the configured upload size limit

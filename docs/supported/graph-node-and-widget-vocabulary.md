@@ -49,6 +49,8 @@
 - Backend color widgets accept scalar COLOR or STRING sockets, retaining the
   declared type and stored color text. Palettes, lists, and unions are rejected.
   This does not claim frontend COLOR editor support.
+- Backend `CAMERA_INFO_STATE` values retain nested JSON camera-view state across
+  pack boundaries. This does not claim a camera editor or CreateCameraInfo node.
 - Inputs can declare socketless presentation while retaining their type,
   widget, default and interface order, including nested combos and families.
   The flag defaults to false, conflicts with forced socket presentation, and
