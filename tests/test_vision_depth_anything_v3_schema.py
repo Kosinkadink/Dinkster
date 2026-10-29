@@ -55,7 +55,7 @@ def test_depth_anything_v3_pack_declares_cpu_provider_and_pinned_model() -> None
     assert manifest.sandbox.writable_mounts is False
     assert manifest.requires == (
         "numpy==2.5.1",
-        "opencv-python-headless==5.0.0.93",
+        "opencv-contrib-python-headless==5.0.0.93",
         "pillow==12.0.0",
         "safetensors==0.8.0",
         "torch==2.13.0",

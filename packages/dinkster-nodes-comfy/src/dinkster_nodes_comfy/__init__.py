@@ -37,6 +37,7 @@ from .cache import CACHE_NODES
 from .camera_angle import CameraAngle
 from .cfg_guidance import CFG_GUIDANCE_NODES
 from .cfg_guiders import CFG_GUIDER_NODES
+from .checkpoint_save import ImageOnlyCheckpointSave
 from .chroma_options import ChromaRadianceOptions
 from .clip import CLIP_NODES
 from .clip_loaders import QuadrupleCLIPLoader, TripleCLIPLoader
@@ -192,12 +193,15 @@ from .video_edits import VideoCrop, VideoSlice, VideoTrim
 from .video_guidance import VIDEO_GUIDANCE_NODES
 from .video_latent import VIDEO_LATENT_NODES
 from .video_latent_ops import VIDEO_LATENT_OPERATION_NODES
+from .video_load import LoadVideo
 from .video_save import SaveVideo
 from .void_conditioning import (
     VOIDInpaintConditioning,
     VOIDQuadmaskPreprocess,
     VOIDWarpedNoiseSource,
 )
+from .void_sampler import VOIDSampler
+from .void_warped_noise import VOIDWarpedNoise
 from .wan22_latent import Wan22ImageToVideoLatent
 from .wan_animate import WAN_ANIMATE_NODES
 from .wan_camera import WanCameraEmbedding
@@ -214,6 +218,7 @@ from .wan_track_conditioning import WanTrackToVideo
 from .wan_uni3c import WanUni3CControlnetApply
 from .wandancer_audio import WanDancerEncodeAudio
 from .wandancer_keyframes import WANDANCER_KEYFRAME_NODES
+from .wandancer_video import WanDancerVideo
 from .webm_save import SaveWEBM
 from .yue2_conditioning import YUE2_CONDITIONING_NODES
 from .zimage_encoders import TextEncodeZImageOmni
@@ -437,6 +442,8 @@ COMFY_NODES = (
     *YUE2_CONDITIONING_NODES,
     MoGeGeometryToFOV,
     UpscaleModelLoader,
+    ImageOnlyCheckpointSave,
+    VOIDSampler,
     VOIDQuadmaskPreprocess,
     VOIDInpaintConditioning,
     VOIDWarpedNoiseSource,
@@ -450,6 +457,9 @@ COMFY_NODES = (
     SDPoseDrawKeypoints,
     SDPoseKeypointExtractor,
     AddLayer,
+    WanDancerVideo,
+    VOIDWarpedNoise,
+    LoadVideo,
 )
 
 

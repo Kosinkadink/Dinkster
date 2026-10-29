@@ -56,7 +56,7 @@ def test_depth_provider_declares_isolated_cpu_execution_and_pinned_model() -> No
     assert manifest.sandbox.gpu is False
     assert manifest.requires == (
         "numpy==2.5.1",
-        "opencv-python-headless==5.0.0.93",
+        "opencv-contrib-python-headless==5.0.0.93",
         "safetensors==0.8.0",
         "torch==2.13.0",
         "transformers==5.16.1",

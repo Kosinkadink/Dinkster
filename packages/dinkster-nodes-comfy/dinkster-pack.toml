@@ -529,6 +529,8 @@ namespaces = [
     "YuE2GenerateMusic",
     "MoGeGeometryToFOV",
     "UpscaleModelLoader",
+    "ImageOnlyCheckpointSave",
+    "VOIDSampler",
     "VOIDQuadmaskPreprocess",
     "VOIDInpaintConditioning",
     "VOIDWarpedNoiseSource",
@@ -542,6 +544,9 @@ namespaces = [
     "SDPoseDrawKeypoints",
     "SDPoseKeypointExtractor",
     "AddLayer",
+    "WanDancerVideo",
+    "VOIDWarpedNoise",
+    "LoadVideo",
 ]
 
 [pack.sandbox]

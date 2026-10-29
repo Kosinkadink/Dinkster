@@ -10,7 +10,7 @@ executes = [
 ]
 requires = [
     "numpy==2.5.1",
-    "opencv-python-headless==5.0.0.93",
+    "opencv-contrib-python-headless==5.0.0.93",
     "safetensors==0.8.0",
     "torch==2.13.0",
 ]
