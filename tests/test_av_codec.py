@@ -401,8 +401,9 @@ def test_native_video_refuses_unknown_subclasses(monkeypatch: pytest.MonkeyPatch
         worker.spec(VIDEO_TYPE).encode(UnknownVideo(mp4_bytes()))
 
 
-def test_av_registration_wiring_covers_host_and_translation() -> None:
-    from dinkster_compat_comfy.translate import CompatTranslation
+def test_av_registration_wiring_covers_host_and_worker() -> None:
+    from dinkster_native.audio import register_audio_type
+    from dinkster_native.video import register_video_type
 
     host = TypeRegistry()
     register_inference_types(host)
@@ -425,13 +426,12 @@ def test_av_registration_wiring_covers_host_and_translation() -> None:
     assert host.render(audio_value).mime == "audio/wav"
     assert host.render(video_value).data == mp4_bytes()
 
-    translated = TypeRegistry()
-    translation = CompatTranslation()
-    translation.opaque_types.update({AUDIO_TYPE, VIDEO_TYPE})
-    translation.register_types(translated)
-    assert translated.spec(AUDIO_TYPE).declared_codec
-    assert translated.spec(VIDEO_TYPE).declared_codec
-    assert translated.spec(VIDEO_TYPE).validate_encoded_buffer is validate_video_encoded
+    worker = TypeRegistry()
+    register_audio_type(worker, AUDIO_TYPE)
+    register_video_type(worker, VIDEO_TYPE)
+    assert worker.spec(AUDIO_TYPE).declared_codec
+    assert worker.spec(VIDEO_TYPE).declared_codec
+    assert worker.spec(VIDEO_TYPE).validate_encoded_buffer is validate_video_encoded
 
 
 def test_av_preview_intent_is_explicit_on_test_owned_output_schemas() -> None:
