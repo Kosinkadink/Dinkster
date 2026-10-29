@@ -57,6 +57,10 @@
 - Serving jobs retain scratch ownership between nodes until run settlement,
   including failure or cancellation. Finishing one job does not release another
   live job's ownership, and missing host ownership state refuses reconciliation.
+- Open verified produced-asset readers retain their bytes after the producing
+  invocation ends, including readers in another process. Closing the last
+  descriptor or exiting the reader process releases its ownership; this does
+  not protect bare paths or enable deletion.
 - Job scratch retains publication ownership and handoff intent across process
   exit. Missing ownership state refuses reuse of nonempty scratch; merely
   inspecting a source does not mark it as offered or adopted.

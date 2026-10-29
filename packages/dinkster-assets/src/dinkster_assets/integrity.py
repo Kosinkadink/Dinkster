@@ -8,6 +8,7 @@ records fail closed.
 
 from __future__ import annotations
 
+import io
 import os
 import threading
 from collections import OrderedDict
@@ -17,6 +18,7 @@ from pathlib import Path
 from typing import BinaryIO, Literal, cast
 
 from .identity import CHUNK_SIZE, DIGEST_PREFIX, AssetError, new_hasher
+from .scratch import ProducedScratchLease, hold_produced_asset_read
 
 IntegrityFailure = Literal[
     "digest_mismatch",
@@ -231,6 +233,18 @@ def digest_file_with_record(
         return digest, verification_record(digest, after_stat)
 
 
+class _ProducedAssetFile(io.FileIO):
+    def __init__(self, path: Path, lease: ProducedScratchLease) -> None:
+        self._lease = lease
+        super().__init__(path, "rb")
+
+    def close(self) -> None:
+        try:
+            super().close()
+        finally:
+            self._lease.close()
+
+
 def open_verified(
     path: Path,
     expected_digest: str,
@@ -243,8 +257,20 @@ def open_verified(
     rename/replace after (or during) verification cannot swap the bytes:
     the descriptor keeps the verified inode. Raises AssetIntegrityError
     on any mismatch; raises AssetError when hashing is unavailable in
-    this interpreter (missing blake3) - never a silent downgrade."""
-    handle = path.open("rb")
+    this interpreter (missing blake3) - never a silent downgrade.
+    Managed produced bytes hold an OS-backed read lease until the handle closes,
+    independently of the invocation that originally published them."""
+    lease = hold_produced_asset_read(path)
+    try:
+        handle = (
+            path.open("rb")
+            if lease is None
+            else cast(BinaryIO, io.BufferedReader(_ProducedAssetFile(path, lease)))
+        )
+    except BaseException:
+        if lease is not None:
+            lease.close()
+        raise
     try:
         opened_stat = os.fstat(handle.fileno())
         before = _fingerprint(opened_stat)

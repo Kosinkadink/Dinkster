@@ -10,7 +10,7 @@ from pathlib import Path
 
 from filelock import FileLock, Timeout
 
-from .identity import AssetError, digest_bytes, require_digest
+from .identity import AssetError, digest_bytes, is_digest, require_digest
 
 
 class ProducedScratchState:
@@ -152,6 +152,31 @@ class ProducedScratchLease:
 
     def close(self) -> None:
         self._lock.release()
+
+
+def hold_produced_asset_read(path: Path) -> ProducedScratchLease | None:
+    """Protect managed scratch or an adopted CAS blob while its descriptor is open.
+
+    Ordinary mounted/imported files acquire no lease and create no metadata.
+    Scratch readers retain the whole job root; engine readers retain one digest.
+    Missing publication state cannot authorize collection of either kind.
+    """
+    path = path.absolute()
+    if not is_digest(f"blake3:{path.name}") or path.parent.name != path.name[:2]:
+        return None
+    root = path.parent.parent
+    scratch = root / ".produced-scratch.sqlite"
+    inventory = root / ".produced-assets.sqlite"
+    if not any(marker.exists() or marker.is_symlink() for marker in (scratch, inventory)):
+        return None
+    if any(candidate.is_symlink() for candidate in (root, path.parent, path, scratch, inventory)):
+        raise AssetError("produced asset reads must not follow symlinks")
+    if scratch.exists():
+        return ProducedScratchLease(root)
+    readers = root / ".produced-readers"
+    if readers.is_symlink():
+        raise AssetError("produced asset reader ownership must not be a symlink")
+    return ProducedScratchLease(readers / path.name)
 
 
 def _job_lease_root(scratch: Path, job: str) -> Path:
