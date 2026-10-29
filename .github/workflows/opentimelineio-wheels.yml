@@ -67,6 +67,7 @@ jobs:
           CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: python -m delvewheel repair --add-path C:/vcpkg/installed/x64-windows/bin -w {dest_dir} {wheel}
           CIBW_TEST_REQUIRES: urllib3
           CIBW_TEST_COMMAND: python -m unittest discover -s {package}/tests -t {package}
+          CIBW_TEST_COMMAND_WINDOWS: 'cd /d "{package}" && python -m unittest discover -s tests -t .'
       - name: Record source and binary provenance
         shell: bash
         run: |
