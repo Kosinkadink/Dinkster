@@ -70,11 +70,11 @@ def test_attention_runtime_resolves_upstream_named_attention() -> None:
 
 
 def test_native_sampling_choices_match_the_installed_upstream_engine() -> None:
-    from dinkster_native.fork_nodes import GenerationKSampler
+    from dinkster_nodes_comfy.standard_sampling import KSampler
     from dinkster_schema import ComboOption, ComboWidget
 
     samplers = importlib.import_module("dinkster_inference.samplers")
-    schema = GenerationKSampler.schema()
+    schema = KSampler.schema()
     for name, expected in (
         ("sampler_name", samplers.KSampler.SAMPLERS),
         ("scheduler", samplers.KSampler.SCHEDULERS),
@@ -82,9 +82,9 @@ def test_native_sampling_choices_match_the_installed_upstream_engine() -> None:
         spec = schema.input(name)
         assert spec is not None and isinstance(spec.widget, ComboWidget)
         assert all(isinstance(option, ComboOption) for option in spec.widget.options)
-        assert [cast("ComboOption", option).value for option in spec.widget.options] == [
-            f"dinkster.{value}" for value in expected
-        ]
+        assert [cast("ComboOption", option).value for option in spec.widget.options] == list(
+            expected
+        )
 
 
 @pytest.mark.parametrize("skip_output_reshape", (False, True))

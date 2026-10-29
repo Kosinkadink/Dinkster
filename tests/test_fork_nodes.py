@@ -17,10 +17,11 @@ from dinkster_compat_comfy.translate import CompatTranslation
 from dinkster_inference_wire import (
     MultiStreamLatent,
     ResidentConditioningCarrier,
+    register_inference_types,
 )
+from dinkster_memory.resident import default_pool
 from dinkster_native import fork_nodes
 from dinkster_native.native import register_native_types
-from dinkster_native.pool import default_pool
 from dinkster_protocol import Invocation
 from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_values import ResidentLookupError, TypeRegistry, register_core_types
@@ -211,7 +212,7 @@ def test_native_types_register_resident_model_patches() -> None:
 
 def test_native_latent_operation_full_release_invalidates_encoded_closure() -> None:
     registry = TypeRegistry()
-    register_native_types(registry)
+    register_inference_types(registry)
     storage = np.zeros(1)
     storage_reference = weakref.ref(storage)
 
