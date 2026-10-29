@@ -28,6 +28,13 @@ tokens documented in [auth.md](auth.md), not a separate server secret.
 
 Default: `3639`. TCP port for the HTTP server.
 
+### --engine-variant
+
+Optional declared generation target: `linux-cpu`, `win-cpu`, `win-nvidia`, or
+`win-nvidia-cu126`. Workflow-open planning uses this value when its request
+omits `variant`. It does not select GPUs, change execution, or infer hardware.
+Without a declared target, plan requests must supply their variant explicitly.
+
 ### --allow-host
 
 Syntax: `--allow-host HOST` (repeatable).
@@ -703,6 +710,8 @@ Persistence root. When set, the following live under it:
 | Path | Contents |
 |------|----------|
 | `vault/` | Content-addressed uploaded bytes |
+| `imports/` | Visible import folder initialized by setup or serving with mount changes enabled |
+| `.imports-initialized` | Records one-time imports initialization so removed grants stay removed |
 | `library.sqlite` | Scoped library records |
 | `history.sqlite` | Persistent execution history |
 | `provenance.json` | Acquisition leads |
@@ -879,6 +888,41 @@ listings remain browsable without disclosing host paths or path-bearing errors
 to non-operators. Location listings and mutations require a human operator
 with `settings:write`, not just `assets:write`; delegated agents cannot grant
 filesystem authority.
+The location response advertises `resolvePath: true` when
+`POST /api/mounts/resolve-path` is available. A trusted local desktop host can
+send exactly `{"path": "<absolute-native-path>", "project": "<id>", "scope": "local"}`
+without query fields. The route also requires `assets:read` in that scope.
+It verifies the current bytes of a regular file in a live selected project
+folder, including read-only folders, and catalogs an unindexed or changed file
+without copying it. HTTP 200 returns either `{"status":"resolved","asset":...}`
+with the five-field mounted AssetRef, or
+`{"status":"refused","reason":"not-resolvable"}` for an outside, excluded,
+revoked, missing, unavailable, unsafe or unstable file. An absolute path for
+another operating system is refused. Malformed requests, empty/NUL/relative
+paths and invalid project IDs return HTTP 400 `invalid-path-request`;
+authentication/scope failures remain 401/403; unexpected catalog/storage
+failures return HTTP 500 `mount-resolution-failed`. Responses are no-store and
+never echo the host path. Only an explicit refusal permits the client to fall
+back to uploading bytes. Older location responses without the capability
+advertisement mean unsupported; a missing route after advertisement, malformed
+response or server error is not an ordinary refusal.
+The location response includes `vault` when a library is configured. Optional
+`digest`, `scope` and `project` query fields add `locations` for that cataloged
+identity in the selected scope and project; this also requires `assets:read`.
+Only verified vault copies and observed files in live project folders are
+returned, with their actual `path` and `storage` type. Missing, changed,
+excluded and revoked copies are omitted. Responses use `Cache-Control: no-store`.
+Each observed filename is verified separately, so identical content at multiple
+names remains revealable without substituting the resolver's preferred alias.
+Vault paths must remain inside the canonical vault root, including after
+symlink resolution. A digest query with both a `vault` string and a `locations`
+array supports exact-file lookup; `locations: []` means no verified location.
+A host without a configured library omits `vault` and does not support that
+lookup, even if it returns an empty `locations` array. Missing fields on older
+hosts likewise do not advertise support. HTTP 400, 403, 404 and 5xx responses
+are errors or unavailable capability, never a successful empty lookup.
+This endpoint only reports locations; it neither downloads nor opens files in
+the desktop shell.
 
 ## Logging
 

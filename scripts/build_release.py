@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import re
-import shutil
 import subprocess
 import tempfile
 import tomllib
 import zipfile
 from pathlib import Path
+
+from scripts.download_frontend import verify_and_extract
 
 TAG_PATTERN = re.compile(r"v(?P<version>[0-9]+\.[0-9]+\.[0-9]+)")
 
@@ -19,10 +21,6 @@ TAG_PATTERN = re.compile(r"v(?P<version>[0-9]+\.[0-9]+\.[0-9]+)")
 def project_metadata(path: Path) -> tuple[str, str]:
     project = tomllib.loads(path.read_text(encoding="utf-8"))["project"]
     return project["name"], project["version"]
-
-
-def git_head(root: Path) -> str:
-    return subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
 
 
 def workspace_projects(root: Path) -> dict[str, Path]:
@@ -72,25 +70,17 @@ def wheel_metadata(path: Path) -> tuple[str, str]:
 
 
 def build_frontend_wheel(
-    frontend_root: Path,
-    frontend_dist: Path,
+    frontend_artifact: Path,
     version: str,
-    expected_commit: str,
+    sources: dict,
     output: Path,
     uv: str,
 ) -> Path:
-    if git_head(frontend_root) != expected_commit:
-        raise ValueError("frontend source does not match its pinned release commit")
-    package = json.loads((frontend_root / "package.json").read_text(encoding="utf-8"))
-    if package.get("version") != version:
-        raise ValueError("frontend package version does not match the release tag")
-    if not (frontend_dist / "index.html").is_file():
-        raise ValueError("frontend distribution must contain index.html")
     with tempfile.TemporaryDirectory(prefix="dinkster-frontend-wheel-") as directory:
         project = Path(directory)
         module = project / "src/dinkster_frontend"
         module.mkdir(parents=True)
-        shutil.copytree(frontend_dist, module / "static")
+        verify_and_extract(frontend_artifact.read_bytes(), sources, module / "static")
         (module / "__init__.py").write_text(
             '"""Installed Dinkster frontend bundle."""\n\n'
             "from importlib.resources import files\n\n"
@@ -116,6 +106,19 @@ def build_frontend_wheel(
     wheels = sorted(output.glob(f"dinkster_frontend-{version}-*.whl"))
     if len(wheels) != 1:
         raise ValueError("frontend build did not produce exactly one wheel")
+    with zipfile.ZipFile(frontend_artifact) as artifact, zipfile.ZipFile(wheels[0]) as wheel:
+        manifest = json.loads(artifact.read("manifest.json"))
+        with zipfile.ZipFile(io.BytesIO(artifact.read("bundle.zip"))) as bundle:
+            expected = {f"dinkster_frontend/static/{name}" for name in bundle.namelist()}
+            actual = {
+                name for name in wheel.namelist() if name.startswith("dinkster_frontend/static/")
+            }
+            if actual != expected or any(
+                wheel.read(f"dinkster_frontend/static/{name}") != bundle.read(name)
+                for name in bundle.namelist()
+            ):
+                raise ValueError("frontend wheel files do not match the pinned bundle")
+    print(f"Packaged frontend bundle sha256:{manifest['sha256']} from {manifest['commit']}")
     return wheels[0]
 
 
@@ -175,8 +178,7 @@ def build(
     root: Path,
     output: Path,
     tag: str,
-    frontend_root: Path,
-    frontend_dist: Path,
+    frontend_artifact: Path,
     *,
     uv: str = "uv",
 ) -> dict[str, object]:
@@ -188,7 +190,7 @@ def build(
         cwd=root,
         check=True,
     )
-    build_frontend_wheel(frontend_root, frontend_dist, version, sources["commit"], output, uv)
+    build_frontend_wheel(frontend_artifact, version, sources, output, uv)
     wheels = sorted(output.glob("*.whl"))
     expected = set(workspace_projects(root)) | {"dinkster-frontend"}
     actual = {wheel_metadata(wheel)[0] for wheel in wheels}
@@ -220,8 +222,7 @@ def build(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tag", required=True)
-    parser.add_argument("--frontend-root", type=Path, required=True)
-    parser.add_argument("--frontend-dist", type=Path, required=True)
+    parser.add_argument("--frontend-artifact", type=Path, required=True)
     parser.add_argument("--output", type=Path, default=Path("dist"))
     parser.add_argument("--uv", default="uv")
     args = parser.parse_args()
@@ -229,7 +230,6 @@ if __name__ == "__main__":
         Path(__file__).resolve().parent.parent,
         args.output.resolve(),
         args.tag,
-        args.frontend_root.resolve(),
-        args.frontend_dist.resolve(),
+        args.frontend_artifact.resolve(),
         uv=args.uv,
     )

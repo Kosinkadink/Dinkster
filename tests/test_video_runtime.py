@@ -29,7 +29,7 @@ from dinkster_values import (
     video_meta,
 )
 from dinkster_values.storage import image_input
-from dinkster_video import assemble_video, disassemble_video, save_video_stream
+from dinkster_video import assemble_video, concatenate_video, disassemble_video, save_video_stream
 
 
 def _source(*, depth: int = 8, b_frames: int = 0, container: str = "mp4", offset: int = 0) -> bytes:
@@ -73,7 +73,7 @@ def _x264_options(data: bytes) -> bytes:
     return payload[start : payload.index(b"\x00", start)]
 
 
-def _source_style_h264(
+def _source_style_video(
     images: np.ndarray,
     *,
     fps: Fraction,
@@ -81,18 +81,19 @@ def _source_style_h264(
     color: str,
     crf: float | None = None,
     preset: str | None = None,
+    codec: str = "h264",
 ) -> bytes:
-    """Encode source components with the approved public-source conversion recipe."""
+    """Encode source components independently of the public VIDEO writer."""
     output = io.BytesIO()
     rate = Fraction(round(fps * 1000), 1000)
     pix_fmt = "yuv420p10le" if depth > 8 else "yuv420p"
     color_values = {"sRGB": (1, 13, 1, 1), "HDR PQ": (9, 16, 9, 1)}[color]
     with av.open(output, "w", format="mp4", options={"movflags": "use_metadata_tags"}) as opened:
         mux = cast(Any, opened)
-        stream = mux.add_stream("libx264", rate=rate)
+        stream = mux.add_stream("libsvtav1" if codec == "av1" else "libx264", rate=rate)
         stream.width, stream.height = images.shape[2], images.shape[1]
         stream.pix_fmt = pix_fmt
-        stream.options = {"crf": str(18 if crf is None else crf)}
+        stream.options = {"crf": str((24 if codec == "av1" else 18) if crf is None else crf)}
         if preset is not None:
             stream.options["preset"] = preset
         (
@@ -132,7 +133,9 @@ def test_source_component_h264_matches_approved_source_encoding(
     fps = Fraction(30000, 1001)
     images = np.linspace(-0.01, 1.01, 4 * 64 * 64 * 3, dtype=np.float64).reshape(4, 64, 64, 3)
     value = assemble_video(images, fps=fps, bit_depth=str(depth), color_space=color)
-    expected = _source_style_h264(images, fps=fps, depth=depth, color=color, crf=crf, preset=preset)
+    expected = _source_style_video(
+        images, fps=fps, depth=depth, color=color, crf=crf, preset=preset
+    )
     actual = io.BytesIO()
     save_video_stream(
         value,
@@ -177,7 +180,7 @@ def test_default_component_writer_remains_separate_from_source_component_encodin
         # Four frames span 133467 ticks under the default microsecond timestamp policy.
         assert container.streams.video[0].average_rate == Fraction(4_000_000, 133_467)
     assert _x264_options(source_style.getvalue()) == _x264_options(
-        _source_style_h264(images, fps=fps, depth=8, color="sRGB")
+        _source_style_video(images, fps=fps, depth=8, color="sRGB")
     )
 
 
@@ -196,11 +199,27 @@ def test_source_component_h264_preserves_source_shape_failures(
         )
 
 
-def test_source_component_small_av1_keeps_explicit_codec() -> None:
-    images = np.linspace(0, 1, 2 * 8 * 12 * 3, dtype=np.float32).reshape(2, 8, 12, 3)
+@pytest.mark.parametrize(("height", "width"), [(8, 12), (64, 64)])
+def test_source_component_av1_preserves_source_encode_contract(height: int, width: int) -> None:
+    images = np.linspace(0, 1, 2 * height * width * 3, dtype=np.float32).reshape(
+        2, height, width, 3
+    )
+    value = assemble_video(images, fps=30)
     encoded = io.BytesIO()
+    try:
+        expected = _source_style_video(images, fps=Fraction(30), depth=8, color="sRGB", codec="av1")
+    except FFmpegError as expected_error:
+        if height >= 64 and width >= 64:
+            raise
+        # Small-frame support belongs to the source encoder, including its failures.
+        with pytest.raises(type(expected_error)) as actual_error:
+            save_video_stream(value, encoded, container="mkv", codec="av1", source_components=True)
+        assert type(actual_error.value) is type(expected_error)
+        assert actual_error.value.errno == expected_error.errno
+        assert encoded.getvalue() == b""
+        return
     save_video_stream(
-        assemble_video(images, fps=30),
+        value,
         encoded,
         container="mkv",
         codec="av1",
@@ -209,8 +228,14 @@ def test_source_component_small_av1_keeps_explicit_codec() -> None:
     with av.open(io.BytesIO(encoded.getvalue()), mode="r") as container:
         stream = container.streams.video[0]
         assert stream.codec_context.codec.canonical_name == "av1"
-        assert (stream.width, stream.height) == (12, 8)
+        assert (stream.width, stream.height) == (width, height)
         assert len(list(container.decode(video=0))) == 2
+    if height >= 64 and width >= 64:
+        # Unaligned small inputs do not have bit-stable source encoder output.
+        np.testing.assert_array_equal(
+            disassemble_video(video_from_source(encoded.getvalue()))["images"],
+            disassemble_video(video_from_source(expected))["images"],
+        )
 
 
 @pytest.mark.parametrize("encoded", (False, True))
@@ -514,6 +539,151 @@ def test_concat_matches_templates_and_spatial_dimensions() -> None:
     incompatible = edit_video(value, {"concat": [different]})
     with pytest.raises(ValueError, match="identical"):
         save_video_stream(incompatible, io.BytesIO())
+
+
+def test_public_concatenate_video_encodes_components_and_preserves_soundtrack() -> None:
+    first = assemble_video(np.zeros((2, 16, 16, 3), np.uint8), fps=2)
+    second = assemble_video(np.full((2, 16, 16, 3), 255, np.uint8), fps=2)
+    audio = {"waveform": np.ones((1, 1, 48000), np.float32), "sample_rate": 48000}
+    joined = concatenate_video([first, second], complete_audio=audio)
+    assert "components" not in joined
+    assert joined["complete_audio"] != audio
+    result = disassemble_video(joined)
+    assert result["frame_count"] == 4
+    images = cast(np.ndarray, result["images"])
+    np.testing.assert_array_equal(images[0], np.zeros((16, 16, 3), np.uint8))
+    np.testing.assert_allclose(images[-1], 255, atol=1)
+    assert result["audio"] is not None
+    saved = io.BytesIO()
+    save_video_stream(joined, saved, container="mkv", codec="ffv1")
+    assert cast(dict[str, Any], video_from_source(saved.getvalue())["probe"])["audio"]
+
+
+@pytest.mark.parametrize("count", (64, 65, 100))
+def test_public_concatenate_video_limits_direct_inputs_not_unrelated_trees(count: int) -> None:
+    source = video_from_source(_source())
+    joined = decode_video(encode_video(concatenate_video([source] * count)))
+    # Hand-derived: the local source fixture has 20 frames per clip.
+    assert effective_video_facts(joined)["frame_count"] == 20 * count
+    with pytest.raises(ValueError, match="1 and 100"):
+        concatenate_video([source] * 101)
+
+
+def test_public_concatenate_video_preserves_nonflattened_first_clip_edits() -> None:
+    from dinkster_values.audio_codec import audio_window
+
+    source = video_from_source(_source())
+    trimmed = edit_video(source, {"trim": {"start_time": 0.5, "duration": 0.5}})
+    # Hand-derived: attaching audio after the source trim starts at sample zero.
+    waveform = np.repeat(np.array([0.125, 0.5], np.float32), 4000)[None, None]
+    single = concatenate_video(
+        [trimmed], complete_audio={"waveform": waveform, "sample_rate": 8000}
+    )
+    multiple = concatenate_video([trimmed, source])
+    assert effective_video_facts(single)["frame_count"] == 5
+    assert effective_video_facts(multiple)["frame_count"] == 25
+    np.testing.assert_array_equal(
+        audio_window(disassemble_video(single)["audio"], 0, 4000)["waveform"],
+        waveform[..., :4000],
+    )
+    assert cast(np.ndarray, disassemble_video(multiple)["images"]).shape[0] == 25
+
+
+@pytest.mark.parametrize("inherited", (False, True))
+@pytest.mark.parametrize(
+    ("windows", "start", "count"),
+    [([(1, 1)], 48000, 48000), ([(0.5, 1.5), (-0.5, 0.5)], 72000, 24000)],
+)
+def test_complete_soundtrack_follows_post_concat_trims(
+    inherited: bool,
+    windows: list[tuple[float, float]],
+    start: int,
+    count: int,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_assets.value import bind_video_value
+    from dinkster_values.audio_codec import audio_window
+    from dinkster_video.runtime import iter_video_audio
+
+    # Hand-derived local fixture: two one-second clips, 48kHz mono audio
+    # changing every quarter second. The windows select [1,2) or [1.5,2).
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path))
+    waveform = np.repeat(np.arange(8, dtype=np.float32) / 16, 12000)[None, None]
+    first = assemble_video(np.zeros((2, 16, 16, 3), np.uint8), fps=2)
+    second = assemble_video(np.full((2, 16, 16, 3), 255, np.uint8), fps=2)
+    joined = concatenate_video(
+        [first, second],
+        codec="ffv1",
+        complete_audio={"waveform": waveform, "sample_rate": 48000},
+    )
+    if inherited:
+        joined = concatenate_video([joined])
+    for offset, duration in windows:
+        joined = edit_video(joined, {"trim": {"start_time": offset, "duration": duration}})
+    joined = bind_video_value(
+        decode_video(encode_video(bind_video_value(joined))), AssetVault(tmp_path)
+    )
+    expected = waveform[..., start : start + count]
+    result = disassemble_video(joined)
+    np.testing.assert_array_equal(audio_window(result["audio"], 0, count)["waveform"], expected)
+    np.testing.assert_array_equal(
+        np.concatenate([frame.to_ndarray() for _, frame in iter_video_audio(joined)], axis=1)[None],
+        expected,
+    )
+    saved = io.BytesIO()
+    save_video_stream(joined, saved, container="mkv", codec="ffv1")
+    reloaded = video_from_source(saved.getvalue())
+    np.testing.assert_array_equal(
+        np.concatenate([frame.to_ndarray() for _, frame in iter_video_audio(reloaded)], axis=1)[
+            None
+        ],
+        expected,
+    )
+    assert cast(np.ndarray, result["images"]).shape[0] == count // 24000
+    np.testing.assert_array_equal(result["images"], np.full((count // 24000, 16, 16, 3), 255))
+
+
+@pytest.mark.parametrize("codec", ("h264", "ffv1"))
+def test_concatenate_replaces_audio_without_changing_video_packets(
+    codec: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # VideoFromList in comfy_api/latest/_input_impl/video_types.py at ComfyUI
+    # bc5f880dbdd43e426077f42ccec53bb577ffee9f preserves compatible packets and
+    # uses explicit complete_audio instead of carried tracks. Exact inputs:
+    # two local 20-frame, 10-FPS fixtures (offsets 0 and 70), stereo 48kHz
+    # constant +/-0.25 soundtrack. Expected 40 frames/192000 samples is hand-derived.
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path))
+    data = [_source(offset=offset) for offset in (0, 70)]
+    if codec == "ffv1":
+        encoded = []
+        for source in data:
+            output = io.BytesIO()
+            save_video_stream(video_from_source(source), output, container="mkv", codec=codec)
+            encoded.append(output.getvalue())
+        data = encoded
+    waveform = np.full((1, 2, 240000), 0.25, np.float32)
+    waveform[:, 1] *= -1
+    value = concatenate_video(
+        [video_from_source(source) for source in data],
+        complete_audio={"waveform": waveform, "sample_rate": 48000},
+    )
+    output = io.BytesIO()
+    save_video_stream(value, output, container="mkv")
+    assert _packets(output.getvalue()) == [packet for source in data for packet in _packets(source)]
+    from dinkster_assets.value import bind_video_value
+    from dinkster_values.audio_codec import audio_window
+
+    reloaded = bind_video_value(video_from_source(output.getvalue()), for_audio_extraction=True)
+    result = disassemble_video(reloaded)
+    assert result["frame_count"] == 40
+    actual = audio_window(result["audio"], 0, 192000)["waveform"]
+    assert actual.shape == (1, 2, 192000)
+    if codec == "ffv1":
+        np.testing.assert_array_equal(actual, waveform[..., :192000])
+    else:
+        assert actual[0, 0, 10000:180000].mean() > 0.2
+        assert actual[0, 1, 10000:180000].mean() < -0.2
 
 
 def test_saved_hdr_samples_do_not_quantize_to_eight_bits() -> None:

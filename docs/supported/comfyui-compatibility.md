@@ -1,5 +1,8 @@
 ## ComfyUI compatibility
 
+- Native POSE_KEYPOINT values preserve frame canvas dimensions, people and flat
+  body, foot, face and hand keypoints across isolated hosts, including absent
+  and empty optional fields. This is distinct from the existing POSE format.
 - The `--comfy-root` and `--execution-python` composition supports an installed
   inference package alongside source-only ComfyUI modules from the checkout,
   while sharing one inference module state and leaving source files unchanged.
@@ -49,6 +52,8 @@
   returning raw seconds and a frame count snapped to the causal VAE grid.
 - Native ComfyUI AUDIO sockets retain the first registered audio authority
   and work across isolated pack processes without a companion media pack.
+- Literal VIDEO_EDIT mappings retain their crop and trim fields across ordinary
+  in-process and isolated pack hosts without host type overrides.
 - Native LTXVCropGuides removes appended guide frames and their conditioning
   metadata while preserving the remaining video latent and noise mask.
 - Native LTXV latent-guide and generated-keyframe nodes attach, separate and
@@ -95,8 +100,6 @@
   across ordinary native pack hosts without loading Torch during registration.
 - UPSCALE_MODEL preserves the live image-upscale descriptor and its patcher as a
   resident value across ordinary pack hosts; model contents are not serialized.
-- LOSS_MAP transports ordered training loss values and structural extras through
-  the shared latent framing without changing the recorded numeric values.
 - Hunyuan Video 1.5 and LTXV latent upscale consumers preserve core resize,
   normalization, dtype, device, and latent metadata behavior.
 - Nine native advanced latent nodes add, subtract, multiply, interpolate,
@@ -158,6 +161,12 @@
   trajectories, conditions image starts, and renders colored tracks.
 - Native Wan Sound, HuMo and InfiniteTalk conditioning use audio-encoder layers
   with image starts, continuation motion and single- or two-speaker controls.
+- Native WanDancer audio encoding extracts onset, MFCC, chroma, peak and beat
+  features with frame-rate metadata and matching prompt text. This CPU feature
+  extraction does not establish full-model generation quality.
+- Native WanDancer video conditioning combines optional image starts and masks,
+  first-frame and reference vision states, and encoded audio features with an
+  empty video latent. CPU tensor coverage does not certify model quality or GPU parity.
 - Native SCAIL-2 colored masks render packed SAM3 tracks with identity selection,
   appearance/area ordering, palette controls and background masks. Source
   experimental presentation badges are not preserved.
@@ -200,6 +209,11 @@
 - Reference file-input metadata includes manually enumerated file choices whose
   declared execution method directly resolves the input as an annotated path.
   Empty file lists retain this classification; unrelated empty combos do not.
+- Native Save SVG writes ordered UTF-8 SVG streams to the selected output mount,
+  retaining duplicate and empty streams, source batch counters, and submitted
+  prompt/workflow metadata in source-compatible CDATA blocks. Invalid UTF-8 fails
+  rather than being replaced. Saved files appear as host-validated run artifacts;
+  the unchanged SVG value remains available downstream.
 - Native animated PNG and WebP outputs retain frame order, alpha, timing,
   compression controls and source images while writing to the selected mount.
   SaveImage, SaveAnimatedPNG and SaveAnimatedWEBP retain submitted prompt and

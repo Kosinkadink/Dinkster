@@ -2,22 +2,42 @@
 
 - Native `UpscaleModelLoader` loads granted single-image upscale checkpoints
   into the shared `UPSCALE_MODEL` value.
+- Native `FrameInterpolationModelLoader` loads granted FILM and five-block
+  RIFE checkpoints into the shared resident `INTERP_MODEL` value.
+  Native `FrameInterpolate` inserts intermediate frames using that model,
+  retaining source frame order and dimensions.
 - Native `CurveEditor` passes canonical curves through the curve editor and
   displays an optional histogram without restricting its bin count.
+- Native `AddLayer` appends image and mask batches to a layer document with
+  placement, rotation, opacity, blend mode, and stacking metadata.
 - Native `CameraAngle` produces an orbit-camera dictionary and shot description
   from horizontal angle, elevation, and zoom.
+- Native `MoGeGeometryToFOV` derives horizontal, vertical, or diagonal field of
+  view and focal length in pixels from MoGe geometry intrinsics.
 - Native `TripoSplatPreprocessImage` erodes alpha, crops foreground to a padded
   square, resizes with Lanczos, and composites the image over black.
 - Native `TripoSplatConditioning` combines normalized vision tokens and VAE
   reference latents with zero negative conditioning and fixed shape/camera noise targets.
 - Native `Trellis2UpsampleStage` cascades sparse shape latents through a VAE
   and prepares second-pass conditioning, projection features, and padded sparse latents.
+- Native `MoGePanoramaInference` estimates spherical geometry for a single
+  equirectangular image by merging perspective-view depth predictions.
+- Native `MoGeInference` predicts optional depth, points, camera intrinsics,
+  masks, and normals from image batches with configurable chunking and camera hints.
 - Color strings, ordered color palettes, bounding boxes, and optional
   resolution-preview metadata pass between node packs without rewriting their values.
 - Native `PrimitiveBoundingBox` constructs pixel bounding boxes; `ImageCropV2`
   crops each image in a batch to that box and reports a PNG preview.
+- Native `ImageCropToMask` crops images around foreground masks with adjustable
+  margin, mask growth, background color and output dimensions.
 - Native `CropByBBoxes` crops each frame to its bounding-box union and resizes
   with stretching or aspect-preserving black padding.
+- Native `SDPoseFaceBBoxes` converts canonical pose face keypoints into per-frame
+  pixel boxes with area scaling and optional square expansion for cropping.
+- Native `SDPoseDrawKeypoints` renders body, head, hand, foot and face keypoints
+  as pose images with confidence thresholds and adjustable marker widths.
+- Native `SDPoseKeypointExtractor` extracts OpenPose-format body, foot, face and
+  hand keypoints from SDPose models, with batched images or per-person crop boxes.
 - Native `RTDETR_detect` returns per-frame pixel bounding boxes filtered by
   confidence and COCO class, ordered by score and limited per frame.
   `DrawBBoxes` overlays boxes and labels on images or a black canvas.
@@ -66,6 +86,7 @@
 - Image compositing with placement, mask, common blend modes, Porter-Duff
   operations, explicit alpha polarity, and configurable batch reconciliation
 - Graph-native image composition with ordered `dinkster.layers` values, native
+  ImageDocument storage distinct from structural tensor `LAYERS`, and
   placement from image batches or regions/detections, digest-bound compositor
   edit commands, 26 blend modes plus dissolve, perceptual or linear-light
   rendering, per-layer previews, flatten/split, structural editing nodes, and

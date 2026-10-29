@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 import threading
 from collections.abc import Sequence
@@ -78,6 +79,139 @@ def write_pack(directory: Path, name: str, body: str = "NODES = []\n") -> Path:
     (directory / "dinkster-pack.toml").write_text(MANIFEST_TEMPLATE.format(name=name))
     (directory / f"{name}_nodes.py").write_text(body)
     return directory
+
+
+def test_explicit_generation_sources_preserve_locks_hosting_and_retained_versions(
+    tmp_path: Path,
+) -> None:
+    from dinkster.compose import CompositionError
+    from dinkster.generation_packs import load_generation_packs, stage_generation_packs
+
+    pack = write_pack(tmp_path / "source", "example")
+    archive = tmp_path / "example.zip"
+    digest = build_artifact(pack, archive)
+    generations = []
+    for number, version in ((1, "1.2.3"), (2, "2.0.0")):
+        generation = tmp_path / "generations" / str(number)
+        dependency = generation / "packs" / "example" / "pack-lock.json"
+        dependency.parent.mkdir(parents=True)
+        dependency.write_text('"dependency-lock-kept-verbatim"')
+        entry = LockedPack("example", version, digest, "local", ("example",), "registry")
+        stage_generation_packs(generation, Lockfile.of([entry]), {"example": archive})
+        assert dependency.read_text() == '"dependency-lock-kept-verbatim"'
+        in_process = number == 1
+        python = venv_python(dependency.parent)
+        if not in_process:
+            python.parent.mkdir(parents=True)
+            python.write_text("prepared-interpreter")
+        (generation / "generation.json").write_text(
+            json.dumps(
+                {
+                    "format": "dinkster.generation/1",
+                    "variant": "linux-cpu" if in_process else "win-cpu",
+                    "inProcessPacks": ["example"] if in_process else [],
+                }
+            )
+        )
+        variant, (spec,) = load_generation_packs(generation)
+        assert variant == ("linux-cpu" if in_process else "win-cpu")
+        assert spec.in_process is in_process
+        assert spec.python == (None if in_process else str(python))
+        assert spec.packs is not None
+        assert spec.packs["example"].version == version
+        assert spec.packs["example"].artifact_digest == digest
+        assert spec.trust_reserved is False
+        assert Path(spec.manifest) == generation / "pack-sources/example/dinkster-pack.toml"
+        generations.append(generation)
+    variant, (retained,) = load_generation_packs(generations[0])
+    assert variant == "linux-cpu"
+    assert retained.packs is not None
+    assert retained.packs["example"].version == "1.2.3"
+    python.unlink()
+    with pytest.raises(CompositionError, match="interpreter is missing"):
+        load_generation_packs(generations[1])
+    python.write_text("prepared-interpreter")
+    with pytest.raises(CompositionError, match="fresh, unsealed"):
+        stage_generation_packs(generations[0], Lockfile.of([entry]), {"example": archive})
+    changed = generations[1] / "pack-sources/example/example_nodes.py"
+    changed.write_text("NODES = ['tampered']")
+    with pytest.raises(CompositionError, match="artifact digest"):
+        load_generation_packs(generations[1])
+
+
+@pytest.mark.parametrize(
+    ("problem", "message"),
+    [
+        (None, ""),
+        ("missing", ".zip"),
+        ("tampered", "digest mismatch"),
+        ("identity", "manifest names"),
+        ("claims", "claims differ"),
+        ("lock", "unsupported lockfile format"),
+        ("sealed", "fresh, unsealed"),
+        ("relative", "absolute paths"),
+    ],
+)
+def test_generation_source_staging_cli(tmp_path: Path, problem: str | None, message: str) -> None:
+    pack = write_pack(tmp_path / "source", "example", "raise RuntimeError('must not import')\n")
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    archive = artifacts / "temporary.zip"
+    digest = build_artifact(pack, archive)
+    archive = archive.rename(artifacts / f"{digest.removeprefix('blake3:')}.zip")
+    entry = LockedPack("example", "1.2.3", digest, "local", ("example",), "registry")
+    if problem == "identity":
+        entry = replace(entry, pack="other")
+    elif problem == "claims":
+        entry = replace(entry, claims=("other",))
+    lock = Lockfile.of([entry])
+    catalog = tmp_path / "official-packs.lock"
+    catalog.write_text(lock.record_json(), encoding="utf-8")
+    generation = tmp_path / "generation"
+    dependency = generation / "packs/example/pack-lock.json"
+    dependency.parent.mkdir(parents=True)
+    dependency.write_bytes(b"preserve prepared dependency state")
+    if problem == "missing":
+        archive.rename(artifacts / "example-1.2.3.zip")
+    elif problem == "tampered":
+        archive.write_bytes(b"changed archive")
+    elif problem == "lock":
+        catalog.write_text('{"format":"wrong"}', encoding="utf-8")
+    elif problem == "sealed":
+        (generation / "generation.json").write_text("sealed", encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            "-m",
+            "dinkster.generation_packs",
+            "--generation",
+            "relative-generation" if problem == "relative" else str(generation),
+            "--catalog-lock",
+            str(catalog),
+            "--artifacts",
+            str(artifacts),
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    record = json.loads(result.stdout)
+    assert result.returncode == (0 if problem is None else 1), result.stderr
+    assert dependency.read_bytes() == b"preserve prepared dependency state"
+    if problem is not None:
+        assert record["packs"] == []
+        assert message in record["errors"][0]
+        assert not (generation / "dinkster.lock").exists()
+    else:
+        assert record == {"packs": ["example"], "errors": []}
+        assert result.stderr == ""
+        assert (generation / "dinkster.lock").read_text() == lock.record_json() + "\n"
+        source = generation / "pack-sources/example/example_nodes.py"
+        assert source.read_bytes() == (pack / "example_nodes.py").read_bytes()
+        assert not list(generation.rglob("*.pyc"))
+    assert not (generation / "official-packs.lock").exists()
 
 
 def fake_provision(manifest: PackManifest, venv_root: Path, spec: VenvSpec | None = None) -> Path:

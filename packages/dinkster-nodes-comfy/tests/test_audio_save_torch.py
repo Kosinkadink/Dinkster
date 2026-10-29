@@ -10,6 +10,7 @@ import wave
 from pathlib import Path
 
 import av
+import dinkster_nodes_comfy.audio_io as audio_io
 import numpy as np
 import pytest
 import torch
@@ -144,9 +145,10 @@ def test_save_audio_refuses_mounts_outside_the_snapshot(
     assert not list(root.rglob("*"))
 
 
+@pytest.mark.parametrize("source_node", ("LoadAudio", "RecordAudio"))
 @pytest.mark.parametrize("in_process", (True, False))
 def test_audio_load_preview_and_saves_through_native_hosts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_node: str, in_process: bool
 ) -> None:
     source = tmp_path / "source"
     output = tmp_path / "output"
@@ -172,6 +174,8 @@ def test_audio_load_preview_and_saves_through_native_hosts(
     async def scenario() -> None:
         package = Path(__file__).resolve().parents[1]
         checkout = package.parents[1]
+        assert audio_io.__file__ is not None
+        assert Path(audio_io.__file__).resolve().is_relative_to(package / "src")
         paths = (checkout / "src", *sorted(checkout.glob("packages/*/src")))
         composer = ServingComposer(
             worker_env={
@@ -186,7 +190,7 @@ def test_audio_load_preview_and_saves_through_native_hosts(
                 PackSpec(manifest=package / "dinkster-pack.toml", in_process=in_process)
             )
             nodes = {
-                "load": GraphNode("LoadAudio", {"audio": asset.to_wire()}),
+                "load": GraphNode(source_node, {"audio": asset.to_wire()}),
                 "preview": GraphNode("PreviewAudio", {"audio": Link("load", "AUDIO")}),
             }
             for name, node_type, options in (

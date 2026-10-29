@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib
-import logging
 from collections.abc import Mapping
 from typing import Any
 
@@ -475,16 +474,6 @@ class ModelComputeDtype(Node):
 class ModelAttentionBackend(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        backends = ("pytorch attention",)
-        try:
-            torch = importlib.import_module("torch")
-        except ModuleNotFoundError:
-            pass
-        else:
-            if torch.cuda.is_available() or torch.version.hip is not None:
-                attention = importlib.import_module("dinkster_inference.ldm.modules.attention")
-                if attention.COMFY_KITCHEN_INT8_ATTENTION_IS_AVAILABLE:
-                    backends += ("comfy kitchen attention",)
         return NodeSchema(
             node_type="ModelAttentionBackend",
             display_name="Model Attention Backend",
@@ -494,7 +483,7 @@ class ModelAttentionBackend(Node):
                 "Sparse Attention, this backend is used whenever sparse attention is inactive or "
                 "unsupported."
             ),
-            search_terms=("comfy kitchen", "attention", "pytorch", "kitchen attention"),
+            search_terms=("attention", "pytorch"),
             inputs=(
                 InputSpec("model", _MODEL, doc="The model to patch."),
                 InputSpec(
@@ -502,11 +491,8 @@ class ModelAttentionBackend(Node):
                     _COMBO,
                     default="pytorch attention",
                     display_name="backend",
-                    doc=(
-                        "The dense attention backend. Comfy Kitchen attention uses quantized INT8 "
-                        "attention and is available only on Nvidia and AMD GPUs."
-                    ),
-                    widget=ComboWidget(tuple(ComboOption(value) for value in backends)),
+                    doc="The dense attention backend.",
+                    widget=ComboWidget(("pytorch attention",)),
                 ),
             ),
             outputs=(
@@ -521,19 +507,11 @@ class ModelAttentionBackend(Node):
 
     @classmethod
     def execute(cls, *, model: Any, attention: str) -> Mapping[str, object]:
+        if attention != "pytorch attention":
+            raise ValueError(f"Unknown attention backend: {attention!r}")
         initialize_inference_process()
         module = importlib.import_module("dinkster_inference.ldm.modules.attention")
-        function = module.get_attention_function(
-            {"pytorch attention": "pytorch", "comfy kitchen attention": "comfy_kitchen_int8"}.get(
-                attention
-            ),
-            None,
-        )
-        if function is None:
-            logging.warning(
-                "Attention backend '%s' is unavailable; using PyTorch attention.", attention
-            )
-            function = module.get_attention_function("pytorch")
+        function = module.get_attention_function("pytorch")
         result = model.clone()
         result.set_model_optimized_attention(function)
         return cls.outputs(MODEL=result)
