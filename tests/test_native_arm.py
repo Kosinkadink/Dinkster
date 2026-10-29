@@ -25217,7 +25217,7 @@ def test_generation_seedvr2_tiled_vae_uses_comfyui_geometry(
     events: list[object] = []
 
     class Handle:
-        pass
+        recipe = SimpleNamespace(family_id="dinkster.seedvr2")
 
     class Codec:
         descriptor = SEEDVR2_CODEC
@@ -25265,7 +25265,11 @@ def test_generation_seedvr2_tiled_vae_uses_comfyui_geometry(
 
     codec = Codec()
     monkeypatch.setattr(arm, "NativeComponentHandle", Handle)
-    monkeypatch.setattr(arm, "_native_component_codec", lambda _value: codec)
+    monkeypatch.setattr(
+        arm,
+        "_native_component_codec",
+        lambda value: arm._RegisteredComponentCodec(value, codec),
+    )
     monkeypatch.setattr(arm, "_torch", lambda: torch)
     handle = Handle()
 
