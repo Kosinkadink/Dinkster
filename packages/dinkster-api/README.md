@@ -56,6 +56,11 @@ Remote clients use `current_execution_context()` to read the worker's current
 invocation and its cooperative `cancelled()` callback; outside an invocation it
 returns `None`. Packs do not create or replace the host's execution context.
 
+Sampling consumers call `prepare_sampling_model(model)` once before constructing
+their sampler or guider. The host prepares the invocation's model clone and
+attention route; outside a routed invocation the input object is returned
+unchanged. Preparation failures propagate to the caller.
+
 `OutputDescriptorsSpec` declares ordered heterogeneous outputs from a stored
 JSON input. Execution receives `OutputInterface.outputs`; use
 `output_descriptor_entries` to read node-owned entry fields and return a plain

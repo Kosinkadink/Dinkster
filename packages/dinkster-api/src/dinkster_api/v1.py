@@ -115,6 +115,7 @@ from dinkster_protocol import (
     canonical_extension_snapshot,
     current_export_snapshot,
     extension_behavior_hash,
+    prepare_sampling_model,
 )
 from dinkster_protocol.frontend_modules import FrontendContribution, FrontendModule
 from dinkster_protocol.pack_surfaces import (
@@ -568,6 +569,7 @@ __all__ = [
     "LatentStream",
     "MultiStreamLatent",
     "initialize_inference_process",
+    "prepare_sampling_model",
     "materialize_audio",
     "materialize_clip_vision_output",
     "materialize_image",

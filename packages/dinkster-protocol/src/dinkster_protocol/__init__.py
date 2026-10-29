@@ -46,8 +46,10 @@ from .attention import (
     automatic_attention_route,
     canonical_attention_route_token_bytes,
     derive_attention_route_token,
+    prepare_sampling_model,
     resolve_attention_runtime_status,
     resolve_role_policy,
+    use_sampling_model_preparer,
     validate_attention_policy,
 )
 from .extensions import (
@@ -923,8 +925,10 @@ __all__ = [
     "automatic_attention_route",
     "canonical_attention_route_token_bytes",
     "derive_attention_route_token",
+    "prepare_sampling_model",
     "resolve_attention_runtime_status",
     "resolve_role_policy",
+    "use_sampling_model_preparer",
     "validate_attention_policy",
     "single_job_multi_gpu_config_from_wire",
     "single_job_multi_gpu_config_to_wire",
