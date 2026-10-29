@@ -5,21 +5,31 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
+import pytest
 from dinkster_api.v1 import (
+    CLIP_TYPE,
     CONDITIONING_TYPE,
     IMAGE_TYPE,
     LATENT_TYPE,
     VAE_TYPE,
     InputSpec,
+    NodeSchema,
     NumberWidget,
+    OutputSpec,
     TypeExpr,
+    schema_from_wire,
+    schema_to_wire,
 )
+from dinkster_engine import ParentGraphBudget, admit_parent_graph
+from dinkster_graph import Graph, GraphNode, Link, graph_to_wire, validate
 from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.joyimage_encoders import TextEncodeJoyImageEdit
 from dinkster_nodes_comfy.reference_conditioning import (
     InstructPixToPixConditioning,
     ReferenceLatent,
     ReferenceMultiLatent,
 )
+from dinkster_schema import elaborate
 
 
 def test_reference_conditioning_interfaces_and_manifest() -> None:
@@ -102,3 +112,71 @@ def test_reference_multi_latent_exposes_resize_and_optional_ordered_images() -> 
     assert (family.min_members, family.max_members, family.member_prefix) == (1, 100, "image")
     assert isinstance(family.template[0], InputSpec)
     assert family.template[0].type == TypeExpr.concrete(IMAGE_TYPE)
+
+
+@pytest.mark.parametrize("connected", [(), (1, 4)])
+def test_joy_authored_image_members_are_optional_in_native_graphs(
+    connected: tuple[int, ...],
+) -> None:
+    schema = schema_from_wire(schema_to_wire(TextEncodeJoyImageEdit.schema()))
+    family = schema.input_families[0]
+    assert (family.min_members, family.max_members, family.required) == (0, 6, False)
+    members = tuple(f"images.m{index}" for index in range(6))
+    effective = elaborate(schema, ("clip", "prompt", *members))
+    source = NodeSchema(
+        "test.source",
+        outputs=(
+            OutputSpec("clip", TypeExpr.concrete(CLIP_TYPE)),
+            OutputSpec("image", TypeExpr.concrete(IMAGE_TYPE)),
+        ),
+    )
+    sink = NodeSchema(
+        "test.sink",
+        inputs=(
+            InputSpec("positive", TypeExpr.concrete(CONDITIONING_TYPE)),
+            InputSpec("negative", TypeExpr.concrete(CONDITIONING_TYPE)),
+        ),
+    )
+    image_links = {members[index]: Link("source", "image") for index in connected}
+    graph = Graph(
+        {
+            "source": GraphNode(source.node_type),
+            "positive": GraphNode(
+                schema.node_type, {"clip": Link("source", "clip"), "prompt": "edit", **image_links}
+            ),
+            "negative": GraphNode(
+                schema.node_type, {"clip": Link("source", "clip"), "prompt": "avoid", **image_links}
+            ),
+            "sink": GraphNode(
+                sink.node_type,
+                {
+                    "positive": Link("positive", "CONDITIONING"),
+                    "negative": Link("negative", "CONDITIONING"),
+                },
+            ),
+        }
+    )
+    before = graph_to_wire(graph)
+    schemas = {item.node_type: item for item in (source, effective, sink)}
+    assert validate(graph, schemas, ("sink",)) == []
+    admitted = admit_parent_graph(
+        graph,
+        graph_to_wire(Graph({})),
+        namespace="test.joy",
+        origins=(),
+        virtual_joins=(),
+        budget=ParentGraphBudget(),
+        schemas=schemas,
+    )
+    assert graph_to_wire(admitted.graph) == before
+    assert graph_to_wire(graph) == before
+    assert [(port.id, port.type, port.required) for port in effective.inputs[3:]] == [
+        (member, TypeExpr.concrete(IMAGE_TYPE), False) for member in members
+    ]
+    missing_clip = Graph(
+        {**graph.nodes, "positive": GraphNode(schema.node_type, {"prompt": "edit"})}
+    )
+    assert [
+        (item.code, item.node_id, item.input_id)
+        for item in validate(missing_clip, schemas, ("sink",))
+    ] == [("missing-input", "positive", "clip")]
