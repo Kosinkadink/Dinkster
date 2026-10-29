@@ -1202,6 +1202,11 @@ def _default_pack_lock() -> Lockfile:
         raise CompositionError(f"default pack catalog is invalid: {exc}") from exc
     if not lock.packs:
         raise CompositionError("default pack catalog selects no packs")
+    unsupported = tuple(
+        entry.pack for entry in lock.packs if entry.pack not in _FIRST_PARTY_PACK_MODULES
+    )
+    if unsupported:
+        raise CompositionError(f"default pack catalog selects unsupported packs {unsupported!r}")
     unexpected_publishers = tuple(
         entry.pack for entry in lock.packs if entry.publisher != "dinkster"
     )

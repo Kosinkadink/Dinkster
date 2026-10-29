@@ -1645,7 +1645,7 @@ def test_default_suite_refuses_malformed_managed_lock(
         "dinkster.compose.importlib.metadata.distribution", lambda _name: distribution
     )
 
-    with pytest.raises(CompositionError, match="installed default suite lock is invalid"):
+    with pytest.raises(CompositionError, match="default pack catalog is invalid"):
         compose._default_pack_lock()
 
 
