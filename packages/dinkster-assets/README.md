@@ -19,6 +19,9 @@ output wrapping, transfer, and engine adoption; job identifiers are not paths.
 Direct in-process results adopt produced sources before returning. Published
 AUDIO and VIDEO references use the store chain, so adopted bytes remain readable
 after scratch is removed.
+Job-owned publication stores and existing writers refuse further publication
+after the owning invocation scope closes, including in copied task contexts.
+Nested scopes for the same job attempt share that lifetime.
 
 ## Setup
 

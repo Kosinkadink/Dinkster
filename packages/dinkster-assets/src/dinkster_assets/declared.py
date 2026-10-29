@@ -28,10 +28,11 @@ from __future__ import annotations
 import json
 import logging
 import os
-from collections.abc import Generator, Iterable, Mapping
+import threading
+from collections.abc import Callable, Generator, Iterable, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .fetch import ChainResolver
@@ -41,7 +42,7 @@ from .library import IndexedAssetResolver
 from .model import AssetRef, AssetResolution, AssetResolver
 from .mounts import MountSnapshotResolver
 from .pack_assets import DeclaredAsset
-from .vault import AssetVault
+from .vault import AssetVault, VaultWriter
 
 __all__ = [
     "clear_declared_assets",
@@ -57,9 +58,56 @@ VAULT_ENV = "DINKSTER_ASSET_VAULT"
 MOUNTS_ENV = "DINKSTER_MOUNTS_SNAPSHOT"
 ROOT_ENV = "DINKSTER_ASSET_ROOT"
 
-_produced_job: ContextVar[tuple[str, int] | None] = ContextVar(
-    "dinkster_produced_job", default=None
-)
+
+@dataclass
+class _ProducedJob:
+    identity: tuple[str, int]
+    active: bool = True
+    lock: threading.RLock = field(default_factory=threading.RLock)
+
+    @contextmanager
+    def publication(self) -> Generator[None]:
+        # Writers are synchronous; no lock is held over an invocation await.
+        with self.lock:
+            if not self.active:
+                raise AssetError("produced output job is no longer active")
+            yield
+
+    def close(self) -> None:
+        with self.lock:
+            self.active = False
+
+
+_produced_job: ContextVar[_ProducedJob | None] = ContextVar("dinkster_produced_job", default=None)
+
+
+class _ProducedWriter(VaultWriter):
+    def __init__(self, root: Path, target: Path, digest: str, job: _ProducedJob) -> None:
+        self._job = job
+        super().__init__(root, target, digest)
+
+    def write(self, chunk: bytes) -> None:
+        with self._job.publication():
+            super().write(chunk)
+
+    def commit(self, *, before_publish: Callable[[int], None] | None = None) -> Path:
+        with self._job.publication():
+            return super().commit(before_publish=before_publish)
+
+    def commit_with_result(self) -> tuple[Path, bool]:
+        with self._job.publication():
+            return super().commit_with_result()
+
+
+class _ProducedVault(AssetVault):
+    def __init__(self, root: Path, job: _ProducedJob) -> None:
+        self._job = job
+        super().__init__(root)
+
+    def writer(self, expected_digest: str) -> VaultWriter:
+        with self._job.publication():
+            path = self._path(expected_digest)
+            return _ProducedWriter(self.root, path, expected_digest, self._job)
 
 
 @contextmanager
@@ -67,11 +115,17 @@ def use_produced_output_job(job: str, attempt: int) -> Generator[bool]:
     """Bind source lookup to a job attempt, yielding whether this scope owns adoption."""
     if not job or type(attempt) is not int or attempt < 1:
         raise AssetError("produced output requires a job and positive attempt")
-    owns_adoption = _produced_job.get() != (job, attempt)
-    token = _produced_job.set((job, attempt))
+    current = _produced_job.get()
+    owns_adoption = current is None or current.identity != (job, attempt)
+    scope = _ProducedJob((job, attempt)) if owns_adoption else current
+    assert scope is not None
+    with scope.publication():
+        token = _produced_job.set(scope)
     try:
         yield owns_adoption
     finally:
+        if owns_adoption:
+            scope.close()
         _produced_job.reset(token)
 
 
@@ -80,7 +134,9 @@ def _produced_root(scratch: str) -> Path:
     job = _produced_job.get()
     if job is None:
         return root
-    identity = digest_bytes(json.dumps(job, ensure_ascii=True).encode("ascii")).split(":", 1)[1]
+    identity = digest_bytes(json.dumps(job.identity, ensure_ascii=True).encode("ascii")).split(
+        ":", 1
+    )[1]
     return root / "jobs" / identity
 
 
@@ -116,6 +172,10 @@ def produced_output_scratch(env: Mapping[str, str] | None = None) -> AssetVault 
     environment = os.environ if env is None else env
     scratch = environment.get("DINKSTER_PACK_SCRATCH")
     if scratch:
+        job = _produced_job.get()
+        if job is not None:
+            with job.publication():
+                return _ProducedVault(_produced_root(scratch), job)
         return AssetVault(_produced_root(scratch))
     root = environment.get(VAULT_ENV)
     return AssetVault(root) if root else None

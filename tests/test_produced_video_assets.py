@@ -102,6 +102,66 @@ def test_produced_scratch_isolates_concurrent_jobs_and_attempts(tmp_path: Path) 
     assert not (tmp_path / "job with spaces").exists()
 
 
+@pytest.mark.parametrize("outcome", ["complete", "failure", "cancel"])
+def test_completed_produced_scope_refuses_detached_tasks_and_held_writers(
+    tmp_path: Path, outcome: str
+) -> None:
+    env = {"DINKSTER_PACK_SCRATCH": str(tmp_path / "scratch")}
+    data = b"unpublished source"
+    digest = digest_bytes(data)
+
+    async def scenario() -> None:
+        resume = asyncio.Event()
+        detached: list[asyncio.Task[None]] = []
+
+        async def owner() -> None:
+            with use_produced_output_job("ending job", 1) as owns:
+                assert owns
+                vault = produced_output_scratch(env)
+                assert vault is not None
+                writer = vault.writer(digest)
+                writer.write(data)
+
+                async def late_publication() -> None:
+                    await resume.wait()
+                    try:
+                        with pytest.raises(AssetError, match="no longer active"):
+                            produced_output_scratch(env)
+                        with pytest.raises(AssetError, match="no longer active"):
+                            vault.writer(digest)
+                        with pytest.raises(AssetError, match="no longer active"):
+                            writer.write(b"late bytes")
+                        with pytest.raises(AssetError, match="no longer active"):
+                            writer.commit()
+                        with pytest.raises(AssetError, match="no longer active"):
+                            writer.commit_with_result()
+                    finally:
+                        writer.__exit__(None, None, None)
+
+                detached.append(asyncio.create_task(late_publication()))
+                if outcome == "failure":
+                    raise ValueError("job failed")
+                if outcome == "cancel":
+                    raise asyncio.CancelledError
+
+        try:
+            await owner()
+        except (ValueError, asyncio.CancelledError):
+            assert outcome != "complete"
+        resume.set()
+        await asyncio.wait_for(asyncio.gather(*detached), 5)
+        with use_produced_output_job("ending job", 1):
+            vault = produced_output_scratch(env)
+            assert vault is not None
+            assert vault.resolve(digest) is None
+            assert not list(vault.root.glob(".ingest-*"))
+            with use_produced_output_job("ending job", 1) as owns:
+                assert not owns
+            assert _publish(vault, data).read_bytes() == data
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("configured_vault", [False, True])
 @pytest.mark.parametrize("media", ["audio", "video"])
 def test_in_process_produced_sources_require_durable_adoption(

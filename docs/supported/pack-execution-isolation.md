@@ -49,6 +49,8 @@
 - Boundary workers with configured pack scratch keep produced asset bytes
   separate for each job attempt. Returning a result still requires verified
   engine adoption before acknowledgement; this does not delete temporary files.
+- Completed, failed and cancelled invocation scopes refuse further publication
+  into their job-owned scratch, including from detached tasks and held writers.
 - Direct in-process results also adopt produced sources before returning when
   pack scratch is configured. Returned AUDIO and VIDEO sources remain readable
   from the engine vault after scratch removal; failed adoption preserves scratch
