@@ -40,7 +40,7 @@ class HiDreamO1ReferenceImages(Node):
             input_families=(
                 InputFamilySpec(
                     "images",
-                    (InputSpec("image", TypeExpr.concrete(IMAGE_TYPE)),),
+                    (InputSpec("image", TypeExpr.concrete(IMAGE_TYPE), required=False),),
                     min_members=0,
                     member_names=tuple(f"image_{index}" for index in range(1, 101)),
                     required=False,

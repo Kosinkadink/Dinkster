@@ -87,6 +87,8 @@
   positions to conditioning, preserving prior boxes and other prompt metadata.
 - `PiDConditioning` attaches Flux, SD3, SDXL, or Qwen Image latents and a
   degradation sigma to conditioning for PiD decoding and upscaling.
+- Bernini and HiDream-O1 accept authored reference image sockets left
+  unconnected, preserving prefixed/named members and conditioning fanout.
 - Qwen Image 2.1, Ming Image Edit, Mage Flow Edit, and Fibo 2 accept
   unconnected authored reference image sockets while retaining named members,
   required text/CLIP controls, optional VAE, and conditioning fanout.

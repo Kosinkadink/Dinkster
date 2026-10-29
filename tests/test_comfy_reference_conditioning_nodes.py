@@ -23,8 +23,10 @@ from dinkster_api.v1 import (
 from dinkster_engine import ParentGraphBudget, admit_parent_graph
 from dinkster_graph import Graph, GraphNode, Link, graph_to_wire, validate
 from dinkster_nodes_comfy import COMFY_NODES
+from dinkster_nodes_comfy.bernini_conditioning import BerniniConditioning
 from dinkster_nodes_comfy.boogu_encoders import TextEncodeBooguEdit
 from dinkster_nodes_comfy.fibo2_encoders import TextEncodeFibo2
+from dinkster_nodes_comfy.hidream_patches import HiDreamO1ReferenceImages
 from dinkster_nodes_comfy.joyimage_encoders import TextEncodeJoyImageEdit
 from dinkster_nodes_comfy.mage_image_encoders import TextEncodeMageFlowEdit
 from dinkster_nodes_comfy.ming_image_encoders import TextEncodeMingImageEdit
@@ -254,6 +256,99 @@ def test_boogu_authored_image_members_are_optional_in_native_graphs(
                 **graph.nodes,
                 "encode": GraphNode(
                     schema.node_type, {k: v for k, v in inputs.items() if k != missing}
+                ),
+            }
+        )
+        assert [
+            (item.code, item.node_id, item.input_id)
+            for item in validate(incomplete, schemas, ("sink",))
+        ] == [("missing-input", "encode", missing)]
+
+
+@pytest.mark.parametrize("node_type", ["BerniniConditioning", "HiDreamO1ReferenceImages"])
+@pytest.mark.parametrize("state", ["absent", "unconnected", "sparse"])
+def test_vision_reference_image_members_are_optional_in_native_graphs(
+    node_type: str, state: str
+) -> None:
+    node = {
+        "BerniniConditioning": BerniniConditioning,
+        "HiDreamO1ReferenceImages": HiDreamO1ReferenceImages,
+    }[node_type]
+    schema = schema_from_wire(schema_to_wire(node.schema()))
+    family = schema.input_families[0]
+    assert family.min_members == 0 and not family.required
+    if node_type == "BerniniConditioning":
+        assert (family.id, family.max_members, family.member_prefix) == (
+            "reference_images",
+            8,
+            "reference_image_",
+        )
+        names = ("reference_image_0", "reference_image_7")
+    else:
+        assert family.id == "images"
+        assert family.member_names == tuple(f"image_{index}" for index in range(1, 101))
+        names = ("image_1", "image_100")
+    members = () if state == "absent" else tuple(f"{family.id}.{name}" for name in names)
+    effective = elaborate(schema, (*[port.id for port in schema.inputs], *members))
+    assert [
+        (port.id, port.type, port.required) for port in effective.inputs if port.id in members
+    ] == [(member, TypeExpr.concrete(IMAGE_TYPE), False) for member in members]
+    source = NodeSchema(
+        "test.source",
+        outputs=(
+            OutputSpec("conditioning", TypeExpr.concrete(CONDITIONING_TYPE)),
+            OutputSpec("vae", TypeExpr.concrete(VAE_TYPE)),
+            OutputSpec("image", TypeExpr.concrete(IMAGE_TYPE)),
+        ),
+    )
+    sink = NodeSchema(
+        "test.sink",
+        inputs=(
+            InputSpec("positive", TypeExpr.concrete(CONDITIONING_TYPE)),
+            InputSpec("negative", TypeExpr.concrete(CONDITIONING_TYPE)),
+        ),
+    )
+    inputs = {
+        "positive": Link("source", "conditioning"),
+        "negative": Link("source", "conditioning"),
+    }
+    if node_type == "BerniniConditioning":
+        inputs["vae"] = Link("source", "vae")
+    if state == "sparse":
+        inputs[f"{family.id}.{names[-1]}"] = Link("source", "image")
+    graph = Graph(
+        {
+            "source": GraphNode(source.node_type),
+            "encode": GraphNode(node_type, inputs),
+            "sink": GraphNode(
+                sink.node_type,
+                {"positive": Link("encode", "positive"), "negative": Link("encode", "negative")},
+            ),
+        }
+    )
+    schemas = {item.node_type: item for item in (source, effective, sink)}
+    before = graph_to_wire(graph)
+    assert validate(graph, schemas, ("sink",)) == []
+    admitted = admit_parent_graph(
+        graph,
+        graph_to_wire(Graph({})),
+        namespace="test.vision",
+        origins=(),
+        virtual_joins=(),
+        budget=ParentGraphBudget(),
+        schemas=schemas,
+    )
+    assert graph_to_wire(admitted.graph) == graph_to_wire(graph) == before
+    for missing in (
+        ("positive", "negative", "vae")
+        if node_type == "BerniniConditioning"
+        else ("positive", "negative")
+    ):
+        incomplete = Graph(
+            {
+                **graph.nodes,
+                "encode": GraphNode(
+                    node_type, {key: value for key, value in inputs.items() if key != missing}
                 ),
             }
         )

@@ -3,9 +3,33 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Literal, cast
+
+_sampling_model_preparer: ContextVar[Callable[[object], object] | None] = ContextVar(
+    "dinkster_sampling_model_preparer", default=None
+)
+
+
+def prepare_sampling_model(model: object) -> object:
+    """Prepare a sampling model using this invocation's host-selected route."""
+    preparer = _sampling_model_preparer.get()
+    return model if preparer is None else preparer(model)
+
+
+@contextmanager
+def use_sampling_model_preparer(
+    preparer: Callable[[object], object] | None,
+) -> Generator[None]:
+    token = _sampling_model_preparer.set(preparer)
+    try:
+        yield
+    finally:
+        _sampling_model_preparer.reset(token)
+
 
 AttentionPolicy = Literal[
     "auto", "sdpa", "flash", "xformers", "sage", "sage3", "sol", "comfy_kitchen_int8"
