@@ -2,7 +2,9 @@ version = 1
 revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
-    "python_full_version >= '3.14'",
+    "(python_full_version >= '3.15' and implementation_name == 'cpython' and platform_machine == 'x86_64' and sys_platform == 'linux') or (python_full_version >= '3.15' and implementation_name == 'cpython' and platform_machine == 'AMD64' and sys_platform == 'win32') or (python_full_version >= '3.14' and implementation_name != 'cpython' and sys_platform == 'linux') or (python_full_version >= '3.14' and implementation_name != 'cpython' and sys_platform == 'win32') or (python_full_version >= '3.14' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version >= '3.14' and platform_machine != 'AMD64' and sys_platform == 'win32') or (python_full_version >= '3.14' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "python_full_version == '3.14.*' and implementation_name == 'cpython' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version == '3.14.*' and implementation_name == 'cpython' and platform_machine == 'AMD64' and sys_platform == 'win32'",
     "python_full_version < '3.14' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
     "python_full_version < '3.14' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
     "python_full_version < '3.14' and platform_machine == 'AMD64' and platform_python_implementation == 'CPython' and sys_platform == 'win32'",
@@ -843,7 +845,9 @@ angle = [
 ]
 dev = [
     { name = "hypothesis" },
-    { name = "opentimelineio" },
+    { name = "opentimelineio", version = "0.18.1", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version != '3.14.*' and sys_platform == 'linux') or (python_full_version != '3.14.*' and sys_platform == 'win32') or (implementation_name != 'cpython' and sys_platform == 'linux') or (implementation_name != 'cpython' and sys_platform == 'win32') or (platform_machine != 'x86_64' and sys_platform == 'linux') or (platform_machine != 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "opentimelineio", version = "0.19.0.dev1", source = { url = "https://github.com/Kosinkadink/Dinkster/releases/download/opentimelineio-wheels-0.19.0.dev1-4524367491df/opentimelineio-0.19.0.dev1-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl" }, marker = "python_full_version == '3.14.*' and implementation_name == 'cpython' and platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "opentimelineio", version = "0.19.0.dev1", source = { url = "https://github.com/Kosinkadink/Dinkster/releases/download/opentimelineio-wheels-0.19.0.dev1-4524367491df/opentimelineio-0.19.0.dev1-cp314-cp314-win_amd64.whl" }, marker = "python_full_version == '3.14.*' and implementation_name == 'cpython' and platform_machine == 'AMD64' and sys_platform == 'win32'" },
     { name = "pyright" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -905,7 +909,9 @@ angle = [
 ]
 dev = [
     { name = "hypothesis", specifier = ">=6" },
-    { name = "opentimelineio", specifier = "==0.18.1" },
+    { name = "opentimelineio", marker = "(python_full_version != '3.14.*' and sys_platform == 'linux') or (python_full_version != '3.14.*' and sys_platform == 'win32') or (implementation_name != 'cpython' and sys_platform == 'linux') or (implementation_name != 'cpython' and sys_platform == 'win32') or (platform_machine != 'x86_64' and sys_platform == 'linux') or (platform_machine != 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = "==0.18.1" },
+    { name = "opentimelineio", marker = "python_full_version == '3.14.*' and implementation_name == 'cpython' and platform_machine == 'x86_64' and sys_platform == 'linux'", url = "https://github.com/Kosinkadink/Dinkster/releases/download/opentimelineio-wheels-0.19.0.dev1-4524367491df/opentimelineio-0.19.0.dev1-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl" },
+    { name = "opentimelineio", marker = "python_full_version == '3.14.*' and implementation_name == 'cpython' and platform_machine == 'AMD64' and sys_platform == 'win32'", url = "https://github.com/Kosinkadink/Dinkster/releases/download/opentimelineio-wheels-0.19.0.dev1-4524367491df/opentimelineio-0.19.0.dev1-cp314-cp314-win_amd64.whl" },
     { name = "pyright", specifier = ">=1.1.390" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-cov", specifier = ">=6" },
@@ -1483,7 +1489,9 @@ dependencies = [
     { name = "dinkster-image-document" },
     { name = "dinkster-values" },
     { name = "numpy" },
-    { name = "opentimelineio" },
+    { name = "opentimelineio", version = "0.18.1", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version != '3.14.*' and sys_platform == 'linux') or (python_full_version != '3.14.*' and sys_platform == 'win32') or (implementation_name != 'cpython' and sys_platform == 'linux') or (implementation_name != 'cpython' and sys_platform == 'win32') or (platform_machine != 'x86_64' and sys_platform == 'linux') or (platform_machine != 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "opentimelineio", version = "0.19.0.dev1", source = { url = "https://github.com/Kosinkadink/Dinkster/releases/download/opentimelineio-wheels-0.19.0.dev1-4524367491df/opentimelineio-0.19.0.dev1-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl" }, marker = "python_full_version == '3.14.*' and implementation_name == 'cpython' and platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "opentimelineio", version = "0.19.0.dev1", source = { url = "https://github.com/Kosinkadink/Dinkster/releases/download/opentimelineio-wheels-0.19.0.dev1-4524367491df/opentimelineio-0.19.0.dev1-cp314-cp314-win_amd64.whl" }, marker = "python_full_version == '3.14.*' and implementation_name == 'cpython' and platform_machine == 'AMD64' and sys_platform == 'win32'" },
     { name = "pillow" },
 ]
 
@@ -1493,7 +1501,9 @@ requires-dist = [
     { name = "dinkster-image-document", editable = "packages/dinkster-image-document" },
     { name = "dinkster-values", editable = "packages/dinkster-values" },
     { name = "numpy", specifier = ">=1.26" },
-    { name = "opentimelineio", specifier = "==0.18.1" },
+    { name = "opentimelineio", marker = "(python_full_version != '3.14.*' and sys_platform == 'linux') or (python_full_version != '3.14.*' and sys_platform == 'win32') or (implementation_name != 'cpython' and sys_platform == 'linux') or (implementation_name != 'cpython' and sys_platform == 'win32') or (platform_machine != 'x86_64' and sys_platform == 'linux') or (platform_machine != 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = "==0.18.1" },
+    { name = "opentimelineio", marker = "python_full_version == '3.14.*' and implementation_name == 'cpython' and platform_machine == 'x86_64' and sys_platform == 'linux'", url = "https://github.com/Kosinkadink/Dinkster/releases/download/opentimelineio-wheels-0.19.0.dev1-4524367491df/opentimelineio-0.19.0.dev1-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl" },
+    { name = "opentimelineio", marker = "python_full_version == '3.14.*' and implementation_name == 'cpython' and platform_machine == 'AMD64' and sys_platform == 'win32'", url = "https://github.com/Kosinkadink/Dinkster/releases/download/opentimelineio-wheels-0.19.0.dev1-4524367491df/opentimelineio-0.19.0.dev1-cp314-cp314-win_amd64.whl" },
     { name = "pillow", specifier = ">=10" },
 ]
 
@@ -2405,6 +2415,14 @@ wheels = [
 name = "opentimelineio"
 version = "0.18.1"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "(python_full_version >= '3.15' and implementation_name == 'cpython' and platform_machine == 'x86_64' and sys_platform == 'linux') or (python_full_version >= '3.15' and implementation_name == 'cpython' and platform_machine == 'AMD64' and sys_platform == 'win32') or (python_full_version >= '3.14' and implementation_name != 'cpython' and sys_platform == 'linux') or (python_full_version >= '3.14' and implementation_name != 'cpython' and sys_platform == 'win32') or (python_full_version >= '3.14' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version >= '3.14' and platform_machine != 'AMD64' and sys_platform == 'win32') or (python_full_version >= '3.14' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "python_full_version < '3.14' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
+    "python_full_version < '3.14' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
+    "python_full_version < '3.14' and platform_machine == 'AMD64' and platform_python_implementation == 'CPython' and sys_platform == 'win32'",
+    "python_full_version < '3.14' and platform_machine == 'arm64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin'",
+    "(python_full_version < '3.14' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version < '3.14' and platform_machine == 'aarch64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (python_full_version < '3.14' and platform_machine == 'x86_64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (python_full_version < '3.14' and platform_machine != 'arm64' and sys_platform == 'darwin') or (python_full_version < '3.14' and platform_machine != 'AMD64' and sys_platform == 'win32') or (python_full_version < '3.14' and platform_python_implementation != 'CPython' and sys_platform == 'darwin') or (python_full_version < '3.14' and platform_python_implementation != 'CPython' and sys_platform == 'win32') or (python_full_version < '3.14' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')",
+]
 sdist = { url = "https://files.pythonhosted.org/packages/de/41/73e65b707f3491792d4b34bea75edc2a1cc6ce10848ba199c3de8e3bee58/opentimelineio-0.18.1.tar.gz", hash = "sha256:a4e5086e2accd4ca9853ab48bf531e0c148eff47889363a6da3a03f662fbf5e8", size = 2921656, upload-time = "2025-11-09T16:38:53.364Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/42/f9/1171d246952382214ff2936dc24a1a2b5b439968a7aeda28d472339b50b4/opentimelineio-0.18.1-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:1798102411fdd7fdace2441925f910b6daa71ca67c29cd523702a5a19e4e1ded", size = 1236369, upload-time = "2025-11-09T16:38:38.444Z" },
@@ -2416,6 +2434,46 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/e7/a8/b1721da936e0405a3e317aacb1759a047db36eacd1efbd933feb3ead743e/opentimelineio-0.18.1-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:8740c18d2778d64d2128c3cb805cf381a71164ec8f7ff6b38477b60471ebe1a1", size = 843470, upload-time = "2025-11-09T16:38:46.322Z" },
     { url = "https://files.pythonhosted.org/packages/6c/ea/346d55de1348d80b5c37036fa4bc2a9e19e08121742369d51577de0d9562/opentimelineio-0.18.1-cp313-cp313-win_amd64.whl", hash = "sha256:af19134bf9cb2f3dd86b15004e0ca9a22c22d6e58a14465d4e5aeeb8329154ea", size = 608367, upload-time = "2025-11-09T16:38:47.554Z" },
 ]
+
+[[package]]
+name = "opentimelineio"
+version = "0.19.0.dev1"
+source = { url = "https://github.com/Kosinkadink/Dinkster/releases/download/opentimelineio-wheels-0.19.0.dev1-4524367491df/opentimelineio-0.19.0.dev1-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl" }
+resolution-markers = [
+    "python_full_version == '3.14.*' and implementation_name == 'cpython' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+]
+wheels = [
+    { url = "https://github.com/Kosinkadink/Dinkster/releases/download/opentimelineio-wheels-0.19.0.dev1-4524367491df/opentimelineio-0.19.0.dev1-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:e714b08efd3e8d60b67aba6ed402242f070266efb6fcfa4a53dff17eaf24adf5" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "check-manifest", marker = "extra == 'dev'" },
+    { name = "coverage", marker = "extra == 'dev'", specifier = ">=4.5" },
+    { name = "flake8", marker = "extra == 'dev'", specifier = ">=3.5" },
+    { name = "urllib3", marker = "extra == 'dev'", specifier = ">=1.24.3" },
+]
+provides-extras = ["dev"]
+
+[[package]]
+name = "opentimelineio"
+version = "0.19.0.dev1"
+source = { url = "https://github.com/Kosinkadink/Dinkster/releases/download/opentimelineio-wheels-0.19.0.dev1-4524367491df/opentimelineio-0.19.0.dev1-cp314-cp314-win_amd64.whl" }
+resolution-markers = [
+    "python_full_version == '3.14.*' and implementation_name == 'cpython' and platform_machine == 'AMD64' and sys_platform == 'win32'",
+]
+wheels = [
+    { url = "https://github.com/Kosinkadink/Dinkster/releases/download/opentimelineio-wheels-0.19.0.dev1-4524367491df/opentimelineio-0.19.0.dev1-cp314-cp314-win_amd64.whl", hash = "sha256:61d991fad48a99cd41ccaecf49fa6cc243d68c455e258fd560f04e7a6f516d7f" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "check-manifest", marker = "extra == 'dev'" },
+    { name = "coverage", marker = "extra == 'dev'", specifier = ">=4.5" },
+    { name = "flake8", marker = "extra == 'dev'", specifier = ">=3.5" },
+    { name = "urllib3", marker = "extra == 'dev'", specifier = ">=1.24.3" },
+]
+provides-extras = ["dev"]
 
 [[package]]
 name = "optype"

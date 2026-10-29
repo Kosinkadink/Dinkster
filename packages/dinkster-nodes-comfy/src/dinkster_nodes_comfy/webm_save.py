@@ -28,6 +28,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
+    attach_saved_artifact,
     current_export_snapshot,
     image_input,
 )
@@ -161,11 +162,12 @@ class SaveWEBM(Node):
                         container.mux(packet)
                 container.mux(stream.encode())
             encoded.seek(0)
-            writer.save_stream(
+            ref = writer.save_stream(
                 target,
                 cast(BinaryIO, encoded),
                 suffix=".webm",
                 media_type="video/webm",
                 limit=ENCODED_MEDIA_LIMIT_BYTES,
             )
+            attach_saved_artifact(ref.to_wire())
         return cls.outputs(images=images)
