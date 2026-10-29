@@ -58,7 +58,7 @@ def build(
         packages = staged / "packages"
         roots = [
             packages / f"dinkster-nodes-{family}"
-            for family in ("comfy", "foundation", "image", "media-io", "remote", "generation")
+            for family in ("comfy", "foundation", "image", "media-io", "remote")
         ]
         vision = packages / "dinkster-nodes-vision"
         for manifest in sorted(vision.glob("*_pack/dinkster-pack.toml")):
