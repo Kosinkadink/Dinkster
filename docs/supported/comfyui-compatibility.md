@@ -222,6 +222,7 @@
 - Native CLIP and VAE exports preserve tensor keys and dtypes in safetensors
   on the selected output mount. CLIP weights split by encoder prefix.
   Submitted prompt and workflow metadata are retained unless metadata is disabled.
+  Exported files are attached as validated run artifacts within the shared result limits.
 - Native latent files load verified safetensors, convert samples to float32,
   and apply legacy scaling only when the format marker is absent. Saving
   writes contiguous samples and the format marker to the selected output mount.
@@ -240,6 +241,8 @@
   and workflow fields are included unless disabled; architecture metadata remains.
   Submitted extra fields override matching metadata keys. Tiny CPU
   checks use controlled model state, not full-model or GPU execution.
+  Saved checkpoints and models are attached as validated run artifacts within the
+  shared result limits.
 - Native SaveImageAdvanced writes 8/16-bit PNG and half/full-float EXR through
   the selected output mount, preserving source counters and straight alpha.
   EXR exports retain extended range and convert sRGB or HLG input to scene light.

@@ -25,6 +25,7 @@ from dinkster_api.v1 import (
     Node,
     NodeSchema,
     TypeExpr,
+    attach_saved_artifact,
     current_export_snapshot,
     initialize_inference_process,
 )
@@ -66,12 +67,13 @@ def _save_tensors(
         path = Path(directory) / "weights.safetensors"
         utils.save_torch_file(tensors, str(path), metadata={**metadata, **_export_metadata()})
         with path.open("rb") as source:
-            writer.save_stream(
+            ref = writer.save_stream(
                 writer.output_target(prefix, mount=mount),
                 source,
                 suffix=".safetensors",
                 limit=path.stat().st_size,
             )
+            attach_saved_artifact(ref.to_wire())
 
 
 def _save_checkpoint(model: Any, clip: Any, vae: Any, prefix: str, mount: str | None) -> None:
@@ -126,12 +128,13 @@ def _save_checkpoint(model: Any, clip: Any, vae: Any, prefix: str, mount: str | 
             )
             return streams.enter_context(path.open("rb"))
 
-        writer.save_encoded(
+        ref = writer.save_encoded(
             writer.output_target(prefix, mount=mount),
             encode,
             suffix="_.safetensors",
             limit=sys.maxsize,
         )
+        attach_saved_artifact(ref.to_wire())
 
 
 class CheckpointSave(Node):
