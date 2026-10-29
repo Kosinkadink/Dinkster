@@ -145,8 +145,8 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
     if aliases:
         try:
             (base / "executable-alias").symlink_to(executable)
-            (base / "resource-alias").symlink_to("share/fixture/resource.txt")
-            (base / "directory-alias").symlink_to("share/fixture", target_is_directory=True)
+            (base / "resource-alias").symlink_to(Path("share/fixture/resource.txt"))
+            (base / "directory-alias").symlink_to(Path("share/fixture"), target_is_directory=True)
         except OSError as exc:
             pytest.skip(f"internal interpreter aliases require symlink support: {exc}")
     site = Path(
