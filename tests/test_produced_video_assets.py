@@ -27,7 +27,10 @@ from dinkster_assets import (
 )
 from dinkster_assets.declared import produced_output_scratch, use_produced_output_job
 from dinkster_caches import BudgetedDiskCAS
+from dinkster_engine.control import EngineRunContext, RunControlState
+from dinkster_graph import Graph, GraphNode
 from dinkster_protocol import Invocation, InvocationResult
+from dinkster_schema import Node, NodeSchema, RunExecutionContext
 from dinkster_values import TypeRegistry, Value, ValueMeta, default_encode, make_list_value
 from dinkster_values.model import PyObjPayload
 from dinkster_workers import BoundaryDiagnostic, InProcessWorker, IsolatedWorker, RemoteWorker
@@ -153,6 +156,107 @@ def test_in_process_produced_sources_require_durable_adoption(
         assert source.digest == digests[0]
         assert source.local_path() == engine.resolve(digests[0])
         assert source.read_bytes() == original
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("configured_vault", [False, True])
+@pytest.mark.parametrize("media", ["audio", "video"])
+def test_in_process_control_sources_are_adopted_before_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, configured_vault: bool, media: str
+) -> None:
+    engine = AssetVault(tmp_path / "engine")
+    scratch = tmp_path / "scratch"
+    monkeypatch.setenv("DINKSTER_PACK_SCRATCH", str(scratch))
+    if configured_vault:
+        monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(engine.root))
+    else:
+        monkeypatch.delenv("DINKSTER_ASSET_VAULT", raising=False)
+    registry = TypeRegistry()
+    register_video_value_type(registry, VIDEO_TYPE, resolver_from_env())
+    register_audio_value_type(registry, AUDIO_TYPE, resolver_from_env())
+    producer = ProduceVideo if media == "video" else ProduceAudio
+    original: dict[str, bytes] = {}
+    saved_contexts: list[RunExecutionContext] = []
+
+    class PublishMedia(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema("control.media", outputs=(), execution_context=True)
+
+        @classmethod
+        async def execute(cls, execution_context: RunExecutionContext) -> Mapping[str, object]:
+            saved_contexts.append(execution_context)
+            value = registry.wrap(
+                VIDEO_TYPE if media == "video" else AUDIO_TYPE, producer.execute()[media]
+            )
+            store = produced_output_scratch()
+            assert store is not None
+            for digest in store.digests():
+                path = store.resolve(digest)
+                assert path is not None
+                original[digest] = path.read_bytes()
+            assert len(original) == 1
+            await execution_context.publish_run_value("target", {media: value})
+            return {}
+
+    worker = InProcessWorker({"control.media": PublishMedia}, registry)
+
+    async def scenario() -> None:
+        state = RunControlState()
+
+        def published(_target: str, values: Mapping[str, Value]) -> None:
+            digest, data = next(iter(original.items()))
+            assert digest_bytes(data) == digest
+            path = engine.resolve(digest)
+            assert path is not None, "publication reached the engine before durable adoption"
+            assert path.read_bytes() == data
+            shutil.rmtree(scratch)
+            payload = cast(Mapping[str, object], values[media].resolve())
+            assert cast(AssetRef, payload["source"]).read_bytes() == data
+
+        context = EngineRunContext(
+            "publish",
+            {},
+            state,
+            lambda: Graph({"target": GraphNode("control.media")}),
+            published,
+            lambda _nodes: None,
+            lambda _node, _inputs: None,
+            {},
+        )
+        result = await worker.invoke(
+            Invocation(
+                invocation_id="control-source",
+                job_ref="control job",
+                attempt_id=2,
+                node_id="publish",
+                node_type="control.media",
+                inputs={},
+                effective_schema=worker.schemas["control.media"],
+                run_control=context,
+            )
+        )
+        if configured_vault:
+            assert result.error is None, result.error
+            assert state.future("target").done()
+            values = await context.await_run_value("target")
+            payload = cast(Mapping[str, object], values[media].resolve())
+            assert cast(AssetRef, payload["source"]).read_bytes() == next(iter(original.values()))
+        else:
+            assert result.error is not None
+            assert "require an engine DINKSTER_ASSET_VAULT" in result.error.message
+            assert not state.future("target").done()
+            with use_produced_output_job("control job", 2):
+                store = produced_output_scratch()
+                assert store is not None
+                digest, data = next(iter(original.items()))
+                path = store.resolve(digest)
+                assert path is not None
+                assert path.read_bytes() == data
+        with pytest.raises(RuntimeError, match="no longer active"):
+            await saved_contexts[0].publish_run_value("target", {})
+        state.close()
 
     asyncio.run(scenario())
 

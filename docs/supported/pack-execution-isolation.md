@@ -53,6 +53,9 @@
   pack scratch is configured. Returned AUDIO and VIDEO sources remain readable
   from the engine vault after scratch removal; failed adoption preserves scratch
   bytes.
+- Direct in-process run-value publications use the same durable adoption before
+  another node can receive the value. Failed adoption does not publish a value,
+  and completed invocation contexts cannot publish again.
 - Worker conversations carry typed runtime-expansion results. Present
   values retain ordinary resource ownership, source adoption, saved-artifact
   validation and shared-memory/result acknowledgements. Carrying a fragment

@@ -108,6 +108,7 @@ from .error_hints import hints_for
 from .execution import ExecutionContext, current_execution_context, use_execution_context
 from .media import apply_alpha_policy, coercion_drops_alpha, media_input_value, prepare_media_output
 from .produced_assets import ProducedAssetAuthority
+from .run_control import PreparedRunContext
 
 
 async def _run_sync(call: Callable[..., object], /, *args: object, **kwargs: object) -> object:
@@ -406,13 +407,10 @@ class InProcessWorker:
                 invocation.job_ref or invocation.invocation_id, invocation.attempt_id
             ) as owns_adoption,
         ):
-            result = await self._invoke_in_context(invocation, on_event)
-            if (
-                owns_adoption
-                and result.outputs is not None
-                and os.environ.get("DINKSTER_PACK_SCRATCH")
-            ):
-                try:
+            control: PreparedRunContext | None = None
+            try:
+                authority: ProducedAssetAuthority | None = None
+                if owns_adoption and os.environ.get("DINKSTER_PACK_SCRATCH"):
                     root = os.environ.get(VAULT_ENV)
                     vault = AssetVault(root) if root else None
                     existing_env = dict(os.environ)
@@ -420,12 +418,27 @@ class InProcessWorker:
                     authority = ProducedAssetAuthority(
                         vault, resolver_from_env(), resolver_from_env(existing_env)
                     )
+
+                    async def prepare_values(values: Mapping[str, Value]) -> Mapping[str, Value]:
+                        assert authority is not None
+                        values = dict(values)
+                        await _run_sync(authority.capture, values, None, invocation.inputs)
+                        return values
+
+                    if invocation.run_control is not None:
+                        control = PreparedRunContext(invocation.run_control, prepare_values)
+                        invocation = replace(invocation, run_control=control)
+                result = await self._invoke_in_context(invocation, on_event)
+                if authority is not None and result.outputs is not None:
                     await _run_sync(authority.capture, result.outputs, None, invocation.inputs)
-                except (AssetError, OSError) as error:
-                    return InvocationResult(
-                        error=NodeError(invocation.node_id, invocation.node_type, str(error))
-                    )
-            return result
+                return result
+            except (AssetError, OSError) as error:
+                return InvocationResult(
+                    error=NodeError(invocation.node_id, invocation.node_type, str(error))
+                )
+            finally:
+                if control is not None:
+                    control.close()
 
     async def check_lazy_status(
         self,
