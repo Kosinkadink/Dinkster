@@ -218,6 +218,7 @@ from .wan_track_conditioning import WanTrackToVideo
 from .wan_uni3c import WanUni3CControlnetApply
 from .wandancer_audio import WanDancerEncodeAudio
 from .wandancer_keyframes import WANDANCER_KEYFRAME_NODES
+from .wandancer_video import WanDancerVideo
 from .webm_save import SaveWEBM
 from .yue2_conditioning import YUE2_CONDITIONING_NODES
 from .zimage_encoders import TextEncodeZImageOmni
@@ -456,6 +457,7 @@ COMFY_NODES = (
     SDPoseDrawKeypoints,
     SDPoseKeypointExtractor,
     AddLayer,
+    WanDancerVideo,
     VOIDWarpedNoise,
     LoadVideo,
 )
