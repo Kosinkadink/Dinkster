@@ -13,6 +13,7 @@ import warnings
 from collections.abc import Buffer
 from contextlib import ExitStack
 from pathlib import Path, PurePosixPath
+from typing import BinaryIO, cast
 
 import zstandard
 
@@ -44,6 +45,60 @@ class _PartsReader(io.RawIOBase):
                 return size
             self.current = next(self.files, None)
         return 0
+
+
+class _TarReader:
+    def __init__(self, source: BinaryIO) -> None:
+        self.source = source
+        self.size = 0
+        self.zero_tail = 0
+
+    def read(self, size: int = -1) -> bytes:
+        block = self.source.read(size)
+        self.size += len(block)
+        trailing = len(block) - len(block.rstrip(b"\0"))
+        self.zero_tail = self.zero_tail + trailing if trailing == len(block) else trailing
+        return block
+
+
+def _verify_frame(source: BinaryIO) -> None:
+    # stream_reader permits incomplete EOF; require a complete single frame before decoding.
+    def read(size: int) -> bytes:
+        data = source.read(size)
+        if len(data) != size:
+            raise ArchiveError("incomplete zstd frame")
+        return data
+
+    header = read(6)
+    header += read(zstandard.frame_header_size(header) - len(header))
+    parameters = zstandard.get_frame_parameters(header)
+    while True:
+        block = int.from_bytes(read(3), "little")
+        kind, size = (block >> 1) & 3, block >> 3
+        if kind == 3 or size > 128 * 1024:
+            raise ArchiveError("invalid zstd block")
+        read(1 if kind == 1 else size)
+        if block & 1:
+            break
+    if parameters.has_checksum:
+        read(4)
+    if source.read(1):
+        raise ArchiveError("base archive must contain one zstd frame")
+
+
+def _data_filter(member: tarfile.TarInfo, destination: str) -> tarfile.TarInfo:
+    filtered = tarfile.data_filter(member, destination)
+    if member.issym():
+        # Normalizing '..' through a directory symlink changes its filesystem meaning.
+        target = Path(destination) / member.name
+        if (
+            not (target.parent / member.linkname)
+            .resolve()
+            .is_relative_to(Path(destination).resolve())
+        ):
+            raise ArchiveError("archive link escapes staging")
+        filtered = filtered.replace(linkname=member.linkname)
+    return filtered
 
 
 def extract_base(
@@ -79,6 +134,10 @@ def extract_base(
                     raise ArchiveError(f"base archive part digest or size mismatch: {name}")
                 source.seek(0)
                 files.append(source)
+            with io.BufferedReader(_PartsReader(files)) as compressed:
+                _verify_frame(compressed)
+            for source in files:
+                source.seek(0)
             staging = Path(
                 tempfile.mkdtemp(prefix=f".{destination.name}.stage-", dir=destination.parent)
             )
@@ -86,11 +145,15 @@ def extract_base(
             names: set[str] = set()
             spellings: dict[str, str] = {}
             directories: list[tuple[Path, int]] = []
+            modes: list[tuple[Path, int]] = []
             with (
                 io.BufferedReader(_PartsReader(files)) as source,
                 zstandard.ZstdDecompressor().stream_reader(source) as decoded,
-                tarfile.open(fileobj=decoded, mode="r|") as archive,
+                tarfile.open(
+                    fileobj=cast("BinaryIO", tracked := _TarReader(decoded)), mode="r|"
+                ) as archive,
             ):
+                end = 0
                 for member in archive:
                     path = _member_path(member.name)
                     if path.parts[0] not in _ALLOWED_TREES:
@@ -117,16 +180,21 @@ def extract_base(
                         raise ArchiveError(f"unsafe archive link: {name!r}")
                     if any((staging / parent).is_symlink() for parent in path.parents):
                         raise ArchiveError(f"archive member has a symbolic-link parent: {name!r}")
-                    archive.extract(member, staging, filter="data")
+                    archive.extract(member, staging, filter=_data_filter)
                     if member.isdir():
                         directories.append((staging / path, member.mode & 0o777))
+                    elif member.isfile():
+                        modes.append((staging / path, member.mode & 0o755))
+                    end = member.offset_data + ((member.size + 511) // 512) * 512
                 # Consume the zstd footer as well as the tar end markers.
-                while decoded.read(_CHUNK_SIZE):
+                while tracked.read(_CHUNK_SIZE):
                     pass
+                padding = tracked.size - end
+                if padding < 1024 or tracked.size % 512 or tracked.zero_tail < padding:
+                    raise ArchiveError("incomplete tar end markers or trailing archive data")
         _validate_staging(staging)
-        # The data filter intentionally discards directory modes; restore safe permission bits.
-        for directory, mode in reversed(directories):
-            directory.chmod(mode)
+        for path, mode in modes:
+            path.chmod(mode)
         interpreter = staging / _member_path(executable)
         if not executable.startswith("python/") or not interpreter.is_file():
             raise ArchiveError("manifest interpreter is missing from the python tree")
@@ -138,13 +206,15 @@ def extract_base(
             )
             interpreter.chmod(0o755)
         result = subprocess.run(
-            [str(interpreter.resolve()), "-I", "-c", "import sys, sysconfig"],
+            [str(interpreter.resolve()), "-I", "-B", "-c", "import sys, sysconfig"],
             stdin=subprocess.DEVNULL,
             capture_output=True,
             timeout=60,
         )
         if result.returncode != 0:
             raise ArchiveError(f"base interpreter probe failed with exit code {result.returncode}")
+        for directory, mode in sorted(directories, key=lambda row: len(row[0].parts), reverse=True):
+            directory.chmod(mode)
         if os.path.lexists(destination):
             raise ArchiveError(f"base destination was created while staging: {destination}")
         staging.rename(destination)
@@ -154,7 +224,19 @@ def extract_base(
         raise ArchiveError(f"base archive extraction failed: {exc}") from exc
     finally:
         if staging is not None:
-            shutil.rmtree(staging, ignore_errors=True)
+            # Restore traversal before cleanup, including modes already applied before a failure.
+            staging.chmod(0o700)
+            for directory, children, files_in_directory in os.walk(staging):
+                Path(directory).chmod(0o700)
+                for name in children:
+                    path = Path(directory) / name
+                    if not path.is_symlink():
+                        path.chmod(0o700)
+                for name in files_in_directory:
+                    path = Path(directory) / name
+                    if not path.is_symlink():
+                        path.chmod(0o600)
+            shutil.rmtree(staging)
 
 
 def _case_insensitive(directory: Path) -> bool:
