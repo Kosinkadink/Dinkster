@@ -12,7 +12,7 @@ import numpy as np
 from dinkster_assets import AssetRef, resolver_from_env
 from dinkster_values import (
     COMPOSITOR_TYPE,
-    LAYERS_TYPE,
+    IMAGE_DOCUMENT_TYPE,
     TypeRegistry,
     copy_media_semantics,
     media_semantics,
@@ -169,9 +169,9 @@ def register_comfy_layers(registry: TypeRegistry) -> None:
             mime=IMAGE_DOCUMENT_MEDIA_TYPE,
             render=lambda obj: coerce(obj).data,
         )
-    if LAYERS_TYPE in registry:
+    if IMAGE_DOCUMENT_TYPE in registry:
         registry.register_type_equivalence(
-            "comfy.LAYERS", LAYERS_TYPE, provider_id="dinkster.layer-document-equivalence@2"
+            "comfy.LAYERS", IMAGE_DOCUMENT_TYPE, provider_id="dinkster.layer-document-equivalence@2"
         )
 
 
