@@ -249,7 +249,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     catalog = discover(mirrors, channel)
     base_id = catalog.channel.base_for(variant)
     base = catalog.bases[variant]
-    parts = cast("list[dict[str, object]]", base["parts"])
+    parts = cast("list[dict[str, object]]", cast("dict[str, object]", base["archive"])["parts"])
     artifacts = cast("list[dict[str, object]]", catalog.engine["artifacts"])
     size = sum(cast("int", row["size"]) for row in (*parts, *artifacts))
     plan = [

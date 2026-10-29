@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tarfile
 from pathlib import Path
 
-import py7zr
 import pytest
+import zstandard
 from dinkster_registry import LockedPack, Lockfile, build_artifact
 from dinkster_supervisor.environment_artifacts import (
     acquire,
@@ -22,6 +24,7 @@ from dinkster_supervisor.environment_artifacts import (
 from dinkster_supervisor.environment_channels import write_channel
 from dinkster_supervisor.environment_downloads import DownloadError
 from dinkster_supervisor.environment_state import EnvironmentError
+from test_environment_generations import _standalone_tree
 
 from dinkster.generation_packs import stage_generation_packs
 
@@ -65,22 +68,28 @@ def _mirror(
         "replaces": ["fixture-base", "nvidia-cublas"],
         "workerProtocol": protocol,
         "nvidia": None,
+        "archive": {"format": "tar+zstd"},
     }
     base_id = hashlib.sha256(_json(base)).hexdigest()
-    archive = root / "fixture.7z"
-    with py7zr.SevenZipFile(archive, "w", filters=[{"id": py7zr.FILTER_LZMA2}]) as output:
-        output.writestr(b"interpreter fixture, not executable", python)
-        output.writestr(b"wrong" if damaged_archive else base_wheel, "wheels/" + wheel["filename"])
-    data = archive.read_bytes()
-    archive.unlink()
+    tree = root / "fixture-tree"
+    _standalone_tree(tree / "python")
+    (tree / "wheels").mkdir()
+    (tree / "wheels" / wheel["filename"]).write_bytes(b"wrong" if damaged_archive else base_wheel)
+    compressed = io.BytesIO()
+    with zstandard.ZstdCompressor().stream_writer(compressed, closefd=False) as encoded:
+        with tarfile.open(fileobj=encoded, mode="w|", dereference=False) as archive:
+            archive.add(tree / "python", "python")
+            archive.add(tree / "wheels", "wheels")
+    data = compressed.getvalue()
+    shutil.rmtree(tree)
     base_path = root / f"base/{variant}/{base_id}"
     base_path.mkdir(parents=True)
     parts = (data[: len(data) // 2], data[len(data) // 2 :])
-    base["parts"] = []
+    base["archive"]["parts"] = []
     for index, part in enumerate(parts, 1):
-        name = f"base.7z.{index:03}"
+        name = f"base.tar.zst.{index:03}"
         (base_path / name).write_bytes(part)
-        base["parts"].append(_artifact(name, part, key="filename"))
+        base["archive"]["parts"].append(_artifact(name, part, key="filename"))
     base["id"], base["signature"] = "sha256:" + base_id, None
     (base_path / "manifest.json").write_bytes(_json(base) + b"\n")
     engine_wheel = b"engine wheel bytes"
@@ -269,7 +278,7 @@ def test_discovers_intact_manifests_without_creating_cache_then_acquires_exact_b
             "variant": "fixture-cpu",
             "base": base["id"],
             "manifest": base,
-            "downloadBytes": sum(row["size"] for row in base["parts"]),
+            "downloadBytes": sum(row["size"] for row in base["archive"]["parts"]),
         }
     ]
     assert sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*")) == before

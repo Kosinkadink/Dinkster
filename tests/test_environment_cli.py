@@ -8,13 +8,14 @@ import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import time
 import zipfile
 from pathlib import Path
 from urllib.request import urlopen
 
-import py7zr
 import pytest
+import zstandard
 from dinkster_assets import AssetRef, AssetVault, LibraryStore, digest_bytes
 from dinkster_registry import Lockfile
 from dinkster_supervisor.environment_artifacts import acquire_sources, discover
@@ -357,17 +358,23 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
     base["wheels"][0].update(_artifact(wheel.name, wheel.read_bytes(), key="filename"))
     base["python"] = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
     identity = {
-        key: value for key, value in base.items() if key not in {"id", "parts", "signature"}
+        key: value for key, value in base.items() if key not in {"id", "archive", "signature"}
     }
+    identity["archive"] = {"format": "tar+zstd"}
     base_id = hashlib.sha256(_json(identity)).hexdigest()
     directory = mirror / "base/fixture-cpu" / base_id
     directory.mkdir()
-    part = directory / "base.7z.001"
-    with py7zr.SevenZipFile(part, "w", filters=[{"id": py7zr.FILTER_LZMA2}]) as archive:
-        archive.writeall(tree / "python", "python")
-        archive.writeall(tree / "wheels", "wheels")
+    part = directory / "base.tar.zst.001"
+    with part.open("wb") as output, zstandard.ZstdCompressor().stream_writer(output) as encoded:
+        with tarfile.open(fileobj=encoded, mode="w|", dereference=False) as archive:
+            archive.add(tree / "python", "python")
+            archive.add(tree / "wheels", "wheels")
     base.update(
-        id="sha256:" + base_id, parts=[_artifact(part.name, part.read_bytes(), key="filename")]
+        id="sha256:" + base_id,
+        archive={
+            "format": "tar+zstd",
+            "parts": [_artifact(part.name, part.read_bytes(), key="filename")],
+        },
     )
     (directory / "manifest.json").write_bytes(_json(base))
     channel_path = mirror / "channels/main.json"

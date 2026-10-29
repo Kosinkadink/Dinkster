@@ -221,15 +221,19 @@ Its build workflow:
    the `workerProtocol` the engine wheels in this lock declare, the minimum
    NVIDIA driver and compute capability for the CUDA tag, and
    `signature: null`.
-4. Archives the interpreter and wheels as split 7z parts under 2 GB each so
-   GitHub releases can host them, with the base manifest listing part hashes.
+4. Archives the interpreter and wheels as one tar stream compressed with zstd,
+   byte-split strictly below 2,000,000,000 bytes per part. The manifest carries
+   `archive: {"format": "tar+zstd", "parts": [...]}` with ordered filenames,
+   sizes and SHA-256 hashes. The canonical identity includes the archive format,
+   not its derived part rows.
 5. Publishes to a GitHub release of `Dinkster-Environments` and, when the R2
    secrets are present, to `releases.dinkster.org/base/<variant>/<id>/`.
 
-The consumer lists members with py7zr for path/link safety, extracts with the
-real 7-Zip binary from the py7zz wheel, and sets the manifest interpreter to
-0755. An absolute `DINKSTER_7ZIP_BINARY` overrides that binary for Desktop.
-No runtime decoder download or additional archive-format field is required.
+The consumer verifies every part before streaming the ordered bytes through
+`zstandard` into Python's tar data extraction filter. Relative internal symlinks
+and safe permission bits are preserved; traversal, absolute paths, hardlinks,
+devices and duplicate paths are refused. The manifest interpreter must run in
+isolation before promotion. A missing execute bit is repaired with a warning.
 
 The base is rebuilt only when its part of the lock changes. The workflow
 compares the base-relevant lock entries with the newest published base

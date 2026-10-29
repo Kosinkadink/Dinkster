@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import sys
 from dataclasses import dataclass
 from http.client import HTTPException
 from pathlib import Path
@@ -111,19 +112,32 @@ def validate_manifest(data: bytes, expected: str, variant: str | None) -> dict[s
             payload = {key: document[key] for key in _BASE_IDENTITY}
         except KeyError as exc:
             raise EnvironmentError("base manifest identity fields are missing") from exc
+        raw_archive = document.get("archive")
+        if not isinstance(raw_archive, dict):
+            raise EnvironmentError("unsupported base archive format")
+        archive = cast("dict[str, object]", raw_archive)
+        if archive.get("format") != "tar+zstd":
+            raise EnvironmentError("unsupported base archive format")
+        payload["archive"] = {"format": "tar+zstd"}
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
         actual = "sha256:" + hashlib.sha256(canonical.encode("ascii")).hexdigest()
         if document.get("id") != expected or actual != expected:
             raise EnvironmentError("base manifest digest mismatch")
         artifact_rows(document.get("wheels"), "filename")
-        artifact_rows(document.get("parts"), "filename")
+        parts = artifact_rows(archive.get("parts"), "filename")
+        if not parts or any(
+            row["filename"] != f"base.tar.zst.{index:03d}"
+            or not 0 < cast("int", row["size"]) < 2_000_000_000
+            for index, row in enumerate(parts, 1)
+        ):
+            raise EnvironmentError("base archive parts must be ordered and below 2 GB")
         # Validate the producer-owned replacement set and wheel identities before acquisition.
         effective_constraints("", document)
         platform = document.get("platform")
         if not isinstance(platform, dict):
             raise EnvironmentError("base manifest platform is invalid")
         platform = cast("dict[str, object]", platform)
-        if platform.get("os") not in ("windows", "linux"):
+        if platform.get("os") not in ("windows", "linux", "macos"):
             raise EnvironmentError("base manifest platform is invalid")
         if platform.get("arch") != "x86_64":
             raise EnvironmentError("unsupported base architecture")
@@ -219,7 +233,10 @@ class EnvironmentCatalog:
                 "base": manifest["id"],
                 "manifest": manifest,
                 "downloadBytes": sum(
-                    cast("int", row["size"]) for row in artifact_rows(manifest["parts"], "filename")
+                    cast("int", row["size"])
+                    for row in artifact_rows(
+                        cast("dict[str, object]", manifest["archive"])["parts"], "filename"
+                    )
                 ),
             }
             for variant, manifest in self.bases.items()
@@ -264,12 +281,13 @@ def acquire(catalog: EnvironmentCatalog, variant: str, store: Path) -> Path:
     base_id = catalog.channel.base_for(variant)
     base = catalog.bases[variant]
     platform = cast("dict[str, object]", base["platform"])
-    if platform["os"] != ("windows" if os.name == "nt" else "linux"):
+    host = "windows" if os.name == "nt" else "macos" if sys.platform == "darwin" else "linux"
+    if platform["os"] != host:
         raise EnvironmentError("selected variant does not run on this operating system")
     base_root = store / "bases" / base_id[7:]
     created = not base_root.exists()
     if created:
-        parts = artifact_rows(base["parts"], "filename")
+        parts = artifact_rows(cast("dict[str, object]", base["archive"])["parts"], "filename")
         if not parts:
             raise EnvironmentError(
                 "base archive is unavailable; manifest reconstruction is required"
@@ -289,6 +307,7 @@ def acquire(catalog: EnvironmentCatalog, variant: str, store: Path) -> Path:
             base_root,
             platform=cast("str", platform["os"]),
             executable=cast("str", cast("dict[str, object]", base["interpreter"])["executable"]),
+            expected_parts=parts,
         )
     try:
         for row in artifact_rows(base["wheels"], "filename"):

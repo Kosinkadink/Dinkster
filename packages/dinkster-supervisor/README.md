@@ -268,21 +268,20 @@ the target before activation. Catalogs enter the sealed file inventory even
 though their `__pycache__/dinkster-schema-catalog` location is excluded from
 source artifact identities. Additional `prepare_packs` staging runs before sealing.
 
-`environment_archives.extract_base(parts, destination, platform=..., executable=...)` reconstructs verified
-split 7z parts in order and stages their contents beside the final base path.
-The caller verifies part digests, supplies the manifest's platform and interpreter
-path, and holds the store writer lock. py7zr lists members for safety only;
-the real 7-Zip binary bundled in the pinned py7zz wheel decodes their contents.
-`DINKSTER_7ZIP_BINARY` may supply an absolute executable path for Desktop.
-An invalid explicit path fails without fallback; no runtime binary download or
-archive-format restriction is introduced. Extraction accepts only `python/` and
-`wheels/`, rejects links, traversal, Windows device names and exact duplicate paths.
+`environment_archives.extract_base(parts, destination, platform=..., executable=...,
+expected_parts=...)` verifies every ordered part's size and SHA-256 before streaming
+one zstd decoder into tar extraction with the data filter. The caller supplies the
+manifest's platform, interpreter path and part rows, and holds the store writer lock.
+Extraction accepts only `python/` and `wheels/`, rejects traversal, absolute paths,
+hardlinks, devices, Windows device names and exact duplicate paths. Internal relative
+symlinks are preserved, but later members cannot write through a symlink parent.
 Case-ambiguous paths are refused for Windows/macOS targets or case-insensitive
 destination filesystems; Linux case-sensitive trees retain distinct spellings.
-Only the designated interpreter receives mode 0755, independent of archive modes.
-The complete tree is promoted only on success.
+Safe permission bits are preserved. A missing interpreter execute bit is restored
+to 0755 with a warning. The manifest interpreter must pass an isolated sys/sysconfig
+probe before promotion.
 It returns `destination/python`. Existing bases are never replaced; failed
-reconstruction or extraction removes temporary archives and staging trees.
+verification or extraction removes staging trees.
 
 ## Environment queries and runtime
 

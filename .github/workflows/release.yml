@@ -15,7 +15,10 @@ on:
       - scripts/download_frontend.py
       - scripts/release_sources.json
       - scripts/verify_release_install.py
+      - packages/dinkster-supervisor/**
       - src/dinkster/frontend.py
+      - tests/test_environment_archives.py
+      - tests/test_environment_generations.py
       - tests/test_release_install.py
       - tests/test_frontend_artifact.py
 
@@ -141,6 +144,11 @@ jobs:
           "$python" -m dinkster.cli --help
           "$python" -c "from dinkster_frontend import bundle_path; assert bundle_path().joinpath('index.html').is_file()"
           "$python" scripts/verify_release_install.py "$GITHUB_WORKSPACE" --python "$python" --require-frontend
+      - name: Verify streaming base extraction on the host filesystem
+        shell: bash
+        run: |
+          uv sync --locked --all-packages
+          uv run --locked python -m pytest -q tests/test_environment_archives.py
 
   release:
     needs: install

@@ -68,13 +68,14 @@
   another channel or variant, retaining the old selection until candidate health
   and requirement revalidation succeed. Failure recovers the prior selection and
   serving engine.
-- Base acquisition uses the real 7-Zip executable bundled in the py7zz wheel,
-  with an explicit executable override for Desktop. No decoder download occurs
-  during setup. Unsafe members refuse extraction before promotion.
+- Base acquisition verifies ordered tar+zstd parts before streaming extraction.
+  No external decoder executable or runtime decoder download is needed. Unsafe
+  members refuse extraction before promotion; internal symlinks are preserved.
 - Linux base archives preserve distinct case-sensitive interpreter paths, including
   terminfo entries. Windows targets and case-insensitive destinations reject
-  case collisions. The manifest-designated interpreter is executable even when
-  archive attributes omit Unix modes; other files receive no permission override.
+  case collisions. Archive permission bits are preserved. A missing interpreter
+  execute bit is repaired with a warning, and its isolated startup must pass
+  before the base becomes visible.
 - Update plans include explicit-addition needs through the
   active generation's read-only planner. Selected release sources must already be
   verified in the local cache, or supplied through explicit catalog/cache inputs.
