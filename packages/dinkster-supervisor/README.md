@@ -268,11 +268,15 @@ the target before activation. Catalogs enter the sealed file inventory even
 though their `__pycache__/dinkster-schema-catalog` location is excluded from
 source artifact identities. Additional `prepare_packs` staging runs before sealing.
 
-`environment_archives.extract_base(parts, destination)` reconstructs verified
+`environment_archives.extract_base(parts, destination, platform=..., executable=...)` reconstructs verified
 split 7z parts in order and stages their contents beside the final base path.
-The caller verifies part digests and holds the store writer lock. Extraction
-accepts only `python/` and `wheels/`, rejects links, traversal, Windows device
-names and case-ambiguous paths, and promotes the complete tree only on success.
+The caller verifies part digests, supplies the manifest's platform and interpreter
+path, and holds the store writer lock. Extraction accepts only `python/` and
+`wheels/`, rejects links, traversal, Windows device names and exact duplicate paths.
+Case-ambiguous paths are refused for Windows/macOS targets or case-insensitive
+destination filesystems; Linux case-sensitive trees retain distinct spellings.
+Only the designated interpreter receives mode 0755, independent of archive modes.
+The complete tree is promoted only on success.
 It returns `destination/python`. Existing bases are never replaced; failed
 reconstruction or extraction removes temporary archives and staging trees.
 

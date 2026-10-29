@@ -284,7 +284,12 @@ def acquire(catalog: EnvironmentCatalog, variant: str, store: Path) -> Path:
             )
             for row in parts
         )
-        extract_base(downloaded, base_root)
+        extract_base(
+            downloaded,
+            base_root,
+            platform=cast("str", platform["os"]),
+            executable=cast("str", cast("dict[str, object]", base["interpreter"])["executable"]),
+        )
     try:
         for row in artifact_rows(base["wheels"], "filename"):
             source = base_root / "wheels" / cast("str", row["filename"])

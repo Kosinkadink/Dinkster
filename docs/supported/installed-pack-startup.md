@@ -68,6 +68,10 @@
   another channel or variant, retaining the old selection until candidate health
   and requirement revalidation succeed. Failure recovers the prior selection and
   serving engine.
+- Linux base archives preserve distinct case-sensitive interpreter paths, including
+  terminfo entries. Windows targets and case-insensitive destinations reject
+  case collisions. The manifest-designated interpreter is executable even when
+  archive attributes omit Unix modes; other files receive no permission override.
 - Update plans include explicit-addition needs through the
   active generation's read-only planner. Selected release sources must already be
   verified in the local cache, or supplied through explicit catalog/cache inputs.

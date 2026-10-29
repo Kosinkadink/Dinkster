@@ -22,7 +22,9 @@ class ArchiveError(ValueError):
     """A base archive is malformed or cannot be safely staged."""
 
 
-def extract_base(parts: tuple[Path, ...], destination: Path) -> Path:
+def extract_base(
+    parts: tuple[Path, ...], destination: Path, *, platform: str, executable: str
+) -> Path:
     """Concatenate verified archive parts and atomically install their base tree.
 
     Links are rejected because py7zr's public member metadata identifies
@@ -43,9 +45,16 @@ def extract_base(parts: tuple[Path, ...], destination: Path) -> Path:
             tempfile.mkdtemp(prefix=f".{destination.name}.stage-", dir=destination.parent)
         )
         with py7zr.SevenZipFile(archive_path, mode="r") as archive:
-            _validate_members(archive)
+            _validate_members(
+                archive,
+                case_insensitive=platform in {"windows", "macos"} or _case_insensitive(staging),
+            )
             archive.extractall(path=staging)
         _validate_staging(staging)
+        interpreter = staging / _member_path(executable)
+        if not executable.startswith("python/") or not interpreter.is_file():
+            raise ArchiveError("manifest interpreter is missing from the python tree")
+        interpreter.chmod(0o755)
         if os.path.lexists(destination):
             raise ArchiveError(f"base destination was created while staging: {destination}")
         staging.rename(destination)
@@ -80,20 +89,41 @@ def _reconstruct_archive(parts: tuple[Path, ...], destination: Path) -> Path:
     return archive_path
 
 
-def _validate_members(archive: py7zr.SevenZipFile) -> None:
+def _case_insensitive(directory: Path) -> bool:
+    with tempfile.NamedTemporaryFile(prefix=".case-A-", dir=directory) as probe:
+        path = Path(probe.name)
+        return path.with_name(path.name.swapcase()).exists()
+
+
+def _validate_members(archive: py7zr.SevenZipFile, *, case_insensitive: bool) -> None:
     names: set[str] = set()
     spellings: dict[str, str] = {}
     top_levels: set[str] = set()
+    info = archive.header.files_info
+    if info is None:
+        raise ArchiveError("archive has no file metadata")
+    emptyfiles = info.emptyfiles
+    empty_index = 0
     for member in archive.files:
+        if member.emptystream:
+            # 7z EmptyFile distinguishes directories when optional attributes are absent.
+            empty_file = emptyfiles[empty_index] if emptyfiles else False
+            empty_index += 1
+            properties = member.file_properties()
+            if properties.get("attributes") is None and not empty_file:
+                properties["attributes"] = 0x10
         path = _member_path(member.filename)
-        normalized = path.as_posix().casefold()
+        normalized = path.as_posix()
+        if case_insensitive:
+            normalized = normalized.casefold()
         if normalized in names:
             raise ArchiveError(f"archive contains ambiguous duplicate path: {member.filename!r}")
         names.add(normalized)
-        for end in range(1, len(path.parts) + 1):
-            prefix = "/".join(path.parts[:end])
-            if spellings.setdefault(prefix.casefold(), prefix) != prefix:
-                raise ArchiveError(f"archive contains case-ambiguous path: {member.filename!r}")
+        if case_insensitive:
+            for end in range(1, len(path.parts) + 1):
+                prefix = "/".join(path.parts[:end])
+                if spellings.setdefault(prefix.casefold(), prefix) != prefix:
+                    raise ArchiveError(f"archive contains case-ambiguous path: {member.filename!r}")
         top_levels.add(path.parts[0])
         if member.is_symlink or member.is_junction:
             raise ArchiveError(f"archive links are not supported: {member.filename!r}")
