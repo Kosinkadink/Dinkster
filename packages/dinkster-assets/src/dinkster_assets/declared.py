@@ -171,14 +171,14 @@ def produced_output_scratch(env: Mapping[str, str] | None = None) -> AssetVault 
     """Worker publications use writable scratch, not the sandbox's read-only input vault."""
     environment = os.environ if env is None else env
     scratch = environment.get("DINKSTER_PACK_SCRATCH")
-    if scratch:
-        job = _produced_job.get()
-        if job is not None:
-            with job.publication():
-                return _ProducedVault(_produced_root(scratch), job)
-        return AssetVault(_produced_root(scratch))
-    root = environment.get(VAULT_ENV)
-    return AssetVault(root) if root else None
+    root = _produced_root(scratch) if scratch else environment.get(VAULT_ENV)
+    if not root:
+        return None
+    job = _produced_job.get()
+    if job is not None:
+        with job.publication():
+            return _ProducedVault(Path(root), job)
+    return AssetVault(root)
 
 
 def resolver_from_env(env: Mapping[str, str] | None = None) -> AssetResolver | None:

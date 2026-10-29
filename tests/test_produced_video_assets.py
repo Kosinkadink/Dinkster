@@ -103,10 +103,15 @@ def test_produced_scratch_isolates_concurrent_jobs_and_attempts(tmp_path: Path) 
 
 
 @pytest.mark.parametrize("outcome", ["complete", "failure", "cancel"])
+@pytest.mark.parametrize("store_kind", ["scratch", "vault"])
 def test_completed_produced_scope_refuses_detached_tasks_and_held_writers(
-    tmp_path: Path, outcome: str
+    tmp_path: Path, outcome: str, store_kind: str
 ) -> None:
-    env = {"DINKSTER_PACK_SCRATCH": str(tmp_path / "scratch")}
+    env = {
+        "DINKSTER_PACK_SCRATCH" if store_kind == "scratch" else "DINKSTER_ASSET_VAULT": str(
+            tmp_path / store_kind
+        )
+    }
     data = b"unpublished source"
     digest = digest_bytes(data)
 
