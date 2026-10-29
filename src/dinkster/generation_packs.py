@@ -41,14 +41,17 @@ def stage_generation_packs(generation: Path, lock: Lockfile, artifacts: Mapping[
     (generation / "dinkster.lock").write_text(lock.record_json() + "\n", encoding="utf-8")
 
 
-def generation_pack_specs(generation: Path) -> tuple[PackSpec, ...]:
-    """Select only this generation's admitted sources and recorded hosting placement."""
+def load_generation_packs(generation: Path) -> tuple[str, tuple[PackSpec, ...]]:
+    """Read the selected variant and admitted sources from this generation only."""
     if not generation.is_absolute():
         raise CompositionError("--generation requires an absolute path")
     generation = generation.resolve()
     record = json.loads((generation / "generation.json").read_text(encoding="utf-8"))
     if not isinstance(record, dict) or record.get("format") != "dinkster.generation/1":
         raise CompositionError("unsupported generation format")
+    variant = record.get("variant")
+    if not isinstance(variant, str) or not variant.strip():
+        raise CompositionError("generation variant must be a non-empty string")
     hosting = record.get("inProcessPacks", [])
     if (
         not isinstance(hosting, list)
@@ -105,4 +108,4 @@ def generation_pack_specs(generation: Path) -> tuple[PackSpec, ...]:
                 ),
             )
         )
-    return tuple(specs)
+    return variant, tuple(specs)

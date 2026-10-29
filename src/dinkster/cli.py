@@ -56,6 +56,11 @@ _COMMANDS: dict[str, _Command] = {
         passes_argv=False,
         summary="manage a Dinkster install root (alias: dinkster-pack)",
     ),
+    "workflow": _Command(
+        "dinkster.workflow_requirements",
+        passes_argv=True,
+        summary="print a read-only plan for saved workflow requirements",
+    ),
     "installs": _Command(
         "dinkster_supervisor.install_manager",
         passes_argv=False,

@@ -8,6 +8,8 @@
   retaining source frame order and dimensions.
 - Native `CurveEditor` passes canonical curves through the curve editor and
   displays an optional histogram without restricting its bin count.
+- Native `AddLayer` appends image and mask batches to a layer document with
+  placement, rotation, opacity, blend mode, and stacking metadata.
 - Native `CameraAngle` produces an orbit-camera dictionary and shot description
   from horizontal angle, elevation, and zoom.
 - Native `MoGeGeometryToFOV` derives horizontal, vertical, or diagonal field of
@@ -18,6 +20,8 @@
   reference latents with zero negative conditioning and fixed shape/camera noise targets.
 - Native `Trellis2UpsampleStage` cascades sparse shape latents through a VAE
   and prepares second-pass conditioning, projection features, and padded sparse latents.
+- Native `MoGeInference` predicts optional depth, points, camera intrinsics,
+  masks, and normals from image batches with configurable chunking and camera hints.
 - Color strings, ordered color palettes, bounding boxes, and optional
   resolution-preview metadata pass between node packs without rewriting their values.
 - Native `PrimitiveBoundingBox` constructs pixel bounding boxes; `ImageCropV2`
