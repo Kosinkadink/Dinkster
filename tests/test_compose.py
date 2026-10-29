@@ -1645,11 +1645,8 @@ def test_default_suite_refuses_malformed_managed_lock(
 
     lock = tmp_path / "dinkster.lock"
     lock.write_text('{"format":"dinkster.lock/999","packs":[]}', encoding="utf-8")
-    distribution = SimpleNamespace(locate_file=lambda _path: lock)
     compose._default_pack_lock.cache_clear()
-    monkeypatch.setattr(
-        "dinkster.compose.importlib.metadata.distribution", lambda _name: distribution
-    )
+    monkeypatch.setattr(compose, "_CHECKOUT_PACKS_LOCK", lock)
 
     with pytest.raises(CompositionError, match="default pack catalog is invalid"):
         compose._default_pack_lock()
@@ -1685,28 +1682,65 @@ def test_default_suite_refuses_non_suite_lock(
 
     lock = tmp_path / "dinkster.lock"
     lock.write_text(record, encoding="utf-8")
-    distribution = SimpleNamespace(locate_file=lambda _path: lock)
     compose._default_pack_lock.cache_clear()
-    monkeypatch.setattr(
-        "dinkster.compose.importlib.metadata.distribution", lambda _name: distribution
-    )
+    monkeypatch.setattr(compose, "_CHECKOUT_PACKS_LOCK", lock)
 
     with pytest.raises(CompositionError, match=message):
         compose._default_pack_lock()
 
 
-def test_default_suite_package_matches_managed_lock() -> None:
-    root = Path(__file__).parent.parent / "packages/dinkster-nodes-std"
-    configuration = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
-    lock = json.loads((root / "dinkster.lock").read_text(encoding="utf-8"))
-    locked_distributions = list(
-        dict.fromkeys(entry["source"].removeprefix("python:") for entry in lock["packs"])
+def test_checkout_defaults_do_not_require_standard_suite_distribution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster import compose
+
+    real_distribution = compose.importlib.metadata.distribution
+
+    def distribution(name: str):
+        if name == "dinkster-nodes-std":
+            raise compose.importlib.metadata.PackageNotFoundError(name)
+        return real_distribution(name)
+
+    monkeypatch.setattr(compose.importlib.metadata, "distribution", distribution)
+    compose._default_pack_lock.cache_clear()
+    expected = (
+        "dinkster-nodes-foundation",
+        "dinkster-nodes-image",
+        "dinkster-nodes-media-io",
+        "dinkster-nodes-remote",
+        "dinkster-vision-birefnet",
+        "dinkster-vision-depth-anything-v2",
+        "dinkster-vision-depth-anything-v3",
+        "dinkster-vision-detr",
+        "dinkster-vision-efficient-sam",
+        "dinkster-vision-hed",
+        "dinkster-vision-rtdetr",
+        "dinkster-vision-sam31",
+        "dinkster-vision-upscale",
     )
-    assert configuration["project"]["dependencies"] == locked_distributions
-    wheel = configuration["tool"]["hatch"]["build"]["targets"]["wheel"]
-    assert wheel["force-include"] == {
-        "dinkster.lock": "dinkster_nodes_std_suite/dinkster.lock",
-    }
+    try:
+        assert compose.default_pack_ids() == expected
+        for pack_id in expected:
+            spec = compose.default_pack_spec(pack_id)
+            assert spec.packs is not None
+            assert load_manifest(spec.manifest).name == pack_id
+    finally:
+        compose._default_pack_lock.cache_clear()
+
+
+def test_installed_defaults_require_the_official_catalog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster import compose
+
+    monkeypatch.setattr(compose, "__file__", str(tmp_path / "site-packages/dinkster/compose.py"))
+    monkeypatch.setattr(compose, "_OFFICIAL_PACKS_DIRECTORY", tmp_path / "missing")
+    compose._default_pack_lock.cache_clear()
+    try:
+        with pytest.raises(CompositionError, match="no bundled official pack catalog"):
+            compose.default_pack_ids()
+    finally:
+        compose._default_pack_lock.cache_clear()
 
 
 def test_compose_dev_pack_adds_scaffold_nodes(tmp_path: Path) -> None:

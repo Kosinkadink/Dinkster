@@ -57,6 +57,8 @@
   then serves the browser application and engine API from one loopback origin.
 - A pip-installed engine prepares the bundled default pack catalogs before
   binding; the core worker is selected once with its configured runtime options.
+- Checkout defaults retain their managed source lock without requiring an
+  installed standard-suite distribution.
 - Released engines discover the frontend bundled inside the engine wheel without a frontend
   checkout. Release installation checks require the browser application document
   at `/` as well as the engine API.

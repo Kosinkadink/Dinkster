@@ -326,8 +326,7 @@ _ENGINE_CARRIED_PACKS = frozenset(
     {"dinkster-native", "dinkster-compat-comfy", "dinkster-nodes-generation"}
 )
 _PACK_ARTIFACT_SIDECARS = ("comfy-aliases.json", "comfy-groups.json")
-_DEFAULT_SUITE_DISTRIBUTION = "dinkster-nodes-std"
-_DEFAULT_SUITE_LOCK = "dinkster_nodes_std_suite/dinkster.lock"
+_CHECKOUT_PACKS_LOCK = Path(__file__).with_name("checkout-packs.lock")
 _OFFICIAL_PACKS_DIRECTORY = Path(__file__).with_name("official_packs")
 _OFFICIAL_PACKS_LOCK = "official-packs.lock"
 _MODEL_PACK_IDS: tuple[str, ...] = ()
@@ -1187,15 +1186,9 @@ def _default_pack_lock() -> Lockfile:
     """Load packaged official packs, or checkout defaults during development."""
     path = _OFFICIAL_PACKS_DIRECTORY / _OFFICIAL_PACKS_LOCK
     if not path.is_file():
-        try:
-            distribution = importlib.metadata.distribution(_DEFAULT_SUITE_DISTRIBUTION)
-        except importlib.metadata.PackageNotFoundError as exc:
-            raise CompositionError(
-                f"engine wheel has no bundled official pack catalog: {path}"
-            ) from exc
-        path = Path(str(distribution.locate_file(_DEFAULT_SUITE_LOCK)))
-        if not path.is_file():
+        if not Path(__file__).resolve().parents[2].joinpath("pyproject.toml").is_file():
             raise CompositionError(f"engine wheel has no bundled official pack catalog: {path}")
+        path = _CHECKOUT_PACKS_LOCK
     try:
         lock = Lockfile.from_record_json(path.read_text(encoding="utf-8"))
     except (InstallError, OSError) as exc:
