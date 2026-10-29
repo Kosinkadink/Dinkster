@@ -2083,10 +2083,72 @@ def test_operator_location_support_and_vault_containment(
             assert response.headers["Cache-Control"] == "no-store"
             body = await response.json()
             assert body["locations"] == []
+            assert body["importMount"] is None
             if library is None:
                 assert "vault" not in body
             else:
                 assert body["vault"] == str(library.vault.root.resolve())
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_operator_default_import_destination_matches_upload_and_survives_revocation(
+    tmp_path: Path,
+) -> None:
+    table = MountTable(output_mount="renders")
+    (tmp_path / "actual-imports").mkdir()
+    (tmp_path / "output").mkdir()
+    table.add(MountDef("incoming", tmp_path / "actual-imports", "readwrite"))
+    table.add(MountDef("renders", tmp_path / "output", "readwrite"))
+    table.scan("incoming")
+    table.scan("renders")
+    service = MountService(table, allow_changes=True)
+
+    async def scenario() -> None:
+        library = ServerLibrary(
+            vault=AssetVault(tmp_path / "vault"),
+            store=LibraryStore(tmp_path / "catalog.sqlite"),
+            local_resolver=table,
+            project_folders_for=service.project_context,
+            upload_writer=AssetWriter(table),
+            import_mount="incoming",
+        )
+        app = create_app(make_engine, SCHEMAS, library=library)
+        add_mount_routes(app, service)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            response = await client.get("/api/mounts/locations")
+            assert response.status == 200
+            body = await response.json()
+            assert body["importMount"] == "incoming"
+            row = next(row for row in body["activeMounts"] if row["id"] == body["importMount"])
+            assert row["path"] == str(tmp_path / "actual-imports")
+            assert table.output_mount == "renders"
+            response = await client.post(
+                "/api/assets",
+                params={"scope": "local", "name": "original.txt"},
+                data=b"named default import",
+            )
+            assert response.status == 201
+            assert (await response.json())["asset"]["virtualPath"] == "mounts/incoming/original.txt"
+            assert (
+                tmp_path / "actual-imports" / "original.txt"
+            ).read_bytes() == b"named default import"
+            assert not (tmp_path / "output" / "original.txt").exists()
+            assert (await client.delete("/api/mounts/incoming")).status == 200
+            body = await (await client.get("/api/mounts/locations")).json()
+            assert body["importMount"] == "incoming"
+            assert all(row["id"] != "incoming" for row in body["activeMounts"])
+            response = await client.post(
+                "/api/assets",
+                params={"scope": "local", "name": "must-not-fallback.txt"},
+                data=b"refused",
+            )
+            assert response.status == 403
+            assert not (tmp_path / "output" / "must-not-fallback.txt").exists()
         finally:
             await client.close()
 

@@ -5,6 +5,10 @@
   Custom targets and non-media files, including empty text files, are supported
   through both ordinary hosts. Failed invocations do not return kept artifacts;
   returning an ASSET without attaching it does not advertise a saved file.
+- Native image, mask, animation, audio, video, text, layer-document, model3D,
+  splat, and conditioning savers explicitly attach their successful mounted
+  publications. Save nodes require an active invocation attachment context;
+  ordinary writer use outside a Save node does not advertise a kept result.
 - Indexed video file selections remain references to their granted files,
   without input copying or an encoded-file size cap. Unindexed selections
   must be scanned before VIDEO admission. Decode working-set and produced
@@ -138,6 +142,8 @@
   VIDEO_EDIT preservation, track composition, transitions, retiming, bounded
   audio mixing, CURVE parameters available in core-only registries, and
   deterministic CPU text effects
+- OTIO JSON import/export on CPython 3.14 Linux x86_64 and Windows x64 uses
+  prebuilt native wheels; installation needs no local OpenTimelineIO build.
 - Streamed media uploads and video encoding with explicit upload, decoded
   frame, decoded audio, and encoded output limits
 - Native VOID optical-flow-warped noise with 16 latent channels, even temporal
@@ -218,8 +224,9 @@
   splat PLY files
 - Native ImageOnlyCheckpointSave exports model, vision encoder and VAE weights
   to a selected writable mount, preserving checkpoint metadata and reserved
-  counter names. Controlled CPU weights exercise serialization; real-model
-  loading and GPU parity are not certified.
+  counter names, and reports the host-validated saved file in execution results.
+  Controlled CPU weights exercise serialization; real-model loading and GPU
+  parity are not certified.
 - Native VOIDSampler supplies the node-defined alpha-space DDIM sampler for
   the existing custom-sampling path, without ordinary KSampler noise scaling.
   Controlled CPU schedules cover the numerical contract, not real-model or

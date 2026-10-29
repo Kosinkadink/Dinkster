@@ -27,6 +27,8 @@ from dinkster_values import EncodedPayload
 
 from dinkster.compose import PackSpec, ServingComposer
 
+pytestmark = pytest.mark.usefixtures("saved_artifact_context")
+
 
 def _audio() -> dict[str, object]:
     return {

@@ -22,6 +22,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     SaveTargetWidget,
     TypeExpr,
+    attach_saved_artifact,
     export_ora,
     export_psd,
     load_document,
@@ -104,4 +105,5 @@ class SaveLayers(Node):
             suffix=suffix,
             media_type=media_type,
         )
+        attach_saved_artifact(reference.to_wire())
         return cls.outputs(document=reference)

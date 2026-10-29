@@ -23,6 +23,8 @@ from dinkster_nodes_media_io.audio import MAX_ENCODED_AUDIO_BYTES
 from dinkster_schema import AssetWidget
 from dinkster_values import render_audio_wav
 
+pytestmark = pytest.mark.usefixtures("saved_artifact_context")
+
 
 def _sine(
     samples: int = 44_100, sample_rate: int = 44_100, channels: int = 2, batch: int = 1

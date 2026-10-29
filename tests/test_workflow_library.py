@@ -19,8 +19,9 @@ import shutil
 import sqlite3
 import subprocess
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
 
@@ -38,8 +39,14 @@ from dinkster_assets import (
     digest_bytes,
 )
 from dinkster_caches import MemoryLRUCache
-from dinkster_engine import Engine, EventListener
-from dinkster_protocol import AssetFolderContext
+from dinkster_engine import Engine, EventListener, ExecutionRuntime
+from dinkster_protocol import (
+    AssetFolderContext,
+    Invocation,
+    InvocationResult,
+    OnInvocationEvent,
+    SavedArtifact,
+)
 from dinkster_schema import (
     InputSpec,
     Node,
@@ -360,6 +367,268 @@ async def make_client(tmp_path: Path, **library_overrides: object) -> TestClient
     client = TestClient(TestServer(app))
     await client.start_server()
     return client
+
+
+@pytest.mark.parametrize("kind", ("media/image", "media/audio", "media/video", "asset/file"))
+def test_native_media_saves_complete_into_kind_filtered_project_catalog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    import numpy as np
+    from dinkster_nodes_media_io import SaveAudio, SaveImage, SaveText
+    from dinkster_nodes_media_io.video import SaveVideo
+    from dinkster_video import assemble_video
+    from dinkster_workers.saved_artifacts import SavedArtifactAuthority
+
+    root = tmp_path / "output"
+    root.mkdir()
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot, output_mount="renders")
+    table.add(MountDef("renders", root, "readwrite"))
+    table.scan("renders")
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+
+    class NativeSave(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                node_type="test.native_save",
+                outputs=(OutputSpec("out", STRING),),
+                output_node=True,
+                idempotent=False,
+            )
+
+        @classmethod
+        def execute(cls) -> Mapping[str, object]:
+            target = {"mount": "renders", "prefix": "saved/result"}
+            if kind == "media/image":
+                SaveImage.execute(
+                    images=np.full((1, 3, 5, 3), 0.25, dtype=np.float32), target=target
+                )
+            elif kind == "media/audio":
+                SaveAudio.execute(
+                    audio={
+                        "waveform": np.zeros((1, 1, 800), dtype=np.float32),
+                        "sample_rate": 8000,
+                    },
+                    target=target,
+                )
+            elif kind == "media/video":
+                video = assemble_video(np.full((2, 16, 16, 3), 0.75, dtype=np.float32), fps=2)
+                SaveVideo.execute(video=video, target=target, format="mp4_h264")
+            else:
+                SaveText.execute(text="ordinary text, not encoded media", target=target)
+            return cls.outputs(out="saved")
+
+    schemas = build_schemas([NativeSave])
+
+    async def validate_saved(
+        node_id: str, claims: Sequence[Mapping[str, object]], started_at_ns: int
+    ) -> tuple[SavedArtifact, ...]:
+        return SavedArtifactAuthority(snapshot).capture_mounted(claims, node_id, started_at_ns)
+
+    def engine(on_event: EventListener) -> Engine:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        worker = InProcessWorker(build_node_types([NativeSave]), registry)
+        runtime = ExecutionRuntime(worker=worker, validate_saved_artifacts=validate_saved)
+        return Engine(
+            schemas=schemas,
+            registry=registry,
+            worker=worker,
+            pin_execution=lambda: runtime,
+            cache=MemoryLRUCache(),
+            on_event=on_event,
+        )
+
+    async def scenario() -> None:
+        library = ServerLibrary(
+            vault=AssetVault(tmp_path / "vault"),
+            store=LibraryStore(tmp_path / "catalog.sqlite"),
+            local_resolver=table,
+            resolver=table,
+            upload_writer=AssetWriter(table),
+            project_folders_for=lambda _project: AssetFolderContext(("renders",), "renders"),
+        )
+        client = TestClient(TestServer(create_app(engine, schemas, library=library)))
+        await client.start_server()
+        try:
+            response = await client.post(
+                "/api/jobs",
+                json={
+                    "clientId": "client",
+                    "jobId": "save",
+                    "project": "film",
+                    "graph": {"nodes": {"save": {"nodeType": "test.native_save", "inputs": {}}}},
+                    "targets": ["save"],
+                },
+            )
+            assert response.status == 202
+            submitted = await response.json()
+            async with asyncio.timeout(10):
+                while True:
+                    status = await (await client.get("/api/jobs/client/save")).json()
+                    if status["state"] in {"completed", "failed", "cancelled"}:
+                        break
+                    await asyncio.sleep(0)
+            assert status["state"] == "completed", status
+            (artifact,) = status["artifacts"]
+            path = root / artifact["virtualPath"].split("/", 2)[2]
+            assert artifact["digest"] == digest_bytes(path.read_bytes())
+            response = await client.get(
+                "/api/assets/catalog",
+                params={
+                    "scope": "local",
+                    "project": "film",
+                    "kind": kind,
+                },
+            )
+            assert response.status == 200
+            (item,) = (await response.json())["assets"]
+            assert item["asset"]["digest"] == artifact["digest"]
+            (record,) = library.store.query_assets("local", project="film", kind=kind)[0]
+            assert dict(record.origin) == {
+                "kind": "produced",
+                "job": submitted["jobRef"],
+                "node": "save",
+            }
+            assert record.kind == kind
+            if kind != "asset/file":
+                assert library.store.media_grant("local", artifact["digest"], kind) is not None
+            assert library.store.query_assets("other", project="film", kind=kind) == []
+            assert library.vault.digests() == []
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("failure", ["", "catalog", "revoked"])
+def test_completed_artifacts_are_cataloged_in_the_submitted_project(
+    tmp_path: Path, failure: str
+) -> None:
+    async def scenario() -> None:
+        root = tmp_path / "output"
+        root.mkdir()
+        mounts = MountTable()
+        mounts.add(MountDef("output", root, "readwrite"))
+        mounts.scan("output")
+        writer = AssetWriter(mounts)
+        data = b"saved by the worker, not an input copy"
+
+        class SavingWorker(InProcessWorker):
+            async def invoke(
+                self, invocation: Invocation, on_event: OnInvocationEvent | None = None
+            ) -> InvocationResult:
+                result = await super().invoke(invocation, on_event)
+                ref = writer.save_bytes(
+                    {"mount": "output", "prefix": "result"},
+                    data,
+                    suffix=".txt",
+                    media_type="video/mp4",
+                )
+                if failure == "revoked":
+                    mounts.remove("output")
+                return replace(
+                    result,
+                    artifacts=(
+                        SavedArtifact(
+                            invocation.node_id,
+                            ref.digest,
+                            ref.name,
+                            ref.size,
+                            ref.media_type,
+                            ref.virtual_path,
+                        ),
+                    ),
+                )
+
+        def engine(on_event: EventListener) -> Engine:
+            registry = TypeRegistry()
+            register_core_types(registry)
+            return Engine(
+                schemas=SCHEMAS,
+                registry=registry,
+                worker=SavingWorker(build_node_types(NODES), registry),
+                cache=MemoryLRUCache(),
+                on_event=on_event,
+            )
+
+        database = tmp_path / "library.sqlite"
+        library = ServerLibrary(
+            vault=AssetVault(tmp_path / "vault"),
+            store=LibraryStore(database),
+            resolver=mounts,
+            upload_writer=writer,
+            project_folders_for=lambda project: AssetFolderContext(
+                ("output",) if project == "film" else ()
+            ),
+        )
+        if failure == "catalog":
+            with sqlite3.connect(database) as connection:
+                connection.execute(
+                    "CREATE TRIGGER fail_output BEFORE INSERT ON asset_observations "
+                    "BEGIN SELECT RAISE(ABORT, 'catalog offline'); END"
+                )
+        client = TestClient(TestServer(create_app(engine, SCHEMAS, library=library)))
+        await client.start_server()
+        try:
+            response = await client.post(
+                "/api/jobs",
+                json={
+                    "clientId": "client",
+                    "jobId": "save",
+                    "project": "film",
+                    "graph": {
+                        "nodes": {"save": {"nodeType": "test.echo", "inputs": {"text": "x"}}}
+                    },
+                    "targets": ["save"],
+                },
+            )
+            assert response.status == 202, await response.text()
+            submitted = await response.json()
+            async with asyncio.timeout(10):
+                while True:
+                    status = await (await client.get("/api/jobs/client/save")).json()
+                    if status["state"] in {"completed", "failed", "cancelled"}:
+                        break
+                    await asyncio.sleep(0.005)
+            assert status["state"] == ("failed" if failure else "completed"), status
+            records = library.store.query_assets("local", project="film", origin="produced")
+            assert len(records) == (0 if failure else 1)
+            assert library.store.query_assets("local") == []
+            assert library.store.query_assets("other", project="film") == []
+            assert library.store.media_grant("local", digest_bytes(data), "media/video") is None
+            assert library.vault.digests() == []
+            assert (root / "result_00001.txt").read_bytes() == data
+            if not failure:
+                (record,) = records[0]
+                assert record.asset.digest == digest_bytes(data)
+                assert record.asset.virtual_path == "mounts/output/result_00001.txt"
+                assert dict(record.origin) == {
+                    "kind": "produced",
+                    "job": submitted["jobRef"],
+                    "node": "save",
+                }
+        finally:
+            await client.close()
+        if failure == "catalog":
+            with sqlite3.connect(database) as connection:
+                connection.execute("DROP TRIGGER fail_output")
+        restarted = await make_client(
+            tmp_path,
+            resolver=mounts,
+            upload_writer=writer,
+            project_folders_for=library.project_folders_for,
+        )
+        try:
+            records = restarted.app[LIBRARY_KEY].store.query_assets("local", project="film")
+            assert len(records) == (0 if failure == "revoked" else 1)
+            journals = list(library.vault.root.glob(".upload-observations/*.json"))
+            assert len(journals) == (1 if failure == "revoked" else 0)
+        finally:
+            await restarted.close()
+
+    asyncio.run(scenario())
 
 
 def test_anonymous_vault_inventory_is_operator_only_and_does_not_grant_scope(
