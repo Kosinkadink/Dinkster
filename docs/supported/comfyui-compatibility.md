@@ -232,6 +232,8 @@
 - Native image file schemas expose bound assets and adjacent output mounts;
   PNG output truncates channel values and preview outputs retain source images.
   PNG batches retain source counter progression and the trailing filename underscore.
+  Every saved PNG in a SaveImage batch is attached as a validated run artifact,
+  including batches larger than 64 images, within the shared result limits.
   File operations reject oversized image batches and encoded outputs.
   Image loading retains decoded frame precision, straight alpha and frame order;
   animated WebP uses a bounded Pillow fallback because FFmpeg cannot decode it.

@@ -336,13 +336,15 @@ class SaveImage(Node):
                 with BytesIO(encoded) as stream:
                     yield stream
 
-        writer.save_stream_batch(
+        refs = writer.save_stream_batch(
             target,
             sources(),
             suffix="_.png",
             media_type="image/png",
             limit=ENCODED_MEDIA_LIMIT_BYTES,
         )
+        for ref in refs:
+            attach_saved_artifact(ref.to_wire())
         return cls.outputs(images=images)
 
 

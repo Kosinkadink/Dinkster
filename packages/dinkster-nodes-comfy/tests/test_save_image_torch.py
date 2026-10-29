@@ -246,8 +246,13 @@ def test_save_image_preserves_batch_counter_and_filename_tail(tmp_path: Path, mo
     images = torch.tensor([[[[0.1, 0.5, 0.9]]], [[[0.8, 0.3, 0.2]]]])
     before = images.clone()
 
-    assert SaveImage.execute(images=images, filename_prefix=f"batch/{prefix}")["images"] is images
-    assert SaveImage.execute(images=images, filename_prefix=f"batch/{prefix}")["images"] is images
+    with capture_saved_artifacts():
+        assert (
+            SaveImage.execute(images=images, filename_prefix=f"batch/{prefix}")["images"] is images
+        )
+        assert (
+            SaveImage.execute(images=images, filename_prefix=f"batch/{prefix}")["images"] is images
+        )
 
     counters = (8, 9, 10, 11) if prefix == "item" else (8, 9, 9, 10)
     for position, counter in enumerate(counters):
@@ -272,13 +277,19 @@ def test_save_image_writes_each_cpu_batch_item_and_preserves_source(
         dtype=torch.float32,
     )
 
-    default_result = SaveImage.execute(images=images, filename_prefix="default/%width%x%height%")
+    with capture_saved_artifacts():
+        default_result = SaveImage.execute(
+            images=images, filename_prefix="default/%width%x%height%"
+        )
     assert default_result["images"] is images
     assert (default / "default" / "2x1_00001_.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
     assert (default / "default" / "2x1_00002_.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
 
     chosen = images[:1]
-    chosen_result = SaveImage.execute(images=chosen, filename_prefix="chosen", mount="alternate")
+    with capture_saved_artifacts():
+        chosen_result = SaveImage.execute(
+            images=chosen, filename_prefix="chosen", mount="alternate"
+        )
     assert chosen_result["images"] is chosen
     assert (alternate / "chosen_00001_.png").is_file()
     assert torch.equal(images[0, 0, 0], torch.tensor([0.0, 0.5, 1.0]))
@@ -296,7 +307,8 @@ def test_save_image_uses_comfyui_truncation_and_batch_number_prefix(
         dtype=torch.float32,
     )
 
-    SaveImage.execute(images=images, filename_prefix="batch/item-%batch_num%")
+    with capture_saved_artifacts():
+        SaveImage.execute(images=images, filename_prefix="batch/item-%batch_num%")
 
     with Image.open(default / "batch" / "item-0_00001_.png") as saved:
         assert list(saved.getdata()) == [(0, 127, 255), (127, 254, 0)]
@@ -1134,6 +1146,133 @@ def test_advanced_image_exports_consume_submission_metadata(
                         for key, value in (str(item).split(":", 1) for item in exif.values())
                     }
             assert metadata == expected
+
+
+class _ImageBatchAttachmentSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "image-batch-attachment.source",
+            outputs=(OutputSpec("images", TypeExpr.concrete(IMAGE_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls):
+        pixels = (
+            torch.tensor(
+                [(index + 1, 191 - index, 2 * index + 3) for index in range(65)],
+                dtype=torch.float32,
+            )
+            / 256
+        )
+        return cls.outputs(images=pixels[:, None, None, :].expand(65, 2, 3, 3).contiguous())
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_save_image_attaches_every_batch_file_on_repeated_host_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool
+) -> None:
+    default, alternate = _mount(tmp_path, monkeypatch)
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot, index_root=tmp_path / "index")
+    for mount, root in (("default", default), ("alternate", alternate)):
+        table.add(MountDef(mount, root, mode="readwrite"))
+        table.scan(mount)
+    table.select_output_mount("default")
+
+    async def scenario() -> None:
+        native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+        module = f"batch_attachment_fixture_{tmp_path.name.replace('-', '_')}"
+        (tmp_path / f"{module}.py").write_text(
+            "from test_save_image_torch import _ImageBatchAttachmentSource\n"
+            "from dinkster_nodes_comfy import register_inference_types\n"
+            "NODES = (_ImageBatchAttachmentSource,)\n",
+            encoding="ascii",
+        )
+        fixture = tmp_path / "dinkster-pack.toml"
+        fixture.write_text(
+            '[pack]\nname="image-batch-attachment"\npublisher="dinkster"\n'
+            'namespaces=["image-batch-attachment"]\n[pack.entry]\n'
+            f'nodes="{module}:NODES"\ntypes="{module}:register_inference_types"\n',
+            encoding="ascii",
+        )
+        paths = (str(tmp_path), str(Path(__file__).parent), *(p for p in sys.path if p))
+        composer = ServingComposer(
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
+                "PYTHONPATH": os.pathsep.join(paths),
+            }
+        )
+        try:
+            manifests = (native, fixture)
+            for manifest in manifests:
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=manifest,
+                        in_process=in_process,
+                        worker_group=None if in_process else "image-batch-attachment",
+                        group_manifests=() if in_process else manifests,
+                    )
+                )
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("image-batch-attachment.source"),
+                    "plain": GraphNode(
+                        "SaveImage",
+                        {"images": Link("source", "images"), "filename_prefix": "frames/plain"},
+                    ),
+                    "tokens": GraphNode(
+                        "SaveImage",
+                        {
+                            "images": Link("source", "images"),
+                            "filename_prefix": "chosen/item-%batch_num%",
+                            "mount": "alternate",
+                        },
+                    ),
+                }
+            )
+            engine = composer.composition.make_engine(lambda _event: None)
+            original_bytes = {}
+            for attempt in range(2):
+                result = await engine.run(graph, ["plain", "tokens"])
+                assert len(result.artifacts) == 130
+                assert {item.node_id for item in result.artifacts} == {"plain", "tokens"}
+                for node, mount, root in (
+                    ("plain", "default", default),
+                    ("tokens", "alternate", alternate),
+                ):
+                    artifacts = [item for item in result.artifacts if item.node_id == node]
+                    assert len(artifacts) == 65
+                    for index, artifact in enumerate(artifacts):
+                        counter = (
+                            attempt * 65 + index + 1 if node == "plain" else attempt + index + 1
+                        )
+                        prefix = "frames/plain" if node == "plain" else f"chosen/item-{index}"
+                        path = root / f"{prefix}_{counter:05d}_.png"
+                        assert artifact.virtual_path == f"mounts/{mount}/{path.relative_to(root)}"
+                        assert artifact.name == path.name
+                        assert artifact.digest == digest_file(path)
+                        assert artifact.size == path.stat().st_size
+                        assert artifact.media_type == "image/png"
+                        with Image.open(path) as image:
+                            assert image.size == (3, 2)
+                            assert (
+                                list(image.getdata()) == [(index, 190 - index, 2 * index + 2)] * 6
+                            )
+                        original_bytes[path] = path.read_bytes()
+                if attempt:
+                    assert "source" in result.cached
+                    assert not {"plain", "tokens"} & set(result.cached)
+            for path, encoded in original_bytes.items():
+                assert path.read_bytes() == encoded
+            assert len(list(default.rglob("*.png"))) == 130
+            assert len(list(alternate.rglob("*.png"))) == 130
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("in_process", (True, False))
