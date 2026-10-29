@@ -492,6 +492,9 @@ def test_external_downloads_select_target_wheels_and_enforce_exported_hashes(
     wheel("native", "cp313-cp313-win_amd64")
     wheel("native", "cp314-cp314-macosx_11_0_arm64")
     wheel("native", "cp312-abi3-win_amd64")
+    legacy = wheel("legacy", "py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64")
+    oldest = wheel("oldest", "py3-none-manylinux1_x86_64.manylinux_2_5_x86_64")
+    wheel("legacy", "py3-none-manylinux_2_29_x86_64")
     win_only = wheel("windows_only", "py3-none-any")
     lock = ""
     requirements = []
@@ -507,6 +510,8 @@ def test_external_downloads_select_target_wheels_and_enforce_exported_hashes(
         marker = (
             ' ; sys_platform == "win32" and python_full_version >= "3.14.10"'
             if package == "windows_only"
+            else ' ; sys_platform == "linux"'
+            if package in {"legacy", "oldest"}
             else ""
         )
         requirements.append(
@@ -522,7 +527,14 @@ def test_external_downloads_select_target_wheels_and_enforce_exported_hashes(
     monkeypatch.setattr("scripts.build_release.write_constraints", export)
     output = tmp_path / "downloads"
     result = download_external_wheels(tmp_path, output, "uv")
-    assert {path.name for path in result} == {shared.name, win.name, linux.name, win_only.name}
+    assert {path.name for path in result} == {
+        shared.name,
+        win.name,
+        linux.name,
+        legacy.name,
+        oldest.name,
+        win_only.name,
+    }
     assert all(path.read_bytes() == (source / path.name).read_bytes() for path in result)
     original = requirements[0]
     requirements[0] = "shared==1.0 --hash=sha256:" + "0" * 64

@@ -23,6 +23,12 @@ from scripts.download_frontend import verify_and_extract
 
 TAG_PATTERN = re.compile(r"v(?P<version>[0-9]+\.[0-9]+\.[0-9]+)")
 TARGET_PYTHON = "3.14.10"
+LINUX_PLATFORMS = [f"manylinux_2_{n}_x86_64" for n in range(28, 4, -1)] + [
+    "manylinux2014_x86_64",
+    "manylinux2010_x86_64",
+    "manylinux1_x86_64",
+    "linux_x86_64",
+]
 
 
 def project_metadata(path: Path) -> tuple[str, str]:
@@ -238,12 +244,7 @@ def download_external_wheels(root: Path, output: Path, uv: str) -> list[Path]:
         requirements = write_constraints(root, Path(directory), [], uv).read_text()
     selected: dict[str, tuple[str, int, str]] = {}
     for windows in (True, False):
-        platforms = (
-            ["win_amd64"]
-            if windows
-            else [f"manylinux_2_{n}_x86_64" for n in range(28, 16, -1)]
-            + ["manylinux2014_x86_64", "linux_x86_64"]
-        )
+        platforms = ["win_amd64"] if windows else LINUX_PLATFORMS
         tags = list(cpython_tags((3, 14), platforms=platforms)) + list(
             compatible_tags((3, 14), interpreter="cp314", platforms=platforms)
         )

@@ -17,7 +17,7 @@ from packaging.tags import compatible_tags, cpython_tags
 from packaging.utils import canonicalize_name, parse_wheel_filename
 from packaging.version import Version
 
-from scripts.build_release import TARGET_PYTHON, read_base_manifest
+from scripts.build_release import LINUX_PLATFORMS, TARGET_PYTHON, read_base_manifest
 
 REPOSITORY = "Kosinkadink/Dinkster-Environments"
 VARIANTS = {
@@ -60,12 +60,7 @@ def qualify(root: Path, path: Path, tag: str) -> dict:
         != ("python/python.exe" if platform["os"] == "windows" else "python/bin/python3")
     ):
         raise ValueError("base interpreter does not match its target or source identity")
-    platforms = (
-        ["win_amd64"]
-        if platform["os"] == "windows"
-        else [f"manylinux_2_{n}_x86_64" for n in range(28, 16, -1)]
-        + ["manylinux2014_x86_64", "linux_x86_64"]
-    )
+    platforms = ["win_amd64"] if platform["os"] == "windows" else LINUX_PLATFORMS
     compatible = set(cpython_tags((3, 14), platforms=platforms)) | set(
         compatible_tags((3, 14), interpreter="cp314", platforms=platforms)
     )
