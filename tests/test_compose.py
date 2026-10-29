@@ -80,24 +80,27 @@ def test_default_pack_specs_load_verified_bundled_official_sources(
     pack = tmp_path / "pack"
     pack.mkdir()
     (pack / "dinkster-pack.toml").write_text(
-        '[pack]\nname = "official-pack"\npublisher = "dinkster"\nnamespaces = ["official"]\n'
+        '[pack]\nname = "dinkster-nodes-foundation"\npublisher = "dinkster"\n'
+        'namespaces = ["official"]\n'
         '[pack.entry]\nnodes = "official_nodes:NODES"\n',
         encoding="utf-8",
     )
     (pack / "official_nodes.py").write_text("NODES = ()\n", encoding="utf-8")
-    archive = package_data / "official-pack-1.2.3.zip"
+    archive = package_data / "dinkster-nodes-foundation-1.2.3.zip"
     digest = build_artifact(pack, archive)
     core = tmp_path / "core"
     shutil.copytree(pack, core)
     (core / "dinkster-pack.toml").write_text(
         (core / "dinkster-pack.toml")
         .read_text()
-        .replace('"official-pack"', '"dinkster-nodes-comfy"')
+        .replace('"dinkster-nodes-foundation"', '"dinkster-nodes-comfy"')
     )
     core_digest = build_artifact(core, package_data / "dinkster-nodes-comfy-1.2.3.zip")
     lock = Lockfile.of(
         [
-            LockedPack("official-pack", "1.2.3", digest, "dinkster", ("official",), "release"),
+            LockedPack(
+                "dinkster-nodes-foundation", "1.2.3", digest, "dinkster", ("official",), "release"
+            ),
             LockedPack(
                 "dinkster-nodes-comfy", "1.2.3", core_digest, "dinkster", ("official",), "release"
             ),
@@ -109,16 +112,16 @@ def test_default_pack_specs_load_verified_bundled_official_sources(
     compose._official_pack_sources.cache_clear()
     compose.default_pack_specs.cache_clear()
     try:
-        assert compose.default_pack_ids() == ("official-pack",)
+        assert compose.default_pack_ids() == ("dinkster-nodes-foundation",)
         assert load_manifest(compose.default_pack_spec("dinkster-nodes-comfy").manifest).name == (
             "dinkster-nodes-comfy"
         )
-        spec = compose.default_pack_spec("official-pack")
+        spec = compose.default_pack_spec("dinkster-nodes-foundation")
         assert spec.require_catalog
         assert spec.in_process
         assert spec.packs is not None
-        assert spec.packs["official-pack"].artifact_digest == digest
-        assert spec.packs["official-pack"].source == "release"
+        assert spec.packs["dinkster-nodes-foundation"].artifact_digest == digest
+        assert spec.packs["dinkster-nodes-foundation"].source == "release"
         assert Path(spec.manifest).parent != pack
         bundled_manifest = Path(spec.manifest).read_text(encoding="utf-8")
         source_manifest = (pack / "dinkster-pack.toml").read_text(encoding="utf-8")
@@ -139,29 +142,32 @@ def test_default_pack_specs_load_verified_bundled_official_sources(
         archive.write_bytes(b"tampered")
         compose._official_pack_sources.cache_clear()
         with pytest.raises(CompositionError, match="bundled official pack source is invalid"):
-            compose.default_pack_spec("official-pack")
+            compose.default_pack_spec("dinkster-nodes-foundation")
     finally:
         compose.default_pack_specs.cache_clear()
         compose._official_pack_sources.cache_clear()
         compose._default_pack_lock.cache_clear()
 
 
-def test_engine_carried_pack_uses_engine_distribution(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_engine_carried_pack_uses_engine_distribution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import dinkster.compose as compose
 
     distribution = SimpleNamespace(version="1.2.3", locate_file=lambda path: path)
     requested: list[str] = []
+    package_data = tmp_path / "official_packs"
+    package_data.mkdir()
+    (package_data / "official-packs.lock").write_text(Lockfile.of([]).record_json())
+    monkeypatch.setattr(compose, "_OFFICIAL_PACKS_DIRECTORY", package_data)
+    monkeypatch.setattr(compose, "_default_pack_lock", lambda: Lockfile.of([]))
 
     def find_distribution(name: str) -> SimpleNamespace:
         requested.append(name)
         return distribution
 
     monkeypatch.setattr(compose.importlib.metadata, "distribution", find_distribution)
-    spec = compose._installed_pack_spec(
-        "dinkster-nodes-generation",
-        "dinkster_nodes_generation",
-        in_process=True,
-    )
+    spec = compose.default_pack_spec("dinkster-nodes-generation")
     assert requested == ["dinkster"]
     assert spec.packs is not None
     assert spec.packs["dinkster-nodes-generation"].version == "1.2.3"

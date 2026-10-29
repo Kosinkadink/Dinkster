@@ -1466,7 +1466,10 @@ def _official_pack_spec(pack_id: str) -> PackSpec:
 
 def default_pack_spec(pack_id: str) -> PackSpec:
     """Resolve packaged official packs, or installed sources in a checkout."""
-    if (_OFFICIAL_PACKS_DIRECTORY / _OFFICIAL_PACKS_LOCK).is_file():
+    if (
+        pack_id not in _ENGINE_CARRIED_PACKS
+        and (_OFFICIAL_PACKS_DIRECTORY / _OFFICIAL_PACKS_LOCK).is_file()
+    ):
         return _official_pack_spec(pack_id)
     module_name = _FIRST_PARTY_PACK_MODULES.get(pack_id)
     if module_name is None:
