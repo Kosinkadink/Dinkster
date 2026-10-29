@@ -11,7 +11,6 @@ import numpy as np
 from dinkster_api.v1 import (
     CORE_STRING,
     IMAGE_TYPE,
-    LAYERS_TYPE,
     MASK_TYPE,
     REGION_TYPE,
     ImageDocument,
@@ -28,7 +27,7 @@ from dinkster_api.v1 import (
     ordered_layer_ids,
 )
 
-from .compositor_types import LayerStack, decode_layer_stack, source_layer_fingerprint
+from .compositor_types import LAYERS_TYPE, LayerStack, decode_layer_stack, source_layer_fingerprint
 from .types import Region
 
 LAYERS = TypeExpr.concrete(LAYERS_TYPE)
