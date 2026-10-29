@@ -17,7 +17,6 @@ from test_frontend_artifact import artifact
 
 from scripts.build_release import (
     build,
-    build_frontend_wheel,
     build_source_archive,
     development_version,
     download_external_wheels,
@@ -27,6 +26,7 @@ from scripts.build_release import (
     workspace_projects,
     write_constraints,
 )
+from scripts.download_frontend import verify_and_extract
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -39,7 +39,14 @@ def test_built_frontend_wheel_is_discovered_without_a_checkout(tmp_path: Path) -
     published.write_bytes(payload)
     uv = shutil.which("uv")
     assert uv is not None, "release packaging requires uv"
-    wheel = build_frontend_wheel(published, "0.0.1", pin, tmp_path, uv)
+    with versioned_sources(ROOT, "0.0.1") as staged:
+        verify_and_extract(payload, pin, staged / "src/dinkster/frontend_bundle/static")
+        subprocess.run(
+            [uv, "build", "--package", "dinkster", "--wheel", "--out-dir", str(tmp_path)],
+            cwd=staged,
+            check=True,
+        )
+    [wheel] = tmp_path.glob("*.whl")
     installed = tmp_path / "site-packages"
     with zipfile.ZipFile(wheel) as archive:
         archive.extractall(installed)
@@ -57,7 +64,7 @@ def test_built_frontend_wheel_is_discovered_without_a_checkout(tmp_path: Path) -
         cwd=tmp_path,
         text=True,
     ).strip()
-    assert discovered == str(installed / "dinkster_frontend/static")
+    assert discovered == str(installed / "dinkster/frontend_bundle/static")
 
 
 def test_release_workflow_validates_tag_before_building_and_publishing() -> None:
@@ -211,7 +218,7 @@ def test_release_install_matrix_covers_supported_desktop_platforms() -> None:
     assert "--require-hashes" in command
     assert "--find-links" in command
     assert "--requirement" in command
-    assert "from dinkster_frontend import bundle_path" in command
+    assert "from dinkster.frontend import discover_frontend_bundle" in command
     assert all(
         step.get("uses") != "./.github/actions/configure-dinkster-identity"
         for step in workflow["jobs"]["install"]["steps"]
@@ -430,7 +437,8 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     assert source_modules == wheel_modules
     assert f"Version: {version}\n" in metadata
     assert f"Requires-Dist: dinkster-api=={version}\n" in metadata
-    assert f"Requires-Dist: dinkster-frontend=={version}\n" in metadata
+    assert "dinkster-frontend" not in metadata
+    assert "Requires-Dist: dinkster-inference==0.1.0\n" in metadata
     assert "Requires-Dist: aiohttp>=3.10\n" in metadata
     subprocess.run(
         [
@@ -838,6 +846,7 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
     files = {
         "pyproject.toml": (
             '[project]\nname = "dinkster"\nversion = "1.2.3"\n'
+            '[tool.uv.workspace]\nmembers = ["packages/*"]\n'
             "[dependency-groups]\nengine-base = []\n"
             '[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n'
         ),
@@ -845,6 +854,12 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
         "packages/dinkster-workers/src/dinkster_workers/boundary.py": "PROTOCOL_VERSION = 1\n",
         "scripts/release_sources.json": json.dumps(frontend_pin),
     }
+    for member in ("api", "supervisor"):
+        files[f"packages/dinkster-{member}/pyproject.toml"] = (
+            f'[project]\nname = "dinkster-{member}"\nversion = "1.2.3"\n'
+            '[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n'
+        )
+        files[f"packages/dinkster-{member}/src/dinkster_{member}/__init__.py"] = ""
     for name, value in files.items():
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -864,7 +879,8 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
     assert built == manifest
     assert set(manifest["workspaceWheels"]) == {
         "dinkster-1.2.3-py2.py3-none-any.whl",
-        "dinkster_frontend-1.2.3-py3-none-any.whl",
+        "dinkster_api-1.2.3-py2.py3-none-any.whl",
+        "dinkster_supervisor-1.2.3-py2.py3-none-any.whl",
     }
     for candidate in (payload, bootstrap):
         assert (output / candidate.name).read_bytes() == candidate.read_bytes()

@@ -9,29 +9,13 @@ dependencies = [
     "comfy-aimdo==0.6.0",
     "comfy-kitchen==0.2.40",
     "dinkster-api",
-    "dinkster-schema",
-    "dinkster-values",
-    "dinkster-graph",
-    "dinkster-inference-wire",
-    "dinkster-protocol",
-    "dinkster-engine",
-    "dinkster-workers",
-    "dinkster-caches",
-    "dinkster-assets",
-    "dinkster-image-document",
-    "dinkster-memory",
-    "dinkster-native",
-    "dinkster-compat-comfy",
-    "dinkster-nodes-std",
-    "dinkster-nodes-remote",
-    "dinkster-nodes-comfy",
-    "dinkster-nodes-generation",
-    "dinkster-nodes-image",
-    "dinkster-nodes-dev",
-    "dinkster-server",
-    "dinkster-collab",
-    "dinkster-registry",
+    "dinkster-inference==0.1.0",
+    "dinkster-token-verifier==0.1.2",
     "dinkster-supervisor",
+    "numba>=0.67",
+    "pyobjc-framework-Network>=12.2.2; sys_platform == 'darwin'",
+    "pyobjc-framework-libdispatch>=12.2.2; sys_platform == 'darwin'",
+    "zeroconf>=0.147",
     # The comfy compat host registration (comfy_compose.register_comfy_host_types)
     # decodes and renders comfy.IMAGE values with numpy; dinkster-values itself
     # stays dependency-free (its image codec needs numpy at call time only).
@@ -51,9 +35,8 @@ dinkster-port = "dinkster.port:main"
 [project.optional-dependencies]
 default = [
     "dinkster-supervisor",
-    "dinkster-collab",
 ]
-collab = ["dinkster-collab"]
+collab = []
 supervisor = ["dinkster-supervisor"]
 
 [dependency-groups]
@@ -107,12 +90,10 @@ dinkster-image-document = { workspace = true }
 dinkster-memory = { workspace = true }
 dinkster-native = { workspace = true }
 dinkster-compat-comfy = { workspace = true }
-dinkster-nodes-std = { workspace = true }
 dinkster-nodes-remote = { workspace = true }
 dinkster-nodes-comfy = { workspace = true }
 dinkster-nodes-generation = { workspace = true }
 dinkster-nodes-image = { workspace = true }
-dinkster-nodes-dev = { workspace = true }
 dinkster-server = { workspace = true }
 dinkster-collab = { workspace = true }
 dinkster-registry = { workspace = true }
@@ -127,7 +108,24 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/dinkster"]
+packages = [
+    "src/dinkster",
+    "packages/dinkster-native/src/dinkster_native",
+    "packages/dinkster-compat-comfy/src/dinkster_compat_comfy",
+    "packages/dinkster-nodes-generation/src/dinkster_nodes_generation",
+]
+
+[tool.hatch.build.targets.wheel.force-include]
+"packages/dinkster-graph/src/dinkster_graph" = "dinkster_graph"
+"packages/dinkster-engine/src/dinkster_engine" = "dinkster_engine"
+"packages/dinkster-server/src/dinkster_server" = "dinkster_server"
+"packages/dinkster-collab/src/dinkster_collab" = "dinkster_collab"
+"packages/dinkster-native/dinkster-pack.toml" = "dinkster_native_pack/dinkster-pack.toml"
+"packages/dinkster-native/src/dinkster_native" = "dinkster_native_pack/dinkster_native"
+"packages/dinkster-compat-comfy/dinkster-pack.toml" = "dinkster_compat_comfy_pack/dinkster-pack.toml"
+"packages/dinkster-compat-comfy/src/dinkster_compat_comfy" = "dinkster_compat_comfy_pack/dinkster_compat_comfy"
+"packages/dinkster-nodes-generation/dinkster-pack.toml" = "dinkster_nodes_generation_pack/dinkster-pack.toml"
+"packages/dinkster-nodes-generation/src/dinkster_nodes_generation" = "dinkster_nodes_generation_pack/dinkster_nodes_generation"
 
 [tool.ruff]
 line-length = 100

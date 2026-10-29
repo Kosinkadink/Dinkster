@@ -139,7 +139,7 @@ jobs:
             --requirement "$RUNNER_TEMP/dinkster-release/constraints.txt"
           "$python" -m pip check
           "$python" -m dinkster.cli --help
-          "$python" -c "from dinkster_frontend import bundle_path; assert bundle_path().joinpath('index.html').is_file()"
+          "$python" -c "from dinkster.frontend import discover_frontend_bundle; assert discover_frontend_bundle() is not None"
           "$python" scripts/verify_release_install.py "$GITHUB_WORKSPACE" --python "$python" --require-frontend
 
   release:
@@ -205,7 +205,7 @@ jobs:
         with:
           name: wheel-release
           path: dist
-      - name: Select the built workspace and frontend wheels
+      - name: Select the three published workspace wheels
         run: |
           mkdir publish
           python3 - <<'PY'
