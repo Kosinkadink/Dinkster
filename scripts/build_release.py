@@ -203,9 +203,11 @@ def build_source_archive(root: Path, version: str, output: Path) -> Path:
         ):
             for name in source.namelist():
                 parts = tuple(part.lower() for part in Path(name).parts)
-                if any(part in {"tests", "tools", "benchmarks"} for part in parts):
-                    continue
-                if any("benchmark" in part for part in parts):
+                directories = parts if name.endswith("/") else parts[:-1]
+                if "src" not in directories and any(
+                    part in {"tests", "tools", "benchmarks"} or "benchmark" in part
+                    for part in directories
+                ):
                     continue
                 target.writestr(name, source.read(name))
     return archive
