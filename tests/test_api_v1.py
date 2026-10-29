@@ -195,6 +195,7 @@ GOLDEN_V1_SURFACE = (
     "BACKGROUND_REMOVAL_TYPE",
     "BOUNDING_BOX_TYPE",
     "BOUNDING_BOXES_TYPE",
+    "CAMERA_INFO_STATE_TYPE",
     "CLIP_TYPE",
     "CLIP_VISION_OUTPUT_TYPE",
     "CLIP_VISION_TYPE",
@@ -819,6 +820,10 @@ from dinkster_values import builtin_types
 from dinkster_native.native import register_native_types
 
 payloads = {
+    'CAMERA_INFO_STATE': {'position': {'x': -3.25, 'y': 7, 'z': 0.5},
+                         'target': [2, -1.5, 8], 'zoom': 1.25,
+                         'extension': {'active': False, 'selection': None,
+                                       'labels': ['right', 'left']}},
     'BOUNDING_BOXES': [{'x': 13, 'y': 7, 'width': 29, 'height': 11,
                         'metadata': {'label': 'left', 'score': 0.75}},
                        {'x': -2, 'y': 5, 'width': 3, 'height': 17, 'metadata': {}}],
@@ -847,6 +852,7 @@ for registrations in ((api.register_inference_types, register_native_types),
             assert not preexisting or spec is first[type_id]
             if not preexisting:
                 assert spec.decode(spec.encode(value)) == value
+                assert registry.wrap(type_id, spec.decode(spec.encode(value))).resolve() == value
 assert sys.modules['torch'] is None
 assert sys.modules['dinkster_inference'] is None
 """
