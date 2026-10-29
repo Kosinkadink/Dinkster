@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from dinkster_api.v1 import schema_to_wire
@@ -27,7 +27,9 @@ from dinkster_nodes_comfy.text import (
 
 
 def test_format_wire_preserves_optional_named_values() -> None:
-    interface: list[dict[str, Any]] = schema_to_wire(StringFormat.define_schema())["interface"]
+    interface = cast(
+        list[dict[str, Any]], schema_to_wire(StringFormat.define_schema())["interface"]
+    )
     assert [item["id"] for item in interface] == ["values", "f_string", "STRING"]
     family, text, output = interface
     assert family["role"] == "inputFamily"
