@@ -247,6 +247,11 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
             assert set(prepared.schemas) == {f"{name}.doubler", f"{name}.tagger"}
         assert sum("dinkster-schema-catalog" in name for name, _ in generation.files) == 2
         if problem in moves:
+            from dinkster_supervisor.environment_runtime import (
+                engine_assignments,
+                start_engine,
+                stop_engine,
+            )
             from dinkster_supervisor.environment_state import (
                 Generation,
                 Journal,
@@ -283,11 +288,6 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
             again = destination.parent / "moved again"
             assignments = None
             if problem == "move-running-interrupted":
-                from dinkster_supervisor.environment_runtime import (
-                    engine_assignments,
-                    start_engine,
-                    stop_engine,
-                )
                 from test_environment_runtime import free_port
 
                 for location in (root, destination, again):
