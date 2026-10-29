@@ -487,7 +487,11 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
         [name] = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
         api_metadata = archive.read(name).decode()
         assert "Requires-Dist: torch" not in api_metadata
-        assert "Requires-Dist: dinkster-" not in api_metadata
+        assert {
+            line
+            for line in api_metadata.splitlines()
+            if line.startswith("Requires-Dist: dinkster-")
+        } == {"Requires-Dist: dinkster-opentimelineio==0.19.0"}
         for member in (
             "api",
             "values",
