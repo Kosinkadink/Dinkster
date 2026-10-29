@@ -363,7 +363,7 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
     directory = mirror / "base/fixture-cpu" / base_id
     directory.mkdir()
     part = directory / "base.7z.001"
-    with py7zr.SevenZipFile(part, "w", filters=[{"id": py7zr.FILTER_COPY}]) as archive:
+    with py7zr.SevenZipFile(part, "w", filters=[{"id": py7zr.FILTER_LZMA2}]) as archive:
         archive.writeall(tree / "python", "python")
         archive.writeall(tree / "wheels", "wheels")
     base.update(

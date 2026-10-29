@@ -1602,6 +1602,7 @@ dependencies = [
     { name = "blake3" },
     { name = "packaging" },
     { name = "py7zr" },
+    { name = "py7zz" },
 ]
 
 [package.metadata]
@@ -1610,6 +1611,7 @@ requires-dist = [
     { name = "blake3", specifier = ">=1.0" },
     { name = "packaging", specifier = ">=24" },
     { name = "py7zr", specifier = ">=1.0" },
+    { name = "py7zz", specifier = "==1.4.0" },
 ]
 
 [[package]]
@@ -2630,7 +2632,8 @@ resolution-markers = [
     "python_full_version < '3.14' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
     "python_full_version < '3.14' and platform_machine == 'AMD64' and platform_python_implementation == 'CPython' and sys_platform == 'win32'",
     "python_full_version < '3.14' and platform_machine == 'arm64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin'",
-    "(python_full_version < '3.14' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version < '3.14' and platform_machine == 'aarch64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (python_full_version < '3.14' and platform_machine == 'x86_64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (python_full_version < '3.14' and platform_machine != 'arm64' and sys_platform == 'darwin') or (python_full_version < '3.14' and platform_machine != 'AMD64' and sys_platform == 'win32') or (python_full_version < '3.14' and platform_python_implementation != 'CPython' and sys_platform == 'darwin') or (python_full_version < '3.14' and platform_python_implementation != 'CPython' and sys_platform == 'win32') or (python_full_version < '3.14' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "(python_full_version == '3.13.*' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version == '3.13.*' and platform_machine == 'aarch64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (python_full_version == '3.13.*' and platform_machine == 'x86_64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (python_full_version == '3.13.*' and platform_machine != 'arm64' and sys_platform == 'darwin') or (python_full_version == '3.13.*' and platform_machine != 'AMD64' and sys_platform == 'win32') or (python_full_version == '3.13.*' and platform_python_implementation != 'CPython' and sys_platform == 'darwin') or (python_full_version == '3.13.*' and platform_python_implementation != 'CPython' and sys_platform == 'win32') or (python_full_version == '3.13.*' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "(python_full_version < '3.13' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version < '3.13' and platform_machine == 'aarch64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (python_full_version < '3.13' and platform_machine == 'x86_64' and platform_python_implementation != 'CPython' and sys_platform == 'linux') or (python_full_version < '3.13' and platform_machine != 'arm64' and sys_platform == 'darwin') or (python_full_version < '3.13' and platform_machine != 'AMD64' and sys_platform == 'win32') or (python_full_version < '3.13' and platform_python_implementation != 'CPython' and sys_platform == 'darwin') or (python_full_version < '3.13' and platform_python_implementation != 'CPython' and sys_platform == 'win32') or (python_full_version < '3.13' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/de/41/73e65b707f3491792d4b34bea75edc2a1cc6ce10848ba199c3de8e3bee58/opentimelineio-0.18.1.tar.gz", hash = "sha256:a4e5086e2accd4ca9853ab48bf531e0c148eff47889363a6da3a03f662fbf5e8", size = 2921656, upload-time = "2025-11-09T16:38:53.364Z" }
 wheels = [
@@ -2979,6 +2982,24 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/d6/31/d5469ec310b57c730785068c227caf2263391be846ae5e99488f69b394eb/py7zr-1.1.4.tar.gz", hash = "sha256:7674697559bd06b697bf6e8249985cee6dc704a4b07b8e11f24d0b1695707c3e", size = 76503, upload-time = "2026-10-12T11:31:18.36Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/96/bd/72bace0bf4025af8ab4bf972394fab466d4b565cdbea805281fbee9a8dbc/py7zr-1.1.4-py3-none-any.whl", hash = "sha256:f6f868a457a6bd485b78d26e619045718bcd0b7720a6bf97d5fe86a1523423e8", size = 75484, upload-time = "2026-10-12T11:31:16.526Z" },
+]
+
+[[package]]
+name = "py7zz"
+version = "1.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+    { name = "requests" },
+    { name = "rich" },
+    { name = "typer" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/05/e6/40718b3e826ec633f19e53925d7fe04e60d10f010a99c16671165925adf3/py7zz-1.4.0-py3-none-macosx_10_9_universal2.whl", hash = "sha256:f5af6e7da11194b8bd469fd14d779cbe6db76f27e254138a547443c4b56d44f3", size = 2713218, upload-time = "2026-09-07T15:18:35.907Z" },
+    { url = "https://files.pythonhosted.org/packages/16/9c/3373eb9f7692bd94586ecdbb2b09ec58e822850bfb54ad1e4549787308f2/py7zz-1.4.0-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:db81fd6feed930bbcd32f8d8bdff99d5fd26ac1b5e484dc634005a9b25fb5401", size = 1295347, upload-time = "2026-09-07T15:18:37.618Z" },
+    { url = "https://files.pythonhosted.org/packages/da/b8/8288eb0c8e465a4cd717614bcd2a5b5872560724aad2a0724ede8596aaed/py7zz-1.4.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:32a1ce9d6b0eb944cc9e8827350c87a31b15abcd5df146c5edd4be1fbfbf755c", size = 1407822, upload-time = "2026-09-07T15:18:39.739Z" },
+    { url = "https://files.pythonhosted.org/packages/06/ea/3549634214688f55bdb82f0bad269c2bcbcf656b1ce0131fb721e12894de/py7zz-1.4.0-py3-none-win_amd64.whl", hash = "sha256:966850e12f7aae4373034a2d5bbf0c23077ab9db931656c18e17ec0f7328aab0", size = 1221964, upload-time = "2026-09-07T15:18:41.048Z" },
+    { url = "https://files.pythonhosted.org/packages/1b/21/e8ee80f0a0ce0ee5123ff6bd3163f5dc3d0d78773c1d0f682aeb9c282952/py7zz-1.4.0-py3-none-win_arm64.whl", hash = "sha256:5db0b912ba4047930c9afa111821f90231c006ce57a1899a384c0da40e2df1da", size = 1148273, upload-time = "2026-09-07T15:18:42.582Z" },
 ]
 
 [[package]]

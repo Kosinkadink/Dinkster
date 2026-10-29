@@ -68,7 +68,7 @@ def _mirror(
     }
     base_id = hashlib.sha256(_json(base)).hexdigest()
     archive = root / "fixture.7z"
-    with py7zr.SevenZipFile(archive, "w") as output:
+    with py7zr.SevenZipFile(archive, "w", filters=[{"id": py7zr.FILTER_LZMA2}]) as output:
         output.writestr(b"interpreter fixture, not executable", python)
         output.writestr(b"wrong" if damaged_archive else base_wheel, "wheels/" + wheel["filename"])
     data = archive.read_bytes()

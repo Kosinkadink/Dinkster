@@ -8,6 +8,7 @@ dependencies = [
     "blake3>=1.0",
     "packaging>=24",
     "py7zr>=1.0",
+    "py7zz==1.4.0",
 ]
 
 [project.scripts]

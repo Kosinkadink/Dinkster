@@ -271,7 +271,11 @@ source artifact identities. Additional `prepare_packs` staging runs before seali
 `environment_archives.extract_base(parts, destination, platform=..., executable=...)` reconstructs verified
 split 7z parts in order and stages their contents beside the final base path.
 The caller verifies part digests, supplies the manifest's platform and interpreter
-path, and holds the store writer lock. Extraction accepts only `python/` and
+path, and holds the store writer lock. py7zr lists members for safety only;
+the real 7-Zip binary bundled in the pinned py7zz wheel decodes their contents.
+`DINKSTER_7ZIP_BINARY` may supply an absolute executable path for Desktop.
+An invalid explicit path fails without fallback; no runtime binary download or
+archive-format restriction is introduced. Extraction accepts only `python/` and
 `wheels/`, rejects links, traversal, Windows device names and exact duplicate paths.
 Case-ambiguous paths are refused for Windows/macOS targets or case-insensitive
 destination filesystems; Linux case-sensitive trees retain distinct spellings.

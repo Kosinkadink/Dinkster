@@ -68,6 +68,9 @@
   another channel or variant, retaining the old selection until candidate health
   and requirement revalidation succeed. Failure recovers the prior selection and
   serving engine.
+- Base acquisition uses the real 7-Zip executable bundled in the py7zz wheel,
+  with an explicit executable override for Desktop. No decoder download occurs
+  during setup. Unsafe members refuse extraction before promotion.
 - Linux base archives preserve distinct case-sensitive interpreter paths, including
   terminfo entries. Windows targets and case-insensitive destinations reject
   case collisions. The manifest-designated interpreter is executable even when

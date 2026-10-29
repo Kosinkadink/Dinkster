@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import os
 import shutil
+import stat
+import subprocess
 import tempfile
+from importlib.metadata import distribution
 from pathlib import Path, PurePosixPath
 
 import py7zr
@@ -25,11 +28,7 @@ class ArchiveError(ValueError):
 def extract_base(
     parts: tuple[Path, ...], destination: Path, *, platform: str, executable: str
 ) -> Path:
-    """Concatenate verified archive parts and atomically install their base tree.
-
-    Links are rejected because py7zr's public member metadata identifies
-    symbolic links but does not expose a target for proving containment.
-    """
+    """Preflight and extract verified archive parts using the real 7-Zip binary."""
     destination = Path(destination)
     if os.path.lexists(destination):
         raise ArchiveError(f"base destination already exists: {destination}")
@@ -44,12 +43,31 @@ def extract_base(
         staging = Path(
             tempfile.mkdtemp(prefix=f".{destination.name}.stage-", dir=destination.parent)
         )
+        binary = os.environ.get("DINKSTER_7ZIP_BINARY")
+        if binary:
+            if not Path(binary).is_absolute() or not Path(binary).is_file():
+                raise ArchiveError("DINKSTER_7ZIP_BINARY must name an existing absolute executable")
+        else:
+            binary = str(
+                distribution("py7zz").locate_file(
+                    f"py7zz/bin/{'7zz.exe' if os.name == 'nt' else '7zz'}"
+                )
+            )
+            if not Path(binary).is_file():
+                raise ArchiveError("installed py7zz wheel has no bundled decoder")
         with py7zr.SevenZipFile(archive_path, mode="r") as archive:
             _validate_members(
                 archive,
                 case_insensitive=platform in {"windows", "macos"} or _case_insensitive(staging),
             )
-            archive.extractall(path=staging)
+        result = subprocess.run(
+            [binary, "x", "-y", "-bd", f"-o{staging.resolve()}", str(archive_path.resolve())],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=600,
+        )
+        if result.returncode != 0:
+            raise ArchiveError(f"7-Zip extraction failed with exit code {result.returncode}")
         _validate_staging(staging)
         interpreter = staging / _member_path(executable)
         if not executable.startswith("python/") or not interpreter.is_file():
@@ -99,36 +117,30 @@ def _validate_members(archive: py7zr.SevenZipFile, *, case_insensitive: bool) ->
     names: set[str] = set()
     spellings: dict[str, str] = {}
     top_levels: set[str] = set()
-    info = archive.header.files_info
-    if info is None:
-        raise ArchiveError("archive has no file metadata")
-    emptyfiles = info.emptyfiles
-    empty_index = 0
     for member in archive.files:
-        if member.emptystream:
-            # 7z EmptyFile distinguishes directories when optional attributes are absent.
-            empty_file = emptyfiles[empty_index] if emptyfiles else False
-            empty_index += 1
-            properties = member.file_properties()
-            if properties.get("attributes") is None and not empty_file:
-                properties["attributes"] = 0x10
-        path = _member_path(member.filename)
+        name = member.filename
+        path = _member_path(name)
+        attributes = member.file_properties().get("attributes") or 0
+        # Native 7-Zip honors link bits even without py7zr's Unix-extension marker.
+        if (
+            member.is_symlink
+            or member.is_junction
+            or stat.S_ISLNK(attributes >> 16)
+            or attributes & 0x400
+        ):
+            raise ArchiveError(f"archive links are not supported: {name!r}")
         normalized = path.as_posix()
         if case_insensitive:
             normalized = normalized.casefold()
         if normalized in names:
-            raise ArchiveError(f"archive contains ambiguous duplicate path: {member.filename!r}")
+            raise ArchiveError(f"archive contains ambiguous duplicate path: {name!r}")
         names.add(normalized)
         if case_insensitive:
             for end in range(1, len(path.parts) + 1):
                 prefix = "/".join(path.parts[:end])
                 if spellings.setdefault(prefix.casefold(), prefix) != prefix:
-                    raise ArchiveError(f"archive contains case-ambiguous path: {member.filename!r}")
+                    raise ArchiveError(f"archive contains case-ambiguous path: {name!r}")
         top_levels.add(path.parts[0])
-        if member.is_symlink or member.is_junction:
-            raise ArchiveError(f"archive links are not supported: {member.filename!r}")
-        if not member.is_file and not member.is_directory:
-            raise ArchiveError(f"archive contains unsupported member type: {member.filename!r}")
     if top_levels - _ALLOWED_TREES:
         unknown = sorted(top_levels - _ALLOWED_TREES)
         raise ArchiveError(f"archive contains unknown top-level tree: {unknown}")
@@ -141,6 +153,7 @@ def _member_path(name: str) -> PurePosixPath:
     if (
         not name
         or "\\" in name
+        or any(character in name for character in '*?<>|"')
         or path.is_absolute()
         or any(part in {"", ".", ".."} or ":" in part for part in name.split("/"))
         or any(ord(character) < 32 for character in name)

@@ -226,6 +226,11 @@ Its build workflow:
 5. Publishes to a GitHub release of `Dinkster-Environments` and, when the R2
    secrets are present, to `releases.dinkster.org/base/<variant>/<id>/`.
 
+The consumer lists members with py7zr for path/link safety, extracts with the
+real 7-Zip binary from the py7zz wheel, and sets the manifest interpreter to
+0755. An absolute `DINKSTER_7ZIP_BINARY` overrides that binary for Desktop.
+No runtime decoder download or additional archive-format field is required.
+
 The base is rebuilt only when its part of the lock changes. The workflow
 compares the base-relevant lock entries with the newest published base
 manifest and skips the build when they match, so a tag that only touches
