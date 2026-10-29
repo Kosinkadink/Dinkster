@@ -698,6 +698,59 @@ def test_project_plan_observes_live_commits_and_reports_read_only_open_failure(
     finally:
         store.close()
 
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import os, sqlite3, sys
+connection = sqlite3.connect(sys.argv[1])
+connection.execute('UPDATE records SET digest=?, revision=revision+1 WHERE id=?',
+                   (sys.argv[3], sys.argv[2]))
+connection.commit()
+connection.execute('UPDATE records SET digest=?, revision=revision+1 WHERE id=?',
+                   (sys.argv[4], sys.argv[2]))
+os._exit(0)
+""",
+            str(database),
+            record.id,
+            documents[0][0],
+            documents[1][0],
+        ],
+        check=True,
+        timeout=30,
+    )
+    assert database.with_name(database.name + "-wal").is_file()
+    post_crash = plan_project_requirements(tmp_path, variant="linux-cpu")
+    assert post_crash["plan"] == {
+        "packs": [],
+        "assets": [{**documents[0][1], "sources": []}],
+        "errors": [],
+    }
+    assert post_crash["inputs"] == [
+        {
+            "scope": "local",
+            "id": record.id,
+            "revision": updated.revision + 1,
+            "digest": documents[0][0],
+        }
+    ]
+    assert project.read_bytes() == project_bytes
+    assert {path: path.read_bytes() for path in before} == before
+
+    corrupt = tmp_path / "corrupt-project"
+    (corrupt / "library/vault").mkdir(parents=True)
+    (corrupt / "project.json").write_bytes(project_bytes)
+    (corrupt / "library/library.sqlite").write_bytes(b"not a SQLite database")
+    failed_arguments = list(arguments)
+    failed_arguments[2] = str(corrupt)
+    assert main(failed_arguments) == 1
+    output = capsys.readouterr()
+    assert output.out == "" and "file is not a database" in output.err
+    assert (corrupt / "library/library.sqlite").read_bytes() == b"not a SQLite database"
+    assert (corrupt / "project.json").read_bytes() == project_bytes
+    assert list((corrupt / "library/vault").iterdir()) == []
+
 
 def test_empty_project_requirements_do_not_create_library(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]

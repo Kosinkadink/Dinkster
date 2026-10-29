@@ -95,8 +95,10 @@
   generation, fetching content or changing project/vault bytes or logical library
   records/revisions. SQLite may create or touch its ordinary WAL/shared-memory
   coordination files. A concurrent committed workflow edit either refuses the
-  in-flight snapshot or is visible in the next plan. SQLite open or recovery
-  errors are reported without an unsafe fallback. Only verified project-vault
+  in-flight snapshot or is visible in the next plan. Readable committed data is
+  accepted even when a writer exited abruptly; uncommitted changes stay invisible.
+  SQLite open/read errors are reported by name without a rollback, checkpoint or
+  unsafe fallback from the planner. Only verified project-vault
   assets count as materialized; resolver leads remain advisory.
   Exact saved versions must be present in the selected release, even for packs
   already installed. Blocking errors produce nonzero status. First setup omits
