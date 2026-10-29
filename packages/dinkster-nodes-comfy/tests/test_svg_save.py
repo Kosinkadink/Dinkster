@@ -74,9 +74,21 @@ def test_svg_save_schema_uses_canonical_type_and_adjacent_mount() -> None:
 
 
 @pytest.mark.parametrize("in_process", (True, False))
-@pytest.mark.parametrize("prompt", (None, {}, {"source": {"seed": 83}}))
+@pytest.mark.parametrize(
+    ("prompt", "with_snapshot"),
+    (
+        pytest.param(None, False, id="no_snapshot"),
+        pytest.param({}, True, id="empty_prompt"),
+        pytest.param({"source": {"seed": 83}}, True, id="populated_prompt"),
+        pytest.param(None, True, id="extras_only"),
+    ),
+)
 def test_svg_save_publishes_ordered_streams_and_submission_metadata(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, prompt: dict | None
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    in_process: bool,
+    prompt: dict | None,
+    with_snapshot: bool,
 ) -> None:
     output, alternate = tmp_path / "output", tmp_path / "alternate"
     output.mkdir()
@@ -89,7 +101,7 @@ def test_svg_save_publishes_ordered_streams_and_submission_metadata(
     table.select_output_mount("output")
     monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(mounts))
     extra = {"workflow": {"nodes": [{"id": 43, "title": "SVG: caf\u00e9"}]}}
-    submitted = None if prompt is None else ExportSnapshot(prompt=prompt, extra_pnginfo=extra)
+    submitted = ExportSnapshot(prompt=prompt, extra_pnginfo=extra) if with_snapshot else None
 
     async def scenario():
         module = f"svg_fixture_{tmp_path.name.replace('-', '_')}"
@@ -154,7 +166,7 @@ def test_svg_save_publishes_ordered_streams_and_submission_metadata(
     asyncio.run(scenario())
     paths = sorted((alternate / "chosen").glob("*.svg"))
     assert len(paths) == 8
-    metadata = {"prompt": prompt, **extra}
+    metadata = {**({"prompt": prompt} if prompt is not None else {}), **extra}
     for batch, value in enumerate(_VALUES):
         expected = value
         if submitted is not None and value == _FIRST:
