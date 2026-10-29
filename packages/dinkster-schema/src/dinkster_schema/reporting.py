@@ -49,7 +49,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Protocol, cast
 
-from dinkster_values import SAVED_ARTIFACT_LIMIT_BYTES
+from dinkster_values import SAVED_ARTIFACT_CLAIM_LIMIT, SAVED_ARTIFACT_LIMIT_BYTES
 
 _saved_artifact_sink: ContextVar[Callable[[Mapping[str, object]], None] | None] = ContextVar(
     "dinkster_saved_artifact_sink", default=None
@@ -84,8 +84,8 @@ def attach_saved_artifact(ref: Mapping[str, object]) -> None:
         or any(char not in "0123456789abcdef" for char in digest[7:])
     ):
         raise ValueError("saved artifact digest must be canonical blake3")
-    if type(size) is not int or not 0 <= size <= SAVED_ARTIFACT_LIMIT_BYTES:
-        raise ValueError("saved artifact size exceeds invocation limits")
+    if type(size) is not int or size < 0:
+        raise ValueError("saved artifact size must be a nonnegative integer")
     for field, value, limit in (
         ("name", name, 255),
         ("mediaType", media_type, 255),
@@ -125,7 +125,7 @@ def capture_saved_artifacts() -> Generator[list[Mapping[str, object]]]:
         with lock:
             if not active:
                 raise RuntimeError("saved artifact invocation is closed")
-            if len(claims) >= 64:
+            if len(claims) >= SAVED_ARTIFACT_CLAIM_LIMIT:
                 raise ValueError("saved artifact batch exceeds invocation limits")
             claims.append(claim)
 

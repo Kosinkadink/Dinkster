@@ -5,6 +5,10 @@
   Custom targets and non-media files, including empty text files, are supported
   through both ordinary hosts. Failed invocations do not return kept artifacts;
   returning an ASSET without attaching it does not advertise a saved file.
+  One invocation supports up to 4096 explicit saved-file attachments, including
+  complete admitted image batches, subject to existing file and transport bounds.
+  Mounted-file descriptors do not impose the encoded-preview byte limit on saved
+  weights or other files; the host validates their actual bytes by streaming.
 - Native image, mask, animation, audio, video, text, layer-document, model3D,
   splat, and conditioning savers explicitly attach their successful mounted
   publications. Save nodes require an active invocation attachment context;
@@ -219,9 +223,14 @@
 - GLB 3D model assets through Load 3D Model, Save 3D Model, and Preview 3D
   nodes carrying validated raw GLB bytes as `dinkster.model3d`
 - Gaussian splat assets through Load Gaussian Splat and Save Gaussian Splat
-  nodes: `dinkster.splat` batches of activated world-space gaussians with
+  nodes: `SPLAT` batches of activated world-space gaussians with
   binary little-endian PLY interchange byte-compatible with ComfyUI's
-  splat PLY files
+  splat PLY files. Shared inference and media packs preserve optional per-item
+  counts, empty Gaussian tensors and floating dtype across ordinary worker
+  boundaries; live tensors retain their device and storage. Empty splats can
+  cross workers but cannot be exported to PLY.
+- Get Splat Count reports the total valid Gaussian count across a SPLAT batch,
+  honoring optional per-row counts and preserving the input splat value.
 - Native ImageOnlyCheckpointSave exports model, vision encoder and VAE weights
   to a selected writable mount, preserving checkpoint metadata and reserved
   counter names, and reports the host-validated saved file in execution results.
