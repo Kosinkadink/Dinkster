@@ -63,6 +63,53 @@ def test_load_latent_converts_to_float_and_scales_only_legacy_files(
     torch.testing.assert_close(actual["samples"], expected, rtol=0, atol=0)
 
 
+@pytest.mark.parametrize("mount", (None, "alternate"))
+def test_save_latent_preserves_filename_tail_and_existing_publications(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mount: str | None
+) -> None:
+    output, alternate = tmp_path / "output", tmp_path / "alternate"
+    output.mkdir()
+    alternate.mkdir()
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot, index_root=tmp_path / "index")
+    for name, root in (("output", output), ("alternate", alternate)):
+        table.add(MountDef(name, root, mode="readwrite"))
+        table.scan(name)
+    table.select_output_mount("output")
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+    root = alternate if mount else output
+    folder = root / "chosen"
+    folder.mkdir()
+    existing = folder / "tail__00007_.latent"
+    existing.write_bytes(b"complete existing publication")
+    samples = {"samples": torch.tensor([[[[-1.25, 7.5, 0.125]]]])}
+    previous = {}
+    for counter in (8, 9):
+        with capture_saved_artifacts() as claims:
+            result = SaveLatent.execute(
+                samples=samples, filename_prefix="chosen/tail_", mount=mount
+            )
+        assert result["samples"] is samples
+        path = folder / f"tail__{counter:05d}_.latent"
+        assert path.is_file()
+        assert claims == [
+            {
+                "digest": digest_file(path),
+                "name": path.name,
+                "size": path.stat().st_size,
+                "mediaType": "application/octet-stream",
+                "virtualPath": f"mounts/{mount or 'output'}/chosen/{path.name}",
+            }
+        ]
+        previous[path] = path.read_bytes()
+    assert existing.read_bytes() == b"complete existing publication"
+    assert len(list(folder.glob("*.latent"))) == 3
+    for path, encoded in previous.items():
+        assert path.read_bytes() == encoded
+    other = output if mount else alternate
+    assert not list(other.rglob("*.latent"))
+
+
 def test_save_latent_preserves_source_and_writes_versioned_tensors_to_selected_mount(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -94,8 +141,8 @@ def test_save_latent_preserves_source_and_writes_versioned_tensors_to_selected_m
             is samples
         )
     for path in (
-        output / "latents/ComfyUI_00001.latent",
-        alternate / "chosen/latent_00001.latent",
+        output / "latents/ComfyUI_00001_.latent",
+        alternate / "chosen/latent_00001_.latent",
     ):
         with safe_open(path, framework="pt", device="cpu") as handle:
             assert set(handle.keys()) == {"latent_tensor", "latent_format_version_0"}
@@ -444,7 +491,7 @@ def test_latent_exports_attach_exact_mounted_files_on_each_execution(
                     ("default", "output", output, "latents/ComfyUI"),
                     ("alternate", "alternate", alternate, "chosen/asymmetric"),
                 ):
-                    relative = f"{prefix}_{attempt + 1:05d}.latent"
+                    relative = f"{prefix}_{attempt + 1:05d}_.latent"
                     path = root / relative
                     artifact = by_node[node]
                     assert artifact.virtual_path == f"mounts/{mount}/{relative}"

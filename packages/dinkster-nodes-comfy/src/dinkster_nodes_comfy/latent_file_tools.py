@@ -126,7 +126,7 @@ class SaveLatent(Node):
         ref = writer.save_bytes(
             writer.output_target(filename_prefix, mount=mount),
             data,
-            suffix=".latent",
+            suffix="_.latent",
         )
         attach_saved_artifact(ref.to_wire())
         return cls.outputs(samples=samples)
