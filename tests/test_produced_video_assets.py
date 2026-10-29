@@ -22,7 +22,9 @@ from dinkster_assets import (
     LocalAssetRef,
     digest_bytes,
     register_video_value_type,
+    resolver_from_env,
 )
+from dinkster_assets.declared import produced_output_scratch, use_produced_output_job
 from dinkster_caches import BudgetedDiskCAS
 from dinkster_protocol import Invocation, InvocationResult
 from dinkster_values import TypeRegistry, Value, ValueMeta, default_encode, make_list_value
@@ -51,6 +53,48 @@ def _publish(vault: AssetVault, data: bytes) -> AssetRef:
         writer.write(data)
         writer.commit()
     return AssetRef(digest, "source.mkv", len(data), resolver=vault)
+
+
+def test_produced_scratch_isolates_concurrent_jobs_and_attempts(tmp_path: Path) -> None:
+    env = {"DINKSTER_PACK_SCRATCH": str(tmp_path / "scratch")}
+    resolver = resolver_from_env(env)
+    assert resolver is not None
+    data = b"identical produced bytes"
+    digest = digest_bytes(data)
+
+    async def scenario() -> list[Path]:
+        ready = [asyncio.Event() for _ in range(3)]
+
+        async def publish(index: int, job: str, attempt: int) -> Path:
+            with use_produced_output_job(job, attempt):
+                vault = produced_output_scratch(env)
+                assert vault is not None
+                assert resolver.resolve(digest) is None
+                ref = await asyncio.to_thread(_publish, vault, data)
+                ready[index].set()
+                await asyncio.gather(*(event.wait() for event in ready))
+                assert resolver.resolve(digest) == ref.local_path()
+                assert await asyncio.to_thread(ref.read_bytes) == data
+                return ref.local_path()
+
+        return await asyncio.wait_for(
+            asyncio.gather(
+                publish(0, "../job with spaces", 1),
+                publish(1, "../job with spaces", 2),
+                publish(2, "another job", 1),
+            ),
+            10,
+        )
+
+    paths = asyncio.run(scenario())
+    assert len(set(paths)) == 3
+    assert all(
+        path.is_relative_to(tmp_path / "scratch" / "produced-assets" / "jobs") for path in paths
+    )
+    assert resolver.resolve(digest) is None
+    with use_produced_output_job("../job with spaces", 1):
+        assert resolver.resolve(digest) == paths[0]
+    assert not (tmp_path / "job with spaces").exists()
 
 
 def _value(ref: AssetRef, type_id: str = VIDEO_TYPE) -> Value:

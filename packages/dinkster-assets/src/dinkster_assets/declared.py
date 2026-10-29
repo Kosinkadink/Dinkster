@@ -25,6 +25,7 @@ can never drift between the two.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from collections.abc import Generator, Iterable, Mapping
@@ -34,10 +35,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .fetch import ChainResolver
-from .identity import AssetError
+from .identity import AssetError, digest_bytes
 from .kind import require_asset_kind
 from .library import IndexedAssetResolver
-from .model import AssetRef, AssetResolver
+from .model import AssetRef, AssetResolution, AssetResolver
 from .mounts import MountSnapshotResolver
 from .pack_assets import DeclaredAsset
 from .vault import AssetVault
@@ -49,11 +50,52 @@ __all__ = [
     "mount_roots_for_kind",
     "resolver_from_env",
     "use_declared_asset_pack",
+    "use_produced_output_job",
 ]
 
 VAULT_ENV = "DINKSTER_ASSET_VAULT"
 MOUNTS_ENV = "DINKSTER_MOUNTS_SNAPSHOT"
 ROOT_ENV = "DINKSTER_ASSET_ROOT"
+
+_produced_job: ContextVar[tuple[str, int] | None] = ContextVar(
+    "dinkster_produced_job", default=None
+)
+
+
+@contextmanager
+def use_produced_output_job(job: str, attempt: int) -> Generator[None]:
+    """Keep publication and source lookup bound to the host's job attempt."""
+    if not job or type(attempt) is not int or attempt < 1:
+        raise AssetError("produced output requires a job and positive attempt")
+    token = _produced_job.set((job, attempt))
+    try:
+        yield
+    finally:
+        _produced_job.reset(token)
+
+
+def _produced_root(scratch: str) -> Path:
+    root = Path(scratch) / "produced-assets"
+    job = _produced_job.get()
+    if job is None:
+        return root
+    identity = digest_bytes(json.dumps(job, ensure_ascii=True).encode("ascii")).split(":", 1)[1]
+    return root / "jobs" / identity
+
+
+class _ProducedOutputResolver:
+    """A worker's installed resolver follows the current job, not its startup context."""
+
+    def __init__(self, scratch: str) -> None:
+        self._scratch = scratch
+
+    def resolve(self, digest: str) -> Path | None:
+        resolution = self.resolve_asset(digest)
+        return resolution.path if resolution is not None else None
+
+    def resolve_asset(self, digest: str) -> AssetResolution | None:
+        root = _produced_root(self._scratch)
+        return AssetVault(root).resolve_asset(digest) if root.is_dir() else None
 
 
 def mount_roots_for_kind(kind: str, *, env: Mapping[str, str] | None = None) -> tuple[Path, ...]:
@@ -73,7 +115,7 @@ def produced_output_scratch(env: Mapping[str, str] | None = None) -> AssetVault 
     environment = os.environ if env is None else env
     scratch = environment.get("DINKSTER_PACK_SCRATCH")
     if scratch:
-        return AssetVault(Path(scratch) / "produced-assets")
+        return AssetVault(_produced_root(scratch))
     root = environment.get(VAULT_ENV)
     return AssetVault(root) if root else None
 
@@ -87,10 +129,8 @@ def resolver_from_env(env: Mapping[str, str] | None = None) -> AssetResolver | N
     if env is None:
         env = os.environ
     resolvers: list[AssetResolver] = []
-    if env.get("DINKSTER_PACK_SCRATCH"):
-        produced = produced_output_scratch(env)
-        assert produced is not None
-        resolvers.append(produced)
+    if scratch := env.get("DINKSTER_PACK_SCRATCH"):
+        resolvers.append(_ProducedOutputResolver(scratch))
     vault_root = env.get(VAULT_ENV, "")
     if vault_root:
         resolvers.append(AssetVault(vault_root))

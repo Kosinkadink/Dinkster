@@ -45,6 +45,7 @@ from dinkster_assets import (
     resolver_from_env,
     use_declared_asset_pack,
 )
+from dinkster_assets.declared import use_produced_output_job
 from dinkster_memory import (
     DEFAULT_ACCELERATOR_HEADROOM_BYTES,
     AcceleratorMemoryPolicy,
@@ -1375,6 +1376,7 @@ async def serve_connection(
         event_tasks: list[asyncio.Task[None]] = []
         event_window_open = True
         event_loop = asyncio.get_running_loop()
+        produced_context = contextlib.ExitStack()
 
         async def send_event(event: InvocationEvent) -> None:
             frame: dict[str, object] = {
@@ -1401,6 +1403,11 @@ async def serve_connection(
         try:
             consumed: list[str] = []
             invocation = decode_invocation(codec, header, blobs, consumed)
+            produced_context.enter_context(
+                use_produced_output_job(
+                    invocation.job_ref or invocation.invocation_id, invocation.attempt_id
+                )
+            )
             if consumed:
                 await send({"type": "shmAck", "segments": consumed})
             # Memory lease (DESIGN 3.10): the pack's planner names what this
@@ -1682,6 +1689,7 @@ async def serve_connection(
                     }
                 )
         finally:
+            produced_context.close()
             context = run_contexts.pop(invocation_id, None)
             if context is not None:
                 context.close()

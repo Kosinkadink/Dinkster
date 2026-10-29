@@ -46,6 +46,9 @@
   user's filesystem and network authority.
 - In-process packs and remote worker daemons are outside the local serving
   sandbox on every platform.
+- Boundary workers with configured pack scratch keep produced asset bytes
+  separate for each job attempt. Returning a result still requires verified
+  engine adoption before acknowledgement; this does not delete temporary files.
 - Worker conversations carry typed runtime-expansion results. Present
   values retain ordinary resource ownership, source adoption, saved-artifact
   validation and shared-memory/result acknowledgements. Carrying a fragment
