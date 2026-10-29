@@ -208,6 +208,36 @@ def test_compositor_nodes_and_runtime_types_are_registered() -> None:
     assert registry.spec(COMPOSITOR_TYPE).type_id == COMPOSITOR_TYPE
 
 
+@pytest.mark.parametrize("image_first", [False, True])
+def test_document_types_remain_distinct_from_core_editor_types(image_first: bool) -> None:
+    from dinkster_api.v1 import COMPOSITOR_TYPE as CORE_COMPOSITOR_TYPE
+    from dinkster_api.v1 import LAYERS_TYPE as CORE_LAYERS_TYPE
+    from dinkster_image_document.document import empty_document
+    from dinkster_inference_wire.types import register_inference_types
+    from dinkster_values import EncodedLatentTensor
+
+    registry = TypeRegistry()
+    registrations = (register_image_types, register_inference_types)
+    for register in registrations if image_first else reversed(registrations):
+        register(registry)
+
+    assert LAYERS_TYPE == "dinkster.layers" != CORE_LAYERS_TYPE
+    assert COMPOSITOR_TYPE == CORE_COMPOSITOR_TYPE == "COMPOSITOR"
+    document = empty_document(2, 3)
+    value = registry.wrap(LAYERS_TYPE, document)
+    assert registry.render(value, "document").data == document.data
+    assert registry.render(value).data.startswith(b"\x89PNG\r\n\x1a\n")
+    spec = registry.spec(CORE_LAYERS_TYPE)
+    layers = {
+        "foreground": EncodedLatentTensor(
+            "float32", (2, 3), np.arange(6, dtype=np.float32).tobytes()
+        )
+    }
+    assert spec.decode(spec.encode(layers)) == layers
+    assert registry.renditions_of(CORE_LAYERS_TYPE) == ()
+    assert registry.renditions_of(CORE_COMPOSITOR_TYPE) == ()
+
+
 def test_layer_stack_codec_round_trips_pixels_masks_placement_and_meta() -> None:
     image = np.arange(24, dtype=np.float32).reshape(2, 2, 2, 3) / 23
     mask = np.asarray([[[0.0, 1.0], [0.25, 0.75]]], dtype=np.float32)
