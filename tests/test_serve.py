@@ -73,7 +73,15 @@ def test_folded_engine_serves_catalog_jobs_and_sessions_without_supervisor(tmp_p
             "--package",
             "dinkster",
             "--package",
-            "dinkster-nodes-std",
+            "dinkster-nodes-foundation",
+            "--package",
+            "dinkster-nodes-media-io",
+            "--package",
+            "dinkster-nodes-image",
+            "--package",
+            "dinkster-nodes-remote",
+            "--package",
+            "dinkster-nodes-vision",
             "--package",
             "dinkster-nodes-comfy",
             "--no-install-package",
@@ -92,7 +100,8 @@ def test_folded_engine_serves_catalog_jobs_and_sessions_without_supervisor(tmp_p
             "assert u.find_spec('dinkster_collab') is not None; "
             "assert u.find_spec('dinkster_supervisor') is None; "
             "assert all(not any(d.metadata['Name'] == n for d in m.distributions()) for n in "
-            "('dinkster-collab', 'dinkster-supervisor'))",
+            "('dinkster-collab', 'dinkster-supervisor', 'dinkster-nodes-std', "
+            "'dinkster-nodes-dev'))",
         ],
         check=True,
     )
