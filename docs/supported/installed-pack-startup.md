@@ -133,3 +133,7 @@
   and atomically writes the existing stable/main channel format. It preserves
   publisher inputs and requires no network. Hosted channel publication and
   published-base selection are not provided by this local command.
+- Confirmed gc collects obsolete generation trees while retaining current and
+  the actual successful predecessor. Interrupted quarantine is restored; only
+  committed trash is deleted. Generation collection leaves shared-store and
+  project-library contents unchanged and refuses live obsolete engines.

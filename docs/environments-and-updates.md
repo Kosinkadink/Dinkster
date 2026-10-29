@@ -299,6 +299,15 @@ newer generation stays on disk until garbage collection, which keeps the
 active and previous generation of each project, and keeps every wheel and
 base in the store that any retained generation references.
 
+Generation collection uses the last successful activation journal to find the
+previous generation, not numeric order. A gc journal carries optional
+`collectedGenerations`, distinct positive obsolete numbers excluding current;
+`previous` and `target` both name current. Trees are durably quarantined under
+`.garbage/<journal timestamp>/<number>` before recording complete, then deleted.
+Incomplete collection restores quarantined trees before another confirmed
+operation; terminal cleanup is retryable. Live or ambiguous obsolete engine
+bindings refuse collection. Previously published generation numbers are not reused.
+
 Moving a project is `dinkster-env move <new-root>`. Within a volume it moves
 the root, rewrites the `home` line of every pack venv's `pyvenv.cfg`, and
 runs `doctor`. Across volumes it creates a store on the destination volume

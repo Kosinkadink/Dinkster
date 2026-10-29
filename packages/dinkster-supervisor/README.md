@@ -413,3 +413,14 @@ client exit before its binding record is updated. A dead supervisor with a
 `running` receipt does not prove its child exited and still refuses mutation.
 These private process receipts contain no shutdown token and do not replace
 generation metadata, dependency locks or operation journals.
+
+`gc [--plan | --yes] --json` collects obsolete generation trees, retaining current
+and its most recent successful journal predecessor rather than the largest two
+numbers. Live or ambiguous obsolete bindings refuse collection. The journal's
+optional `collectedGenerations` array names distinct positive obsolete numbers;
+`previous` and `target` both name current. Trees move durably into
+`.garbage/<journal timestamp>/<number>` before the journal becomes complete.
+Incomplete collection restores the trees; only complete collection trash is
+deleted, with cleanup retried by later confirmed operations. Previously successful
+generation numbers are never reused after collection. Project/library and shared
+store contents are unchanged by generation collection.

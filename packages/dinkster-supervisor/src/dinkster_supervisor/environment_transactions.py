@@ -30,6 +30,30 @@ from .environment_state import (
 from .environment_stores import restore_setup_registration
 
 
+def next_generation(root: Path) -> int:
+    """Never reuse the number of a successfully published tree after collection."""
+    numbers = [int(path.name) for path in (root / "generations").glob("*") if path.name.isdecimal()]
+    for path in (root / "journal").glob("*.json"):
+        journal = Journal.read(path)
+        if journal.stage == "complete":
+            numbers.append(journal.target)
+    return max(numbers, default=0) + 1
+
+
+def previous_activation(root: Path, current: int) -> Journal | None:
+    """Find the actual successful predecessor, ignoring collection and failed attempts."""
+    for path in sorted((root / "journal").glob("*.json"), reverse=True):
+        journal = Journal.read(path)
+        if (
+            journal.operation in {"update", "rollback", "repair"}
+            and journal.stage == "complete"
+            and journal.target == current
+            and journal.previous is not None
+        ):
+            return journal
+    return None
+
+
 def begin_setup(
     root: Path,
     target: int,

@@ -111,6 +111,18 @@ def write_document(path: Path, value: dict[str, object]) -> None:
     atomic_write(path, json.dumps(value, indent=2, sort_keys=True, ensure_ascii=True) + "\n")
 
 
+def durable_rename(source: Path, destination: Path) -> None:
+    """Publish a same-volume move and flush both affected directory entries."""
+    os.rename(source, destination)
+    if os.name != "nt":
+        for parent in {source.parent, destination.parent}:
+            directory = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+
+
 def durable_unlink(path: Path) -> None:
     """Flush removal even when retrying an interrupted, unsynced unlink."""
     path.unlink(missing_ok=True)
@@ -360,6 +372,7 @@ class Journal:
     bindings: tuple[dict[str, object], ...] = ()
     setup_registration: dict[str, object] | None = None
     project_settings: dict[str, str] | None = None
+    collected_generations: tuple[int, ...] = ()
 
     @classmethod
     def read(cls, path: Path) -> Journal:
@@ -429,6 +442,17 @@ class Journal:
         previous = value.get("previous")
         if previous == value.get("target") and operation in {"update", "rollback", "repair"}:
             raise EnvironmentError("activation journal must name distinct generations")
+        collected = value.get("collectedGenerations", [])
+        if not isinstance(collected, list):
+            raise EnvironmentError("collectedGenerations must be an array")
+        numbers = tuple(generation_number(number) for number in cast("list[object]", collected))
+        if numbers and (
+            operation != "gc"
+            or previous != value.get("target")
+            or previous in numbers
+            or len(set(numbers)) != len(numbers)
+        ):
+            raise EnvironmentError("collection must name distinct non-current generations")
         settings = value.get("projectSettings")
         if settings is not None:
             if operation not in {"update", "rollback"} or not isinstance(settings, dict):
@@ -474,6 +498,7 @@ class Journal:
             tuple(checked),
             registration,
             cast("dict[str, str] | None", settings),
+            numbers,
         )
 
     @property
@@ -496,4 +521,6 @@ class Journal:
             value["setupRegistration"] = self.setup_registration
         if self.project_settings is not None:
             value["projectSettings"] = self.project_settings
+        if self.collected_generations:
+            value["collectedGenerations"] = list(self.collected_generations)
         write_document(path, value)

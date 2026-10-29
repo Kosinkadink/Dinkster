@@ -11,6 +11,12 @@ from pathlib import Path
 from typing import cast
 
 from .environment_artifacts import acquire, acquire_sources, discover
+from .environment_collection import (
+    cleanup_collection,
+    collect_generations,
+    collection_plan,
+    recover_collection,
+)
 from .environment_generations import build_generation, pack_operation, project_operation
 from .environment_runtime import (
     engine_assignments,
@@ -32,7 +38,14 @@ from .environment_state import (
     writer_lock,
 )
 from .environment_stores import register_project, registry_path, select_store, setup_registration
-from .environment_transactions import activate, begin_activation, begin_setup, recover_activation
+from .environment_transactions import (
+    activate,
+    begin_activation,
+    begin_setup,
+    next_generation,
+    previous_activation,
+    recover_activation,
+)
 
 
 def _settings(root: Path) -> dict[str, object] | None:
@@ -119,7 +132,9 @@ def _confirmed(args: argparse.Namespace, plan: list[str]) -> bool:
 def _recover_pending(root: Path, *, locked_store: Path | None = None) -> None:
     for path in sorted((root / "journal").glob("*.json")):
         journal = Journal.read(path)
-        if not journal.incomplete:
+        if not journal.incomplete and not (
+            journal.operation == "gc" and journal.stage == "complete"
+        ):
             continue
         with ExitStack() as locks:
             if journal.setup_registration is not None:
@@ -132,7 +147,13 @@ def _recover_pending(root: Path, *, locked_store: Path | None = None) -> None:
                     raise EnvironmentError("pending setup uses another store; retry recovery")
             if locked_store is None:
                 locks.enter_context(writer_lock(root))
-            recover_activation(root, path)
+            if journal.operation == "gc":
+                if journal.incomplete:
+                    recover_collection(root, path)
+                else:
+                    cleanup_collection(root, path)
+            else:
+                recover_activation(root, path)
 
 
 def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
@@ -292,17 +313,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         with writer_lock(store), writer_lock(root):
             _recover_pending(root, locked_store=store)
             revalidate()
-            target = (
-                max(
-                    (
-                        int(path.name)
-                        for path in (root / "generations").glob("*")
-                        if path.name.isdecimal()
-                    ),
-                    default=0,
-                )
-                + 1
-            )
+            target = next_generation(root)
             journal = (
                 begin_setup(
                     root,
@@ -465,17 +476,7 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
         return 0
     with writer_lock(store), writer_lock(root):
         revalidate()
-        target = (
-            max(
-                (
-                    int(path.name)
-                    for path in (root / "generations").iterdir()
-                    if path.name.isdecimal()
-                ),
-                default=0,
-            )
-            + 1
-        )
+        target = next_generation(root)
         journal = begin_activation(root, target, "repair")
         try:
             replace(Journal.read(journal), stage="building").write(journal)
@@ -522,22 +523,18 @@ def _rollback(args: argparse.Namespace, result: dict[str, object]) -> int:
     if current is None or settings is None:
         raise EnvironmentError("project has no active generation")
     snapshot = (root / "project.json").read_bytes()
-    target = None
+    journal = previous_activation(root, current)
+    target = journal.previous if journal is not None else None
     project_settings = None
-    for path in sorted((root / "journal").glob("*.json"), reverse=True):
-        journal = Journal.read(path)
-        if journal.stage == "complete" and journal.target == current and journal.previous:
-            target = journal.previous
-            if journal.project_settings is not None:
-                if snapshot.decode("utf-8") != journal.project_settings["target"]:
-                    raise EnvironmentError(
-                        "project settings changed since selection; cannot restore prior settings"
-                    )
-                project_settings = {
-                    "previous": journal.project_settings["target"],
-                    "target": journal.project_settings["previous"],
-                }
-            break
+    if journal is not None and journal.project_settings is not None:
+        if snapshot.decode("utf-8") != journal.project_settings["target"]:
+            raise EnvironmentError(
+                "project settings changed since selection; cannot restore prior settings"
+            )
+        project_settings = {
+            "previous": journal.project_settings["target"],
+            "target": journal.project_settings["previous"],
+        }
     if target is None:
         raise EnvironmentError("project has no previous successful generation")
     plan = [f"reactivate retained generation {target} without rebuilding generation {current}"]
@@ -555,6 +552,27 @@ def _rollback(args: argparse.Namespace, result: dict[str, object]) -> int:
         path = begin_activation(root, target, "rollback", project_settings=project_settings)
         activate(root, path, revalidate=revalidate)
         result.update(current=target, status="applied", engines=list(engine_status(root)))
+    return 0
+
+
+def _gc(args: argparse.Namespace, result: dict[str, object]) -> int:
+    root = Path(args.root)
+    if args.yes:
+        _recover_pending(root)
+    approved = collection_plan(root)
+    current, retained, collected = approved
+    plan = [
+        f"retain generations {', '.join(map(str, retained))}",
+        f"collect obsolete generations {', '.join(map(str, collected)) or 'none'}",
+        "quarantine before committing deletion; preserve the shared store and project library",
+    ]
+    result.update(current=current, plan=plan, status="planned")
+    if not _confirmed(args, plan):
+        return 0
+    _recover_pending(root)
+    with writer_lock(root):
+        collect_generations(root, approved)
+    result.update(status="applied", collectedGenerations=list(collected))
     return 0
 
 
@@ -644,13 +662,14 @@ def main() -> None:
     start.add_argument("--gpu", action="append", default=[])
     stop = commands.add_parser("stop", help="stop one identity-checked supervisor and engine")
     rollback = commands.add_parser("rollback", help="reactivate the previous successful generation")
+    gc = commands.add_parser("gc", help="collect obsolete generation trees after confirmation")
     for command in (start, stop):
         command.add_argument("--engine", default="main")
-    for command in (doctor, setup, update, start, stop, rollback):
+    for command in (doctor, setup, update, start, stop, rollback, gc):
         confirmation = command.add_mutually_exclusive_group()
         confirmation.add_argument("--yes", action="store_true", help="apply the printed plan")
         confirmation.add_argument("--plan", action="store_true", help="inspect without mutation")
-    for command in (catalog, status, doctor, setup, update, start, stop, rollback):
+    for command in (catalog, status, doctor, setup, update, start, stop, rollback, gc):
         command.add_argument("--json", action="store_true", help="emit exactly one result object")
     args = parser.parse_args()
     if not args.root.is_absolute():
@@ -670,6 +689,8 @@ def main() -> None:
             code = _install(args, result)
         elif args.operation == "rollback":
             code = _rollback(args, result)
+        elif args.operation == "gc":
+            code = _gc(args, result)
         elif args.operation in {"start", "stop"}:
             code = _runtime(args, result)
         else:
