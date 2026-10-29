@@ -12,10 +12,8 @@ from dinkster_api.v1 import (
     BLEND_MODES,
     BOUNDING_BOX_TYPE,
     COMFY_ARRAY_TYPE,
-    COMPOSITOR_TYPE,
     CORE_STRING,
     DETECTION_TYPE,
-    LAYERS_TYPE,
     REGION_TYPE,
     CompositorWidget,
     ImageDocument,
@@ -35,6 +33,7 @@ from dinkster_api.v1 import (
     report_preview,
 )
 
+from .compositor_types import COMPOSITOR_TYPE, LAYERS_TYPE
 from .geometry import BOOLEAN, FLOAT, IMAGE, INT, MASK
 from .layer_document import migrate_layers
 from .support import combo_input, image_array, mask_array

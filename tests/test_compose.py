@@ -67,6 +67,45 @@ DEV_PACK_MANIFEST = TESTS_DIR.parent / "packages" / "dinkster-nodes-dev" / "dink
 ATTENTION_PROVIDER = TESTS_DIR / "fixtures/attention_provider"
 WORKER_ENV = {"PYTHONPATH": os.pathsep.join((str(ATTENTION_PROVIDER), str(TESTS_DIR)))}
 DEFAULT_NODES = [*FOUNDATION_NODES, *MEDIA_IO_NODES, *IMAGE_NODES]
+
+
+def test_image_pack_starts_with_canonical_inference_types() -> None:
+    async def scenario() -> None:
+        image = replace(default_pack_spec("dinkster-nodes-image"), require_catalog=True)
+        assert prepare_catalog(image.manifest, environment=os.environ).ok
+        composer = ServingComposer()
+        try:
+            specs = tuple(
+                image if load_manifest(spec.manifest).name == "dinkster-nodes-image" else spec
+                for spec in default_pack_specs()
+            )
+            for spec in composer.order_pack_entries(specs):
+                await composer.add_pack(spec)
+            result = await composer.composition.make_engine(lambda event: None).run(
+                Graph(
+                    nodes={
+                        "region": GraphNode(
+                            "dinkster.region.make",
+                            {"x": 2.0, "y": 3.0, "width": 4.0, "height": 5.0},
+                        )
+                    }
+                ),
+                ["region"],
+            )
+            assert result.executed == ("region",)
+            assert result.outputs["region"]["region"].meta.entries == {
+                "x": 2.0,
+                "y": 3.0,
+                "width": 4.0,
+                "height": 5.0,
+            }
+            assert result.diagnostics == ()
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
 STANDARD_OWNER_PACKS = {
     "dinkster-nodes-foundation",
     "dinkster-nodes-image",
@@ -1060,15 +1099,15 @@ def test_compose_serving_default_resolution_is_atomic(
         ),
         (
             "dinkster-nodes-media-io",
-            "blake3:fbf67f7575979f4b6a0c3b4fe4d1662386ca8da8173b59fa26a12294d799b779",
+            "blake3:7f74a1f97a0966e23abe9c2f6e5eeb13c75084d7202674293a962cea41c33558",
         ),
         (
             "dinkster-nodes-image",
-            "blake3:e178af6017ac875f04dc785fe3369bd9d1b4a720d845aa0775fc706f35cbbc20",
+            "blake3:6131ff4a30b6d6fd95aeadb615965c18b453181c1511f732b1d86d4ec746c7ee",
         ),
         (
             "dinkster-nodes-remote",
-            "blake3:08eff2916a87c45c57174a474ad096ba609e54c24258a453875b97324825b9fa",
+            "blake3:3059cb21c012775a4e16e21a2a8dde55bc2853b50f8426781bf78e1afd8d89ea",
         ),
     ],
 )

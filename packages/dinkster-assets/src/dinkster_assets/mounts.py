@@ -944,6 +944,45 @@ class MountTable:
                 self.write_snapshot()
         return ref
 
+    def ref_path(self, path: Path, mount_ids: Sequence[str]) -> AssetRef | None:
+        """Bind exactly one local file under the selected live mount grants."""
+        with self._lock:
+            rows = [self._rows[mount_id] for mount_id in mount_ids if mount_id in self._rows]
+        for row in rows:
+            library = row.library
+            if library is None or row.state != "ready":
+                continue
+            try:
+                root = row.mount.path.resolve(strict=True)
+                lexical_root = row.mount.path.absolute()
+                if path.is_relative_to(lexical_root):
+                    relative = path.relative_to(lexical_root).as_posix()
+                elif path.is_relative_to(root):
+                    relative = path.relative_to(root).as_posix()
+                else:
+                    continue
+                selected = path.resolve(strict=True)
+                if not selected.is_relative_to(root):
+                    return None
+            except (OSError, RuntimeError):
+                continue
+            ref = library.index_file(relative)
+            if ref is None:
+                return None
+            with self._lock:
+                if self._rows.get(row.mount.id) is not row:
+                    return None
+                row.entry_count = len(library.entries())
+                row.missing_entry_count = len(library.missing_entries())
+            try:
+                if path.resolve(strict=True) != selected or not ref.local_path().samefile(selected):
+                    return None
+            except (AssetError, OSError, RuntimeError):
+                return None
+            self.write_snapshot()
+            return replace(ref, resolver=self)
+        return None
+
     def write_snapshot(self) -> None:
         """Publish each indexed mount's root and current index path.
 
