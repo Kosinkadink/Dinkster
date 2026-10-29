@@ -2884,7 +2884,16 @@ def test_serve_plain_dev_pack_is_announced(tmp_path: Path, pack_path: str) -> No
     port = free_port()
     pack = Path(__file__).resolve().parent.parent / pack_path
     process, log = start_logged_serve(
-        serve_command(port, "--no-default-packs", "--pack", str(pack)), tmp_path
+        serve_with_library_command(
+            port,
+            tmp_path / "library",
+            "--no-default-packs",
+            "--pack",
+            str(pack),
+            "--engine-variant",
+            "linux-cpu",
+        ),
+        tmp_path,
     )
     pending_error: BaseException | None = None
     try:
@@ -2892,6 +2901,22 @@ def test_serve_plain_dev_pack_is_announced(tmp_path: Path, pack_path: str) -> No
         packs = report["packs"]
         assert isinstance(packs, dict)
         assert packs["dinkster-nodes-dev"]["state"] == "announced"
+
+        async def plan() -> None:
+            workflow = {
+                "format": "dinkster-workflow",
+                "formatVersion": 1,
+                "graphs": {"root": {"nodes": {}}},
+            }
+            async with aiohttp.ClientSession() as client:
+                async with client.post(
+                    f"http://127.0.0.1:{port}/api/workflows/plan",
+                    json={"workflows": [workflow]},
+                ) as response:
+                    assert response.status == 200, await response.text()
+                    assert await response.json() == {"packs": [], "assets": [], "errors": []}
+
+        asyncio.run(plan())
     except BaseException as error:
         pending_error = error
         raise
