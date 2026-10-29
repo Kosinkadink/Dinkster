@@ -86,6 +86,7 @@
 - Image compositing with placement, mask, common blend modes, Porter-Duff
   operations, explicit alpha polarity, and configurable batch reconciliation
 - Graph-native image composition with ordered `dinkster.layers` values, native
+  ImageDocument storage distinct from structural tensor `LAYERS`, and
   placement from image batches or regions/detections, digest-bound compositor
   edit commands, 26 blend modes plus dissolve, perceptual or linear-light
   rendering, per-layer previews, flatten/split, structural editing nodes, and
