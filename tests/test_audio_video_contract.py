@@ -23,7 +23,7 @@ from dinkster_assets import (
 )
 from dinkster_assets.audio import bind_audio_value, register_audio_value_type
 from dinkster_assets.value import bind_video_value
-from dinkster_compat_comfy.video import _VideoValue
+from dinkster_native.video import _VideoValue
 from dinkster_nodes_media_io.video_ops import DisassembleVideo
 from dinkster_protocol import Invocation
 from dinkster_values import (

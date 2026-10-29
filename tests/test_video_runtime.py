@@ -598,7 +598,7 @@ def test_alpha_encoding_cannot_silently_reduce_ten_bit_components() -> None:
 
 
 def test_compat_path_save_publishes_atomically(tmp_path: Path) -> None:
-    from dinkster_compat_comfy.video import _VideoValue
+    from dinkster_native.video import _VideoValue
 
     source = _source()
     value = _VideoValue(video_from_source(source))
@@ -1031,7 +1031,7 @@ def test_compat_trim_getter_overrides_pinned_file_getter(monkeypatch: pytest.Mon
     import sys
     from types import ModuleType
 
-    from dinkster_compat_comfy.video import _upstream_video
+    from dinkster_native.video import _upstream_video
 
     class VideoFromFile:
         __start_time: float
@@ -1135,7 +1135,7 @@ def test_nested_large_sources_publish_without_reprobe(
 def test_compat_migrates_large_legacy_sources_without_encoding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from dinkster_compat_comfy.video import _VideoValue
+    from dinkster_native.video import _VideoValue
 
     data = _source() + struct.pack(">I4s", 300_008, b"free") + bytes(300_000)
     monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(tmp_path / "vault"))
