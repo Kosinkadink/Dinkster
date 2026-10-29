@@ -26,8 +26,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     env:
-      OMP_NUM_THREADS: "4"
-      MKL_NUM_THREADS: "4"
       ATEN_CPU_CAPABILITY: avx2
       ONEDNN_MAX_CPU_ISA: AVX2
     steps:
@@ -73,7 +71,7 @@ jobs:
           .venv-torch/bin/python - <<'PY'
           import sys
           import torch
-          from dinkster_nodes_comfy.void_sampler import VOIDSampler
+          import pytest
 
           def trace(frame, event, arg):
               if frame.f_code.co_name == 'sample' and frame.f_code.co_filename.endswith('void_sampler.py'):
@@ -83,17 +81,16 @@ jobs:
                             if k in ('index', 'sigma', 'alpha_t', 'alpha_prev', 'pred_eps', 'x', 'denoised')})
                   return trace
 
-          sampler = VOIDSampler.execute()['SAMPLER']
+          print('threads', torch.get_num_threads(), torch.get_num_interop_threads())
+          print(open('/proc/cpuinfo').read().split('model name')[1].splitlines()[0])
           for dtype in (torch.float32, torch.float64):
               sigmas = torch.tensor([2., 1., .25, 0.], dtype=dtype)
               alpha = 1. / (1. + sigmas**2)
-              print(dtype, alpha.tolist(), [(a**.5).item() for a in alpha])
-              sys.settrace(trace)
-              result = sampler.sample(lambda x, sigma, **kw: x*.25 + sigma.reshape(-1, 1, 1, 1)*.125,
-                                      sigmas, {}, None, torch.tensor([[[[2., -3.]]]], dtype=torch.float64),
-                                      disable_pbar=True)
-              sys.settrace(None)
-              print('result', result.tolist())
+              print(dtype, alpha.tolist(), [(a**.5).item() for a in alpha],
+                    [((1.-a)**.5).item() for a in alpha])
+          sys.settrace(trace)
+          raise SystemExit(pytest.main(['-q', '-s', 'packages/dinkster-nodes-comfy/tests',
+                                       '-p', 'tools.pytest_file_shard', '--file-shard', '3/4']))
           PY
       - name: Test public CPU sampler and attention contracts
         if: runner.os == 'Linux'
