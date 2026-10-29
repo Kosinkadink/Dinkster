@@ -66,6 +66,8 @@ def copy_tree(
     for first, second, directory in links:
         os.symlink(os.readlink(first), second, target_is_directory=directory)
         shutil.copystat(first, second, follow_symlinks=False)
+    for parent in {first.parent for first, _, _ in links}:
+        shutil.copystat(parent, target / parent.relative_to(source))
 
 
 def _files(root: Path, journal: str = "") -> dict[str, str]:
