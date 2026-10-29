@@ -24,6 +24,7 @@ from dinkster_api.v1 import (
     Node,
     NodeSchema,
     TypeExpr,
+    attach_saved_artifact,
     initialize_inference_process,
 )
 
@@ -146,10 +147,11 @@ class ImageOnlyCheckpointSave(Node):
                 # Safetensors can replace the path, so open the completed file, not its predecessor.
                 return streams.enter_context(open(output_path, "rb"))
 
-            writer.save_encoded(
+            ref = writer.save_encoded(
                 target,
                 encode,
                 suffix="_.safetensors",
                 limit=sys.maxsize,
             )
+            attach_saved_artifact(ref.to_wire())
         return cls.outputs()

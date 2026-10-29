@@ -25,6 +25,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
+    attach_saved_artifact,
     initialize_inference_process,
 )
 
@@ -149,11 +150,12 @@ class SaveConditioning(Node):
         if not snapshot:
             raise AssetError("saving requires DINKSTER_MOUNTS_SNAPSHOT")
         writer = AssetWriter(MountSnapshotWriter(snapshot))
-        writer.save_bytes(
+        ref = writer.save_bytes(
             writer.output_target(filename_prefix, mount=mount),
             data,
             suffix="_.safetensors",
         )
+        attach_saved_artifact(ref.to_wire())
         return cls.outputs(conditioning=conditioning)
 
 

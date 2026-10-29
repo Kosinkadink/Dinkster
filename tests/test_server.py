@@ -6810,7 +6810,10 @@ def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
         return Engine(
             schemas=schemas,
             registry=registry,
-            worker=InProcessWorker(build_node_types(nodes), registry),
+            worker=InProcessWorker(
+                build_node_types(nodes),
+                registry,
+            ),
             cache=MemoryLRUCache(),
             on_event=on_event,
         )

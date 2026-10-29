@@ -3773,19 +3773,29 @@ def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
                         pass
                     await asyncio.sleep(0.05)
             async with session.get(base + "/api/mounts") as resp:
-                (imports,) = (await resp.json())["mounts"]
+                listing = await resp.json()
+                rows = {row["id"]: row for row in listing["mounts"]}
+                assert set(rows) == {"imports", "output"}
+                assert listing["outputMount"] == "output"
+                output = rows["output"]
+                assert output["path"] == str(library_root / "output")
+                assert output["mode"] == "readwrite"
+                imports = rows["imports"]
                 assert imports["id"] == "imports"
                 assert imports["path"] == str(library_root / "imports")
                 assert imports["mode"] == "readwrite"
             async with session.get(base + "/api/mounts", params={"project": "film"}) as resp:
-                (project_imports,) = (await resp.json())["mounts"]
-                assert project_imports["id"] == "imports"
+                listing = await resp.json()
+                assert {row["id"] for row in listing["mounts"]} == {"imports", "output"}
+                assert listing["outputMount"] is None
             assert (library_root / "imports").is_dir()
+            assert (library_root / "output").is_dir()
             async with asyncio.timeout(60):
                 while imports["state"] != "ready":
                     await asyncio.sleep(0.05)
                     async with session.get(base + "/api/mounts") as resp:
-                        (imports,) = (await resp.json())["mounts"]
+                        rows = {row["id"]: row for row in (await resp.json())["mounts"]}
+                        imports = rows["imports"]
             from io import BytesIO
 
             from PIL import Image
@@ -3846,7 +3856,7 @@ def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
                 while True:
                     async with session.get(base + "/api/mounts") as resp:
                         rows = {row["id"]: row for row in (await resp.json())["mounts"]}
-                        assert set(rows) == {"imports", "shots"}
+                        assert set(rows) == {"imports", "output", "shots"}
                         row = rows["shots"]
                     if row["state"] == "ready":
                         break
@@ -3862,8 +3872,7 @@ def test_serve_runtime_mounts_end_to_end(tmp_path: Path) -> None:
             async with session.delete(base + "/api/mounts/shots") as resp:
                 assert resp.status == 200
             async with session.get(base + "/api/mounts") as resp:
-                (imports,) = (await resp.json())["mounts"]
-                assert imports["id"] == "imports"
+                assert {row["id"] for row in (await resp.json())["mounts"]} == {"imports", "output"}
             async with session.get(base + "/api/assets/" + entry["digest"]) as resp:
                 assert resp.status == 404
             async with session.get(
@@ -4034,7 +4043,7 @@ serve.main()
                 while True:
                     async with session.get(base + "/api/mounts") as resp:
                         rows = {row["id"]: row for row in (await resp.json())["mounts"]}
-                        assert set(rows) == {"imports", "renders"}
+                        assert set(rows) == {"imports", "output", "renders"}
                         row = rows["renders"]
                     if row["state"] == "ready":
                         break

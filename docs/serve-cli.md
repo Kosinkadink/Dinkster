@@ -712,6 +712,8 @@ Persistence root. When set, the following live under it:
 | `vault/` | Content-addressed uploaded bytes |
 | `imports/` | Visible import folder initialized by setup or serving with mount changes enabled |
 | `.imports-initialized` | Records one-time imports initialization so removed grants stay removed |
+| `output/` | Default writable output folder initialized by setup or serving with mount changes enabled, unless an output is already configured |
+| `.output-initialized` | Records one-time output initialization so removed grants stay removed |
 | `library.sqlite` | Scoped library records |
 | `history.sqlite` | Persistent execution history |
 | `provenance.json` | Acquisition leads |
@@ -906,8 +908,16 @@ never echo the host path. Only an explicit refusal permits the client to fall
 back to uploading bytes. Older location responses without the capability
 advertisement mean unsupported; a missing route after advertisement, malformed
 response or server error is not an ordinary refusal.
-The location response includes `vault` when a library is configured. Optional
-`digest`, `scope` and `project` query fields add `locations` for that cataloged
+The location response includes `vault` when a library is configured.
+`importMount` identifies the active default target used when a named upload
+omits `mount`; use its `activeMounts` row for the real directory and state.
+It is independent of the selected output folder and may have any mount ID.
+It is null when the host has no named-folder writer/project configuration.
+A revoked default remains identified but has no active row; it is not replaced
+by another destination. An absent field on older hosts means unknown, not an
+implicit `imports` mount. Project membership and live write authority still
+govern the upload; a location response does not grant access.
+Optional `digest`, `scope` and `project` query fields add `locations` for that cataloged
 identity in the selected scope and project; this also requires `assets:read`.
 Only verified vault copies and observed files in live project folders are
 returned, with their actual `path` and `storage` type. Missing, changed,

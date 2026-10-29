@@ -6,9 +6,9 @@ rescale classifier-free guidance; select compute dtype; and select a supported
 dense attention backend. They use the pinned `dinkster_inference` sampler and
 model patcher.
 
-`ModelAttentionBackend` offers PyTorch attention without loading the tensor
-runtime during schema discovery. Kitchen attention remains available through
-runtime attention policies and capability selection, with their existing fallback.
+`ModelAttentionBackend` offers PyTorch and Comfy Kitchen INT8 attention without
+loading the tensor runtime during schema discovery. Selecting Kitchen attention
+uses its kernel when available and falls back to PyTorch attention otherwise.
 
 `ChromaRadianceOptions` applies Chroma Radiance transformer options over an
 inclusive sigma range while optionally retaining an existing model wrapper.
@@ -22,7 +22,8 @@ or median blending while preserving the image edges.
 `SelectModelDevice`, `SelectCLIPDevice`, and `SelectVAEDevice` route their
 resident values to the selected default, CPU, or portable `gpu:N` device where
 supported. Unavailable devices leave the value unchanged; VAE routing does not
-offer CPU.
+offer CPU. Device choices are fetched from the owning inference worker and include
+`gpu:N` for every visible device when more than one device is available there.
 
 `HypernetworkLoader` loads a bound hypernetwork asset and applies its key/value
 networks to self- and cross-attention on a cloned model, with adjustable strength.
