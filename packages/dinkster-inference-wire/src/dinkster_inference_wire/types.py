@@ -55,6 +55,7 @@ from dinkster_values import (
     encode_latent,
     latent_fingerprint,
     register_resident_type,
+    register_splat_type,
     register_video_edit_type,
     validate_latent_encoded,
 )
@@ -76,6 +77,7 @@ from .media_wire import (
 from .pose_keypoint import register_pose_keypoint_type
 from .sam3_wire import register_sam3_track_type
 from .sampling_wire import register_sampling_type
+from .splat_wire import materialize_splat
 from .vision_wire import (
     clip_vision_output_fingerprint,
     decode_clip_vision_output,
@@ -222,6 +224,7 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
             registry.spec(type_id) if type_id in registry else register_wan_type(registry, type_id)
         )
     registered.extend(register_media_types(registry))
+    registered.append(register_splat_type(registry))
     registered.append(register_voxel_type(registry))
     register_video_edit_type(registry)
     registered.append(registry.spec(VIDEO_EDIT_TYPE))
@@ -241,6 +244,7 @@ __all__ = [
     "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
+    "materialize_splat",
     "materialize_voxel",
     "register_inference_types",
 ]
