@@ -12,11 +12,12 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from .limits import ENVIRONMENT_METADATA_LIMIT_BYTES, ENVIRONMENT_STREAM_CHUNK_BYTES
+
 __all__ = ["DownloadError", "fetch_artifact", "read_metadata"]
 
 _DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 _CONTENT_RANGE_PATTERN = re.compile(r"bytes (\d+)-(\d+)/(\d+)\Z")
-_CHUNK_SIZE = 1024 * 1024
 _USER_AGENT = "dinkster-env"
 
 
@@ -41,7 +42,7 @@ class _SafeRedirects(HTTPRedirectHandler):
 def read_metadata(mirror: str, relative_path: str) -> bytes:
     """Read a bounded channel or manifest without creating a local project/cache."""
     _validate_path(relative_path)
-    maximum = 8 * 1024 * 1024
+    maximum = ENVIRONMENT_METADATA_LIMIT_BYTES
     parsed = urlparse(mirror)
     if parsed.scheme and not Path(mirror).is_absolute():
         _validate_remote_url(mirror)
@@ -195,12 +196,12 @@ def _append_stream(stream: BinaryIO, partial: Path, offset: int, size: int) -> s
     digest = hashlib.sha256()
     if offset:
         with partial.open("rb") as prefix:
-            while chunk := prefix.read(_CHUNK_SIZE):
+            while chunk := prefix.read(ENVIRONMENT_STREAM_CHUNK_BYTES):
                 digest.update(chunk)
     mode = "ab" if offset else "wb"
     received = offset
     with partial.open(mode) as output:
-        while chunk := stream.read(_CHUNK_SIZE):
+        while chunk := stream.read(ENVIRONMENT_STREAM_CHUNK_BYTES):
             received += len(chunk)
             if received > size:
                 raise ValueError("response exceeds expected size")
@@ -220,7 +221,7 @@ def _matches(path: Path, sha256: str, size: int) -> bool:
         return False
     digest = hashlib.sha256()
     with path.open("rb") as source:
-        while chunk := source.read(_CHUNK_SIZE):
+        while chunk := source.read(ENVIRONMENT_STREAM_CHUNK_BYTES):
             digest.update(chunk)
     return digest.hexdigest() == sha256
 

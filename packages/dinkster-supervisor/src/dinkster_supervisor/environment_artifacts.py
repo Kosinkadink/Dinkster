@@ -31,6 +31,7 @@ from .environment_state import (
     digest,
     relative_file,
 )
+from .limits import ENVIRONMENT_STREAM_CHUNK_BYTES
 
 _BASE_IDENTITY = (
     "format",
@@ -404,7 +405,7 @@ def acquire_sources(
         if name.endswith(".zip"):
             identity = blake3()
             with downloaded.open("rb") as source:
-                for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                for chunk in iter(lambda: source.read(ENVIRONMENT_STREAM_CHUNK_BYTES), b""):
                     identity.update(chunk)
             cached = artifacts / f"{identity.hexdigest()}.zip"
             if download:

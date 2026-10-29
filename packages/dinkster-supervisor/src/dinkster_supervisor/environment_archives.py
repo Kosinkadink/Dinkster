@@ -17,9 +17,10 @@ from typing import BinaryIO, cast
 
 import zstandard
 
+from .limits import ENVIRONMENT_STREAM_CHUNK_BYTES
+
 __all__ = ["ArchiveError", "extract_base"]
 
-_CHUNK_SIZE = 1024 * 1024
 _ALLOWED_TREES = frozenset({"python", "wheels"})
 _WINDOWS_DEVICES = {"con", "prn", "aux", "nul"} | {
     f"{prefix}{number}" for prefix in ("com", "lpt") for number in range(1, 10)
@@ -127,7 +128,7 @@ def extract_base(
                 source = stack.enter_context(part.open("rb"))
                 sha = hashlib.sha256()
                 size = 0
-                while block := source.read(_CHUNK_SIZE):
+                while block := source.read(ENVIRONMENT_STREAM_CHUNK_BYTES):
                     sha.update(block)
                     size += len(block)
                 if size != row.get("size") or sha.hexdigest() != row.get("sha256"):
@@ -187,7 +188,7 @@ def extract_base(
                         modes.append((staging / path, member.mode & 0o755))
                     end = member.offset_data + ((member.size + 511) // 512) * 512
                 # Consume the zstd footer as well as the tar end markers.
-                while tracked.read(_CHUNK_SIZE):
+                while tracked.read(ENVIRONMENT_STREAM_CHUNK_BYTES):
                     pass
                 padding = tracked.size - end
                 if padding < 1024 or tracked.size % 512 or tracked.zero_tail < padding:
