@@ -61,7 +61,11 @@ def copy_tree(
             shutil.copystat(first, second, follow_symlinks=False)
         elif first.is_dir():
             copy_tree(
-                first, second, dirs_exist_ok=dirs_exist_ok, ignore=ignore, copy_function=copy_function
+                first,
+                second,
+                dirs_exist_ok=dirs_exist_ok,
+                ignore=ignore,
+                copy_function=copy_function,
             )
         else:
             copy_function(str(first), str(second))
