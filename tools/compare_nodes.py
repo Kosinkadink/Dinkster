@@ -106,6 +106,9 @@ def _reference_inputs(groups: dict[str, Any], list_inputs: bool = False) -> list
                 entry["type"] = "inputFamily"
                 entry["template"] = _reference_inputs(template["input"], list_inputs)
                 entry["min"] = template.get("min", 1)
+                if entry["min"] == 0:
+                    for member in entry["template"]:
+                        member["group"] = "optional"
                 if "names" in template:
                     entry["names"] = template["names"]
                 else:

@@ -373,7 +373,7 @@ class EndLoop(Node):
             input_families=(
                 InputFamilySpec(
                     "terminations",
-                    (InputSpec("termination", ANY),),
+                    (InputSpec("termination", ANY, required=False),),
                     max_members=50,
                     member_prefix="termination",
                     required=False,
