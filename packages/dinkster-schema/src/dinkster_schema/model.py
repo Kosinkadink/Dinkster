@@ -33,6 +33,7 @@ from typing import Literal, cast
 from dinkster_values import (
     ASSET_TYPE,
     COLOR_TYPE,
+    COMPOSITOR_RECIPE_TYPE,
     COMPOSITOR_TYPE,
     CORE_BOOLEAN,
     CORE_COMBO,
@@ -1172,9 +1173,13 @@ def _validate_widget_binding(
         )
     if isinstance(widget, CurveWidget) and input_type != TypeExpr.concrete(CURVE_TYPE):
         raise ValueError(f"input {input_id}: curve widget requires a concrete {CURVE_TYPE} input")
-    if isinstance(widget, CompositorWidget) and input_type != TypeExpr.concrete(COMPOSITOR_TYPE):
+    if isinstance(widget, CompositorWidget) and input_type not in (
+        TypeExpr.concrete(COMPOSITOR_TYPE),
+        TypeExpr.concrete(COMPOSITOR_RECIPE_TYPE),
+    ):
         raise ValueError(
-            f"input {input_id}: compositor widget requires a concrete {COMPOSITOR_TYPE} input"
+            f"input {input_id}: compositor widget requires a concrete {COMPOSITOR_TYPE} "
+            f"or {COMPOSITOR_RECIPE_TYPE} input"
         )
     if isinstance(widget, BooleanWidget) and primitive_type != TypeExpr.concrete(CORE_BOOLEAN):
         raise ValueError(f"input {input_id}: boolean widget requires a concrete BOOLEAN input")
