@@ -1,14 +1,14 @@
 [project]
 name = "dinkster-nodes-std"
-version = "0.0.1"
+version = "0.0.2"
 description = "Dinkster standard first-party node pack suite"
 requires-python = ">=3.12"
 dependencies = [
-    "dinkster-nodes-foundation==0.0.1",
-    "dinkster-nodes-media-io==0.0.1",
-    "dinkster-nodes-image==0.0.1",
-    "dinkster-nodes-remote==0.0.1",
-    "dinkster-nodes-vision==0.0.1",
+    "dinkster-nodes-foundation==0.0.2",
+    "dinkster-nodes-media-io==0.0.2",
+    "dinkster-nodes-image==0.0.2",
+    "dinkster-nodes-remote==0.0.2",
+    "dinkster-nodes-vision==0.0.2",
 ]
 
 [build-system]

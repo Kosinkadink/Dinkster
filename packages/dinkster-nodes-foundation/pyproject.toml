@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-nodes-foundation"
-version = "0.0.1"
+version = "0.0.2"
 description = "Dinkster first-party logic, math, text, list, and utility node pack"
 requires-python = ">=3.12"
 dependencies = ["dinkster-api"]
