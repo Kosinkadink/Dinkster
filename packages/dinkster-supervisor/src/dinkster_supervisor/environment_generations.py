@@ -56,7 +56,7 @@ def pack_operation(
     uv: str = "uv",
 ) -> dict[str, object]:
     """Invoke the generation-owned provisioner without importing engine packages."""
-    if operation not in {"preflight", "rebuild", "doctor"}:
+    if operation not in {"preflight", "rebuild", "doctor", "references"}:
         raise EnvironmentError(f"unsupported pack lifecycle operation: {operation}")
     command = [
         str(interpreter(generation)),
@@ -108,7 +108,7 @@ def pack_operation(
         messages = cast("list[object]", changes)
         if any(not isinstance(message, str) for message in messages):
             raise ValueError("changes must contain strings")
-        errors = list(cast("list[str]", messages)) if operation == "doctor" else []
+        errors = list(cast("list[str]", messages)) if operation in {"doctor", "references"} else []
         names: set[str] = set()
         for raw_pack in cast("list[object]", packs):
             if not isinstance(raw_pack, dict):
@@ -413,7 +413,10 @@ def build_generation(
             (path.relative_to(destination).as_posix(), content_digest(path))
             for path in sorted(destination.rglob("*"))
             if path.is_file()
-            and path.relative_to(destination).parts[0] != "packs"
+            and (
+                path.relative_to(destination).parts[0] != "packs"
+                or (len(path.relative_to(destination).parts) == 3 and path.name == "pack-lock.json")
+            )
             and (
                 "__pycache__" not in path.relative_to(destination).parts
                 or "dinkster-schema-catalog" in path.relative_to(destination).parts

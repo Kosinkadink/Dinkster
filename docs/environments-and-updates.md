@@ -321,6 +321,28 @@ Incomplete collection restores quarantined trees before another confirmed
 operation; terminal cleanup is retryable. Live or ambiguous obsolete engine
 bindings refuse collection. Previously published generation numbers are not reused.
 
+Shared-store collection preserves the bases, engine caches and hashed wheels of
+every extant generation in registered projects, except this project's approved
+obsolete trees. Missing projects, unreadable constraints/dependency locks or linked
+cache paths refuse deletion. The generation-owned provisioner reports dependency
+wheel hashes through its read-only `references` operation. Other-platform hashes
+are retained too. The extracted uv cache is disposable; deleting it does not
+change installed hardlinks or clones. Only recognized digest-named cache entries
+are collected; project libraries and registration records are never collection
+targets.
+Recorded pack dependency locks are included in the immutable generation file
+inventory even though pack venv contents remain separately doctor-managed.
+
+A store collection journal additionally carries `collectionStore` (absolute path)
+and `collectedStorePaths` (distinct `bases/<sha256>`, `engines/<sha256>`,
+`downloads/<sha256>`, `wheels/<sha256>` or `uv-cache` entries). They are parked under
+`<store>/.garbage/<journal timestamp>/<relative entry>` in the same transaction.
+`<store>/collection` contains the owning journal's absolute path and newline until
+recovery or committed cleanup finishes. Any registered project recovers this
+operation under the store and owning project locks before a confirmed mutation.
+Collection acquires registry, store and all registered project locks and rechecks
+the approved deletion set before publishing its journal.
+
 Moving a project is `dinkster-env move <new-root>`. Within a volume it moves
 the root, rewrites the `home` line of every pack venv's `pyvenv.cfg`, and
 runs `doctor`. Across volumes it creates a store on the destination volume

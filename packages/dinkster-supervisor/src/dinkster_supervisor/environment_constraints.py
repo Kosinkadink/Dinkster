@@ -14,6 +14,11 @@ from .environment_state import EnvironmentError, digest, relative_file
 _HASH = re.compile(r"(?<!\S)--hash=sha256:([0-9a-f]{64})(?=\s|$)")
 
 
+def requirement_hashes(requirements: str) -> frozenset[str]:
+    """Keep every hashed alternative, including other-platform marker rows."""
+    return frozenset(_HASH.findall(requirements.replace("\\\n", "").replace("\\\r\n", "")))
+
+
 def effective_constraints(engine: str, base: dict[str, object]) -> str:
     """Replace precisely the base producer's owned closure, including remove-only rows.
 

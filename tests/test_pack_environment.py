@@ -409,6 +409,14 @@ def test_generation_adapter_preflights_rebuilds_and_reports_drift(
     assert result["packs"] == [
         {"pack": "example", "conflicts": [], "downloadBytes": 0, "ownEnvironmentBytes": 9000}
     ]
+    assert main(["references", *args]) == 0
+    assert json.loads(capsys.readouterr().out)["wheelHashes"] == [extra.sha256]
+    assert main(["references", *args, "--in-process-pack", "missing"]) == 1
+    assert "no recorded dependency lock" in json.loads(capsys.readouterr().out)["changes"][0]
+    (target / "packs/unreadable").write_text("not a pack directory")
+    assert main(["references", *args]) == 1
+    assert "readable pack directories" in json.loads(capsys.readouterr().out)["changes"][0]
+    (target / "packs/unreadable").unlink()
     pack_python = venv_python(target / "packs/example")
     unavailable = pack_python.with_name("unavailable")
     pack_python.rename(unavailable)

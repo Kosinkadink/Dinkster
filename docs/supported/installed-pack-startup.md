@@ -66,6 +66,11 @@
 - Failed initial setup releases its own metadata and store registrations so a
   retry can select another data directory. Cached content, pre-existing settings,
   other projects' references and the diagnostic journal remain intact.
+- Confirmed environment garbage collection keeps the current generation and its
+  successful predecessor, and preserves cache references from other registered
+  projects. Interrupted collection recovers before another confirmed mutation;
+  unreadable project references refuse shared-cache deletion. Libraries remain
+  untouched.
 - `dinkster-env doctor --repair` plans an offline rebuild from the active release's
   local wheels and retained base. Confirmation creates and health-checks a new
   generation without editing the drifted tree. Missing or corrupt local inputs

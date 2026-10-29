@@ -348,7 +348,9 @@ def doctor_generation(context: GenerationContext) -> tuple[str, ...]:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("preflight", "rebuild", "doctor", "terminal"))
+    parser.add_argument(
+        "operation", choices=("preflight", "rebuild", "doctor", "terminal", "references")
+    )
     parser.add_argument("--generation", type=Path, required=True)
     parser.add_argument("--generation-python", type=Path, required=True)
     parser.add_argument("--constraints", type=Path, required=True)
@@ -379,10 +381,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     plans: tuple[PackPlan, ...] = ()
     changes: tuple[str, ...] = ()
+    wheel_hashes: set[str] = set()
     code = 0
     try:
         context.validate()
-        if args.operation == "doctor":
+        if args.operation == "references":
+            packs = context.generation / "packs"
+            if packs.is_symlink() or (packs.exists() and not packs.is_dir()):
+                raise ProvisionError("dependency references require an unlinked packs directory")
+            if packs.exists() and any(
+                entry.is_symlink() or not entry.is_dir() or (entry / "pack-lock.json").is_symlink()
+                for entry in packs.iterdir()
+            ):
+                raise ProvisionError("dependency references require readable pack directories")
+            recorded = _generation_locks(context.generation, ())
+            if set(context.in_process_packs) - {lock.pack for lock in recorded}:
+                raise ProvisionError("in-process packs have no recorded dependency lock")
+            wheel_hashes = {
+                wheel.sha256
+                for lock in recorded
+                for package in lock.packages
+                for wheel in package.wheels
+            }
+        elif args.operation == "doctor":
             plans = preflight_generation(context, source_generation=context.generation)
             changes = doctor_generation(context)
             code = int(bool(changes))
@@ -441,6 +462,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     for plan in plans
                 ],
                 "changes": list(changes),
+                **({"wheelHashes": sorted(wheel_hashes)} if args.operation == "references" else {}),
             }
         )
     )

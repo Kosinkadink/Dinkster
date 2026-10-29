@@ -437,5 +437,21 @@ optional `collectedGenerations` array names distinct positive obsolete numbers;
 `.garbage/<journal timestamp>/<number>` before the journal becomes complete.
 Incomplete collection restores the trees; only complete collection trash is
 deleted, with cleanup retried by later confirmed operations. Previously successful
-generation numbers are never reused after collection. Project/library and shared
-store contents are unchanged by generation collection.
+generation numbers are never reused after collection. Project libraries remain
+unchanged. A registered store also collects unreferenced digest-named bases,
+engine caches, archive downloads and wheel directories, plus its disposable uv
+cache. All extant generations in other registered projects retain their
+references. Missing projects, damaged retained constraints or unsafe paths refuse
+store deletion. Dependency references come from the target provisioner's
+read-only `references` result (`wheelHashes`), never a supervisor pack parser.
+Pack dependency-lock files are included in the generation inventory; missing
+whole pack directories therefore refuse reference collection too.
+
+Optional journal fields `collectionStore` and `collectedStorePaths` name the
+absolute store and disposable relative entries (`bases/<sha256>`,
+`engines/<sha256>`, `downloads/<sha256>`, `wheels/<sha256>`, `uv-cache`). They are
+quarantined under `<store>/.garbage/<journal timestamp>/<relative entry>` before
+the same completion write. `<store>/collection` holds the absolute owning journal
+path plus newline until recovery/cleanup finishes, so another project can recover
+the store before mutation. Registry, store and registered project locks protect
+plan revalidation and quarantine. Missing references never imply abandonment.

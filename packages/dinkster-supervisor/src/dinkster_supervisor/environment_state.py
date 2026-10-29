@@ -373,6 +373,8 @@ class Journal:
     setup_registration: dict[str, object] | None = None
     project_settings: dict[str, str] | None = None
     collected_generations: tuple[int, ...] = ()
+    collection_store: str | None = None
+    collected_store_paths: tuple[str, ...] = ()
 
     @classmethod
     def read(cls, path: Path) -> Journal:
@@ -453,6 +455,22 @@ class Journal:
             or len(set(numbers)) != len(numbers)
         ):
             raise EnvironmentError("collection must name distinct non-current generations")
+        store = value.get("collectionStore")
+        paths = value.get("collectedStorePaths", [])
+        if not isinstance(paths, list):
+            raise EnvironmentError("collectedStorePaths must be an array")
+        store_paths = tuple(store_cache_path(entry) for entry in cast("list[object]", paths))
+        if store is not None or store_paths:
+            if (
+                operation != "gc"
+                or previous != value.get("target")
+                or not isinstance(store, str)
+                or not Path(store).is_absolute()
+                or len(set(store_paths)) != len(store_paths)
+            ):
+                raise EnvironmentError(
+                    "store collection requires a distinct cache set and absolute store"
+                )
         settings = value.get("projectSettings")
         if settings is not None:
             if operation not in {"update", "rollback"} or not isinstance(settings, dict):
@@ -499,6 +517,8 @@ class Journal:
             registration,
             cast("dict[str, str] | None", settings),
             numbers,
+            store,
+            store_paths,
         )
 
     @property
@@ -523,4 +543,16 @@ class Journal:
             value["projectSettings"] = self.project_settings
         if self.collected_generations:
             value["collectedGenerations"] = list(self.collected_generations)
+        if self.collection_store is not None:
+            value["collectionStore"] = self.collection_store
+            value["collectedStorePaths"] = list(self.collected_store_paths)
         write_document(path, value)
+
+
+def store_cache_path(value: object) -> str:
+    if not isinstance(value, str) or (
+        value != "uv-cache"
+        and re.fullmatch(r"(?:bases|engines|downloads|wheels)/[0-9a-f]{64}", value) is None
+    ):
+        raise EnvironmentError("store collection paths must name disposable cache entries")
+    return value

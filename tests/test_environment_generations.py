@@ -92,7 +92,7 @@ def _assert_shared(first: Path, second: Path) -> None:
     assert extents[0] == extents[1]
 
 
-@pytest.mark.parametrize("problem", [None, "update", "missing", "variant", "wheel"])
+@pytest.mark.parametrize("problem", [None, "update", "extra", "missing", "variant", "wheel"])
 def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
     tmp_path: Path, problem: str | None
 ) -> None:
@@ -130,6 +130,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()
     entries, locks = [], []
+    wheel_sha: str | None = None
     variant = "win-cpu" if os.name == "nt" else "linux-cpu"
     for name in ("healthy", "other"):
         source = tmp_path / name
@@ -146,8 +147,10 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                 "wrong-variant" if problem == "variant" and name == "other" else variant
             )
             packages = ()
-            if problem == "wheel" and name == "other":
-                wheel, wheel_sha = _wheel(tmp_path, "unavailable_extra", "1.0", 73)
+            if problem in {"wheel", "extra"} and name == "other":
+                wheel, wheel_sha = _wheel(
+                    wheels if problem == "extra" else tmp_path, "unavailable_extra", "1.0", 73
+                )
                 packages = (
                     LockedDistribution(
                         "unavailable-extra",
@@ -195,7 +198,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
         artifacts=artifacts,
         source_generation=previous,
     )
-    if problem is not None and problem != "update":
+    if problem is not None and problem not in {"update", "extra"}:
         message = {
             "missing": "selected packs have no dependency lock: other",
             "variant": "variant wrong-variant does not match",
@@ -211,12 +214,51 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
         assert not (target / "packs/healthy/bin").exists()
         assert venv_python(target / "packs/other").is_file()
         for name in ("healthy", "other"):
-            assert PackLock.read(target / "packs" / name / "pack-lock.json").packages == ()
+            assert f"packs/{name}/pack-lock.json" in dict(generation.files)
+            recorded = PackLock.read(target / "packs" / name / "pack-lock.json")
+            assert tuple(package.name for package in recorded.packages) == (
+                ("unavailable-extra",) if problem == "extra" and name == "other" else ()
+            )
             manifest = load_manifest(target / "pack-sources" / name / "dinkster-pack.toml")
             prepared = read_catalog(manifest)
             assert prepared is not None
             assert set(prepared.schemas) == {f"{name}.doubler", f"{name}.tagger"}
         assert sum("dinkster-schema-catalog" in name for name, _ in generation.files) == 2
+        if problem == "extra":
+            from dinkster_supervisor.environment_collection import store_collection_plan
+            from dinkster_supervisor.environment_state import write_document
+
+            (root / "store").write_text(str(store) + "\n")
+            for cached in wheels.glob("*.whl"):
+                directory = wheels / hashlib.sha256(cached.read_bytes()).hexdigest()
+                directory.mkdir(exist_ok=True)
+                cached.rename(directory / cached.name)
+            write_document(
+                store / "projects.json", {"format": "dinkster.store/1", "projects": [str(root)]}
+            )
+            plan = store_collection_plan(root, store, ())
+            assert wheel_sha is not None
+            assert f"wheels/{wheel_sha}" not in plan
+            pack_tree = target / "packs/other"
+            parked = tmp_path / "parked-pack"
+            pack_tree.rename(parked)
+            pack_tree.write_text("not a readable pack reference")
+            with pytest.raises(EnvironmentError, match="recorded dependency locks"):
+                store_collection_plan(root, store, ())
+            pack_tree.unlink()
+            with pytest.raises(EnvironmentError, match="recorded dependency locks"):
+                store_collection_plan(root, store, ())
+            parked.rename(pack_tree)
+            assert (
+                subprocess.check_output(
+                    [
+                        str(venv_python(target / "packs/other")),
+                        "-c",
+                        "import unavailable_extra; print(unavailable_extra.VALUE)",
+                    ]
+                ).strip()
+                == b"73"
+            )
     assert read_current(root) == (1 if problem == "update" else None)
 
 

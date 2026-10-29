@@ -16,6 +16,8 @@ from .environment_collection import (
     collect_generations,
     collection_plan,
     recover_collection,
+    recover_store_collection,
+    store_collection_plan,
 )
 from .environment_generations import build_generation, pack_operation, project_operation
 from .environment_runtime import (
@@ -37,7 +39,13 @@ from .environment_state import (
     write_document,
     writer_lock,
 )
-from .environment_stores import register_project, registry_path, select_store, setup_registration
+from .environment_stores import (
+    register_project,
+    registry_path,
+    select_store,
+    setup_registration,
+    store_projects,
+)
 from .environment_transactions import (
     activate,
     begin_activation,
@@ -130,6 +138,15 @@ def _confirmed(args: argparse.Namespace, plan: list[str]) -> bool:
 
 
 def _recover_pending(root: Path, *, locked_store: Path | None = None) -> None:
+    if locked_store is not None:
+        recover_store_collection(locked_store, locked_root=root)
+    elif (root / "store").exists():
+        store = Path((root / "store").read_text(encoding="utf-8").strip())
+        if not store.is_absolute():
+            raise EnvironmentError("project store must be absolute")
+        if (store / "collection").exists() or (store / "collection").is_symlink():
+            with writer_lock(store):
+                recover_store_collection(store)
     for path in sorted((root / "journal").glob("*.json")):
         journal = Journal.read(path)
         if not journal.incomplete and not (
@@ -137,6 +154,12 @@ def _recover_pending(root: Path, *, locked_store: Path | None = None) -> None:
         ):
             continue
         with ExitStack() as locks:
+            if journal.collection_store is not None:
+                store = Path(journal.collection_store)
+                if locked_store is None:
+                    locks.enter_context(writer_lock(store))
+                elif store != locked_store:
+                    raise EnvironmentError("pending collection uses another store")
             if journal.setup_registration is not None:
                 registry = Path(cast("str", journal.setup_registration["registry"])).parent
                 store = Path(cast("str", journal.setup_registration["store"]))
@@ -477,6 +500,7 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
     if not _confirmed(args, plan):
         return 0
     with writer_lock(store), writer_lock(root):
+        _recover_pending(root, locked_store=store)
         revalidate()
         target = next_generation(root)
         journal = begin_activation(root, target, "repair")
@@ -501,7 +525,15 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
                 artifacts=release / "artifacts" if catalog is not None else None,
                 repair=True,
             )
-            if set(dict(repaired.files)) != set(expected):
+            added_locks = {
+                name
+                for name, _ in repaired.files
+                if len(Path(name).parts) == 3
+                and Path(name).parts[0] == "packs"
+                and Path(name).parts[2] == "pack-lock.json"
+                and name not in expected
+            }
+            if set(dict(repaired.files)) - added_locks != set(expected):
                 raise EnvironmentError(
                     "repaired file inventory differs from the retained generation"
                 )
@@ -563,18 +595,43 @@ def _gc(args: argparse.Namespace, result: dict[str, object]) -> int:
         _recover_pending(root)
     approved = collection_plan(root)
     current, retained, collected = approved
+    pointer = root / "store"
+    store = Path(pointer.read_text(encoding="utf-8").strip()) if pointer.exists() else None
+    if store is not None and (
+        not store.is_absolute() or store.is_symlink() or pointer.is_symlink()
+    ):
+        raise EnvironmentError("collection requires an absolute unlinked store")
+    projects = store_projects(store) if store is not None else []
+    store_paths = store_collection_plan(root, store, collected) if store is not None else ()
     plan = [
         f"retain generations {', '.join(map(str, retained))}",
         f"collect obsolete generations {', '.join(map(str, collected)) or 'none'}",
-        "quarantine before committing deletion; preserve the shared store and project library",
+        "quarantine before committing deletion; preserve referenced cache and project libraries",
+        *[f"collect unreferenced cache {name}" for name in store_paths],
     ]
     result.update(current=current, plan=plan, status="planned")
     if not _confirmed(args, plan):
         return 0
     _recover_pending(root)
-    with writer_lock(root):
-        collect_generations(root, approved)
-    result.update(status="applied", collectedGenerations=list(collected))
+    with ExitStack() as locks:
+        if store is not None:
+            registry_path().parent.mkdir(parents=True, exist_ok=True)
+            locks.enter_context(writer_lock(registry_path().parent))
+            locks.enter_context(writer_lock(store))
+            if store_projects(store) != projects or pointer.read_text(
+                encoding="utf-8"
+            ).strip() != str(store):
+                raise EnvironmentError(
+                    "store references changed after planning; request a new plan"
+                )
+        for project in sorted(set(projects) | {str(root)}):
+            locks.enter_context(writer_lock(Path(project)))
+        collect_generations(root, approved, store=store, store_paths=store_paths)
+    result.update(
+        status="applied",
+        collectedGenerations=list(collected),
+        collectedStorePaths=list(store_paths),
+    )
     return 0
 
 
