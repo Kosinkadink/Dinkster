@@ -446,7 +446,7 @@ first. Applied results include observed engines and the started engine URL.
 
 Runtime writers serialize through the project's persistent `.lock` file using
 an OS-held nonblocking lock. The same primitive serializes shared-store writes;
-callers needing both acquire project then store. Process exit releases the lock,
+callers needing both acquire store then project. Process exit releases the lock,
 but its file is never removed. Apply rechecks project/current under lock and
 recovers incomplete activation journals before performing another mutation.
 
