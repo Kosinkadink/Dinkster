@@ -17,17 +17,27 @@ def default_roots() -> tuple[Path, Path]:
     return home / "library", home / "packs"
 
 
-def ensure_import_mount(library_root: Path) -> None:
-    """Initialize visible imports without widening or replacing an existing grant."""
-    initialized = library_root / ".imports-initialized"
+def ensure_default_mounts(library_root: Path) -> None:
+    """Initialize visible folders once without restoring or widening existing grants."""
+    library_root.mkdir(parents=True, exist_ok=True)
+    for name in ("output", "imports"):
+        _ensure_default_mount(library_root, name)
+
+
+def _ensure_default_mount(library_root: Path, name: str) -> None:
+    initialized = library_root / f".{name}-initialized"
     if initialized.exists():
         return
     mounts_path = library_root / "mounts.toml"
     mounts = load_mounts(mounts_path)
-    imports_root = library_root / "imports"
-    existing = next((mount for mount in mounts if mount.id == "imports"), None)
+    root = library_root / name
+    output_mount = load_output_mount(mounts_path)
+    existing = next((mount for mount in mounts if mount.id == name), None)
     if existing is None:
-        existing = next((mount for mount in mounts if mount.path == imports_root), None)
+        existing = next((mount for mount in mounts if mount.path == root), None)
+    if name == "output" and output_mount is not None and existing is None:
+        initialized.touch()
+        return
     project_path = library_root / "project-folders.json"
     projects = ProjectFolders(project_path) if project_path.exists() else None
     if existing is not None:
@@ -35,10 +45,10 @@ def ensure_import_mount(library_root: Path) -> None:
             projects.initialize(tuple(mount.id for mount in mounts), shared_defaults=(existing.id,))
         initialized.touch()
         return
-    imports_root.mkdir(parents=True, exist_ok=True)
+    root.mkdir(parents=True, exist_ok=True)
     text = dump_mounts(
-        (*mounts, MountDef(id="imports", path=imports_root, mode="readwrite")),
-        output_mount=load_output_mount(mounts_path),
+        (*mounts, MountDef(id=name, path=root, mode="readwrite")),
+        output_mount=name if name == "output" else output_mount,
     )
     temporary = mounts_path.with_name(f"{mounts_path.name}.tmp-{os.getpid()}")
     try:
@@ -50,9 +60,7 @@ def ensure_import_mount(library_root: Path) -> None:
     finally:
         temporary.unlink(missing_ok=True)
     if projects is not None:
-        projects.initialize(
-            tuple(mount.id for mount in mounts) + ("imports",), shared_defaults=("imports",)
-        )
+        projects.initialize(tuple(mount.id for mount in mounts) + (name,), shared_defaults=(name,))
     initialized.touch()
 
 
@@ -63,35 +71,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.parse_args(argv)
     library_root, install_root = default_roots()
-    library_root.mkdir(parents=True, exist_ok=True)
-    output_root = library_root / "output"
-    output_root.mkdir(parents=True, exist_ok=True)
-    mounts_path = library_root / "mounts.toml"
-    mounts = list(load_mounts(mounts_path))
-    default_output_index = next(
-        (
-            index
-            for index, mount in enumerate(mounts)
-            if mount.id == "output" or mount.path == output_root
-        ),
-        None,
-    )
-    if default_output_index is None:
-        mounts.append(MountDef(id="output", path=output_root, mode="readwrite"))
-        default_output_index = len(mounts) - 1
-    elif mounts[default_output_index].mode != "readwrite":
-        mount = mounts[default_output_index]
-        mounts[default_output_index] = MountDef(
-            id=mount.id,
-            path=mount.path,
-            mode="readwrite",
-            priority=mount.priority,
-            kind=mount.kind,
-        )
-    default_output_mount = mounts[default_output_index].id
-    output_mount = load_output_mount(mounts_path) or default_output_mount
-    mounts_path.write_text(dump_mounts(mounts, output_mount=output_mount), "utf-8")
-    ensure_import_mount(library_root)
+    ensure_default_mounts(library_root)
     Installer(install_root)
     print(f"Library: {library_root}")
     print(f"Packs: {install_root}")

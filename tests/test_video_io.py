@@ -21,6 +21,8 @@ from dinkster_schema import (
 )
 from dinkster_video import assemble_video
 
+pytestmark = pytest.mark.usefixtures("saved_artifact_context")
+
 
 def _frames(count: int = 4, *, alpha: bool = False) -> np.ndarray:
     channels = 4 if alpha else 3
