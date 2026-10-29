@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from contextlib import ExitStack
 from dataclasses import replace
@@ -20,7 +19,12 @@ from .environment_collection import (
     recover_store_collection,
     store_collection_plan,
 )
-from .environment_generations import build_generation, pack_operation, project_operation
+from .environment_generations import (
+    build_generation,
+    pack_operation,
+    project_operation,
+    verify_base_inputs,
+)
 from .environment_move import execute_move, moved_to, plan_move, recover_moves
 from .environment_runtime import (
     engine_assignments,
@@ -475,42 +479,13 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
             or (root / "project.json").read_bytes() != settings
         ):
             raise EnvironmentError("project changed after planning; request a new plan")
-        if not base.is_dir():
-            raise EnvironmentError("repair requires the retained base in the local store")
-        if base.is_symlink():
-            raise EnvironmentError("repair refuses linked local base inputs")
         if (
             not constraints.is_file()
             or constraints.is_symlink()
             or content_digest(constraints) != generation.constraints
         ):
             raise EnvironmentError("repair requires intact cached effective constraints")
-
-        def verify_directory(directory: Path, ancestors: tuple[Path, ...]) -> None:
-            resolved = directory.resolve(strict=True)
-            if resolved in ancestors:
-                raise EnvironmentError("repair refuses cyclic local base inputs")
-            entries = list(directory.iterdir())
-            for path in entries:
-                if path.is_symlink() and (
-                    Path(os.readlink(path)).is_absolute()
-                    or not path.resolve(strict=True).is_relative_to(base.resolve())
-                ):
-                    raise EnvironmentError("repair refuses linked local base inputs")
-            for path in entries:
-                if (
-                    path.name == "__pycache__"
-                    or "__pycache__" in path.resolve().relative_to(base.resolve()).parts
-                ):
-                    continue
-                if path.is_dir():
-                    verify_directory(path, (*ancestors, resolved))
-                elif path.is_file():
-                    name = "python/" + path.relative_to(base).as_posix()
-                    if content_digest(path) != expected.get(name):
-                        raise EnvironmentError(f"repair requires intact local base input: {name}")
-
-        verify_directory(base, ())
+        verify_base_inputs(base, expected, operation="repair")
         if catalog is not None and (
             catalog.is_symlink() or content_digest(catalog) != expected["dinkster.lock"]
         ):

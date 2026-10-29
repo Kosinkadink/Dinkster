@@ -107,6 +107,10 @@ def _assert_shared(first: Path, second: Path) -> None:
         "move",
         "move-interrupted",
         "move-running-interrupted",
+        "move-cross-volume-plain",
+        "move-cross-volume-aliases",
+        "move-cross-volume-cached-aliases",
+        "move-cross-volume-missing-resource",
     ],
 )
 def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
@@ -127,6 +131,21 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
     root.mkdir()
     base = store / "bases" / ("a" * 64) / "python"
     _standalone_tree(base)
+    cross_volume = problem is not None and problem.startswith("move-cross-volume-")
+    aliases = problem in {"move-cross-volume-aliases", "move-cross-volume-cached-aliases"}
+    executable = Path("python.exe") if os.name == "nt" else Path("bin/python3")
+    if cross_volume:
+        request.addfinalizer(partial(shutil.rmtree, tmp_path, ignore_errors=True))
+        resources = base / "share" / "fixture"
+        resources.mkdir(parents=True)
+        (resources / "resource.txt").write_bytes(b"sealed non-startup resource")
+    if aliases:
+        try:
+            (base / "executable-alias").symlink_to(executable)
+            (base / "resource-alias").symlink_to("share/fixture/resource.txt")
+            (base / "directory-alias").symlink_to("share/fixture", target_is_directory=True)
+        except OSError as exc:
+            pytest.skip(f"internal interpreter aliases require symlink support: {exc}")
     site = Path(
         subprocess.check_output(
             [
@@ -219,7 +238,15 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
         source_generation=previous,
     )
     repairs = {"repair", "repair-extra", "repair-missing"}
-    moves = {"move", "move-interrupted", "move-running-interrupted"}
+    moves = {
+        "move",
+        "move-interrupted",
+        "move-running-interrupted",
+        "move-cross-volume-plain",
+        "move-cross-volume-aliases",
+        "move-cross-volume-cached-aliases",
+        "move-cross-volume-missing-resource",
+    }
     if problem is not None and problem not in {"update", "extra"} | repairs | moves:
         message = {
             "missing": "selected packs have no dependency lock: other",
@@ -247,6 +274,7 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
             assert set(prepared.schemas) == {f"{name}.doubler", f"{name}.tagger"}
         assert sum("dinkster-schema-catalog" in name for name, _ in generation.files) == 2
         if problem in moves:
+            from dinkster_supervisor import environment_move, environment_stores
             from dinkster_supervisor.environment_runtime import (
                 engine_assignments,
                 start_engine,
@@ -286,6 +314,56 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
             (root / "library/asset").write_bytes(b"preserve this project asset")
             destination = tmp_path / "moved project"
             again = destination.parent / "moved again"
+            target_store = store
+            missing = Path("python/share/fixture/resource.txt")
+
+            def move(source: Path, target: Path) -> None:
+                if cross_volume:
+                    plan = environment_move.plan_move(source, target, target_store)
+                    assert plan.cross_volume == (source == root)
+                    environment_move.execute_move(plan)
+                else:
+                    code, result = _run(source, "move", str(target), "--yes")
+                    assert code == 0 and result["status"] == "applied", result
+
+            if cross_volume:
+                # Exercise volume-dependent branches without requiring another filesystem.
+                def volume(path: Path) -> str:
+                    return (
+                        "1"
+                        if path.resolve().is_relative_to(root)
+                        or path.resolve().is_relative_to(store)
+                        else "2"
+                    )
+
+                monkeypatch.setattr(environment_move, "volume", volume)
+                monkeypatch.setattr(environment_stores, "volume", volume)
+                target_store = tmp_path / "destination-store"
+                if problem in {
+                    "move-cross-volume-cached-aliases",
+                    "move-cross-volume-missing-resource",
+                }:
+                    for category in ("bases", "engines", "wheels"):
+                        shutil.copytree(store / category, target_store / category, symlinks=True)
+                if problem == "move-cross-volume-missing-resource":
+                    assert missing.as_posix() in dict(generation.files)
+                    (target_store / "bases" / ("a" * 64) / missing).unlink()
+
+                if problem == "move-cross-volume-missing-resource":
+                    with pytest.raises(EnvironmentError):
+                        move(root, destination)
+                    assert read_current(root) == 1
+                    assert generation.drift(root / "generations/1") == ()
+                    assert (root / "library/asset").read_bytes() == b"preserve this project asset"
+                    assert (
+                        root / "generations/1" / missing
+                    ).read_bytes() == b"sealed non-startup resource"
+                    assert not destination.exists()
+                    assert all(
+                        not Journal.read(path).incomplete
+                        for path in (root / "journal").glob("*.json")
+                    )
+                    return
             assignments = None
             if problem == "move-running-interrupted":
                 from test_environment_runtime import free_port
@@ -305,17 +383,22 @@ def test_generation_requires_dependency_locks_for_the_complete_admitted_catalog(
                 p.relative_to(root): content_digest(p)
                 for p in root.rglob("*")
                 if p.is_file()
-                and not (p.is_relative_to(root / "runtime") and p.suffix in {".log", ".lock"})
+                and not (p.is_relative_to(root / "runtime") and p.name.endswith((".log", ".lock")))
             }
             for flags in ((), ("--plan",)):
-                code, planned = _run(root, "move", str(destination), *flags)
-                assert code == 0 and planned["status"] == "planned", planned
+                if cross_volume:
+                    assert environment_move.plan_move(root, destination, target_store).cross_volume
+                else:
+                    code, planned = _run(root, "move", str(destination), *flags)
+                    assert code == 0 and planned["status"] == "planned", planned
                 assert not destination.exists()
                 assert before == {
                     p.relative_to(root): content_digest(p)
                     for p in root.rglob("*")
                     if p.is_file()
-                    and not (p.is_relative_to(root / "runtime") and p.suffix in {".log", ".lock"})
+                    and not (
+                        p.is_relative_to(root / "runtime") and p.name.endswith((".log", ".lock"))
+                    )
                 }
             if problem in {"move-interrupted", "move-running-interrupted"}:
                 script = """
@@ -351,8 +434,7 @@ environment.main()
                 assert all(
                     not Journal.read(p).incomplete for p in (root / "journal").glob("*.json")
                 )
-            code, moved = _run(root, "move", str(destination), "--yes")
-            assert code == 0 and moved["status"] == "applied", moved
+            move(root, destination)
             assert read_current(destination) == 1 and read_current(root) is None
             if assignments is not None:
                 assert engine_assignments(destination, 1) == assignments
@@ -367,6 +449,21 @@ environment.main()
             assert "project moved to" in _run(root, "start", "--yes")[1]["error"]
             moved_tree = destination / "generations/1"
             assert Generation.read(moved_tree / "generation.json").drift(moved_tree) == ()
+            if cross_volume:
+                moved_generation = Generation.read(moved_tree / "generation.json")
+                assert dict(moved_generation.files).keys() == dict(generation.files).keys()
+                assert (
+                    moved_tree / "python/share/fixture/resource.txt"
+                ).read_bytes() == b"sealed non-startup resource"
+            if aliases:
+                for alias, original in (
+                    ("executable-alias", executable.as_posix()),
+                    ("resource-alias", "share/fixture/resource.txt"),
+                    ("directory-alias/resource.txt", "share/fixture/resource.txt"),
+                ):
+                    retained = moved_tree / "python" / alias
+                    assert not retained.is_symlink()
+                    assert retained.read_bytes() == (moved_tree / "python" / original).read_bytes()
             assert (
                 subprocess.check_output(
                     [
@@ -386,8 +483,7 @@ environment.main()
                 next(moved_tree.rglob("stable_fixture.py")),
                 next((moved_store / "uv-cache").rglob("stable_fixture.py")),
             )
-            code, second_move = _run(destination, "move", str(again), "--yes")
-            assert code == 0 and second_move["status"] == "applied", second_move
+            move(destination, again)
             if assignments is not None:
                 assert engine_assignments(again, 1) == assignments
             assert _run(again, "stop", "--yes")[0] == 0

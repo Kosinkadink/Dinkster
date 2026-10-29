@@ -22,6 +22,44 @@ from .environment_state import (
 )
 
 
+def verify_base_inputs(base: Path, expected: dict[str, str], *, operation: str) -> None:
+    """Check retained interpreter payloads and internal aliases before rebuilding."""
+    if not base.is_dir():
+        raise EnvironmentError(f"{operation} requires the retained base in the local store")
+    if base.is_symlink():
+        raise EnvironmentError(f"{operation} refuses linked local base inputs")
+    boundary = base.resolve(strict=True)
+
+    def verify_directory(directory: Path, ancestors: tuple[Path, ...]) -> None:
+        resolved = directory.resolve(strict=True)
+        if resolved in ancestors:
+            raise EnvironmentError(f"{operation} refuses cyclic local base inputs")
+        entries = list(directory.iterdir())
+        for path in entries:
+            if path.is_symlink() and (
+                Path(os.readlink(path)).is_absolute()
+                or not path.resolve(strict=True).is_relative_to(boundary)
+            ):
+                raise EnvironmentError(f"{operation} refuses linked local base inputs")
+        for path in entries:
+            if (
+                path.name == "__pycache__"
+                or "__pycache__" in path.resolve().relative_to(boundary).parts
+            ):
+                continue
+            if path.is_dir():
+                verify_directory(path, (*ancestors, resolved))
+            elif path.is_file():
+                name = "python/" + path.relative_to(base).as_posix()
+                if content_digest(path) != expected.get(name):
+                    raise EnvironmentError(f"{operation} requires intact local base input: {name}")
+
+    try:
+        verify_directory(base, ())
+    except (OSError, RuntimeError) as exc:
+        raise EnvironmentError(f"{operation} cannot verify local base inputs: {exc}") from exc
+
+
 def link_file(source: str, destination: str) -> str:
     # Dereference interpreter-internal aliases so every generation is self-contained.
     original = Path(source).resolve(strict=True)

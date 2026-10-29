@@ -503,7 +503,7 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
             p.relative_to(root): content_digest(p)
             for p in root.rglob("*")
             if p.is_file()
-            and not (p.is_relative_to(root / "runtime") and p.suffix in {".log", ".lock"})
+            and not (p.is_relative_to(root / "runtime") and p.name.endswith((".log", ".lock")))
         }
         code, selection_plan = _run(root, "update", "--channel", "stable", "--plan")
         assert code == 0 and any(
@@ -513,7 +513,7 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
             p.relative_to(root): content_digest(p)
             for p in root.rglob("*")
             if p.is_file()
-            and not (p.is_relative_to(root / "runtime") and p.suffix in {".log", ".lock"})
+            and not (p.is_relative_to(root / "runtime") and p.name.endswith((".log", ".lock")))
         } == before_selection
         (root / "queue.json").write_text('{"running": ["real-job"], "queued": []}')
         before = sorted(path.name for path in (root / "journal").iterdir())

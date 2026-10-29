@@ -13,7 +13,7 @@ from typing import cast
 
 from .environment_collection import recover_store_collection
 from .environment_constraints import requirement_hashes
-from .environment_generations import build_generation, link_file, pack_operation
+from .environment_generations import build_generation, link_file, pack_operation, verify_base_inputs
 from .environment_runtime import engine_assignments, require_idle, start_engine, stop_engine
 from .environment_state import (
     EnvironmentError,
@@ -262,6 +262,8 @@ def _prepare(plan: MovePlan, path: Path, journal: Journal) -> None:
                 destination = plan.target_store / category / entry.name
                 if entry.is_symlink() or not entry.is_dir():
                     raise EnvironmentError("move requires digest-directory local caches")
+                if destination.is_symlink() or (destination.exists() and not destination.is_dir()):
+                    raise EnvironmentError("move requires digest-directory local caches")
                 if not destination.exists():
                     staging = (
                         plan.target_store
@@ -274,7 +276,11 @@ def _prepare(plan: MovePlan, path: Path, journal: Journal) -> None:
                     if staging.exists():
                         shutil.rmtree(staging)
                     shutil.copytree(entry, staging, symlinks=True)
-                    if any(p.is_symlink() for p in staging.rglob("*")):
+                    if any(
+                        p.is_symlink()
+                        and (category != "bases" or not p.is_relative_to(staging / "python"))
+                        for p in staging.rglob("*")
+                    ):
                         raise EnvironmentError("move refuses linked cache inputs")
                     destination.parent.mkdir(parents=True, exist_ok=True)
                     durable_rename(staging, destination)
@@ -284,13 +290,7 @@ def _prepare(plan: MovePlan, path: Path, journal: Journal) -> None:
         if plan.cross_volume:
             base = plan.target_store / "bases" / generation.base[7:] / "python"
             expected = dict(generation.files)
-            for cached in base.rglob("*"):
-                if cached.is_symlink() or (
-                    cached.is_file()
-                    and content_digest(cached)
-                    != expected.get("python/" + cached.relative_to(base).as_posix())
-                ):
-                    raise EnvironmentError("move requires intact cached base inputs")
+            verify_base_inputs(base, expected, operation="move")
             release = plan.target_store / "engines" / generation.engine_release[7:]
             build_generation(
                 root=target,
@@ -322,6 +322,12 @@ def _prepare(plan: MovePlan, path: Path, journal: Journal) -> None:
                     + "\n",
                 )
         checked = Generation.read(destination / "generation.json")
+        if plan.cross_volume:
+            if set(dict(checked.files)) != set(dict(generation.files)):
+                raise EnvironmentError("moved file inventory differs from the retained generation")
+            for name, sha in generation.files:
+                if not name.startswith("python/") and dict(checked.files)[name] != sha:
+                    raise EnvironmentError(f"moved retained input differs: {name}")
         if checked.drift(destination):
             raise EnvironmentError("moved generation has drift")
         if (destination / "packs").exists():
