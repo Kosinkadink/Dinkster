@@ -176,6 +176,64 @@ A null signature is acceptable only for a Dinkster-operated mirror; signed
 documents are refused until signature verification is available. Engine and base
 artifact layouts are owned by their publishing tools, not this package.
 
+### Extraction-only Desktop bootstrap
+
+`scripts/build_environment_tools.py` builds the native tools payload from a
+size/SHA256-pinned standalone `python/` tar.gz and the release-built supervisor
+wheel. Run it with the same native Python patch version, implementation,
+architecture and ABI as the standalone interpreter, including free-threaded
+status; a mismatch is refused before wheel acquisition:
+
+```sh
+uv run --locked python -m scripts.build_environment_tools \
+  --interpreter /absolute/path/cpython-install-only.tar.gz \
+  --interpreter-size BYTES --interpreter-sha256 LOWERCASE_SHA256 \
+  --supervisor-wheel /absolute/path/dinkster_supervisor-VERSION-py3-none-any.whl \
+  --output /absolute/new/tools-output
+```
+
+`--interpreter` also accepts an HTTPS download URL; the complete size and hash
+are checked before extraction or execution. Obtain those values from the
+selected standalone interpreter's verified producer input, not a latest alias.
+The supervisor wheel is the same wheel passed to the engine release builder,
+not a separately resolved PyPI version. The command downloads only compatible
+wheels whose filenames, versions, sizes and hashes occur in `uv.lock` and its
+supervisor/tools export. uv is pinned by the supervisor's `environment-tools`
+dependency group. Installation into the owned standalone tree is offline,
+index-free, binary-only and hash-required. An offline `uv pip check` must
+confirm that the supplied supervisor wheel and every installed dependency
+have a satisfied closure before packaging. No engine or torch is installed.
+
+The output is `dinkster-tools-<os>-<arch>.zip`, where os is `linux`, `windows`
+or `macos`, and arch is `x86_64` or `arm64`. stdout is its existing engine
+artifact row `{name,size,sha256}`; `SHA256SUMS` records the same archive hash.
+The release builder accepts the archive using its existing `--artifact` flag,
+which includes that row in `dinkster.engine/1`. Release publication owns calling
+the native builder and attaching all platform archives. There is no separate
+tools manifest or extra PyPI distribution. An unpublished local output is not
+a production download pin.
+
+Desktop selects that exact basename from the hash-verified engine manifest,
+downloads it from the same release directory, verifies its full size/SHA256,
+and safely extracts it into a new owned directory. ZIP is only the bootstrap
+container: it needs no Python/zstandard decoder before the tools exist and
+does not change the producer's tar+zstd base contract. Internal interpreter
+aliases are materialized as ordinary files/directories, so Windows extraction
+does not require symlink privileges. The extractor must retain Unix executable
+mode bits from ZIP attributes. Reject escaping paths and do not overwrite an
+existing installation.
+
+Invoke `<tools>/python/bin/python3 -I -m dinkster_supervisor.environment` on
+Linux/macOS or `<tools>/python/python.exe -I -m dinkster_supervisor.environment`
+on Windows. For each child prepend `<tools>/python/bin` (Windows
+`<tools>/python/Scripts`) to PATH so the client's offline generation commands
+find bundled uv; do not set a global PATH. Console-script shebangs are not the
+relocatable interface. Extraction does not run pip, uv or package resolution.
+The tools builder and the shared lifecycle builder at
+`tests/fixtures/environments/build.py` are separate: the latter supplies tiny
+production-format mirror inputs for Desktop/CLI equivalence, not production
+tools or release artifacts.
+
 `python -m dinkster_supervisor.environment_channels --release RELEASE_DIRECTORY
 --base-manifest BASE_MANIFEST --channel main --output-root MIRROR_DIRECTORY
 --minimum-desktop-version X.Y.Z` builds a local channel document. Repeat

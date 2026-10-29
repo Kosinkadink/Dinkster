@@ -10,6 +10,9 @@ dependencies = [
     "zstandard>=0.25",
 ]
 
+[dependency-groups]
+environment-tools = ["uv==0.11.29"]
+
 [project.scripts]
 dinkster-env = "dinkster_supervisor.environment:main"
 dinkster-installs = "dinkster_supervisor.install_manager:main"

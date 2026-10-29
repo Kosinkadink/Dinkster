@@ -34,6 +34,30 @@ fix produces a new engine release of a few tens of megabytes; the base bundle
 changes when torch or another heavy pin moves. That split is the whole reason
 updates are cheap.
 
+## Environment tools bootstrap
+
+The native client bootstrap is an engine-release artifact named
+`dinkster-tools-<os>-<arch>.zip` (`linux`, `windows`, `macos`; `x86_64` or
+`arm64`). Its ordinary `artifacts` row in the hash-verified `dinkster.engine/1`
+manifest supplies the complete archive size and SHA256. It contains only a
+standalone `python/` tree with the release's supervisor wheel, its locked
+runtime dependency closure and pinned uv, not the engine or torch. ZIP is the
+bootstrap container and does not change the base bundle's tar+zstd format.
+
+Desktop verifies the archive bytes before safe extraction into a new owned
+directory, preserving Unix executable mode bits. Internal interpreter aliases
+are materialized, requiring no Windows symlink privilege. It invokes
+`python/bin/python3 -I -m dinkster_supervisor.environment` (Windows
+`python/python.exe`) and prepends `python/bin` (Windows `python/Scripts`) to
+that child's PATH for bundled uv. Desktop performs no package installation,
+resolution or fallback to a host Python/package manager.
+
+The native build/acquisition command and input pinning are documented in
+[the supervisor README](../packages/dinkster-supervisor/README.md#extraction-only-desktop-bootstrap).
+The shared [lifecycle fixture builder](../tests/fixtures/environments/README.md)
+generates the same base/engine/channel formats for CLI and Desktop
+setup/update/rollback comparisons without a second provisioner.
+
 ## Layout
 
 ```
