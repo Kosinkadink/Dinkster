@@ -324,7 +324,7 @@ def test_checkpoint_save_graph_writes_mounted_safetensors_and_only_caches_source
                 "DINKSTER_ACCELERATOR": "cpu",
                 "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
                 "PYTHONPATH": os.pathsep.join(
-                    (str(tmp_path), str(Path(__file__).parent), str(package / "src"))
+                    (str(tmp_path), str(Path(__file__).parent), str(package / "src"), *sys.path)
                 ),
             }
         )
