@@ -73,7 +73,7 @@ def _x264_options(data: bytes) -> bytes:
     return payload[start : payload.index(b"\x00", start)]
 
 
-def _source_style_h264(
+def _source_style_video(
     images: np.ndarray,
     *,
     fps: Fraction,
@@ -81,18 +81,19 @@ def _source_style_h264(
     color: str,
     crf: float | None = None,
     preset: str | None = None,
+    codec: str = "h264",
 ) -> bytes:
-    """Encode source components with the approved public-source conversion recipe."""
+    """Encode source components independently of the public VIDEO writer."""
     output = io.BytesIO()
     rate = Fraction(round(fps * 1000), 1000)
     pix_fmt = "yuv420p10le" if depth > 8 else "yuv420p"
     color_values = {"sRGB": (1, 13, 1, 1), "HDR PQ": (9, 16, 9, 1)}[color]
     with av.open(output, "w", format="mp4", options={"movflags": "use_metadata_tags"}) as opened:
         mux = cast(Any, opened)
-        stream = mux.add_stream("libx264", rate=rate)
+        stream = mux.add_stream("libsvtav1" if codec == "av1" else "libx264", rate=rate)
         stream.width, stream.height = images.shape[2], images.shape[1]
         stream.pix_fmt = pix_fmt
-        stream.options = {"crf": str(18 if crf is None else crf)}
+        stream.options = {"crf": str((24 if codec == "av1" else 18) if crf is None else crf)}
         if preset is not None:
             stream.options["preset"] = preset
         (
@@ -132,7 +133,9 @@ def test_source_component_h264_matches_approved_source_encoding(
     fps = Fraction(30000, 1001)
     images = np.linspace(-0.01, 1.01, 4 * 64 * 64 * 3, dtype=np.float64).reshape(4, 64, 64, 3)
     value = assemble_video(images, fps=fps, bit_depth=str(depth), color_space=color)
-    expected = _source_style_h264(images, fps=fps, depth=depth, color=color, crf=crf, preset=preset)
+    expected = _source_style_video(
+        images, fps=fps, depth=depth, color=color, crf=crf, preset=preset
+    )
     actual = io.BytesIO()
     save_video_stream(
         value,
@@ -177,7 +180,7 @@ def test_default_component_writer_remains_separate_from_source_component_encodin
         # Four frames span 133467 ticks under the default microsecond timestamp policy.
         assert container.streams.video[0].average_rate == Fraction(4_000_000, 133_467)
     assert _x264_options(source_style.getvalue()) == _x264_options(
-        _source_style_h264(images, fps=fps, depth=8, color="sRGB")
+        _source_style_video(images, fps=fps, depth=8, color="sRGB")
     )
 
 
@@ -196,11 +199,27 @@ def test_source_component_h264_preserves_source_shape_failures(
         )
 
 
-def test_source_component_small_av1_keeps_explicit_codec() -> None:
-    images = np.linspace(0, 1, 2 * 8 * 12 * 3, dtype=np.float32).reshape(2, 8, 12, 3)
+@pytest.mark.parametrize(("height", "width"), [(8, 12), (64, 64)])
+def test_source_component_av1_preserves_source_encode_contract(height: int, width: int) -> None:
+    images = np.linspace(0, 1, 2 * height * width * 3, dtype=np.float32).reshape(
+        2, height, width, 3
+    )
+    value = assemble_video(images, fps=30)
     encoded = io.BytesIO()
+    try:
+        expected = _source_style_video(images, fps=Fraction(30), depth=8, color="sRGB", codec="av1")
+    except FFmpegError as expected_error:
+        if height >= 64 and width >= 64:
+            raise
+        # Small-frame support belongs to the source encoder, including its failures.
+        with pytest.raises(type(expected_error)) as actual_error:
+            save_video_stream(value, encoded, container="mkv", codec="av1", source_components=True)
+        assert type(actual_error.value) is type(expected_error)
+        assert actual_error.value.errno == expected_error.errno
+        assert encoded.getvalue() == b""
+        return
     save_video_stream(
-        assemble_video(images, fps=30),
+        value,
         encoded,
         container="mkv",
         codec="av1",
@@ -209,8 +228,14 @@ def test_source_component_small_av1_keeps_explicit_codec() -> None:
     with av.open(io.BytesIO(encoded.getvalue()), mode="r") as container:
         stream = container.streams.video[0]
         assert stream.codec_context.codec.canonical_name == "av1"
-        assert (stream.width, stream.height) == (12, 8)
+        assert (stream.width, stream.height) == (width, height)
         assert len(list(container.decode(video=0))) == 2
+    if height >= 64 and width >= 64:
+        # Unaligned small inputs do not have bit-stable source encoder output.
+        np.testing.assert_array_equal(
+            disassemble_video(video_from_source(encoded.getvalue()))["images"],
+            disassemble_video(video_from_source(expected))["images"],
+        )
 
 
 @pytest.mark.parametrize("encoded", (False, True))
