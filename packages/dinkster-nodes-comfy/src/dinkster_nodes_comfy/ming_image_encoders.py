@@ -49,7 +49,7 @@ class TextEncodeMingImageEdit(Node):
             input_families=(
                 InputFamilySpec(
                     "images",
-                    (InputSpec("image", _IMAGE),),
+                    (InputSpec("image", _IMAGE, required=False),),
                     min_members=0,
                     member_names=tuple(f"image_{index}" for index in range(1, 9)),
                 ),

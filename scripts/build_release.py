@@ -203,9 +203,11 @@ def build_source_archive(root: Path, version: str, output: Path) -> Path:
         ):
             for name in source.namelist():
                 parts = tuple(part.lower() for part in Path(name).parts)
-                if any(part in {"tests", "tools", "benchmarks"} for part in parts):
-                    continue
-                if any("benchmark" in part for part in parts):
+                directories = parts if name.endswith("/") else parts[:-1]
+                if "src" not in directories and any(
+                    part in {"tests", "tools", "benchmarks"} or "benchmark" in part
+                    for part in directories
+                ):
                     continue
                 target.writestr(name, source.read(name))
     return archive
@@ -220,7 +222,8 @@ def write_constraints(
     verified_external: list[Path] | None = None,
 ) -> Path:
     constraints = output / "constraints.txt"
-    with tempfile.NamedTemporaryFile(prefix="dinkster-external-", suffix=".txt") as temporary:
+    with tempfile.TemporaryDirectory(prefix="dinkster-external-") as directory:
+        temporary = Path(directory) / "constraints.txt"
         subprocess.run(
             [
                 uv,
@@ -235,12 +238,12 @@ def write_constraints(
                 "--no-annotate",
                 "--no-header",
                 "--output-file",
-                temporary.name,
+                str(temporary),
             ],
             cwd=root,
             check=True,
         )
-        external = Path(temporary.name).read_text(encoding="utf-8").rstrip()
+        external = temporary.read_text(encoding="utf-8").rstrip()
     if verified_external is not None:
         from packaging.requirements import Requirement
         from packaging.utils import canonicalize_name

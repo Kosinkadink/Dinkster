@@ -455,6 +455,20 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     with zipfile.ZipFile(wheel) as archive:
         [name] = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
         metadata = archive.read(name).decode()
+        wheel_modules = {
+            name
+            for name in archive.namelist()
+            if name.startswith("dinkster/") and name.endswith(".py")
+        }
+    source_archive = build_source_archive(ROOT, version, tmp_path)
+    with zipfile.ZipFile(source_archive) as archive:
+        source_modules = {
+            name.removeprefix("src/")
+            for name in archive.namelist()
+            if name.startswith("src/dinkster/") and name.endswith(".py")
+        }
+    assert "dinkster/benchmark.py" in wheel_modules
+    assert source_modules == wheel_modules
     assert f"Version: {version}\n" in metadata
     assert f"Requires-Dist: dinkster-api=={version}\n" in metadata
     assert f"Requires-Dist: dinkster-frontend=={version}\n" in metadata
@@ -1202,7 +1216,10 @@ def test_maintainer_source_archive_excludes_non_release_material(tmp_path: Path)
         "tests/test_package.py": "excluded\n",
         "tools/generate.py": "excluded\n",
         "benchmarks/measure.py": "excluded\n",
-        "scripts/run_benchmark.py": "excluded\n",
+        "scripts/comfyui_benchmark_nodes/fixture.py": "excluded\n",
+        "scripts/run_benchmark.py": "released\n",
+        "src/benchmark.py": "released\n",
+        "src/package/benchmarks/runtime.py": "released\n",
     }
     for name, content in files.items():
         path = root / name
@@ -1218,4 +1235,6 @@ def test_maintainer_source_archive_excludes_non_release_material(tmp_path: Path)
     (root / ".git/HEAD").write_text(f"{tree}\n", encoding="ascii")
     archive = build_source_archive(root, "1.2.3", tmp_path)
     with zipfile.ZipFile(archive) as source:
-        assert source.namelist() == ["scripts/", "src/", "src/package.py"]
+        assert {name for name in source.namelist() if not name.endswith("/")} == {
+            name for name, content in files.items() if content == "released\n"
+        }
