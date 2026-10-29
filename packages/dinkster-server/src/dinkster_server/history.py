@@ -13,10 +13,10 @@ it. Since environment stamps live INSIDE documents, persisting the
 document (library) plus this link answers "what exact document and
 environment produced this run" with no second channel.
 
-What is deliberately NOT here: output values. Values live in the cache
-and are served by the peek surface with its own retention and refusal
-vocabulary; history rows are facts about runs, small enough to keep
-forever.
+Output values live in the cache and are served by the peek surface with
+its own retention and refusal vocabulary. History retains only their
+external asset identities, not payloads, so clearing caches does not erase
+the assets referenced by a durable run record.
 
 The store is also the queue's durability hook (QueuePersistence): every
 accepted job gets a row in the ``accepted`` table before the submission
@@ -63,12 +63,13 @@ import threading
 import time
 from collections.abc import Generator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from aiohttp import web
 from dinkster_assets import AssetError, require_digest
+from dinkster_assets.value import value_asset_references
 
 from .auth import LOCAL_PRINCIPAL, principal_for, resolve_scope
 from .paging import decode_cursor, encode_cursor
@@ -105,6 +106,8 @@ class HistoryRecord:
     cached: int = 0
     skipped: int = 0
     node_receipts: tuple[dict[str, str], ...] = ()
+    asset_digests: tuple[str, ...] | None = field(default=(), kw_only=True)
+    """External identities only; None means a legacy row has unknown references."""
 
     def to_wire(self) -> dict[str, object]:
         wire: dict[str, object] = {
@@ -164,7 +167,30 @@ def record_from_job(job: Job) -> HistoryRecord:
         cached=len(job.result.cached) if job.result is not None else 0,
         skipped=len(job.result.skipped) if job.result is not None else 0,
         node_receipts=tuple(node_receipts),
+        asset_digests=tuple(
+            sorted(
+                {
+                    digest
+                    for outputs in job.result.outputs.values()
+                    for digest in value_asset_references(outputs)
+                }
+                | {require_digest(artifact.digest) for artifact in job.result.artifacts}
+            )
+        )
+        if job.result is not None
+        else (),
     )
+
+
+def _asset_digests(raw: object) -> tuple[str, ...]:
+    if not isinstance(raw, list):
+        raise AssetError("history asset references are unavailable")
+    digests: set[str] = set()
+    for digest in cast(list[object], raw):
+        if not isinstance(digest, str):
+            raise AssetError("history asset reference is invalid")
+        digests.add(require_digest(digest))
+    return tuple(sorted(digests))
 
 
 class HistoryStore:
@@ -220,6 +246,10 @@ class HistoryStore:
                 self._conn.execute(
                     "ALTER TABLE history ADD COLUMN node_receipts TEXT NOT NULL DEFAULT '[]'"
                 )
+            if "asset_digests" not in columns:
+                # Old rows did not record output identities. NULL blocks
+                # collection rather than claiming those outputs had no assets.
+                self._conn.execute("ALTER TABLE history ADD COLUMN asset_digests TEXT")
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS history_scope_finished"
                 " ON history(scope, finished DESC, run_id DESC)"
@@ -256,7 +286,8 @@ class HistoryStore:
     def hold_asset_references(self) -> Generator[frozenset[str]]:
         """Hold every scope's accepted and terminal workflow roots behind their write barrier.
 
-        Output values and references inside opaque documents have other owners.
+        Terminal target identities are durable; opaque document contents and
+        live preview values still have other owners.
         """
         with self._lock:
             try:
@@ -270,6 +301,11 @@ class HistoryStore:
                         raise AssetError("history asset reference is invalid")
                     if digest:
                         roots.add(require_digest(digest))
+                for (manifest,) in self._conn.execute("SELECT asset_digests FROM history"):
+                    try:
+                        roots.update(_asset_digests(json.loads(manifest)))
+                    except (TypeError, ValueError) as exc:
+                        raise AssetError("history asset references are unavailable") from exc
                 yield frozenset(roots)
             except sqlite3.Error as exc:
                 raise AssetError("history asset reference state is unavailable") from exc
@@ -294,8 +330,8 @@ class HistoryStore:
             " (run_id, scope, principal, principal_kind, client_id, job_id, state,"
             " priority, submitted,"
             " started, finished, source_document, error, executed, cached,"
-            " skipped, attempt, node_receipts)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            " skipped, attempt, node_receipts, asset_digests)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
             " ON CONFLICT(run_id) DO NOTHING",
             (
                 record.run_id,
@@ -316,6 +352,9 @@ class HistoryStore:
                 record.skipped,
                 record.attempt,
                 json.dumps(record.node_receipts, separators=(",", ":")),
+                json.dumps(_asset_digests(list(record.asset_digests)))
+                if record.asset_digests is not None
+                else None,
             ),
         )
         return cursor.rowcount > 0
@@ -416,6 +455,7 @@ class HistoryStore:
                     attempt=row["attempt"],
                     source_document=row["source_document"],
                     error=error,
+                    asset_digests=None,
                 )
                 if self._put_locked(record):
                     records.append(record)
@@ -550,6 +590,9 @@ def _from_row(row: sqlite3.Row) -> HistoryRecord:
         cached=row["cached"],
         skipped=row["skipped"],
         node_receipts=tuple(json.loads(row["node_receipts"])),
+        asset_digests=_asset_digests(json.loads(row["asset_digests"]))
+        if row["asset_digests"] is not None
+        else None,
     )
 
 

@@ -128,8 +128,13 @@ The main protocol routes include:
   that older documents contain no asset values. Cleanup remains disabled.
   `HistoryStore.hold_asset_references()` separately holds the history write
   barrier and reads source-document roots from accepted and terminal jobs in
-  every scope. This includes interrupted jobs after restart; it does not
-  inspect workflow bytes or retain their nested values automatically.
+  every scope. Terminal writes atomically retain external asset identities
+  from nested target values and saved artifacts, independently of execution
+  cache retention. These manifests persist until their history rows are
+  removed and grant no byte access. Legacy and interrupted rows with unknown
+  output references block inspection rather than count as empty. History
+  responses do not expose these internal manifests. This does not inspect
+  opaque workflow bytes, retain live previews, or enable deletion.
 - `GET /api/assets/catalog?scope=&project=` lists persistent upload observations,
   grouped by digest, separately from workflow records. `q` searches original
   and stored names and recorded origin details; `kind` and `origin` filter

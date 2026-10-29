@@ -26,6 +26,11 @@
   release prevent stale clients from removing newer associations, including
   after restart or owner reuse. Association registration is explicit, not
   automatic history or preview integration; it does not enable cleanup.
+- Durable terminal history retains external asset identities from target
+  values and saved artifacts independently of execution-cache entries, without
+  storing output payloads or changing history responses. Legacy and interrupted
+  history with unknown output references refuses collection inspection. This
+  does not retain opaque workflow contents or live previews, or enable deletion.
 - Host-validated saved-file artifacts are cataloged in the submitted project
   with job and node provenance before the job reports completion. Unavailable
   or revoked files and catalog failures fail the job rather than report a
