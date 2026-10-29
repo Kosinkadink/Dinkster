@@ -12,6 +12,10 @@
   mappings without that metadata retain their wire shape. Historical same-type
   templates are distinct from the current node interface. This describes the
   backend declaration contract, not frontend migration support.
+- Backend replacement input-family copies can explicitly map authored source
+  order to target naming positions instead of preserving suffix IDs. The option
+  composes with historical-template metadata; omitted options retain their wire
+  shape. This is a declaration contract, not a claim of frontend migration support.
 - Backend `list<*>` values retain independently typed child envelopes through
   ordinary worker and persistent-cache boundaries. Outputs collect existing
   typed values rather than guessing types from Python objects. Nested lists,
