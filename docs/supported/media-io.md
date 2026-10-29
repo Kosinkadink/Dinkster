@@ -7,6 +7,8 @@
   returning an ASSET without attaching it does not advertise a saved file.
   One invocation supports up to 4096 explicit saved-file attachments, including
   complete admitted image batches, subject to existing file and transport bounds.
+  Mounted-file descriptors do not impose the encoded-preview byte limit on saved
+  weights or other files; the host validates their actual bytes by streaming.
 - Native image, mask, animation, audio, video, text, layer-document, model3D,
   splat, and conditioning savers explicitly attach their successful mounted
   publications. Save nodes require an active invocation attachment context;

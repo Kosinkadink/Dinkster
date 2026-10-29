@@ -84,8 +84,8 @@ def attach_saved_artifact(ref: Mapping[str, object]) -> None:
         or any(char not in "0123456789abcdef" for char in digest[7:])
     ):
         raise ValueError("saved artifact digest must be canonical blake3")
-    if type(size) is not int or not 0 <= size <= SAVED_ARTIFACT_LIMIT_BYTES:
-        raise ValueError("saved artifact size exceeds invocation limits")
+    if type(size) is not int or size < 0:
+        raise ValueError("saved artifact size must be a nonnegative integer")
     for field, value, limit in (
         ("name", name, 255),
         ("mediaType", media_type, 255),

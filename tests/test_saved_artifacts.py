@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import struct
+import sys
 import time
 import zlib
 from contextlib import contextmanager
@@ -426,9 +427,35 @@ def test_native_save_attachment_admits_complete_image_batch_and_bounds_overflow(
         decode_saved_artifact_claims({"savedArtifactClaims": [*expected, expected[0]]})
 
 
+@pytest.mark.parametrize("size", (0, 1073741824, 1073741825, sys.maxsize))
+def test_native_save_attachment_size_is_a_descriptor_not_an_encoded_payload(size: int) -> None:
+    expected = {
+        "digest": digest_bytes(b"descriptor only"),
+        "name": "model.safetensors",
+        "size": size,
+        "mediaType": "application/octet-stream",
+        "virtualPath": "mounts/custom/model.safetensors",
+    }
+    with capture_saved_artifacts() as claims:
+        attach_saved_artifact(expected)
+    assert claims == [expected]
+    wire = json.loads(json.dumps({"savedArtifactClaims": [dict(claim) for claim in claims]}))
+    assert decode_saved_artifact_claims(wire) == (expected,)
+
+
 @pytest.mark.parametrize(
     "fault",
-    ("revoked", "readonly", "digest", "size", "unpublished", "stale", "hardlink", "symlink"),
+    (
+        "revoked",
+        "readonly",
+        "digest",
+        "size",
+        "large-size",
+        "unpublished",
+        "stale",
+        "hardlink",
+        "symlink",
+    ),
 )
 def test_native_save_authority_rejects_invalid_or_revoked_publication(
     tmp_path: Path, fault: str
@@ -451,6 +478,8 @@ def test_native_save_authority_rejects_invalid_or_revoked_publication(
         (root / "nested" / ref.name).write_bytes(b"evil! text")
     elif fault == "size":
         claim["size"] = ref.size + 1
+    elif fault == "large-size":
+        claim["size"] = 1073741825
     elif fault == "unpublished":
         (root / "unpublished.txt").write_bytes(b"valid text")
         claim.update(name="unpublished.txt", virtualPath="mounts/custom/unpublished.txt")
@@ -477,7 +506,7 @@ def test_native_save_authority_rejects_invalid_or_revoked_publication(
     (
         {"size": True},
         {"size": -1},
-        {"size": MAX_SAVED_ARTIFACT_BYTES + 1},
+        {"size": 1.5},
         {"digest": "blake3:" + "G" * 64},
         {"virtualPath": "mounts/custom/../x.txt"},
         {"virtualPath": "mounts/custom/other.txt"},
