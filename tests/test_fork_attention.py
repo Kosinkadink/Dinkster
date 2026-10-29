@@ -326,6 +326,7 @@ def test_sampling_clone_resolves_distributed_activation_at_consumption(
         def set_model_optimized_attention(self, selected: object) -> None:
             self.selected = selected
 
+    monkeypatch.setenv("DINKSTER_ACCELERATOR", "cpu")
     runtime = attention.create_attention_runtime()
     selected = object()
     active = False
