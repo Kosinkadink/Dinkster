@@ -72,9 +72,9 @@ def test_powershell_setup_pins_native_windows_test_environments() -> None:
         "opencv-contrib-python-headless==5.0.0.93",
         "pillow==12.0.0",
         "safetensors==0.8.0",
-        "sentencepiece==0.2.1",
-        "tokenizers==0.23.1",
-        "transformers==5.16.1",
+        "sentencepiece==0.2.2",
+        "tokenizers==0.23.3",
+        "transformers==5.21.0",
         "comfy-aimdo==0.6.0",
         "$KitchenCpuWheel",
     ]
@@ -122,6 +122,23 @@ def test_setup_math_dependency_matches_workspace_lock() -> None:
         POWERSHELL_SETUP.read_text(), "CpuDependencies"
     )
     assert f'"{requirement}"' in POSIX_SETUP.read_text()
+
+
+def test_cpu_setup_exact_dependencies_match_workspace_lock() -> None:
+    lock = tomllib.loads((REPO_ROOT / "uv.lock").read_text())
+    versions = {item["name"]: item["version"] for item in lock["package"]}
+    powershell = POWERSHELL_SETUP.read_text()
+    posix = POSIX_SETUP.read_text().split(
+        "# ------------------------------------------------------------ .venv-gpu"
+    )[0]
+    requirements = _powershell_dependency_array(powershell, "CpuDependencies")
+    for requirement in requirements:
+        if "==" not in requirement:
+            continue
+        name, version = requirement.split("==")
+        if name in versions:
+            assert version == versions[name], requirement
+        assert requirement in posix
 
 
 def test_powershell_setup_limits_force_and_has_no_private_installer() -> None:
