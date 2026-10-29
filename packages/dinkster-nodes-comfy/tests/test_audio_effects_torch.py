@@ -161,6 +161,7 @@ def test_audio_effect_nodes_execute_twice_in_both_manifest_hosts(
             (tmp_path / "audio_effects_fixture.py").write_text(
                 "from test_audio_effects_torch import AudioInspect, AudioSource\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "from dinkster_nodes_media_io import register_media_types\n"
                 "NODES = (*COMFY_NODES, AudioSource, AudioInspect)\n"
                 "\ndef register_types(registry):\n"
@@ -173,6 +174,10 @@ def test_audio_effect_nodes_execute_twice_in_both_manifest_hosts(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["audio-effects-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "audio_effects_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "audio_effects_fixture:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "audio_effects_fixture:register_types",

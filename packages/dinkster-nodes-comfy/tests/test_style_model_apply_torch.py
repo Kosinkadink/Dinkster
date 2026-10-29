@@ -235,6 +235,7 @@ def test_style_apply_runs_through_native_conditioning_consumer_twice(
             (tmp_path / "style_apply_fixture.py").write_text(
                 "from test_style_model_apply_torch import FIXTURES\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, *FIXTURES)\n",
                 encoding="ascii",
             )
@@ -243,6 +244,10 @@ def test_style_apply_runs_through_native_conditioning_consumer_twice(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["style-apply-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "style_apply_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "style_apply_fixture:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "style_apply_fixture:register_inference_types",

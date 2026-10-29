@@ -1919,7 +1919,10 @@ def test_rootless_native_runtime_configuration(
     assert not spec.trust_reserved
 
 
-def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(tmp_path: Path) -> None:
+@pytest.mark.parametrize("in_process", (False, True))
+def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(
+    tmp_path: Path, in_process: bool
+) -> None:
     from dinkster_nodes_comfy import COMFY_NODES
 
     claims = tuple(node.schema().node_type for node in COMFY_NODES)
@@ -1938,10 +1941,16 @@ def test_exact_node_claims_compose_reload_execute_and_reject_second_owner(tmp_pa
     async def scenario() -> None:
         composer = ServingComposer()
         try:
-            await composer.add_pack(PackSpec(manifest=manifest))
+            await composer.add_pack(PackSpec(manifest=manifest, in_process=in_process))
             assert set(composer.composition.schemas) == set(claims)
             assert set(composer.composition.node_packs.values()) == {"dinkster-nodes-comfy"}
-            await composer.reload_pack("dinkster-nodes-comfy")
+            assert set(composer.composition.lazy_choices) == {"devices.gpu", "devices.vae"}
+            if in_process:
+                with pytest.raises(CompositionError, match="cannot reload in-process pack"):
+                    await composer.reload_pack("dinkster-nodes-comfy")
+            else:
+                await composer.reload_pack("dinkster-nodes-comfy")
+            assert set(composer.composition.lazy_choices) == {"devices.gpu", "devices.vae"}
             result = await composer.composition.make_engine(lambda _event: None).run(
                 Graph(
                     nodes={
