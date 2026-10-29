@@ -7,7 +7,7 @@ publisher = "dinkster"
 # dinkster is reserved. This first-party pack receives explicit host trust but
 # otherwise follows the same composition path as every pack.
 namespaces = ["dinkster"]
-type-namespaces = ["comfy.LAYERS", "comfy.COMPOSITOR"]
+type-namespaces = ["dinkster.layers", "comfy.LAYERS", "comfy.COMPOSITOR"]
 
 [pack.sandbox]
 writable-mounts = true
