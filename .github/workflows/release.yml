@@ -93,10 +93,13 @@ jobs:
         include:
           - os: linux
             runner: ubuntu-latest
+            python: "3.14.10"
           - os: windows
             runner: windows-latest
+            python: "3.14.10"
           - os: macos
             runner: macos-latest
+            python: "3.12"
     steps:
       - name: Expose Git Bash on Windows
         if: runner.os == 'Windows'
@@ -117,13 +120,15 @@ jobs:
           path: ${{ runner.temp }}/dinkster-release
       - uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
           enable-cache: true
           cache-dependency-glob: uv.lock
       - name: Install and launch from wheels
         shell: bash
+        env:
+          RELEASE_PYTHON: ${{ matrix.python }}
         run: |
-          uv venv --seed --python 3.12 "$RUNNER_TEMP/dinkster-release-venv"
+          uv venv --seed --python "$RELEASE_PYTHON" "$RUNNER_TEMP/dinkster-release-venv"
           python="$RUNNER_TEMP/dinkster-release-venv/bin/python"
           if [ "$RUNNER_OS" = Windows ]; then
             python="$RUNNER_TEMP/dinkster-release-venv/Scripts/python.exe"

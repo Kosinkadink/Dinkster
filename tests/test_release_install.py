@@ -217,9 +217,9 @@ def test_release_install_matrix_covers_supported_desktop_platforms() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
     assert workflow["jobs"]["install"]["strategy"]["matrix"] == {
         "include": [
-            {"os": "linux", "runner": "ubuntu-latest"},
-            {"os": "windows", "runner": "windows-latest"},
-            {"os": "macos", "runner": "macos-latest"},
+            {"os": "linux", "runner": "ubuntu-latest", "python": "3.14.10"},
+            {"os": "windows", "runner": "windows-latest", "python": "3.14.10"},
+            {"os": "macos", "runner": "macos-latest", "python": "3.12"},
         ]
     }
     bootstrap = workflow["jobs"]["install"]["steps"][0]
@@ -229,11 +229,24 @@ def test_release_install_matrix_covers_supported_desktop_platforms() -> None:
     assert "Git/bin" in bootstrap["run"]
     assert "bash.exe" in bootstrap["run"]
     assert "GITHUB_PATH" in bootstrap["run"]
+    setup = next(
+        step
+        for step in workflow["jobs"]["install"]["steps"]
+        if step.get("uses") == "astral-sh/setup-uv@v5"
+    )
+    assert setup["with"]["python-version"] == "${{ matrix.python }}"
+    install = next(
+        step
+        for step in workflow["jobs"]["install"]["steps"]
+        if step.get("name") == "Install and launch from wheels"
+    )
+    assert install["env"]["RELEASE_PYTHON"] == "${{ matrix.python }}"
     command = next(
         step["run"]
         for step in workflow["jobs"]["install"]["steps"]
         if step.get("name") == "Install and launch from wheels"
     )
+    assert 'uv venv --seed --python "$RELEASE_PYTHON"' in command
     assert '"$python" -m pip install' in command
     assert '"$python" -m pip check' in command
     assert "--require-hashes" in command
