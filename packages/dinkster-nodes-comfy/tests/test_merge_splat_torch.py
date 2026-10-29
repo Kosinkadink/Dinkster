@@ -94,6 +94,29 @@ def test_merge_splat_truncates_real_counts_pads_sh_and_preserves_sources() -> No
                 torch.testing.assert_close(after, before, rtol=0, atol=0)
 
 
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32, torch.float64])
+def test_merge_splat_preserves_each_float_dtype_and_cpu_device(dtype: torch.dtype) -> None:
+    first, second = _sources()
+    names = ("positions", "scales", "rotations", "opacities", "sh")
+    for value in (first, second):
+        for name in names:
+            setattr(value, name, getattr(value, name).to(dtype=dtype, device="cpu"))
+    result = materialize_splat(
+        MergeSplat.execute(splats={"splat0": first, "splat1": second})["splat"]
+    )
+    for name in names:
+        tensor = getattr(result, name)
+        assert tensor.dtype == dtype and tensor.device == torch.device("cpu")
+        assert tensor[0, 3:].count_nonzero().item() == 0
+        torch.testing.assert_close(tensor[1, 3:], getattr(second, name)[1], rtol=0, atol=0)
+    assert result.sh[0, 0, 1:].count_nonzero().item() == 0
+    assert result.sh[1, :3, 1:].count_nonzero().item() == 0
+    assert result.positions[0, :3, 0].tolist() == [10, 40, 43]
+    assert result.counts.dtype == torch.int64
+    assert result.counts.device == torch.device("cpu")
+    assert result.counts.tolist() == [3, 5]
+
+
 @pytest.mark.parametrize("case,size", [("uniform", 5), ("empty", 0), ("zero-counts", 0)])
 def test_merge_splat_uniform_lengths_omit_counts(case: str, size: int) -> None:
     first, second = _sources()
