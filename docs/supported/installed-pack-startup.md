@@ -42,9 +42,11 @@
 - The environment CLI can acquire an explicit mirror selection, build an offline
   generation and health-check it before activation, with confirmation and retained
   rollback. Setup plans show the selected engine binding, port and ordered GPU
-  assignment before confirmation. Registered workflow/addition execution and
-  automatic release source acquisition are not connected yet; channel or variant
-  migration is refused.
+  assignment before confirmation. Releases carrying an official source lock feed
+  their verified source ZIPs into target-interpreter admission automatically;
+  missing admission support refuses activation. Automatic default dependency
+  provisioning and registered workflow/addition execution are not connected yet;
+  channel or variant migration is refused.
 - Failed initial setup releases its own metadata and store registrations so a
   retry can select another data directory. Cached content, pre-existing settings,
   other projects' references and the diagnostic journal remain intact.

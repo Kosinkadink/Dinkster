@@ -256,8 +256,15 @@ journal. A confirmed retry first recovers interrupted activation.
 Existing per-variant dependency locks can be supplied with repeated `--pack-lock`,
 and in-process placement with repeated `--in-process-pack`. Paired absolute
 `--catalog-lock` and `--artifacts` inputs feed verified source admission in the
-target interpreter. Automatic release source-payload acquisition is not connected
-yet. Projects with registered workflows/additions and channel/variant changes
+target interpreter. Without those overrides, a selected release carrying
+`official-packs.lock` supplies its source inputs automatically. The client downloads
+that lock and the release's ZIP payloads with the manifest's SHA256/size checks,
+then caches each ZIP as `engines/<release-id>/artifacts/<blake3-hex>.zip`.
+It does not parse the registry lock or unpack sources; target-interpreter admission
+still verifies identity and claims before sealing. A missing admission command
+refuses the generation rather than omitting sources. Automatic default dependency
+lock provisioning remains separate from source acquisition.
+Projects with registered workflows/additions and channel/variant changes
 currently refuse rather than bypass their pending combined-execution/migration
 paths. These commands are not a complete released-engine setup claim.
 

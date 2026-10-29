@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import cast
 from urllib.parse import quote, urlparse
 
+from blake3 import blake3
 from packaging.utils import InvalidWheelFilename, parse_wheel_filename
 
 from .environment_archives import extract_base
@@ -325,3 +326,31 @@ def acquire(catalog: EnvironmentCatalog, variant: str, store: Path) -> Path:
     constraints = release_root / f"constraints-{variant}.txt"
     atomic_write(constraints, merged)
     return constraints
+
+
+def acquire_sources(catalog: EnvironmentCatalog, store: Path) -> tuple[Path, Path] | None:
+    """Verify release payload transport; target admission alone interprets the pack lock."""
+    rows = _rows(catalog.engine["artifacts"], "name")
+    if not any(row["name"] == "official-packs.lock" for row in rows):
+        return None
+    release = store / "engines" / catalog.channel.engine_release[7:]
+    artifacts = release / "artifacts"
+    artifacts.mkdir(parents=True, exist_ok=True)
+    for row in rows:
+        name, sha, size = (
+            cast("str", row["name"]),
+            cast("str", row["sha256"]),
+            cast("int", row["size"]),
+        )
+        if name != "official-packs.lock" and not name.endswith(".zip"):
+            continue
+        downloaded = fetch_artifact(catalog.engine_sources, name, release / name, sha, size)
+        if name.endswith(".zip"):
+            identity = blake3()
+            with downloaded.open("rb") as source:
+                for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                    identity.update(chunk)
+            fetch_artifact(
+                (str(release),), name, artifacts / f"{identity.hexdigest()}.zip", sha, size
+            )
+    return release / "official-packs.lock", artifacts

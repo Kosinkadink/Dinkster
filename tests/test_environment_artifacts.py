@@ -5,12 +5,17 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 from pathlib import Path
 
 import py7zr
 import pytest
-from dinkster_supervisor.environment_artifacts import acquire, discover
+from dinkster_registry import LockedPack, Lockfile, build_artifact
+from dinkster_supervisor.environment_artifacts import acquire, acquire_sources, discover
+from dinkster_supervisor.environment_downloads import DownloadError
 from dinkster_supervisor.environment_state import EnvironmentError
+
+from dinkster.generation_packs import stage_generation_packs
 
 
 def _json(value: dict) -> bytes:
@@ -117,6 +122,81 @@ def _mirror(
     for name in ("stable", "main"):
         (root / f"channels/{name}.json").write_bytes(_json(channel))
     return base, engine, channel
+
+
+def _release_sources(mirror: Path) -> tuple[Path, dict[str, bytes]]:
+    channel_path = mirror / "channels/main.json"
+    channel = json.loads(channel_path.read_bytes())
+    previous = mirror / "engine" / channel["engine"]["release"][7:]
+    engine = json.loads((previous / "release-manifest.json").read_bytes())
+    entries, payloads = [], {}
+    for name in ("first-pack", "second-pack"):
+        source = mirror / name
+        source.mkdir()
+        (source / "dinkster-pack.toml").write_text(
+            f'[pack]\nname = "{name}"\npublisher = "dinkster"\n'
+            f'namespaces = ["{name}"]\n[pack.entry]\nnodes = "nodes:NODES"\n'
+        )
+        (source / "nodes.py").write_text(f'VALUE = "{name}"\n')
+        archive = mirror / f"{name}-1.0.zip"
+        identity = build_artifact(source, archive)
+        entries.append(LockedPack(name, "1.0", identity, "dinkster", (name,)))
+        payloads[archive.name] = archive.read_bytes()
+    payloads["official-packs.lock"] = (Lockfile.of(entries).record_json() + "\n").encode()
+    engine["artifacts"].extend(_artifact(name, data) for name, data in payloads.items())
+    data = _json(engine) + b"\n"
+    identity = hashlib.sha256(data).hexdigest()
+    release = mirror / "engine" / identity
+    shutil.copytree(previous, release)
+    (release / "release-manifest.json").write_bytes(data)
+    for name, payload in payloads.items():
+        (release / name).write_bytes(payload)
+    channel["engine"]["release"] = "sha256:" + identity
+    channel["engine"]["locations"] = [
+        {"type": "mirror", "path": f"engine/{identity}/release-manifest.json"}
+    ]
+    channel_path.write_bytes(_json(channel))
+    return release, payloads
+
+
+def test_acquires_release_sources_into_the_existing_artifact_identity_cache(tmp_path: Path):
+    mirror, store = tmp_path / "mirror", tmp_path / "store"
+    _mirror(mirror)
+    release, payloads = _release_sources(mirror)
+    catalog = discover((str(mirror),), "main")
+    acquired = acquire_sources(catalog, store)
+    assert acquired is not None
+    lock, artifacts = acquired
+    assert lock.read_bytes() == payloads["official-packs.lock"]
+    entries = Lockfile.from_record_json(lock.read_text()).packs
+    assert len(entries) == 2
+    for entry in entries:
+        cached = artifacts / f"{entry.artifact_digest.removeprefix('blake3:')}.zip"
+        assert cached.read_bytes() == payloads[f"{entry.pack}-1.0.zip"]
+        cached.write_bytes(b"damaged cache")
+    acquire_sources(catalog, store)
+    for entry in entries:
+        cached = artifacts / f"{entry.artifact_digest.removeprefix('blake3:')}.zip"
+        assert cached.read_bytes() == payloads[f"{entry.pack}-1.0.zip"]
+    target = tmp_path / "target"
+    target.mkdir()
+    stage_generation_packs(
+        target,
+        Lockfile.from_record_json(lock.read_text()),
+        {
+            entry.pack: artifacts / f"{entry.artifact_digest.removeprefix('blake3:')}.zip"
+            for entry in entries
+        },
+    )
+    assert (target / "dinkster.lock").read_bytes() == payloads["official-packs.lock"]
+    for entry in entries:
+        assert (
+            target / "pack-sources" / entry.pack / "nodes.py"
+        ).read_text() == f'VALUE = "{entry.pack}"\n'
+    (release / "first-pack-1.0.zip").write_bytes(b"damaged release")
+    with pytest.raises(DownloadError, match="could not be downloaded"):
+        acquire_sources(catalog, tmp_path / "fresh-store")
+    assert not list((tmp_path / "fresh-store").rglob("*.zip"))
 
 
 @pytest.mark.parametrize("channel_name", ["stable", "main"])

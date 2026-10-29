@@ -15,7 +15,7 @@ from urllib.request import urlopen
 import py7zr
 import pytest
 from dinkster_supervisor.environment_state import Journal, content_digest, writer_lock
-from test_environment_artifacts import _artifact, _json, _mirror
+from test_environment_artifacts import _artifact, _json, _mirror, _release_sources
 from test_environment_generations import _assert_shared, _standalone_tree, _wheel
 from test_environment_runtime import SERVE, free_port, make_generation
 from test_environment_state import _generation
@@ -428,6 +428,21 @@ environment.main()
         )
         assert content_digest(python) == retained_digest
         assert _run(root, "doctor")[1]["status"] == "clean"
+        source_release, payloads = _release_sources(mirror)
+        code, source_refused = _run(root, "update", "--yes")
+        assert (
+            code == 1 and "pack source staging: invalid admission result" in source_refused["error"]
+        )
+        # This fixture engine has no source-admission CLI; it must not silently omit sources.
+        assert (root / "current").read_text() == "1\n" and not (root / "generations/3").exists()
+        cached_release = store / "engines" / source_release.name
+        assert (cached_release / "official-packs.lock").read_bytes() == payloads[
+            "official-packs.lock"
+        ]
+        assert sorted(
+            path.read_bytes() for path in (cached_release / "artifacts").glob("*.zip")
+        ) == sorted(payload for name, payload in payloads.items() if name.endswith(".zip"))
+        assert _run(root, "status")[1]["engines"][0]["state"] == "ready"
         _executable_release(mirror, base, "3.0", 61)
         engine = json.loads((mirror / "channels/main.json").read_bytes())["engine"]["release"][7:]
         (mirror / "engine" / engine / "fixture_engine-3.0-py3-none-any.whl").write_bytes(b"corrupt")

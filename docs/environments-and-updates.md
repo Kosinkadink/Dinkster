@@ -72,6 +72,16 @@ The engine environment is immutable and hash-checked. `dinkster-env doctor`
 compares the active generation against its constraints and reports drift.
 Repair re-syncs from the wheel store without network access.
 
+When the selected engine manifest lists `official-packs.lock`, setup/update also
+acquire that existing registry lock and the release's ZIP source payloads. Manifest
+SHA256/size checks verify transport; raw ZIP-byte BLAKE3 identities name the cache
+entries at `engines/<release-id>/artifacts/<digest-hex>.zip`. The supervisor does not
+parse the registry lock or extract sources. Target-interpreter source admission
+consumes that lock/cache pair, verifies artifact identity and claims, and refuses
+the whole candidate on errors. Explicit paired `--catalog-lock`/`--artifacts`
+inputs override release-source acquisition. Dependency locks remain distinct from
+source identities and are supplied through the existing pack-provisioning path.
+
 ### Project records
 
 `current` is the active positive decimal generation number followed by one

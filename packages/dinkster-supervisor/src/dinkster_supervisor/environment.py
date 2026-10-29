@@ -10,7 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
-from .environment_artifacts import acquire, discover
+from .environment_artifacts import acquire, acquire_sources, discover
 from .environment_generations import build_generation, pack_operation
 from .environment_runtime import (
     engine_assignments,
@@ -263,6 +263,11 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                 store_snapshot = pointer.read_bytes()
                 replace(Journal.read(journal), stage="building").write(journal)
                 constraints = acquire(catalog, variant, store)
+                catalog_lock, source_artifacts = args.catalog_lock, args.artifacts
+                if catalog_lock is None:
+                    acquired_sources = acquire_sources(catalog, store)
+                    if acquired_sources is not None:
+                        catalog_lock, source_artifacts = acquired_sources
                 measured = sum(
                     path.stat().st_size
                     for path in (store / "bases" / base_id[7:] / "python").rglob("*")
@@ -286,8 +291,8 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     pack_locks=tuple(args.pack_lock),
                     in_process_packs=in_process,
                     own_environment_size=measured,
-                    catalog_lock=args.catalog_lock,
-                    artifacts=args.artifacts,
+                    catalog_lock=catalog_lock,
+                    artifacts=source_artifacts,
                 )
                 activate(root, journal, revalidate=revalidate)
             except Exception as exc:
