@@ -144,14 +144,6 @@ def build(
                     requires_python=project.get("requires-python", ">=3.12"),
                     uv=uv,
                 )
-                missing = [
-                    package.name for package in dependency_lock.packages if not package.wheels
-                ]
-                if missing:
-                    raise ValueError(
-                        f"pack {manifest.name} has no published dependency wheels for: "
-                        + ", ".join(missing)
-                    )
                 dependency_payload = output / f"{manifest.name}-{version}-{variant}.pack-lock.json"
                 dependency_lock.write(dependency_payload)
                 payloads.append(dependency_payload)
