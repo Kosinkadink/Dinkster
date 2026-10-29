@@ -6,12 +6,15 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import py7zr
 import pytest
 from dinkster_registry import LockedPack, Lockfile, build_artifact
 from dinkster_supervisor.environment_artifacts import acquire, acquire_sources, discover
+from dinkster_supervisor.environment_channels import write_channel
 from dinkster_supervisor.environment_downloads import DownloadError
 from dinkster_supervisor.environment_state import EnvironmentError
 
@@ -294,3 +297,120 @@ def test_part_hashes_do_not_substitute_for_verifying_extracted_wheel_hashes(tmp_
         acquire(catalog, "fixture-cpu", store)
     assert not (store / "bases" / base["id"][7:]).exists()
     assert not list(store.glob("wheels/*/*.whl"))
+
+
+def test_channel_builder_round_trips_both_channels_without_changing_publisher_inputs(
+    tmp_path: Path,
+):
+    mirror = tmp_path / "mirror"
+    base, engine, channel = _mirror(mirror, variant="linux-cpu")
+    second = tmp_path / "second"
+    extra, _, _ = _mirror(second, variant="win-cpu")
+    shutil.copytree(second / "base/win-cpu", mirror / "base/win-cpu")
+    release = mirror / "engine" / channel["engine"]["release"][7:]
+    bases = [
+        mirror / "base" / variant / manifest["id"][7:] / "manifest.json"
+        for variant, manifest in (("linux-cpu", base), ("win-cpu", extra))
+    ]
+    before = {
+        path: path.read_bytes()
+        for tree in (mirror / "engine", mirror / "base")
+        for path in tree.rglob("*")
+        if path.is_file()
+    }
+    expected_id = (
+        "sha256:" + hashlib.sha256((release / "release-manifest.json").read_bytes()).hexdigest()
+    )
+    for name in ("main", "stable"):
+        command = [
+            sys.executable,
+            "-m",
+            "dinkster_supervisor.environment_channels",
+            "--release",
+            str(release),
+            "--channel",
+            name,
+            "--output-root",
+            str(mirror),
+            "--minimum-desktop-version",
+            "0.7.2",
+        ]
+        for path in reversed(bases):
+            command.extend(["--base-manifest", str(path)])
+        result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+        assert result.returncode == 0, result.stderr
+        generated = json.loads((mirror / "channels" / f"{name}.json").read_bytes())
+        assert generated["engine"]["release"] == expected_id
+        assert generated["engine"]["tag"] == engine["tag"]
+        assert generated["minimumDesktopVersion"] == "0.7.2"
+        selected = discover((str(mirror),), name)
+        assert selected.engine == engine
+        assert selected.bases == {"linux-cpu": base, "win-cpu": extra}
+        assert selected.channel.base_for("linux-cpu") == base["id"]
+        assert selected.channel.base_for("win-cpu") == extra["id"]
+        assert {path: path.read_bytes() for path in before} == before
+    assert (mirror / "channels/main.json").read_bytes() == (
+        mirror / "channels/stable.json"
+    ).read_bytes()
+
+
+@pytest.mark.parametrize(
+    ("damage", "reason"),
+    [
+        ("constraints", "artifact constraints.txt differs"),
+        ("wheel", "artifact fixture_engine.* differs"),
+        ("base-id", "base manifest digest mismatch"),
+        ("protocol", "workerProtocol mismatch"),
+        ("version", "disagrees with engine lock"),
+        ("duplicate", "duplicate selected base variant"),
+        ("alias", "alias tags"),
+        ("empty", "at least one base"),
+    ],
+)
+def test_channel_builder_refuses_invalid_inputs_without_replacing_channels(
+    tmp_path: Path, damage: str, reason: str
+):
+    mirror = tmp_path / "mirror"
+    base, engine, channel = _mirror(mirror)
+    release = mirror / "engine" / channel["engine"]["release"][7:]
+    base_path = mirror / "base/fixture-cpu" / base["id"][7:] / "manifest.json"
+    selected = [base_path]
+    if damage == "constraints":
+        (release / "constraints.txt").write_bytes(b"tampered constraints")
+    elif damage == "wheel":
+        wheel = release / "fixture_engine-2.0-py3-none-any.whl"
+        wheel.write_bytes(b"x" * wheel.stat().st_size)
+    elif damage == "base-id":
+        base["python"] = "3.14.99"
+        base_path.write_bytes(_json(base))
+    elif damage == "protocol":
+        engine["workerProtocol"] += 1
+        (release / "release-manifest.json").write_bytes(_json(engine))
+    elif damage == "version":
+        constraints = (
+            (release / "constraints.txt")
+            .read_bytes()
+            .replace(b"fixture-base==1.0", b"fixture-base==9.0")
+        )
+        (release / "constraints.txt").write_bytes(constraints)
+        engine["artifacts"][0] = _artifact("constraints.txt", constraints)
+        (release / "release-manifest.json").write_bytes(_json(engine))
+    elif damage == "duplicate":
+        selected.append(base_path)
+    elif damage == "alias":
+        engine["tag"] = "latest"
+        (release / "release-manifest.json").write_bytes(_json(engine))
+    else:
+        selected.clear()
+    before = {path: path.read_bytes() for path in (mirror / "channels").iterdir()}
+    for output in (mirror, tmp_path / "absent"):
+        with pytest.raises(EnvironmentError, match=reason):
+            write_channel(
+                release,
+                selected,
+                channel="main",
+                output_root=output,
+                minimum_desktop_version="0.2.0",
+            )
+        assert {path: path.read_bytes() for path in before} == before
+        assert not (tmp_path / "absent").exists()

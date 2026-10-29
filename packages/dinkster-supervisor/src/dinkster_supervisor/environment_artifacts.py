@@ -43,7 +43,7 @@ _BASE_IDENTITY = (
 )
 
 
-def _document(data: bytes) -> dict[str, object]:
+def parse_metadata(data: bytes) -> dict[str, object]:
     def unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
         result: dict[str, object] = {}
         for key, value in pairs:
@@ -61,7 +61,7 @@ def _document(data: bytes) -> dict[str, object]:
     return cast("dict[str, object]", value)
 
 
-def _rows(value: object, key: str) -> tuple[dict[str, object], ...]:
+def artifact_rows(value: object, key: str) -> tuple[dict[str, object], ...]:
     if not isinstance(value, list):
         raise EnvironmentError("manifest artifacts must be an array")
     rows: list[dict[str, object]] = []
@@ -82,9 +82,9 @@ def _rows(value: object, key: str) -> tuple[dict[str, object], ...]:
     return tuple(rows)
 
 
-def _manifest(data: bytes, expected: str, variant: str | None) -> dict[str, object]:
+def validate_manifest(data: bytes, expected: str, variant: str | None) -> dict[str, object]:
     digest(expected)
-    document = _document(data)
+    document = parse_metadata(data)
     protocol = document.get("workerProtocol")
     if type(protocol) is not int or protocol < 1:
         raise EnvironmentError("manifest workerProtocol must be a positive integer")
@@ -98,7 +98,7 @@ def _manifest(data: bytes, expected: str, variant: str | None) -> dict[str, obje
         commit = document.get("commit")
         if not isinstance(commit, str) or re.fullmatch(r"[0-9a-f]{40}", commit) is None:
             raise EnvironmentError("engine manifest must name its full commit")
-        rows = _rows(document.get("artifacts"), "name")
+        rows = artifact_rows(document.get("artifacts"), "name")
         if not any(row["name"] == "constraints.txt" for row in rows):
             raise EnvironmentError("engine release has no constraints.txt artifact")
     else:
@@ -114,8 +114,8 @@ def _manifest(data: bytes, expected: str, variant: str | None) -> dict[str, obje
         actual = "sha256:" + hashlib.sha256(canonical.encode("ascii")).hexdigest()
         if document.get("id") != expected or actual != expected:
             raise EnvironmentError("base manifest digest mismatch")
-        _rows(document.get("wheels"), "filename")
-        _rows(document.get("parts"), "filename")
+        artifact_rows(document.get("wheels"), "filename")
+        artifact_rows(document.get("parts"), "filename")
         # Validate the producer-owned replacement set and wheel identities before acquisition.
         effective_constraints("", document)
         platform = document.get("platform")
@@ -194,7 +194,7 @@ def _discover_manifest(
     sources = _sources(locations, mirrors)
     for root, filename in sources:
         try:
-            document = _manifest(read_metadata(root, filename), expected, variant)
+            document = validate_manifest(read_metadata(root, filename), expected, variant)
             return document, tuple(source for source, _ in sources)
         except (OSError, ValueError, HTTPException):
             continue
@@ -218,7 +218,7 @@ class EnvironmentCatalog:
                 "base": manifest["id"],
                 "manifest": manifest,
                 "downloadBytes": sum(
-                    cast("int", row["size"]) for row in _rows(manifest["parts"], "filename")
+                    cast("int", row["size"]) for row in artifact_rows(manifest["parts"], "filename")
                 ),
             }
             for variant, manifest in self.bases.items()
@@ -234,7 +234,7 @@ def discover(mirrors: tuple[str, ...], channel_name: str) -> EnvironmentCatalog:
     for mirror in mirrors:
         try:
             _trusted_metadata(mirror)
-            document = _document(read_metadata(mirror, f"channels/{channel_name}.json"))
+            document = parse_metadata(read_metadata(mirror, f"channels/{channel_name}.json"))
             channel = Channel.parse(document)
             break
         except (OSError, ValueError, HTTPException):
@@ -268,7 +268,7 @@ def acquire(catalog: EnvironmentCatalog, variant: str, store: Path) -> Path:
     base_root = store / "bases" / base_id[7:]
     created = not base_root.exists()
     if created:
-        parts = _rows(base["parts"], "filename")
+        parts = artifact_rows(base["parts"], "filename")
         if not parts:
             raise EnvironmentError(
                 "base archive is unavailable; manifest reconstruction is required"
@@ -285,7 +285,7 @@ def acquire(catalog: EnvironmentCatalog, variant: str, store: Path) -> Path:
         )
         extract_base(downloaded, base_root)
     try:
-        for row in _rows(base["wheels"], "filename"):
+        for row in artifact_rows(base["wheels"], "filename"):
             source = base_root / "wheels" / cast("str", row["filename"])
             sha = cast("str", row["sha256"])
             if (
@@ -305,7 +305,7 @@ def acquire(catalog: EnvironmentCatalog, variant: str, store: Path) -> Path:
         raise
     release_root = store / "engines" / catalog.channel.engine_release[7:]
     owned = cast("list[str]", base["replaces"])
-    for row in _rows(catalog.engine["artifacts"], "name"):
+    for row in artifact_rows(catalog.engine["artifacts"], "name"):
         name, sha = cast("str", row["name"]), cast("str", row["sha256"])
         if name.endswith(".whl"):
             try:
@@ -332,7 +332,7 @@ def acquire_sources(
     catalog: EnvironmentCatalog, store: Path, *, download: bool = True
 ) -> tuple[Path, Path] | None:
     """Verify release payload transport; target admission alone interprets the pack lock."""
-    rows = _rows(catalog.engine["artifacts"], "name")
+    rows = artifact_rows(catalog.engine["artifacts"], "name")
     if not any(row["name"] == "official-packs.lock" for row in rows):
         return None
     release = store / "engines" / catalog.channel.engine_release[7:]

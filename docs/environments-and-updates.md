@@ -130,8 +130,22 @@ active generation; they do not authorize data deletion.
 ```json
 {
   "format": "dinkster.channel/1",
-  "engine": { "version": "0.3.1", "release": "sha256:..." },
-  "base": { "win-nvidia": "sha256:...", "win-cpu": "sha256:..." },
+  "engine": {
+    "version": "0.3.1",
+    "release": "sha256:<engine-hex>",
+    "tag": "v0.3.1",
+    "locations": [
+      { "type": "mirror", "path": "engine/<engine-hex>/release-manifest.json" }
+    ]
+  },
+  "base": {
+    "win-cpu": {
+      "id": "sha256:<base-hex>",
+      "locations": [
+        { "type": "mirror", "path": "base/win-cpu/<base-hex>/manifest.json" }
+      ]
+    }
+  },
   "minimumDesktopVersion": "0.2.0",
   "signature": null
 }
@@ -140,6 +154,18 @@ active generation; they do not authorize data deletion.
 The channel names artifacts by content hash, never by "latest GitHub release".
 A channel update is one small file write, so a release that was built earlier
 and kept unpublished becomes live in seconds.
+
+Each selected variant names a base id and ordered location hints. The hex
+placeholders above stand for complete lowercase SHA-256 values. Mirror paths
+are relative to the configured mirror; an immutable GitHub location is
+`{type: "github", repository, tag, asset}`. A location never overrides digest
+verification. The engine id hashes the final release-manifest.json bytes,
+including its trailing newline; `engine.tag` is copied from that manifest,
+not inferred from its development version. Base ids use the base producer's
+canonical identity fields. The local channel builder validates publisher
+manifests, engine payload hashes, worker protocols and effective constraints
+before atomically replacing one channel file. It does not select base releases
+or publish artifacts itself.
 
 `stable` is written when a `vX.Y.Z` tag's release workflow finishes. `main`
 is written when a push to `main` finishes the same workflow without a

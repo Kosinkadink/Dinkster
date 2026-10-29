@@ -116,3 +116,8 @@
   Failed acquisition or revalidation retains the previous serving generation and
   diagnostic journal. First setup with requirements still needs an existing
   generation interpreter; channel/variant migration is not available.
+- A local channel builder accepts completed engine release files and selected
+  base manifests, verifies engine payload hashes and base/engine compatibility,
+  and atomically writes the existing stable/main channel format. It preserves
+  publisher inputs and requires no network. Hosted channel publication and
+  published-base selection are not provided by this local command.
