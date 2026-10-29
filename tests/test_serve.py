@@ -335,10 +335,7 @@ def test_standard_vision_pack_provisions_declared_runtime_before_composition(
         assert dependencies & package_names <= workspace_names
     assert TESTS_DIR.parent / "packages" / "dinkster-video" in workspace
     if pack_name == "dinkster-vision-birefnet":
-        assert any(
-            requirement.startswith("dinkster-inference @ https://")
-            for requirement in manifest.requires
-        )
+        assert "dinkster-inference==0.1.0" in manifest.requires
     assert str(manifest.root.parent / "src") in prepared.env["PYTHONPATH"].split(os.pathsep)
 
 
@@ -2627,7 +2624,11 @@ def test_serve_explicit_generation_uses_only_its_sources(tmp_path: Path, in_proc
     stage_generation_packs(generation, lock, {pack: archive})
     (generation / "generation.json").write_text(
         json.dumps(
-            {"format": "dinkster.generation/1", "inProcessPacks": [pack] if in_process else []}
+            {
+                "format": "dinkster.generation/1",
+                "variant": "linux-cpu",
+                "inProcessPacks": [pack] if in_process else [],
+            }
         )
     )
     if not in_process:
@@ -2639,7 +2640,14 @@ def test_serve_explicit_generation_uses_only_its_sources(tmp_path: Path, in_proc
     log = tmp_path / "server.log"
     with log.open("wb") as output:
         process = subprocess.Popen(
-            serve_command(port, "--generation", str(generation), "--strict-packs"),
+            serve_with_library_command(
+                port,
+                tmp_path / "library",
+                "--generation",
+                str(generation),
+                "--strict-packs",
+                *(["--engine-variant", "linux-cpu"] if in_process else []),
+            ),
             cwd=tmp_path,
             stdout=output,
             stderr=output,
@@ -2651,6 +2659,25 @@ def test_serve_explicit_generation_uses_only_its_sources(tmp_path: Path, in_proc
                 async with aiohttp.ClientSession() as client:
                     async with client.get(f"http://127.0.0.1:{port}/api/nodes") as response:
                         data = await response.json()
+                    workflow = {
+                        "format": "dinkster-workflow",
+                        "formatVersion": 1,
+                        "graphs": {"root": {"nodes": {"probe": {"type": "shutdown57.probe"}}}},
+                        "environment": {
+                            "nodes": {"shutdown57.probe": {"pack": pack}},
+                            "packs": {pack: {"version": "1.2.3"}},
+                        },
+                    }
+                    for variant in (None, "win-nvidia"):
+                        body: dict[str, object] = {"workflows": [workflow]}
+                        if variant is not None:
+                            body["variant"] = variant
+                        async with client.post(
+                            f"http://127.0.0.1:{port}/api/workflows/plan", json=body
+                        ) as response:
+                            plan = await response.json()
+                            assert response.status == 200, plan
+                            assert plan == {"packs": [], "assets": [], "errors": []}
                 assert set(data["nodes"]) == {"shutdown57.probe"}, data
                 assert data["nodes"]["shutdown57.probe"]["pack"] == pack
 
@@ -2665,6 +2692,36 @@ def test_serve_explicit_generation_uses_only_its_sources(tmp_path: Path, in_proc
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=30)
+
+    if in_process:
+        for selected_variant, explicit_variant, error in (
+            ("linux-cpu", "win-nvidia", "--engine-variant differs"),
+            (None, "linux-cpu", "generation variant must be a non-empty string"),
+        ):
+            (generation / "generation.json").write_text(
+                json.dumps(
+                    {
+                        "format": "dinkster.generation/1",
+                        "variant": selected_variant,
+                        "inProcessPacks": [pack],
+                    }
+                )
+            )
+            refused = subprocess.run(
+                serve_command(
+                    free_port(),
+                    "--generation",
+                    str(generation),
+                    "--engine-variant",
+                    explicit_variant,
+                ),
+                cwd=tmp_path,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert refused.returncode != 0
+            assert error in refused.stderr
 
 
 def child_pids(parent: subprocess.Popen[bytes]) -> tuple[int, ...]:
@@ -2884,7 +2941,16 @@ def test_serve_plain_dev_pack_is_announced(tmp_path: Path, pack_path: str) -> No
     port = free_port()
     pack = Path(__file__).resolve().parent.parent / pack_path
     process, log = start_logged_serve(
-        serve_command(port, "--no-default-packs", "--pack", str(pack)), tmp_path
+        serve_with_library_command(
+            port,
+            tmp_path / "library",
+            "--no-default-packs",
+            "--pack",
+            str(pack),
+            "--engine-variant",
+            "linux-cpu",
+        ),
+        tmp_path,
     )
     pending_error: BaseException | None = None
     try:
@@ -2892,6 +2958,22 @@ def test_serve_plain_dev_pack_is_announced(tmp_path: Path, pack_path: str) -> No
         packs = report["packs"]
         assert isinstance(packs, dict)
         assert packs["dinkster-nodes-dev"]["state"] == "announced"
+
+        async def plan() -> None:
+            workflow = {
+                "format": "dinkster-workflow",
+                "formatVersion": 1,
+                "graphs": {"root": {"nodes": {}}},
+            }
+            async with aiohttp.ClientSession() as client:
+                async with client.post(
+                    f"http://127.0.0.1:{port}/api/workflows/plan",
+                    json={"workflows": [workflow]},
+                ) as response:
+                    assert response.status == 200, await response.text()
+                    assert await response.json() == {"packs": [], "assets": [], "errors": []}
+
+        asyncio.run(plan())
     except BaseException as error:
         pending_error = error
         raise
