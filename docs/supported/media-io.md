@@ -5,6 +5,10 @@
   Custom targets and non-media files, including empty text files, are supported
   through both ordinary hosts. Failed invocations do not return kept artifacts;
   returning an ASSET without attaching it does not advertise a saved file.
+  One invocation supports up to 4096 explicit saved-file attachments, including
+  complete admitted image batches, subject to existing file and transport bounds.
+  Mounted-file descriptors do not impose the encoded-preview byte limit on saved
+  weights or other files; the host validates their actual bytes by streaming.
 - Native image, mask, animation, audio, video, text, layer-document, model3D,
   splat, and conditioning savers explicitly attach their successful mounted
   publications. Save nodes require an active invocation attachment context;
@@ -225,6 +229,8 @@
   counts, empty Gaussian tensors and floating dtype across ordinary worker
   boundaries; live tensors retain their device and storage. Empty splats can
   cross workers but cannot be exported to PLY.
+- Get Splat Count reports the total valid Gaussian count across a SPLAT batch,
+  honoring optional per-row counts and preserving the input splat value.
 - Native ImageOnlyCheckpointSave exports model, vision encoder and VAE weights
   to a selected writable mount, preserving checkpoint metadata and reserved
   counter names, and reports the host-validated saved file in execution results.
@@ -238,6 +244,9 @@
   conditioning with even temporal latent lengths, and precomputed warped
   noise sources. Controlled CPU encoders cover mask/video conditioning and
   source preservation; real-model and GPU output parity are not certified.
+- Native Transform Splat translates, rotates, and scales canonical SPLAT
+  batches. Nonuniform scaling reshapes Gaussian covariance; opacity,
+  spherical harmonics, and per-item counts are preserved.
 - Native Create Video assembles IMAGE frames, rational frame rate and optional
   AUDIO as a VIDEO, retaining component storage until explicit encoding.
   Bit depth and sRGB/HLG/PQ color choices are retained; optional immediate
