@@ -40,6 +40,7 @@ from dinkster_nodes_comfy.image_file_tools import (
     SaveImage,
 )
 from dinkster_nodes_comfy.save_image_advanced import SaveImageAdvanced
+from dinkster_schema.reporting import capture_saved_artifacts
 from PIL import Image
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -199,10 +200,12 @@ def test_image_savers_enforce_encoded_output_limit_without_publishing_partial_fi
         if node is SaveAnimatedWEBP
         else {}
     )
-    node.execute(images=images, filename_prefix="first", **options)
+    with capture_saved_artifacts():
+        node.execute(images=images, filename_prefix="first", **options)
     encoded_size = next(default.glob("first_*")).stat().st_size
     monkeypatch.setattr(image_file_tools, "ENCODED_MEDIA_LIMIT_BYTES", encoded_size)
-    node.execute(images=images, filename_prefix="at-limit", **options)
+    with capture_saved_artifacts():
+        node.execute(images=images, filename_prefix="at-limit", **options)
     monkeypatch.setattr(image_file_tools, "ENCODED_MEDIA_LIMIT_BYTES", encoded_size - 1)
     with pytest.raises((ValueError, AssetError), match="limit"):
         node.execute(images=images, filename_prefix="over-limit", **options)
@@ -325,16 +328,17 @@ def test_animated_savers_preserve_frame_order_alpha_timing_and_dimension_prefix(
         else {"lossless": True, "quality": 93, "method": "slowest"}
     )
     node = SaveAnimatedPNG if format_name == "png" else SaveAnimatedWEBP
-    assert (
-        node.execute(
-            images=frames,
-            filename_prefix="animated/%width%x%height%",
-            fps=7.0,
-            mount="alternate",
-            **options,
-        )["images"]
-        is frames
-    )
+    with capture_saved_artifacts():
+        assert (
+            node.execute(
+                images=frames,
+                filename_prefix="animated/%width%x%height%",
+                fps=7.0,
+                mount="alternate",
+                **options,
+            )["images"]
+            is frames
+        )
     expected = np.array(
         [
             [[[127, 63, 191, 255], [255, 0, 25, 127], [229, 51, 102, 191]]],
@@ -1129,6 +1133,110 @@ def test_advanced_image_exports_consume_submission_metadata(
                         for key, value in (str(item).split(":", 1) for item in exif.values())
                     }
             assert metadata == expected
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_animated_exports_attach_exact_mounted_files_on_each_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool
+) -> None:
+    default, alternate = _mount(tmp_path, monkeypatch)
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot, index_root=tmp_path / "index")
+    for mount, root in (("default", default), ("alternate", alternate)):
+        table.add(MountDef(mount, root, mode="readwrite"))
+        table.scan(mount)
+    table.select_output_mount("default")
+
+    async def scenario() -> None:
+        native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+        module = f"animated_attachment_fixture_{tmp_path.name.replace('-', '_')}"
+        (tmp_path / f"{module}.py").write_text(
+            "from test_save_image_torch import _AdvancedAVIFHostSource\n"
+            "from dinkster_nodes_comfy import register_inference_types\n"
+            "NODES = (_AdvancedAVIFHostSource,)\n",
+            encoding="ascii",
+        )
+        fixture = tmp_path / "dinkster-pack.toml"
+        fixture.write_text(
+            '[pack]\nname="animated-attachment-fixture"\npublisher="dinkster"\n'
+            'namespaces=["advanced-avif-fixture"]\n[pack.entry]\n'
+            f'nodes="{module}:NODES"\ntypes="{module}:register_inference_types"\n',
+            encoding="ascii",
+        )
+        paths = (str(tmp_path), str(Path(__file__).parent), *(p for p in sys.path if p))
+        composer = ServingComposer(
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
+                "PYTHONPATH": os.pathsep.join(paths),
+            }
+        )
+        try:
+            manifests = (native, fixture)
+            for manifest in manifests:
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=manifest,
+                        in_process=in_process,
+                        worker_group=None if in_process else "animated-attachment-fixture",
+                        group_manifests=() if in_process else manifests,
+                    )
+                )
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("advanced-avif-fixture.source"),
+                    "png": GraphNode(
+                        "SaveAnimatedPNG",
+                        {"images": Link("source", "images"), "filename_prefix": "frames/png"},
+                    ),
+                    "webp": GraphNode(
+                        "SaveAnimatedWEBP",
+                        {
+                            "images": Link("source", "images"),
+                            "filename_prefix": "chosen/webp",
+                            "mount": "alternate",
+                            "method": "fastest",
+                            "lossless": True,
+                        },
+                    ),
+                }
+            )
+            engine = composer.composition.make_engine(lambda _event: None)
+            for attempt in range(2):
+                result = await engine.run(graph, ["png", "webp"])
+                assert len(result.artifacts) == 2
+                assert {artifact.node_id for artifact in result.artifacts} == {"png", "webp"}
+                for node, mount, root, prefix in (
+                    ("png", "default", default, "frames/png"),
+                    ("webp", "alternate", alternate, "chosen/webp"),
+                ):
+                    path = root / f"{prefix}_{attempt + 1:05d}.{node}"
+                    artifact = next(item for item in result.artifacts if item.node_id == node)
+                    assert artifact.virtual_path == f"mounts/{mount}/{path.relative_to(root)}"
+                    assert artifact.name == path.name
+                    assert artifact.digest == digest_file(path)
+                    assert artifact.size == path.stat().st_size
+                    assert artifact.media_type == f"image/{node}"
+                    with Image.open(path) as image:
+                        assert image.n_frames == 2
+                        for index, pixel in enumerate(((191, 31, 63), (31, 63, 159))):
+                            image.seek(index)
+                            np.testing.assert_array_equal(
+                                np.asarray(image.convert("RGB")),
+                                np.broadcast_to(np.array(pixel, dtype=np.uint8), (64, 64, 3)),
+                            )
+                if attempt:
+                    assert "source" in result.cached
+                    assert not {"png", "webp"} & set(result.cached)
+            assert len(list(default.rglob("*.png"))) == 2
+            assert len(list(alternate.rglob("*.webp"))) == 2
+            assert not list(default.rglob("*.webp"))
+            assert not list(alternate.rglob("*.png"))
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("in_process", (True, False))

@@ -36,6 +36,7 @@ from dinkster_api.v1 import (
     SourceFilenameSpec,
     StringWidget,
     TypeExpr,
+    attach_saved_artifact,
     current_export_snapshot,
     initialize_inference_process,
     materialize_image,
@@ -241,7 +242,7 @@ def _save_animation(
         frames[0].save(
             buffer, format=format_name, save_all=True, append_images=frames[1:], **options
         )
-        writer.save_stream(
+        ref = writer.save_stream(
             writer.output_target(
                 filename_prefix,
                 mount=mount,
@@ -253,6 +254,7 @@ def _save_animation(
             media_type=media_type,
             limit=ENCODED_MEDIA_LIMIT_BYTES,
         )
+        attach_saved_artifact(ref.to_wire())
 
 
 class SaveImage(Node):

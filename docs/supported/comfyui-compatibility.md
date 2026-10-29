@@ -216,6 +216,7 @@
   the unchanged SVG value remains available downstream.
 - Native animated PNG and WebP outputs retain frame order, alpha, timing,
   compression controls and source images while writing to the selected mount.
+  Each saved animation is attached as a validated run artifact on every execution.
   SaveImage, SaveAnimatedPNG and SaveAnimatedWEBP retain submitted prompt and
   workflow metadata unless metadata is disabled. Animated PNG omits empty prompts.
 - Native CLIP and VAE exports preserve tensor keys and dtypes in safetensors
