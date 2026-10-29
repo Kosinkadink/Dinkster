@@ -2184,7 +2184,8 @@ def main(argv: list[str] | None = None) -> None:
         add_workflow_requirement_routes(
             app,
             manifests=lambda: {
-                name: load_manifest(spec.manifest) for name, spec in composer.pack_specs().items()
+                name: load_manifest(resolve_manifest_path(spec.manifest))
+                for name, spec in composer.pack_specs().items()
             },
             engine_variant=args.engine_variant,
         )

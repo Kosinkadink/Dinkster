@@ -123,8 +123,8 @@ try {
     )
     Invoke-Native "uv" @(
         "pip", "install", "--python", $TorchPython,
-        "--index-url", "https://download.pytorch.org/whl/cpu",
-        "torch==2.13.0+cpu", "torchvision==0.28.0+cpu"
+        "--torch-backend", "cpu",
+        "torch==2.14.1+cpu", "torchvision==0.29.1+cpu"
     )
     $CpuDependencies = @(
         "pytest", "packaging", "numpy>=1.26", "scipy>=1.11",
@@ -144,7 +144,7 @@ try {
     }
     Invoke-Native $TorchPython @(
         "-c",
-        "from importlib.metadata import version; import torch; assert torch.__version__ == '2.13.0+cpu'; assert version('torchvision') == '0.28.0+cpu'; assert version('comfy-kitchen') == '0.2.40'; assert version('comfy-aimdo') == '0.6.0'"
+        "from importlib.metadata import version; import torch; assert torch.__version__ == '2.14.1+cpu'; assert version('torchvision') == '0.29.1+cpu'; assert version('comfy-kitchen') == '0.2.40'; assert version('comfy-aimdo') == '0.6.0'"
     )
 
     $PythonInclude = (& $TorchPython -c "import sysconfig; print(sysconfig.get_paths()['include'])")

@@ -56,6 +56,7 @@ RESOURCE_HANDLE_TYPE = "RESOURCE"
 VIDEO_DOCUMENT_TYPE = "VIDEO_DOCUMENT"
 LAYERS_TYPE = "LAYERS"
 COMPOSITOR_TYPE = "COMPOSITOR"
+IMAGE_DOCUMENT_TYPE = "dinkster.layers"
 POSE_TYPE = "POSE"
 POSE_KEYPOINT_TYPE = "POSE_KEYPOINT"
 VECTOR_TYPE = "VECTOR"
@@ -122,6 +123,7 @@ __all__ = [
     "HOOK_KEYFRAMES_TYPE",
     "HOOKS_TYPE",
     "IC_LORA_PARAMETERS_TYPE",
+    "IMAGE_DOCUMENT_TYPE",
     "IMAGE_TYPE",
     "IMAGECOMPARE_TYPE",
     "IMPACT_BASIC_PIPE_TYPE",
@@ -169,4 +171,7 @@ __all__ = [
     "WAN_CAMERA_EMBEDDING_TYPE",
 ]
 
-BUILTIN_TYPE_IDS: frozenset[str] = frozenset(globals()[name] for name in __all__)
+# Image documents remain owned by the image pack, not foundation.
+BUILTIN_TYPE_IDS: frozenset[str] = frozenset(globals()[name] for name in __all__) - {
+    IMAGE_DOCUMENT_TYPE,
+}
