@@ -73,7 +73,7 @@ from .hypernetwork import HypernetworkLoader
 from .image_color_conversion import IMAGE_COLOR_CONVERSION_NODES
 from .image_control_patches import IMAGE_CONTROL_PATCH_NODES
 from .image_core import IMAGE_CORE_NODES
-from .image_crop import ImageCropV2, PrimitiveBoundingBox
+from .image_crop import ImageCropToMask, ImageCropV2, PrimitiveBoundingBox
 from .image_dimensions import IMAGE_DIMENSION_NODES
 from .image_filters import IMAGE_FILTER_NODES
 from .image_layers import AddLayer
@@ -412,6 +412,7 @@ COMFY_NODES = (
     TextEncodeZImageOmni,
     PhotoMakerLoader,
     PhotoMakerEncode,
+    ImageCropToMask,
     ImageCropV2,
     PrimitiveBoundingBox,
     *RTDETR_NODES,

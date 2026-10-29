@@ -476,6 +476,7 @@ namespaces = [
     "TextEncodeZImageOmni",
     "PhotoMakerLoader",
     "PhotoMakerEncode",
+    "ImageCropToMask",
     "ImageCropV2",
     "PrimitiveBoundingBox",
     "RTDETR_detect",
