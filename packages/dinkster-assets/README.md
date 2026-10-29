@@ -27,6 +27,11 @@ scratch claim refuses live leases and blocks new users until released; a crashed
 process releases its OS locks without relying on a PID or age threshold. Lease
 metadata lives beside the data directory so the gate survives directory removal.
 These leases alone do not authorize deleting unpublished or referenced bytes.
+The serving host holds an additional job lease from execution admission
+through run settlement, including gaps between invocations and native-policy
+release. It releases on success, failure and cancellation. Reconciliation must
+claim both the host job and each pack's scratch; missing host lease metadata
+refuses a claim, and process exit releases ownership without an age threshold.
 Managed job scratch journals its owner, committed digests and byte sizes.
 Result and control-value handoff marks offered digests before sending or direct
 adoption; merely inspecting source paths does not offer a publication. Journals

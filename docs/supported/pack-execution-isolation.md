@@ -54,6 +54,9 @@
 - Produced scratch claims refuse live invocations and open writers, including
   in another process. Crashed-process locks release without age-based expiry;
   this does not itself collect or discard produced data.
+- Serving jobs retain scratch ownership between nodes until run settlement,
+  including failure or cancellation. Finishing one job does not release another
+  live job's ownership, and missing host ownership state refuses reconciliation.
 - Job scratch retains publication ownership and handoff intent across process
   exit. Missing ownership state refuses reuse of nonempty scratch; merely
   inspecting a source does not mark it as offered or adopted.

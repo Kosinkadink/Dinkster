@@ -31,7 +31,12 @@ from dinkster_assets import (
 )
 from dinkster_assets.declared import produced_output_scratch, use_produced_output_job
 from dinkster_assets.produced import ProducedAssetInventory
-from dinkster_assets.scratch import ProducedScratchState, claim_inactive_produced_scratch
+from dinkster_assets.scratch import (
+    ProducedScratchState,
+    claim_inactive_produced_job,
+    claim_inactive_produced_scratch,
+    hold_produced_job,
+)
 from dinkster_caches import BudgetedDiskCAS
 from dinkster_engine.control import EngineRunContext, RunControlState
 from dinkster_graph import Graph, GraphNode
@@ -68,6 +73,7 @@ def _publish(vault: AssetVault, data: bytes) -> AssetRef:
 
 
 def _hold_produced_scratch(channel: Connection, env: dict[str, str]) -> None:
+    job_lease = hold_produced_job(Path(env["DINKSTER_PACK_SCRATCH"]), "process job")
     with use_produced_output_job("process job", 1):
         vault = produced_output_scratch(env)
         assert vault is not None
@@ -83,6 +89,7 @@ def _hold_produced_scratch(channel: Connection, env: dict[str, str]) -> None:
     assert channel.recv() == "close writer"
     writer.__exit__(None, None, None)
     channel.send("writer closed")
+    job_lease.close()
     channel.close()
 
 
@@ -103,17 +110,25 @@ def test_produced_scratch_claim_protects_live_process_and_open_writer(
 
     try:
         root = Path(cast(str, receive()))
+        with claim_inactive_produced_job(Path(env["DINKSTER_PACK_SCRATCH"]), "process job") as idle:
+            assert not idle
         with claim_inactive_produced_scratch(root) as inactive:
             assert not inactive
         parent.send("crash" if crash else "close scope")
         if not crash:
             assert receive() == "scope closed"
+            with claim_inactive_produced_job(
+                Path(env["DINKSTER_PACK_SCRATCH"]), "process job"
+            ) as idle:
+                assert not idle
             with claim_inactive_produced_scratch(root) as inactive:
                 assert not inactive
             parent.send("close writer")
             assert receive() == "writer closed"
         process.join(20)
         assert process.exitcode == 0
+        with claim_inactive_produced_job(Path(env["DINKSTER_PACK_SCRATCH"]), "process job") as idle:
+            assert idle
         assert ProducedScratchState(root).publications() == (
             (digest_bytes(b"recoverable publication"), len(b"recoverable publication"), False),
         )
@@ -152,6 +167,23 @@ def test_produced_scratch_claim_refuses_escaping_lease_directory(tmp_path: Path)
             pytest.fail("unsafe lease directory was claimed")
     assert sentinel.read_bytes() == b"untouched"
     assert list(outside.iterdir()) == [sentinel]
+
+
+def test_produced_host_job_refuses_escaping_ownership_directory(tmp_path: Path) -> None:
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    try:
+        (scratch / "produced-jobs").symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks unavailable")
+    with pytest.raises(AssetError, match="must not be a symlink"):
+        hold_produced_job(scratch, "safe job")
+    with pytest.raises(AssetError, match="must not be a symlink"):
+        with claim_inactive_produced_job(scratch, "safe job"):
+            pytest.fail("escaping job ownership was claimed")
+    assert not list(outside.iterdir())
 
 
 def test_produced_scratch_claim_refuses_unmanaged_data(tmp_path: Path) -> None:

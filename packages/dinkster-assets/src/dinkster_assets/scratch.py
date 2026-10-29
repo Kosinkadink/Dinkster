@@ -10,7 +10,7 @@ from pathlib import Path
 
 from filelock import FileLock, Timeout
 
-from .identity import AssetError, require_digest
+from .identity import AssetError, digest_bytes, require_digest
 
 
 class ProducedScratchState:
@@ -116,7 +116,7 @@ def _lease_directory(root: Path, *, create: bool = True) -> Path:
     # The gate must survive removal of the claimed data directory.
     parent = root.parent / ".leases"
     folder = parent / root.name
-    if parent.is_symlink() or folder.is_symlink():
+    if parent.is_symlink() or folder.is_symlink() or (folder / "gate.lock").is_symlink():
         raise AssetError("produced scratch leases must not be a symlink")
     if create:
         folder.mkdir(parents=True, exist_ok=True)
@@ -152,6 +152,31 @@ class ProducedScratchLease:
 
     def close(self) -> None:
         self._lock.release()
+
+
+def _job_lease_root(scratch: Path, job: str) -> Path:
+    if not job:
+        raise AssetError("produced scratch requires a nonempty job")
+    if scratch.is_symlink() or (scratch / "produced-jobs").is_symlink():
+        raise AssetError("produced job ownership root must not be a symlink")
+    key = digest_bytes(job.encode("utf-8")).split(":", 1)[1]
+    return scratch / "produced-jobs" / key
+
+
+def hold_produced_job(scratch: Path, job: str) -> ProducedScratchLease:
+    """Protect every pack's scratch between invocations until the host ends a job."""
+    return ProducedScratchLease(_job_lease_root(scratch, job))
+
+
+@contextmanager
+def claim_inactive_produced_job(scratch: Path, job: str) -> Generator[bool]:
+    """Refuse reconciliation across invocation gaps in any live host job.
+
+    Missing host ownership metadata is not evidence of an orphaned job.
+    Per-pack writer leases and publication recovery must also be checked.
+    """
+    with claim_inactive_produced_scratch(_job_lease_root(scratch, job)) as inactive:
+        yield inactive
 
 
 @contextmanager
