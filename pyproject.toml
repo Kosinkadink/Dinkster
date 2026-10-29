@@ -75,7 +75,8 @@ dev = [
     "ruff>=0.8",
     "pyright>=1.1.390",
     "scipy-stubs>=1.18.1.0",
-    "opentimelineio==0.18.1",
+    "opentimelineio==0.19.0.dev1 ; python_version == '3.14' and implementation_name == 'cpython' and ((sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64'))",
+    "opentimelineio==0.18.1 ; python_version != '3.14' or implementation_name != 'cpython' or (sys_platform == 'linux' and platform_machine != 'x86_64') or (sys_platform == 'win32' and platform_machine != 'AMD64') or (sys_platform != 'linux' and sys_platform != 'win32')",
     "threadpoolctl>=3.7",
 ]
 
@@ -116,6 +117,10 @@ dinkster-server = { workspace = true }
 dinkster-collab = { workspace = true }
 dinkster-registry = { workspace = true }
 dinkster-supervisor = { workspace = true }
+opentimelineio = [
+    { url = "https://github.com/Kosinkadink/Dinkster/releases/download/opentimelineio-wheels-0.19.0.dev1-4524367491df/opentimelineio-0.19.0.dev1-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", marker = "python_version == '3.14' and implementation_name == 'cpython' and sys_platform == 'linux' and platform_machine == 'x86_64'" },
+    { url = "https://github.com/Kosinkadink/Dinkster/releases/download/opentimelineio-wheels-0.19.0.dev1-4524367491df/opentimelineio-0.19.0.dev1-cp314-cp314-win_amd64.whl", marker = "python_version == '3.14' and implementation_name == 'cpython' and sys_platform == 'win32' and platform_machine == 'AMD64'" },
+]
 
 [build-system]
 requires = ["hatchling"]
