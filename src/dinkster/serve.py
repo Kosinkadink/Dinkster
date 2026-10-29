@@ -1967,9 +1967,12 @@ def main(argv: list[str] | None = None) -> None:
             _order_default_pack_specs(composer, specs, resolved_default_pack_count)
         )
         composer.validate_specs(specs)
-        if args.prepare_stale_catalogs:
+        if args.prepare_stale_catalogs or (
+            args.generation is None
+            and Path(__file__).with_name("official_packs").joinpath("official-packs.lock").is_file()
+        ):
             _prepare_stale_catalogs(
-                specs,
+                specs if args.prepare_stale_catalogs else specs[:resolved_default_pack_count],
                 venv_root=default_pack_venv_root,
                 accelerator=default_pack_accelerator,
             )

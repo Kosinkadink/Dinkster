@@ -87,8 +87,21 @@ def test_default_pack_specs_load_verified_bundled_official_sources(
     (pack / "official_nodes.py").write_text("NODES = ()\n", encoding="utf-8")
     archive = package_data / "official-pack-1.2.3.zip"
     digest = build_artifact(pack, archive)
+    core = tmp_path / "core"
+    shutil.copytree(pack, core)
+    (core / "dinkster-pack.toml").write_text(
+        (core / "dinkster-pack.toml")
+        .read_text()
+        .replace('"official-pack"', '"dinkster-nodes-comfy"')
+    )
+    core_digest = build_artifact(core, package_data / "dinkster-nodes-comfy-1.2.3.zip")
     lock = Lockfile.of(
-        [LockedPack("official-pack", "1.2.3", digest, "dinkster", ("official",), "release")]
+        [
+            LockedPack("official-pack", "1.2.3", digest, "dinkster", ("official",), "release"),
+            LockedPack(
+                "dinkster-nodes-comfy", "1.2.3", core_digest, "dinkster", ("official",), "release"
+            ),
+        ]
     )
     (package_data / "official-packs.lock").write_text(lock.record_json(), encoding="utf-8")
     monkeypatch.setattr(compose, "_OFFICIAL_PACKS_DIRECTORY", package_data)
@@ -96,6 +109,10 @@ def test_default_pack_specs_load_verified_bundled_official_sources(
     compose._official_pack_sources.cache_clear()
     compose.default_pack_specs.cache_clear()
     try:
+        assert compose.default_pack_ids() == ("official-pack",)
+        assert load_manifest(compose.default_pack_spec("dinkster-nodes-comfy").manifest).name == (
+            "dinkster-nodes-comfy"
+        )
         spec = compose.default_pack_spec("official-pack")
         assert spec.require_catalog
         assert spec.in_process

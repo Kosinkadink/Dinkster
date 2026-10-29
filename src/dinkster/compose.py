@@ -1259,8 +1259,10 @@ def _official_pack_sources() -> _OfficialPackSources:
 
 
 def default_pack_ids() -> tuple[str, ...]:
-    """Return the locked first-party pack ids in composition order."""
-    return tuple(entry.pack for entry in _default_pack_lock().packs)
+    """Return defaults other than the separately configured core worker."""
+    return tuple(
+        entry.pack for entry in _default_pack_lock().packs if entry.pack != "dinkster-nodes-comfy"
+    )
 
 
 def _installed_pack_digest(manifest: Path, module_root: Path | None) -> str:
