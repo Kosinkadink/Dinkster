@@ -463,12 +463,16 @@ workspace dependencies to it without rewriting the checkout or its lock.
 Pull requests changing release machinery run the build and clean-install
 checks without creating a GitHub release or invoking PyPI. Tag publication
 waits for all clean-install checks, attaches the checked assets to GitHub,
-then uploads only `workspaceWheels` to PyPI through OIDC trusted publishing
-in the protected `pypi` environment. No PyPI API token is stored.
+then uploads the three workspace distributions in independent OIDC trusted
+publishing jobs. Each job uploads only its own wheel: `dinkster` uses
+environment `pypi`, `dinkster-api` uses `pypi-dinkster-api`, and
+`dinkster-supervisor` uses `pypi-dinkster-supervisor`. No PyPI API token is stored.
 Before the first upload, the repository owner registers a pending trusted
 publisher on PyPI for each distribution, naming `Kosinkadink/Dinkster`,
-workflow `release.yml` and environment `pypi`. A pending publisher does not
-create the project; the first trusted upload creates it. Tag publication
+workflow `release.yml` and its project-specific environment above. Repository
+casing must match exactly. Separate environments let PyPI distinguish the
+three pending publishers. A pending publisher does not create the project;
+the first trusted upload creates it. Tag publication
 does not require the project to exist beforehand. Missing or mismatched
 publisher registration fails the upload rather than silently skipping it.
 Subsequent tag uploads skip versions already uploaded.

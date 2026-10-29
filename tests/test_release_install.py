@@ -72,7 +72,15 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert workflow[True]["push"] == {"branches": ["main"], "tags": ["v*.*.*"]}
     assert ".github/workflows/release.yml" in workflow[True]["pull_request"]["paths"]
     assert "src/dinkster/frontend.py" in workflow[True]["pull_request"]["paths"]
-    assert set(workflow["jobs"]) == {"validation", "build", "install", "release", "publish"}
+    assert set(workflow["jobs"]) == {
+        "validation",
+        "build",
+        "install",
+        "release",
+        "publish",
+        "publish-api",
+        "publish-supervisor",
+    }
     assert workflow["jobs"]["validation"] == {
         "uses": "./.github/workflows/ci.yml",
     }
@@ -109,20 +117,51 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     }
 
 
-def test_release_publication_is_tag_only_and_uses_trusted_publishing() -> None:
+@pytest.mark.parametrize(
+    ("job", "project", "environment"),
+    [
+        ("publish", "dinkster", "pypi"),
+        ("publish-api", "dinkster-api", "pypi-dinkster-api"),
+        ("publish-supervisor", "dinkster-supervisor", "pypi-dinkster-supervisor"),
+    ],
+)
+def test_release_publication_is_tag_only_and_uses_trusted_publishing(
+    job: str, project: str, environment: str, tmp_path: Path
+) -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
     assert workflow["jobs"]["release"]["if"] == "github.event_name == 'push'"
-    publish = workflow["jobs"]["publish"]
+    publish = workflow["jobs"][job]
     assert publish["needs"] == "release"
     assert publish["if"] == ("github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')")
     assert "pypi.org/pypi/" not in json.dumps(workflow)
     assert "pypi-ready" not in json.dumps(workflow)
     assert publish["permissions"] == {"id-token": "write"}
-    assert publish["environment"]["name"] == "pypi"
+    assert publish["environment"] == {
+        "name": environment,
+        "url": f"https://pypi.org/project/{project}/",
+    }
     action = publish["steps"][-1]
     assert action["uses"] == "pypa/gh-action-pypi-publish@release/v1"
     assert action["with"] == {"packages-dir": "publish/", "skip-existing": True}
     assert "secrets." not in json.dumps(publish)
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    for name in (
+        "dinkster-1.2.3-py3-none-any.whl",
+        "dinkster_api-1.2.3-py3-none-any.whl",
+        "dinkster_supervisor-1.2.3-py3-none-any.whl",
+        "dinkster_inference-1.2.3-py3-none-any.whl",
+        "official-packs.lock",
+        "dinkster-source-1.2.3.zip",
+    ):
+        (dist / name).write_bytes(name.encode())
+    selection = next(step["run"] for step in publish["steps"] if "run" in step)
+    subprocess.run(["bash", "-e", "-c", selection], cwd=tmp_path, check=True)
+    selected = list((tmp_path / "publish").iterdir())
+    assert [path.name for path in selected] == [
+        f"{project.replace('-', '_')}-1.2.3-py3-none-any.whl"
+    ]
+    assert selected[0].read_bytes() == (dist / selected[0].name).read_bytes()
     assert all(
         "latest" in row["runner"]
         for row in workflow["jobs"]["install"]["strategy"]["matrix"]["include"]
