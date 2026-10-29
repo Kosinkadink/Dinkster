@@ -201,7 +201,14 @@ def build_source_archive(root: Path, version: str, output: Path) -> Path:
     return archive
 
 
-def write_constraints(root: Path, output: Path, wheels: list[Path], uv: str) -> Path:
+def write_constraints(
+    root: Path,
+    output: Path,
+    wheels: list[Path],
+    uv: str,
+    *,
+    verified_external: list[Path] | None = None,
+) -> Path:
     constraints = output / "constraints.txt"
     with tempfile.NamedTemporaryFile(prefix="dinkster-external-", suffix=".txt") as temporary:
         subprocess.run(
@@ -224,6 +231,41 @@ def write_constraints(root: Path, output: Path, wheels: list[Path], uv: str) -> 
             check=True,
         )
         external = Path(temporary.name).read_text(encoding="utf-8").rstrip()
+    if verified_external is not None:
+        from packaging.requirements import Requirement
+        from packaging.utils import canonicalize_name
+
+        lock = tomllib.loads((root / "uv.lock").read_text(encoding="utf-8"))
+        identities = {
+            (path.name, path.stat().st_size, "sha256:" + sha256(path)) for path in verified_external
+        }
+        lines = []
+        for line in external.replace("\\\n", "").splitlines():
+            if not line.strip():
+                lines.append(line)
+                continue
+            requirement = Requirement(line.split(" --hash=", 1)[0].strip())
+            if requirement.url is not None:
+                matches = [
+                    (package, wheel)
+                    for package in lock["package"]
+                    if canonicalize_name(package["name"]) == canonicalize_name(requirement.name)
+                    and package.get("source", {}).get("url") == requirement.url
+                    for wheel in package.get("wheels", [])
+                    if wheel["url"] == requirement.url
+                ]
+                if len(matches) != 1:
+                    raise ValueError("offline constraint requires one exact locked direct wheel")
+                package, wheel = matches[0]
+                size = direct_wheel_size(root, package, wheel)
+                filename = unquote(urlsplit(wheel["url"]).path).rsplit("/", 1)[-1]
+                hashes = set(re.findall(r"--hash=(sha256:[0-9a-f]{64})", line))
+                if hashes != {wheel["hash"]} or (filename, size, wheel["hash"]) not in identities:
+                    raise ValueError("offline constraint requires the verified direct wheel bytes")
+                # Keep acquisition URLs in the native export, never in offline install inputs.
+                line = line.replace(f"@ {requirement.url}", f"=={package['version']}", 1)
+            lines.append(line)
+        external = "\n".join(lines)
     local = []
     for wheel in sorted(wheels):
         name, version = wheel_metadata(wheel)
@@ -505,7 +547,6 @@ def build(
         missing = sorted(expected - actual)
         extra = sorted(actual - expected)
         raise ValueError(f"wheel set mismatch: missing={missing}, extra={extra}")
-    constraints = write_constraints(root, output, wheels, uv)
     with tempfile.TemporaryDirectory(prefix="dinkster-external-wheels-") as directory:
         candidates = list(external_wheels or [])
         if download_external:
@@ -513,6 +554,7 @@ def build(
         external = stage_external_wheels(
             root, output, candidates, base_manifests or [], target_variants or set()
         )
+        constraints = write_constraints(root, output, wheels, uv, verified_external=candidates)
     source = build_source_archive(root, version, output)
     artifacts = sorted([*wheels, *external, constraints, source], key=lambda path: path.name)
     reserved = {path.name.casefold() for path in artifacts} | {

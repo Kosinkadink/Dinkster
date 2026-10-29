@@ -689,6 +689,39 @@ def test_direct_otio_acquisition_and_staging_require_native_lock_and_producer_ag
         assert {path.name: path.read_bytes() for path in downloaded} == expected
         staged = stage_external_wheels(tmp_path, release, downloaded, [], set())
         assert {path.name: path.read_bytes() for path in staged} == expected
+
+        def uv_export(command: list[str], **kwargs: object) -> None:
+            Path(command[command.index("--output-file") + 1]).write_text(
+                "\n".join(requirements[1:]) + "\n"
+            )
+
+        with monkeypatch.context() as context:
+            context.setattr(subprocess, "run", uv_export)
+            offline = write_constraints(
+                tmp_path, release, [], "uv", verified_external=downloaded
+            ).read_text()
+            assert offline.splitlines() == [
+                f'opentimelineio ==0.19.0.dev1 ; sys_platform == "{marker}" '
+                f"--hash=sha256:{hashlib.sha256(payload).hexdigest()}"
+                for marker, payload in (
+                    ("win32", b"windows fixture wheel bytes"),
+                    ("linux", b"linux fixture wheel bytes"),
+                )
+            ] + [""]
+            with pytest.raises(ValueError, match="verified direct wheel bytes"):
+                write_constraints(tmp_path, release, [], "uv", verified_external=downloaded[:1])
+            original = requirements[1]
+            requirements[1] = original.replace(namespace, "https://example.invalid")
+            with pytest.raises(ValueError, match="exact locked direct wheel"):
+                write_constraints(tmp_path, release, [], "uv", verified_external=downloaded)
+            requirements[1] = original
+            downloaded[0].write_bytes(b"tampered")
+            with pytest.raises(ValueError, match="verified direct wheel bytes"):
+                write_constraints(tmp_path, release, [], "uv", verified_external=downloaded)
+            downloaded[0].write_bytes(expected[downloaded[0].name])
+            requirements[1] = requirements[1].replace("--hash=sha256:", "--hash=sha256:0")
+            with pytest.raises(ValueError, match="verified direct wheel bytes"):
+                write_constraints(tmp_path, release, [], "uv", verified_external=downloaded)
     else:
         with pytest.raises((ValueError, OSError)):
             download_external_wheels(tmp_path, downloads, "uv")

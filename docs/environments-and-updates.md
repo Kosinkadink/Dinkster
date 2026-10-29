@@ -408,6 +408,11 @@ measured size. The export, lock source URL and wheel URL must agree. Other
 direct requirements, missing compatible wheels, mismatched provenance and
 corrupted downloads fail the build; acquisition never resolves dependencies
 or falls back to source. Target markers are evaluated before source admission.
+After staging verifies the actual bytes, the final `constraints.txt` replaces
+each approved direct-wheel URL with its exact locked version, preserving the
+target marker and hash. Missing or mismatched bytes fail the build. Acquisition
+still uses the unchanged native lock and URL-bearing export; offline consumers
+use only the version/hash requirements and supplied wheel files.
 Repeated `--base-manifest PATH` inputs use the existing `dinkster.base/1`
 manifest, including its canonical id, and `--target-variant NAME` identifies
 the selected targets. Only an exact filename/size/SHA-256 member present in
