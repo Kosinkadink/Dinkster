@@ -6,6 +6,7 @@ requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.10",
     "blake3>=0.4",
+    "comfy-angle==0.1.1; sys_platform != 'darwin' or platform_machine == 'arm64'",
     "comfy-aimdo==0.6.0",
     "comfy-kitchen==0.2.40",
     "dinkster-api",
@@ -13,8 +14,12 @@ dependencies = [
     "dinkster-token-verifier==0.1.2",
     "dinkster-supervisor",
     "numba>=0.67",
+    "opencv-contrib-python-headless>=5.0,<5.1",
+    "PyOpenGL>=3.1.8,<4",
     "pyobjc-framework-Network>=12.2.2; sys_platform == 'darwin'",
     "pyobjc-framework-libdispatch>=12.2.2; sys_platform == 'darwin'",
+    "scipy>=1.11",
+    "simpleeval==1.0.8",
     "zeroconf>=0.147",
     # The comfy compat host registration (comfy_compose.register_comfy_host_types)
     # decodes and renders comfy.IMAGE values with numpy; dinkster-values itself

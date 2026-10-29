@@ -797,6 +797,7 @@ dependencies = [
     { name = "aiohttp" },
     { name = "blake3" },
     { name = "comfy-aimdo" },
+    { name = "comfy-angle", marker = "platform_machine == 'arm64' or sys_platform != 'darwin'" },
     { name = "comfy-kitchen" },
     { name = "dinkster-api" },
     { name = "dinkster-inference" },
@@ -804,9 +805,13 @@ dependencies = [
     { name = "dinkster-token-verifier" },
     { name = "numba" },
     { name = "numpy" },
+    { name = "opencv-contrib-python-headless" },
     { name = "pillow" },
     { name = "pyobjc-framework-libdispatch", marker = "sys_platform == 'darwin'" },
     { name = "pyobjc-framework-network", marker = "sys_platform == 'darwin'" },
+    { name = "pyopengl" },
+    { name = "scipy" },
+    { name = "simpleeval" },
     { name = "zeroconf" },
 ]
 
@@ -848,6 +853,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.10" },
     { name = "blake3", specifier = ">=0.4" },
     { name = "comfy-aimdo", specifier = "==0.6.0" },
+    { name = "comfy-angle", marker = "platform_machine == 'arm64' or sys_platform != 'darwin'", specifier = "==0.1.1" },
     { name = "comfy-kitchen", specifier = "==0.2.40" },
     { name = "dinkster-api", editable = "packages/dinkster-api" },
     { name = "dinkster-inference", specifier = "==0.1.0" },
@@ -857,9 +863,13 @@ requires-dist = [
     { name = "dinkster-token-verifier", specifier = "==0.1.2" },
     { name = "numba", specifier = ">=0.67" },
     { name = "numpy", specifier = ">=1.26" },
+    { name = "opencv-contrib-python-headless", specifier = ">=5.0,<5.1" },
     { name = "pillow", specifier = ">=10" },
     { name = "pyobjc-framework-libdispatch", marker = "sys_platform == 'darwin'", specifier = ">=12.2.2" },
     { name = "pyobjc-framework-network", marker = "sys_platform == 'darwin'", specifier = ">=12.2.2" },
+    { name = "pyopengl", specifier = ">=3.1.8,<4" },
+    { name = "scipy", specifier = ">=1.11" },
+    { name = "simpleeval", specifier = "==1.0.8" },
     { name = "zeroconf", specifier = ">=0.147" },
 ]
 provides-extras = ["default", "collab", "supervisor"]
