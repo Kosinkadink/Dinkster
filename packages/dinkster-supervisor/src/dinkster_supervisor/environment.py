@@ -181,6 +181,12 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         f"artifact payload size {size} bytes; reuse verified local artifacts in {store}",
         "build an offline generation, check health, then activate; retain the previous tree",
     ]
+    if args.operation == "setup":
+        plan.insert(
+            1,
+            f"engine binding {args.engine}; listen on 127.0.0.1:{port}; "
+            f"CUDA_VISIBLE_DEVICES={','.join(args.gpu)}",
+        )
     result.update(
         current=current, plan=plan, status="planned", downloadBytes=size, store=str(store)
     )

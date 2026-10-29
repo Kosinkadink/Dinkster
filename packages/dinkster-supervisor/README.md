@@ -246,6 +246,8 @@ payloads. `--plan` and unconfirmed JSON calls create nothing. Confirmed calls
 write a journal before registration/acquisition, sync offline, check the candidate
 engine's health, publish `current`, then stop the old engine. Update preserves
 existing engine bindings; setup accepts `--engine`, `--port` and repeatable `--gpu`.
+The setup confirmation plan includes that binding name, loopback port and ordered
+`CUDA_VISIBLE_DEVICES` assignment, including the empty CPU-only assignment.
 Stopped bindings keep their assigned ports; only running bindings need new ports
 for candidate health checks alongside their previous processes.
 Failed acquisition/build/startup retains the previous serving tree and a rolled-back

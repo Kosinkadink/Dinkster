@@ -41,8 +41,10 @@
   generation or its running engine.
 - The environment CLI can acquire an explicit mirror selection, build an offline
   generation and health-check it before activation, with confirmation and retained
-  rollback. Registered workflow/addition execution and automatic release source
-  acquisition are not connected yet; channel or variant migration is refused.
+  rollback. Setup plans show the selected engine binding, port and ordered GPU
+  assignment before confirmation. Registered workflow/addition execution and
+  automatic release source acquisition are not connected yet; channel or variant
+  migration is refused.
 - Managed workflow plans default to the selected generation's recorded variant.
   A conflicting launch variant refuses startup; an explicit request variant
   remains a read-only compatibility comparison, not an environment switch.

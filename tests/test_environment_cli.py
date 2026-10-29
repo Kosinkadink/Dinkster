@@ -304,7 +304,24 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
         code, planned = _run(root, *arguments, *flags)
         assert code == 0, planned
         assert planned["downloadBytes"] > 0 and planned["status"] == "planned"
+        assert any(
+            "engine binding main" in step
+            and f"127.0.0.1:{port}" in step
+            and step.endswith("CUDA_VISIBLE_DEVICES=")
+            for step in planned["plan"]
+        )
         assert not root.exists() and not store.exists() and not (tmp_path / "user-data").exists()
+    code, assigned = _run(
+        root, *arguments, "--engine", "preview", "--gpu", "GPU-aB12", "--gpu", "2", "--plan"
+    )
+    assert code == 0, assigned
+    assert any(
+        "engine binding preview" in step
+        and f"127.0.0.1:{port}" in step
+        and "CUDA_VISIBLE_DEVICES=GPU-aB12,2" in step
+        for step in assigned["plan"]
+    )
+    assert not root.exists() and not store.exists() and not (tmp_path / "user-data").exists()
     root.mkdir()
     (root / "queue.json").write_text('{"running": [], "queued": []}')
     code, installed = _run(root, *arguments, "--yes")
