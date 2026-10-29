@@ -4,11 +4,11 @@ publisher = "dinkster"
 namespaces = []
 executes = ["dinkster.preprocess.model_depth"]
 requires = [
-    "numpy==2.5.1",
-    "opencv-contrib-python-headless==5.0.0.93",
+    "numpy",
+    "opencv-contrib-python-headless",
     "pillow==12.0.0",
     "safetensors==0.8.0",
-    "torch==2.13.0",
+    "torch",
     "transformers==5.16.1",
 ]
 

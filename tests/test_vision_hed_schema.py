@@ -62,9 +62,9 @@ def test_hed_pack_declares_isolated_cpu_cuda_providers_and_pinned_models() -> No
     )
     assert manifest.sandbox.gpu is True
     assert manifest.requires == (
-        "numpy==2.5.1",
-        "opencv-contrib-python-headless==5.0.0.93",
-        "torch==2.13.0",
+        "numpy",
+        "opencv-contrib-python-headless",
+        "torch",
     )
     assert len(manifest.vision_providers) == 7
     assert {provider.node for provider in manifest.vision_providers} == set(manifest.executes)

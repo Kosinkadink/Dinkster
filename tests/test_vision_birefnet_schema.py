@@ -44,10 +44,10 @@ def test_birefnet_pack_declares_cpu_provider_and_pinned_model() -> None:
     assert manifest.sandbox.writable_mounts is False
     assert manifest.requires == (
         "dinkster-inference==0.1.0",
-        "numpy==2.5.1",
+        "numpy",
         "safetensors==0.8.0",
-        "torch==2.13.0",
-        "torchvision==0.28.0",
+        "torch",
+        "torchvision",
     )
     assert len(manifest.vision_providers) == 1
     provider = manifest.vision_providers[0]
