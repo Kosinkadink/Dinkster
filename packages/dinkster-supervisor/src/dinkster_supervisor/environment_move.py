@@ -51,7 +51,7 @@ def copy_tree(
     links: list[tuple[Path, Path, bool]] = []
 
     def collect(directory: str, names: list[str]) -> set[str]:
-        ignored = set() if ignore is None else ignore(directory, names)
+        ignored: set[str] = set() if ignore is None else ignore(directory, names)
         for name in set(names) - ignored:
             path = Path(directory) / name
             if path.is_symlink():
