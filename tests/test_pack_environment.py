@@ -231,13 +231,14 @@ def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
         (root / "nodes.py").write_text("raise AssertionError('node bodies must not load')\n")
         (root / "pyproject.toml").write_text(
             '[project]\nrequires-python=">=3.12"\n'
-            'dependencies=["fixture-extra>=1", "dinkster-nodes-foundation>=0.0.1"]\n'
+            'dependencies=["fixture-extra>=2", "dinkster-nodes-foundation>=0.0.1"]\n'
         )
     subprocess.run(["git", "init", "--quiet", str(source)], check=True)
     subprocess.run(["git", "-C", str(source), "add", "."], check=True)
     tree = subprocess.check_output(["git", "-C", str(source), "write-tree"], text=True).strip()
     (source / ".git/HEAD").write_text(tree + "\n")
     (source / "packages/dinkster-nodes-comfy/pyproject.toml").write_text("dirty = true\n")
+    (source / "packages/dinkster-nodes-comfy/dinkster-pack.toml").write_text("dirty = true\n")
     constraints = tmp_path / "constraints.txt"
     constraints.write_text("fixture-extra==1.2\n")
     output = tmp_path / "payloads"
@@ -259,7 +260,7 @@ def test_official_payloads_lock_committed_dependencies_with_variant_constraints(
         assert lock.pack == entry.pack
         assert lock.variant == "linux-cpu"
         assert lock.requires_python == ">=3.12"
-        assert set(lock.requirements) == {"fixture-extra<3", "fixture-extra>=1"}
+        assert lock.requirements == ("fixture-extra<3",)
         assert [(package.name, package.version) for package in lock.packages] == [
             ("fixture-extra", "1.2")
         ]

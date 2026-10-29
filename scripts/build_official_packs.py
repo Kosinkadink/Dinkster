@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import io
-import json
 import re
 import shutil
 import subprocess
@@ -19,8 +18,6 @@ from dinkster_registry.model import validate_version
 from dinkster_schema import canonical_claim
 from dinkster_workers import load_manifest
 from dinkster_workers.pack_lock import resolve_pack_lock
-from packaging.requirements import Requirement
-from packaging.utils import canonicalize_name
 
 
 def build(
@@ -80,25 +77,6 @@ def build(
                 else pack_root / "pyproject.toml"
             )
             project = tomllib.loads(project_path.read_text(encoding="utf-8"))["project"]
-            pack_dependencies = {dependency.pack for dependency in manifest.dependencies}
-            requirements = list(manifest.requires)
-            for requirement in project.get("dependencies", []):
-                name = canonicalize_name(Requirement(requirement).name)
-                if name not in pack_dependencies and requirement not in requirements:
-                    requirements.append(requirement)
-            if tuple(requirements) != manifest.requires:
-                text = manifest_path.read_text(encoding="utf-8")
-                text = re.sub(
-                    r"(?ms)^requires[ \t]*=[ \t]*\[.*?\][ \t]*(?:#[^\n]*)?\n", "", text, count=1
-                )
-                declaration = (
-                    "requires = [\n"
-                    + "".join(f"    {json.dumps(requirement)},\n" for requirement in requirements)
-                    + "]\n"
-                )
-                manifest_path.write_text(
-                    text.replace("[pack]\n", "[pack]\n" + declaration, 1), encoding="utf-8"
-                )
             source = pack_root / "src"
             if source.is_dir():
                 # Pack workers import from the artifact root, not workspace src/.
