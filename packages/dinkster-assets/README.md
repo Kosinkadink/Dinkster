@@ -27,6 +27,11 @@ scratch claim refuses live leases and blocks new users until released; a crashed
 process releases its OS locks without relying on a PID or age threshold. Lease
 metadata lives beside the data directory so the gate survives directory removal.
 These leases alone do not authorize deleting unpublished or referenced bytes.
+Managed job scratch journals its owner, committed digests and byte sizes.
+Result and control-value handoff marks offered digests before sending or direct
+adoption; merely inspecting source paths does not offer a publication. Journals
+survive scope closure and process exit, and missing ownership state refuses
+reuse of nonempty scratch rather than reclassifying existing bytes.
 Engine adoption records a pending digest and byte size before copying produced
 sources into the vault, then marks the inventory entry adopted after verified
 publication. Retrying an interrupted copy preserves the first adoption order;

@@ -15,6 +15,7 @@ from dinkster_assets import (
     LocalAssetRef,
     open_verified,
 )
+from dinkster_assets.declared import offer_produced_outputs
 from dinkster_assets.produced import ProducedAssetInventory
 from dinkster_values import (
     ASSET_BASE_TYPE,
@@ -107,6 +108,11 @@ def _source_references(
     return references
 
 
+def offer_source_assets(outputs: Mapping[str, Value]) -> None:
+    """Record publication handoff before transfer or direct engine adoption."""
+    offer_produced_outputs(_source_references(outputs))
+
+
 def source_asset_files(
     outputs: Mapping[str, Value], resolver: AssetResolver | None
 ) -> list[tuple[str, Path]]:
@@ -140,6 +146,7 @@ class ProducedAssetAuthority:
         inputs: Mapping[str, Value] | None = None,
     ) -> None:
         incoming = _source_references(inputs or {}, include_asset_inputs=True)
+        offer_source_assets(outputs)
         for ref in _source_references(outputs).values():
             if ref.digest in incoming:
                 if incoming[ref.digest].size != ref.size:

@@ -160,7 +160,7 @@ from .manifest import (
     validate_registration_claims,
     vision_provider_to_wire,
 )
-from .produced_assets import source_asset_files
+from .produced_assets import offer_source_assets, source_asset_files
 from .relay import consumer_item_to_wire
 from .resume import InvocationKey, ResumableConversation
 from .run_control import BoundaryRunContext
@@ -1490,6 +1490,7 @@ async def serve_connection(
                 refs = inflight_control_refs.setdefault(invocation_id, set())
                 for value in values.values():
                     refs.update(value_resource_ids(value))
+                offer_source_assets(values)
                 if blob_transfer is not None:
                     files = source_asset_files(values, resolver_from_env())
                     if files:
@@ -1589,6 +1590,8 @@ async def serve_connection(
             if blob_transfer is not None:
                 await result_transfer_lock.acquire()
                 result_send_locked = True
+            if result.outputs:
+                offer_source_assets(result.outputs)
             source_files = (
                 source_asset_files(result.outputs, resolver_from_env())
                 if blob_transfer is not None and result.outputs

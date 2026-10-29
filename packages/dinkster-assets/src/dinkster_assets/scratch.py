@@ -2,14 +2,112 @@
 
 from __future__ import annotations
 
+import sqlite3
 import uuid
-from collections.abc import Generator
-from contextlib import ExitStack, contextmanager
+from collections.abc import Generator, Iterable
+from contextlib import ExitStack, closing, contextmanager
 from pathlib import Path
 
 from filelock import FileLock, Timeout
 
-from .identity import AssetError
+from .identity import AssetError, require_digest
+
+
+class ProducedScratchState:
+    """Journal a scratch root's job owner and publications offered for handoff.
+
+    Offered bytes remain recoverable until durable adoption is established.
+    This journal does not prove reader liveness or authorize deletion.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self._root = root.absolute()
+        self._path = self._root / ".produced-scratch.sqlite"
+        if self._root.is_symlink() or self._path.is_symlink():
+            raise AssetError("produced scratch state must not be a symlink")
+
+    def bind(self, job: str, attempt: int) -> None:
+        if not job or type(attempt) is not int or attempt < 1:
+            raise AssetError("produced scratch requires a job and positive attempt")
+        try:
+            with closing(sqlite3.connect(self._path)) as db, db:
+                db.execute("BEGIN IMMEDIATE")
+                tables = {
+                    row[0]
+                    for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                }
+                if not tables:
+                    metadata = {self._path.name, self._path.name + "-journal"}
+                    if any(path.name not in metadata for path in self._root.iterdir()):
+                        raise AssetError("produced scratch contains untracked data")
+                    db.execute(
+                        "CREATE TABLE owner (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), "
+                        "job TEXT NOT NULL, attempt INTEGER NOT NULL)"
+                    )
+                    db.execute(
+                        "CREATE TABLE publications (digest TEXT PRIMARY KEY, "
+                        "size INTEGER NOT NULL, "
+                        "offered INTEGER NOT NULL DEFAULT 0 CHECK (offered IN (0, 1)))"
+                    )
+                    db.execute("INSERT INTO owner VALUES (1, ?, ?)", (job, attempt))
+                elif tables != {"owner", "publications"}:
+                    raise AssetError("produced scratch ownership state is incomplete")
+                if db.execute("SELECT job, attempt FROM owner").fetchall() != [(job, attempt)]:
+                    raise AssetError("produced scratch job ownership is unavailable or changed")
+        except sqlite3.Error as exc:
+            raise AssetError("produced scratch state is unavailable") from exc
+
+    def published(self, digest: str, size: int) -> None:
+        digest = require_digest(digest)
+        if type(size) is not int or size < 0:
+            raise AssetError("produced scratch size must be a nonnegative integer")
+        try:
+            with closing(sqlite3.connect(self._path.as_uri() + "?mode=rw", uri=True)) as db, db:
+                db.execute(
+                    "INSERT OR IGNORE INTO publications (digest, size) VALUES (?, ?)",
+                    (digest, size),
+                )
+                if db.execute(
+                    "SELECT size FROM publications WHERE digest = ?", (digest,)
+                ).fetchone() != (size,):
+                    raise AssetError("produced scratch publication sizes disagree")
+        except sqlite3.Error as exc:
+            raise AssetError("produced scratch state is unavailable") from exc
+
+    def offer(self, digests: Iterable[str]) -> None:
+        try:
+            with closing(sqlite3.connect(self._path.as_uri() + "?mode=rw", uri=True)) as db, db:
+                for digest in digests:
+                    db.execute(
+                        "UPDATE publications SET offered = 1 WHERE digest = ?",
+                        (require_digest(digest),),
+                    )
+        except sqlite3.Error as exc:
+            raise AssetError("produced scratch state is unavailable") from exc
+
+    def publications(self) -> tuple[tuple[str, int, bool], ...]:
+        """Read existing publication state without creating or repairing a journal."""
+        try:
+            with closing(sqlite3.connect(self._path.as_uri() + "?mode=ro", uri=True)) as db:
+                rows = db.execute(
+                    "SELECT digest, size, offered FROM publications ORDER BY digest"
+                ).fetchall()
+        except sqlite3.Error as exc:
+            raise AssetError("produced scratch state is unavailable") from exc
+        result: list[tuple[str, int, bool]] = []
+        for digest, size, offered in rows:
+            if not isinstance(digest, str):
+                raise AssetError("produced scratch digest is invalid")
+            require_digest(digest)
+            if (
+                type(size) is not int
+                or size < 0
+                or type(offered) is not int
+                or offered not in (0, 1)
+            ):
+                raise AssetError("produced scratch publication state is invalid")
+            result.append((digest, size, bool(offered)))
+        return tuple(result)
 
 
 def _lease_directory(root: Path, *, create: bool = True) -> Path:

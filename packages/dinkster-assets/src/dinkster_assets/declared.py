@@ -43,7 +43,7 @@ from .library import IndexedAssetResolver
 from .model import AssetRef, AssetResolution, AssetResolver
 from .mounts import MountSnapshotResolver
 from .pack_assets import DeclaredAsset
-from .scratch import ProducedScratchLease
+from .scratch import ProducedScratchLease, ProducedScratchState
 from .vault import AssetVault, VaultWriter
 
 __all__ = [
@@ -51,6 +51,7 @@ __all__ = [
     "declared_asset",
     "install_declared_assets",
     "mount_roots_for_kind",
+    "offer_produced_outputs",
     "resolver_from_env",
     "use_declared_asset_pack",
     "use_produced_output_job",
@@ -68,6 +69,9 @@ class _ProducedJob:
     lock: threading.RLock = field(default_factory=threading.RLock)
     leases: dict[Path, ProducedScratchLease] = field(
         default_factory=dict[Path, ProducedScratchLease]
+    )
+    states: dict[Path, ProducedScratchState] = field(
+        default_factory=dict[Path, ProducedScratchState]
     )
 
     @contextmanager
@@ -91,6 +95,7 @@ _produced_job: ContextVar[_ProducedJob | None] = ContextVar("dinkster_produced_j
 class _ProducedWriter(VaultWriter):
     def __init__(self, root: Path, target: Path, digest: str, job: _ProducedJob) -> None:
         self._job = job
+        self._state = job.states.get(root)
         self._lease = ProducedScratchLease(root)
         try:
             super().__init__(root, target, digest)
@@ -104,11 +109,17 @@ class _ProducedWriter(VaultWriter):
 
     def commit(self, *, before_publish: Callable[[int], None] | None = None) -> Path:
         with self._job.publication():
-            return super().commit(before_publish=before_publish)
+            path = super().commit(before_publish=before_publish)
+            if self._state is not None:
+                self._state.published(self._expected, path.stat().st_size)
+            return path
 
     def commit_with_result(self) -> tuple[Path, bool]:
         with self._job.publication():
-            return super().commit_with_result()
+            path, created = super().commit_with_result()
+            if self._state is not None:
+                self._state.published(self._expected, path.stat().st_size)
+            return path, created
 
     def __exit__(
         self,
@@ -123,11 +134,15 @@ class _ProducedWriter(VaultWriter):
 
 
 class _ProducedVault(AssetVault):
-    def __init__(self, root: Path, job: _ProducedJob) -> None:
+    def __init__(self, root: Path, job: _ProducedJob, *, managed_scratch: bool) -> None:
         self._job = job
         if root not in job.leases:
             job.leases[root] = ProducedScratchLease(root)
         super().__init__(root)
+        if managed_scratch and root not in job.states:
+            state = ProducedScratchState(root)
+            state.bind(*job.identity)
+            job.states[root] = state
 
     def writer(self, expected_digest: str) -> VaultWriter:
         with self._job.publication():
@@ -152,6 +167,18 @@ def use_produced_output_job(job: str, attempt: int) -> Generator[bool]:
         if owns_adoption:
             scope.close()
         _produced_job.reset(token)
+
+
+def offer_produced_outputs(digests: Iterable[str]) -> None:
+    """Persist handoff intent before a produced result can leave its invocation."""
+    job = _produced_job.get()
+    if job is not None and job.states:
+        digests = tuple(digests)
+        if not digests:
+            return
+        with job.publication():
+            for state in job.states.values():
+                state.offer(digests)
 
 
 def _produced_root(scratch: str) -> Path:
@@ -202,7 +229,7 @@ def produced_output_scratch(env: Mapping[str, str] | None = None) -> AssetVault 
     job = _produced_job.get()
     if job is not None:
         with job.publication():
-            return _ProducedVault(Path(root), job)
+            return _ProducedVault(Path(root), job, managed_scratch=bool(scratch))
     return AssetVault(root)
 
 

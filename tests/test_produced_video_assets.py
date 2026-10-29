@@ -30,7 +30,7 @@ from dinkster_assets import (
 )
 from dinkster_assets.declared import produced_output_scratch, use_produced_output_job
 from dinkster_assets.produced import ProducedAssetInventory
-from dinkster_assets.scratch import claim_inactive_produced_scratch
+from dinkster_assets.scratch import ProducedScratchState, claim_inactive_produced_scratch
 from dinkster_caches import BudgetedDiskCAS
 from dinkster_engine.control import EngineRunContext, RunControlState
 from dinkster_graph import Graph, GraphNode
@@ -44,6 +44,7 @@ from dinkster_workers.blobs import attribute_moved_wire
 from dinkster_workers.boundary import ValueCodec, encode_result, read_frame
 from dinkster_workers.produced_assets import (
     ProducedAssetAuthority,
+    offer_source_assets,
     result_asset_digests,
     source_asset_files,
 )
@@ -112,6 +113,9 @@ def test_produced_scratch_claim_protects_live_process_and_open_writer(
             assert receive() == "writer closed"
         process.join(20)
         assert process.exitcode == 0
+        assert ProducedScratchState(root).publications() == (
+            (digest_bytes(b"recoverable publication"), len(b"recoverable publication"), False),
+        )
         with claim_inactive_produced_scratch(root) as inactive:
             assert inactive
             with use_produced_output_job("process job", 1):
@@ -176,6 +180,60 @@ def test_produced_scratch_claim_survives_data_directory_removal(tmp_path: Path) 
         vault = produced_output_scratch(env)
         assert vault is not None
         assert _publish(vault, b"new invocation").read_bytes() == b"new invocation"
+
+
+@pytest.mark.parametrize("creation_result", [False, True])
+def test_produced_scratch_preserves_publication_handoff_after_restart(
+    tmp_path: Path, creation_result: bool
+) -> None:
+    env = {"DINKSTER_PACK_SCRATCH": str(tmp_path / "scratch")}
+    data = b"offered publication"
+    unused = b"unused intermediate"
+    digest = digest_bytes(data)
+    with use_produced_output_job("handoff job", 2):
+        vault = produced_output_scratch(env)
+        assert vault is not None
+        with vault.writer(digest) as writer:
+            writer.write(data)
+            if creation_result:
+                path, created = writer.commit_with_result()
+                assert created
+            else:
+                path = writer.commit()
+        _publish(vault, unused)
+        before = ProducedScratchState(vault.root).publications()
+        assert set(before) == {
+            (digest, len(data), False),
+            (digest_bytes(unused), len(unused), False),
+        }
+        outputs = {"video": _value(AssetRef(digest, "source", len(data)))}
+        assert source_asset_files(outputs, vault) == [(digest, path)]
+        assert ProducedScratchState(vault.root).publications() == before
+        offer_source_assets(outputs)
+    expected = {(digest, len(data), True), (digest_bytes(unused), len(unused), False)}
+    assert set(ProducedScratchState(vault.root).publications()) == expected
+    with use_produced_output_job("handoff job", 2):
+        reopened = produced_output_scratch(env)
+        assert reopened is not None and reopened.root == vault.root
+        assert set(ProducedScratchState(reopened.root).publications()) == expected
+    with pytest.raises(AssetError, match="ownership is unavailable or changed"):
+        ProducedScratchState(vault.root).bind("different owner", 2)
+    assert path.read_bytes() == data
+
+
+def test_produced_scratch_refuses_missing_journal_without_reclassifying_bytes(
+    tmp_path: Path,
+) -> None:
+    env = {"DINKSTER_PACK_SCRATCH": str(tmp_path / "scratch")}
+    with use_produced_output_job("lost state", 1):
+        vault = produced_output_scratch(env)
+        assert vault is not None
+        ref = _publish(vault, b"keep recoverable source")
+    (vault.root / ".produced-scratch.sqlite").unlink()
+    with use_produced_output_job("lost state", 1):
+        with pytest.raises(AssetError, match="untracked data"):
+            produced_output_scratch(env)
+    assert ref.read_bytes() == b"keep recoverable source"
 
 
 def test_produced_scratch_isolates_concurrent_jobs_and_attempts(tmp_path: Path) -> None:
@@ -325,6 +383,9 @@ def test_in_process_produced_sources_require_durable_adoption(
             assert produced is not None
             original = produced.read_bytes()
             assert digest_bytes(original) == digests[0]
+            assert ProducedScratchState(store.root).publications() == (
+                (digests[0], len(original), True),
+            )
         if not configured_vault:
             assert result.error is not None
             assert "require an engine DINKSTER_ASSET_VAULT" in result.error.message
@@ -394,6 +455,12 @@ def test_in_process_control_sources_are_adopted_before_publication(
             path = engine.resolve(digest)
             assert path is not None, "publication reached the engine before durable adoption"
             assert path.read_bytes() == data
+            with use_produced_output_job("control job", 2):
+                store = produced_output_scratch()
+                assert store is not None
+                assert ProducedScratchState(store.root).publications() == (
+                    (digest, len(data), True),
+                )
             shutil.rmtree(scratch)
             payload = cast(Mapping[str, object], values[media].resolve())
             assert cast(AssetRef, payload["source"]).read_bytes() == data

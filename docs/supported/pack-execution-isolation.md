@@ -54,6 +54,9 @@
 - Produced scratch claims refuse live invocations and open writers, including
   in another process. Crashed-process locks release without age-based expiry;
   this does not itself collect or discard produced data.
+- Job scratch retains publication ownership and handoff intent across process
+  exit. Missing ownership state refuses reuse of nonempty scratch; merely
+  inspecting a source does not mark it as offered or adopted.
 - Copying produced sources into the engine vault records pending and verified
   adoption across restarts. An interrupted inventory commit can be completed
   from verified destination bytes without the producer. Existing untracked
