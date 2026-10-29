@@ -10,6 +10,7 @@ from dinkster_values import (
     AUDIO_ENCODER_TYPE,
     BOUNDING_BOX_TYPE,
     BOUNDING_BOXES_TYPE,
+    CAMERA_INFO_STATE_TYPE,
     CLIP_TYPE,
     CLIP_VISION_OUTPUT_TYPE,
     CLIP_VISION_TYPE,
@@ -153,6 +154,7 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
     for type_id in (
         BOUNDING_BOX_TYPE,
         BOUNDING_BOXES_TYPE,
+        CAMERA_INFO_STATE_TYPE,
         COLOR_TYPE,
         COLORS_TYPE,
         COMPOSITOR_TYPE,

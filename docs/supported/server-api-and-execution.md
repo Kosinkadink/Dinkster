@@ -42,6 +42,12 @@
 - Filesystem mount scans report file, byte, and elapsed progress; publish
   indexed assets before the scan finishes; reuse unchanged-file indexes; and
   keep per-mount indexes under the configured library root
+- Operators can resolve an absolute local file path to a mounted asset in the
+  selected project's live folders without copying bytes. Changed or unindexed
+  files are verified and cataloged on demand, including read-only inputs.
+  Outside, revoked, excluded, missing and unsafe paths return an explicit
+  refusal without revealing host paths. Authentication, malformed requests and
+  server failures remain distinct errors, not upload-fallback signals.
 - Setup and serving with mount changes enabled initialize a writable
   `<library-root>/imports` folder and a selected writable
   `<library-root>/output` folder when those defaults are not configured.

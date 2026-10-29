@@ -10,6 +10,9 @@
 - The official pack artifact builder produces deterministic source archives and
   an existing registry artifact lock from committed sources, preserving the
   fifteen pack identities and node entry points without importing node code.
+- Core official pack manifests declare their existing third-party runtime
+  requirements directly, including platform markers. Pack-to-pack dependencies
+  and the host API contract remain separate from Python requirements.
 - Packs may own exact node IDs with case, spaces and dots, without renaming
   them. Namespace and exact-node ownership reject overlapping owners through
   install, composition and reload. Pack and publisher identities remain
@@ -32,6 +35,9 @@
   and recorded in-process or isolated hosting. Retained generations keep their
   own pack selection for rollback. Missing interpreters or changed source
   artifacts fail startup rather than falling back to installed distributions.
+- A target-interpreter command stages sources from an existing registry lock
+  and digest-addressed local archives, without network access or dependency
+  resolution. JSON results report admission failures before activation.
 - Managed workflow plans default to the selected generation's recorded variant.
   A conflicting launch variant refuses startup; an explicit request variant
   remains a read-only compatibility comparison, not an environment switch.
@@ -55,6 +61,8 @@
 - A server launched with `--engine-variant` supplies that declared target to
   workflow-open plans that omit `variant`. Explicit request variants remain
   available for read-only comparisons; no target is inferred from hardware.
+  Plans support packs supplied with either a directory or an explicit manifest
+  path through `--pack`.
 - Local environment operators can run `python -m dinkster.workflow_requirements
   project-plan --project-root /absolute/project --source-generation /absolute/source
   --catalog-lock /absolute/release/official-packs.lock --artifacts /absolute/cache
