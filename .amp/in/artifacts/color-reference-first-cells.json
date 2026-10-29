@@ -1,0 +1,849 @@
+{
+  "reference": "bc5f880dbdd43e426077f42ccec53bb577ffee9f",
+  "source": "/home/kosin/comfy-vibe-station/lanes/comfy-nodes-511-images/Dinkster/.amp/in/reference/comfy_extras/nodes_images.py",
+  "source_sha256": "897ba3b46ace2c0083e85241c30e41af0c141e63b81449743192d5e29101a233",
+  "method": "AST-selected unchanged fixed-F helper/constants/classes; reset model-management CPU policy via landed public initializer",
+  "cells": 52,
+  "output_device": "cpu",
+  "output_dtype": "torch.float32",
+  "results": [
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "sRGB",
+        "destination": "sRGB"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "c740388cc9921d5984d32ac760a2df3095d3704925d111151edd39854af9b080"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "sRGB",
+        "destination": "HDR"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "01024e88a0c368d5fe584364fd6a9eaed4dee813bdee6280400913c1e991a3ce"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "sRGB",
+        "destination": "HDR ACEScct"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "2768cb79dff8df388fc1ab0c4569df3cbd3e8b0e2a023fd7cc541f86ef8d317f"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "sRGB",
+        "destination": "HDR LogC3"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "dbad1678a41879eafb2fce7993031b05cbfcbf398f189aec637be1a7f8874acc"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "sRGB",
+        "destination": "HDR PQ"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "878360c49b3d2136e1b759b903ad2e6d3d46c5a4d6ec4618126e6bc5238e8b2b"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "sRGB",
+        "destination": "linear"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "9dfb02fe572c42a77a7c3b23f242e771d607104d29c3fe126fa7045327f7cc79"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "sRGB",
+        "destination": "linear ACEScg"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "00c13408bd3518c561b4a6b3c6ac8c9cf6dcd62ef9106e891e15802de4ac49ab"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "HDR",
+        "destination": "sRGB"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "fa3e185dd896f75e8e997794913ab8b8a147592c9571ea8bafc949ccec49f922"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "HDR",
+        "destination": "HDR"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "c740388cc9921d5984d32ac760a2df3095d3704925d111151edd39854af9b080"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "HDR",
+        "destination": "HDR ACEScct"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "062d4bfe13f1dc37d333981922376daec425e65a8e3ea61dce48666623be6aa2"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "HDR",
+        "destination": "HDR LogC3"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "9937511852b1a6c49d1489cf445723a8bd273fd2898d45d7d020dcd62c987586"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "HDR",
+        "destination": "HDR PQ"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "ac360ba52a7c82e639c08a08a7651d5d083d686f51310311dc5d9ccb15a0125f"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "HDR",
+        "destination": "linear"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "11e3399397e1997d1710e2354a1b7b92b642ff61d7edad410cb8e090c3a5634d"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "HDR",
+        "destination": "linear ACEScg"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "9b57ff061a35fce8b52eb924098132e0d835334d31be4d8c143ae295b19bd7c5"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "HDR ACEScct",
+        "destination": "sRGB"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "0588f877ba90ff5c779f9a2b31a1a80ccaed5e12cd7c3a0b77cf0c68a7fa51b8"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "HDR ACEScct",
+        "destination": "HDR"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "6d2ed2f1b64f38a3a09b9039270c9cedebeafc92f3dd8e8bb59d0ac146f12a9a"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "HDR ACEScct",
+        "destination": "HDR ACEScct"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "c740388cc9921d5984d32ac760a2df3095d3704925d111151edd39854af9b080"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "HDR ACEScct",
+        "destination": "HDR LogC3"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "5eb8fc83d3c08530b3130939f16b5d632f841c2ebc4655e2e3d90a729079432f"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "HDR ACEScct",
+        "destination": "HDR PQ"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "372431cc1509d6c68b0064ae883d68edc4449ac72a15b15cbb9f36a29328fc8d"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "HDR ACEScct",
+        "destination": "linear"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "518b312182c1e83650a0f04b709da39fa01c6d630bcb43693f6f6f6ab68de603"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "HDR ACEScct",
+        "destination": "linear ACEScg"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "180e933ad3db1bc674e738baff6d0e072b9601941e14045880d4e8fef287e4f2"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "HDR LogC3",
+        "destination": "sRGB"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "bf306a383cf9aa34cd43c9a3c8cb0f5ffdf5bda2416efc27b1d4757bfc2a02ac"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "HDR LogC3",
+        "destination": "HDR"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "f7ada9a546b9164cfca4f2cfaf1850bf5492cbe50effe11316c5823e92079326"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "HDR LogC3",
+        "destination": "HDR ACEScct"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "d1a5b6b67ccd4de5a3d135b6853e28e6b58d1da9a2f56d9ff231f80674906ed8"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "HDR LogC3",
+        "destination": "HDR LogC3"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "c740388cc9921d5984d32ac760a2df3095d3704925d111151edd39854af9b080"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "HDR LogC3",
+        "destination": "HDR PQ"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "a4532a1687fa28ed4b1a04bb70795911e2f71a05477078e45438307a4f6c5e0d"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "HDR LogC3",
+        "destination": "linear"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "5f2feeb3ae3887d76b3c12a23f4080c046e4fe836bf9c456d0b4d4d2b5407ae4"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "HDR LogC3",
+        "destination": "linear ACEScg"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "afd97fb2a01944d101bd7565d119b2af4421ba2bdaf2b88c4cf84d6e601823d8"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "HDR PQ",
+        "destination": "sRGB"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "9f2a80c321e4b48df7d662cb3a4abc23d68617490adbe2ff6f061cfaa4cc4eb7"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "HDR PQ",
+        "destination": "HDR"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "fbe1b77f501c21da0bce1e29f2cbce55b26d172c9951a1bac6fd3ce691a21bbc"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "HDR PQ",
+        "destination": "HDR ACEScct"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "2a7de41225b30cd33dea7424ddc6863d242eba921afb7eeff524a0642f132dcf"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "HDR PQ",
+        "destination": "HDR LogC3"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "2fc7d484fed94b0223cbc94f7d3eab66250990e44bab944874f20fcf3209bd23"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "HDR PQ",
+        "destination": "HDR PQ"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "c740388cc9921d5984d32ac760a2df3095d3704925d111151edd39854af9b080"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "HDR PQ",
+        "destination": "linear"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "bbf6e796fd3a6414fe6250b2292c733c0fba09d6a61c6f166ad76148ebf6fcf9"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "HDR PQ",
+        "destination": "linear ACEScg"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "84d436a3f553f16a685bc88b8702f388441085a54d49989131a9869aade91681"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "linear",
+        "destination": "sRGB"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "324b48cff339391572f3fb8bc8b0ddc97b447a5804d914ee0ea543bcc12b4719"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "linear",
+        "destination": "HDR"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "7df154e2ee608a7710d6be106637a76a15c0bf14e43499afea816327bdb7359f"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "linear",
+        "destination": "HDR ACEScct"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "9f68805fd689159556897a043d24dd2e9d8992447d242ace2f942aae4697cb16"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "linear",
+        "destination": "HDR LogC3"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "8910c816cfbac4df0d268e90b9741f96bde659d9ad83361226711dc0412b0cbb"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "linear",
+        "destination": "HDR PQ"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "685112cea7dc4050837f5049870a23e2c065b0ec40fa91f92ed685305d19d2bc"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "linear",
+        "destination": "linear"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "c740388cc9921d5984d32ac760a2df3095d3704925d111151edd39854af9b080"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "linear",
+        "destination": "linear ACEScg"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "c93037f4a50956e564158915e628e1a08ef64d6f217b92e4c0328aaa9177bd55"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "linear ACEScg",
+        "destination": "sRGB"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "c645a676f6558ff2d918df822891d52e936d6b92cd1359fc43be6d1fee7f55b9"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "linear ACEScg",
+        "destination": "HDR"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "cb34040cf21ab5d96d984990af815108b07b466feff28d22ca208cd950e7bfd9"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "linear ACEScg",
+        "destination": "HDR ACEScct"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "de5e7d4566ac79d45e2823127117f34d70846660642aee6e98e72a3a94d79e77"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "linear ACEScg",
+        "destination": "HDR LogC3"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "76b0a483a53a98f811600250c2a8262ee1f6fcb196580791ae8b698cb5c1858d"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "linear ACEScg",
+        "destination": "HDR PQ"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "4918498ed4d8cdb999086c46eabbb28d42d3c4671a87e10771735cee12d5543d"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "linear ACEScg",
+        "destination": "linear"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "d676eed1d8fd80a6f2361f098a96fd50f2dea925e7cf2f8232f46d5415ceb781"
+    },
+    {
+      "node": "ImageColorSpace",
+      "parameters": {
+        "source": "linear ACEScg",
+        "destination": "linear ACEScg"
+      },
+      "input_dtype": "torch.float64",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "c740388cc9921d5984d32ac760a2df3095d3704925d111151edd39854af9b080"
+    },
+    {
+      "node": "ImageSDRToHDR",
+      "parameters": {
+        "algorithm": {
+          "algorithm": "lottes",
+          "target_luminance": 0.0
+        }
+      },
+      "input_dtype": "torch.float16",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        3
+      ],
+      "sha256": "b8ce1ccf0a85a30608e60a01a9225a79b3b0e235ea2c388ec952efa291212da5"
+    },
+    {
+      "node": "ImageSDRToHDR",
+      "parameters": {
+        "algorithm": {
+          "algorithm": "lottes",
+          "target_luminance": 650.0
+        }
+      },
+      "input_dtype": "torch.float16",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        3
+      ],
+      "sha256": "2519fd0113d288187973d3d7f8b3781b0df511c7b0dce4dd02919ff1f3123858"
+    },
+    {
+      "node": "ImageSDRToHDR",
+      "parameters": {
+        "algorithm": {
+          "algorithm": "lottes",
+          "target_luminance": 1400.0
+        }
+      },
+      "input_dtype": "torch.float16",
+      "output_dtype": "torch.float32",
+      "shape": [
+        2,
+        2,
+        2,
+        4
+      ],
+      "sha256": "ca59c38282695cd1eba1c8f05fb1f5ea07e503964b9f282b14ba2c9dddee01f0"
+    }
+  ]
+}
