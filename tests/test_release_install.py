@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -157,7 +158,12 @@ def test_release_publication_is_tag_only_and_uses_trusted_publishing(
     ):
         (dist / name).write_bytes(name.encode())
     selection = next(step["run"] for step in publish["steps"] if "run" in step)
-    subprocess.run(["bash", "-e", "-c", selection], cwd=tmp_path, check=True)
+    bash = (
+        str(Path(os.environ["ProgramFiles"]) / "Git/bin/bash.exe")
+        if sys.platform == "win32"
+        else "bash"
+    )
+    subprocess.run([bash, "-e", "-c", selection], cwd=tmp_path, check=True)
     selected = list((tmp_path / "publish").iterdir())
     assert [path.name for path in selected] == [
         f"{project.replace('-', '_')}-1.2.3-py3-none-any.whl"
