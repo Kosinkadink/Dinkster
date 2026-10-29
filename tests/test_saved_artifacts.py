@@ -30,7 +30,11 @@ from dinkster_graph import Graph, GraphNode
 from dinkster_protocol import SavedArtifactCandidate
 from dinkster_schema.reporting import capture_saved_artifacts
 from dinkster_workers import ExecutionContext
-from dinkster_workers.boundary import BoundaryError, decode_result_artifact_candidates
+from dinkster_workers.boundary import (
+    BoundaryError,
+    decode_result_artifact_candidates,
+    decode_saved_artifact_claims,
+)
 from dinkster_workers.execution import use_execution_context
 from dinkster_workers.saved_artifacts import (
     MAX_ARTIFACT_FILENAME,
@@ -399,6 +403,29 @@ def test_native_save_attachment_requires_open_context_and_snapshots_claim() -> N
     asyncio.run(scenario())
 
 
+def test_native_save_attachment_admits_complete_image_batch_and_bounds_overflow() -> None:
+    expected = [
+        {
+            "digest": digest_bytes(str(index).encode("ascii")),
+            "name": f"frame-{index}.png",
+            "size": index + 1,
+            "mediaType": "image/png",
+            "virtualPath": f"mounts/custom/frame-{index}.png",
+        }
+        for index in range(4096)
+    ]
+    with capture_saved_artifacts() as claims:
+        for claim in expected:
+            attach_saved_artifact(claim)
+        with pytest.raises(ValueError, match="batch exceeds"):
+            attach_saved_artifact(expected[0])
+    assert claims == expected
+    wire = json.loads(json.dumps({"savedArtifactClaims": [dict(claim) for claim in claims]}))
+    assert decode_saved_artifact_claims(wire) == tuple(expected)
+    with pytest.raises(BoundaryError, match="bounded list"):
+        decode_saved_artifact_claims({"savedArtifactClaims": [*expected, expected[0]]})
+
+
 @pytest.mark.parametrize(
     "fault",
     ("revoked", "readonly", "digest", "size", "unpublished", "stale", "hardlink", "symlink"),
@@ -590,6 +617,13 @@ class Save(Node):
     def execute(cls, *, mode):
         authority = MountSnapshotWriter(os.environ['DINKSTER_MOUNTS_SNAPSHOT'])
         data = b'' if mode == 'empty' else b'asymmetric text 1,2,7\n'
+        if mode == 'batch':
+            for index in range(65):
+                ref = AssetWriter(authority).save_bytes(
+                    SaveTarget('custom', f'batch/frame-{index}'), str(index).encode('ascii'),
+                    suffix='.txt', media_type='text/plain')
+                attach_saved_artifact(ref.to_wire())
+            return cls.outputs(out=ref.name, asset=ref)
         ref = AssetWriter(authority).save_bytes(SaveTarget('custom', 'nested/report'),
             data, suffix='.txt', media_type='text/plain')
         if mode != 'unattached':
@@ -629,13 +663,26 @@ types = "native_save_fixture:register_types"
         try:
             await composer.add_pack(PackSpec(manifest, in_process=in_process, env=env))
             engine = composer.composition.make_engine(lambda _event: None)
-            for mode in ("text", "empty", "unattached"):
+            for mode in ("text", "empty", "unattached", "batch"):
                 result = await engine.run(
                     Graph(nodes={"save": GraphNode("native-save-fixture.save", {"mode": mode})}),
                     ["save"],
                 )
                 if mode == "unattached":
                     assert result.artifacts == ()
+                    continue
+                if mode == "batch":
+                    assert len(result.artifacts) == 65
+                    assert len({artifact.virtual_path for artifact in result.artifacts}) == 65
+                    for index, artifact in enumerate(result.artifacts):
+                        data = str(index).encode("ascii")
+                        assert artifact.node_id == "save"
+                        assert artifact.digest == digest_bytes(data)
+                        assert artifact.size == len(data)
+                        assert artifact.media_type == "text/plain"
+                        assert artifact.name.startswith(f"frame-{index}_")
+                        assert artifact.virtual_path == f"mounts/custom/batch/{artifact.name}"
+                        assert (root / "batch" / artifact.name).read_bytes() == data
                     continue
                 (artifact,) = result.artifacts
                 data = b"" if mode == "empty" else b"asymmetric text 1,2,7\n"

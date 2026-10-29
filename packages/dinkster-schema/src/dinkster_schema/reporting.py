@@ -49,7 +49,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Protocol, cast
 
-from dinkster_values import SAVED_ARTIFACT_LIMIT_BYTES
+from dinkster_values import SAVED_ARTIFACT_CLAIM_LIMIT, SAVED_ARTIFACT_LIMIT_BYTES
 
 _saved_artifact_sink: ContextVar[Callable[[Mapping[str, object]], None] | None] = ContextVar(
     "dinkster_saved_artifact_sink", default=None
@@ -125,7 +125,7 @@ def capture_saved_artifacts() -> Generator[list[Mapping[str, object]]]:
         with lock:
             if not active:
                 raise RuntimeError("saved artifact invocation is closed")
-            if len(claims) >= 64:
+            if len(claims) >= SAVED_ARTIFACT_CLAIM_LIMIT:
                 raise ValueError("saved artifact batch exceeds invocation limits")
             claims.append(claim)
 
