@@ -55,7 +55,11 @@
   remains a read-only compatibility comparison, not an environment switch.
 - The default local launcher prepares missing or stale catalogs before binding,
   then serves the browser application and engine API from one loopback origin.
-- Released engines discover the installed frontend wheel without a frontend
+- A pip-installed engine prepares the bundled default pack catalogs before
+  binding; the core worker is selected once with its configured runtime options.
+- Checkout defaults retain their managed source lock without requiring an
+  installed standard-suite distribution.
+- Released engines discover the frontend bundled inside the engine wheel without a frontend
   checkout. Release installation checks require the browser application document
   at `/` as well as the engine API.
 - Health reports composed and failed counts and is not ready when composition

@@ -13,7 +13,7 @@ command line. Developers who change Dinkster itself work from a checkout
 
 | Term | Meaning | Where it lives |
 |---|---|---|
-| Engine release | Dinkster at one commit: the pure-Python wheels for every workspace package, the `dinkster-frontend` wheel, any third-party wheel the lock needs that the base does not carry, `constraints.txt`, `SHA256SUMS` | GitHub release of `Kosinkadink/Dinkster`, mirrored to R2 |
+| Engine release | Dinkster at one commit: the `dinkster`, `dinkster-api` and `dinkster-supervisor` wheels, any third-party wheel the lock needs that the base does not carry, `constraints.txt`, `SHA256SUMS` | GitHub release of `Kosinkadink/Dinkster`, mirrored to R2 |
 | Lock | Dinkster's `uv.lock` at that commit, the single resolution every wheel hash comes from; `constraints.txt` is its export | `Kosinkadink/Dinkster` |
 | Variant | One hardware target: `win-nvidia`, `win-nvidia-cu126`, `win-cpu`, `linux-cpu` | a row in `Dinkster-Environments` |
 | Base bundle | A python-build-standalone interpreter plus the heavy locked wheels for one variant (torch, torchvision, numpy, the parts of the lock that change rarely), archived once and named by content hash, described by a base manifest | built by `Dinkster-Environments`, downloaded to the wheel store |
@@ -354,7 +354,7 @@ do not change.
 ## Frontend
 
 Dinkster pins one `Dinkster-Frontend` commit in `scripts/release_sources.json`
-and the release workflow packages that commit as the `dinkster-frontend`
+and the release workflow embeds that commit's bundle as data in the `dinkster`
 wheel, so the frontend version is pinned by the generation and nothing
 else. `Dinkster-Frontend` publishes its built bundle per commit as a CI
 artifact named by hash, and the release workflow downloads that bundle
@@ -373,8 +373,8 @@ directory is the build artifact used by installation checks and publication:
 
 | Asset | Contract |
 |---|---|
-| `*.whl` | Every workspace distribution, including the root `dinkster` distribution, plus `dinkster-frontend`; workspace dependencies require the exact same release version |
-| `constraints.txt` | Hashed `uv export --locked --all-packages --no-dev --group engine-base` requirements, excluding editable workspace entries and including exact versions and SHA-256 hashes of the built workspace and frontend wheels |
+| `*.whl` | Three workspace distributions: `dinkster`, `dinkster-api`, `dinkster-supervisor`; their workspace dependencies require the exact same release version |
+| `constraints.txt` | Hashed `uv export --locked --all-packages --no-dev --group engine-base` requirements, excluding editable workspace entries and including exact versions and SHA-256 hashes of the three built workspace wheels |
 | `release-manifest.json` | UTF-8 JSON with a trailing LF; `format: dinkster.engine/1`, `repository`, `tag`, full source `commit`, PEP 440 `version`, integer `workerProtocol`, `workspaceWheels` filenames and `artifacts` rows containing `name`, lowercase hex `sha256` and byte `size` |
 | `SHA256SUMS` | One lowercase SHA-256, two spaces, asset basename and LF per line; covers every asset except itself, including the manifest; verifiable with `sha256sum -c SHA256SUMS` |
 | `dinkster-source-<version>.zip` | Maintainer source archive; never an installation requirement |
@@ -385,6 +385,8 @@ with `scripts/build_official_packs.py` and admits them through repeated
 the local `+g<commit>` segment); the existing pack lock retains the full source
 commit. These payloads have the same artifact hashes and checksums as other
 release assets but are not `workspaceWheels` and are never uploaded to PyPI.
+The engine wheel also carries these ZIPs and their catalog as package data,
+so a pip-installed engine can stage its defaults without a selected generation.
 
 The engine release id used by channels is `sha256:` followed by the SHA-256
 of the exact `release-manifest.json` bytes. The manifest lists payload assets,
@@ -446,26 +448,30 @@ Tag releases use `vX.Y.Z` and require every workspace project's source
 version to equal `X.Y.Z`. A main commit uses GitHub release tag
 `main-<full commit>` and wheel version
 `<next patch>.dev<commit Unix timestamp>+g<full commit>`. These are GitHub
-prereleases, never PyPI publications. The frontend wheel has the engine
-release version even when its pinned frontend commit is unchanged. A
-temporary source tree gives every workspace wheel that version and pins
+prereleases, never PyPI publications. The frontend bundle stays embedded even
+when its pinned frontend commit is unchanged. A temporary source tree gives
+the three published workspace wheels that version and pins
 workspace dependencies to it without rewriting the checkout or its lock.
 
 Pull requests changing release machinery run the build and clean-install
 checks without creating a GitHub release or invoking PyPI. Tag publication
 waits for all clean-install checks, attaches the checked assets to GitHub,
-then uploads only `workspaceWheels` to PyPI through OIDC trusted publishing
-in the protected `pypi` environment. No PyPI API token is stored.
+then uploads the three workspace distributions in independent OIDC trusted
+publishing jobs. Each job uploads only its own wheel: `dinkster` uses
+environment `pypi`, `dinkster-api` uses `pypi-dinkster-api`, and
+`dinkster-supervisor` uses `pypi-dinkster-supervisor`. No PyPI API token is stored.
 Before the first upload, the repository owner registers a pending trusted
 publisher on PyPI for each distribution, naming `Kosinkadink/Dinkster`,
-workflow `release.yml` and environment `pypi`. A pending publisher does not
-create the project; the first trusted upload creates it. Tag publication
+workflow `release.yml` and its project-specific environment above. Repository
+casing must match exactly. Separate environments let PyPI distinguish the
+three pending publishers. A pending publisher does not create the project;
+the first trusted upload creates it. Tag publication
 does not require the project to exist beforehand. Missing or mismatched
 publisher registration fails the upload rather than silently skipping it.
 Subsequent tag uploads skip versions already uploaded.
 
-The tag workflow uploads every workspace wheel and the frontend wheel to
-PyPI with trusted publishing, so `pip install dinkster` and the `stable`
+The tag workflow uploads only `dinkster`, `dinkster-api` and
+`dinkster-supervisor` to PyPI with trusted publishing, so `pip install dinkster` and the `stable`
 channel install the same artifacts: the channel fetches them by hash from
 the release, pip resolves the same versions from the index. Every
 dependency that comes from another Dinkster repository (`dinkster-inference`
@@ -476,6 +482,13 @@ must not be the only way to obtain one. torch is declared without an index:
 a pip user chooses the index for their hardware the way ComfyUI users do, or
 runs `dinkster-env setup`, which applies the variant rule above and installs
 the base for the machine.
+
+`dinkster-api` contains the torch-free pack-author and worker-host modules,
+including the registry client and `dinkster-doctor`. The engine wheel contains
+the scheduler, graph, server and native runtime; inference brings torch into
+the engine, not into the API kit. `dinkster-supervisor` stays independently
+installable. Development workspace members retain their module-layering
+boundaries but are not separate PyPI publications.
 
 ## What Desktop adds
 

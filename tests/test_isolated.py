@@ -3198,7 +3198,9 @@ def test_pack_venv_ignores_workspace_only_source_metadata(
     assert "--no-sources" in install
     assert install.index("--no-sources") < install.index("-e")
     assert install.count(str(pack)) == 1
-    assert "dinkster-workers" in install
+    assert install.count(str(api)) == 1
+    assert "dinkster-api" not in install
+    assert "dinkster-workers" not in install
 
 
 def test_pack_venv_reuse_requires_matching_provisioning_inputs(
