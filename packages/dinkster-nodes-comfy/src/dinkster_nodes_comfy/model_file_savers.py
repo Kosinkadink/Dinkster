@@ -70,7 +70,7 @@ def _save_tensors(
             ref = writer.save_stream(
                 writer.output_target(prefix, mount=mount),
                 source,
-                suffix=".safetensors",
+                suffix="_.safetensors",
                 limit=path.stat().st_size,
             )
             attach_saved_artifact(ref.to_wire())

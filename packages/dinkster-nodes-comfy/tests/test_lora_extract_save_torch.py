@@ -433,7 +433,7 @@ def test_lora_exports_attach_exact_mounted_files_on_each_execution(
                     ("combined", "output", output),
                     ("model", "alternate", alternate),
                 ):
-                    relative = f"loras/{node}_{attempt + 1:05d}.safetensors"
+                    relative = f"loras/{node}_{attempt + 1:05d}_.safetensors"
                     path = root / relative
                     artifact = next(item for item in result.artifacts if item.node_id == node)
                     assert artifact.virtual_path == f"mounts/{mount}/{relative}"

@@ -316,7 +316,7 @@ def test_latent_and_encoder_exports_write_exact_files_through_native_hosts(
         name = f"ComfyUI_{prefix}" if prefix else "ComfyUI"
         paths = sorted((alternate / "clip").glob(f"{name}_*.safetensors"))
         if not prefix:
-            paths = [path for path in paths if path.stem.rsplit("_", 1)[0] == name]
+            paths = [path for path in paths if path.stem.rsplit("_", 2)[0] == name]
         assert len(paths) == 2
         for path in paths:
             with safe_open(path, framework="pt", device="cpu") as handle:

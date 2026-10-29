@@ -221,6 +221,7 @@
   workflow metadata unless metadata is disabled. Animated PNG omits empty prompts.
 - Native CLIP and VAE exports preserve tensor keys and dtypes in safetensors
   on the selected output mount. CLIP weights split by encoder prefix.
+  Filenames retain the source trailing underscore before `.safetensors`.
   Submitted prompt and workflow metadata are retained unless metadata is disabled.
   Exported files are attached as validated run artifacts within the shared result limits.
 - Native latent files load verified safetensors, convert samples to float32,

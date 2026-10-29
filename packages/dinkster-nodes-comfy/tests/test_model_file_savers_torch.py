@@ -48,6 +48,70 @@ class _Vae:
         return {"decoder.weight": torch.tensor([[1.25, -3.5]], dtype=torch.float64)}
 
 
+@pytest.mark.parametrize("saver", ("clip", "vae", "lora"))
+@pytest.mark.parametrize("mount", (None, "alternate"))
+def test_weight_exports_preserve_filename_tails_and_prior_publications(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, saver: str, mount: str | None
+) -> None:
+    output, alternate = tmp_path / "output", tmp_path / "alternate"
+    output.mkdir()
+    alternate.mkdir()
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot, index_root=tmp_path / "index")
+    for name, root in (("output", output), ("alternate", alternate)):
+        table.add(MountDef(name, root, mode="readwrite"))
+        table.scan(name)
+    table.select_output_mount("output")
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+    root = alternate if mount else output
+    folder = root / "chosen"
+    folder.mkdir()
+    stems = ("tail__clip_l", "tail__clip_g", "tail_") if saver == "clip" else ("tail_",)
+    originals = {}
+    for stem in stems:
+        path = folder / f"{stem}_00007_.safetensors"
+        path.write_bytes(f"complete original {stem}".encode("ascii"))
+        originals[path] = path.read_bytes()
+    if saver == "lora":
+        from dinkster_nodes_comfy.lora_extract_save import LoraSave
+        from test_lora_extract_save_torch import _Patcher, _runtime
+
+        _runtime(monkeypatch)
+        node, options = (
+            LoraSave,
+            {
+                "rank": 1,
+                "lora_type": "full_diff",
+                "bias_diff": True,
+                "model_diff": _Patcher(),
+            },
+        )
+    elif saver == "clip":
+        node, options = CLIPSave, {"clip": _Clip()}
+    else:
+        node, options = VAESave, {"vae": _Vae()}
+    for counter in (8, 9):
+        with capture_saved_artifacts() as claims:
+            assert node.execute(filename_prefix="chosen/tail_", mount=mount, **options) == {}
+        assert len(claims) == len(stems)
+        for claim, stem in zip(claims, stems, strict=True):
+            path = folder / f"{stem}_{counter:05d}_.safetensors"
+            assert path.is_file()
+            assert dict(claim) == {
+                "digest": digest_file(path),
+                "name": path.name,
+                "size": path.stat().st_size,
+                "mediaType": "application/octet-stream",
+                "virtualPath": f"mounts/{mount or 'output'}/chosen/{path.name}",
+            }
+            originals[path] = path.read_bytes()
+    for path, encoded in originals.items():
+        assert path.read_bytes() == encoded
+    assert len(list(folder.glob("*.safetensors"))) == 3 * len(stems)
+    other = output if mount else alternate
+    assert not list(other.rglob("*.safetensors"))
+
+
 def test_encoder_exports_partition_clip_keys_and_preserve_vae_weights(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -71,19 +135,19 @@ def test_encoder_exports_partition_clip_keys_and_preserve_vae_weights(
         assert CLIPSave.execute(clip=_Clip(), mount="alternate") == {}
         assert VAESave.execute(vae=_Vae()) == {}
     expected = (
-        (alternate / "clip/ComfyUI_clip_l_00001.safetensors", "left", torch.tensor([1.25, -3.5])),
+        (alternate / "clip/ComfyUI_clip_l_00001_.safetensors", "left", torch.tensor([1.25, -3.5])),
         (
-            alternate / "clip/ComfyUI_clip_g_00001.safetensors",
+            alternate / "clip/ComfyUI_clip_g_00001_.safetensors",
             "right",
             torch.tensor([[8, -2]], dtype=torch.int32),
         ),
         (
-            alternate / "clip/ComfyUI_00001.safetensors",
+            alternate / "clip/ComfyUI_00001_.safetensors",
             "other",
             torch.tensor([9.0], dtype=torch.float64),
         ),
         (
-            output / "vae/ComfyUI_vae_00001.safetensors",
+            output / "vae/ComfyUI_vae_00001_.safetensors",
             "decoder.weight",
             torch.tensor([[1.25, -3.5]], dtype=torch.float64),
         ),
@@ -587,8 +651,7 @@ def test_model_exports_attach_exact_mounted_files_on_each_execution(
                         if kind in ("checkpoint", "clip")
                         else ("output", output)
                     )
-                    tail = "_" if kind in ("model", "checkpoint") else ""
-                    relative = f"exports/{kind}_{attempt + 1:05d}{tail}.safetensors"
+                    relative = f"exports/{kind}_{attempt + 1:05d}_.safetensors"
                     path = root / relative
                     artifact = next(item for item in result.artifacts if item.node_id == kind)
                     assert artifact.virtual_path == f"mounts/{mount}/{relative}"
@@ -646,9 +709,9 @@ def test_clip_export_attaches_every_partition(
     with capture_saved_artifacts() as claims:
         assert CLIPSave.execute(clip=_Clip(), filename_prefix="split/encoder") == {}
     relative_paths = (
-        "split/encoder_clip_l_00001.safetensors",
-        "split/encoder_clip_g_00001.safetensors",
-        "split/encoder_00001.safetensors",
+        "split/encoder_clip_l_00001_.safetensors",
+        "split/encoder_clip_g_00001_.safetensors",
+        "split/encoder_00001_.safetensors",
     )
     assert len(claims) == 3
     for claim, relative in zip(claims, relative_paths, strict=True):

@@ -253,7 +253,7 @@ class LoraSave(Node):
                 ref = writer.save_stream(
                     writer.output_target(filename_prefix, mount=mount),
                     stream,
-                    suffix=".safetensors",
+                    suffix="_.safetensors",
                     media_type="application/octet-stream",
                     limit=temporary_path.stat().st_size,
                 )
