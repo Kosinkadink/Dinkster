@@ -29,6 +29,7 @@ from dinkster_api.v1 import (
 from dinkster_assets import MountDef, MountTable, digest_file
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy.latent_file_tools import LoadLatent, SaveLatent
+from dinkster_schema.reporting import capture_saved_artifacts
 from safetensors import safe_open
 from safetensors.torch import save_file
 from test_model_file_savers_torch import _Clip, _Vae
@@ -84,13 +85,14 @@ def test_save_latent_preserves_source_and_writes_versioned_tensors_to_selected_m
     tensor = torch.tensor([[[[1.125, -3.5, 0.25], [8.0, -0.75, 2.0]]]], dtype=torch.float64)
     samples = {"samples": tensor.transpose(-1, -2), "batch_index": [7], "origin": "source"}
     assert not samples["samples"].is_contiguous()
-    assert SaveLatent.execute(samples=samples)["samples"] is samples
-    assert (
-        SaveLatent.execute(samples=samples, filename_prefix="chosen/latent", mount="alternate")[
-            "samples"
-        ]
-        is samples
-    )
+    with capture_saved_artifacts():
+        assert SaveLatent.execute(samples=samples)["samples"] is samples
+        assert (
+            SaveLatent.execute(samples=samples, filename_prefix="chosen/latent", mount="alternate")[
+                "samples"
+            ]
+            is samples
+        )
     for path in (
         output / "latents/ComfyUI_00001.latent",
         alternate / "chosen/latent_00001.latent",
@@ -380,3 +382,88 @@ def test_latent_export_consumes_submission_metadata(
         assert handle.metadata() == expected
         torch.testing.assert_close(handle.get_tensor("latent_tensor"), tensor, rtol=0, atol=0)
         assert handle.get_tensor("latent_format_version_0").numel() == 0
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_latent_exports_attach_exact_mounted_files_on_each_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool
+) -> None:
+    source, output, alternate = (tmp_path / name for name in ("input", "output", "alternate"))
+    for directory in (source, output, alternate):
+        directory.mkdir()
+    tensor = torch.tensor([[[[-1.25, 7.5, 0.125], [3.75, -0.5, 9.0]]]])
+    save_file(
+        {"latent_tensor": tensor, "latent_format_version_0": torch.tensor([])},
+        source / "selected.latent",
+    )
+    mounts = tmp_path / "mounts.json"
+    table = MountTable(mounts, index_root=tmp_path / "index")
+    table.add(MountDef("input", source), kind="data/latent")
+    for name, root in (("output", output), ("alternate", alternate)):
+        table.add(MountDef(name, root, mode="readwrite"))
+        table.scan(name)
+    table.scan("input")
+    table.select_output_mount("output")
+    asset = table.bind_name("selected.latent", "data/latent")
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(mounts))
+
+    async def scenario() -> None:
+        native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+        paths = tuple(p for p in sys.path if p)
+        composer = ServingComposer(
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "DINKSTER_MOUNTS_SNAPSHOT": str(mounts),
+                "PYTHONPATH": os.pathsep.join(paths),
+            }
+        )
+        try:
+            await composer.add_pack(PackSpec(manifest=native, in_process=in_process))
+            engine = composer.composition.make_engine(lambda _event: None)
+            graph = Graph(
+                nodes={
+                    "load": GraphNode("LoadLatent", {"latent": asset.to_wire()}),
+                    "default": GraphNode("SaveLatent", {"samples": Link("load", "LATENT")}),
+                    "alternate": GraphNode(
+                        "SaveLatent",
+                        {
+                            "samples": Link("load", "LATENT"),
+                            "filename_prefix": "chosen/asymmetric",
+                            "mount": "alternate",
+                        },
+                    ),
+                }
+            )
+            for attempt in range(2):
+                result = await engine.run(graph, ["default", "alternate"])
+                assert len(result.artifacts) == 2
+                by_node = {artifact.node_id: artifact for artifact in result.artifacts}
+                assert set(by_node) == {"default", "alternate"}
+                for node, mount, root, prefix in (
+                    ("default", "output", output, "latents/ComfyUI"),
+                    ("alternate", "alternate", alternate, "chosen/asymmetric"),
+                ):
+                    relative = f"{prefix}_{attempt + 1:05d}.latent"
+                    path = root / relative
+                    artifact = by_node[node]
+                    assert artifact.virtual_path == f"mounts/{mount}/{relative}"
+                    assert artifact.name == path.name
+                    assert artifact.digest == digest_file(path)
+                    assert artifact.size == path.stat().st_size
+                    assert artifact.media_type == "application/octet-stream"
+                    with safe_open(path, framework="pt", device="cpu") as handle:
+                        assert set(handle.keys()) == {"latent_tensor", "latent_format_version_0"}
+                        torch.testing.assert_close(
+                            handle.get_tensor("latent_tensor"), tensor, rtol=0, atol=0
+                        )
+                        assert handle.get_tensor("latent_format_version_0").numel() == 0
+                if attempt:
+                    assert "load" in result.cached
+                    assert not {"default", "alternate"} & set(result.cached)
+            assert len(list(output.rglob("*.latent"))) == 2
+            assert len(list(alternate.rglob("*.latent"))) == 2
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())

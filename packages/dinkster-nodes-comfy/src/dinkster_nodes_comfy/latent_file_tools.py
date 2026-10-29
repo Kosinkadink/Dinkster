@@ -25,6 +25,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     SourceFilenameSpec,
     TypeExpr,
+    attach_saved_artifact,
     current_export_snapshot,
     initialize_inference_process,
     materialize_latent,
@@ -122,11 +123,12 @@ class SaveLatent(Node):
         if not snapshot:
             raise AssetError("saving requires DINKSTER_MOUNTS_SNAPSHOT")
         writer = AssetWriter(MountSnapshotWriter(snapshot))
-        writer.save_bytes(
+        ref = writer.save_bytes(
             writer.output_target(filename_prefix, mount=mount),
             data,
             suffix=".latent",
         )
+        attach_saved_artifact(ref.to_wire())
         return cls.outputs(samples=samples)
 
 

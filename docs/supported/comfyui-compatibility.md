@@ -226,6 +226,7 @@
   writes contiguous samples and the format marker to the selected output mount.
   SaveLatent retains submitted prompt and workflow metadata unless disabled;
   an absent prompt remains an empty string, distinct from an empty prompt object.
+  Each saved latent is attached as a validated run artifact on every execution.
 - Native image file schemas expose bound assets and adjacent output mounts;
   PNG output truncates channel values and preview outputs retain source images.
   PNG batches retain source counter progression and the trailing filename underscore.
