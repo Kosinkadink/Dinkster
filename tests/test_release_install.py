@@ -20,6 +20,7 @@ from scripts.build_release import (
     build_source_archive,
     development_version,
     download_external_wheels,
+    read_base_manifest,
     release_version,
     stage_external_wheels,
     versioned_sources,
@@ -662,6 +663,99 @@ def test_external_downloads_select_target_wheels_and_enforce_exported_hashes(
         download_external_wheels(tmp_path, tmp_path / "url-requirement", "uv")
 
 
+@pytest.mark.parametrize(
+    "change",
+    [
+        "plan",
+        "multipart",
+        "largest-part",
+        "legacy-parts",
+        "missing-archive",
+        "archive-format",
+        "parts-type",
+        "part-type",
+        "part-name",
+        "part-order",
+        "part-zero",
+        "part-negative",
+        "part-limit",
+        "part-bool",
+        "part-hash",
+        "part-hash-type",
+        "legacy-id",
+        "parts-in-id",
+    ],
+)
+def test_base_archive_contract_and_canonical_identity(tmp_path: Path, change: str) -> None:
+    manifest: dict = {
+        "format": "dinkster.base/1",
+        "variant": "linux-cpu",
+        "platform": {"os": "linux", "arch": "x86_64"},
+        "python": "3.14.10",
+        "interpreter": {},
+        "wheels": [],
+        "replaces": [],
+        "workerProtocol": 11,
+        "nvidia": None,
+        "archive": {"format": "tar+zstd"},
+    }
+    canonical = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("ascii")
+    manifest["id"] = "sha256:" + hashlib.sha256(canonical).hexdigest()
+    part = {"filename": "base.tar.zst.001", "size": 1, "sha256": "a" * 64}
+    archive = manifest["archive"]
+    archive["parts"] = [part]
+    if change == "plan":
+        archive["parts"] = []
+    elif change == "multipart":
+        archive["parts"].append({**part, "filename": "base.tar.zst.002"})
+    elif change == "largest-part":
+        part["size"] = 1_999_999_999
+    elif change == "legacy-parts":
+        manifest["parts"] = manifest.pop("archive")["parts"]
+    elif change == "missing-archive":
+        del manifest["archive"]
+    elif change == "archive-format":
+        archive["format"] = "7z"
+    elif change == "parts-type":
+        archive["parts"] = {}
+    elif change == "part-type":
+        archive["parts"] = [None]
+    elif change == "part-name":
+        part["filename"] = "base.7z.001"
+    elif change == "part-order":
+        part["filename"] = "base.tar.zst.002"
+    elif change.startswith("part-") and change.removeprefix("part-") in {
+        "zero",
+        "negative",
+        "limit",
+        "bool",
+    }:
+        part["size"] = {"zero": 0, "negative": -1, "limit": 2_000_000_000, "bool": True}[
+            change.removeprefix("part-")
+        ]
+    elif change == "part-hash":
+        part["sha256"] = "A" * 64
+    elif change == "part-hash-type":
+        part["sha256"] = None
+    elif change in {"legacy-id", "parts-in-id"}:
+        identity = {key: value for key, value in manifest.items() if key != "id"}
+        if change == "legacy-id":
+            del identity["archive"]
+        manifest["id"] = (
+            "sha256:"
+            + hashlib.sha256(
+                json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("ascii")
+            ).hexdigest()
+        )
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest))
+    if change in {"plan", "multipart", "largest-part"}:
+        assert read_base_manifest(path) == manifest
+    else:
+        with pytest.raises(ValueError, match="archive|id does not match"):
+            read_base_manifest(path)
+
+
 def test_external_payload_omits_only_exact_members_shared_by_all_target_bases(
     tmp_path: Path,
 ) -> None:
@@ -712,6 +806,7 @@ def test_external_payload_omits_only_exact_members_shared_by_all_target_bases(
             "replaces": [row["name"] for row in members],
             "workerProtocol": 1,
             "nvidia": None,
+            "archive": {"format": "tar+zstd"},
         }
         manifest["id"] = (
             "sha256:"
@@ -719,7 +814,9 @@ def test_external_payload_omits_only_exact_members_shared_by_all_target_bases(
                 json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("ascii")
             ).hexdigest()
         )
-        manifest["parts"] = [{"filename": "base.7z.001", "size": 1, "sha256": "0" * 64}]
+        manifest["archive"]["parts"] = [
+            {"filename": "base.tar.zst.001", "size": 1, "sha256": "0" * 64}
+        ]
         manifest["signature"] = None
         path = tmp_path / f"{variant}.json"
         path.write_text(json.dumps(manifest))
@@ -740,7 +837,7 @@ def test_external_payload_omits_only_exact_members_shared_by_all_target_bases(
     plans = []
     for path in manifests:
         manifest = json.loads(path.read_text())
-        manifest["parts"] = []
+        manifest["archive"]["parts"] = []
         plan = tmp_path / f"plan-{path.name}"
         plan.write_text(json.dumps(manifest))
         plans.append(plan)
@@ -986,6 +1083,7 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
         replaces=list(pins),
         workerProtocol=11,
         nvidia=None,
+        archive=dict(format="tar+zstd"),
     )
     part_digest = hashlib.sha256(b"archive part").hexdigest()
     mutation = "valid"
@@ -1020,8 +1118,10 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
             json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("ascii")
         ).hexdigest()
         manifest["id"] = "sha256:" + identity
-        manifest["parts"] = (
-            [] if change == "plan" else [dict(filename="base.7z.001", size=12, sha256=part_digest)]
+        manifest["archive"]["parts"] = (
+            []
+            if change == "plan"
+            else [dict(filename="base.tar.zst.001", size=12, sha256=part_digest)]
         )
         manifest["signature"] = None
         requested = f"base-win-cpu-{identity}"
@@ -1063,7 +1163,7 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
         if mutation != "missing-part":
             assets.append(
                 dict(
-                    name="base.7z.001",
+                    name="base.tar.zst.001",
                     id=3,
                     size=12,
                     state="uploaded",

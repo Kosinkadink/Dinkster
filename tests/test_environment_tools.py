@@ -1,0 +1,202 @@
+"""Published tools run after extraction without a checkout or host package manager."""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import sysconfig
+import tarfile
+import zipfile
+from pathlib import Path
+
+import pytest
+from test_environment_generations import _standalone_tree
+
+from scripts.build_environment_tools import acquire, build
+from scripts.build_release import sha256
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_tools_acquisition_refuses_corruption_before_extraction(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.write_bytes(b"corrupt")
+    target = tmp_path / "archive"
+    with pytest.raises(ValueError, match="size or SHA256 mismatch"):
+        acquire(str(source), target, 7, "a" * 64)
+    assert not target.exists()
+
+
+@pytest.mark.parametrize("invalid_input", [None, "abi", "dependency"])
+def test_tools_archive_runs_from_relocated_path_without_host_tools(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    invalid_input: str | None,
+) -> None:
+    tree = tmp_path / "standalone"
+    _standalone_tree(tree / "python")
+    source = tmp_path / "python.tar.gz"
+    with tarfile.open(source, "w:gz") as archive:
+        archive.add(tree / "python", "python")
+    wheels = tmp_path / "wheels"
+    uv = shutil.which("uv")
+    assert uv is not None
+    subprocess.run(
+        [uv, "build", "--package", "dinkster-supervisor", "--wheel", "--out-dir", str(wheels)],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+    )
+    output = tmp_path / "tools"
+    wheel = next(wheels.glob("*.whl"))
+    if invalid_input == "abi":
+        actual = sysconfig.get_config_var
+        monkeypatch.setattr(
+            sysconfig,
+            "get_config_var",
+            lambda name: "different-abi" if name == "SOABI" else actual(name),
+        )
+    elif invalid_input == "dependency":
+        with zipfile.ZipFile(wheel) as archive:
+            members = {name: archive.read(name) for name in archive.namelist()}
+        metadata = next(name for name in members if name.endswith(".dist-info/METADATA"))
+        head, _, body = members[metadata].partition(b"\n\n")
+        members[metadata] = (
+            head.rstrip(b"\n") + b"\nRequires-Dist: missing-tools-fixture==1.0\n\n" + body
+        )
+        with zipfile.ZipFile(wheel, "w") as archive:
+            for name, data in members.items():
+                archive.writestr(name, data)
+    if invalid_input:
+        match = "architecture and ABI" if invalid_input == "abi" else "missing-tools-fixture"
+        with pytest.raises(ValueError, match=match):
+            build(ROOT, output, str(source), source.stat().st_size, sha256(source), wheel, uv=uv)
+        assert not output.exists()
+        return
+    row = build(
+        ROOT,
+        output,
+        str(source),
+        source.stat().st_size,
+        sha256(source),
+        wheel,
+        uv=uv,
+    )
+    artifact = output / str(row["name"])
+    assert row["size"] == artifact.stat().st_size
+    assert row["sha256"] == sha256(artifact)
+    shutil.rmtree(tree)
+    source.unlink()
+    wheels.rename(tmp_path / "not-on-path")
+    relocated = tmp_path / "relocated tools with spaces"
+    with zipfile.ZipFile(artifact) as archive:
+        archive.extractall(relocated)
+        if os.name != "nt":
+            for member in archive.infolist():
+                (relocated / member.filename).chmod((member.external_attr >> 16) & 0o777)
+    python = relocated / ("python/python.exe" if os.name == "nt" else "python/bin/python3")
+    scripts = python.parent / "Scripts" if os.name == "nt" else python.parent
+    environment = {
+        **os.environ,
+        "PATH": str(scripts),
+        "PYTHONPATH": "",
+        "UV_INDEX_URL": "http://127.0.0.1:1/unreachable",
+        "HTTP_PROXY": "http://127.0.0.1:1/unreachable",
+        "HTTPS_PROXY": "http://127.0.0.1:1/unreachable",
+        "XDG_DATA_HOME": str(tmp_path / "user-data"),
+        "LOCALAPPDATA": str(tmp_path / "user-data"),
+    }
+    project = tmp_path / "absent project"
+    result = subprocess.run(
+        [
+            str(python),
+            "-I",
+            "-m",
+            "dinkster_supervisor.environment",
+            "--root",
+            str(project),
+            "status",
+            "--json",
+        ],
+        env=environment,
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    document = json.loads(result.stdout)
+    assert document["format"] == "dinkster.environment-result/1"
+    assert document["current"] is None and document["engines"] == []
+    assert not project.exists()
+    bundled_uv = scripts / ("uv.exe" if os.name == "nt" else "uv")
+    result = subprocess.run(
+        [str(bundled_uv), "--version"], env=environment, text=True, capture_output=True, check=True
+    )
+    assert result.stdout.startswith("uv 0.11.29")
+    subprocess.run(
+        [
+            str(python),
+            "-I",
+            "-c",
+            "import importlib.util; assert importlib.util.find_spec('torch') is None; "
+            "assert importlib.util.find_spec('dinkster') is None",
+        ],
+        env=environment,
+        cwd=tmp_path,
+        check=True,
+    )
+    fixture = json.loads(
+        subprocess.check_output(
+            [
+                str(python),
+                "-I",
+                str(ROOT / "tests/fixtures/environments/build.py"),
+                "--output",
+                str(tmp_path / "lifecycle"),
+            ],
+            env=environment,
+            cwd=tmp_path,
+            text=True,
+        )
+    )
+    root = Path(fixture["root"])
+    try:
+        for operation, current, value in (("setup", 1, 41), ("update", 2, 59), ("rollback", 1, 41)):
+            if operation == "update":
+                subprocess.run(
+                    fixture["commands"]["advance"],
+                    env=environment,
+                    cwd=tmp_path,
+                    check=True,
+                    capture_output=True,
+                )
+            result = subprocess.run(
+                fixture["commands"][operation],
+                env=environment,
+                cwd=tmp_path,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            assert json.loads(result.stdout)["current"] == current
+            assert (root / "current").read_text() == f"{current}\n"
+            engine = root / f"generations/{current}/python"
+            engine = engine / ("python.exe" if os.name == "nt" else "bin/python3")
+            result = subprocess.check_output(
+                [str(engine), "-I", "-c", "import fixture_engine; print(fixture_engine.VALUE)"],
+                env=environment,
+                cwd=tmp_path,
+                text=True,
+            )
+            assert result.strip() == str(value)
+        assert (root / "generations/2/generation.json").is_file()
+    finally:
+        subprocess.run(
+            fixture["commands"]["stop"],
+            env=environment,
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
