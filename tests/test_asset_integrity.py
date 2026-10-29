@@ -8,6 +8,8 @@ import io
 import multiprocessing
 import os
 import threading
+from contextlib import ExitStack, nullcontext
+from contextvars import copy_context
 from multiprocessing.connection import Connection
 from pathlib import Path
 from typing import BinaryIO, cast
@@ -18,6 +20,7 @@ from aiohttp.test_utils import TestClient, TestServer, make_mocked_request
 from dinkster_assets import (
     AssetError,
     AssetIntegrityError,
+    AssetRef,
     AssetVault,
     LibraryStore,
     LocalAssetLibrary,
@@ -28,6 +31,7 @@ from dinkster_assets import (
 )
 from dinkster_assets import integrity as integrity_module
 from dinkster_assets import vault as vault_module
+from dinkster_assets.declared import use_produced_output_job
 from dinkster_assets.produced import ProducedAssetInventory
 from dinkster_assets.scratch import ProducedScratchState, claim_inactive_produced_scratch
 from dinkster_server import ServerLibrary, create_app
@@ -228,9 +232,58 @@ def test_produced_readers_keep_ownership_until_last_descriptor_closes(
             second.close()
 
 
-def _hold_produced_reader(channel: Connection, path: Path, digest: str, crash: bool) -> None:
-    with open_verified(path, digest) as handle:
-        channel.send(handle.read())
+@pytest.mark.parametrize("store", ["scratch", "engine"])
+@pytest.mark.parametrize("failure", [None, RuntimeError, asyncio.CancelledError])
+def test_produced_local_paths_retain_ownership_for_the_invocation(
+    tmp_path: Path, store: str, failure: type[BaseException] | None
+) -> None:
+    vault = AssetVault(tmp_path / "vault")
+    data = b"bytes reopened by a pathname-only decoder"
+    digest = digest_bytes(data)
+    if store == "scratch":
+        ProducedScratchState(vault.root).bind("source job", 1)
+        claim_root = vault.root
+    else:
+        ProducedAssetInventory(vault.root).pending(digest, len(data))
+        claim_root = vault.root / ".produced-readers" / digest.split(":")[1]
+    with vault.writer(digest) as writer:
+        writer.write(data)
+        writer.commit()
+    ref = AssetRef(digest, "source.bin", len(data), resolver=vault)
+    original_wire = ref.to_wire()
+    with pytest.raises(failure) if failure is not None else nullcontext():
+        with use_produced_output_job("path consumer", 1):
+            path = ref.local_path()
+            inherited = copy_context()
+            with use_produced_output_job("path consumer", 1):
+                assert ref.local_path() == path
+            with claim_inactive_produced_scratch(claim_root) as inactive:
+                assert not inactive
+            # A pathname-only decoder opens its own descriptor, after verification ended.
+            with path.open("rb") as reopened:
+                assert reopened.read() == data
+            assert ref.to_wire() == original_wire
+            if failure is not None:
+                raise failure()
+    with claim_inactive_produced_scratch(claim_root) as inactive:
+        assert inactive
+    with pytest.raises(AssetError, match="no longer active"):
+        inherited.run(ref.local_path)
+    with claim_inactive_produced_scratch(claim_root) as inactive:
+        assert inactive
+
+
+def _hold_produced_reader(
+    channel: Connection, path: Path, digest: str, crash: bool, reader: str
+) -> None:
+    with ExitStack() as held:
+        if reader == "path":
+            held.enter_context(use_produced_output_job("path reader", 1))
+            ref = AssetRef(digest, "source.bin", 0, resolver=AssetVault(path.parent.parent))
+            channel.send(ref.local_path().read_bytes())
+        else:
+            handle = held.enter_context(open_verified(path, digest))
+            channel.send(handle.read())
         assert channel.recv() == "release"
         if crash:
             os._exit(0)
@@ -238,8 +291,9 @@ def _hold_produced_reader(channel: Connection, path: Path, digest: str, crash: b
 
 
 @pytest.mark.parametrize("crash", [False, True])
+@pytest.mark.parametrize("reader", ["handle", "path"])
 def test_produced_reader_ownership_crosses_processes_and_releases_on_exit(
-    tmp_path: Path, crash: bool
+    tmp_path: Path, crash: bool, reader: str
 ) -> None:
     vault = AssetVault(tmp_path / "vault")
     data = b"read by another process after producer settlement"
@@ -250,7 +304,9 @@ def test_produced_reader_ownership_crosses_processes_and_releases_on_exit(
         path = writer.commit()
     context = multiprocessing.get_context("spawn")
     parent, child = context.Pipe()
-    process = context.Process(target=_hold_produced_reader, args=(child, path, digest, crash))
+    process = context.Process(
+        target=_hold_produced_reader, args=(child, path, digest, crash, reader)
+    )
     process.start()
     child.close()
     claim_root = vault.root / ".produced-readers" / digest.split(":")[1]

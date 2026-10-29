@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import BinaryIO, Literal, cast
 
 from .identity import CHUNK_SIZE, DIGEST_PREFIX, AssetError, new_hasher
-from .scratch import ProducedScratchLease, hold_produced_asset_read
+from .scratch import ProducedScratchLease, hold_produced_asset_read, retain_produced_asset_path
 
 IntegrityFailure = Literal[
     "digest_mismatch",
@@ -319,7 +319,10 @@ def verified_local_path(
     loaders). Weaker than :func:`open_verified` by nature: after the final
     check the name can be rebound, so the guarantee is "the path named the
     verified bytes at return time", with the window shrunk from unbounded
-    to the instant of return. Prefer open_verified where a handle works."""
+    to the instant of return. Managed produced paths retain read ownership for
+    the active invocation after the verification handle closes. Paths used
+    outside an invocation require their own lifetime owner; prefer open_verified
+    where a handle works."""
     verified = (
         open_verified(path, expected_digest)
         if record is None
@@ -333,4 +336,5 @@ def verified_local_path(
             raise AssetIntegrityError(expected_digest, None, path, "path_rebound") from None
         if _path_binding_fingerprint(path_print) != _path_binding_fingerprint(fd_print):
             raise AssetIntegrityError(expected_digest, None, path, "path_rebound")
+        retain_produced_asset_path(path)
     return path

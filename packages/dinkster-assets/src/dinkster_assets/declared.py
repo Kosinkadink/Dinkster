@@ -43,7 +43,12 @@ from .library import IndexedAssetResolver
 from .model import AssetRef, AssetResolution, AssetResolver
 from .mounts import MountSnapshotResolver
 from .pack_assets import DeclaredAsset
-from .scratch import ProducedScratchLease, ProducedScratchState
+from .scratch import (
+    ProducedScratchLease,
+    ProducedScratchState,
+    hold_produced_asset_read,
+    use_produced_asset_path_owner,
+)
 from .vault import AssetVault, VaultWriter
 
 __all__ = [
@@ -81,6 +86,14 @@ class _ProducedJob:
             if not self.active:
                 raise AssetError("produced output job is no longer active")
             yield
+
+    def retain_path(self, path: Path) -> None:
+        with self.publication():
+            path = path.absolute()
+            if path not in self.leases:
+                lease = hold_produced_asset_read(path)
+                if lease is not None:
+                    self.leases[path] = lease
 
     def close(self) -> None:
         with self.lock:
@@ -162,7 +175,8 @@ def use_produced_output_job(job: str, attempt: int) -> Generator[bool]:
     with scope.publication():
         token = _produced_job.set(scope)
     try:
-        yield owns_adoption
+        with use_produced_asset_path_owner(scope.retain_path):
+            yield owns_adoption
     finally:
         if owns_adoption:
             scope.close()

@@ -59,8 +59,12 @@
   live job's ownership, and missing host ownership state refuses reconciliation.
 - Open verified produced-asset readers retain their bytes after the producing
   invocation ends, including readers in another process. Closing the last
-  descriptor or exiting the reader process releases its ownership; this does
-  not protect bare paths or enable deletion.
+  descriptor or exiting the reader process releases its ownership.
+- Verified managed paths returned during an invocation retain ownership until
+  that invocation ends, even after the verification descriptor closes. Nested
+  calls cannot release their parent's paths; expired invocation contexts refuse
+  new path retention. Paths retained outside that lifetime need a separate
+  owner, and no deletion is enabled.
 - Job scratch retains publication ownership and handoff intent across process
   exit. Missing ownership state refuses reuse of nonempty scratch; merely
   inspecting a source does not mark it as offered or adopted.

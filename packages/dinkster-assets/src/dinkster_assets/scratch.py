@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import sqlite3
 import uuid
-from collections.abc import Generator, Iterable
+from collections.abc import Callable, Generator, Iterable
 from contextlib import ExitStack, closing, contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 
 from filelock import FileLock, Timeout
@@ -177,6 +178,28 @@ def hold_produced_asset_read(path: Path) -> ProducedScratchLease | None:
     if readers.is_symlink():
         raise AssetError("produced asset reader ownership must not be a symlink")
     return ProducedScratchLease(readers / path.name)
+
+
+_path_owner: ContextVar[Callable[[Path], None] | None] = ContextVar(
+    "dinkster_produced_asset_path_owner", default=None
+)
+
+
+@contextmanager
+def use_produced_asset_path_owner(retain: Callable[[Path], None]) -> Generator[None]:
+    """Bind verified path retention to the invocation's existing lifetime owner."""
+    token = _path_owner.set(retain)
+    try:
+        yield
+    finally:
+        _path_owner.reset(token)
+
+
+def retain_produced_asset_path(path: Path) -> None:
+    """Extend a managed path's read ownership beyond its verification handle."""
+    owner = _path_owner.get()
+    if owner is not None:
+        owner(path)
 
 
 def _job_lease_root(scratch: Path, job: str) -> Path:
