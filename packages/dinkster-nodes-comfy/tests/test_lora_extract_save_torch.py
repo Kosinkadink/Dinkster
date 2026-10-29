@@ -26,8 +26,9 @@ from dinkster_api.v1 import (
     TypeExpr,
     initialize_inference_process,
 )
-from dinkster_assets import MountDef, MountTable
+from dinkster_assets import MountDef, MountTable, digest_file
 from dinkster_graph import Graph, GraphNode, Link
+from dinkster_schema.reporting import capture_saved_artifacts
 from safetensors import safe_open
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -187,14 +188,15 @@ def test_execute_writes_safetensors_to_selected_mount_and_cleans_temporary_file(
         return temporary
 
     monkeypatch.setattr(lora.tempfile, "NamedTemporaryFile", temporary_file)
-    lora.LoraSave.execute(
-        filename_prefix="loras/tiny",
-        rank=1,
-        lora_type="full_diff",
-        bias_diff=True,
-        model_diff=_Patcher(),
-        mount="out",
-    )
+    with capture_saved_artifacts():
+        lora.LoraSave.execute(
+            filename_prefix="loras/tiny",
+            rank=1,
+            lora_type="full_diff",
+            bias_diff=True,
+            model_diff=_Patcher(),
+            mount="out",
+        )
     saved = list((output / "loras").glob("tiny_*.safetensors"))
     assert len(saved) == 1
     with safe_open(saved[0], framework="pt", device="cpu") as checkpoint:
@@ -346,3 +348,123 @@ def test_lora_save_preserves_both_differences_through_native_hosts(
                 actual = handle.get_tensor(key)
                 assert actual.dtype == torch.float16
                 torch.testing.assert_close(actual, tensor.half(), rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_lora_exports_attach_exact_mounted_files_on_each_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool
+) -> None:
+    output, alternate = tmp_path / "output", tmp_path / "alternate"
+    output.mkdir()
+    alternate.mkdir()
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot, index_root=tmp_path / "index")
+    for name, root in (("output", output), ("alternate", alternate)):
+        table.add(MountDef(name, root, mode="readwrite"))
+        table.scan(name)
+    table.select_output_mount("output")
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+
+    async def scenario() -> None:
+        native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+        module = f"lora_attachment_fixture_{tmp_path.name.replace('-', '_')}"
+        (tmp_path / f"{module}.py").write_text(
+            "from test_lora_extract_save_torch import LoraDifferenceSource\n"
+            "from dinkster_nodes_comfy import register_inference_types\n"
+            "NODES = (LoraDifferenceSource,)\n",
+            encoding="ascii",
+        )
+        fixture = tmp_path / "dinkster-pack.toml"
+        fixture.write_text(
+            '[pack]\nname="lora-attachment-fixture"\npublisher="dinkster"\n'
+            'namespaces=["lora-save-host-fixture"]\n[pack.entry]\n'
+            f'nodes="{module}:NODES"\ntypes="{module}:register_inference_types"\n',
+            encoding="ascii",
+        )
+        paths = (str(tmp_path), str(Path(__file__).parent), *(p for p in sys.path if p))
+        composer = ServingComposer(
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
+                "PYTHONPATH": os.pathsep.join(paths),
+            }
+        )
+        try:
+            manifests = (native, fixture)
+            for manifest in manifests:
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=manifest,
+                        in_process=in_process,
+                        worker_group=None if in_process else "lora-attachment-fixture",
+                        group_manifests=() if in_process else manifests,
+                    )
+                )
+            options = {
+                "rank": 1,
+                "lora_type": "full_diff",
+                "bias_diff": True,
+                "model_diff": Link("source", "model"),
+            }
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("lora-save-host-fixture.source"),
+                    "combined": GraphNode(
+                        "LoraSave",
+                        {
+                            **options,
+                            "filename_prefix": "loras/combined",
+                            "text_encoder_diff": Link("source", "clip"),
+                        },
+                    ),
+                    "model": GraphNode(
+                        "LoraSave",
+                        {**options, "filename_prefix": "loras/model", "mount": "alternate"},
+                    ),
+                }
+            )
+            engine = composer.composition.make_engine(lambda _event: None)
+            for attempt in range(2):
+                result = await engine.run(graph, ["combined", "model"])
+                assert len(result.artifacts) == 2
+                assert {artifact.node_id for artifact in result.artifacts} == {"combined", "model"}
+                for node, mount, root in (
+                    ("combined", "output", output),
+                    ("model", "alternate", alternate),
+                ):
+                    relative = f"loras/{node}_{attempt + 1:05d}.safetensors"
+                    path = root / relative
+                    artifact = next(item for item in result.artifacts if item.node_id == node)
+                    assert artifact.virtual_path == f"mounts/{mount}/{relative}"
+                    assert artifact.name == path.name
+                    assert artifact.digest == digest_file(path)
+                    assert artifact.size == path.stat().st_size
+                    assert artifact.media_type == "application/octet-stream"
+                    expected = {
+                        "diffusion_model.linear.diff": torch.tensor([[3.0, -1.0], [2.0, 4.0]]),
+                        "diffusion_model.linear.diff_b": torch.tensor([0.25, -0.5]),
+                    }
+                    if node == "combined":
+                        expected.update(
+                            {
+                                "text_encoders.linear.diff": torch.tensor([[-7.0, 1.5]]),
+                                "text_encoders.linear.diff_b": torch.tensor([0.75]),
+                            }
+                        )
+                    with safe_open(path, framework="pt", device="cpu") as saved:
+                        assert saved.metadata() is None
+                        assert set(saved.keys()) == set(expected)
+                        for key, tensor in expected.items():
+                            actual = saved.get_tensor(key)
+                            assert actual.dtype == torch.float16
+                            torch.testing.assert_close(actual, tensor.half(), rtol=0, atol=0)
+                if attempt:
+                    assert "source" in result.cached
+                    assert not {"combined", "model"} & set(result.cached)
+            assert len(list(output.rglob("*.safetensors"))) == 2
+            assert len(list(alternate.rglob("*.safetensors"))) == 2
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())

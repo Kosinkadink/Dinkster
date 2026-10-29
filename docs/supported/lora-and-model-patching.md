@@ -13,6 +13,7 @@ runtime attention policies and capability selection, with their existing fallbac
 `LoraSave` extracts standard low-rank or full-difference LoRA checkpoints from
 model and text-encoder differences, optionally includes bias differences, and
 saves a safetensors file to the selected writable mount.
+The saved file is attached as a validated run artifact within shared result limits.
 
 `ChromaRadianceOptions` applies Chroma Radiance transformer options over an
 inclusive sigma range while optionally retaining an existing model wrapper.

@@ -28,6 +28,7 @@ from dinkster_api.v1 import (
     NodeSchema,
     NumberWidget,
     TypeExpr,
+    attach_saved_artifact,
     initialize_inference_process,
 )
 
@@ -249,13 +250,14 @@ class LoraSave(Node):
                 temporary_path = Path(temporary.name)
             utils.save_torch_file(output_sd, str(temporary_path), metadata=None)
             with temporary_path.open("rb") as stream:
-                writer.save_stream(
+                ref = writer.save_stream(
                     writer.output_target(filename_prefix, mount=mount),
                     stream,
                     suffix=".safetensors",
                     media_type="application/octet-stream",
                     limit=temporary_path.stat().st_size,
                 )
+                attach_saved_artifact(ref.to_wire())
         finally:
             if temporary_path is not None:
                 temporary_path.unlink(missing_ok=True)
