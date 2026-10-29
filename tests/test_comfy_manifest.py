@@ -5,7 +5,7 @@ from dataclasses import replace
 import pytest
 from dinkster_api.v1 import schema_from_wire, schema_to_wire
 from dinkster_nodes_comfy import COMFY_NODES
-from dinkster_schema import schema_signature
+from dinkster_schema import schema_signature, validate_replacement_references
 from dinkster_workers import load_manifest
 
 
@@ -67,3 +67,4 @@ def test_canonical_families_ship_complete_historical_migrations(
     ]
     assert schema_from_wire(schema_to_wire(schema)) == schema
     assert schema_signature(schema) == schema_signature(replace(schema, replacements=()))
+    assert validate_replacement_references({schema.node_type: schema}) == ()
