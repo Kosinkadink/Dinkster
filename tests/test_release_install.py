@@ -75,7 +75,6 @@ def test_release_workflow_validates_tag_before_building_and_publishing() -> None
     assert workflow["jobs"]["release"]["if"] == "github.event_name == 'push'"
     assert workflow["jobs"]["release"]["permissions"] == {"contents": "write"}
     assert workflow["jobs"]["release"]["outputs"] == {
-        "pypi-ready": "${{ steps.projects.outputs.ready }}",
         "engine-id": "${{ steps.identity.outputs.engine-id }}",
         "engine-tag": "${{ steps.identity.outputs.tag }}",
     }
@@ -108,10 +107,9 @@ def test_release_publication_is_tag_only_and_uses_trusted_publishing() -> None:
     assert workflow["jobs"]["release"]["if"] == "github.event_name == 'push'"
     publish = workflow["jobs"]["publish"]
     assert publish["needs"] == "release"
-    assert publish["if"] == (
-        "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') "
-        "&& needs.release.outputs.pypi-ready == 'true'"
-    )
+    assert publish["if"] == ("github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')")
+    assert "pypi.org/pypi/" not in json.dumps(workflow)
+    assert "pypi-ready" not in json.dumps(workflow)
     assert publish["permissions"] == {"id-token": "write"}
     assert publish["environment"]["name"] == "pypi"
     action = publish["steps"][-1]
@@ -122,45 +120,6 @@ def test_release_publication_is_tag_only_and_uses_trusted_publishing() -> None:
         "latest" in row["runner"]
         for row in workflow["jobs"]["install"]["strategy"]["matrix"]["include"]
     )
-
-
-@pytest.mark.parametrize("status", [200, 404, 403])
-def test_pypi_bootstrap_gate_skips_missing_projects_and_refuses_other_errors(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: int
-) -> None:
-    import urllib.error
-    import urllib.request
-    from contextlib import nullcontext
-    from email.message import Message
-
-    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
-    step = next(
-        step for step in workflow["jobs"]["release"]["steps"] if step.get("id") == "projects"
-    )
-    assert step["if"] == "startsWith(github.ref, 'refs/tags/v')"
-    script = step["run"].split("python3 - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
-    (tmp_path / "dist").mkdir()
-    (tmp_path / "dist/release-manifest.json").write_text(
-        json.dumps({"workspaceWheels": ["dinkster_api-0.0.1-py3-none-any.whl"]})
-    )
-    output = tmp_path / "output"
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
-
-    def open_project(url: str, *, timeout: int) -> nullcontext[None]:
-        assert url == "https://pypi.org/pypi/dinkster-api/json"
-        if status != 200:
-            raise urllib.error.HTTPError(url, status, "test index response", Message(), None)
-        return nullcontext()
-
-    monkeypatch.setattr(urllib.request, "urlopen", open_project)
-    if status == 403:
-        with pytest.raises(urllib.error.HTTPError):
-            exec(compile(script, "pypi bootstrap workflow", "exec"), {})
-        assert not output.exists()
-    else:
-        exec(compile(script, "pypi bootstrap workflow", "exec"), {})
-        assert output.read_text() == ("ready=true\n" if status == 200 else "ready=false\n")
 
 
 def test_release_workflow_builds_all_wheels_and_checks_tag_metadata() -> None:
