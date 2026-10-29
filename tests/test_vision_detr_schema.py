@@ -43,8 +43,8 @@ def test_detr_pack_declares_isolated_cpu_provider_and_pinned_model() -> None:
     assert manifest.executes == ("dinkster.detection.detect",)
     assert manifest.sandbox.gpu is False
     assert manifest.requires == (
-        "numpy==2.5.1",
-        "torch==2.13.0",
+        "numpy",
+        "torch",
     )
     assert len(manifest.vision_providers) == 1
     provider = manifest.vision_providers[0]

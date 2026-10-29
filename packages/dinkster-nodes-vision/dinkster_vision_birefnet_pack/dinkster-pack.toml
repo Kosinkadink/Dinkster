@@ -5,10 +5,10 @@ namespaces = []
 executes = ["dinkster.image.matte"]
 requires = [
     "dinkster-inference==0.1.0",
-    "numpy==2.5.1",
+    "numpy",
     "safetensors==0.8.0",
-    "torch==2.13.0",
-    "torchvision==0.28.0",
+    "torch",
+    "torchvision",
 ]
 
 [pack.sandbox]

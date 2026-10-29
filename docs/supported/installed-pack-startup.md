@@ -5,6 +5,10 @@
 - Pack dependency provisioning can consume per-variant hashed locks, reject
   shared-package conflicts and layer only extra wheels over an engine
   interpreter without copying torch or opencv into the pack venv.
+- The BiRefNet, Depth Anything v2/v3, DETR, HED, RT-DETR, SAM 3.1 and
+  upscale packs declare base-carried dependencies without exact version pins.
+  The generation's effective constraints select those versions; incompatible
+  requirements still fail rather than shadowing the engine's packages.
 - In-process pack dependencies stage only into a fresh, inactive generation;
   their terminals use scratch venvs and doctor reports dependency drift.
 - The official pack artifact builder produces deterministic source archives and
