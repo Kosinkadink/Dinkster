@@ -10,6 +10,10 @@
 - The official pack artifact builder produces deterministic source archives and
   an existing registry artifact lock from committed sources, preserving the
   fifteen pack identities and node entry points without importing node code.
+- Official source artifacts retain their committed manifest dependency
+  declarations without adding workspace project requirements at publication.
+  Publishing can emit separate per-variant hashed dependency locks against the
+  target interpreter and engine constraints, without resolving during setup.
 - Core official pack manifests declare their existing third-party runtime
   requirements directly, including platform markers. Pack-to-pack dependencies
   and the host API contract remain separate from Python requirements.
