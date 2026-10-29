@@ -250,3 +250,5 @@
   EXR exports retain extended range and convert sRGB or HLG input to scene light.
   PNG, EXR and AVIF exports retain submitted prompt and workflow metadata unless
   metadata is disabled.
+  Every published file, including each still image or complete AVIF animation,
+  is attached as a validated run artifact within the shared result limits.

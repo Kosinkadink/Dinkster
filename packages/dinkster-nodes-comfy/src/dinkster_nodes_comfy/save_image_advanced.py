@@ -28,6 +28,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     StringWidget,
     TypeExpr,
+    attach_saved_artifact,
     current_export_snapshot,
     initialize_inference_process,
     materialize_image,
@@ -318,7 +319,7 @@ class SaveImageAdvanced(Node):
                         yield stream
 
         with closing(sources()) as streams:
-            writer.save_stream_batch(
+            refs = writer.save_stream_batch(
                 target,
                 streams,
                 suffix=f".{file_format}",
@@ -327,6 +328,8 @@ class SaveImageAdvanced(Node):
                 ],
                 limit=ENCODED_MEDIA_LIMIT_BYTES,
             )
+            for ref in refs:
+                attach_saved_artifact(ref.to_wire())
         return cls.outputs(images=images)
 
 

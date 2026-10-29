@@ -549,12 +549,13 @@ def test_advanced_image_png_keeps_depth_alpha_counters_and_mount(
     existing.write_bytes(b"existing")
     images = torch.linspace(-0.1, 1.15, 2 * 17 * 19 * 4).reshape(2, 17, 19, 4)
     before = images.clone()
-    result = SaveImageAdvanced.execute(
-        images=images,
-        filename_prefix="sample",
-        mount="alternate",
-        format={"format": "png", "bit_depth": depth, "input_color_space": "sRGB"},
-    )
+    with capture_saved_artifacts():
+        result = SaveImageAdvanced.execute(
+            images=images,
+            filename_prefix="sample",
+            mount="alternate",
+            format={"format": "png", "bit_depth": depth, "input_color_space": "sRGB"},
+        )
     assert result["images"] is images
     assert torch.equal(images, before)
     assert not list(default.iterdir())
@@ -582,11 +583,12 @@ def test_advanced_image_exr_preserves_range_scene_light_and_alpha(
     default, alternate = _mount(tmp_path, monkeypatch)
     images = torch.tensor([-0.25, 0.031, 1.75, 0.37]).expand(1, 17, 19, 4).clone()
     before = images.clone()
-    SaveImageAdvanced.execute(
-        images=images,
-        filename_prefix="scene",
-        format={"format": "exr", "bit_depth": depth, "input_color_space": colorspace},
-    )
+    with capture_saved_artifacts():
+        SaveImageAdvanced.execute(
+            images=images,
+            filename_prefix="scene",
+            format={"format": "exr", "bit_depth": depth, "input_color_space": colorspace},
+        )
     # Derive the scene-light RGB independently, leaving straight alpha untouched.
     rgb = images[0, 0, 0, :3].numpy()
     if colorspace == "sRGB":
@@ -629,15 +631,16 @@ def test_advanced_image_exr_metadata_flag_controls_chromaticities(
 
     default, _ = _mount(tmp_path, monkeypatch)
     monkeypatch.setattr(args, "disable_metadata", disabled)
-    SaveImageAdvanced.execute(
-        images=torch.full((1, 17, 19, 3), 0.23),
-        filename_prefix="aces",
-        format={
-            "format": "exr",
-            "bit_depth": "32-bit float",
-            "input_color_space": "linear ACEScg",
-        },
-    )
+    with capture_saved_artifacts():
+        SaveImageAdvanced.execute(
+            images=torch.full((1, 17, 19, 3), 0.23),
+            filename_prefix="aces",
+            format={
+                "format": "exr",
+                "bit_depth": "32-bit float",
+                "input_color_space": "linear ACEScg",
+            },
+        )
     encoded = (default / "aces_00001.exr").read_bytes()
     attribute = (
         b"chromaticities\x00chromaticities\x00"
@@ -657,17 +660,18 @@ def test_advanced_image_avif_retains_mode_frame_order_and_hdr_auto(
 
     default, _ = _mount(tmp_path, monkeypatch)
     images = torch.tensor([[0.8, 0.1, 0.2], [0.1, 0.2, 0.7]])[:, None, None, :].expand(2, 64, 64, 3)
-    result = SaveImageAdvanced.execute(
-        images=images,
-        filename_prefix="movie-%batch_num%",
-        format={
-            "format": "avif",
-            "bit_depth": "auto",
-            "input_color_space": "HDR PQ",
-            "crf": 18,
-            "save_mode": {"save_mode": mode, "fps": 7.0, "loop_count": 2},
-        },
-    )
+    with capture_saved_artifacts():
+        result = SaveImageAdvanced.execute(
+            images=images,
+            filename_prefix="movie-%batch_num%",
+            format={
+                "format": "avif",
+                "bit_depth": "auto",
+                "input_color_space": "HDR PQ",
+                "crf": 18,
+                "save_mode": {"save_mode": mode, "fps": 7.0, "loop_count": 2},
+            },
+        )
     assert result["images"] is images
     files = sorted(default.glob("movie-*.avif"))
     assert len(files) == (1 if mode == "animated" else 2)
@@ -707,11 +711,12 @@ def test_advanced_image_grayscale_width_four_converts_every_column(
     if layout == "one-channel":
         images = images.unsqueeze(-1)
     before = images.clone()
-    result = SaveImageAdvanced.execute(
-        images=images,
-        filename_prefix="gray",
-        format={"format": "exr", "bit_depth": "32-bit float", "input_color_space": colorspace},
-    )
+    with capture_saved_artifacts():
+        result = SaveImageAdvanced.execute(
+            images=images,
+            filename_prefix="gray",
+            format={"format": "exr", "bit_depth": "32-bit float", "input_color_space": colorspace},
+        )
     assert result["images"] is images
     assert torch.equal(images, before)
     if colorspace == "sRGB":
@@ -1269,6 +1274,153 @@ def test_save_image_attaches_every_batch_file_on_repeated_host_execution(
                 assert path.read_bytes() == encoded
             assert len(list(default.rglob("*.png"))) == 130
             assert len(list(alternate.rglob("*.png"))) == 130
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+def test_advanced_exports_attach_every_published_file_on_repeated_host_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool
+) -> None:
+    import av
+
+    default, alternate = _mount(tmp_path, monkeypatch)
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot, index_root=tmp_path / "index")
+    for mount, root in (("default", default), ("alternate", alternate)):
+        table.add(MountDef(mount, root, mode="readwrite"))
+        table.scan(mount)
+    table.select_output_mount("default")
+    exports = (
+        ("png", "png", "default", default, 65, "image/png"),
+        ("exr", "exr", "alternate", alternate, 2, "image/x-exr"),
+        ("still", "avif", "default", default, 2, "image/avif"),
+        ("animated", "avif", "alternate", alternate, 1, "image/avif"),
+    )
+
+    async def scenario() -> None:
+        native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+        module = f"advanced_attachment_fixture_{tmp_path.name.replace('-', '_')}"
+        (tmp_path / f"{module}.py").write_text(
+            "from test_save_image_torch import "
+            "_ImageBatchAttachmentSource, _AdvancedAVIFHostSource\n"
+            "from dinkster_nodes_comfy import register_inference_types\n"
+            "NODES = (_ImageBatchAttachmentSource, _AdvancedAVIFHostSource)\n",
+            encoding="ascii",
+        )
+        fixture = tmp_path / "dinkster-pack.toml"
+        fixture.write_text(
+            '[pack]\nname="advanced-attachment"\npublisher="dinkster"\n'
+            'namespaces=["image-batch-attachment", "advanced-avif-fixture"]\n[pack.entry]\n'
+            f'nodes="{module}:NODES"\ntypes="{module}:register_inference_types"\n',
+            encoding="ascii",
+        )
+        paths = (str(tmp_path), str(Path(__file__).parent), *(p for p in sys.path if p))
+        composer = ServingComposer(
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
+                "PYTHONPATH": os.pathsep.join(paths),
+            }
+        )
+        try:
+            manifests = (native, fixture)
+            for manifest in manifests:
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=manifest,
+                        in_process=in_process,
+                        worker_group=None if in_process else "advanced-attachment",
+                        group_manifests=() if in_process else manifests,
+                    )
+                )
+            nodes = {
+                "batch": GraphNode("image-batch-attachment.source"),
+                "pair": GraphNode("advanced-avif-fixture.source"),
+            }
+            for node, fmt, mount, _root, _count, _media_type in exports:
+                variants = {"format": fmt}
+                options = {
+                    "images": Link("batch" if node == "png" else "pair", "images"),
+                    "filename_prefix": f"files/{node}-%batch_num%",
+                }
+                if mount == "alternate":
+                    options["mount"] = mount
+                if fmt == "png":
+                    options["format.bit_depth"] = "16-bit"
+                elif fmt == "exr":
+                    options["format.bit_depth"] = "32-bit float"
+                    options["format.input_color_space"] = "linear"
+                else:
+                    variants["format.save_mode"] = (
+                        "animated" if node == "animated" else "still images"
+                    )
+                    options["format.crf"] = 13
+                nodes[node] = GraphNode("SaveImageAdvanced", options, slot_variants=variants)
+            engine = composer.composition.make_engine(lambda _event: None)
+            original_bytes = {}
+            for attempt in range(2):
+                result = await engine.run(Graph(nodes=nodes), [item[0] for item in exports])
+                assert len(result.artifacts) == 70
+                assert {item.node_id for item in result.artifacts} == {item[0] for item in exports}
+                for node, fmt, mount, root, count, media_type in exports:
+                    artifacts = [item for item in result.artifacts if item.node_id == node]
+                    assert len(artifacts) == count
+                    for index, artifact in enumerate(artifacts):
+                        path = root / f"files/{node}-{index}_{attempt + index + 1:05d}.{fmt}"
+                        assert artifact.virtual_path == f"mounts/{mount}/{path.relative_to(root)}"
+                        assert artifact.name == path.name
+                        assert artifact.digest == digest_file(path)
+                        assert artifact.size == path.stat().st_size
+                        assert artifact.media_type == media_type
+                        with av.open(str(path)) as container:
+                            frames = list(container.decode(video=1 if node == "animated" else 0))
+                            assert len(frames) == (2 if node == "animated" else 1)
+                            if node == "png":
+                                expected = np.array(
+                                    [
+                                        (index + 1) * 256 - 1,
+                                        (191 - index) * 256 - 1,
+                                        (2 * index + 3) * 256 - 1,
+                                    ],
+                                    dtype=np.uint16,
+                                )
+                                np.testing.assert_array_equal(
+                                    frames[0].to_ndarray(format="rgb48le"),
+                                    np.broadcast_to(expected, (2, 3, 3)),
+                                )
+                            elif node == "exr":
+                                expected = np.array(
+                                    ((0.75, 0.125, 0.25), (0.125, 0.25, 0.625))[index],
+                                    dtype=np.float32,
+                                )
+                                np.testing.assert_array_equal(
+                                    frames[0].to_ndarray(format="gbrpf32le"),
+                                    np.broadcast_to(expected, (64, 64, 3)),
+                                )
+                            else:
+                                for frame_index, frame in enumerate(frames):
+                                    assert (frame.width, frame.height) == (64, 64)
+                                    rgb = frame.to_ndarray(format="rgb24").mean(axis=(0, 1))
+                                    channel = (
+                                        0
+                                        if (frame_index if node == "animated" else index) == 0
+                                        else 2
+                                    )
+                                    assert rgb[channel] > max(np.delete(rgb, channel))
+                        original_bytes[path] = path.read_bytes()
+                if attempt:
+                    assert {"batch", "pair"} <= set(result.cached)
+                    assert not {item[0] for item in exports} & set(result.cached)
+            for path, encoded in original_bytes.items():
+                assert path.read_bytes() == encoded
+            assert len(list(default.rglob("*.png"))) == 130
+            assert len(list(default.rglob("*.avif"))) == 4
+            assert len(list(alternate.rglob("*.exr"))) == 4
+            assert len(list(alternate.rglob("*.avif"))) == 2
         finally:
             await composer.close()
 
