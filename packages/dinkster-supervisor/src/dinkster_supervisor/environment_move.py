@@ -48,26 +48,24 @@ def copy_tree(
     copy_function: Callable[[str, str], str] = shutil.copy2,
 ) -> None:
     """Copy a tree without following links or losing Windows directory-link types."""
-    links: list[tuple[Path, Path, bool]] = []
-
-    def collect(directory: str, names: list[str]) -> set[str]:
-        ignored: set[str] = set() if ignore is None else ignore(directory, names)
-        for name in set(names) - ignored:
-            path = Path(directory) / name
-            if path.is_symlink():
-                links.append((path, target / path.relative_to(source), path.is_dir()))
-                ignored.add(name)
-        return ignored
-
-    # CPython 3.12 copytree(symlinks=True) recreates directory links as file links.
-    shutil.copytree(
-        source, target, dirs_exist_ok=dirs_exist_ok, ignore=collect, copy_function=copy_function
-    )
-    for first, second, directory in links:
-        os.symlink(os.readlink(first), second, target_is_directory=directory)
-        shutil.copystat(first, second, follow_symlinks=False)
-    for parent in {first.parent for first, _, _ in links}:
-        shutil.copystat(parent, target / parent.relative_to(source))
+    entries = list(source.iterdir())
+    ignored: set[str] = set() if ignore is None else ignore(str(source), [p.name for p in entries])
+    target.mkdir(parents=True, exist_ok=dirs_exist_ok)
+    for first in entries:
+        if first.name in ignored:
+            continue
+        second = target / first.name
+        if first.is_symlink():
+            # CPython 3.12 copytree(symlinks=True) loses Windows directory-link types.
+            os.symlink(os.readlink(first), second, target_is_directory=first.is_dir())
+            shutil.copystat(first, second, follow_symlinks=False)
+        elif first.is_dir():
+            copy_tree(
+                first, second, dirs_exist_ok=dirs_exist_ok, ignore=ignore, copy_function=copy_function
+            )
+        else:
+            copy_function(str(first), str(second))
+    shutil.copystat(source, target)
 
 
 def _files(root: Path, journal: str = "") -> dict[str, str]:
