@@ -1,0 +1,19 @@
+{
+  "reference_commit": "bc5f880dbdd43e426077f42ccec53bb577ffee9f",
+  "counts": {
+    "absent": 458,
+    "identical": 218,
+    "differs": 1,
+    "excluded": 6
+  },
+  "engine_exclusions": {
+    "ComfySwitchNode": "lazy inputs",
+    "StartLoop": "GraphBuilder expansion; loop semantics",
+    "EndLoop": "loop semantics",
+    "LoopIteration": "loop semantics",
+    "LoopProgress": "loop semantics",
+    "LoopResult": "loop semantics"
+  },
+  "registry_errors": [],
+  "passed": false
+}

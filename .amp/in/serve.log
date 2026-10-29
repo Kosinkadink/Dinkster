@@ -1,0 +1,3 @@
+07:40:43 INFO     dinkster.serve: pack dinkster-nodes-comfy announced (1/1, epoch 2)
+dinkster server on http://127.0.0.1:3640 (diagnostic core, composing 1 pack(s))
+dinkster server: 219 node types, 1 pack(s) composed
