@@ -249,7 +249,22 @@ def test_official_artifacts_preserve_sources_and_existing_pack_identities(tmp_pa
     }
     assert {pack.pack for pack in lock.packs} == expected
     core_requirements = {
-        "dinkster-nodes-comfy": ("simpleeval==1.0.8", "numpy", "pillow"),
+        "dinkster-nodes-comfy": (
+            "simpleeval==1.0.8",
+            "numpy",
+            "pillow",
+            "torch",
+            "torchvision",
+            "dinkster-inference==0.1.0",
+            "av",
+            "scipy",
+            "einops",
+            "kornia",
+            "safetensors",
+            "tqdm",
+            "spandrel",
+            "comfy-kitchen",
+        ),
         "dinkster-nodes-foundation": (),
         "dinkster-nodes-image": (
             "comfy-angle==0.1.1; sys_platform != 'darwin' or platform_machine == 'arm64'",
