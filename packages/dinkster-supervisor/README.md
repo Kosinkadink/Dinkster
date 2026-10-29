@@ -361,8 +361,9 @@ and pack drift without repair and exits nonzero on drift or errors.
 
 `doctor --repair [--plan | --yes]` rebuilds the same release offline into a new
 generation using the existing `repair` activation journal. Plans are read-only;
-apply requires confirmation. It rejects linked base inputs and verifies retained files against sealed file
-hashes, selects constraints with the recorded digest, and admits retained source
+apply requires confirmation. It rejects absolute, escaping or cyclic base links,
+verifies relative internal aliases and regular files against sealed file hashes,
+and ignores disposable bytecode. It selects constraints with the recorded digest and admits retained source
 locks from the release's cached archives. Missing or corrupt local inputs refuse
 instead of fetching a channel or reading an index. The shared store lock protects
 uv cache cleanup and reconstruction: hand edits to installed hardlinks can also

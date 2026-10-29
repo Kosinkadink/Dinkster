@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from contextlib import ExitStack
 from dataclasses import replace
@@ -484,13 +485,29 @@ def _repair(args: argparse.Namespace, result: dict[str, object]) -> int:
             or content_digest(constraints) != generation.constraints
         ):
             raise EnvironmentError("repair requires intact cached effective constraints")
-        for path in base.rglob("*"):
-            if path.is_symlink():
-                raise EnvironmentError("repair refuses linked local base inputs")
-            if path.is_file():
-                name = "python/" + path.relative_to(base).as_posix()
-                if content_digest(path) != expected.get(name):
-                    raise EnvironmentError(f"repair requires intact local base input: {name}")
+
+        def verify_directory(directory: Path, ancestors: tuple[Path, ...]) -> None:
+            resolved = directory.resolve(strict=True)
+            if resolved in ancestors:
+                raise EnvironmentError("repair refuses cyclic local base inputs")
+            entries = list(directory.iterdir())
+            for path in entries:
+                if path.is_symlink() and (
+                    Path(os.readlink(path)).is_absolute()
+                    or not path.resolve(strict=True).is_relative_to(base.resolve())
+                ):
+                    raise EnvironmentError("repair refuses linked local base inputs")
+            for path in entries:
+                if path.name == "__pycache__":
+                    continue
+                if path.is_dir():
+                    verify_directory(path, (*ancestors, resolved))
+                elif path.is_file():
+                    name = "python/" + path.relative_to(base).as_posix()
+                    if content_digest(path) != expected.get(name):
+                        raise EnvironmentError(f"repair requires intact local base input: {name}")
+
+        verify_directory(base, ())
         if catalog is not None and (
             catalog.is_symlink() or content_digest(catalog) != expected["dinkster.lock"]
         ):

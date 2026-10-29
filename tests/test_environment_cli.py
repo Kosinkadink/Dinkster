@@ -41,6 +41,7 @@ def _run(root: Path, *arguments: str) -> tuple[int, dict]:
         text=True,
         timeout=30,
     )
+    assert result.stdout, result.stderr
     document = json.loads(result.stdout)
     assert document["format"] == "dinkster.environment-result/1"
     assert document["root"] == str(root)
@@ -353,6 +354,11 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
     base, _, _ = _mirror(mirror)
     tree = tmp_path / "standalone"
     _standalone_tree(tree / "python")
+    if os.name != "nt":
+        (tree / "python/bin/python-alias").symlink_to("python3")
+        (tree / "python/resources").mkdir()
+        (tree / "python/resources/value").write_bytes(b"internal directory alias")
+        (tree / "python/resource-alias").symlink_to("resources", target_is_directory=True)
     (tree / "wheels").mkdir()
     wheel, _ = _wheel(tree / "wheels", "fixture_base", "1.0", 37)
     base["wheels"][0].update(_artifact(wheel.name, wheel.read_bytes(), key="filename"))
@@ -584,6 +590,10 @@ environment.main()
         assert code == 1 and drift["status"] == "drift"
         assert "missing: constraints.txt" in drift["changes"]
         assert _run(root, "stop", "--yes")[0] == 0
+        base_python = store / "bases" / base_id / "python"
+        bytecode = base_python / "__pycache__/runtime.cpython-312.pyc"
+        bytecode.parent.mkdir(exist_ok=True)
+        bytecode.write_bytes(b"disposable bytecode outside the sealed inventory")
 
         def snapshot() -> dict[Path, str | None]:
             return {
@@ -615,7 +625,6 @@ environment.main()
         assert damaged.read_text() == "VALUE = 999\n"
         assert not (first / "constraints.txt").exists()
         assert Journal.read(sorted((root / "journal").glob("*.json"))[-1]).operation == "repair"
-        base_python = store / "bases" / base_id / "python"
         base_module = next(base_python.rglob("antigravity.py"))
         original = base_module.read_bytes()
         base_module.write_bytes(b"corrupt retained base")
