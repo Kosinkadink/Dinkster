@@ -507,18 +507,12 @@ def build(
             for entry in entries:
                 name = f"{entry['pack']}-{entry['version']}.zip"
                 shutil.copyfile(payloads[name], bundled / name)
-        subprocess.run(
-            [
-                uv,
-                "build",
-                *(argument for name in PUBLISHED_PROJECTS for argument in ("--package", name)),
-                "--wheel",
-                "--out-dir",
-                str(output),
-            ],
-            cwd=staged,
-            check=True,
-        )
+        for name in PUBLISHED_PROJECTS:
+            subprocess.run(
+                [uv, "build", "--package", name, "--wheel", "--out-dir", str(output)],
+                cwd=staged,
+                check=True,
+            )
     wheels = sorted(output.glob("*.whl"))
     expected = set(PUBLISHED_PROJECTS)
     actual = {wheel_metadata(wheel)[0] for wheel in wheels}

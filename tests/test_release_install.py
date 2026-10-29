@@ -257,11 +257,11 @@ def test_release_http_check_requires_the_application_root(
 ) -> None:
     from scripts.verify_release_install import verify_launch
 
-    module = tmp_path / "dinkster_frontend"
-    (module / "static").mkdir(parents=True)
-    (module / "__init__.py").touch()
+    module = tmp_path / "dinkster"
+    shutil.copytree(ROOT / "src/dinkster", module)
+    (module / "frontend_bundle/static").mkdir(parents=True)
     document = '<html><div id="root"></div></html>' if has_root else "<html>Error</html>"
-    (module / "static/index.html").write_text(document)
+    (module / "frontend_bundle/static/index.html").write_text(document)
     monkeypatch.setenv("PYTHONPATH", str(tmp_path))
     state = tmp_path / "release"
     if has_root:
@@ -846,7 +846,8 @@ def test_release_payloads_are_hashed_but_never_published_as_workspace_wheels(
     files = {
         "pyproject.toml": (
             '[project]\nname = "dinkster"\nversion = "1.2.3"\n'
-            '[tool.uv.workspace]\nmembers = ["packages/*"]\n'
+            '[tool.uv.workspace]\n'
+            'members = ["packages/dinkster-api", "packages/dinkster-supervisor"]\n'
             "[dependency-groups]\nengine-base = []\n"
             '[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n'
         ),
