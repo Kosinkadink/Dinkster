@@ -9,6 +9,7 @@ import struct
 import tempfile
 import zlib
 from fractions import Fraction
+from io import BytesIO
 from typing import Any
 
 from . import image_color_conversion
@@ -65,6 +66,39 @@ def to_scene_linear(image: Any, colorspace: str) -> Any:
     if colorspace == "HDR":
         return hlg_to_linear(image)
     return image
+
+
+def encode_exr_preview(image: Any, colorspace: str) -> bytes:
+    torch = _torch()
+    pil_image = importlib.import_module("PIL.Image")
+    linear = to_scene_linear(image, colorspace)
+    x = torch.nan_to_num(linear.float(), nan=0.0, posinf=1.0, neginf=0.0)
+    if x.shape[-1] == 1:
+        x = x.expand(-1, -1, 3)
+    height, width = x.shape[:2]
+    x = x.movedim(-1, 0).unsqueeze(0)
+    has_alpha = x.shape[1] == 4
+    if has_alpha:
+        alpha = x[:, 3:].clamp(0.0, 1.0)
+        x = torch.cat([x[:, :3] * alpha, alpha], dim=1)
+    scale = min(1.0, (1_000_000 / (width * height)) ** 0.5, 16383 / max(width, height))
+    if scale < 1.0:
+        x = torch.nn.functional.interpolate(
+            x, size=(max(1, int(height * scale)), max(1, int(width * scale))), mode="area"
+        )
+    if has_alpha:
+        alpha = x[:, 3:]
+        x = torch.cat(
+            [torch.where(alpha > 0, x[:, :3] / alpha.clamp_min(1e-12), 0.0), alpha], dim=1
+        )
+    linear = x[0].movedim(0, -1).clamp(0.0, 1.0)
+    rgb = linear[..., :3]
+    linear[..., :3] = torch.where(rgb <= 0.0031308, rgb * 12.92, 1.055 * rgb.pow(1 / 2.4) - 0.055)
+    pixels = (linear * 255 + 0.5).to(torch.uint8).cpu().numpy()
+    image = pil_image.fromarray(pixels, "RGBA" if has_alpha else "RGB")
+    with BytesIO() as stream:
+        image.save(stream, format="WEBP" if has_alpha else "JPEG", quality=80 if has_alpha else 85)
+        return stream.getvalue()
 
 
 def encode_image(image: Any, file_format: str, bit_depth: str, colorspace: str) -> bytes:

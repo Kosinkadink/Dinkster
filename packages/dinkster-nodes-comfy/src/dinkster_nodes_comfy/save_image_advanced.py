@@ -32,6 +32,7 @@ from dinkster_api.v1 import (
     current_export_snapshot,
     initialize_inference_process,
     materialize_image,
+    publish_saved_file_preview,
 )
 
 from . import advanced_image_encoding as encoding
@@ -328,8 +329,17 @@ class SaveImageAdvanced(Node):
                 ],
                 limit=ENCODED_MEDIA_LIMIT_BYTES,
             )
-            for ref in refs:
-                attach_saved_artifact(ref.to_wire())
+            for index, ref in enumerate(refs):
+                wire = ref.to_wire()
+                attach_saved_artifact(wire)
+                if file_format == "exr":
+                    has_alpha = batch.shape[-1] == 4
+                    publish_saved_file_preview(
+                        wire,
+                        lambda index=index: encoding.encode_exr_preview(batch[index], colorspace),
+                        name="preview.webp" if has_alpha else "preview.jpg",
+                        media_type="image/webp" if has_alpha else "image/jpeg",
+                    )
         return cls.outputs(images=images)
 
 

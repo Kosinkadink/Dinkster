@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import struct
 import sys
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -28,7 +30,7 @@ from dinkster_api.v1 import (
     TypeExpr,
     materialize_image,
 )
-from dinkster_assets import MountDef, MountTable, digest_file
+from dinkster_assets import AssetVault, MountDef, MountTable, digest_file
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_comfy import image_file_tools
 from dinkster_nodes_comfy.image_file_tools import (
@@ -1425,6 +1427,176 @@ def test_advanced_exports_attach_every_published_file_on_repeated_host_execution
             await composer.close()
 
     asyncio.run(scenario())
+
+
+class _EXRPreviewSource(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "exr-preview-fixture.source",
+            outputs=tuple(
+                OutputSpec(name, TypeExpr.concrete(IMAGE_TYPE)) for name in ("rgb", "rgba", "gray")
+            ),
+        )
+
+    @classmethod
+    def execute(cls):
+        rgb = (
+            torch.tensor([(index / 128, 0.125, 1.25) for index in range(65)], dtype=torch.float32)[
+                :, None, None, :
+            ]
+            .expand(65, 2, 3, 3)
+            .contiguous()
+        )
+        rgba = torch.tensor(
+            [[[[0.25, 0.5, 0.75, 0.25], [1.0, 0.125, 0.5, 0.0]]]], dtype=torch.float32
+        )
+        gray = torch.tensor([[[[0.125], [0.5], [2.0]]]], dtype=torch.float32)
+        return cls.outputs(rgb=rgb, rgba=rgba, gray=gray)
+
+
+@pytest.mark.parametrize("in_process", (True, False))
+@pytest.mark.parametrize("policy", ("enabled", "disabled", "encode-failure"))
+def test_exr_exports_associate_lazy_optional_previews(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_process: bool, policy: str
+) -> None:
+    from dinkster_nodes_comfy import advanced_image_encoding
+
+    monkeypatch.setattr(
+        advanced_image_encoding, "encode_exr_preview", advanced_image_encoding.encode_exr_preview
+    )
+    default, alternate = _mount(tmp_path, monkeypatch)
+    snapshot = tmp_path / "mounts.json"
+    table = MountTable(snapshot, index_root=tmp_path / "index")
+    for mount, root in (("default", default), ("alternate", alternate)):
+        table.add(MountDef(mount, root, mode="readwrite"))
+        table.scan(mount)
+    table.select_output_mount("default")
+    vault = AssetVault(tmp_path / "vault")
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(vault.root))
+    calls = tmp_path / "encoder-calls"
+
+    async def scenario() -> None:
+        native = Path(__file__).resolve().parents[1] / "dinkster-pack.toml"
+        module = f"exr_preview_fixture_{tmp_path.name.replace('-', '_')}"
+        (tmp_path / f"{module}.py").write_text(
+            "from pathlib import Path\n"
+            "from test_save_image_torch import _EXRPreviewSource\n"
+            "from dinkster_nodes_comfy import register_inference_types\n"
+            "from dinkster_nodes_comfy import advanced_image_encoding as encoding\n"
+            "original = encoding.encode_exr_preview\n"
+            "def encode(*args):\n"
+            f" with Path({str(calls)!r}).open('a') as log: log.write('call\\n')\n"
+            + (
+                " raise RuntimeError('optional encoder offline')\n"
+                if policy == "encode-failure"
+                else " return original(*args)\n"
+            )
+            + "encoding.encode_exr_preview = encode\n"
+            "NODES = (_EXRPreviewSource,)\n",
+            encoding="ascii",
+        )
+        fixture = tmp_path / "dinkster-pack.toml"
+        fixture.write_text(
+            '[pack]\nname="exr-preview-fixture"\npublisher="dinkster"\n'
+            'namespaces=["exr-preview-fixture"]\n[pack.entry]\n'
+            f'nodes="{module}:NODES"\ntypes="{module}:register_inference_types"\n',
+            encoding="ascii",
+        )
+        paths = (str(tmp_path), str(Path(__file__).parent), *(p for p in sys.path if p))
+        composer = ServingComposer(
+            worker_env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "DINKSTER_ACCELERATOR": "cpu",
+                "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot),
+                "DINKSTER_ASSET_VAULT": str(vault.root),
+                "PYTHONPATH": os.pathsep.join(paths),
+            },
+            saved_file_previews_enabled=policy != "disabled",
+        )
+        try:
+            manifests = (native, fixture)
+            for manifest in manifests:
+                await composer.add_pack(
+                    PackSpec(
+                        manifest=manifest,
+                        in_process=in_process,
+                        worker_group=None if in_process else "exr-preview-fixture",
+                        group_manifests=() if in_process else manifests,
+                    )
+                )
+            nodes = {"source": GraphNode("exr-preview-fixture.source")}
+            for name in ("rgb", "rgba", "gray"):
+                nodes[name] = GraphNode(
+                    "SaveImageAdvanced",
+                    {
+                        "images": Link("source", name),
+                        "filename_prefix": name,
+                        "mount": "alternate" if name == "rgba" else "default",
+                        "format.bit_depth": "32-bit float",
+                        "format.input_color_space": "linear",
+                    },
+                    slot_variants={"format": "exr"},
+                )
+            result = await composer.composition.make_engine(lambda _event: None).run(
+                Graph(nodes=nodes), ["rgb", "rgba", "gray"]
+            )
+            assert len(result.artifacts) == 67
+            for name, count, root, mount in (
+                ("rgb", 65, default, "default"),
+                ("rgba", 1, alternate, "alternate"),
+                ("gray", 1, default, "default"),
+            ):
+                artifacts = [item for item in result.artifacts if item.node_id == name]
+                assert len(artifacts) == count
+                for index, artifact in enumerate(artifacts):
+                    path = root / f"{name}_{index + 1:05d}.exr"
+                    assert artifact.virtual_path == f"mounts/{mount}/{path.name}"
+                    assert artifact.digest == digest_file(path)
+                    assert artifact.size == path.stat().st_size
+                    assert (artifact.preview is not None) == (policy == "enabled")
+                    if artifact.preview is None:
+                        continue
+                    preview_path = vault.resolve(artifact.preview.digest)
+                    assert preview_path is not None
+
+                    def srgb(value: float) -> int:
+                        value = max(0.0, min(1.0, value))
+                        encoded = (
+                            value * 12.92
+                            if value <= 0.0031308
+                            else 1.055 * value ** (1 / 2.4) - 0.055
+                        )
+                        return math.floor(encoded * 255 + 0.5)
+
+                    if name == "rgb":
+                        pixels = np.full((2, 3, 3), (srgb(index / 128), srgb(0.125), 255), np.uint8)
+                    elif name == "rgba":
+                        pixels = np.array(
+                            [[(srgb(0.25), srgb(0.5), srgb(0.75), 64), (0, 0, 0, 0)]], np.uint8
+                        )
+                    else:
+                        pixels = np.array(
+                            [[(srgb(value),) * 3 for value in (0.125, 0.5, 2.0)]], np.uint8
+                        )
+                    expected = BytesIO()
+                    Image.fromarray(pixels).save(
+                        expected,
+                        format="WEBP" if name == "rgba" else "JPEG",
+                        quality=80 if name == "rgba" else 85,
+                    )
+                    assert preview_path.read_bytes() == expected.getvalue()
+                    assert artifact.preview.media_type == (
+                        "image/webp" if name == "rgba" else "image/jpeg"
+                    )
+            assert not list(default.glob("*.jpg")) and not list(alternate.glob("*.webp"))
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+    assert (len(calls.read_text().splitlines()) if calls.exists() else 0) == (
+        0 if policy == "disabled" else 67
+    )
 
 
 @pytest.mark.parametrize("in_process", (True, False))

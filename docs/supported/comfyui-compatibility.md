@@ -252,6 +252,10 @@
 - Native SaveImageAdvanced writes 8/16-bit PNG and half/full-float EXR through
   the selected output mount, preserving source counters and straight alpha.
   EXR exports retain extended range and convert sRGB or HLG input to scene light.
+  When saved-file previews are enabled by the host, each EXR gets an optional
+  sRGB preview: JPEG at quality 85, or WebP at quality 80 for straight alpha.
+  Previews fit within one million pixels and WebP's side limit; preview failure
+  does not invalidate the saved EXR. Disabled previews perform no encoding.
   PNG, EXR and AVIF exports retain submitted prompt and workflow metadata unless
   metadata is disabled.
   Every published file, including each still image or complete AVIF animation,
