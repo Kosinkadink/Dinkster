@@ -2391,6 +2391,7 @@ class NodeSchema:
     observe live run state and therefore never use invocation-result caches."""
     input_values: bool = False
     """Inject read-only input envelopes without live run-control access.
+    Execute may omit decoded input parameters to handle only their envelopes.
     Caching includes metadata throughout each input value tree."""
     mirror: MirrorSpec | None = None
     """Optional frontend-renderable mirror of this node's transform (see
