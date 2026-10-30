@@ -609,6 +609,7 @@ directory is the build artifact used by installation checks and publication:
 | `release-manifest.json` | UTF-8 JSON with a trailing LF; `format: dinkster.engine/1`, `repository`, `tag`, full source `commit`, PEP 440 `version`, integer `workerProtocol`, `workspaceWheels` filenames and `artifacts` rows containing `name`, lowercase hex `sha256` and byte `size` |
 | `SHA256SUMS` | One lowercase SHA-256, two spaces, asset basename and LF per line; covers every asset except itself, including the manifest; verifiable with `sha256sum -c SHA256SUMS` |
 | `dinkster-source-<version>.zip` | Maintainer source archive; never an installation requirement |
+| `dinkster-tools-<os>-x86_64.zip` | Extraction-only environment client for Linux and Windows; standalone Python, the release-built supervisor, its locked dependencies and uv; no engine or torch |
 
 The workflow also builds the official pack source ZIPs and `official-packs.lock`
 with `scripts/build_official_packs.py` and admits them through repeated
@@ -618,6 +619,15 @@ commit. These payloads have the same artifact hashes and checksums as other
 release assets but are not `workspaceWheels` and are never uploaded to PyPI.
 The engine wheel also carries these ZIPs and their catalog as package data,
 so a pip-installed engine can stage its defaults without a selected generation.
+
+Native tools jobs use the interpreter definitions pinned from
+`Dinkster-Environments`, including its verified SQLite override and functional
+probe on Windows. Each job uses the same supervisor wheel as the engine release
+and checks the extracted client from a relocated path without host tools.
+Finalization verifies the original release, admits the tools ZIPs using the same
+artifact rows, and regenerates the manifest and checksums. Installation checks,
+GitHub release upload and PyPI selection consume this finalized directory.
+The tools ZIPs are not workspace wheels and are never uploaded to PyPI.
 
 The engine release id used by channels is `sha256:` followed by the SHA-256
 of the exact `release-manifest.json` bytes. The manifest lists payload assets,
