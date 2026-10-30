@@ -94,5 +94,5 @@
   required text/CLIP controls, optional VAE, and conditioning fanout.
 - MOSS image editing requires its first reference image, but later authored
   image sockets may be unconnected. ReferenceMultiLatent keeps all references
-  optional, with numeric socket ordering for both nodes.
+  optional, with authored socket order preserved for both nodes.
 - Other model-family conditioning surfaces are unsupported.

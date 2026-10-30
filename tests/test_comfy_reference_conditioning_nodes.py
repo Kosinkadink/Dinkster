@@ -155,7 +155,7 @@ def test_reference_image_families_keep_required_initial_positions(
     choices = {} if moss else {"resolution": "keep resolution"}
     effective = elaborate(schema, (*stored, *members), slot_variants=choices)
     assert [(port.id, port.required) for port in effective.inputs if port.id in members] == [
-        (f"images.{prefix}{index}", moss and index == 0) for index in sorted(member_indices)
+        (f"images.{prefix}{index}", moss and index == 0) for index in member_indices
     ]
     absent = elaborate(schema, stored, slot_variants=choices)
     assert [
