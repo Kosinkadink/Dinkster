@@ -332,6 +332,7 @@ def test_invocation_storage_contract_crosses_worker_boundary(
     "module,registration",
     [
         ("dinkster_nodes_dev.image", "register_dev_types"),
+        ("dinkster_nodes_image.types", "register_image_types"),
         ("dinkster_nodes_media_io", "register_media_types"),
         ("dinkster.comfy_compose", "register_comfy_host_types"),
         *[

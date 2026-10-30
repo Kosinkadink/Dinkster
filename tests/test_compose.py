@@ -72,8 +72,11 @@ DEFAULT_NODES = [*FOUNDATION_NODES, *MEDIA_IO_NODES, *IMAGE_NODES]
 
 @pytest.mark.parametrize("source", ["image-list", "video-asset"])
 def test_subprocess_official_pack_values_through_jobs(tmp_path: Path, source: str) -> None:
+    import io
+
     import av
     import numpy as np
+    from PIL import Image
 
     async def scenario() -> None:
         vault = AssetVault(tmp_path / "vault")
@@ -142,6 +145,9 @@ def test_subprocess_official_pack_values_through_jobs(tmp_path: Path, source: st
                         "info": GraphNode(
                             "dinkster.image.info", {"image": Link("frames", "images")}
                         ),
+                        "compare": GraphNode(
+                            "dinkster.image.compare", {"image_a": Link("frames", "images")}
+                        ),
                     }
                     expected = {"width": 32, "height": 16, "count": 2}
                 response = await client.post(
@@ -150,7 +156,7 @@ def test_subprocess_official_pack_values_through_jobs(tmp_path: Path, source: st
                         "clientId": "cross-pack",
                         "jobId": source,
                         "graph": graph_to_wire(Graph(nodes=nodes)),
-                        "targets": ["info"],
+                        "targets": ["info", "compare"] if source == "video-asset" else ["info"],
                     },
                 )
                 assert response.status == 202, await response.text()
@@ -164,6 +170,20 @@ def test_subprocess_official_pack_values_through_jobs(tmp_path: Path, source: st
                 assert {
                     name: result["outputs"]["info"][name]["value"] for name in expected
                 } == expected
+                if source == "video-asset":
+                    response = await client.get(
+                        "/api/values",
+                        params={
+                            "clientId": "cross-pack",
+                            "jobId": source,
+                            "nodeId": "compare",
+                            "outputId": "image_a",
+                            "rendition": "png",
+                        },
+                    )
+                    assert response.status == 200, await response.text()
+                    pixels = np.array(Image.open(io.BytesIO(await response.read())))
+                    assert np.array_equal(pixels, np.full((16, 32, 3), 31, dtype=np.uint8))
         finally:
             await composition.close()
 
@@ -1338,7 +1358,7 @@ def test_compose_serving_default_resolution_is_atomic(
         ),
         (
             "dinkster-nodes-image",
-            "blake3:7bb3476628d08cd7daa56a09c13a4eb068438f5b4012b753e8c3a0ed3581c276",
+            "blake3:5a100422d5ff649ab523f3af172bce3819eaaec70f8e6d64e04f181c3cb2c6c1",
         ),
         (
             "dinkster-nodes-remote",
