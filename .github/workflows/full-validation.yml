@@ -338,7 +338,7 @@ jobs:
           } | ForEach-Object { $_.FullName }
           if (-not $files) { throw 'No Windows runtime tests selected' }
           uv run --no-sync python -m pytest -q @files `
-            -p tools.pytest_file_shard --file-shard ${{ matrix.shard }}/3 --durations=20 `
+            -p tools.pytest_file_shard --file-shard ${{ matrix.shard }}/3 --durations=0 `
             --case-shard-file tests/test_environment_generations.py `
             --cov=dinkster_api --cov=dinkster_assets `
             --cov=dinkster_caches --cov=dinkster_compat_comfy --cov=dinkster_engine `
