@@ -35,6 +35,7 @@ from __future__ import annotations
 import glob
 import hashlib
 import json
+import logging
 import os
 import re
 import threading
@@ -60,6 +61,7 @@ from .model import (
     LocalFileSignature,
     local_file_signature,
 )
+from .revision import mount_revision_capability, require_local_revision
 
 __all__ = [
     "MOUNT_MODES",
@@ -444,6 +446,7 @@ class _MountRow:
         self.missing_entry_count: int | None = None
         self.progress: AssetScanProgress | None = None
         self.scan_started: float | None = None
+        self.local_binding_capability = mount_revision_capability(mount.path)
 
 
 class MountTable:
@@ -591,6 +594,8 @@ class MountTable:
                     wire["entryCount"] = row.entry_count
                 if row.missing_entry_count is not None:
                     wire["missingEntryCount"] = row.missing_entry_count
+                if os.name == "nt":
+                    wire["localBindingCapability"] = row.local_binding_capability
                 progress = self._current_progress(row)
                 if progress is not None:
                     wire["scanProgress"] = {
@@ -642,6 +647,10 @@ class MountTable:
             row.error = None
             row.progress = None
             row.scan_started = time.monotonic()
+            row.local_binding_capability = mount_revision_capability(row.mount.path)
+            logging.getLogger(__name__).info(
+                "Mount %s local binding capability: %s", mount_id, row.local_binding_capability
+            )
         try:
             if not row.mount.path.is_dir():
                 raise AssetError(f"asset library root is not a directory: {row.mount.path}")
@@ -699,10 +708,10 @@ class MountTable:
             row.library = library
             row.entry_count = count
             row.missing_entry_count = len(library.missing_entries())
-            self.write_snapshot()
             row.state = "ready"
             row.progress = None
             row.scan_started = None
+            self.write_snapshot()
         return count
 
     def entries(self, mount_id: str) -> tuple[AssetEntry, ...]:
@@ -829,10 +838,43 @@ class MountTable:
                 if len(paths) != 1:
                     return None
                 path = paths[0]
-                signature = local_file_signature(path.stat())
                 relative = path.relative_to(root).as_posix()
             except (OSError, RuntimeError):
                 continue
+            if row.library is not None:
+                try:
+                    ref = row.library.ref(f"mounts/{row.mount.id}/{relative}")
+                    resolution = row.library.resolve_asset(ref.digest)
+                    if (
+                        resolution
+                        and resolution.verification
+                        and resolution.verification.matches(path.stat())
+                    ):
+                        with self._lock:
+                            if self._rows.get(row.mount.id) is not row:
+                                return None
+                        return ref
+                except (AssetError, OSError):
+                    pass
+            require_local_revision(
+                row.mount.id,
+                row.local_binding_capability,
+                self._current_progress(row)
+                or f"missingEntryCount={row.missing_entry_count}, state={row.state}",
+            )
+            try:
+                signature = local_file_signature(path.stat(), path)
+            except OSError as error:
+                require_local_revision(
+                    row.mount.id,
+                    {
+                        **row.local_binding_capability,
+                        "supported": False,
+                        "reason": error.strerror or str(error),
+                    },
+                    self._current_progress(row) or f"missingEntryCount={row.missing_entry_count}",
+                )
+                raise
             with self._lock:
                 if self._rows.get(row.mount.id) is not row:
                     return None
@@ -860,14 +902,18 @@ class MountTable:
                 return None
             mount, relative, signature = registered
             row = self._rows.get(mount.id)
-            if row is None or row.mount is not mount:
+            if (
+                row is None
+                or row.mount is not mount
+                or row.local_binding_capability.get("supported") is not True
+            ):
                 return None
         try:
             root = mount.path.resolve()
             path = root / relative
             if (
                 path.resolve().is_relative_to(root)
-                and local_file_signature(path.stat()) == signature
+                and local_file_signature(path.stat(), path) == signature
             ):
                 return path, signature
         except OSError:
@@ -1000,6 +1046,9 @@ class MountTable:
                     "mode": row.mount.mode,
                     "kind": row.kind,
                     "priority": row.mount.priority,
+                    "localBindingCapability": row.local_binding_capability,
+                    "missingEntryCount": row.missing_entry_count,
+                    "scanProgress": str(self._current_progress(row) or row.state),
                 }
                 for row in sorted(
                     self._rows.values(),
@@ -1055,6 +1104,7 @@ class MountSnapshotResolver:
         self._roots: tuple[tuple[str, str, Path], ...] = ()
         self._local_bindings: dict[str, object] = {}
         self._selected_files: dict[str, tuple[str, Path, str, LocalFileSignature]] = {}
+        self._mount_status: dict[Path, dict[str, object]] = {}
 
     def roots_for_kind(self, kind: str) -> tuple[Path, ...]:
         """Authorized directory roots in priority then mount-id order.
@@ -1094,7 +1144,33 @@ class MountSnapshotResolver:
         path = root / relative
         if not path.resolve(strict=True).is_relative_to(root) or not path.is_file():
             raise AssetError("selected file is outside its grant or unavailable")
-        signature = local_file_signature(path.stat())
+        for mount_id, row_kind, row_root, resolver in self._refresh():
+            if row_kind == kind and row_root.resolve() == root:
+                try:
+                    ref = resolver.ref(relative)
+                    return replace(ref, virtual_path=f"mounts/{mount_id}/{relative}", resolver=self)
+                except AssetError:
+                    pass
+        with self._lock:
+            status = self._mount_status.get(root)
+        if status is None:
+            raise AssetError("selected file root was revoked")
+        capability = cast("dict[str, object]", status["localBindingCapability"])
+        progress = (
+            status.get("scanProgress")
+            or f"missingEntryCount={status.get('missingEntryCount')}, "
+            f"state={status.get('state', 'pending')}"
+        )
+        require_local_revision(str(status["id"]), capability, progress)
+        try:
+            signature = local_file_signature(path.stat(), path)
+        except OSError as error:
+            require_local_revision(
+                str(status["id"]),
+                {**capability, "supported": False, "reason": error.strerror or str(error)},
+                progress,
+            )
+            raise
         binding = uuid.uuid4().hex
         with self._lock:
             self._selected_files[binding] = (kind, root, relative, signature)
@@ -1124,11 +1200,18 @@ class MountSnapshotResolver:
             kind, root, relative, signature = selected
             if not any(granted.resolve() == root for granted in self.roots_for_kind(kind)):
                 return None
+            with self._lock:
+                status = self._mount_status.get(root)
+            if status is None:
+                return None
+            capability = cast("dict[str, object]", status["localBindingCapability"])
+            if capability.get("supported") is not True:
+                return None
             path = root / relative
             try:
                 if (
                     path.resolve(strict=True).is_relative_to(root)
-                    and local_file_signature(path.stat()) == signature
+                    and local_file_signature(path.stat(), path) == signature
                 ):
                     return path, signature
             except (OSError, RuntimeError):
@@ -1142,7 +1225,7 @@ class MountSnapshotResolver:
             not isinstance(root, str)
             or not isinstance(relative, str)
             or not isinstance(signature, list)
-            or len(cast("list[object]", signature)) != 5
+            or len(cast("list[object]", signature)) != (6 if os.name == "nt" else 5)
             or any(type(value) is not int for value in cast("list[object]", signature))
         ):
             return None
@@ -1152,7 +1235,7 @@ class MountSnapshotResolver:
             path = root_path / relative
             if (
                 path.resolve().is_relative_to(root_path)
-                and local_file_signature(path.stat()) == expected
+                and local_file_signature(path.stat(), path) == expected
             ):
                 return path, expected
         except OSError:
@@ -1173,7 +1256,7 @@ class MountSnapshotResolver:
                     continue
                 try:
                     ref = resolver.ref(relative)
-                    if local_file_signature(location[0].stat()) != signature:
+                    if local_file_signature(location[0].stat(), location[0]) != signature:
                         return None
                     return replace(ref, virtual_path=f"mounts/{mount_id}/{relative}", resolver=self)
                 except (AssetError, OSError):
@@ -1228,6 +1311,7 @@ class MountSnapshotResolver:
         self._resolvers = []
         self._roots = ()
         self._local_bindings = {}
+        self._mount_status = {}
         if stamp is None:
             return
         try:
@@ -1264,6 +1348,13 @@ class MountSnapshotResolver:
                 continue
             if not isinstance(kind, str):
                 kind = ""
+            capability = entry.get("localBindingCapability")
+            self._mount_status[Path(root).resolve()] = {
+                **entry,
+                "localBindingCapability": capability
+                if isinstance(capability, dict)
+                else mount_revision_capability(Path(root)),
+            }
             prepared.append((priority, mount_id, kind, root, index))
         ordered = sorted(prepared)
         self._roots = tuple(

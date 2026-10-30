@@ -197,6 +197,74 @@ def test_no_filesystem_or_library_fallback_and_changed_bytes_fail_closed(tmp_pat
         ref.read_bytes()
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows native file revisions")
+def test_same_stat_rewrite_invalidates_local_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_assets import model, mounts
+
+    path = seed(tmp_path / "vae", "real.safetensors", b"first")
+    stat = path.stat()
+    signature = model.local_file_signature
+    monkeypatch.setattr(
+        model, "local_file_signature", lambda _stat, source: signature(stat, source)
+    )
+    monkeypatch.setattr(mounts, "local_file_signature", model.local_file_signature)
+    env = grants(tmp_path, ("model/vae", path.parent))
+    ref = resolve_asset_selection("model/vae", path.name, env=env)
+    assert isinstance(ref, LocalAssetRef)
+    assert ref.read_bytes() == b"first"
+    path.write_bytes(b"other")
+    with pytest.raises(AssetError):
+        ref.read_bytes()
+
+
+def test_unsupported_revision_mount_waits_for_background_verification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_assets import MountDef, MountTable, mounts
+
+    monkeypatch.setattr(
+        mounts,
+        "mount_revision_capability",
+        lambda _root: {"supported": False, "filesystem": "exFAT", "reason": "no file USN"},
+    )
+    root = tmp_path / "vae"
+    path = seed(root, "real.safetensors", b"weights")
+    env = grants(tmp_path, ("model/vae", root))
+    with pytest.raises(AssetError) as refused:
+        resolve_asset_selection("model/vae", path.name, env=env)
+    message = str(refused.value)
+    for detail in (
+        "grant-0",
+        "exFAT",
+        "file revision tracking unavailable",
+        "background index",
+        "verified AssetRef",
+        "missingEntryCount",
+    ):
+        assert detail in message
+    snapshot = Path(env["DINKSTER_MOUNTS_SNAPSHOT"])
+    table = MountTable(snapshot)
+    table.add(MountDef(id="vae", path=root), kind="model/vae")
+    with pytest.raises(AssetError, match="background index"):
+        table.bind_name(path.name, "model/vae")
+    table.scan("vae")
+    selected = resolve_asset_selection("model/vae", path.name, env=env)
+    assert isinstance(selected, AssetRef)
+    assert selected.digest == digest_bytes(b"weights")
+    assert selected.read_bytes() == b"weights"
+    named = table.bind_name(path.name, "model/vae")
+    assert isinstance(named, AssetRef)
+    assert named.read_bytes() == b"weights"
+    if os.name == "nt":
+        assert table.descriptors()[0]["localBindingCapability"] == {
+            "supported": False,
+            "filesystem": "exFAT",
+            "reason": "no file USN",
+        }
+
+
 @pytest.mark.parametrize("verified", [False, True])
 def test_existing_file_refs_keep_verification_and_require_live_exact_grants(
     tmp_path: Path, verified: bool
