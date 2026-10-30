@@ -538,6 +538,7 @@ namespaces = [
     "MoGePanoramaInference",
     "MoGeInference",
     "TripoSplatPreprocessImage",
+    "TripoSplatSamplingPreview",
     "TripoSplatConditioning",
     "LoadAudio",
     "RecordAudio",
@@ -586,6 +587,7 @@ namespaces = [
     "CheckpointSave",
     "ModelSave",
     "SaveImageAdvanced",
+    "Trellis2Conditioning",
 ]
 
 [pack.sandbox]

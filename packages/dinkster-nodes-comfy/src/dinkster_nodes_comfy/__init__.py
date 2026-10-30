@@ -5,6 +5,7 @@ from dinkster_api.v1 import (
     AUDIO_RECORD_TYPE,
     AUDIO_TYPE,
     VIDEO_TYPE,
+    Node,
     TypeRegistry,
     register_asset_type,
     register_audio_value_type,
@@ -199,8 +200,13 @@ from .svg_save import SaveSVGNode
 from .switch import ComfySwitchNode
 from .text import TEXT_NODES
 from .text_generation import TextGenerate, TextGenerateLTX2Prompt
+from .trellis_conditioning import Trellis2Conditioning
 from .trellis_upsample import Trellis2UpsampleStage
-from .triposplat import TripoSplatConditioning, TripoSplatPreprocessImage
+from .triposplat import (
+    TripoSplatConditioning,
+    TripoSplatPreprocessImage,
+    TripoSplatSamplingPreview,
+)
 from .upscale_model_loader import UpscaleModelLoader
 from .utilities import ComfyNumberConvert, PreviewAny, SeedNode
 from .vae import VAE_NODES
@@ -240,7 +246,7 @@ from .webm_save import SaveWEBM
 from .yue2_conditioning import YUE2_CONDITIONING_NODES
 from .zimage_encoders import TextEncodeZImageOmni
 
-COMFY_NODES = (
+COMFY_NODES: tuple[type[Node], ...] = (
     *AUDIO_ENCODER_NODES,
     *TEXT_NODES,
     SaveText,
@@ -452,6 +458,7 @@ COMFY_NODES = (
     MoGePanoramaInference,
     MoGeInference,
     TripoSplatPreprocessImage,
+    TripoSplatSamplingPreview,
     TripoSplatConditioning,
     LoadAudio,
     RecordAudio,
@@ -497,6 +504,7 @@ COMFY_NODES = (
     CheckpointSave,
     ModelSave,
     SaveImageAdvanced,
+    Trellis2Conditioning,
 )
 
 

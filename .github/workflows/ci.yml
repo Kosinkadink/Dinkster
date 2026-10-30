@@ -95,3 +95,23 @@ jobs:
           pnpm exec tsx ../tools/validate_default_catalog.mjs "$CATALOG" .
         env:
           CATALOG: ${{ runner.temp }}/default-catalog.json
+
+  windows-checks:
+    name: Windows format, lint and types
+    runs-on: windows-latest
+    timeout-minutes: 10
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --locked --all-packages
+      - run: uv run --locked ruff format --check .
+      - run: uv run --locked ruff check .
+      - run: uv run --locked pyright
