@@ -85,12 +85,27 @@ def test_no_bundle_for_another_platform_or_architecture(bases, monkeypatch):
     with pytest.raises(RuntimeError, match="No published base"):
         setup_envs.select_base(bases)
     monkeypatch.setattr(setup_envs.platform, "system", lambda: "Darwin")
-    with pytest.raises(RuntimeError, match="issues/575"):
+    with pytest.raises(RuntimeError, match="Intel macOS is unsupported"):
         setup_envs.select_base(bases)
     monkeypatch.setattr(setup_envs.platform, "system", lambda: "Windows")
     monkeypatch.setattr(setup_envs.platform, "machine", lambda: "aarch64")
     with pytest.raises(RuntimeError, match="No published base"):
         setup_envs.select_base(bases)
+
+
+@pytest.mark.parametrize("arch", ["arm64", "aarch64"])
+def test_apple_silicon_selects_mac_bundle_without_cuda_probe(bases, monkeypatch, arch):
+    monkeypatch.setattr(setup_envs.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(setup_envs.platform, "machine", lambda: arch)
+    mac = {"variant": "mac-arm64", "platform": {"os": "macos", "arch": "arm64"}, "nvidia": None}
+    bases.append(mac)
+    assert setup_envs.select_base(bases) == mac
+    assert setup_envs.select_base(bases, "mac-arm64") == mac
+    with pytest.raises(RuntimeError, match="No published base"):
+        setup_envs.select_base(bases, "cpu")
+    monkeypatch.setattr(setup_envs.platform, "machine", lambda: "x86_64")
+    with pytest.raises(RuntimeError, match="Intel macOS is unsupported"):
+        setup_envs.select_base(bases, "mac-arm64")
 
 
 def test_setup_ignores_cwd_and_inherited_uv_project_target(tmp_path: Path):

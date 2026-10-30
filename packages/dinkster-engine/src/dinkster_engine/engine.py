@@ -25,6 +25,7 @@ import time
 import uuid
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Container, Iterable, Mapping, Sequence
+from contextlib import AbstractContextManager
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass, replace
@@ -275,6 +276,7 @@ class ExecutionRuntime:
     resolve_providers: ResolveProviders | None = None
     preflight_provider_assets: PreflightProviderAssets | None = None
     run_finished: Callable[[str], None] | None = None
+    run_context: Callable[[str], AbstractContextManager[None]] | None = None
     owner_alive: Callable[[str], bool] | None = None
     extension_snapshot: ExtensionSnapshot = ExtensionSnapshot()
     sampler_registry_snapshot: SamplerRegistrySnapshot = SamplerRegistrySnapshot()
@@ -3214,7 +3216,10 @@ class Engine:
         if single_job_multi_gpu is not None:
             self._run_single_job_multi_gpu[run_id] = single_job_multi_gpu
         self._run_artifacts[run_id] = []
+        run_context = contextlib.ExitStack()
         try:
+            if runtime.run_context is not None:
+                run_context.enter_context(runtime.run_context(run_id))
             # One elaboration pass per run (hazard H10): the SAME effective map
             # feeds validation, cache keys, and invocations, so what validation
             # approved is exactly what executes - no re-elaboration anywhere.
@@ -3317,8 +3322,11 @@ class Engine:
             self._run_blocked_origins.pop(run_id, None)
             self._run_expansion_origins.pop(run_id, None)
             _execution_runtime.reset(runtime_token)
-            if runtime.run_finished is not None:
-                runtime.run_finished(run_id)
+            try:
+                if runtime.run_finished is not None:
+                    runtime.run_finished(run_id)
+            finally:
+                run_context.close()
 
     @property
     def extension_snapshot(self) -> ExtensionSnapshot:
