@@ -53,6 +53,9 @@
   adoption state. Host-generated previews also retain adoption inventory;
   existing untracked vault bytes are not reclassified. Incomplete staging
   remains pending and does not authorize deletion.
+- Operators can persist a produced-asset size policy, initially 20 GiB or
+  explicitly unlimited. Clear reports blocked while global reference ownership
+  is unknown; neither changing the policy nor clearing deletes files.
 - Completed, failed and cancelled invocation scopes refuse further publication
   into their job-owned scratch, including from detached tasks and held writers.
 - Produced scratch claims refuse live invocations and open writers, including

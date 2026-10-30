@@ -76,6 +76,14 @@ sa.Table(
     sa.Column("digests", sa.Text, nullable=False),
     sa.Column("complete", sa.Integer, nullable=False, server_default="0"),
 )
+sa.Table(
+    "asset_cleanup_policy",
+    metadata,
+    sa.Column("singleton", sa.Integer, primary_key=True),
+    sa.Column("limit_bytes", sa.Integer, nullable=True),
+    sa.CheckConstraint("singleton = 1"),
+    sa.CheckConstraint("limit_bytes IS NULL OR limit_bytes > 0"),
+)
 
 
 def migration_config() -> Config:

@@ -321,6 +321,30 @@ class LibraryStore:
             self._database.close()
             self._engine.dispose()
 
+    def cleanup_limit(self) -> int | None:
+        """Read the global size policy; null means unlimited, not unknown."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT singleton, limit_bytes FROM asset_cleanup_policy"
+            ).fetchall()
+        if len(rows) != 1 or rows[0][0] != 1:
+            raise AssetError("asset cleanup policy is unavailable")
+        limit = rows[0][1]
+        if limit is not None and (type(limit) is not int or not 0 < limit <= 2**53 - 1):
+            raise AssetError("asset cleanup policy is invalid")
+        return limit
+
+    def set_cleanup_limit(self, limit: int | None) -> None:
+        """Changing the size policy never grants collection authority."""
+        if limit is not None and (type(limit) is not int or not 0 < limit <= 2**53 - 1):
+            raise AssetError("limitBytes must be a positive safe integer or null")
+        with self._lock, self._conn:
+            changed = self._conn.execute(
+                "UPDATE asset_cleanup_policy SET limit_bytes = ? WHERE singleton = 1", (limit,)
+            ).rowcount
+            if changed != 1:
+                raise AssetError("asset cleanup policy is unavailable")
+
     def retain_assets(
         self,
         scope: str,

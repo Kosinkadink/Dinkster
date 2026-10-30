@@ -121,6 +121,7 @@ def test_catalog_alembic_head_preserves_records(tmp_path: Path, catalog: str) ->
                 assert len(before[table]) == 2
     store = LibraryStore(path)
     try:
+        assert store.cleanup_limit() == 21474836480
         for row in before.get("records", []):
             record = store.get(str(row[1]), str(row[0]))
             assert record is not None
@@ -160,7 +161,7 @@ def test_catalog_alembic_head_preserves_records(tmp_path: Path, catalog: str) ->
         f"catalog={path}",
     ]
     current = subprocess.run([*args, "current"], text=True, capture_output=True, check=True)
-    assert "0005_retention_completeness (head)" in current.stdout
+    assert "0006_cleanup_policy (head)" in current.stdout
     checked = subprocess.run([*args, "check"], text=True, capture_output=True, check=True)
     assert "No new upgrade operations detected" in checked.stdout
     LibraryStore(path).close()

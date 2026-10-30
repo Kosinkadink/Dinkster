@@ -725,6 +725,14 @@ def test_storage_accounting_http_is_operator_only_and_accepts_no_paths(
             url = "/api/library/storage"
             headers = {"Authorization": "Bearer token"}
             assert (await client.get(url)).status == 401
+            for method, suffix, body in (
+                (client.put, "/policy", {"limitBytes": None}),
+                (client.post, "/clear", {}),
+            ):
+                assert (await method(url + suffix, json=body)).status == 401
+                response = await method(url + suffix, json=body, headers=headers)
+                expected = 200 if suffix == "/policy" else 409
+                assert response.status == (expected if kind == "operator" else 403)
             response = await client.get(url, headers=headers)
             assert response.status == (200 if kind == "operator" else 403)
             if kind == "operator":
@@ -742,6 +750,72 @@ def test_storage_accounting_http_is_operator_only_and_accepts_no_paths(
                 assert (await client.post(url, json={}, headers=headers)).status == 405
         finally:
             await client.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("limit", [None, 37, 2**53 - 1])
+def test_cleanup_policy_persists_without_authorizing_collection(
+    tmp_path: Path, limit: int | None
+) -> None:
+    async def scenario() -> None:
+        data = b"kept untracked vault bytes"
+        digest = digest_bytes(data)
+        for cycle in range(2):
+            library = ServerLibrary(
+                AssetVault(tmp_path / "vault"), LibraryStore(tmp_path / "library")
+            )
+            with library.vault.writer(digest) as writer:
+                writer.write(data)
+                writer.commit()
+            if cycle == 0:
+                library.store.retain_assets(
+                    "local", "document", "empty-complete", [], revision=0, complete=True
+                )
+            client = TestClient(TestServer(create_app(make_engine, SCHEMAS, library=library)))
+            await client.start_server()
+            try:
+                url = "/api/library/storage"
+                status = await (await client.get(url)).json()
+                assert status["policyAvailable"]
+                assert status["limitBytes"] == (21474836480 if cycle == 0 else limit)
+                response = await client.put(url + "/policy", json={"limitBytes": limit})
+                assert response.status == 200
+                assert await response.json() == {"limitBytes": limit, "collectionEnabled": False}
+                for invalid in (True, False, 0, -1, 1.5, "37", 2**53):
+                    response = await client.put(url + "/policy", json={"limitBytes": invalid})
+                    assert response.status == 400
+                for body in ({}, {"limitBytes": None, "path": "/"}):
+                    assert (await client.put(url + "/policy", json=body)).status == 400
+                assert (
+                    await client.put(url + "/policy?path=/", json={"limitBytes": None})
+                ).status == 400
+                for _ in range(2):
+                    response = await client.post(url + "/clear", json={})
+                    assert response.status == 409
+                    assert await response.json() == {
+                        "collectionEnabled": False,
+                        "blocked": ["owner_completeness_unknown"],
+                        "reclaimedBytes": 0,
+                        "reclaimedFiles": 0,
+                    }
+                    path = library.vault.resolve(digest)
+                    assert path is not None and path.read_bytes() == data
+                assert (await client.post(url + "/clear", json={"path": "/"})).status == 400
+                assert (await client.post(url + "/clear?path=/", json={})).status == 400
+                status = await (await client.get(url)).json()
+                assert status["limitBytes"] == limit
+                assert not status["collectionEnabled"]
+                if cycle == 1:
+                    with closing(sqlite3.connect(tmp_path / "library")) as db, db:
+                        db.execute("DELETE FROM asset_cleanup_policy")
+                    status = await (await client.get(url)).json()
+                    assert status["policyAvailable"] is False
+                    assert status["limitBytes"] is None
+                    response = await client.put(url + "/policy", json={"limitBytes": None})
+                    assert response.status == 503
+            finally:
+                await client.close()
 
     asyncio.run(scenario())
 

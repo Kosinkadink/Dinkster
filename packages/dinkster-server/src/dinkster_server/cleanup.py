@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import stat
 from collections.abc import Generator
 from contextlib import AsyncExitStack, ExitStack, contextmanager
@@ -317,4 +318,10 @@ async def handle_cleanup_status(request: web.Request) -> web.Response:
         scratch_root=library.scratch_root,
     )
     status["lastPublicationRecovery"] = request.app.get(RECOVERY_KEY)
+    try:
+        status["limitBytes"] = await run_owned_thread(library.store.cleanup_limit)
+        status["policyAvailable"] = True
+    except (AssetError, sqlite3.Error):
+        status["limitBytes"] = None
+        status["policyAvailable"] = False
     return web.json_response(status, headers={"Cache-Control": "no-store"})

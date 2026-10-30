@@ -1678,6 +1678,44 @@ async def handle_retained_assets(request: web.Request) -> web.Response:
     return web.json_response(retained.to_wire())
 
 
+async def handle_cleanup_policy(request: web.Request) -> web.Response:
+    if not principal_for(request).is_operator:
+        raise web.HTTPForbidden(text="asset cleanup policy requires an operator")
+    if request.query:
+        raise web.HTTPBadRequest(text="cleanup policy accepts no filesystem targets")
+    body = await _json_body(request)
+    if set(body) != {"limitBytes"}:
+        raise web.HTTPBadRequest(text="cleanup policy requires only limitBytes")
+    limit = body["limitBytes"]
+    if limit is not None and (type(limit) is not int or not 0 < limit <= 2**53 - 1):
+        raise web.HTTPBadRequest(text="limitBytes must be a positive safe integer or null")
+    try:
+        await run_owned_thread(lambda: request.app[LIBRARY_KEY].store.set_cleanup_limit(limit))
+    except (AssetError, sqlite3.Error):
+        raise web.HTTPServiceUnavailable(text="asset cleanup policy is unavailable") from None
+    return web.json_response(
+        {"limitBytes": limit, "collectionEnabled": False}, headers={"Cache-Control": "no-store"}
+    )
+
+
+async def handle_cleanup_clear(request: web.Request) -> web.Response:
+    if not principal_for(request).is_operator:
+        raise web.HTTPForbidden(text="asset cleanup requires an operator")
+    if request.query or await _json_body(request):
+        raise web.HTTPBadRequest(text="asset cleanup accepts only an empty object")
+    # Registered complete rows cannot certify that no unregistered client exists.
+    return web.json_response(
+        {
+            "collectionEnabled": False,
+            "blocked": ["owner_completeness_unknown"],
+            "reclaimedBytes": 0,
+            "reclaimedFiles": 0,
+        },
+        status=409,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
     from .cleanup import RECOVERY_KEY, handle_cleanup_status, recover_produced_publications
     from .image_document import handle_dependencies, handle_image_document, handle_render
@@ -1703,6 +1741,8 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
     app.router.add_post("/api/library", handle_library_create)
     app.router.add_get("/api/library", handle_library_list)
     app.router.add_get("/api/library/storage", handle_cleanup_status)
+    app.router.add_put("/api/library/storage/policy", handle_cleanup_policy)
+    app.router.add_post("/api/library/storage/clear", handle_cleanup_clear)
     retention_path = "/api/library/retentions/{owner_kind}/{owner_id}"
     app.router.add_get(retention_path, handle_retained_assets)
     app.router.add_put(retention_path, handle_retained_assets)

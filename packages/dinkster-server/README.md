@@ -272,7 +272,22 @@ Unknown global owner completeness still blocks deletion.
 
 `GET /api/library/storage` requires an authenticated human operator and
 `assets:read`. It accepts no query parameters or filesystem destinations and
-returns `Cache-Control: no-store`. It has no collection mutation counterpart.
+returns `Cache-Control: no-store`.
+
+`limitBytes` is the global persisted produced-asset size policy, initially
+21474836480 (20 GiB). Null means unlimited only when `policyAvailable` is true;
+unavailable policy reports false and null instead of inventing a default.
+`PUT /api/library/storage/policy` requires an operator and `assets:write`, and
+accepts exactly `{limitBytes: number | null}` with a positive JSON-safe integer.
+It returns the acknowledged limit and `collectionEnabled:false`. Unknown keys,
+filesystem targets and query parameters are rejected. Changes survive restart
+but do not enable deletion or enforce the limit while ownership is unknown.
+
+`POST /api/library/storage/clear` requires the same operator/write authority and
+an empty JSON object, with no query parameters. It currently returns HTTP409,
+`collectionEnabled:false`, `blocked:["owner_completeness_unknown"]` and zero
+`reclaimedBytes`/`reclaimedFiles`. Repeating Clear is nondestructive. No policy
+request or individual complete owner manifest can bypass this global gate.
 
 `vaultBytes` counts canonical vault blobs, excluding sidecars and scratch;
 `adoptedBytes` sums recorded verified adoption sizes. Either is null when its
