@@ -60,7 +60,7 @@ from .fibo2_encoders import TextEncodeFibo2
 from .flux_conditioning import FLUX_CONDITIONING_NODES
 from .flux_image_layout import FLUX_IMAGE_LAYOUT_NODES
 from .freeu import FREEU_NODES
-from .gaussian_splat import GetSplatCount, TransformSplat
+from .gaussian_splat import GetSplatCount, MergeSplat, TransformSplat
 from .gligen_conditioning import GLIGENTextBoxApply
 from .hidream_patches import HiDreamO1PatchSeamSmoothing, HiDreamO1ReferenceImages
 from .hook_checkpoint import HOOK_CHECKPOINT_NODES
@@ -77,6 +77,15 @@ from .image_control_patches import IMAGE_CONTROL_PATCH_NODES
 from .image_core import IMAGE_CORE_NODES
 from .image_crop import ImageCropToMask, ImageCropV2, PrimitiveBoundingBox
 from .image_dimensions import IMAGE_DIMENSION_NODES
+from .image_file_tools import (
+    LoadImage,
+    LoadImageMask,
+    LoadImageOutput,
+    PreviewImage,
+    SaveAnimatedPNG,
+    SaveAnimatedWEBP,
+    SaveImage,
+)
 from .image_filters import IMAGE_FILTER_NODES
 from .image_layers import AddLayer
 from .image_tiles import ImageMergeTileList, SplitImageToTileList
@@ -89,6 +98,7 @@ from .json_prompt import BuildJsonPromptIdeogram
 from .kandinsky_video import Kandinsky5ImageToVideo
 from .latent import LATENT_NODES
 from .latent_advanced import LATENT_ADVANCED_NODES
+from .latent_file_tools import LATENT_FILE_NODES
 from .latent_model_specific import MODEL_LATENT_NODES
 from .latent_operations import LATENT_OPERATION_NODES
 from .latent_upscale import LATENT_UPSCALE_NODES
@@ -96,6 +106,7 @@ from .latent_upscale_loader import LATENT_UPSCALE_LOADER_NODES
 from .list_utilities import LIST_UTILITY_NODES
 from .logic import LOGIC_NODES
 from .loops import LOOP_NODES
+from .lora_extract_save import LoraSave
 from .lora_file_loaders import LORA_FILE_LOADER_NODES
 from .lotus import LotusConditioning
 from .ltx_audio import LTX_AUDIO_NODES
@@ -125,6 +136,7 @@ from .minimax_h3_sampling import MiniMaxH3SigmaShift
 from .mochi import EmptyMochiLatentVideo
 from .model_advanced import MODEL_ADVANCED_NODES
 from .model_file_loaders import MODEL_FILE_LOADER_NODES
+from .model_file_savers import MODEL_FILE_SAVE_NODES, CheckpointSave, ModelSave
 from .model_merging import MODEL_MERGE_NODES
 from .model_merging_specific import MODEL_SPECIFIC_MERGE_NODES
 from .model_patch_loader import MODEL_PATCH_LOADER_NODES
@@ -163,6 +175,7 @@ from .sam3 import SAM3_TRACKING_NODES
 from .sam3_detection import SAM3_Detect
 from .sam3_preview import SAM3_TrackPreview
 from .sampler_factories import SAMPLER_FACTORY_NODES
+from .save_image_advanced import SaveImageAdvanced
 from .save_text import SaveText
 from .scail_masks import SCAIL2ColoredMask
 from .sd_upscale_conditioning import SD_UPSCALE_CONDITIONING_NODES
@@ -434,6 +447,7 @@ COMFY_NODES = (
     CreateCameraInfo,
     GetSplatCount,
     TransformSplat,
+    MergeSplat,
     Trellis2UpsampleStage,
     MoGePanoramaInference,
     MoGeInference,
@@ -470,6 +484,19 @@ COMFY_NODES = (
     VOIDWarpedNoise,
     LoadVideo,
     SaveSVGNode,
+    SaveImage,
+    PreviewImage,
+    LoadImage,
+    LoadImageMask,
+    LoadImageOutput,
+    *LATENT_FILE_NODES,
+    *MODEL_FILE_SAVE_NODES,
+    SaveAnimatedWEBP,
+    SaveAnimatedPNG,
+    LoraSave,
+    CheckpointSave,
+    ModelSave,
+    SaveImageAdvanced,
 )
 
 

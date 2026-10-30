@@ -43,6 +43,8 @@
 - Portable LOAD3D_CAMERA values preserve perspective and orthographic camera
   dictionaries, including position, target, zoom, camera type, optional camera
   controls, and structural extensions across execution hosts and caches
+- Portable LOAD3D_MODEL_INFO values preserve ordered model positions, quaternions,
+  scales, and structural extensions across execution hosts and caches
 - Typed PNG, JPEG, and WebP image loading with EXIF orientation, ICC-to-sRGB
   conversion, alpha masks, bounded metadata inspection, and input- or
   output-category asset selection. Media outputs retain compact pixel or PCM
@@ -256,6 +258,10 @@
 - Native Transform Splat translates, rotates, and scales canonical SPLAT
   batches. Nonuniform scaling reshapes Gaussian covariance; opacity,
   spherical harmonics, and per-item counts are preserved.
+- Native Merge Splats concatenates valid Gaussian rows in input order, pads
+  spherical harmonics to the highest degree, and retains unequal batch-item
+  counts with zero-padded rows. Its first two splat sockets are required;
+  additional authored sockets are optional.
 - Native Create Video assembles IMAGE frames, rational frame rate and optional
   AUDIO as a VIDEO, retaining component storage until explicit encoding.
   Bit depth and sRGB/HLG/PQ color choices are retained; optional immediate

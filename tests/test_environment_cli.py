@@ -12,7 +12,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.request import ProxyHandler, build_opener, urlopen
 
 import pytest
 from dinkster_assets import AssetRef, AssetVault, LibraryStore, digest_bytes
@@ -659,6 +659,9 @@ def test_public_fixture_commands_install_update_and_rollback(
 ):
     for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
         monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    for variable in ("NO_PROXY", "no_proxy"):
+        monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setattr("urllib.request._opener", None)
     builder = Path(__file__).parent / "fixtures/environments/build.py"
     build_command = [
         sys.executable,
@@ -710,7 +713,10 @@ def test_public_fixture_commands_install_update_and_rollback(
         assert status["current"] == number
         assert status["engines"][0]["state"] == "ready"
         assert run("doctor")["status"] == "clean"
-        with urlopen(status["engines"][0]["url"] + "/api/generation", timeout=5) as response:  # noqa: S310
+        # The offline proxy barrier applies to downloads, not this loopback observation.
+        with build_opener(ProxyHandler({})).open(
+            status["engines"][0]["url"] + "/api/generation", timeout=5
+        ) as response:
             assert json.loads(response.read()) == {"generation": str(generation)}
 
     try:
