@@ -474,7 +474,9 @@ def test_release_version_matches_every_workspace_project(tmp_path: Path) -> None
 
 
 def test_repository_versions_match_first_release_tag() -> None:
-    assert release_version(ROOT, "v0.0.1") == "0.0.1"
+    assert release_version(ROOT, "v0.0.2") == "0.0.2"
+    with pytest.raises(ValueError, match="does not match workspace metadata"):
+        release_version(ROOT, "v0.0.1")
     projects = workspace_projects(ROOT)
     assert "dinkster-nodes-std" not in projects
     dev = tomllib.loads(projects["dinkster-nodes-dev"].read_text(encoding="utf-8"))
@@ -490,7 +492,7 @@ def test_release_wheels_pin_the_workspace_and_frontend_without_changing_the_lock
     tmp_path: Path,
 ) -> None:
     version = development_version(ROOT)
-    assert version.startswith("0.0.2.dev")
+    assert version.startswith("0.0.3.dev")
     assert version.endswith(
         "+g" + subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     )
