@@ -1,5 +1,9 @@
 ## Media I/O
 
+- Authored `LOAD_3D` viewport values retain camera, transform and JSON scene state.
+  Image, mask, normal and recording captures carry existing granted asset
+  identities, rebound to the receiving host, rather than filesystem paths.
+  Omitted captures and an empty recording remain distinct authored states.
 - Explicit mounted Save attachments reach execution results after host validation
   of the live writable mount, writer publication record, and exact file bytes.
   Custom targets and non-media files, including empty text files, are supported

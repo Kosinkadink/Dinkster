@@ -17,6 +17,7 @@ from dinkster_assets import (
     MountSnapshotResolver,
     digest_bytes,
     register_asset_type,
+    register_load3d_type,
 )
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
@@ -197,3 +198,52 @@ def test_schemas_declare_upload_save_and_preview_intent() -> None:
     assert preview.output_node
     preview_output = preview.output("model")
     assert preview_output is not None and preview_output.preview
+
+
+def test_authored_viewport_captures_rebind_without_granting_paths(tmp_path: Path) -> None:
+    sender = AssetVault(tmp_path / "sender")
+    receiver = AssetVault(tmp_path / "receiver")
+    captures = {}
+    for index, name in enumerate(("image", "mask", "normal", "recording")):
+        data = bytes([index, 17, 93]) * (index + 2)
+        digest = digest_bytes(data)
+        for vault in (sender, receiver):
+            with vault.writer(digest) as writer:
+                writer.write(data)
+                writer.commit()
+        captures[name] = AssetRef(digest, name, len(data), resolver=sender)
+    source_registry = TypeRegistry()
+    register_asset_type(source_registry, sender)
+    source = register_load3d_type(source_registry)
+    target_registry = TypeRegistry()
+    register_asset_type(target_registry, receiver)
+    target = register_load3d_type(target_registry)
+    state = {
+        **captures,
+        "camera_info": {"position": {"x": 3, "y": -2, "z": 7}, "zoom": 1.75},
+        "model_3d_info": [{"position": {"x": -4, "y": 8, "z": 1}}],
+        "background": {"enabled": True, "color": "#182c67"},
+    }
+    encoded = source.encode(state)
+    decoded = cast(dict[str, object], target.decode(encoded))
+    assert decoded["camera_info"] == state["camera_info"]
+    assert decoded["model_3d_info"] == state["model_3d_info"]
+    assert decoded["background"] == state["background"]
+    for name, original in captures.items():
+        received = decoded[name]
+        assert isinstance(received, AssetRef)
+        assert received.resolver is receiver
+        assert received.read_bytes() == original.read_bytes()
+    assert source.fingerprint is not None and target.fingerprint is not None
+    assert source.fingerprint(state) == target.fingerprint(decoded)
+    assert target.meta is not None and target.validate_encoded is not None
+    target.validate_encoded(encoded, target.meta(decoded))
+    with pytest.raises(AssetError, match="metadata"):
+        target.validate_encoded(encoded, {"asset_refs": []})
+    with pytest.raises(AssetError, match="asset inputs"):
+        source.encode({"image": "/tmp/ungranted.png"})
+    assert target.decode(source.encode({"recording": "", "camera_info": None})) == {
+        "recording": "",
+        "camera_info": None,
+    }
+    assert target.decode(source.encode({})) == {}

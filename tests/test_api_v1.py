@@ -233,6 +233,7 @@ GOLDEN_V1_SURFACE = (
     "LAYERS_TYPE",
     "LOAD3D_CAMERA_TYPE",
     "LOAD3D_MODEL_INFO_TYPE",
+    "LOAD_3D_TYPE",
     "MASK_TYPE",
     "MESH_TYPE",
     "MODEL3D_TYPE",
@@ -409,6 +410,7 @@ GOLDEN_V1_SURFACE = (
     "asset_selection_options",
     "resolve_asset_selection",
     "register_asset_type",
+    "register_load3d_type",
     "resolver_from_env",
     # -- mounted saves (dinkster-assets + current dinkster-schema widgets)
     "AssetWidget",

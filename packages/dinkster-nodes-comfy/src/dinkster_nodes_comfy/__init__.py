@@ -10,6 +10,7 @@ from dinkster_api.v1 import (
     register_asset_type,
     register_audio_value_type,
     register_curve_type,
+    register_load3d_type,
     register_video_value_type,
     resolver_from_env,
 )
@@ -518,6 +519,7 @@ COMFY_NODES: tuple[type[Node], ...] = (
 def register_inference_types(registry: TypeRegistry) -> None:
     if ASSET_TYPE not in registry:
         register_asset_type(registry, resolver_from_env())
+    register_load3d_type(registry)
     if AUDIO_RECORD_TYPE not in registry:
         register_asset_type(registry, resolver_from_env(), type_id=AUDIO_RECORD_TYPE)
     if AUDIO_TYPE not in registry:
