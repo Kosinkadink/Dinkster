@@ -98,6 +98,18 @@ The station management port adds:
 `create_station_app` are the main Python composition exports. The supervisor
 and station deliberately import no engine code.
 
+Supervisor, station and ingress listeners validate exactly one inbound HTTP
+Host before routing, CORS preflights or WebSocket upgrades. Loopback IP
+literals and the configured `--host` are accepted; other hostnames require
+repeatable `--allow-host HOST`. Unlisted, malformed, missing or duplicate
+Host headers receive `421` with `error: "host-not-allowed"` before proxying.
+Python app factories take the same `host` and `allow_hosts` inputs.
+
+This boundary prevents DNS rebinding even when the browser legitimately
+sends `Sec-Fetch-Site: same-origin` for its original hostname. The upstream
+Host is still rewritten for the internal engine connection; no forwarded
+Host header grants authority. Engine Host and Origin checks are unchanged.
+
 ## Design contract
 
 The supervisor owns the public port and almost nothing else: it binds in

@@ -2,7 +2,7 @@ name: full-validation
 
 on:
   push:
-    branches: [main]
+    branches: [main, windows-sqlite-runtime-570]
   schedule:
     - cron: '0 6-22/2 * * *'
       timezone: America/Los_Angeles
@@ -112,28 +112,28 @@ jobs:
             timeout-minutes: 30
           - os: windows
             runner: windows
-            python-version: "3.12"
+            python-version: "3.14.10"
             shard_name: ", shard 1"
             pytest_args: "-p tools.pytest_file_shard --file-shard 1/4 --durations=20"
             run_checks: true
             timeout-minutes: 45
           - os: windows
             runner: windows
-            python-version: "3.12"
+            python-version: "3.14.10"
             shard_name: ", shard 2"
             pytest_args: "-p tools.pytest_file_shard --file-shard 2/4"
             run_checks: false
             timeout-minutes: 30
           - os: windows
             runner: windows
-            python-version: "3.12"
+            python-version: "3.14.10"
             shard_name: ", shard 3"
             pytest_args: "-p tools.pytest_file_shard --file-shard 3/4"
             run_checks: false
             timeout-minutes: 30
           - os: windows
             runner: windows
-            python-version: "3.12"
+            python-version: "3.14.10"
             shard_name: ", shard 4"
             pytest_args: "-p tools.pytest_file_shard --file-shard 4/4"
             run_checks: false
@@ -159,6 +159,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
           cache-dependency-glob: uv.lock
+      - uses: ./.github/actions/windows-python
+        if: matrix.os == 'windows'
       - run: uv sync --all-packages
       - name: Install and verify published Windows engine dependencies
         if: matrix.os == 'windows'
@@ -299,7 +301,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -336,7 +338,8 @@ jobs:
           } | ForEach-Object { $_.FullName }
           if (-not $files) { throw 'No Windows runtime tests selected' }
           uv run --no-sync python -m pytest -q @files `
-            -p tools.pytest_file_shard --file-shard ${{ matrix.shard }}/2 --durations=20 `
+            -p tools.pytest_file_shard --file-shard ${{ matrix.shard }}/3 --durations=20 `
+            --case-shard-file tests/test_environment_generations.py `
             --cov=dinkster_api --cov=dinkster_assets `
             --cov=dinkster_caches --cov=dinkster_compat_comfy --cov=dinkster_engine `
             --cov=dinkster_graph --cov=dinkster_memory --cov=dinkster_nodes_foundation `
@@ -384,7 +387,7 @@ jobs:
           for shard in 1 2 3 4; do
             test -f "coverage-data/.coverage.$shard"
           done
-          for shard in 1 2; do
+          for shard in 1 2 3; do
             test -f "coverage-data/.coverage.windows-runtime-$shard"
           done
           printf '[paths]\npackages =\n    packages/\n    */packages/\n' > "$RUNNER_TEMP/coverage-paths.ini"

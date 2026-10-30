@@ -1,0 +1,10 @@
+name: Prepare Windows SQLite runtime
+description: Acquire CPython 3.14.10 with the pinned SQLite mapped-shm fix
+runs:
+  using: composite
+  steps:
+    - shell: pwsh
+      run: |
+        uv run --no-project --python 3.14.10 scripts/prepare_windows_python.py `
+          --output "$env:RUNNER_TEMP/dinkster-windows-python" --github-env
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

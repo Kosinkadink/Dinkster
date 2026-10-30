@@ -271,11 +271,14 @@ jobs:
           python-version: ${{ matrix.python }}
           enable-cache: true
           cache-dependency-glob: uv.lock
+      - uses: ./.github/actions/windows-python
+        if: runner.os == 'Windows'
       - name: Install and launch from wheels
         shell: bash
         env:
           RELEASE_PYTHON: ${{ matrix.python }}
         run: |
+          if [ "$RUNNER_OS" = Windows ]; then RELEASE_PYTHON="$UV_PYTHON"; fi
           uv venv --seed --python "$RELEASE_PYTHON" "$RUNNER_TEMP/dinkster-release-venv"
           python="$RUNNER_TEMP/dinkster-release-venv/bin/python"
           if [ "$RUNNER_OS" = Windows ]; then

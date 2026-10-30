@@ -1,5 +1,9 @@
 ## Server API and execution
 
+- Supervisor, station and fleet ingress listeners reject unlisted, malformed,
+  missing or duplicate HTTP Host headers with `421 host-not-allowed`, including
+  WebSocket upgrades. Loopback IP literals and the configured listen hostname
+  are accepted; additional names require repeatable `--allow-host HOST`.
 - Environment catalog/status/doctor queries share a JSON command interface.
   Catalog preserves the selected channel's variant manifests; status reports
   configured channel/variant and observed engines without starting them.
@@ -32,6 +36,40 @@
 - Asset record catalogs upgrade automatically with versioned migrations.
   Matching unversioned catalogs retain scoped records, verified media grants,
   dependency manifests, and derivations; incompatible schemas are refused.
+- Scoped retained-value associations persist explicit asset identities for
+  documents, history, shown results and previews without parsing workflow
+  contents or granting access to bytes. Revision-checked replacement and
+  release prevent stale clients from removing newer associations, including
+  after restart or owner reuse. Association registration is explicit, not
+  automatic history or preview integration; it does not enable cleanup.
+- Durable terminal history retains external asset identities from target
+  values, saved artifacts and their optional published previews independently
+  of execution-cache entries, without storing output payloads or changing
+  history responses. Legacy and interrupted history with unknown output
+  references refuses collection inspection. This
+  does not retain opaque workflow contents or live previews, or enable deletion.
+- Cached image-document renders retain their source, resources and output
+  identities independently of catalog records. Verified cache reuse can certify
+  previously unknown references without changing render provenance or responses.
+  Unknown or unreadable derivation references block collection inspection;
+  cleanup remains disabled.
+- Operators can inspect vault/adoption byte observations and held known asset
+  references without exposing filesystem paths. Unknown accounting is null,
+  with explicit blocked reasons. Recognized inactive job scratch reports its
+  bytes while host-job and store ownership are exclusively held; live, unsafe
+  or unknown scratch remains unavailable. Reclaimable accounting is unavailable;
+  cleanup remains disabled regardless of individual complete registrations.
+  Vault ownership inspection reports busy for active managed readers, writers
+  and server jobs, or unavailable for unknown ownership state. Server jobs keep
+  that ownership through terminal recovery and durable history publication;
+  media publication keeps it through reference commits despite cancellation.
+- Startup recovers explicitly offered publications from inactive job scratch
+  through verified engine-vault adoption, without rerunning jobs or deleting
+  scratch. Active, unknown or corrupt stores remain blocked; recovery of another
+  recognized job can continue. Existing untracked assets are not reclassified.
+  Success, failure and cancellation also reconcile that job's offered bytes
+  after execution settles and before reporting its terminal state. Recovery
+  preserves scratch and the original job outcome; unrelated jobs are untouched.
 - Host-validated saved-file artifacts are cataloged in the submitted project
   with job and node provenance before the job reports completion. Unavailable
   or revoked files and catalog failures fail the job rather than report a
