@@ -13,7 +13,9 @@ from typing import cast
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import AssetRef, AssetVault, LibraryStore, digest_bytes
+from dinkster_assets.declared import produced_output_scratch, use_produced_output_job
 from dinkster_assets.produced import ProducedAssetInventory
+from dinkster_assets.scratch import hold_produced_job
 from dinkster_caches import DiskCacheStore, LayeredCache, MemoryLRUCache
 from dinkster_server import HistoryStore, Principal, ServerLibrary, create_app
 from dinkster_server.auth import StaticBearerAuthenticator
@@ -81,6 +83,73 @@ def test_storage_accounting_combines_held_owners_without_enabling_collection(
                 assert path is not None and path.read_bytes() == data
         finally:
             history.close()
+            store.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("scope", ["packs", "groups"])
+def test_scratch_accounting_waits_for_host_and_store_owners_without_deleting(
+    tmp_path: Path, scope: str
+) -> None:
+    async def scenario() -> None:
+        scratch = tmp_path / "scratch"
+        pack = scratch / scope / "media"
+        env = {"DINKSTER_PACK_SCRATCH": str(pack)}
+        store = LibraryStore(tmp_path / "library")
+        vault = AssetVault(tmp_path / "vault")
+        memory = MemoryLRUCache()
+
+        async def status() -> dict[str, object]:
+            return await inspect_cleanup(vault, store, None, memory, scratch_root=scratch)
+
+        host = hold_produced_job(scratch, "../job with a path")
+        try:
+            with use_produced_output_job("../job with a path", 2):
+                produced = produced_output_scratch(env)
+                assert produced is not None
+                data = b"publication whose adoption is not established"
+                with produced.writer(digest_bytes(data)) as writer:
+                    writer.write(data)
+                    path = writer.commit()
+                assert (await status())["temporaryBytes"] is None
+                host.close()
+                assert (await status())["temporaryBytes"] is None
+                host = hold_produced_job(scratch, "../job with a path")
+            # The invocation is gone, but the host still protects invocation gaps.
+            assert (await status())["temporaryBytes"] is None
+            host.close()
+            observed = await status()
+            size = observed["temporaryBytes"]
+            assert isinstance(size, int) and size >= len(data)
+            assert "temporary_accounting_unavailable" not in cast(list[str], observed["blocked"])
+            assert not observed["collectionEnabled"]
+            assert path.read_bytes() == data
+            (produced.root / ".ingest-interrupted").write_bytes(b"unfinished seven")
+            (pack / "unrelated-user-file").write_bytes(b"outside" * 1000)
+            assert (await status())["temporaryBytes"] == size + 16
+            # A new host can reuse the job only after inspection releases its claim.
+            next_host = hold_produced_job(scratch, "../job with a path")
+            try:
+                assert (await status())["temporaryBytes"] is None
+            finally:
+                next_host.close()
+            outside = tmp_path / "outside"
+            outside.write_bytes(b"not managed")
+            escape = produced.root / "escape"
+            escape.symlink_to(outside)
+            assert (await status())["temporaryBytes"] is None
+            assert outside.read_bytes() == b"not managed"
+            escape.unlink()
+            moved = produced.root.with_name("wrong-owner-location")
+            produced.root.rename(moved)
+            assert (await status())["temporaryBytes"] is None
+            moved.rename(produced.root)
+            (produced.root / ".produced-scratch.sqlite").unlink()
+            assert (await status())["temporaryBytes"] is None
+            assert path.read_bytes() == data
+        finally:
+            host.close()
             store.close()
 
     asyncio.run(scenario())
@@ -166,7 +235,11 @@ def test_storage_accounting_http_is_operator_only_and_accepts_no_paths(
             kind="agent" if kind == "agent" else "human",
             delegation_id="delegation" if kind == "delegated" else None,
         )
-        library = ServerLibrary(AssetVault(tmp_path / "vault"), LibraryStore(tmp_path / "library"))
+        library = ServerLibrary(
+            AssetVault(tmp_path / "vault"),
+            LibraryStore(tmp_path / "library"),
+            scratch_root=tmp_path / "scratch",
+        )
         client = TestClient(
             TestServer(
                 create_app(
@@ -188,6 +261,8 @@ def test_storage_accounting_http_is_operator_only_and_accepts_no_paths(
                 status = await response.json()
                 assert response.headers["Cache-Control"] == "no-store"
                 assert status["vaultBytes"] == 0
+                assert status["temporaryBytes"] == 0
+                assert not (tmp_path / "scratch").exists()
                 assert status["adoptedBytes"] is None
                 assert status["reclaimableBytes"] is None
                 assert "adoption_state_unavailable" in status["blocked"]

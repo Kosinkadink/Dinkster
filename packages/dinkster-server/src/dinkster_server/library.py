@@ -212,6 +212,8 @@ class ServerLibrary:
     public_sources_for: Callable[[str], Sequence[PublicAcquisitionSourceV1]] | None = None
     #: Host-owned metadata classifier; this package does not depend on inference.
     model_output_profile: Callable[[Path, BinaryIO, str, int], Mapping[str, object]] | None = None
+    #: Explicit host configuration, never a client-selected filesystem target.
+    scratch_root: Path | None = None
     #: Serialize the two-resource media publication so one request owns the
     #: byte/grant created result used for exact 200/201 semantics.
     media_ingest_lock: asyncio.Lock = field(

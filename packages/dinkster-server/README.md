@@ -278,10 +278,19 @@ inspection refuses. A partial known set is not a complete owner census.
 Memory barriers remain held until the blocking disk/history/library inspection
 settles, including repeated request cancellation. Disk roots are deduplicated;
 blocking barriers are acquired and released on the same worker thread.
-`temporaryBytes` and `reclaimableBytes` are null, `collectionEnabled` is false,
-and `blocked` always includes `owner_completeness_unknown` and
-`temporary_accounting_unavailable`. Missing, pending or unreadable state adds
-explicit reasons. This endpoint never deletes bytes or treats unknown as zero.
+`temporaryBytes` observes regular files (including journals, sidecars and
+interrupted ingest files) only inside recognized per-pack/per-group job stores
+under the host-configured scratch root. Unrelated pack scratch is excluded.
+The job/attempt path must match its read-only journal owner. Both host-job and
+store OS claims remain held during each tree walk. Missing ownership, live
+jobs/writers/readers, unreadable walks and symlinks return null with
+`temporary_accounting_unavailable`, not a partial total. An explicitly configured
+but absent scratch tree reports zero without creating it; an unconfigured root
+remains unknown. Normal serve supplies `<library-root>/scratch`.
+`reclaimableBytes` is null, `collectionEnabled` is false, and `blocked` always
+includes `owner_completeness_unknown`. Missing, pending or unreadable state adds
+explicit reasons. An inactive claim is not adoption or deletion authority;
+this endpoint never deletes bytes or treats unknown as zero.
 
 ## Learn more
 

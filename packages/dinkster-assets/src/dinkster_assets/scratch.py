@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import uuid
 from collections.abc import Callable, Generator, Iterable
@@ -109,6 +110,36 @@ class ProducedScratchState:
                 raise AssetError("produced scratch publication state is invalid")
             result.append((digest, size, bool(offered)))
         return tuple(result)
+
+    def owner(self) -> tuple[str, int]:
+        """Read an existing owner without binding or repairing publication state."""
+        try:
+            with closing(sqlite3.connect(self._path.as_uri() + "?mode=ro", uri=True)) as db:
+                rows = db.execute("SELECT singleton, job, attempt FROM owner").fetchall()
+        except sqlite3.Error as exc:
+            raise AssetError("produced scratch owner is unavailable") from exc
+        if len(rows) != 1:
+            raise AssetError("produced scratch owner is invalid")
+        singleton, job, attempt = rows[0]
+        if (
+            singleton != 1
+            or not isinstance(job, str)
+            or not job
+            or type(attempt) is not int
+            or attempt < 1
+        ):
+            raise AssetError("produced scratch owner is invalid")
+        return job, attempt
+
+
+def produced_job_scratch_root(scratch: Path, job: str, attempt: int) -> Path:
+    """Use one canonical job/attempt mapping for publication and reconciliation."""
+    if not isinstance(job, str) or not job or type(attempt) is not int or attempt < 1:
+        raise AssetError("produced scratch requires a job and positive attempt")
+    key = digest_bytes(json.dumps((job, attempt), ensure_ascii=True).encode("ascii")).split(":", 1)[
+        1
+    ]
+    return scratch / "produced-assets" / "jobs" / key
 
 
 def _lease_directory(root: Path, *, create: bool = True) -> Path:

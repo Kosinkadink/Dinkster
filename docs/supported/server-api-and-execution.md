@@ -38,7 +38,9 @@
   cleanup remains disabled.
 - Operators can inspect vault/adoption byte observations and held known asset
   references without exposing filesystem paths. Unknown accounting is null,
-  with explicit blocked reasons. Temporary/reclaimable accounting is unavailable;
+  with explicit blocked reasons. Recognized inactive job scratch reports its
+  bytes while host-job and store ownership are exclusively held; live, unsafe
+  or unknown scratch remains unavailable. Reclaimable accounting is unavailable;
   cleanup remains disabled regardless of individual complete registrations.
 - Host-validated saved-file artifacts are cataloged in the submitted project
   with job and node provenance before the job reports completion. Unavailable

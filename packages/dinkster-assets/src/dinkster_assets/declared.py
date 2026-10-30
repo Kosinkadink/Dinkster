@@ -25,7 +25,6 @@ can never drift between the two.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import threading
@@ -37,7 +36,7 @@ from pathlib import Path
 from types import TracebackType
 
 from .fetch import ChainResolver
-from .identity import AssetError, digest_bytes
+from .identity import AssetError
 from .kind import require_asset_kind
 from .library import IndexedAssetResolver
 from .model import AssetRef, AssetResolution, AssetResolver
@@ -47,6 +46,7 @@ from .scratch import (
     ProducedScratchLease,
     ProducedScratchState,
     hold_produced_asset_read,
+    produced_job_scratch_root,
     use_produced_asset_path_owner,
 )
 from .vault import AssetVault, VaultWriter
@@ -200,10 +200,7 @@ def _produced_root(scratch: str) -> Path:
     job = _produced_job.get()
     if job is None:
         return root
-    identity = digest_bytes(json.dumps(job.identity, ensure_ascii=True).encode("ascii")).split(
-        ":", 1
-    )[1]
-    return root / "jobs" / identity
+    return produced_job_scratch_root(Path(scratch), *job.identity)
 
 
 class _ProducedOutputResolver:
