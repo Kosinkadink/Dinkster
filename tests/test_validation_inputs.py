@@ -55,7 +55,36 @@ def test_full_validation_collects_coverage_in_the_root_test_shards() -> None:
     assert upload["if"] == "runner.os == 'Linux'"
     assert upload["with"]["path"] == run["env"]["COVERAGE_FILE"]
     assert upload["with"]["if-no-files-found"] == "error"
-    assert set(jobs["coverage-gate"]["needs"]) == {"validation-plan", "test"}
+    gate = jobs["coverage-gate"]
+    assert set(gate["needs"]) == {"validation-plan", "test", "windows-runtime"}
+    runtime = jobs["windows-runtime"]
+    runtime_run = next(step for step in runtime["steps"] if "--cov-branch" in step.get("run", ""))
+    runtime_upload = next(
+        step for step in runtime["steps"] if step.get("uses") == "actions/upload-artifact@v4"
+    )
+    assert runtime_upload["if"] == "always()"
+    assert runtime_upload["with"]["if-no-files-found"] == "error"
+    assert runtime_upload["with"]["include-hidden-files"] is True
+    download = next(
+        step for step in gate["steps"] if step.get("uses") == "actions/download-artifact@v4"
+    )
+    combine = gate["steps"][-1]["run"]
+    assert "*/packages/" in combine
+    assert 'coverage combine --rcfile="$RUNNER_TEMP/coverage-paths.ini" coverage-data' in combine
+    assert 'test -f "coverage-data/.coverage.windows-runtime-$shard"' in combine
+    for shard in runtime["strategy"]["matrix"]["shard"]:
+        coverage_file = runtime_run["env"]["COVERAGE_FILE"].replace(
+            "${{ matrix.shard }}", str(shard)
+        )
+        assert coverage_file == f".coverage.windows-runtime-{shard}"
+        assert (
+            runtime_upload["with"]["path"].replace("${{ matrix.shard }}", str(shard))
+            == coverage_file
+        )
+        artifact_name = runtime_upload["with"]["name"].replace("${{ matrix.shard }}", str(shard))
+        assert artifact_name.startswith(download["with"]["pattern"].removesuffix("*"))
+        assert download["with"]["path"] == "coverage-data"
+        assert download["with"]["merge-multiple"] is True
     assert "model-tests" not in jobs
     assert "model-tests-gate" not in jobs
 
