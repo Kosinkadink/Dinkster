@@ -86,7 +86,7 @@ jobs:
           cache-dependency-glob: uv.lock
       - uses: ./.github/actions/windows-python
       - run: uv sync --locked --all-packages
-      - run: uv run --no-sync python -m pytest -q tests/test_durable_delegations.py tests/test_environment_archives.py
+      - run: uv run --no-sync python -m pytest -q tests/test_durable_delegations.py tests/test_environment_archives.py tests/test_setup_envs.py
 
   fast:
     needs: [changes, torch-cpu]

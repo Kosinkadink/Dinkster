@@ -18,7 +18,7 @@ def check(expected_base: Path | None = None) -> None:
     try:
         if expected_base is not None and Path(sys.base_prefix).resolve() != expected_base.resolve():
             raise RuntimeError(
-                "Environment does not use the verified private base; rerun setup with -Force"
+                "Environment does not use the verified private base; rerun setup with --force"
             )
         with tempfile.TemporaryDirectory(prefix="dinkster-sqlite-") as temporary:
             path = Path(temporary) / "wal.sqlite"

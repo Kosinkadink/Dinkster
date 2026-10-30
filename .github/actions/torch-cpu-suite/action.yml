@@ -19,60 +19,35 @@ runs:
         evidence-deploy-key: ${{ inputs.evidence-deploy-key }}
         coverage: "false"
     - uses: astral-sh/setup-uv@v5
-      with:
-        python-version: "3.12"
-    - name: Set up CPU environment and inputs
+    - name: Install the published CPU base and locked workspace
       shell: bash
-      env:
-        CUDA_VISIBLE_DEVICES: ""
+      run: uv run --no-project python scripts/setup_envs.py --variant linux-cpu
+    - name: Assert pinned AVX2 dispatch
+      shell: bash
       run: |
-        packages=(--package dinkster)
-        for project in packages/*/pyproject.toml; do
-          packages+=(--package "$(basename "$(dirname "$project")")")
-        done
-        # Prune the CUDA dependency closure before resolving CPU replacements.
-        uv export --locked "${packages[@]}" --prune torch --prune torchvision \
-          --prune comfy-kitchen --no-emit-project --no-emit-workspace --no-hashes \
-          --output-file "$RUNNER_TEMP/cpu-versions.txt"
-        printf '\ntorch==2.14.1+cpu\ntorchvision==0.29.1+cpu\nonnxruntime==1.29.0\n' \
-          >> "$RUNNER_TEMP/cpu-versions.txt"
-        uv pip compile --python-version 3.12 --torch-backend cpu --generate-hashes \
-          --output-file "$RUNNER_TEMP/torch-constraints.txt" "$RUNNER_TEMP/cpu-versions.txt"
-        uv venv .venv-torch --python 3.12
-        uv pip install --python .venv-torch/bin/python --torch-backend cpu \
-          --requirement "$RUNNER_TEMP/torch-constraints.txt"
-        editables=(-e .)
-        for project in packages/*/pyproject.toml; do
-          editables+=(-e "$(dirname "$project")")
-        done
-        uv pip install --python .venv-torch/bin/python --no-deps "${editables[@]}"
-        uv pip install --python .venv-torch/bin/python --no-deps \
-          'comfy-kitchen@https://files.pythonhosted.org/packages/9c/2e/1c6c621a1cd2ba89ae12fe99e095faa50986c0e6485461170732adfcfa6d/comfy_kitchen-0.2.40-py3-none-any.whl#sha256=e5834f2ce993c8d5ea8c01650157c639742b5a28ecb0d95253777f31b5248099'
-        .venv-torch/bin/python - <<'PY'
-        from importlib.metadata import distributions
+        grep -m1 'model name' /proc/cpuinfo
+        .venv/bin/python - <<'PY'
         import torch
-        names = {dist.metadata['Name'].lower() for dist in distributions()}
-        assert not any(name.startswith(('nvidia-', 'cuda-')) or name == 'triton' for name in names)
-        assert torch.version.cuda is None
-        assert torch.backends.cpu.get_cpu_capability() == 'AVX2'
-        print(f'CPU-only torch {torch.__version__}, AVX2')
+        capability = torch.backends.cpu.get_cpu_capability()
+        print(f"torch {torch.__version__} ATen CPU capability: {capability}")
+        assert capability == "AVX2", capability
         PY
     - name: Test CPU comfy contracts
       if: inputs.suite != 'vision'
       shell: bash
-      run: .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-comfy/tests ${{ inputs.comfy-pytest-args }}
+      run: .venv/bin/python -m pytest -q packages/dinkster-nodes-comfy/tests ${{ inputs.comfy-pytest-args }}
     - name: Check vision types
       if: inputs.suite != 'comfy'
       shell: bash
-      run: .venv-torch/bin/pyright -p packages/dinkster-nodes-vision
+      run: .venv/bin/pyright -p packages/dinkster-nodes-vision
     - name: Test CPU vision and root contracts
       if: inputs.suite != 'comfy'
       shell: bash
       env:
         DINKSTER_ACCELERATOR: cpu
       run: |
-        .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests
-        .venv-torch/bin/python -m pytest -v \
+        .venv/bin/python -m pytest -q packages/dinkster-nodes-vision/tests
+        .venv/bin/python -m pytest -v \
           tests/test_audio_materializer.py \
           tests/test_cpu_pack_composition.py \
           tests/test_minimax_h3_multigpu_receipt.py \
@@ -81,6 +56,6 @@ runs:
           tests/test_fork_loader_torch.py \
           tests/test_legacy_sources.py \
           tests/test_compose.py::test_full_free_releases_tensors_held_by_memory_execution_cache
-        .venv-torch/bin/python -m pytest -v \
+        .venv/bin/python -m pytest -v \
           .evidence-source/h3-parity/test_run_comparison.py \
           .evidence-source/model-family-comparison/test_validate.py

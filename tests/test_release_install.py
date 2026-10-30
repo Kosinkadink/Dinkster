@@ -617,8 +617,6 @@ def test_engine_constraints_include_the_locked_base_but_not_the_dev_tools(tmp_pa
     constraints = write_constraints(ROOT, tmp_path, [], "uv").read_text()
     requirements = constraints.replace("\\\n", "").splitlines()
     for requirement in (
-        "torch==2.14.1",
-        "torchvision==0.29.1",
         "numpy==2.5.1",
         "opencv-contrib-python-headless==5.0.0.93",
     ):
@@ -631,8 +629,9 @@ def test_engine_constraints_include_the_locked_base_but_not_the_dev_tools(tmp_pa
     assert "--index-url" not in constraints
 
 
+@pytest.mark.parametrize("python", ["3.13.9", "3.14.10"])
 def test_external_downloads_select_target_wheels_and_enforce_exported_hashes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, python: str
 ) -> None:
     source = tmp_path / "source"
     source.mkdir()
@@ -650,9 +649,10 @@ def test_external_downloads_select_target_wheels_and_enforce_exported_hashes(
         )
         return path
 
+    tag = f"cp{python.split('.')[0]}{python.split('.')[1]}"
     shared = wheel("shared", "py3-none-any")
-    win = wheel("native", "cp314-cp314-win_amd64")
-    linux = wheel("native", "cp314-cp314-manylinux_2_28_x86_64")
+    win = wheel("native", f"{tag}-{tag}-win_amd64")
+    linux = wheel("native", f"{tag}-{tag}-manylinux_2_28_x86_64")
     wheel("native", "cp313-cp313-win_amd64")
     wheel("native", "cp314-cp314-macosx_11_0_arm64")
     wheel("native", "cp312-abi3-win_amd64")
@@ -672,7 +672,7 @@ def test_external_downloads_select_target_wheels_and_enforce_exported_hashes(
             )
         lock += "]\n"
         marker = (
-            ' ; sys_platform == "win32" and python_full_version >= "3.14.10"'
+            f' ; sys_platform == "win32" and python_full_version >= "{python}"'
             if package == "windows_only"
             else ' ; sys_platform == "linux"'
             if package in {"legacy", "oldest"}
@@ -689,8 +689,46 @@ def test_external_downloads_select_target_wheels_and_enforce_exported_hashes(
         return path
 
     monkeypatch.setattr("scripts.build_release.write_constraints", export)
+    manifest = {
+        "format": "dinkster.base/1",
+        "variant": "win-cpu",
+        "platform": {"os": "windows", "arch": "x86_64"},
+        "python": python,
+        "interpreter": {},
+        "wheels": [],
+        "replaces": [],
+        "workerProtocol": 1,
+        "nvidia": None,
+        "archive": {"format": "tar+zstd", "parts": []},
+    }
+    identity = {key: value for key, value in manifest.items() if key != "id"}
+    identity["archive"] = {"format": "tar+zstd"}
+    manifest["id"] = (
+        "sha256:"
+        + hashlib.sha256(
+            json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("ascii")
+        ).hexdigest()
+    )
+    base_manifest = tmp_path / "base-manifest.json"
+    base_manifest.write_text(json.dumps(manifest))
+    linux_manifest = {
+        **manifest,
+        "variant": "linux-cpu",
+        "platform": {"os": "linux", "arch": "x86_64"},
+    }
+    identity = {key: value for key, value in linux_manifest.items() if key != "id"}
+    identity["archive"] = {"format": "tar+zstd"}
+    linux_manifest["id"] = (
+        "sha256:"
+        + hashlib.sha256(
+            json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("ascii")
+        ).hexdigest()
+    )
+    linux_base_manifest = tmp_path / "linux-base-manifest.json"
+    linux_base_manifest.write_text(json.dumps(linux_manifest))
+    base_manifests = [base_manifest, linux_base_manifest]
     output = tmp_path / "downloads"
-    result = download_external_wheels(tmp_path, output, "uv")
+    result = download_external_wheels(tmp_path, output, "uv", base_manifests)
     assert {path.name for path in result} == {
         shared.name,
         win.name,
@@ -702,28 +740,29 @@ def test_external_downloads_select_target_wheels_and_enforce_exported_hashes(
     assert all(path.read_bytes() == (source / path.name).read_bytes() for path in result)
     original = requirements[0]
     requirements[0] = "shared==1.0 --hash=sha256:" + "0" * 64
-    with pytest.raises(ValueError, match="no locked cp314 wheel for shared"):
-        download_external_wheels(tmp_path, tmp_path / "unauthorized", "uv")
+    with pytest.raises(ValueError, match=f"no locked {tag} wheel for shared"):
+        download_external_wheels(tmp_path, tmp_path / "unauthorized", "uv", base_manifests)
     requirements[0] = original
     linux.unlink()
     with pytest.raises(OSError):
-        download_external_wheels(tmp_path, tmp_path / "unavailable", "uv")
+        download_external_wheels(tmp_path, tmp_path / "unavailable", "uv", base_manifests)
     assert not (tmp_path / "unavailable" / linux.name).exists()
     linux.write_bytes(linux.name.encode())
     shared.write_bytes(b"x" * shared.stat().st_size)
     with pytest.raises(ValueError, match="does not match lock"):
-        download_external_wheels(tmp_path, tmp_path / "corrupt", "uv")
+        download_external_wheels(tmp_path, tmp_path / "corrupt", "uv", base_manifests)
     assert not (tmp_path / "corrupt" / shared.name).exists()
     (tmp_path / "uv.lock").write_text(
         lock.replace(
-            linux.as_uri(), linux.as_uri().replace("cp314-cp314-manylinux", "cp313-cp313-manylinux")
+            linux.as_uri(),
+            linux.as_uri().replace(f"{tag}-{tag}-manylinux", "cp312-cp312-manylinux"),
         )
     )
-    with pytest.raises(ValueError, match="no locked cp314 wheel for native on manylinux"):
-        download_external_wheels(tmp_path, tmp_path / "missing-target", "uv")
+    with pytest.raises(ValueError, match=f"no locked {tag} wheel for native on manylinux"):
+        download_external_wheels(tmp_path, tmp_path / "missing-target", "uv", base_manifests)
     requirements[:] = ["shared @ https://example.invalid/shared.whl"]
     with pytest.raises(ValueError, match="unsupported direct wheel requirement"):
-        download_external_wheels(tmp_path, tmp_path / "url-requirement", "uv")
+        download_external_wheels(tmp_path, tmp_path / "url-requirement", "uv", base_manifests)
 
 
 @pytest.mark.parametrize(
@@ -1164,8 +1203,9 @@ def test_main_release_retention_preserves_stable_drafts_and_newest_fifty(
     assert releases[1]["prerelease"] is False
 
 
+@pytest.mark.parametrize("python", ["3.13.9", "3.14.10"])
 def test_selected_published_bases_are_qualified_and_preserved_atomically(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, python: str
 ) -> None:
     from copy import deepcopy
 
@@ -1176,14 +1216,15 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
     boundary.write_text("PROTOCOL_VERSION = 11\n")
     pins = {"torch": "2.14.1", "torchvision": "0.29.1", "numpy": "2.5.1"}
     (tmp_path / "pyproject.toml").write_text(
-        "[dependency-groups]\nengine-base = "
-        + json.dumps([f"{name}=={version}" for name, version in pins.items()])
+        '[project]\nname = "dinkster"\nrequires-python = ">=3.12"\n'
+        "[dependency-groups]\nengine-base = " + json.dumps(["numpy==2.5.1"])
     )
+    tag = f"cp{python.split('.')[0]}{python.split('.')[1]}"
     lock = []
     wheels = []
     for name, version in pins.items():
         torch = name in {"torch", "torchvision"}
-        filename = f"{name}-{version}{'+cpu' if torch else ''}-cp314-cp314-win_amd64.whl"
+        filename = f"{name}-{version}{'+cpu' if torch else ''}-{tag}-{tag}-win_amd64.whl"
         digest = hashlib.sha256(name.encode()).hexdigest()
         url = f"https://example.invalid/{filename}"
         wheels.append(
@@ -1210,15 +1251,15 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
         format="dinkster.base/1",
         variant="win-cpu",
         platform=dict(os="windows", arch="x86_64"),
-        python="3.14.10",
+        python=python,
         interpreter=dict(
-            filename="cpython-3.14.10+20261026-x86_64-pc-windows-msvc-install_only_stripped.tar.gz",
+            filename=f"cpython-{python}+20261026-x86_64-pc-windows-msvc-install_only_stripped.tar.gz",
             release="20261026",
             executable="python/python.exe",
             size=23,
             sha256="a" * 64,
             url="https://github.com/astral-sh/python-build-standalone/releases/download/20261026/"
-            "cpython-3.14.10%2B20261026-x86_64-pc-windows-msvc-install_only_stripped.tar.gz",
+            f"cpython-{python}%2B20261026-x86_64-pc-windows-msvc-install_only_stripped.tar.gz",
         ),
         wheels=wheels,
         replaces=list(pins),
@@ -1238,7 +1279,7 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
         manifest = deepcopy(original)
         if change == "version":
             manifest["wheels"][-1]["version"] = "2.5.0"
-            manifest["wheels"][-1]["filename"] = "numpy-2.5.0-cp314-cp314-win_amd64.whl"
+            manifest["wheels"][-1]["filename"] = f"numpy-2.5.0-{tag}-{tag}-win_amd64.whl"
         elif change == "wheel-hash":
             manifest["wheels"][-1]["sha256"] = "0" * 64
         elif change == "torch-index":
@@ -1246,12 +1287,12 @@ def test_selected_published_bases_are_qualified_and_preserved_atomically(
         elif change == "protocol":
             manifest["workerProtocol"] = 10
         elif change == "python":
-            manifest["python"] = "3.14.9"
+            manifest["python"] = "3.11.9"
         elif change == "interpreter":
             manifest["interpreter"]["executable"] = "python/bin/python3"
         elif change == "wheel-platform":
             manifest["wheels"][0]["filename"] = (
-                "torch-2.14.1+cpu-cp314-cp314-manylinux_2_28_x86_64.whl"
+                f"torch-2.14.1+cpu-{tag}-{tag}-manylinux_2_28_x86_64.whl"
             )
         elif change == "missing-pin":
             manifest["wheels"] = manifest["wheels"][:-1]

@@ -13,9 +13,8 @@ import av
 import numpy as np
 import pytest
 from dinkster_api.v1 import (
-    CORE_COMBO,
     VIDEO_TYPE,
-    ComboWidget,
+    DynamicComboSpec,
     ExportSnapshot,
     MountWidget,
     Node,
@@ -85,23 +84,31 @@ def _tags(path: Path) -> tuple[dict[str, object], Any, int]:
 def test_save_video_schema_exposes_native_format_controls() -> None:
     schema = SaveVideo.define_schema()
     inputs = {input.id: input for input in schema.inputs}
-    (format_combo,) = schema.combos
+    format_combo = next(combo for combo in schema.combos if combo.id == "format")
+    top_codec = next(combo for combo in schema.combos if combo.id == "codec")
     assert schema.node_type == "SaveVideo"
     assert inputs["filename_prefix"].default == "video/ComfyUI"
     assert [option.key for option in format_combo.options] == ["auto", "mp4", "mkv", "webm"]
-    top_codec = inputs["codec"]
-    assert top_codec.type == TypeExpr.concrete(CORE_COMBO)
-    assert not top_codec.required and top_codec.hidden and top_codec.default == "auto"
-    assert isinstance(top_codec.widget, ComboWidget)
-    assert top_codec.widget.options == ("auto", "h264", "av1")
+    assert isinstance(top_codec, DynamicComboSpec)
+    assert not top_codec.required and top_codec.hidden and top_codec.default is None
+    assert [option.key for option in top_codec.options] == ["auto", "h264", "av1"]
     nested_codecs = [option.inputs[0] for option in format_combo.options]
     assert all(codec.id == "codec" and codec.required for codec in nested_codecs)
     assert all(codec.default is None for codec in nested_codecs)
+    assert [[option.key for option in codec.options] for codec in nested_codecs] == [
+        ["auto", "h264", "av1"],
+        ["auto", "h264", "av1"],
+        ["auto", "h264", "av1"],
+        ["auto", "av1"],
+    ]
+    assert top_codec.options == nested_codecs[0].options
     wire = schema_to_wire(schema)
     codec_wire = next(entry for entry in wire["interface"] if entry["id"] == "codec")
-    assert codec_wire["role"] == "input"
+    assert codec_wire["role"] == "dynamicCombo"
     assert codec_wire["hidden"] is True
-    assert codec_wire["default"] == "auto"
+    assert codec_wire["required"] is False
+    assert "default" not in codec_wire
+    assert [option["key"] for option in codec_wire["options"]] == ["auto", "h264", "av1"]
     assert schema_from_wire(wire) == schema
     effective = elaborate(
         schema,
@@ -116,7 +123,6 @@ def test_save_video_schema_exposes_native_format_controls() -> None:
         "video",
         "filename_prefix",
         "format.codec.encoding.crf",
-        "codec",
         "mount",
     ]
     mount = inputs["mount"]
