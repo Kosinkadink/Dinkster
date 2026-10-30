@@ -9,6 +9,7 @@ import importlib.metadata
 import json
 import math
 import os
+import platform
 import secrets
 import shlex
 import statistics
@@ -475,7 +476,15 @@ def run_worker(args: argparse.Namespace) -> int:
     median_sample_seconds = statistics.median(sample_seconds)
     median_whole_job_seconds = statistics.median(whole_job_seconds)
     properties = torch.cuda.get_device_properties(0)
-    resources = cast("Any", importlib.import_module("resource"))
+    if sys.platform == "win32":
+        import psutil
+
+        peak_host_rss_bytes = cast(Any, psutil.Process().memory_info()).peak_wset
+    else:
+        import resource
+
+        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        peak_host_rss_bytes = int(peak if sys.platform == "darwin" else peak * 1024)
     loaded_size = int(model.loaded_size())
     result = {
         "status": "PASS",
@@ -523,7 +532,7 @@ def run_worker(args: argparse.Namespace) -> int:
         },
         "peak_allocated_bytes": torch.cuda.max_memory_allocated(),
         "peak_reserved_bytes": torch.cuda.max_memory_reserved(),
-        "peak_host_rss_bytes": resources.getrusage(resources.RUSAGE_SELF).ru_maxrss * 1024,
+        "peak_host_rss_bytes": peak_host_rss_bytes,
         "model_residency": {
             "logical_weight_bytes": model_size,
             "loaded_bytes": loaded_size,
@@ -721,7 +730,7 @@ def _classify_host(gpus: Sequence[dict[str, Any]]) -> str:
         return "X570"
     if names == {"NVIDIA RTX PRO 6000 Blackwell Workstation Edition"}:
         return "RipperPC"
-    return os.uname().nodename
+    return platform.node()
 
 
 def _median_seconds(result: dict[str, Any]) -> float:
@@ -990,7 +999,7 @@ def _mint_sequence_matrix(args: argparse.Namespace, artifact: dict[str, Any]) ->
             "u4_beats_u2": u4_beats_u2,
         },
         "environment": {
-            "hostname": os.uname().nodename,
+            "hostname": platform.node(),
             "nvidia_smi_topology": _nvidia_smi("topo", "-m"),
             "nvidia_smi_p2p_read": _nvidia_smi("topo", "-p2p", "r"),
             "nvidia_smi_p2p_write": _nvidia_smi("topo", "-p2p", "w"),
@@ -1150,7 +1159,7 @@ def run_mint(args: argparse.Namespace) -> int:
         },
         "environment": {
             "host": host,
-            "hostname": os.uname().nodename,
+            "hostname": platform.node(),
             "nvidia_smi_topology": _nvidia_smi("topo", "-m"),
             "nvidia_smi_p2p_read": _nvidia_smi("topo", "-p2p", "r"),
             "nvidia_smi_p2p_write": _nvidia_smi("topo", "-p2p", "w"),

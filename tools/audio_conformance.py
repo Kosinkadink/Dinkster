@@ -36,6 +36,7 @@ def measure(path: Path) -> dict[str, object]:
     from dinkster_assets import AssetRef, MountSnapshotResolver, digest_file
     from dinkster_nodes_media_io.audio import LoadAudio, SaveAudio
     from dinkster_nodes_media_io.audio_ops import TrimAudio
+    from dinkster_schema.reporting import capture_saved_artifacts
     from dinkster_values.audio_codec import audio_window, effective_audio_facts
 
     class Resolver:
@@ -82,7 +83,10 @@ def measure(path: Path) -> dict[str, object]:
         value = LoadAudio.execute(audio=ref)["audio"]
         source_facts = effective_audio_facts(value)
         trimmed = TrimAudio.execute(audio=value, start=7190.0, duration=10.0)["audio"]
-        saved = cast(list[AssetRef], SaveAudio.execute(audio=trimmed)["audios"])[0]
+        with capture_saved_artifacts() as claims:
+            saved = cast(list[AssetRef], SaveAudio.execute(audio=trimmed)["audios"])[0]
+        if claims != [saved.to_wire()]:
+            raise RuntimeError("audio save did not attach its published asset")
         resolved = AssetRef.from_wire(saved.to_wire(), MountSnapshotResolver(snapshot))
         output = LoadAudio.execute(audio=resolved)["audio"]
         facts = effective_audio_facts(output)
@@ -108,7 +112,11 @@ def measure(path: Path) -> dict[str, object]:
         "source_bytes": path.stat().st_size,
         "saved_bytes": saved.size,
     }
-    if report["rss_growth_bytes"] >= 64 * 1024 * 1024 or facts["frames"] != 480000:
+    if (
+        report["rss_growth_bytes"] >= 64 * 1024 * 1024
+        or facts["frames"] != 480000
+        or source_facts["frames"] != 345600000
+    ):
         raise AssertionError(report)
     return report
 

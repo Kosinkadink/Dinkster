@@ -306,8 +306,8 @@ def test_moss_edit_ordinary_manifest_hosts(tmp_path: Path, in_process: bool) -> 
                                 "vae": Link("source", "vae"),
                                 "prompt": "edit",
                                 "edit_format": edit_format,
-                                "images.image_2": Link("source", "image2"),
-                                "images.image_10": Link("source", "image10"),
+                                "images.image_9": Link("source", "image2"),
+                                "images.image_0": Link("source", "image10"),
                             },
                         )
                         for name, edit_format in (

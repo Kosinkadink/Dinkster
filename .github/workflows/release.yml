@@ -2,8 +2,25 @@ name: Versioned wheel release
 
 on:
   push:
+    branches: [main]
     tags:
       - "v*.*.*"
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - scripts/build_release.py
+      - scripts/build_official_packs.py
+      - scripts/acquire_engine_bases.py
+      - scripts/prune_engine_prereleases.py
+      - scripts/download_frontend.py
+      - scripts/release_sources.json
+      - scripts/verify_release_install.py
+      - packages/dinkster-supervisor/**
+      - src/dinkster/frontend.py
+      - tests/test_environment_archives.py
+      - tests/test_environment_generations.py
+      - tests/test_release_install.py
+      - tests/test_frontend_artifact.py
 
 permissions:
   contents: read
@@ -18,49 +35,51 @@ jobs:
 
   build:
     needs: validation
-    runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
+    permissions:
+      actions: read
+      contents: read
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
           clean: true
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - name: Select the pinned frontend source
-        id: frontend
-        run: |
-          echo "ref=$(python3 -c 'import json; print(json.load(open("scripts/release_sources.json"))["commit"])')" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
-        with:
-          clean: true
-          repository: Kosinkadink/Dinkster-Frontend
-          ref: ${{ steps.frontend.outputs.ref }}
-          path: .release/frontend
-          persist-credentials: false
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10.31.0
-          dest: ${{ runner.tool_cache }}/setup-pnpm
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: .release/frontend/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
-        working-directory: .release/frontend
-      - run: pnpm --filter @dinkster/app build
-        working-directory: .release/frontend
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: uv.lock
+      - name: Download the pinned frontend bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run --no-project --python 3.12 scripts/download_frontend.py --output .release/frontend.zip
       - name: Build the complete release contract
+        env:
+          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+          UV_PROJECT_ENVIRONMENT: .release/pack-builder
         run: |
-          uv run --no-project --python 3.12 scripts/build_release.py \
-            --tag "$GITHUB_REF_NAME" \
-            --frontend-root .release/frontend \
-            --frontend-dist .release/frontend/packages/app/dist
+          arguments=()
+          if [ -n "$RELEASE_TAG" ]; then arguments+=(--tag "$RELEASE_TAG"); fi
+          uv sync --locked --no-dev --package dinkster-registry --package dinkster-workers
+          "$UV_PROJECT_ENVIRONMENT/bin/python" - <<'PY'
+          import os
+          from pathlib import Path
+          from scripts.build_official_packs import build
+          from scripts.build_release import development_version, release_version
+          root = Path.cwd()
+          tag = os.environ['RELEASE_TAG']
+          version = release_version(root, tag) if tag else development_version(root)
+          build(root, root / '.release/official-packs', version=version.split('+', 1)[0])
+          PY
+          for payload in .release/official-packs/*; do arguments+=(--artifact "$payload"); done
+          uv run --no-project --python 3.12 --with packaging==26.2 -m scripts.build_release \
+            "${arguments[@]}" \
+            --download-external-wheels \
+            --frontend-artifact .release/frontend.zip
           uvx twine check dist/*.whl
+          (cd dist && sha256sum -c SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
           name: wheel-release
@@ -69,18 +88,21 @@ jobs:
 
   install:
     needs: build
-    runs-on: ${{ fromJSON(vars.CI_RUNNERS)[matrix.runner] }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: linux
-            runner: linux
+            runner: ubuntu-latest
+            python: "3.14.10"
           - os: windows
-            runner: windows
+            runner: windows-latest
+            python: "3.14.10"
           - os: macos
-            runner: macos
+            runner: macos-latest
+            python: "3.12"
     steps:
       - name: Expose Git Bash on Windows
         if: runner.os == 'Windows'
@@ -101,47 +123,150 @@ jobs:
           path: ${{ runner.temp }}/dinkster-release
       - uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
           enable-cache: true
           cache-dependency-glob: uv.lock
       - name: Install and launch from wheels
         shell: bash
+        env:
+          RELEASE_PYTHON: ${{ matrix.python }}
         run: |
-          uv venv --python 3.12 "$RUNNER_TEMP/dinkster-release-venv"
+          uv venv --seed --python "$RELEASE_PYTHON" "$RUNNER_TEMP/dinkster-release-venv"
           python="$RUNNER_TEMP/dinkster-release-venv/bin/python"
           if [ "$RUNNER_OS" = Windows ]; then
             python="$RUNNER_TEMP/dinkster-release-venv/Scripts/python.exe"
           fi
-          uv pip install --python "$python" \
-            --no-deps \
+          "$python" -m pip install \
             --require-hashes \
             --find-links "$RUNNER_TEMP/dinkster-release" \
             --requirement "$RUNNER_TEMP/dinkster-release/constraints.txt"
+          "$python" -m pip check
           "$python" -m dinkster.cli --help
-          "$python" -c "from dinkster_frontend import bundle_path; assert bundle_path().joinpath('index.html').is_file()"
-          "$python" scripts/verify_release_install.py "$GITHUB_WORKSPACE" --python "$python"
+          "$python" -c "from dinkster.frontend import discover_frontend_bundle; assert discover_frontend_bundle() is not None"
+          "$python" scripts/verify_release_install.py "$GITHUB_WORKSPACE" --python "$python" --require-frontend
+      - name: Verify streaming base extraction on the host filesystem
+        shell: bash
+        run: |
+          uv sync --locked --all-packages
+          uv run --locked python -m pytest -q tests/test_environment_archives.py
 
   release:
     needs: install
-    runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      engine-id: ${{ steps.identity.outputs.engine-id }}
+      engine-tag: ${{ steps.identity.outputs.tag }}
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
           name: wheel-release
           path: dist
       - uses: actions/github-script@v7
+        id: identity
         with:
           script: |
+            const fs = require('fs');
+            const crypto = require('crypto');
+            const bytes = fs.readFileSync('dist/release-manifest.json');
+            const manifest = JSON.parse(bytes.toString('utf8'));
+            if (manifest.commit !== context.sha) throw new Error('Release commit mismatch');
+            core.setOutput('engine-id', 'sha256:' + crypto.createHash('sha256').update(bytes).digest('hex'));
+            core.setOutput('tag', manifest.tag);
             try {
-              await github.rest.repos.getReleaseByTag({ ...context.repo, tag: context.ref.replace('refs/tags/', '') });
+              await github.rest.repos.getReleaseByTag({ ...context.repo, tag: manifest.tag });
               core.setFailed('Refusing to overwrite an existing release');
             } catch (error) {
               if (error.status !== 404) throw error;
             }
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.identity.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          prerelease: ${{ github.ref == 'refs/heads/main' }}
+          make_latest: ${{ github.ref != 'refs/heads/main' }}
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: dist/*
+      - name: Keep the newest main prereleases
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/prune_engine_prereleases.py
+
+  publish:
+    needs: release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/dinkster/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-release
+          path: dist
+      - name: Select the engine distribution
+        run: |
+          mkdir publish
+          cp dist/dinkster-[0-9]*.whl publish/
+      - name: Publish the engine with PyPI trusted publishing
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: publish/
+          skip-existing: true
+
+  publish-api:
+    needs: release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi-dinkster-api
+      url: https://pypi.org/project/dinkster-api/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-release
+          path: dist
+      - name: Select the API distribution
+        run: |
+          mkdir publish
+          cp dist/dinkster_api-[0-9]*.whl publish/
+      - name: Publish the API with PyPI trusted publishing
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: publish/
+          skip-existing: true
+
+  publish-supervisor:
+    needs: release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi-dinkster-supervisor
+      url: https://pypi.org/project/dinkster-supervisor/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-release
+          path: dist
+      - name: Select the supervisor distribution
+        run: |
+          mkdir publish
+          cp dist/dinkster_supervisor-[0-9]*.whl publish/
+      - name: Publish the release wheels with PyPI trusted publishing
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: publish/
+          skip-existing: true

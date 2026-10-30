@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import re
+from typing import Any, cast
 
 import pytest
+from dinkster_api.v1 import schema_to_wire
 from dinkster_nodes_comfy.text import (
     CaseConverter,
     ConvertArrayToString,
@@ -22,6 +24,27 @@ from dinkster_nodes_comfy.text import (
     StringSubstring,
     StringTrim,
 )
+
+
+def test_format_wire_preserves_optional_named_values() -> None:
+    interface = cast(
+        list[dict[str, Any]], schema_to_wire(StringFormat.define_schema())["interface"]
+    )
+    assert [item["id"] for item in interface] == ["values", "f_string", "STRING"]
+    family, text, output = interface
+    assert family["role"] == "inputFamily"
+    assert family["required"] is True
+    assert family["minMembers"] == 0
+    assert family["memberNames"] == list("abcdefghijklmnopqrstuvwxyz")
+    assert family["template"] == [
+        {"role": "input", "id": "value", "required": False, "type": {"kind": "wildcard"}}
+    ]
+    assert text["role"] == "input"
+    assert text["required"] is True
+    assert text["type"] == {"kind": "concrete", "types": ["STRING"]}
+    assert text["default"] == "{a}"
+    assert output["role"] == "output"
+    assert output["type"] == {"kind": "concrete", "types": ["STRING"]}
 
 
 def test_format_uses_python_formatting() -> None:

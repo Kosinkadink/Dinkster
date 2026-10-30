@@ -22,6 +22,8 @@ from dinkster_values import render_splat_ply
 
 from tests.test_splat_codec import splat_value
 
+pytestmark = pytest.mark.usefixtures("saved_artifact_context")
+
 
 def _mount(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
     root = tmp_path / "out"

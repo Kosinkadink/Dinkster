@@ -21,14 +21,15 @@ import json
 import os
 import tempfile
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import cast
 
 from dinkster_caches import MemoryLRUCache
-from dinkster_engine import Engine, EngineEvent
+from dinkster_engine import Engine, EngineEvent, ExecutionRuntime
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_nodes_dev import PACK_NODES, register_dev_types
+from dinkster_protocol import SavedArtifact
 from dinkster_schema import (
     InputSpec,
     Node,
@@ -41,6 +42,7 @@ from dinkster_schema import (
 from dinkster_values import CORE_FLOAT, CORE_STRING, TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker, load_manifest
 from dinkster_workers.host import load_pack
+from dinkster_workers.saved_artifacts import SavedArtifactAuthority
 
 from .compose import default_pack_specs
 
@@ -136,12 +138,25 @@ async def run_demo() -> None:
     nodes = [*default_nodes, *PACK_NODES, GpuDelay]
     schemas = build_schemas(nodes)
     worker = InProcessWorker(build_node_types(nodes), registry)
+    out_dir = grant_output_mount(Path(tempfile.mkdtemp(prefix="dinkster-demo-")))
+    authority = SavedArtifactAuthority(os.environ["DINKSTER_MOUNTS_SNAPSHOT"])
+
+    async def validate_saved(
+        node_id: str, claims: Sequence[Mapping[str, object]], started_at_ns: int
+    ) -> tuple[SavedArtifact, ...]:
+        return await asyncio.to_thread(authority.capture_mounted, claims, node_id, started_at_ns)
+
+    runtime = ExecutionRuntime(worker=worker, validate_saved_artifacts=validate_saved)
     cache = MemoryLRUCache()
     engine = Engine(
-        schemas=schemas, registry=registry, worker=worker, cache=cache, on_event=print_event
+        schemas=schemas,
+        registry=registry,
+        worker=worker,
+        pin_execution=lambda: runtime,
+        cache=cache,
+        on_event=print_event,
     )
 
-    out_dir = grant_output_mount(Path(tempfile.mkdtemp(prefix="dinkster-demo-")))
     targets = ["stats", "save", "blended"]
 
     print("run 1: cold - everything executes")

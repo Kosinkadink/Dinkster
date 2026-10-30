@@ -16,7 +16,7 @@ from dinkster_api.v1 import (
     OutputSpec,
     TypeExpr,
     initialize_inference_process,
-    materialize_latent,
+    materialize_voxel,
 )
 
 
@@ -47,7 +47,7 @@ class Trellis2ShapeStage(Node):
     @classmethod
     def execute(cls, *, positive: Any, negative: Any, voxel: Any) -> Mapping[str, object]:
         torch = importlib.import_module("torch")
-        decoded = materialize_latent(voxel.data).unsqueeze(1)
+        decoded = materialize_voxel(voxel).data.unsqueeze(1)
         coords = torch.argwhere(decoded.bool())[:, [0, 2, 3, 4]].int()
         resolution = int(decoded.shape[-1])
         if coords.shape[0] == 0:

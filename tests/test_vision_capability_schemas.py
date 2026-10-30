@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import subprocess
 import sys
+from contextlib import AbstractAsyncContextManager
 from importlib import import_module
 from pathlib import Path
 
@@ -30,7 +31,7 @@ from dinkster_schema import ComboWidget, NumberWidget, TypeExpr
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import IsolatedWorker
 
-from dinkster.compose import compose_serving
+from dinkster.compose import Composition
 
 CAPABILITIES = (
     (DetectObjects, "dinkster.detection.detect", DETECT_PROVIDER_CHOICE),
@@ -199,10 +200,13 @@ def test_capability_schemas_share_detection_value_contract() -> None:
     assert track.outputs[1].type == mask
 
 
-def test_default_composition_serves_standard_capability_choices() -> None:
+def test_default_composition_serves_standard_capability_choices(
+    shared_default_composition: tuple[asyncio.Runner, AbstractAsyncContextManager[Composition]],
+) -> None:
+    runner, defaults = shared_default_composition
+
     async def scenario() -> None:
-        composition = await compose_serving()
-        try:
+        async with defaults as composition:
             expected = {
                 DETECT_PROVIDER_CHOICE: (
                     "dinkster-vision-detr",
@@ -227,10 +231,8 @@ def test_default_composition_serves_standard_capability_choices() -> None:
             )
             for choice in MODEL_EDGE_PROVIDER_CHOICES:
                 assert composition.choices[choice] == ("dinkster-vision-hed",)
-        finally:
-            await composition.close()
 
-    asyncio.run(scenario())
+    runner.run(scenario())
 
 
 @pytest.mark.parametrize(

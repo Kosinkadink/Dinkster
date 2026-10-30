@@ -31,7 +31,7 @@ from dinkster_protocol import (
 )
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import host as host_module
-from dinkster_workers.boundary import BoundaryError, ValueCodec, write_frame
+from dinkster_workers.boundary import PROTOCOL_VERSION, BoundaryError, ValueCodec, write_frame
 from dinkster_workers.in_process import InProcessWorker
 from dinkster_workers.session import BoundarySession
 from dinkster_workers.workgroup_session import (
@@ -731,6 +731,7 @@ def test_protocol_corruption_closes_boundary_and_fails_pending_receive() -> None
                 writer,
                 {
                     "type": "hello",
+                    "protocol": PROTOCOL_VERSION,
                     "pack": "test",
                     "schemas": {},
                     "workerInstance": "worker-a",

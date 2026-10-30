@@ -152,6 +152,7 @@ def test_ltx_audio_nodes_execute_twice_through_both_production_hosts(
             (tmp_path / "ltx_audio_fixture.py").write_text(
                 "from test_ltx_audio_torch import LTXAudioInspect, LTXAudioSource\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "from dinkster_nodes_media_io import register_media_types\n"
                 "NODES = (*COMFY_NODES, LTXAudioSource, LTXAudioInspect)\n"
                 "\ndef register_types(registry):\n"
@@ -164,6 +165,10 @@ def test_ltx_audio_nodes_execute_twice_through_both_production_hosts(
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["ltx-audio-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "ltx_audio_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "ltx_audio_fixture:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "ltx_audio_fixture:register_types",

@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import ast
 import asyncio
+import importlib.metadata
 import inspect
 import json
 import os
@@ -40,7 +41,8 @@ def annotate_files(value: Any) -> Any:
             if isinstance(options, dict):
                 choices = value[0] if isinstance(value[0], FileChoices) else options.get("options")
                 if isinstance(choices, FileChoices) or any(
-                    options.get(key) for key in ("image_upload", "audio_upload", "video_upload")
+                    options.get(key)
+                    for key in ("image_upload", "audio_upload", "video_upload", "file_upload")
                 ):
                     if len(converted) == 1:
                         converted.append({})
@@ -72,6 +74,52 @@ def annotated_file_arguments(cls: type) -> set[str]:
         and call.args
         and isinstance(call.args[0], ast.Name)
         and call.args[0].id in parameters
+    }
+
+
+def directory_file_inputs(cls: type) -> set[str]:
+    """Trace raw directory listings into V1 combo declarations."""
+    try:
+        tree = ast.parse(textwrap.dedent(inspect.getsource(cls.INPUT_TYPES)))
+    except (AttributeError, OSError, TypeError):
+        return set()
+    names: set[str] = set()
+
+    def from_directory(value: ast.AST) -> bool:
+        return any(
+            (isinstance(item, ast.Name) and item.id in names)
+            or (
+                isinstance(item, ast.Call)
+                and isinstance(item.func, ast.Attribute)
+                and isinstance(item.func.value, ast.Name)
+                and item.func.value.id == "os"
+                and item.func.attr == "listdir"
+            )
+            for item in ast.walk(value)
+        )
+
+    assignments = [item for item in ast.walk(tree) if isinstance(item, ast.Assign)]
+    while True:
+        before = len(names)
+        for assignment in assignments:
+            if from_directory(assignment.value):
+                names.update(
+                    target.id for target in assignment.targets if isinstance(target, ast.Name)
+                )
+        if len(names) == before:
+            break
+    return {
+        key.value
+        for statement in ast.walk(tree)
+        if isinstance(statement, ast.Return) and statement.value is not None
+        for mapping in ast.walk(statement.value)
+        if isinstance(mapping, ast.Dict)
+        for key, value in zip(mapping.keys, mapping.values, strict=True)
+        if isinstance(key, ast.Constant)
+        and isinstance(key.value, str)
+        and isinstance(value, (ast.Tuple, ast.List))
+        and value.elts
+        and from_directory(value.elts[0])
     }
 
 
@@ -121,6 +169,42 @@ def v3_contract(schema: Any) -> dict[str, Any]:
     }
 
 
+def annotate_environment_options(name: str, inputs: dict[str, Any]) -> None:
+    declarations: dict[str, tuple[str, dict[str, str]]] = {
+        "ModelAttentionBackend": (
+            "attention",
+            {
+                "value": "comfy kitchen attention",
+                "condition": "comfy_kitchen.int8_attention_is_available()",
+            },
+        ),
+        **{
+            node: (
+                "device",
+                {
+                    "pattern": r"gpu:[0-9]+",
+                    "condition": "len(comfy.model_management.get_all_torch_devices()) > 1",
+                },
+            )
+            for node in ("SelectModelDevice", "SelectCLIPDevice", "SelectVAEDevice")
+        },
+    }
+    if name not in declarations:
+        return
+    parameter, declaration = declarations[name]
+    for group in ("required", "optional"):
+        if parameter in inputs.get(group, {}):
+            spec = inputs[group][parameter]
+            if len(spec) == 1:
+                spec.append({})
+            observed = spec[0] if isinstance(spec[0], list) else spec[1]["options"]
+            spec[1].update(
+                environment_options=True,
+                baseline_options=list(observed),
+                possible_options=[declaration],
+            )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("checkout", type=Path)
@@ -136,8 +220,12 @@ def main() -> None:
     import comfy.options
 
     comfy.options.enable_args_parsing()
+    import comfy.model_management
     import folder_paths
     import nodes
+    import server
+    import torch
+    from app.assets.manager import default_asset_manager
 
     get_filename_list = folder_paths.get_filename_list
 
@@ -155,8 +243,9 @@ def main() -> None:
     )
 
     async def dump() -> dict[str, Any]:
+        server.PromptServer(asyncio.get_running_loop(), default_asset_manager())
         base_names = set(nodes.NODE_CLASS_MAPPINGS)
-        await nodes.init_builtin_extra_nodes()
+        import_failures = await nodes.init_builtin_extra_nodes()
         dataset_cls = nodes.NODE_CLASS_MAPPINGS.get("LoadTrainingDataset")
         if dataset_cls is not None:
             dataset_module = inspect.getmodule(dataset_cls)
@@ -178,12 +267,16 @@ def main() -> None:
             row["engine_semantics"] = engine_semantics(cls, row["file"])
             try:
                 inputs = annotate_files(cls.INPUT_TYPES())
+                annotate_environment_options(name, inputs)
                 row["input_types"] = inputs
-                source_files = annotated_file_arguments(cls)
+                source_files = annotated_file_arguments(cls) | directory_file_inputs(cls)
                 for group in ("required", "optional"):
                     for key, spec in inputs.get(group, {}).items():
                         options = spec[1] if len(spec) > 1 else {}
                         if options.get("file_input") or key in source_files:
+                            if len(spec) == 1:
+                                spec.append(options)
+                            options["file_input"] = True
                             row["file_inputs"].append(key)
             except Exception as exc:
                 row["input_types"] = None
@@ -206,6 +299,31 @@ def main() -> None:
             rows.append(row)
         return {
             "source_commit": commit,
+            "environment": {
+                "python": sys.version.split()[0],
+                "platform": sys.platform,
+                "device_policy": "cpu",
+                "cuda_visible_devices": os.environ["CUDA_VISIBLE_DEVICES"],
+                "argv": list(sys.argv),
+                "torch_version": str(torch.__version__),
+                "cuda_available": torch.cuda.is_available(),
+                "device_count": len(comfy.model_management.get_all_torch_devices()),
+                "packages": {
+                    distribution.metadata["Name"]: distribution.version
+                    for distribution in importlib.metadata.distributions()
+                    if distribution.metadata["Name"].lower().replace("_", "-")
+                    in {
+                        "comfy-kitchen",
+                        "comfy-aimdo",
+                        "comfy-angle",
+                        "kornia",
+                        "spandrel",
+                        "spandrel-extra-arches",
+                        "pyopengl",
+                    }
+                },
+            },
+            "builtin_import_failures": import_failures,
             "count_nodes_py": len(base_names),
             "count_total": len(rows),
             "engine_exclusions": {

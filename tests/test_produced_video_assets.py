@@ -155,7 +155,7 @@ def test_source_return_does_not_materialize_payloads(
 
 @pytest.mark.parametrize("type_id", [VIDEO_TYPE, "dinkster.layers", AUDIO_TYPE, "custom.asset"])
 @pytest.mark.parametrize("asset_input", [None, ASSET_TYPE, f"asset<{VIDEO_TYPE}>"])
-def test_returned_input_sources_need_no_produced_asset_vault(
+def test_returned_input_sources_need_no_produced_output_scratch(
     type_id: str, asset_input: str | None
 ) -> None:
     class Unreadable:

@@ -187,6 +187,7 @@ def test_vision_output_ordinary_manifest(tmp_path: Path, in_process: bool) -> No
             (tmp_path / "vision_fixture.py").write_text(
                 "from test_vision_output_torch import FIXTURES\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, *FIXTURES)\n",
                 encoding="ascii",
             )
@@ -195,6 +196,10 @@ def test_vision_output_ordinary_manifest(tmp_path: Path, in_process: bool) -> No
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["vision-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "vision_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "vision_fixture:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "vision_fixture:register_inference_types",

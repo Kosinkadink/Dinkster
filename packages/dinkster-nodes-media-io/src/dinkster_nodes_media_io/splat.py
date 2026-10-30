@@ -23,6 +23,7 @@ from dinkster_api.v1 import (
     SaveTargetWidget,
     SourceFilenameSpec,
     TypeExpr,
+    attach_saved_artifact,
     decode_splat_file,
     render_splat_ply,
 )
@@ -108,6 +109,7 @@ class SaveGaussianSplat(Node):
             media_type=SPLAT_MEDIA_TYPE,
             limit=MAX_SPLAT_PLY_BYTES,
         )
+        attach_saved_artifact(ref.to_wire())
         return cls.outputs(splat=ref)
 
 

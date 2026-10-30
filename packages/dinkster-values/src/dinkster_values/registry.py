@@ -289,6 +289,7 @@ class BatchMergeSpec:
 class TypeRegistry:
     def __init__(self) -> None:
         self._types: dict[TypeId, TypeSpec] = {}
+        self._declared_types: dict[str, frozenset[TypeId]] = {}
         self._renditions: dict[TypeId, list[RenditionSpec]] = {}
         self._asset_decoders: dict[TypeId, AssetDecoderSpec] = {}
         self._batch_merges: dict[TypeId, BatchMergeSpec] = {}
@@ -314,6 +315,7 @@ class TypeRegistry:
         """Return an independent registry with the same registrations."""
         copied = TypeRegistry()
         copied._types = dict(self._types)
+        copied._declared_types = dict(self._declared_types)
         copied._renditions = {
             type_id: list(renditions) for type_id, renditions in self._renditions.items()
         }
@@ -328,6 +330,7 @@ class TypeRegistry:
     def replace_from(self, other: TypeRegistry) -> None:
         """Publish all registrations from a staged registry before exposure."""
         self._types = dict(other._types)
+        self._declared_types = dict(other._declared_types)
         self._renditions = {
             type_id: list(renditions) for type_id, renditions in other._renditions.items()
         }
@@ -410,9 +413,13 @@ class TypeRegistry:
         self._owners.update(
             dict.fromkeys((tid for tid in type_ids if tid not in BUILTIN_TYPE_IDS), owner)
         )
+        self._declared_types[owner] = self._declared_types.get(owner, frozenset()) | frozenset(
+            type_ids
+        )
 
     def remove_pack_types(self, owner: str) -> None:
         """Release a pack's claims, codecs, and type-specific registrations."""
+        self._declared_types.pop(owner, None)
         removed = {
             type_id
             for type_id, holder in self._owners.items()
@@ -873,8 +880,16 @@ class TypeRegistry:
             # stamp, so it is codable exactly where dinkster.asset is - when
             # the stamp is well-formed and its innermost atom is real.
             atom = runtime_type_atom(type_id)
-            return atom is not None and ASSET_BASE_TYPE in self._types and atom in self._types
+            return (
+                atom is not None and ASSET_BASE_TYPE in self._types and self.has_type_identity(atom)
+            )
         return type_id in self._types
+
+    def has_type_identity(self, type_id: TypeId) -> bool:
+        """Whether a codec or a worker declaration establishes this atom."""
+        return type_id in self._types or any(
+            type_id in declared for declared in self._declared_types.values()
+        )
 
     def type_ids(self) -> tuple[TypeId, ...]:
         """All registered atom type ids, in registration order. Tooling
@@ -893,7 +908,8 @@ class TypeRegistry:
             atom = runtime_type_atom(type_id)
             if atom is None:
                 raise KeyError(f"malformed asset type id: {type_id!r}")
-            if atom not in self._types:
+            # References need the target's identity, not its local codec.
+            if not self.has_type_identity(atom):
                 raise KeyError(
                     f"cannot resolve '{type_id}': its decode-target atom "
                     f"'{atom}' is not a registered value type"
@@ -1059,11 +1075,20 @@ def register_histogram_type(registry: TypeRegistry) -> TypeSpec:
 
 def register_core_types(registry: TypeRegistry) -> None:
     """Primitives are envelope types like everything else (hazard H2)."""
+    # Imported here because curve depends on this module's TypeRegistry.
+    from .curve import register_curve_type
+
     # Core scalars inline as themselves (DESIGN 3.5): peeking an int or a
     # short string never needs a payload round trip. core.absent does NOT
     # inline - absence has its own channel, never a smuggled null.
     for type_id in (CORE_INT, CORE_FLOAT, CORE_STRING):
         registry.register(type_id, inline=lambda obj: obj)
+    registry.register_rendition(
+        CORE_STRING,
+        "text",
+        mime="text/plain",
+        render=lambda obj: cast(str, obj).encode("utf-8"),
+    )
     registry.register(
         CORE_COMBO,
         coerce=_coerce_combo,
@@ -1074,6 +1099,7 @@ def register_core_types(registry: TypeRegistry) -> None:
     registry.register(DICT_TYPE)
     registry.register(ARRAY_TYPE)
     register_histogram_type(registry)
+    register_curve_type(registry)
     # core.absent registers with the default codec (payload is None, which
     # JSON-encodes) so absences cross boundaries and caches like any value.
     registry.register(CORE_ABSENT)
