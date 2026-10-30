@@ -385,6 +385,31 @@ class NonFile:
 
     def run(self, mode):
         return mode
+
+class V3File:
+    FUNCTION = "EXECUTE_NORMALIZED"
+
+    @classmethod
+    def GET_SCHEMA(cls):
+        raise AssertionError("source inspection must not execute schemas")
+
+    @classmethod
+    def EXECUTE_NORMALIZED(cls, **kwargs):
+        return cls.execute(**kwargs)
+
+    @classmethod
+    def execute(cls, filename, optional_filename, category, mode):
+        path = folder_paths.get_full_path_or_raise(category, filename)
+        optional = folder_paths.get_full_path("models", optional_filename)
+        other = different_owner.get_full_path_or_raise("models", mode)
+        fixed = folder_paths.get_full_path_or_raise("models", "constant.bin")
+        local = "local.bin"
+        ignored = folder_paths.get_full_path_or_raise("models", local)
+        return path, optional, other, fixed, ignored
+
+    @classmethod
+    def validate(cls, mode):
+        return folder_paths.get_full_path_or_raise("models", mode)
 """)
     spec = importlib.util.spec_from_file_location("source_nodes", source)
     assert spec is not None and spec.loader is not None
@@ -392,6 +417,7 @@ class NonFile:
     spec.loader.exec_module(module)
     assert annotated_file_arguments(module.LoadExample) == {"latent"}
     assert annotated_file_arguments(module.NonFile) == set()
+    assert annotated_file_arguments(module.V3File) == {"filename", "optional_filename"}
     assert directory_file_inputs(module.LoadExample) == {"latent"}
     assert directory_file_inputs(module.NonFile) == set()
 
