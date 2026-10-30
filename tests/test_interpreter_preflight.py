@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -11,12 +12,54 @@ from pathlib import Path
 
 import pytest
 from dinkster_workers import interpreter
+from dinkster_workers.doctor import prepare_catalog
 from dinkster_workers.interpreter import InterpreterPreflightError, preflight_interpreter
 from dinkster_workers.launch import LaunchSpec, SubprocessLauncher
+from test_doctor import HEALTHY_MANIFEST, HEALTHY_NODES
 
 
 def test_preflight_accepts_current_supported_interpreter() -> None:
     assert preflight_interpreter(sys.executable) == sys.version_info[:2]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows executable search order")
+def test_worker_bare_interpreter_uses_native_executable_selection(tmp_path: Path) -> None:
+    alternative = tmp_path / "other"
+    venv.EnvBuilder(with_pip=False).create(alternative)
+    environment = {
+        "PATH": str(alternative / "Scripts") + os.pathsep + os.environ["PATH"],
+        "PYTHONPATH": str(tmp_path),
+    }
+    (tmp_path / "selection_probe.py").write_text(
+        "import json,sys\nfrom pathlib import Path\n"
+        "Path(sys.argv[1]).write_text(json.dumps([sys.executable,sys.prefix]))\n"
+    )
+    plain = tmp_path / "plain.json"
+    subprocess.run(
+        ["python", "-m", "selection_probe", str(plain)],
+        env={**os.environ, **environment},
+        check=True,
+        timeout=30,
+    )
+    expected = json.loads(plain.read_text())
+    assert Path(expected[1]) != alternative
+    result = tmp_path / "launched.json"
+
+    async def scenario() -> None:
+        process = await SubprocessLauncher().launch(
+            LaunchSpec(
+                command=("python", "-m", "selection_probe", str(result)),
+                env=environment,
+                endpoint_dir=tmp_path,
+                pack_root=tmp_path,
+                python="python",
+                use_shm=False,
+            )
+        )
+        assert await asyncio.wait_for(process.wait(), timeout=30) == 0
+
+    asyncio.run(scenario())
+    assert json.loads(result.read_text()) == expected
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows native extension loader contract")
@@ -43,17 +86,19 @@ def test_worker_launch_imports_native_extension_at_ordinary_data_roots(
         python = venv_root / "Scripts/python.exe"
         result_path = root / "result.json"
         script = (
-            "import json, sys; from pathlib import Path; "
+            "import json, os, sys; from pathlib import Path; "
             "import sqlalchemy.util._collections_cy as native; "
             "Path(sys.argv[1]).write_text(json.dumps("
-            "{'prefix': sys.prefix, 'native': native.__file__}))"
+            "{'prefix': sys.prefix, 'native': native.__file__, 'argv': sys.argv[1:], "
+            "'environment': os.environ['DINKSTER_PATH_TEST'], 'module': __spec__.name}))"
         )
+        (site / "native_path_probe.py").write_text(script)
 
         async def scenario() -> None:
             process = await SubprocessLauncher().launch(
                 LaunchSpec(
-                    command=(str(python), "-I", "-c", script, str(result_path)),
-                    env={},
+                    command=(str(python), "-m", "native_path_probe", str(result_path), "two words"),
+                    env={"DINKSTER_PATH_TEST": "selected"},
                     endpoint_dir=root,
                     pack_root=root,
                     python=str(python),
@@ -64,13 +109,33 @@ def test_worker_launch_imports_native_extension_at_ordinary_data_roots(
 
         asyncio.run(scenario())
         result = json.loads(result_path.read_text())
-        assert Path(result["prefix"]).samefile(venv_root)
+        assert Path(result["prefix"]) == venv_root
+        assert result["argv"] == [str(result_path), "two words"]
+        assert result["environment"] == "selected"
+        assert result["module"] == "native_path_probe"
         extension = Path(result["native"])
         assert extension.suffix == ".pyd"
         assert extension.samefile(next((site / "sqlalchemy/util").glob("_collections_cy*.pyd")))
         if long_root:
             assert len(str(root).encode("utf-16-le")) // 2 >= 59
             assert len(str(extension).removeprefix("\\\\?\\").encode("utf-16-le")) // 2 >= 251
+
+        (site / "fixture.pth").write_text(
+            "\n".join(str(Path(path).resolve()) for path in sys.path if path) + "\n"
+        )
+        source = root / "source"
+        source.mkdir()
+        manifest = source / "dinkster-pack.toml"
+        manifest.write_text(HEALTHY_MANIFEST)
+        (source / "healthy_nodes.py").write_text(
+            "import sys\nfrom pathlib import Path\n"
+            "import sqlalchemy.util._collections_cy as native\n"
+            f"assert Path(sys.prefix) == Path({str(venv_root)!r})\n"
+            f"assert Path(native.__file__).samefile(Path({str(extension)!r}))\n" + HEALTHY_NODES
+        )
+        report = prepare_catalog(manifest, interpreter=python)
+        assert report.ok, report.to_json()
+        assert set(report.node_types) == {"healthy.doubler", "healthy.tagger"}
 
 
 def test_version_script_requires_no_additional_imports() -> None:

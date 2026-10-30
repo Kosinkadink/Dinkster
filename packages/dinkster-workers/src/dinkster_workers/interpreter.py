@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
 from typing import cast
 
@@ -13,30 +13,45 @@ _MINIMUM_VERSION = (3, 12)
 _PREFLIGHT_TIMEOUT = 5.0
 _INTERPRETER_DISPLAY_LIMIT = 200
 _VERSION_SCRIPT = "import sys;print('[%d,%d]' % sys.version_info[:2])"
+_WINDOWS_MODULE_BOOTSTRAP = r"""
+import os
+import sys
+
+for index, path in enumerate(sys.path):
+    absolute = os.path.abspath(path)
+    if not absolute.startswith("\\\\?\\"):
+        if absolute.startswith("\\\\"):
+            absolute = "\\\\?\\UNC\\" + absolute[2:]
+        else:
+            absolute = "\\\\?\\" + absolute
+    sys.path[index] = absolute
+
+import runpy
+
+sys.argv = sys.argv[1:]
+runpy.run_module(sys.argv[0], run_name="__main__", alter_sys=True)
+"""
 
 
 class InterpreterPreflightError(Exception):
     """The selected child interpreter cannot satisfy Dinkster's Python contract."""
 
 
-def interpreter_command(interpreter: Path | str) -> str:
-    """Preserve extended Windows paths in the child's prefix and native imports."""
-    selected = str(interpreter)
-    if os.name != "nt" or selected.startswith("\\\\?\\"):
-        return selected
-    executable = shutil.which(selected)
-    if executable is None or Path(executable).suffix.lower() in {".bat", ".cmd"}:
-        return selected
-    # Do not resolve symlinks: the selected venv, not its base, owns site-packages.
-    absolute = os.path.abspath(executable)
-    if absolute.startswith("\\\\"):
-        return "\\\\?\\UNC\\" + absolute[2:]
-    return "\\\\?\\" + absolute
+def module_command(command: Sequence[str]) -> list[str]:
+    """Extend Windows module import paths without changing interpreter identity."""
+    if (
+        os.name == "nt"
+        and tuple(command[1:2]) == ("-m",)
+        and Path(command[0]).suffix.lower() not in {".bat", ".cmd"}
+    ):
+        # Leave executable lookup and sys.prefix to Python and CreateProcess.
+        return [command[0], "-c", _WINDOWS_MODULE_BOOTSTRAP, *command[2:]]
+    return list(command)
 
 
 def preflight_interpreter(interpreter: Path | str) -> tuple[int, int]:
     """Require a runnable Python >=3.12 without importing the child target."""
-    selected = interpreter_command(interpreter)
+    selected = str(interpreter)
     selected_display = repr(selected)
     if len(selected_display) > _INTERPRETER_DISPLAY_LIMIT:
         selected_display = f"{selected_display[: _INTERPRETER_DISPLAY_LIMIT - 3]}..."
