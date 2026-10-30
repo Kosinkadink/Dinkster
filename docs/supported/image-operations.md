@@ -46,6 +46,8 @@
   equirectangular image by merging perspective-view depth predictions.
 - Native `MoGeInference` predicts optional depth, points, camera intrinsics,
   masks, and normals from image batches with configurable chunking and camera hints.
+- Native `MoGePointMapToMesh` triangulates one geometry sample with UVs and
+  optional source-image texture, converting perspective or spherical axes for mesh output.
 - Color strings, ordered color palettes, bounding boxes, and optional
   resolution-preview metadata pass between node packs without rewriting their values.
 - Native `PrimitiveBoundingBox` constructs pixel bounding boxes; `ImageCropV2`
@@ -63,6 +65,8 @@
 - Native `RTDETR_detect` returns per-frame pixel bounding boxes filtered by
   confidence and COCO class, ordered by score and limited per frame.
   `DrawBBoxes` overlays boxes and labels on images or a black canvas.
+- Native `LoadBackgroundRemovalModel` loads an admitted background-removal
+  checkpoint; `RemoveBackground` generates its foreground mask for an image batch.
 - Native `SAM3_VideoTrack` tracks initial masks or text-prompted objects across
   video frames. `SAM3_TrackToMask` selects tracked objects and resizes their union
   to the original frame dimensions using the portable packed-track value.
