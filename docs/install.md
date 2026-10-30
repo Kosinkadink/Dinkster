@@ -5,8 +5,8 @@ package index. A GitHub 404 can mean that your account does not have access.
 
 To run from source without the Desktop app, follow the
 [one-command browser quickstart](quickstart.md). Install Git and Node.js
-26.12 or newer within 26.x with npm, clone Dinkster, and run `./run.sh` on Linux or
-`.\run.ps1` on Windows. The scripts install uv user-locally if missing;
+26.12 or newer within 26.x with npm, clone Dinkster, and run `./run.sh` on Linux
+or Apple Silicon macOS, or `.\run.ps1` on Windows. The scripts install uv user-locally if missing;
 the selected Dinkster-Environments bundle supplies runtime Python. The scripts
 prepare execution environments, build the pinned frontend, and launch the UI
 and backend on one loopback origin. Rerun after `git pull` to update them.
@@ -69,8 +69,9 @@ to the Internet; read [authentication](auth.md) before configuring shared
 access.
 
 The shared Python setup installs only one runtime in `.venv`: the published
-Linux CPU base, or a Windows NVIDIA/CPU base compatible with the detected
-hardware. Exact Python and torch versions come from the verified base manifest,
+Linux CPU base, a Windows NVIDIA/CPU base compatible with the detected
+hardware, or `mac-arm64` on Apple Silicon with macOS 14 or newer.
+Exact Python and torch versions come from the verified base manifest,
 not a local version override. `scripts/base_bundles.json` selects published
 content identities from Dinkster-Environments. Hash-locked workspace dependencies
 and editable packages are installed on top without resolving torch again.
@@ -78,9 +79,9 @@ Use `--variant linux-cpu` or `--variant win-cpu` to force CPU. CPU installation
 does not install CUDA wheels. Rerun setup after checkout or dependency changes;
 `--force` rebuilds its `.venv`, retaining the verified bundle store.
 
-macOS setup stops with an unsupported-platform message until the
-[Apple Silicon bundle](https://github.com/Kosinkadink/comfy-vibe-station/issues/575)
-is available; it never falls back to a separate dependency resolution.
+The `mac-arm64` bundle uses PyPI wheels with the MPS backend, not a separate
+torch index or CUDA wheels. Intel macOS is unsupported and setup stops with
+an explicit message; it never falls back to a separate dependency resolution.
 
 A maintainer evidence checkout is optional. If `DINKSTER_EVIDENCE_ROOT` selects
 one, setup also installs its `dinkster-acceptance` package. The run scripts set
@@ -89,6 +90,7 @@ one, setup also installs its `dinkster-acceptance` package. The run scripts set
 | Platform | Execution interpreter |
 | --- | --- |
 | Linux CPU | `$PWD/.venv/bin/python` |
+| Apple Silicon macOS (`mac-arm64`) | `$PWD/.venv/bin/python` |
 | Windows NVIDIA or CPU | `$PWD\.venv\Scripts\python.exe` |
 
 The selected execution environment installs Dinkster's pinned `dinkster_inference`
