@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import struct
 import tempfile
 from collections.abc import Mapping
@@ -32,9 +31,9 @@ from dinkster_values.audio_codec import (
 from dinkster_values.audio_lazy import LazyAudio
 from dinkster_values.storage import audio_input
 
+from .declared import produced_output_scratch, resolver_from_env
 from .identity import AssetError, new_hasher
 from .model import AssetRef, AssetResolver
-from .vault import AssetVault
 
 
 def bind_audio_value(obj: object, resolver: AssetResolver | None = None) -> LazyAudio:
@@ -45,10 +44,11 @@ def bind_audio_value(obj: object, resolver: AssetResolver | None = None) -> Lazy
         if pcm.nbytes > AUDIO_INLINE_LIMIT:
             import numpy as np
 
-            root = os.environ.get("DINKSTER_ASSET_VAULT")
-            if not root:
-                raise AssetError("large AUDIO PCM requires a configured DINKSTER_ASSET_VAULT")
-            vault = AssetVault(root)
+            vault = produced_output_scratch()
+            if vault is None:
+                raise AssetError(
+                    "large AUDIO PCM requires DINKSTER_PACK_SCRATCH or DINKSTER_ASSET_VAULT"
+                )
             with tempfile.TemporaryFile() as file:
                 file.write(struct.pack("<Q", cast(int, source["sample_rate"])))
                 # numpy streams contiguous arrays directly to disk, rather than a BytesIO copy.
@@ -64,7 +64,9 @@ def bind_audio_value(obj: object, resolver: AssetResolver | None = None) -> Lazy
                     while chunk := file.read(MEBIBYTE):
                         writer.write(chunk)
                     writer.commit()
-            published = audio_from_source(AssetRef(digest, "audio.pcm", size, resolver=vault))
+            published = audio_from_source(
+                AssetRef(digest, "audio.pcm", size, resolver=resolver_from_env())
+            )
             cast(dict[str, object], published["probe"])["layout"] = cast(
                 Mapping[str, object], value["probe"]
             )["layout"]

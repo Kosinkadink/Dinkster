@@ -326,6 +326,7 @@ def _cached_response(
     scope: str,
     cache_key: str,
     manifest: dict[str, object],
+    source_references: list[str],
 ) -> web.Response | None:
     output = manifest.get("output")
     if not isinstance(output, dict):
@@ -335,6 +336,7 @@ def _cached_response(
     if not isinstance(digest, str) or library.locate(digest) is None:
         return None
     _grant_render(library, scope, typed_output)
+    library.store.put_derivation(cache_key, manifest, references=[*source_references, digest])
     return web.json_response(
         {
             "cacheKey": cache_key,
@@ -407,9 +409,15 @@ async def handle_render(request: web.Request) -> web.Response:
         if dependencies is None:
             return _error(409, "not_adopted", "image document must be adopted before rendering")
         await _verify_dependencies_bounded(library, scope, dependencies)
+        source_references = [
+            document_digest,
+            *(cast(str, dependency["digest"]) for dependency in dependencies),
+        ]
         existing = await asyncio.to_thread(library.store.get_derivation, cache_key)
         if existing is not None:
-            cached = await asyncio.to_thread(_cached_response, library, scope, cache_key, existing)
+            cached = await asyncio.to_thread(
+                _cached_response, library, scope, cache_key, existing, source_references
+            )
             if cached is not None:
                 return cached
         if library.image_document_render_slots.locked():
@@ -445,7 +453,9 @@ async def handle_render(request: web.Request) -> web.Response:
                 writer.write(png)
                 _, created = writer.commit_with_result()
             _grant_render(library, scope, output)
-            manifest_created = library.store.put_derivation(cache_key, manifest)
+            manifest_created = library.store.put_derivation(
+                cache_key, manifest, references=[*source_references, output_digest]
+            )
             return created, manifest_created
 
         await run_media_publication(library, publish)
