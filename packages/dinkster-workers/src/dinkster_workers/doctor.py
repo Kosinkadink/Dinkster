@@ -47,7 +47,7 @@ from dinkster_schema import claim_covers, reserved_root
 from packaging.requirements import InvalidRequirement, Requirement
 
 from .accelerator import detect_accelerator
-from .interpreter import InterpreterPreflightError, preflight_interpreter
+from .interpreter import InterpreterPreflightError, module_command, preflight_interpreter
 from .manifest import (
     BLUEPRINT_PACK_MAX_BYTES,
     TEMPLATE_PACK_MAX_BYTES,
@@ -849,7 +849,7 @@ def _run_probe(
     try:
         if probe_jail is None:
             proc = subprocess.run(
-                argv,
+                module_command(argv),
                 capture_output=True,
                 text=True,
                 errors="replace",
