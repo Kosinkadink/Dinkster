@@ -42,6 +42,8 @@ uv pip install --python .venv/bin/python --no-deps --require-hashes --find-links
 
 On Windows, use `.venv\Scripts\python.exe`. Do not combine wheels or constraints
 from different releases. Models and accelerator runtimes are not bundled.
+On Windows, first prepare the runtime below and pass its executable to
+`uv venv --python` instead of the floating `3.12` selector.
 
 The registry server is a separate deployment, not part of the Dinkster wheel
 set. Hosted PostgreSQL and self-hosted SQLite deployments use the same
@@ -95,6 +97,59 @@ one, setup also installs its `dinkster-acceptance` package. The run scripts set
 
 The selected execution environment installs Dinkster's pinned `dinkster_inference`
 runtime when the native or compatibility worker is provisioned.
+
+### Windows interpreter
+
+Windows bases use CPython 3.14.10 / cp314 from python-build-standalone 20261026,
+with SQLite 3.53.1 plus the upstream
+[mapped-shm recovery fix](https://sqlite.org/src/info/7c103a0b7d).
+The unmodified interpreter fails WAL reopening while an old shared-memory
+mapping survives ([upstream report](https://sqlite.org/forum/forumpost/f9c68d01e2d7f638)).
+A version string cannot distinguish the patched library. Acquisition and bundle
+extraction require a functional WAL read and integrity check with the mapping
+held open, followed by a released-mapping control.
+
+`scripts/setup_envs.py` installs the published base into its private store and
+uses it for `.venv`. On Windows the selected environment must pass the functional
+check and use that exact private base, including when reusing an existing store
+or environment. Use `--force` to recreate an environment using a different base.
+For manual root-only setup from the checkout:
+
+```powershell
+uv run --no-project --python 3.14.10 scripts/prepare_windows_python.py --output .run/windows-python
+uv sync --python .run/windows-python/python/python.exe --all-packages --frozen
+```
+
+Preparation verifies immutable Dinkster-Environments source pins, the original
+interpreter archive, and the replacement DLL. Zig 0.14.1 is installed in an
+isolated uv environment and verified against its exact Windows wheel SHA-256.
+Only `python/DLLs/sqlite3.dll` changes; uv's interpreter cache is never modified.
+The base manifest records the amalgamation, patch, compiler, flags and DLL
+hashes; Windows bundle CI must reproduce the pinned DLL hash. Linux and macOS
+are unchanged. When a verified upstream interpreter contains the fix, move
+the pins together and remove the override, retaining the functional check.
+
+| Consumer | Interpreter selection | Bundled SQLite |
+| --- | --- | --- |
+| Environments Windows bases and shared contributor setup | PBS 20261026, CPython 3.14.10 / cp314 | 3.53.1 with upstream fix |
+| Environments Linux base and shared contributor setup | PBS 20261026, CPython 3.14.10 / cp314 | 3.53.1 unmodified |
+| Windows full-validation shards, PR runtime job and release install | Verified private Windows interpreter | Patched 3.53.1 |
+| Windows dependency receipt job | Published Windows CPU base | Patched 3.53.1 |
+| Windows acquisition bootstrap | uv CPython 3.14.10; no Dinkster database use | Unpatched bootstrap may carry 3.53.1 |
+| Linux root CI/full-validation and macOS release smoke | Floating uv `3.12` | PBS 20261026 CPython 3.12.14 carries 3.53.1 |
+| Linux release runtime | CPython 3.14.10 | PBS 20261026 carries 3.53.1 |
+| OpenTimelineIO-only dependency checks, including Windows ARM64 | Floating uv `3.14`; no Dinkster stores | PBS 20261026 carries 3.53.1 |
+| Desktop environment client | Published platform base through `dinkster-env` | Windows base carries patched 3.53.1 |
+
+PBS versions come from the
+[20261026 dependency manifest](https://github.com/astral-sh/python-build-standalone/blob/20261026/pythonbuild/downloads.json);
+Windows 3.14.10 was also executed from the size/hash-verified archive.
+Floating selectors can choose other catalog releases or local installations;
+they do not promise a SQLite version. Windows admission checks the interpreter
+actually selected. The legacy Desktop source installer selected floating uv
+`3.12` / cp312 and was exposed when it resolved to affected PBS builds; the
+[environment-client installer](https://github.com/Kosinkadink/Dinkster-Desktop/pull/23)
+uses published base acquisition instead.
 
 ## Model folders
 

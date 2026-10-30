@@ -711,11 +711,26 @@ def test_read_only_regular_file_mode_is_preserved(tmp_path: Path) -> None:
     assert value.read_bytes() == b"read only"
 
 
-def test_extracts_and_runs_complete_standalone_interpreter(tmp_path: Path) -> None:
+@pytest.mark.parametrize("broken_sqlite", [False, True])
+def test_extracts_and_runs_complete_standalone_interpreter(
+    tmp_path: Path, broken_sqlite: bool
+) -> None:
     from test_environment_generations import _standalone_tree
 
     source = tmp_path / "source"
     _standalone_tree(source / "python")
+    if broken_sqlite:
+        library = (
+            source / "python/Lib"
+            if os.name == "nt"
+            else source / f"python/lib/python{sys.version_info.major}.{sys.version_info.minor}"
+        )
+        (library / "sqlite3/__init__.py").write_text(
+            "from sqlite3.dbapi2 import *\n"
+            "def connect(*args, **kwargs):\n"
+            "    raise OperationalError('fixture WAL connection failure')\n",
+            encoding="ascii",
+        )
     (source / "wheels").mkdir()
     (source / "wheels/example.whl").write_bytes(b"wheel")
     archive_path = tmp_path / "standalone.tar.zst"
@@ -728,6 +743,19 @@ def test_extracts_and_runs_complete_standalone_interpreter(tmp_path: Path) -> No
     executable = "python/python.exe" if os.name == "nt" else "python/bin/python3"
     platform = "windows" if os.name == "nt" else "macos" if sys.platform == "darwin" else "linux"
     destination = tmp_path / "bases/base-id"
+    if broken_sqlite and os.name == "nt":
+        with pytest.raises(ArchiveError, match="fixture WAL connection failure") as error:
+            extract_base(
+                parts,
+                destination,
+                platform=platform,
+                executable=executable,
+                expected_parts=expected_parts(parts),
+            )
+        assert "https://sqlite.org/forum/forumpost/f9c68d01e2d7f638" in str(error.value)
+        assert "https://sqlite.org/src/info/7c103a0b7d" in str(error.value)
+        assert_clean(destination)
+        return
     extract_base(
         parts,
         destination,

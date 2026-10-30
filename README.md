@@ -24,6 +24,8 @@ uv run --no-sync dinkster
 The editor opens at `http://127.0.0.1:3639`. See the
 [browser editor quickstart](docs/quickstart.md) for model folders, execution
 environments, and the first-image walkthrough.
+On Windows, use the [verified Windows interpreter setup](docs/install.md#windows-interpreter)
+instead of the floating Python selector above.
 
 Packs are independently installable Python distributions with a
 `dinkster-pack.toml` manifest. A pack declares its schemas, runtime entry
