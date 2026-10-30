@@ -90,6 +90,7 @@ def build(
                         manifest_path.read_text(encoding="utf-8"),
                     ),
                     encoding="utf-8",
+                    newline="\n",
                 )
             manifest = load_manifest(manifest_path)
             if manifest.publisher != "dinkster":
@@ -126,7 +127,7 @@ def build(
                 dependency_lock.write(dependency_payload)
                 payloads.append(dependency_payload)
     lock = output / "official-packs.lock"
-    lock.write_text(Lockfile.of(locked).record_json() + "\n", encoding="utf-8")
+    lock.write_text(Lockfile.of(locked).record_json() + "\n", encoding="utf-8", newline="\n")
     return (*payloads, lock)
 
 
