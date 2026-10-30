@@ -111,7 +111,17 @@ def test_video_component_schema_and_cold_import_use_only_public_types() -> None:
             """
 import sys
 from pathlib import Path
-from dinkster_api.v1 import AUDIO_TYPE, CORE_COMBO, CORE_FLOAT, IMAGE_TYPE, VIDEO_TYPE, TypeExpr
+from dinkster_api.v1 import (
+    AUDIO_TYPE,
+    CORE_COMBO,
+    CORE_FLOAT,
+    IMAGE_TYPE,
+    VIDEO_TYPE,
+    TypeExpr,
+    schema_from_wire,
+    schema_to_wire,
+)
+from dinkster_schema import elaborate
 import dinkster_nodes_comfy.video_components as module
 from dinkster_nodes_comfy.video_components import ConcatenateVideo, CreateVideo, GetVideoComponents
 
@@ -169,6 +179,7 @@ videos = concat.input_families[0]
 assert videos.id == "videos"
 assert videos.member_prefix == "video"
 assert (videos.min_members, videos.max_members) == (1, 100)
+assert videos.optional_after_minimum is True
 assert [(item.id, item.type, item.doc) for item in videos.template] == [
     (
         "video",
@@ -176,6 +187,19 @@ assert [(item.id, item.type, item.doc) for item in videos.template] == [
         "VIDEO lists to concatenate in input order.",
     )
 ]
+assert videos.template[0].required is True
+effective = elaborate(concat, ["videos.video10", "videos.video2"])
+assert [(item.id, item.required, item.type) for item in effective.inputs] == [
+    ("videos.video0", True, TypeExpr.list_of(TypeExpr.concrete(VIDEO_TYPE))),
+    ("videos.video2", False, TypeExpr.list_of(TypeExpr.concrete(VIDEO_TYPE))),
+    ("videos.video10", False, TypeExpr.list_of(TypeExpr.concrete(VIDEO_TYPE))),
+    ("codec", True, TypeExpr.concrete(CORE_COMBO)),
+    ("complete_audio", False, TypeExpr.concrete(AUDIO_TYPE)),
+]
+wire = schema_to_wire(concat)
+family_wire = next(entry for entry in wire["interface"] if entry["role"] == "inputFamily")
+assert family_wire["optionalAfterMinimum"] is True
+assert schema_from_wire(wire) == concat
 assert [(item.id, item.default, item.advanced) for item in concat.inputs] == [
     ("codec", "auto", True),
     ("complete_audio", None, True),

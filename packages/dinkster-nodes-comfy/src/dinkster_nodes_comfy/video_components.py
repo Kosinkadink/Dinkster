@@ -190,6 +190,7 @@ class ConcatenateVideo(Node):
                     min_members=1,
                     max_members=100,
                     member_prefix="video",
+                    optional_after_minimum=True,
                 ),
             ),
             inputs=(
