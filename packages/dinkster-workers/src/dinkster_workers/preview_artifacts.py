@@ -47,13 +47,13 @@ def capture_saved_file_previews(*, enabled: bool) -> Generator[list[Mapping[str,
     """
     claims: list[Mapping[str, object]] = []
     lock = threading.Lock()
-    active = True
+    closed = threading.Event()
 
     def capture(
         ref: Mapping[str, object], encode: Callable[[], bytes], name: str, media_type: str
     ) -> bool:
         with lock:
-            if not enabled or not active:
+            if not enabled or closed.is_set():
                 return False
             try:
                 if len(claims) >= SAVED_ARTIFACT_CLAIM_LIMIT:
@@ -64,6 +64,8 @@ def capture_saved_file_previews(*, enabled: bool) -> Generator[list[Mapping[str,
                 if vault is None:
                     raise AssetError("saved-file preview requires host staging storage")
                 data = encode()
+                if closed.is_set():
+                    return False
                 if type(data) is not bytes or len(data) > SAVED_FILE_PREVIEW_LIMIT_BYTES:
                     raise ValueError("saved-file preview exceeds encoded item limit")
                 with capture_preview_artifacts():
@@ -76,6 +78,8 @@ def capture_saved_file_previews(*, enabled: bool) -> Generator[list[Mapping[str,
                 digest = digest_bytes(data)
                 with vault.writer(digest) as writer:
                     writer.write(data)
+                    if closed.is_set():
+                        return False
                     writer.commit()
                 claims.append(
                     MappingProxyType(
@@ -102,8 +106,9 @@ def capture_saved_file_previews(*, enabled: bool) -> Generator[list[Mapping[str,
         try:
             yield claims
         finally:
-            with lock:
-                active = False
+            # An async node may abandon a to_thread encoder on cancellation.
+            # Closing its context must not block the event loop on that encoder.
+            closed.set()
 
 
 @dataclass
