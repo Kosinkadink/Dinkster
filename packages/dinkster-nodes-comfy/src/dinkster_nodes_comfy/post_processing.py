@@ -30,6 +30,8 @@ from dinkster_api.v1 import (
     report_progress,
 )
 
+from .family_migrations import ordered_family_migration
+
 _IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 _LATENT = TypeExpr.concrete(LATENT_TYPE)
 _MASK = TypeExpr.concrete(MASK_TYPE)
@@ -389,6 +391,9 @@ class BatchImagesNode(Node):
                 ),
             ),
             outputs=(OutputSpec("IMAGE", _IMAGE),),
+            replacements=(
+                ordered_family_migration("BatchImagesNode", "images", "image", ("IMAGE",)),
+            ),
         )
 
     @classmethod
@@ -414,6 +419,7 @@ class BatchMasksNode(Node):
                 ),
             ),
             outputs=(OutputSpec("MASK", _MASK),),
+            replacements=(ordered_family_migration("BatchMasksNode", "masks", "mask", ("MASK",)),),
         )
 
     @classmethod
@@ -439,6 +445,9 @@ class BatchLatentsNode(Node):
                 ),
             ),
             outputs=(OutputSpec("LATENT", _LATENT),),
+            replacements=(
+                ordered_family_migration("BatchLatentsNode", "latents", "latent", ("LATENT",)),
+            ),
         )
 
     @classmethod

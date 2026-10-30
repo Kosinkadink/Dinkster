@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import tomllib
 import zipfile
 from pathlib import Path
@@ -30,6 +32,41 @@ from scripts.build_release import (
 from scripts.download_frontend import verify_and_extract
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize("project", ["dinkster", "dinkster-api", "dinkster-supervisor"])
+def test_source_distribution_rebuilds_the_complete_direct_wheel(
+    tmp_path: Path, project: str
+) -> None:
+    direct = tmp_path / "direct"
+    subprocess.run(
+        ["uv", "build", "--package", project, "--wheel", "--out-dir", str(direct)],
+        cwd=ROOT,
+        check=True,
+    )
+    source = tmp_path / "source"
+    subprocess.run(
+        ["uv", "build", "--package", project, "--sdist", "--out-dir", str(source)],
+        cwd=ROOT,
+        check=True,
+    )
+    extracted = tmp_path / "isolated"
+    with tarfile.open(next(source.glob("*.tar.gz"))) as archive:
+        archive.extractall(extracted, filter="data")
+    [package] = extracted.iterdir()
+    rebuilt = tmp_path / "rebuilt"
+    subprocess.run(
+        ["uv", "build", str(package), "--wheel", "--out-dir", str(rebuilt)],
+        cwd=extracted,
+        check=True,
+    )
+    with (
+        zipfile.ZipFile(next(direct.glob("*.whl"))) as expected,
+        zipfile.ZipFile(next(rebuilt.glob("*.whl"))) as actual,
+    ):
+        assert set(actual.namelist()) == set(expected.namelist())
+        for name in expected.namelist():
+            assert actual.read(name) == expected.read(name), name
 
 
 def test_built_frontend_wheel_is_discovered_without_a_checkout(tmp_path: Path) -> None:
@@ -157,7 +194,12 @@ def test_release_publication_is_tag_only_and_uses_trusted_publishing(
     ):
         (dist / name).write_bytes(name.encode())
     selection = next(step["run"] for step in publish["steps"] if "run" in step)
-    subprocess.run(["bash", "-e", "-c", selection], cwd=tmp_path, check=True)
+    bash = (
+        str(Path(os.environ["ProgramFiles"]) / "Git/bin/bash.exe")
+        if sys.platform == "win32"
+        else "bash"
+    )
+    subprocess.run([bash, "-e", "-c", selection], cwd=tmp_path, check=True)
     selected = list((tmp_path / "publish").iterdir())
     assert [path.name for path in selected] == [
         f"{project.replace('-', '_')}-1.2.3-py3-none-any.whl"
@@ -433,7 +475,10 @@ def test_release_version_matches_every_workspace_project(tmp_path: Path) -> None
 
 def test_repository_versions_match_first_release_tag() -> None:
     assert release_version(ROOT, "v0.0.1") == "0.0.1"
-    assert len(workspace_projects(ROOT)) == 29
+    projects = workspace_projects(ROOT)
+    assert "dinkster-nodes-std" not in projects
+    dev = tomllib.loads(projects["dinkster-nodes-dev"].read_text(encoding="utf-8"))
+    assert "Private :: Do Not Upload" in dev["project"]["classifiers"]
     frontend = json.loads((ROOT / "scripts/release_sources.json").read_text(encoding="utf-8"))
     assert frontend["repository"] == "Kosinkadink/Dinkster-Frontend"
     assert len(frontend["commit"]) == 40

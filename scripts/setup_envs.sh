@@ -98,6 +98,10 @@ uv pip install --python .venv-torch/bin/python pytest packaging "numpy>=1.26" "s
     -e packages/dinkster-engine \
     -e packages/dinkster-native \
     -e packages/dinkster-nodes-generation \
+    -e packages/dinkster-nodes-foundation \
+    -e packages/dinkster-nodes-image \
+    -e packages/dinkster-nodes-media-io \
+    -e packages/dinkster-nodes-remote \
     -e packages/dinkster-compat-comfy \
     -e packages/dinkster-nodes-vision \
     -e packages/dinkster-workers
@@ -194,6 +198,10 @@ if [ "${CUDA_VISIBLE_DEVICES-unset}" != "" ] && [ "${CUDA_VISIBLE_DEVICES-unset}
         -e packages/dinkster-native \
         -e packages/dinkster-workers \
         -e packages/dinkster-nodes-generation \
+        -e packages/dinkster-nodes-foundation \
+        -e packages/dinkster-nodes-image \
+        -e packages/dinkster-nodes-media-io \
+        -e packages/dinkster-nodes-remote \
         -e packages/dinkster-compat-comfy
     if [ "$install_acceptance" = 1 ]; then
         uv pip install --python .venv-gpu/bin/python --no-deps --no-sources \
