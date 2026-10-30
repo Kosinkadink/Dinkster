@@ -56,6 +56,14 @@ uncommitted staging is always cleaned. Calls outside an active
 invocation fail rather than silently dropping required content. This does not
 change transient image/ring previews or persistent mount-based saves.
 
+Saved-file previews mark job scratch handoff intent before returning their
+claims. Boundary adoption records pending and verified engine inventory while
+the verified copy remains owned; existing untracked vault content stays
+unclassified. Host-generated previews use the same inventory, keeping vault
+ownership from staging through commit. Failed or cancelled staging leaves
+pending state rather than claiming adoption; no scratch or vault cleanup is
+enabled by these records.
+
 Run doctor against the pack directory containing `dinkster-pack.toml` before
 publishing it. The human report gives every finding a concrete fix; use the
 JSON form in CI and other tooling.
