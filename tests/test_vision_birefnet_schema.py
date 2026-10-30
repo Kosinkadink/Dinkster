@@ -11,7 +11,7 @@ from dinkster_nodes_vision.birefnet import ImageMatte as BiRefNetImageMatte
 from dinkster_schema import ComboWidget, schema_signature, schema_to_wire
 from dinkster_workers import load_manifest
 
-from dinkster.compose import compose_serving
+from dinkster.compose import compose_serving, default_pack_spec
 
 ROOT = Path(__file__).parent.parent
 PACKAGE = ROOT / "packages" / "dinkster-nodes-vision"
@@ -43,12 +43,11 @@ def test_birefnet_pack_declares_cpu_provider_and_pinned_model() -> None:
     assert manifest.sandbox.network is False
     assert manifest.sandbox.writable_mounts is False
     assert manifest.requires == (
-        "dinkster-inference @ git+https://github.com/Kosinkadink/dinkster-inference.git@"
-        "dacdebc66f097e9889ce66e36e41c25a7b8f6494",
-        "numpy==2.5.1",
+        "dinkster-inference==0.1.0",
+        "numpy",
         "safetensors==0.8.0",
-        "torch==2.13.0",
-        "torchvision==0.28.0",
+        "torch",
+        "torchvision",
     )
     assert len(manifest.vision_providers) == 1
     provider = manifest.vision_providers[0]
@@ -82,7 +81,15 @@ def test_birefnet_wheel_contains_pack_runtime_and_manifest() -> None:
 
 def test_birefnet_provider_populates_owner_choice_and_scopes_model() -> None:
     async def scenario() -> None:
-        composition = await compose_serving()
+        composition = await compose_serving(
+            [
+                default_pack_spec("dinkster-nodes-foundation"),
+                default_pack_spec("dinkster-nodes-media-io"),
+                default_pack_spec("dinkster-nodes-image"),
+                default_pack_spec("dinkster-vision-birefnet"),
+            ],
+            include_default_packs=False,
+        )
         try:
             assert composition.choices[MATTE_PROVIDER_CHOICE] == ("dinkster-vision-birefnet",)
             needs = composition.asset_catalog.needs_for_nodes(

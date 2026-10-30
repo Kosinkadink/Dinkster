@@ -17,6 +17,14 @@ file. Its small-GIF regression is in `tests/test_image_io.py`. Upstream could
 route Pillow-supported animations through the image decoder rather than the
 video alignment filter. No upstream report or source change was made.
 
+The ported compatibility loader in `dinkster_nodes_comfy.image_file_tools`
+inherits this failure: the exact 3x2 transparent palette GIF raises
+`av.error.ArgumentError` with errno 22 before pixels are returned. Its
+regression retains that source result beside the PNG success control.
+Dinkster's native media-io image loader uses Pillow's ordered frames and
+handles the same file, as covered by `tests/test_image_io.py`; use that loader
+for tiny GIFs. The shared alignment and fallback behavior is unchanged.
+
 The immutable ComfyUI `bc5f880dbdd43e426077f42ccec53bb577ffee9f` path has
 the same constraint for non-byte still images: 16-bit grayscale PNGs at 17x7,
 33x9, and 65x3 raise the same error at `g.configure()`. It succeeds for 17x17,

@@ -216,6 +216,7 @@ def test_ordinary_manifest_executes_stable_video_twice(tmp_path: Path, in_proces
             (tmp_path / "video_conditioning_fixture.py").write_text(
                 "from test_video_conditioning_torch import Inspect, Source\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, Source, Inspect)\n",
                 encoding="ascii",
             )
@@ -224,6 +225,10 @@ def test_ordinary_manifest_executes_stable_video_twice(tmp_path: Path, in_proces
                 manifest.read_text(encoding="ascii")
                 .replace("namespaces = [", 'namespaces = ["video-conditioning-fixture",')
                 .replace("dinkster_nodes_comfy:COMFY_NODES", "video_conditioning_fixture:NODES")
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "video_conditioning_fixture:device_choices",
+                )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",
                     "video_conditioning_fixture:register_inference_types",

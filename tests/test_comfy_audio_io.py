@@ -19,10 +19,9 @@ def test_native_audio_io_schemas_and_manifest() -> None:
     assert PreviewAudio.schema().output_node
     for node in (LoadAudio, PreviewAudio):
         assert schema_from_wire(schema_to_wire(node.schema())) == node.schema()
-    assert (
-        tuple(node.schema().node_type for node in COMFY_NODES)
-        == load_manifest("packages/dinkster-nodes-comfy/dinkster-pack.toml").namespaces
-    )
+    assert ("devices", *(node.schema().node_type for node in COMFY_NODES)) == load_manifest(
+        "packages/dinkster-nodes-comfy/dinkster-pack.toml"
+    ).namespaces
 
 
 def test_native_audio_io_cold_discovery() -> None:

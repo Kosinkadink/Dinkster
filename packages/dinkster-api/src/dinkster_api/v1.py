@@ -6,9 +6,9 @@ asset system, re-exported from the internal packages in one place.
 
 The compat promise (DESIGN 3.6, enforced by tests/test_api_v1.py):
 
-- Within v1 this surface only ever GROWS. Nothing here is renamed,
-  removed, or changed incompatibly; breaking changes mean a ``v2``
-  module next to this one, never edits to this one.
+- Within v1 supported extension contracts grow compatibly; breaking changes
+  require a ``v2`` module next to this one. Training-origin nodes and their
+  exclusive value identifiers are excluded from this supported surface.
 - Every name below is the internal object itself, not a wrapper - zero
   overhead, and ``isinstance``/identity checks agree across the door.
 - Internal modules stay reachable (this is Python) but carry no promise:
@@ -50,6 +50,7 @@ Grouped by concern:
 
 from __future__ import annotations
 
+from importlib import import_module
 from typing import TYPE_CHECKING
 
 from dinkster_assets import (
@@ -114,6 +115,7 @@ from dinkster_protocol import (
     canonical_extension_snapshot,
     current_export_snapshot,
     extension_behavior_hash,
+    prepare_sampling_model,
 )
 from dinkster_protocol.frontend_modules import FrontendContribution, FrontendModule
 from dinkster_protocol.pack_surfaces import (
@@ -195,8 +197,11 @@ from dinkster_schema import (
     ValueTransform,
     WidgetRepresentation,
     WidgetRepresentations,
+    attach_saved_artifact,
     output_descriptor_entries,
     pack_logger,
+    publish_preview_artifact,
+    publish_saved_file_preview,
     report_event,
     report_log,
     report_preview,
@@ -210,9 +215,12 @@ from dinkster_values import (
     ARRAY_TYPE,
     AUDIO_ENCODER_OUTPUT_TYPE,
     AUDIO_ENCODER_TYPE,
+    AUDIO_RECORD_TYPE,
     AUDIO_TYPE,
     BACKGROUND_REMOVAL_TYPE,
     BOUNDING_BOX_TYPE,
+    BOUNDING_BOXES_TYPE,
+    CAMERA_INFO_STATE_TYPE,
     CLIP_TYPE,
     CLIP_VISION_OUTPUT_TYPE,
     CLIP_VISION_TYPE,
@@ -242,20 +250,22 @@ from dinkster_values import (
     HOOKS_TYPE,
     IC_LORA_PARAMETERS_TYPE,
     IMAGE_BATCH_MERGER_ID,
+    IMAGE_DOCUMENT_TYPE,
     IMAGE_TYPE,
     IMAGE_WORKING_SET_LIMIT_BYTES,
+    IMAGECOMPARE_TYPE,
     IMPACT_BASIC_PIPE_TYPE,
     INFERENCE_LATENT_OPERATION_TYPE,
     INLINE_STRING_CAP,
     INPAINT_CONDITIONING_TYPE,
+    INTERP_MODEL_TYPE,
     LATENT_OPERATION_TYPE,
     LATENT_TYPE,
     LATENT_UPSCALE_MODEL_TYPE,
     LAYERS_TYPE,
     LENGTH_META_KEY,
     LOAD3D_CAMERA_TYPE,
-    LORA_MODEL_TYPE,
-    LOSS_MAP_TYPE,
+    LOAD3D_MODEL_INFO_TYPE,
     MASK_TYPE,
     MAX_CURVE_POINTS,
     MEBIBYTE,
@@ -267,8 +277,10 @@ from dinkster_values import (
     MOGE_GEOMETRY_TYPE,
     MOGE_MODEL_TYPE,
     NOISE_TYPE,
+    OPTICAL_FLOW_TYPE,
     PHOTOMAKER_TYPE,
     PNG_CONTAINER_VERSION,
+    POSE_KEYPOINT_TYPE,
     POSE_TYPE,
     REGION_TYPE,
     RESOLUTION_PREVIEW_TYPE,
@@ -284,6 +296,7 @@ from dinkster_values import (
     SPLAT_PLY_MIME,
     SPLAT_TYPE,
     STYLE_MODEL_TYPE,
+    SVG_TYPE,
     TIMESTEPS_RANGE_TYPE,
     TRACKS_TYPE,
     UPSCALE_MODEL_TYPE,
@@ -348,17 +361,20 @@ from dinkster_values import (
     image_input,
     list_children,
     mask_array_meta,
+    materialize_svg,
     media_semantics,
     merge_image_batches,
     model3d_fingerprint,
     model3d_format,
     model3d_meta,
+    open_image_components,
     parse_ply_splat,
     prepare_image_array_encoding,
     region_meta,
     register_curve_type,
     register_model3d_type,
     register_resource_handle_type,
+    register_splat_type,
     register_video_edit_type,
     render_audio_wav,
     render_image_png,
@@ -393,6 +409,7 @@ from dinkster_video import (
     DITHERS,
     FRAME_FORMATS,
     assemble_video,
+    concatenate_video,
     disassemble_video,
     iter_video_pixels,
     read_video_metadata,
@@ -404,10 +421,36 @@ from dinkster_video import (
 _VIDEO_MODULE_EXPORTS = frozenset(
     {"image_math", "timeline_document", "timeline_render", "timeline_runtime"}
 )
+_PACK_MEDIA_EXPORTS = {
+    "IMAGE_DOCUMENT_MEDIA_TYPE": "dinkster_image_document.format",
+    "BLEND_MODES": "dinkster_image_document.format",
+    "canonical_json": "dinkster_image_document.format",
+    "ordered_layer_ids": "dinkster_image_document.format",
+    "ImageDocument": "dinkster_image_document.document",
+    "apply_commands": "dinkster_image_document.document",
+    "append_raster": "dinkster_image_document.document",
+    "document_meta": "dinkster_image_document.document",
+    "empty_document": "dinkster_image_document.document",
+    "flatten": "dinkster_image_document.document",
+    "raster_png": "dinkster_image_document.document",
+    "blend": "dinkster_image_document.blend",
+    "dissolve_alpha": "dinkster_image_document.blend",
+    "linear_to_srgb": "dinkster_image_document.blend",
+    "srgb_to_linear": "dinkster_image_document.blend",
+    "from_comfy_layers": "dinkster_image_document.compat",
+    "register_comfy_compositor": "dinkster_image_document.compat",
+    "register_comfy_layers": "dinkster_image_document.compat",
+    "export_ora": "dinkster_image_document.interchange",
+    "export_psd": "dinkster_image_document.interchange",
+    "load_document": "dinkster_image_document.interchange",
+    "current_execution_context": "dinkster_workers.execution",
+}
 
 
 def __getattr__(name: str) -> object:
-    if name in _VIDEO_MODULE_EXPORTS:
+    if name in _PACK_MEDIA_EXPORTS:
+        value = getattr(import_module(_PACK_MEDIA_EXPORTS[name]), name)
+    elif name in _VIDEO_MODULE_EXPORTS:
         import dinkster_video
 
         value = getattr(dinkster_video, name)
@@ -415,12 +458,19 @@ def __getattr__(name: str) -> object:
         from dinkster_inference_wire import latents
 
         value = getattr(latents, name)
+    elif name == "TriangleMeshBatch":
+        from dinkster_inference_wire.sparse import TriangleMeshBatch
+
+        value = TriangleMeshBatch
     elif name in {
         "register_inference_types",
         "materialize_audio",
         "materialize_image",
         "materialize_latent",
+        "materialize_mesh",
         "materialize_clip_vision_output",
+        "materialize_splat",
+        "materialize_voxel",
     }:
         from dinkster_inference_wire import types
 
@@ -439,34 +489,90 @@ def __dir__() -> list[str]:
     return sorted(
         set(globals())
         | _VIDEO_MODULE_EXPORTS
+        | _PACK_MEDIA_EXPORTS.keys()
         | {
             "LatentStream",
             "MultiStreamLatent",
+            "TriangleMeshBatch",
             "register_inference_types",
             "materialize_audio",
             "materialize_image",
             "materialize_latent",
+            "materialize_mesh",
             "materialize_clip_vision_output",
+            "materialize_splat",
+            "materialize_voxel",
             "initialize_inference_process",
         }
     )
 
 
 if TYPE_CHECKING:
+    from dinkster_image_document.blend import blend, dissolve_alpha, linear_to_srgb, srgb_to_linear
+    from dinkster_image_document.compat import (
+        from_comfy_layers,
+        register_comfy_compositor,
+        register_comfy_layers,
+    )
+    from dinkster_image_document.document import (
+        ImageDocument,
+        append_raster,
+        apply_commands,
+        document_meta,
+        empty_document,
+        flatten,
+        raster_png,
+    )
+    from dinkster_image_document.format import (
+        BLEND_MODES,
+        IMAGE_DOCUMENT_MEDIA_TYPE,
+        canonical_json,
+        ordered_layer_ids,
+    )
+    from dinkster_image_document.interchange import export_ora, export_psd, load_document
     from dinkster_inference_wire.latents import LatentStream, MultiStreamLatent
     from dinkster_inference_wire.process import initialize_inference_process
+    from dinkster_inference_wire.sparse import TriangleMeshBatch
     from dinkster_inference_wire.types import (
         materialize_audio,
         materialize_clip_vision_output,
         materialize_image,
         materialize_latent,
+        materialize_mesh,
+        materialize_splat,
+        materialize_voxel,
         register_inference_types,
     )
     from dinkster_video import document as timeline_document
     from dinkster_video import image_math, timeline_runtime
     from dinkster_video import timeline as timeline_render
+    from dinkster_workers.execution import current_execution_context
 
 __all__ = [
+    "TriangleMeshBatch",
+    "materialize_mesh",
+    "IMAGE_DOCUMENT_MEDIA_TYPE",
+    "BLEND_MODES",
+    "ImageDocument",
+    "append_raster",
+    "apply_commands",
+    "blend",
+    "canonical_json",
+    "current_execution_context",
+    "dissolve_alpha",
+    "document_meta",
+    "empty_document",
+    "export_ora",
+    "export_psd",
+    "flatten",
+    "from_comfy_layers",
+    "linear_to_srgb",
+    "load_document",
+    "ordered_layer_ids",
+    "raster_png",
+    "register_comfy_compositor",
+    "register_comfy_layers",
+    "srgb_to_linear",
     "RunExecutionContext",
     "obtain_resident",
     "Expansion",
@@ -476,10 +582,14 @@ __all__ = [
     "LatentStream",
     "MultiStreamLatent",
     "initialize_inference_process",
+    "prepare_sampling_model",
     "materialize_audio",
     "materialize_clip_vision_output",
     "materialize_image",
     "materialize_latent",
+    "materialize_splat",
+    "materialize_svg",
+    "materialize_voxel",
     "register_inference_types",
     "FrontendContribution",
     "FrontendModule",
@@ -504,6 +614,7 @@ __all__ = [
     "timeline_render",
     "timeline_runtime",
     "assemble_video",
+    "concatenate_video",
     "disassemble_video",
     "iter_video_pixels",
     "save_frame_records",
@@ -602,6 +713,9 @@ __all__ = [
     "PREVIEW_EVENT",
     "PROGRESS_EVENT",
     "pack_logger",
+    "attach_saved_artifact",
+    "publish_preview_artifact",
+    "publish_saved_file_preview",
     "report_event",
     "report_log",
     "report_preview",
@@ -614,10 +728,12 @@ __all__ = [
     "CORE_INT",
     "CORE_STRING",
     "ASSET_TYPE",
+    "AUDIO_RECORD_TYPE",
     "AUDIO_ENCODER_OUTPUT_TYPE",
     "AUDIO_ENCODER_TYPE",
     "AUDIO_TYPE",
     "ARRAY_TYPE",
+    "CAMERA_INFO_STATE_TYPE",
     "CLIP_TYPE",
     "CLIP_VISION_OUTPUT_TYPE",
     "CLIP_VISION_TYPE",
@@ -638,21 +754,24 @@ __all__ = [
     "HOOK_KEYFRAMES_TYPE",
     "HOOKS_TYPE",
     "IC_LORA_PARAMETERS_TYPE",
+    "IMAGE_DOCUMENT_TYPE",
     "IMAGE_TYPE",
     "IMPACT_BASIC_PIPE_TYPE",
     "INFERENCE_LATENT_OPERATION_TYPE",
+    "INTERP_MODEL_TYPE",
     "LATENT_OPERATION_TYPE",
     "LATENT_TYPE",
     "LATENT_UPSCALE_MODEL_TYPE",
     "LAYERS_TYPE",
-    "LOSS_MAP_TYPE",
     "LOAD3D_CAMERA_TYPE",
-    "LORA_MODEL_TYPE",
+    "LOAD3D_MODEL_INFO_TYPE",
     "MASK_TYPE",
     "MODEL3D_TYPE",
     "MODEL_PATCH_TYPE",
     "MODEL_TYPE",
     "NOISE_TYPE",
+    "OPTICAL_FLOW_TYPE",
+    "POSE_KEYPOINT_TYPE",
     "POSE_TYPE",
     "IMAGE_BATCH_MERGER_ID",
     "INLINE_STRING_CAP",
@@ -671,6 +790,7 @@ __all__ = [
     "SIGMAS_TYPE",
     "SPLAT_TYPE",
     "STYLE_MODEL_TYPE",
+    "SVG_TYPE",
     "TIMESTEPS_RANGE_TYPE",
     "TRACKS_TYPE",
     "UPSCALE_MODEL_TYPE",
@@ -683,6 +803,8 @@ __all__ = [
     "VOXEL_TYPE",
     "BACKGROUND_REMOVAL_TYPE",
     "BOUNDING_BOX_TYPE",
+    "BOUNDING_BOXES_TYPE",
+    "IMAGECOMPARE_TYPE",
     "COMFY_ARRAY_TYPE",
     "CONTEXT_WINDOWS_TYPE",
     "INPAINT_CONDITIONING_TYPE",
@@ -726,6 +848,7 @@ __all__ = [
     "decode_detection",
     "decode_image_array",
     "decode_image_components",
+    "open_image_components",
     "decode_model3d",
     "decode_model3d_file",
     "decode_region",
@@ -762,6 +885,7 @@ __all__ = [
     "region_meta",
     "register_model3d_type",
     "register_resource_handle_type",
+    "register_splat_type",
     "render_audio_wav",
     "render_image_png",
     "render_mask_png",

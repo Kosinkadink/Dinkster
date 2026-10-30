@@ -171,8 +171,6 @@ contracts and never import the engine; node packs see only the extension API.
   `dinkster-nodes-generation` (provider-independent loading, conditioning,
   sampling, and codec schemas), `dinkster-compat-comfy` (the quarantined
   ComfyUI surface), and catalog-driven `dinkster-nodes-remote`.
-  `dinkster-nodes-std` is the metadata-only install suite for the foundation and
-  media packs.
 
 ### 3.1 Schema as the single source of truth
 

@@ -34,8 +34,11 @@ def main() -> int:
     for name in ("uv", "git", "node", "npm"):
         if not shutil.which(name):
             raise RuntimeError(f"{name} is required; install it and restart your terminal")
-    if int(output("node", "--version").lstrip("v").split(".")[0]) < 22:
-        raise RuntimeError("Node.js 22 or newer is required: https://nodejs.org/")
+    node_version = tuple(
+        int(part) for part in output("node", "--version").lstrip("v").split(".")[:2]
+    )
+    if not (26, 12) <= node_version < (27, 0):
+        raise RuntimeError("Node.js 26.12 or newer within 26.x is required: https://nodejs.org/")
 
     cuda_mask = os.environ.get("CUDA_VISIBLE_DEVICES")
     cuda_disabled = cuda_mask is not None and cuda_mask.strip() in ("", "-1")
@@ -53,7 +56,7 @@ def main() -> int:
 
     npm = shutil.which("npm")
     assert npm is not None
-    pnpm = (npm, "exec", "--yes", "--package=pnpm@10.31.0", "--", "pnpm")
+    pnpm = (npm, "exec", "--yes", "--package=pnpm@11.28.8", "--", "pnpm")
     pin = json.loads((ROOT / "scripts/release_sources.json").read_text())
     frontend = ROOT / ".run/frontend"
     frontend.parent.mkdir(exist_ok=True)

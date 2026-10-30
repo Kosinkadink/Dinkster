@@ -290,6 +290,7 @@ def test_ordinary_manifest_executes_post_processing_dynamic_nodes_with_decoded_n
                 "    PostProcessingInspect, PostProcessingSource,\n"
                 ")\n"
                 "from dinkster_nodes_comfy import COMFY_NODES, register_inference_types\n"
+                "from dinkster_nodes_comfy.device_routing import device_choices\n"
                 "NODES = (*COMFY_NODES, PostProcessingSource, PostProcessingInspect)\n",
                 encoding="ascii",
             )
@@ -299,6 +300,10 @@ def test_ordinary_manifest_executes_post_processing_dynamic_nodes_with_decoded_n
                 .replace("namespaces = [", 'namespaces = ["post-processing-fixture",')
                 .replace(
                     "dinkster_nodes_comfy:COMFY_NODES", "post_processing_fixture_sources:NODES"
+                )
+                .replace(
+                    "dinkster_nodes_comfy.device_routing:device_choices",
+                    "post_processing_fixture_sources:device_choices",
                 )
                 .replace(
                     "dinkster_nodes_comfy:register_inference_types",

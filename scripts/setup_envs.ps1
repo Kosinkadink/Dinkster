@@ -62,6 +62,10 @@ $CpuEditablePackages = @(
     "packages/dinkster-engine",
     "packages/dinkster-native",
     "packages/dinkster-nodes-generation",
+    "packages/dinkster-nodes-foundation",
+    "packages/dinkster-nodes-image",
+    "packages/dinkster-nodes-media-io",
+    "packages/dinkster-nodes-remote",
     "packages/dinkster-compat-comfy",
     "packages/dinkster-nodes-vision",
     "packages/dinkster-workers"
@@ -81,10 +85,13 @@ $GpuEditablePackages = @(
     "packages/dinkster-native",
     "packages/dinkster-workers",
     "packages/dinkster-nodes-generation",
+    "packages/dinkster-nodes-foundation",
+    "packages/dinkster-nodes-image",
+    "packages/dinkster-nodes-media-io",
+    "packages/dinkster-nodes-remote",
     "packages/dinkster-compat-comfy"
 )
 $KitchenCpuWheel = "comfy-kitchen@https://files.pythonhosted.org/packages/9c/2e/1c6c621a1cd2ba89ae12fe99e095faa50986c0e6485461170732adfcfa6d/comfy_kitchen-0.2.40-py3-none-any.whl#sha256=e5834f2ce993c8d5ea8c01650157c639742b5a28ecb0d95253777f31b5248099"
-$DinksterInferenceRequirement = "dinkster-inference @ git+https://github.com/Kosinkadink/dinkster-inference.git@9a9d0fd74ede9dea3058a0a63b2c5e9a8b00cb1c"
 $PreviousProject = [Environment]::GetEnvironmentVariable("UV_PROJECT", "Process")
 $PreviousProjectEnvironment = [Environment]::GetEnvironmentVariable(
     "UV_PROJECT_ENVIRONMENT", "Process"
@@ -101,7 +108,7 @@ try {
             $RootEnvironment, $TorchEnvironment, $GpuEnvironment, $SetupExtras
     }
 
-    Write-Host "==> .venv (torch-free root env)"
+    Write-Host "==> .venv (locked workspace env)"
     [Environment]::SetEnvironmentVariable("UV_PROJECT", $null, "Process")
     [Environment]::SetEnvironmentVariable(
         "UV_PROJECT_ENVIRONMENT", $RootEnvironment, "Process"
@@ -115,19 +122,25 @@ try {
     if (-not (Test-Path $TorchPython)) {
         Invoke-Native "uv" @("venv", $TorchEnvironment, "--python", "3.12")
     }
+    # Both OpenCV distributions own cv2; restore contrib's files after removing the old one.
+    Invoke-Native "uv" @("pip", "uninstall", "--python", $TorchPython, "opencv-python-headless")
     Invoke-Native "uv" @(
         "pip", "install", "--python", $TorchPython,
-        "--index-url", "https://download.pytorch.org/whl/cpu",
-        "torch==2.13.0+cpu", "torchvision==0.28.0+cpu"
+        "--reinstall-package", "opencv-contrib-python-headless",
+        "opencv-contrib-python-headless==5.0.0.93"
+    )
+    Invoke-Native "uv" @(
+        "pip", "install", "--python", $TorchPython,
+        "--torch-backend", "cpu",
+        "torch==2.14.1+cpu", "torchvision==0.29.1+cpu"
     )
     $CpuDependencies = @(
         "pytest", "packaging", "numpy>=1.26", "scipy>=1.11",
         "simpleeval==1.0.8", "onnxruntime==1.29.0",
-        "opencv-python-headless==5.0.0.93", "pillow==12.0.0",
+        "opencv-contrib-python-headless==5.0.0.93", "pillow==12.0.0",
         "safetensors==0.8.0", "sentencepiece==0.2.1", "tokenizers==0.23.1",
         "transformers==5.16.1",
         $KitchenCpuWheel,
-        $DinksterInferenceRequirement,
         "comfy-aimdo==0.6.0"
     ) + (Get-EditableArguments $CpuEditablePackages)
     Invoke-Native "uv" (@("pip", "install", "--python", $TorchPython) + $CpuDependencies)
@@ -139,7 +152,7 @@ try {
     }
     Invoke-Native $TorchPython @(
         "-c",
-        "from importlib.metadata import version; import torch; assert torch.__version__ == '2.13.0+cpu'; assert version('torchvision') == '0.28.0+cpu'; assert version('comfy-kitchen') == '0.2.40'; assert version('comfy-aimdo') == '0.6.0'"
+        "from importlib.metadata import version; import torch; assert torch.__version__ == '2.14.1+cpu'; assert version('torchvision') == '0.29.1+cpu'; assert version('comfy-kitchen') == '0.2.40'; assert version('comfy-aimdo') == '0.6.0'"
     )
 
     $PythonInclude = (& $TorchPython -c "import sysconfig; print(sysconfig.get_paths()['include'])")
@@ -174,7 +187,6 @@ try {
             "pytest", "numpy", "scipy", "torchsde", "tqdm", "pillow", "packaging",
             "safetensors==0.8.0", "sentencepiece==0.2.1", "tokenizers==0.23.1",
             "comfy-kitchen==0.2.40", "comfy-aimdo==0.6.0",
-            $DinksterInferenceRequirement,
             "triton-windows==3.7.1.post27"
         ) + (Get-EditableArguments $GpuEditablePackages)
         Invoke-Native "uv" (@("pip", "install", "--python", $GpuPython) + $GpuDependencies)

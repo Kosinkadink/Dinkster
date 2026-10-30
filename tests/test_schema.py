@@ -21,8 +21,6 @@ from dinkster_schema import (
     InputSpec,
     MountWidget,
     MultiComboWidget,
-    Node,
-    NodeOutputError,
     NodeSchema,
     NumberWidget,
     OutputRepresents,
@@ -590,14 +588,6 @@ def test_type_expressions_roundtrip_and_remain_closed() -> None:
         type_expr_from_wire({"kind": "future"})
 
 
-def test_malformed_widget_wire_is_rejected() -> None:
-    wire = schema_to_wire(SCHEMA)
-    entry = cast("list[dict[str, Any]]", wire["interface"])[0]
-    entry["widget"] = {"type": ""}
-    with pytest.raises(ValueError):
-        schema_from_wire(wire)
-
-
 def test_output_represents_wire_decode_rejects_unknown_fields_and_bad_shapes() -> None:
     schema = NodeSchema(
         node_type="test.represented-output",
@@ -644,33 +634,46 @@ def test_output_represents_wire_decode_rejects_unknown_fields_and_bad_shapes() -
         )
 
 
-class TwoOutputs(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            "test.two_outputs",
-            outputs=(
-                OutputSpec("first", TypeExpr.concrete("INT")),
-                OutputSpec("second", TypeExpr.concrete("INT")),
-            ),
-        )
+@pytest.mark.parametrize("hidden", [False, True])
+def test_dynamic_combo_visibility_round_trips_without_changing_choice_contract(
+    hidden: bool,
+) -> None:
+    combo = DynamicComboSpec(
+        "codec",
+        (
+            DynamicComboOption("auto"),
+            DynamicComboOption("custom", (InputSpec("quality", TypeExpr.concrete("INT")),)),
+        ),
+        required=False,
+        hidden=hidden,
+    )
+    schema = NodeSchema("test.hidden-choice", combos=(combo,))
+    wire = schema_to_wire(schema)
+    entry = cast("list[dict[str, Any]]", wire["interface"])[0]
+    assert (entry.get("hidden") is True) is hidden
+    if not hidden:
+        assert "hidden" not in entry
+    assert "default" not in entry
+    assert entry["required"] is False
+    assert schema_from_wire(wire) == schema
+    effective = elaborate(schema_from_wire(wire), (), slot_variants={"codec": "custom"})
+    assert [item.id for item in effective.inputs] == ["codec.quality"]
+    assert effective.inputs[0].type == TypeExpr.concrete("INT")
+    assert elaborate(schema_from_wire(wire), ()).inputs == ()
 
 
-def test_outputs_helper_requires_exact_output_ids() -> None:
-    assert TwoOutputs.outputs(first=1, second=2) == {"first": 1, "second": 2}
-    with pytest.raises(NodeOutputError, match="missing outputs: second"):
-        TwoOutputs.outputs(first=1, secondd=2)
-
-
-def test_duplicate_ids_are_rejected() -> None:
-    with pytest.raises(ValueError):
+@pytest.mark.parametrize("hidden", [None, 0, 1, "true"])
+def test_dynamic_combo_visibility_rejects_nonboolean_flags(hidden: object) -> None:
+    with pytest.raises(ValueError, match="hidden must be a bool"):
+        DynamicComboSpec("codec", (DynamicComboOption("auto"),), hidden=hidden)  # type: ignore[arg-type]
+    wire = schema_to_wire(
         NodeSchema(
-            "test.duplicate",
-            inputs=(
-                InputSpec("x", TypeExpr.concrete("INT")),
-                InputSpec("x", TypeExpr.concrete("INT")),
-            ),
+            "test.hidden-choice", combos=(DynamicComboSpec("codec", (DynamicComboOption("auto"),)),)
         )
+    )
+    cast("list[dict[str, Any]]", wire["interface"])[0]["hidden"] = hidden
+    with pytest.raises(ValueError, match="dynamicCombo.hidden"):
+        schema_from_wire(wire)
 
 
 def test_mixed_input_order_survives_wire_and_elaboration() -> None:

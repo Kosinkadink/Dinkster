@@ -108,7 +108,8 @@ def test_reattach_after_daemon_restart_swaps_in_a_new_session(tmp_path: Path) ->
             await composer.add_remote(spec)
             first_token = composer._remotes["box1"].instance_token
             assert first_token is not None
-            await stop_service(proc)
+            proc.kill()
+            await proc.wait()
             await wait_for_connected(composer, "box1", False)
             assert worker_status(composer, spec) == "disconnected"
             # A failed redial (daemon still down) changes nothing.
@@ -566,7 +567,8 @@ def test_reattach_adopts_a_changed_daemon_surface(tmp_path: Path) -> None:
             spec = remote_spec(host, port, tmp_path)
             await composer.add_remote(spec)
             assert "iso.chatty" in composer.composition.schemas
-            await stop_service(proc)
+            proc.kill()
+            await proc.wait()
             await wait_for_connected(composer, "box1", False)
 
             variant_root = tmp_path / "variant"
@@ -609,7 +611,8 @@ def test_reattach_refuses_a_surface_change_that_strands_dependents(tmp_path: Pat
             assert composer._owners["iso.chatty"] == "box1"
             assert "iso.chatty" in composer._remotes["box2"].node_types
 
-            await stop_service(proc1)
+            proc1.kill()
+            await proc1.wait()
             await wait_for_connected(composer, "box1", False)
             variant_root = tmp_path / "variant"
             manifest = write_variant_manifest(variant_root, "iso.chatty")
@@ -648,7 +651,8 @@ def test_reattach_aborts_when_the_old_session_cannot_be_reaped(
         try:
             spec = remote_spec(host, port, tmp_path)
             await composer.add_remote(spec)
-            await stop_service(proc)
+            proc.kill()
+            await proc.wait()
             await wait_for_connected(composer, "box1", False)
             restarted, _, _ = await start_service(write_iso_manifest(tmp_path), tmp_path, port=port)
 
@@ -740,7 +744,8 @@ def test_supervisor_redials_and_hinted_jobs_resume(
             assert (await hinted_job("warm")).status == 202
             assert (await wait_for_job(client, "warm", "one"))["state"] == "completed"
 
-            await stop_service(proc)
+            proc.kill()
+            await proc.wait()
             await wait_for_connected(composer, "box1", False)
             # While down: submission hints naming box1 are refused and the
             # composition report row flips to failed.

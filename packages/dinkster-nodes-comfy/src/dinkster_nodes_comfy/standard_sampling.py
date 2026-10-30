@@ -23,6 +23,7 @@ from dinkster_api.v1 import (
     TypeExpr,
     initialize_inference_process,
     materialize_latent,
+    prepare_sampling_model,
 )
 
 from .sampler_factories import SAMPLER_NAMES
@@ -81,6 +82,7 @@ def _sample(
     public_latent = source["samples"]
     latent = to_runtime(public_latent)
     initialize_inference_process()
+    model = prepare_sampling_model(model)
     sampling = importlib.import_module("dinkster_inference.sample")
     latent = sampling.fix_empty_latent_channels(
         model,

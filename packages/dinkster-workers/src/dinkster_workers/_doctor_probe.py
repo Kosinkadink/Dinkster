@@ -321,7 +321,16 @@ def probe(manifest_path: str) -> dict[str, Any]:
                     body_arms=dict(manifest.arms),
                     extension_contributions=load_extension_contributions(manifest),
                     renditions=registry.registered_renditions(),
-                    registered_types=pack_ids,
+                    # Match worker ownership: dependency codecs are usable here
+                    # but are not declarations owned by this pack.
+                    registered_types=[
+                        tid
+                        for tid in pack_ids
+                        if not any(
+                            dependency.pack == registry.owner_of(tid)
+                            for dependency in manifest.dependencies
+                        )
+                    ],
                 )
             )
             report["catalog"]["types"] = {
