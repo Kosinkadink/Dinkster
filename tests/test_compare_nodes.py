@@ -797,6 +797,76 @@ def test_hidden_inputs_do_not_hide_public_input_drift(example_contract: tuple[di
     assert any("name" in difference for difference in compare(reference, native))
 
 
+@pytest.mark.parametrize("nesting", ["direct", "dynamicCombo", "inputFamily"])
+def test_hidden_public_declarations_compare_values_and_visibility(nesting: str) -> None:
+    from copy import deepcopy
+
+    from tools.compare_nodes import compare
+
+    groups = {
+        "optional": {"codec": [["auto", "h264", "av1"], {"default": "auto", "hidden": True}]},
+        "hidden": {"prompt": "PROMPT"},
+    }
+    codec = {
+        "role": "input",
+        "id": "codec",
+        "type": {"kind": "concrete", "types": ["COMBO"]},
+        "required": False,
+        "hidden": True,
+        "default": "auto",
+        "widget": {"type": "COMBO", "options": ["auto", "h264", "av1"]},
+    }
+    interface = [codec]
+    if nesting == "dynamicCombo":
+        groups = {
+            "required": {
+                "format": [
+                    "COMFY_DYNAMICCOMBO_V3",
+                    {"options": [{"key": "mp4", "inputs": groups}]},
+                ]
+            }
+        }
+        interface = [
+            {"role": "dynamicCombo", "id": "format", "options": [{"key": "mp4", "inputs": [codec]}]}
+        ]
+    elif nesting == "inputFamily":
+        groups = {
+            "required": {
+                "codecs": [
+                    "COMFY_DYNAMICGROUP_V3",
+                    {"template": groups, "min": 1, "max": 3},
+                ]
+            }
+        }
+        interface = [
+            {
+                "role": "inputFamily",
+                "id": "codecs",
+                "template": [codec],
+                "minMembers": 1,
+                "maxMembers": 3,
+            }
+        ]
+    reference = {"class_name": "HiddenChoice", "input_types": groups, "return_types": []}
+    native = {"nodeType": "HiddenChoice", "interface": interface}
+    assert compare(reference, native) == []
+    for key, value in (
+        ("hidden", False),
+        ("required", True),
+        ("default", "h264"),
+        ("type", {"kind": "concrete", "types": ["STRING"]}),
+        ("widget", {"type": "COMBO", "options": ["auto", "h264"]}),
+    ):
+        previous = deepcopy(codec[key])
+        codec[key] = value
+        assert compare(reference, native), key
+        codec[key] = previous
+    codec["hidden"] = False
+    if nesting == "direct":
+        groups["optional"]["codec"][1]["hidden"] = False
+        assert compare(reference, native) == []
+
+
 def test_hidden_family_members_do_not_create_public_inputs(
     example_contract: tuple[dict, dict],
 ) -> None:

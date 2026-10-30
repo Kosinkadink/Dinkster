@@ -42,6 +42,36 @@ CAPABILITIES = (
 )
 
 
+def test_background_removal_registers_without_torch_or_inference() -> None:
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys\n"
+            "sys.modules['torch'] = None\n"
+            "sys.modules['dinkster_inference'] = None\n"
+            "from dinkster_api.v1 import ASSET_TYPE, BACKGROUND_REMOVAL_TYPE, MASK_TYPE, TypeExpr\n"
+            "from dinkster_nodes_comfy import COMFY_NODES\n"
+            "from dinkster_nodes_comfy.background_removal import BACKGROUND_REMOVAL_NODES\n"
+            "from dinkster_workers import load_manifest\n"
+            "manifest = load_manifest('packages/dinkster-nodes-comfy/dinkster-pack.toml')\n"
+            "for node in BACKGROUND_REMOVAL_NODES:\n"
+            "    assert node in COMFY_NODES\n"
+            "    assert node.define_schema().node_type in manifest.namespaces\n"
+            "loader, remove = [node.define_schema() for node in BACKGROUND_REMOVAL_NODES]\n"
+            "assert loader.inputs[0].id == 'bg_removal_name'\n"
+            "assert loader.inputs[0].type == TypeExpr.concrete(ASSET_TYPE)\n"
+            "assert loader.inputs[0].widget.kind == 'model/background-removal'\n"
+            "assert loader.outputs[0].type == TypeExpr.concrete(BACKGROUND_REMOVAL_TYPE)\n"
+            "assert [port.id for port in remove.inputs] == ['bg_removal_model', 'image']\n"
+            "assert remove.outputs[0].type == TypeExpr.concrete(MASK_TYPE)\n",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_bbox_crop_schema_registers_without_torch_or_inference() -> None:
     subprocess.run(
         [

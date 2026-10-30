@@ -30,6 +30,8 @@ from dinkster_values import register_core_types
 from dinkster_workers import InProcessWorker
 
 GOLDEN_V1_SURFACE = (
+    "TriangleMeshBatch",
+    "materialize_mesh",
     "IMAGE_DOCUMENT_MEDIA_TYPE",
     "BLEND_MODES",
     "ImageDocument",
@@ -594,37 +596,44 @@ assert "torch" not in sys.modules
 
 
 @pytest.mark.parametrize("native_first", (True, False))
-@pytest.mark.parametrize("type_name", ("GLIGEN", "PHOTOMAKER"))
+@pytest.mark.parametrize("type_name", ("GLIGEN", "PHOTOMAKER", "BACKGROUND_REMOVAL"))
+@pytest.mark.parametrize("preexisting", (False, True))
 def test_model_registration_preserves_resident_identity_without_torch(
-    native_first: bool, type_name: str
+    native_first: bool, type_name: str, preexisting: bool
 ) -> None:
     script = f"""
 import sys
 from dinkster_api.v1 import {type_name}_TYPE, TypeRegistry, register_inference_types
-from dinkster_memory.resident import default_pool
+from dinkster_memory.resident import ResidentPool, default_pool
 from dinkster_native.native import register_native_types
-from dinkster_values import RESOURCE_ID_META_KEY, ResidentLookupError
+from dinkster_values import RESOURCE_ID_META_KEY, ResidentLookupError, register_resident_type
 
 model_type = {type_name}_TYPE
 assert model_type == {type_name!r}
 registry = TypeRegistry()
+table = ResidentPool() if {preexisting!r} else default_pool()
+source = object()
+original = register_resident_type(registry, model_type, table=table) if {preexisting!r} else None
+original_encoded = original.encode(source) if original is not None else None
 registrations = (register_native_types, register_inference_types)
 if not {native_first!r}:
     registrations = registrations[::-1]
 registrations[0](registry)
 spec = registry.spec(model_type)
+if original is not None:
+    assert spec is original
+    assert spec.decode(original_encoded) is source
 registrations[1](registry)
 assert registry.spec(model_type) is spec
 register_inference_types(registry)
 assert registry.spec(model_type) is spec
-assert default_pool() in registry.resident_tables
+assert table in registry.resident_tables
 assert "comfy.{type_name}" not in registry
-source = object()
 encoded = spec.encode(source)
 assert spec.decode(encoded) is source
 assert spec.fingerprint(source) == spec.fingerprint(spec.decode(encoded))
 assert spec.meta(source)[RESOURCE_ID_META_KEY].startswith("resident:")
-assert default_pool().release_resident(source)
+assert table.release_resident(source)
 try:
     spec.decode(encoded)
 except ResidentLookupError:
@@ -888,6 +897,7 @@ def test_reexports_are_the_internal_objects() -> None:
     import dinkster_image_document.interchange as document_interchange
     import dinkster_inference_wire.latents as latent_values
     import dinkster_inference_wire.process as inference_process
+    import dinkster_inference_wire.sparse as sparse_values
     import dinkster_inference_wire.types as inference_types
     import dinkster_memory
     import dinkster_protocol
@@ -924,6 +934,7 @@ def test_reexports_are_the_internal_objects() -> None:
     sources = (
         latent_values,
         inference_process,
+        sparse_values,
         inference_types,
         dinkster_schema,
         dinkster_values,
