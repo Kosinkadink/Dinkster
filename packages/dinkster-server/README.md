@@ -289,6 +289,17 @@ an empty JSON object, with no query parameters. It currently returns HTTP409,
 `reclaimedBytes`/`reclaimedFiles`. Repeating Clear is nondestructive. No policy
 request or individual complete owner manifest can bypass this global gate.
 
+Behind the gate, Clear first runs the same inactive-job publication recovery and
+scratch removal as startup and terminal settlement, then the held-root vault
+collector. Its reclaimed byte/file totals include both passes; `scratchRecovery`
+reports the recovery pass separately. A refused job store yields HTTP409 with
+`scratch_recovery_incomplete`, unknown reclaimability and a failed-item count,
+while still reporting any bytes already removed from other safe stores. Live
+jobs remain untouched, offered copies are verified before scratch removal, and
+unoffered temporary data never becomes a produced engine asset. Repeating Clear
+does not count earlier removal again; owner journals remain part of temporary
+accounting for retries and reuse.
+
 The collector retains memory/disk, history and library reference barriers and
 inactive scratch claims and their dependency closure through an exclusive vault
 claim and deletion. Offered scratch-journal identities remain roots until

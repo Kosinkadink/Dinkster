@@ -1704,11 +1704,23 @@ async def handle_cleanup_clear(request: web.Request) -> web.Response:
     if request.query or await _json_body(request):
         raise web.HTTPBadRequest(text="asset cleanup accepts only an empty object")
     from .app import STATE_KEY
-    from .cleanup import FRONTEND_RETENTION_COMPLETE, inspect_cleanup
+    from .cleanup import (
+        FRONTEND_RETENTION_COMPLETE,
+        RECOVERY_KEY,
+        inspect_cleanup,
+        recover_produced_publications,
+    )
 
     if FRONTEND_RETENTION_COMPLETE:
         library = request.app[LIBRARY_KEY]
         state = request.app[STATE_KEY]
+        recovery: dict[str, int] = {}
+        if library.scratch_root is not None:
+            scratch = library.scratch_root
+            recovery = await run_owned_thread(
+                lambda: recover_produced_publications(library.vault, scratch)
+            )
+            request.app[RECOVERY_KEY].update(recovery)
         result = await inspect_cleanup(
             library.vault,
             library.store,
@@ -1717,6 +1729,16 @@ async def handle_cleanup_clear(request: web.Request) -> web.Response:
             scratch_root=library.scratch_root,
             collect=True,
         )
+        for key in ("reclaimedBytes", "reclaimedFiles"):
+            result[key] = cast(int, result[key]) + recovery.get(key, 0)
+        result["scratchRecovery"] = recovery or None
+        if recovery.get("blockedInspections", 0):
+            cast(list[str], result["blocked"]).append("scratch_recovery_incomplete")
+            result["collectionEnabled"] = False
+            result["reclaimableBytes"] = None
+            result["failedItems"] = (
+                cast(int, result.get("failedItems", 0)) + recovery["blockedInspections"]
+            )
         return web.json_response(
             result,
             status=200 if result["collectionEnabled"] else 409,

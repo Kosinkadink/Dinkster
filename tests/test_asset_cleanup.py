@@ -1163,15 +1163,62 @@ def test_clear_http_uses_held_owner_collector_when_integration_gate_is_enabled(
         )
         await client.start_server()
         try:
+            scratch = tmp_path / "scratch"
+            host = hold_produced_job(scratch, "interrupted after startup")
+            with use_produced_output_job("interrupted after startup", 1):
+                source = produced_output_scratch(
+                    {"DINKSTER_PACK_SCRATCH": str(scratch / "packs" / "media")}
+                )
+                assert source is not None
+                for value in (b"offered result", b"unfinished result"):
+                    with source.writer(digest_bytes(value)) as writer:
+                        writer.write(value)
+                        writer.commit()
+                ProducedScratchState(source.root).offer([digest_bytes(b"offered result")])
+            host.close()
+            (source.root / ".ingest-interrupted").write_bytes(b"partial upload")
+            scratch_files = {
+                p: p.stat().st_size
+                for p in source.root.rglob("*")
+                if p.is_file() and p.name != ".produced-scratch.sqlite"
+            }
             response = await client.post("/api/library/storage/clear", json={})
             assert response.status == 200
             result = await response.json()
-            assert result["reclaimedFiles"] == 2
-            assert result["reclaimedBytes"] > 12
+            assert result["reclaimedFiles"] == 4 + len(scratch_files)
+            assert result["reclaimedBytes"] > 12 + 14 + sum(scratch_files.values())
             assert not vault.has(digest)
+            assert not vault.has(digest_bytes(b"offered result"))
+            assert not vault.has(digest_bytes(b"unfinished result"))
+            assert not any(p.exists() for p in scratch_files)
+            assert ProducedScratchState(source.root).publications() == ()
+            assert (
+                result["temporaryBytes"]
+                == (source.root / ".produced-scratch.sqlite").stat().st_size
+            )
             response = await client.post("/api/library/storage/clear", json={})
             assert response.status == 200
             assert (await response.json())["reclaimedFiles"] == 0
+            host = hold_produced_job(scratch, "still running")
+            try:
+                with use_produced_output_job("still running", 1):
+                    live = produced_output_scratch(
+                        {"DINKSTER_PACK_SCRATCH": str(scratch / "packs" / "media")}
+                    )
+                    assert live is not None
+                    with live.writer(digest_bytes(b"live bytes")) as writer:
+                        writer.write(b"live bytes")
+                        live_path = writer.commit()
+                response = await client.post("/api/library/storage/clear", json={})
+                assert response.status == 409
+                blocked = await response.json()
+                assert "scratch_recovery_incomplete" in blocked["blocked"]
+                assert blocked["reclaimableBytes"] is None
+                assert blocked["reclaimedFiles"] == 0
+                assert blocked["failedItems"] == 1
+                assert live_path.read_bytes() == b"live bytes"
+            finally:
+                host.close()
         finally:
             await client.close()
 
