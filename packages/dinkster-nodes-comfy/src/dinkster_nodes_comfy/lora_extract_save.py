@@ -27,6 +27,7 @@ from dinkster_api.v1 import (
     Node,
     NodeSchema,
     NumberWidget,
+    StringWidget,
     TypeExpr,
     attach_saved_artifact,
     initialize_inference_process,
@@ -161,7 +162,12 @@ class LoraSave(Node):
             category="experimental",
             search_terms=("export lora",),
             inputs=(
-                InputSpec("filename_prefix", _STRING, default="loras/ComfyUI_extracted_lora"),
+                InputSpec(
+                    "filename_prefix",
+                    _STRING,
+                    default="loras/ComfyUI_extracted_lora",
+                    widget=StringWidget(multiline=False),
+                ),
                 InputSpec(
                     "rank",
                     TypeExpr.concrete(CORE_INT),

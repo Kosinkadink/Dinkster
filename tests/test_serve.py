@@ -2605,10 +2605,16 @@ def write_shutdown_pack(directory: Path, index: int, *, startup_delay: float = 0
     return manifest
 
 
-@pytest.mark.parametrize("in_process", [False, True])
-def test_serve_explicit_generation_uses_only_its_sources(tmp_path: Path, in_process: bool) -> None:
+@pytest.mark.parametrize(
+    ("in_process", "output_configuration"),
+    [(False, "fresh"), (True, "fresh"), (True, "custom"), (True, "read-only"), (True, "removed")],
+)
+def test_serve_explicit_generation_uses_only_its_sources(
+    tmp_path: Path, in_process: bool, output_configuration: str
+) -> None:
     import venv
 
+    from dinkster_assets import MountDef, dump_mounts, load_mounts
     from dinkster_registry import LockedPack, Lockfile, build_artifact
     from dinkster_workers.doctor import prepare_catalog
 
@@ -2636,6 +2642,27 @@ def test_serve_explicit_generation_uses_only_its_sources(tmp_path: Path, in_proc
     source = generation / "pack-sources" / pack
     report = prepare_catalog(source / "dinkster-pack.toml", environment={"PYTHONPATH": str(source)})
     assert report.ok, report
+    library_root = tmp_path / "library"
+    expected_output = "output" if output_configuration == "fresh" else None
+    output_path = library_root / "output"
+    existing_mount = None
+    if output_configuration != "fresh":
+        library_root.mkdir()
+        if output_configuration == "removed":
+            (library_root / ".output-initialized").touch()
+        else:
+            output_path = tmp_path / "custom-output"
+            if output_configuration == "custom":
+                expected_output = "renders"
+                output_path.mkdir()
+            existing_mount = MountDef(
+                expected_output or "output",
+                output_path,
+                "readwrite" if expected_output else "read",
+            )
+            (library_root / "mounts.toml").write_text(
+                dump_mounts((existing_mount,), output_mount=expected_output), encoding="utf-8"
+            )
     port = free_port()
     log = tmp_path / "server.log"
     with log.open("wb") as output:
@@ -2659,6 +2686,38 @@ def test_serve_explicit_generation_uses_only_its_sources(tmp_path: Path, in_proc
                 async with aiohttp.ClientSession() as client:
                     async with client.get(f"http://127.0.0.1:{port}/api/nodes") as response:
                         data = await response.json()
+                    async with client.get(f"http://127.0.0.1:{port}/api/mounts") as response:
+                        mounts = await response.json()
+                    assert mounts["outputMount"] == expected_output, mounts
+                    if expected_output is not None:
+                        selected = next(
+                            row for row in mounts["mounts"] if row["id"] == expected_output
+                        )
+                        assert selected["mode"] == "readwrite"
+                        assert Path(selected["path"]) == output_path
+                        async with client.post(
+                            f"http://127.0.0.1:{port}/api/assets",
+                            params={
+                                "scope": "local",
+                                "mount": expected_output,
+                                "name": "first-run.txt",
+                            },
+                            data=b"first generation output",
+                        ) as response:
+                            assert response.status == 201, await response.text()
+                            saved = await response.json()
+                        assert (
+                            saved["asset"]["virtualPath"]
+                            == f"mounts/{expected_output}/first-run.txt"
+                        )
+                        assert (
+                            output_path / "first-run.txt"
+                        ).read_bytes() == b"first generation output"
+                    else:
+                        assert not output_path.exists()
+                    if existing_mount is not None:
+                        assert existing_mount in load_mounts(library_root / "mounts.toml")
+                    assert mounts["mountChangesAllowed"] is False
                     workflow = {
                         "format": "dinkster-workflow",
                         "formatVersion": 1,

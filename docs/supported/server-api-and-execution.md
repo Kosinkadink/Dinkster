@@ -56,9 +56,12 @@
   Outside, revoked, excluded, missing and unsafe paths return an explicit
   refusal without revealing host paths. Authentication, malformed requests and
   server failures remain distinct errors, not upload-fallback signals.
-- Setup and serving with mount changes enabled initialize a writable
+- Setup, environment-managed generation serving, and serving with mount changes
+  enabled initialize a writable
   `<library-root>/imports` folder and a selected writable
   `<library-root>/output` folder when those defaults are not configured.
+  Fresh generations can save output without enabling runtime mount editing;
+  the existing mounts API reports the selected writable destination.
   Existing output selections, folder paths and read-only grants are preserved; unavailable
   configured directories are not recreated or replaced. Removing the import
   or output grant remains effective across restarts and repeated setup.
