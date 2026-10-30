@@ -1,5 +1,13 @@
 ## Image operations
 
+- Native `RotateMesh` rotates mesh vertices, normals and tangents using Euler
+  angles or a normalized quaternion while retaining material attributes.
+  `GetMeshInfo` reports padded-batch counts and available mesh attributes.
+- Portable mesh values retain all fifteen geometry and material fields; voxel
+  values retain dense or sparse data, optional colors and resolution.
+- Native `VAEDecodeHunyuan3D` decodes latents to voxel grids; `VoxelToMesh`
+  extracts basic or surface-net meshes, retaining variable per-item lengths
+  in padded batches. The deprecated `VoxelToMeshBasic` remains available.
 - Native `Trellis2Conditioning` encodes per-image vision tokens at 512 and 1024
   resolution, with independent zero negative conditioning at both sizes.
 - Native `UpscaleModelLoader` loads granted single-image upscale checkpoints
