@@ -63,7 +63,7 @@ def verify_base_inputs(base: Path, expected: dict[str, str], *, operation: str) 
 def link_file(source: str, destination: str) -> str:
     # Dereference interpreter-internal aliases so every generation is self-contained.
     original = Path(source).resolve(strict=True)
-    if sys.platform.startswith("linux"):
+    if sys.platform == "linux":
         import fcntl
 
         try:

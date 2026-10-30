@@ -428,7 +428,7 @@ def _process_alive(record: dict[str, object]) -> bool:
         stat = (Path("/proc") / str(pid) / "stat").read_text(encoding="utf-8")
         if stat.rsplit(")", 1)[1].split()[0] == "Z":
             return False
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
         return False
     except OSError as exc:
         raise EnvironmentError("cannot determine supervisor process state") from exc

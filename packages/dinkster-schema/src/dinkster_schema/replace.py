@@ -1478,11 +1478,21 @@ def validate_replacement_references(
                                 if source_family is None
                                 else source_family.min_members
                             )
-                            suffixes = (
-                                ()
-                                if source_family is None or source_family.member_names is None
-                                else source_family.member_names[:member_count]
-                            )
+                            if family_mapping.member_ids == "targetPositions":
+                                suffixes = (
+                                    family.member_names[:member_count]
+                                    if family.member_names is not None
+                                    else tuple(
+                                        f"{family.member_prefix}{index}"
+                                        for index in range(member_count)
+                                    )
+                                )
+                            else:
+                                suffixes = (
+                                    ()
+                                    if source_family is None or source_family.member_names is None
+                                    else source_family.member_names[:member_count]
+                                )
                             if len(suffixes) < member_count:
                                 suffixes = (
                                     family.member_names[:member_count]

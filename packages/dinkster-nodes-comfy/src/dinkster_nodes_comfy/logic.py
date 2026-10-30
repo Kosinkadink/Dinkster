@@ -14,6 +14,8 @@ from dinkster_api.v1 import (
     TypeExpr,
 )
 
+from .family_migrations import ordered_family_migration
+
 
 class ComfyNotNode(Node):
     @classmethod
@@ -57,6 +59,15 @@ class ComfyAndNode(Node):
                 ),
             ),
             outputs=(OutputSpec("BOOLEAN", TypeExpr.concrete(CORE_BOOLEAN)),),
+            replacements=(
+                ordered_family_migration(
+                    "ComfyAndNode",
+                    "values",
+                    "value",
+                    ("BOOLEAN",),
+                    historical_member_port="values.values",
+                ),
+            ),
         )
 
     @classmethod
@@ -86,6 +97,15 @@ class ComfyOrNode(Node):
                 ),
             ),
             outputs=(OutputSpec("BOOLEAN", TypeExpr.concrete(CORE_BOOLEAN)),),
+            replacements=(
+                ordered_family_migration(
+                    "ComfyOrNode",
+                    "values",
+                    "value",
+                    ("BOOLEAN",),
+                    historical_member_port="values.values",
+                ),
+            ),
         )
 
     @classmethod

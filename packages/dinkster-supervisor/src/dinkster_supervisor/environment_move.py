@@ -6,6 +6,7 @@ import os
 import shutil
 import socket
 import time
+from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -36,6 +37,39 @@ from .environment_stores import (
     store_projects,
     volume,
 )
+
+
+def copy_tree(
+    source: Path,
+    target: Path,
+    *,
+    dirs_exist_ok: bool = False,
+    ignore: Callable[[str, list[str]], set[str]] | None = None,
+    copy_function: Callable[[str, str], str] = shutil.copy2,
+) -> None:
+    """Copy a tree without following links or losing Windows directory-link types."""
+    entries = list(source.iterdir())
+    ignored: set[str] = set() if ignore is None else ignore(str(source), [p.name for p in entries])
+    target.mkdir(parents=True, exist_ok=dirs_exist_ok)
+    for first in entries:
+        if first.name in ignored:
+            continue
+        second = target / first.name
+        if first.is_symlink():
+            # CPython 3.12 copytree(symlinks=True) loses Windows directory-link types.
+            os.symlink(os.readlink(first), second, target_is_directory=first.is_dir())
+            shutil.copystat(first, second, follow_symlinks=False)
+        elif first.is_dir():
+            copy_tree(
+                first,
+                second,
+                dirs_exist_ok=dirs_exist_ok,
+                ignore=ignore,
+                copy_function=copy_function,
+            )
+        else:
+            copy_function(str(first), str(second))
+    shutil.copystat(source, target)
 
 
 def _files(root: Path, journal: str = "") -> dict[str, str]:
@@ -227,9 +261,7 @@ def _prepare(plan: MovePlan, path: Path, journal: Journal) -> None:
             return link_file(first, second)
         return shutil.copy2(first, second)
 
-    shutil.copytree(
-        source, target, dirs_exist_ok=True, symlinks=True, ignore=ignore, copy_function=copy_file
-    )
+    copy_tree(source, target, dirs_exist_ok=True, ignore=ignore, copy_function=copy_file)
     atomic_write(target / "store", str(plan.target_store) + "\n")
     if plan.cross_volume:
         required: dict[str, set[str]] = {"bases": set(), "engines": set(), "wheels": set()}
@@ -275,7 +307,7 @@ def _prepare(plan: MovePlan, path: Path, journal: Journal) -> None:
                     )
                     if staging.exists():
                         shutil.rmtree(staging)
-                    shutil.copytree(entry, staging, symlinks=True)
+                    copy_tree(entry, staging)
                     if any(
                         p.is_symlink()
                         and (category != "bases" or not p.is_relative_to(staging / "python"))
