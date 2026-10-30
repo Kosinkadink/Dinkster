@@ -45,7 +45,7 @@ LocalFileSignature = tuple[int, ...]
 
 
 def local_file_signature(stat: os.stat_result, source: Path | int) -> LocalFileSignature:
-    if sys.platform == "win32" and isinstance(source, Path):
+    if isinstance(source, Path) and sys.platform == "win32":
         with open_local_file(source) as handle:
             return local_file_signature(source.stat(), handle.fileno())
     signature = stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_dev, stat.st_ino
