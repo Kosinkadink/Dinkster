@@ -734,6 +734,65 @@ def test_scratch_accounting_waits_for_host_and_store_owners_without_deleting(
     asyncio.run(scenario())
 
 
+def test_collection_holds_one_job_across_multiple_pack_stores(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("dinkster_server.cleanup.FRONTEND_RETENTION_COMPLETE", True)
+
+    async def scenario() -> None:
+        scratch = tmp_path / "scratch"
+        vault = AssetVault(tmp_path / "vault")
+        store = LibraryStore(tmp_path / "library")
+        history = HistoryStore(tmp_path / "history")
+        host = hold_produced_job(scratch, "multiple packs")
+        data = b"offered by two different packs"
+        digest = digest_bytes(data)
+        try:
+            for scope, pack in (("packs", "first"), ("groups", "second")):
+                with use_produced_output_job("multiple packs", 1):
+                    source = produced_output_scratch(
+                        {"DINKSTER_PACK_SCRATCH": str(scratch / scope / pack)}
+                    )
+                    assert source is not None
+                    with source.writer(digest) as writer:
+                        writer.write(data)
+                        writer.commit()
+                    ProducedScratchState(source.root).offer([digest])
+            host.close()
+            inventory = ProducedAssetInventory(vault.root)
+            inventory.pending(digest, len(data))
+            with vault.writer(digest) as writer:
+                writer.write(data)
+                writer.commit()
+                inventory.adopted(digest, len(data))
+            result = await inspect_cleanup(
+                vault, store, history, MemoryLRUCache(), scratch_root=scratch, collect=True
+            )
+            assert result["blocked"] == []
+            assert result["collectionEnabled"]
+            assert result["knownRetainedAssets"] == 1
+            assert result["reclaimedFiles"] == 0
+            durable = vault.resolve(digest)
+            assert durable is not None and durable.read_bytes() == data
+            recovery = recover_produced_publications(vault, scratch)
+            assert recovery["verifiedPublications"] == 2
+            assert recovery["blockedInspections"] == 0
+            assert recovery["reclaimedFiles"] == 4
+            result = await inspect_cleanup(
+                vault, store, history, MemoryLRUCache(), scratch_root=scratch, collect=True
+            )
+            assert result["blocked"] == []
+            assert result["knownRetainedAssets"] == 0
+            assert result["reclaimedFiles"] == 2
+            assert not vault.has(digest)
+        finally:
+            host.close()
+            history.close()
+            store.close()
+
+    asyncio.run(scenario())
+
+
 def test_cancelled_accounting_keeps_all_reference_owners_until_inspection_settles(
     tmp_path: Path,
 ) -> None:

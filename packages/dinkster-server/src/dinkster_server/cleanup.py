@@ -7,7 +7,7 @@ import os
 import sqlite3
 import stat
 from collections.abc import Generator
-from contextlib import AsyncExitStack, ExitStack, closing, contextmanager
+from contextlib import AsyncExitStack, ExitStack, closing, contextmanager, nullcontext
 from pathlib import Path
 
 from aiohttp import web
@@ -170,19 +170,30 @@ def _scratch_roots(scratch: Path) -> Generator[tuple[Path, Path]]:
 
 
 @contextmanager
-def _hold_scratch_job(scratch: Path, pack: Path, root: Path) -> Generator[ProducedScratchState]:
+def _hold_scratch_job(
+    scratch: Path, pack: Path, root: Path, *, held_jobs: set[str] | None = None
+) -> Generator[ProducedScratchState]:
     state = ProducedScratchState(root)
     job, attempt = state.owner()
     if root != produced_job_scratch_root(pack, job, attempt):
         raise AssetError("scratch job location disagrees with its owner")
-    with claim_inactive_produced_job(scratch, job) as inactive_job:
+    # One inspection may retain several pack stores belonging to the same job.
+    already_held = held_jobs is not None and job in held_jobs
+    claim = nullcontext(True) if already_held else claim_inactive_produced_job(scratch, job)
+    with claim as inactive_job:
         if not inactive_job:
             raise AssetError("scratch job is active")
-        with claim_inactive_produced_scratch(root) as inactive_store:
-            if not inactive_store or state.owner() != (job, attempt):
-                raise AssetError("scratch store is active or changed")
-            state.publications()
-            yield state
+        if held_jobs is not None:
+            held_jobs.add(job)
+        try:
+            with claim_inactive_produced_scratch(root) as inactive_store:
+                if not inactive_store or state.owner() != (job, attempt):
+                    raise AssetError("scratch store is active or changed")
+                state.publications()
+                yield state
+        finally:
+            if held_jobs is not None and not already_held:
+                held_jobs.remove(job)
 
 
 def _scratch_bytes(scratch: Path) -> int:
@@ -449,8 +460,11 @@ def _inspect(
             else:
                 roots.update(owners.enter_context(history.hold_asset_references()))
             if scratch_root is not None:
+                held_jobs: set[str] = set()
                 for pack, root in _scratch_roots(scratch_root):
-                    state = owners.enter_context(_hold_scratch_job(scratch_root, pack, root))
+                    state = owners.enter_context(
+                        _hold_scratch_job(scratch_root, pack, root, held_jobs=held_jobs)
+                    )
                     # Partial scratch removal must remain retryable until journal retirement.
                     roots.update(digest for digest, _, offered in state.publications() if offered)
             references = owners.enter_context(store.hold_asset_references(sorted(roots)))
