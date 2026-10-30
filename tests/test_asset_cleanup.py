@@ -8,6 +8,7 @@ import threading
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
+from typing import cast
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -52,7 +53,9 @@ def test_storage_accounting_combines_held_owners_without_enabling_collection(
             )
             await cache.put("key", {"out": value})
         # A second store sharing the disk root must not acquire the same file lock twice.
-        cache = LayeredCache(memory, disk, DiskCacheStore(disk.root, TypeRegistry()))
+        cache = LayeredCache(
+            memory, disk, DiskCacheStore(disk.root / ".." / "cache", TypeRegistry())
+        )
         store.create("private", "kept", digests[2], "application/octet-stream")
         history.put(make_record("run", scope="another", asset_digests=(digests[3],)))
         store.put_dependencies(digests[0], [{"digest": digests[4]}])
@@ -71,7 +74,7 @@ def test_storage_accounting_combines_held_owners_without_enabling_collection(
             store.retain_assets("unrelated", "preview", "unknown", [], revision=0)
             blocked = await inspect_cleanup(vault, store, history, cache)
             assert blocked["knownRetainedAssets"] is None
-            assert "reference_state_unavailable" in blocked["blocked"]
+            assert "reference_state_unavailable" in cast(list[str], blocked["blocked"])
             assert not blocked["collectionEnabled"]
             for digest, data in zip(digests, payloads, strict=True):
                 path = vault.resolve(digest)
@@ -209,7 +212,7 @@ def test_storage_accounting_refuses_escaping_vault_shard(tmp_path: Path) -> None
         try:
             status = await inspect_cleanup(vault, store, None, MemoryLRUCache())
             assert status["vaultBytes"] is None
-            assert "vault_accounting_unavailable" in status["blocked"]
+            assert "vault_accounting_unavailable" in cast(list[str], status["blocked"])
             assert (outside / ("ab" * 32)).read_bytes() == b"untouched external bytes"
             assert not (vault.root / ".produced-assets.sqlite").exists()
         finally:

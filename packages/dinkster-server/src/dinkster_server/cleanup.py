@@ -36,7 +36,7 @@ async def inspect_cleanup(
         elif isinstance(layer, MemoryLRUCache):
             memories[id(layer)] = layer
         elif isinstance(layer, DiskCacheStore):
-            disks[layer.root.absolute()] = layer
+            disks[layer.root.resolve()] = layer
         else:
             blocked.append("cache_reference_state_unavailable")
 
