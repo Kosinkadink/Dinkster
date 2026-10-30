@@ -73,6 +73,7 @@ def make_generation(root: Path, number: int = 1) -> None:
     python.parent.mkdir(parents=True)
     if os.name == "nt":
         python.write_bytes(Path(sys.executable).read_bytes())
+        (python.parent / "pyvenv.cfg").write_text(f"home = {sys.base_prefix}\n", encoding="utf-8")
     else:
         python.symlink_to(sys.executable)
     (generation / "generation.json").write_text(
