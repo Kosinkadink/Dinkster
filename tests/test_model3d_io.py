@@ -4,28 +4,38 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import shutil
 import struct
+from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
 import dinkster_nodes_media_io.model3d as model3d_module
 import pytest
+from dinkster_api.v1 import LOAD_3D_TYPE, InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_assets import (
     AssetError,
     AssetRef,
     AssetVault,
+    LocalAssetRef,
+    MountDef,
     MountSnapshotResolver,
+    MountTable,
     digest_bytes,
     register_asset_type,
     register_load3d_type,
+    resolver_from_env,
 )
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
-from dinkster_graph import Graph, GraphNode, TypedLiteral
+from dinkster_graph import Graph, GraphNode, Link, TypedLiteral
 from dinkster_nodes_media_io import LoadModel3D, PreviewModel3D, SaveModel3D, register_media_types
 from dinkster_schema import build_node_types, build_schemas
 from dinkster_values import TypeRegistry, decode_model3d, register_core_types
 from dinkster_workers import InProcessWorker
+
+from dinkster.compose import PackSpec, ServingComposer
 
 pytestmark = pytest.mark.usefixtures("saved_artifact_context")
 
@@ -247,3 +257,166 @@ def test_authored_viewport_captures_rebind_without_granting_paths(tmp_path: Path
         "camera_info": None,
     }
     assert target.decode(source.encode({})) == {}
+
+
+@pytest.mark.parametrize("change", ("revoke", "replace", "index"))
+def test_viewport_captures_retain_local_grant_authority(tmp_path: Path, change: str) -> None:
+    root = tmp_path / "captures"
+    root.mkdir()
+    capture = root / "frame.png"
+    capture.write_bytes(b"original capture bytes")
+    snapshot = tmp_path / "mounts.json"
+    mounts = MountTable(snapshot)
+    mounts.add(MountDef(id="captures", path=root), kind="media/image")
+    ref = mounts.bind_name("frame.png", "media/image")
+    assert isinstance(ref, LocalAssetRef)
+    registry = TypeRegistry()
+    register_asset_type(registry, MountSnapshotResolver(snapshot))
+    spec = register_load3d_type(registry)
+    value = {"image": ref, "recording": ""}
+    payload = spec.encode(value)
+    foreign = TypeRegistry()
+    register_asset_type(foreign, MountSnapshotResolver(tmp_path / "foreign.json"))
+    foreign_spec = register_load3d_type(foreign)
+    with pytest.raises(AssetError, match="unavailable, revoked or changed"):
+        foreign_spec.decode(payload)
+    restored = cast(dict[str, object], spec.decode(payload))
+    assert cast(LocalAssetRef, restored["image"]).read_bytes() == b"original capture bytes"
+    if change == "index":
+        mounts.scan("captures")
+        indexed = cast(dict[str, object], spec.decode(payload))["image"]
+        assert isinstance(indexed, AssetRef)
+        assert indexed.digest == digest_bytes(b"original capture bytes")
+        assert indexed.read_bytes() == b"original capture bytes"
+    else:
+        if change == "revoke":
+            mounts.remove("captures")
+        else:
+            capture.write_bytes(b"replacement bytes")
+        with pytest.raises(AssetError, match="unavailable, revoked or changed"):
+            spec.decode(payload)
+
+
+VIEWPORT_CAPTURE = b"\x01\xff\x03\x00asymmetric capture"
+VIEWPORT_CAMERA = {"position": {"x": 3, "y": -7, "z": 2}, "zoom": 1.25}
+
+
+def register_viewport_fixture_types(registry: TypeRegistry) -> None:
+    register_asset_type(registry, resolver_from_env())
+    register_load3d_type(registry)
+
+
+class ViewportCaptureProducer(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="viewport-source.make",
+            outputs=(OutputSpec("viewport", TypeExpr.concrete(LOAD_3D_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls) -> Mapping[str, object]:
+        vault = AssetVault(Path(os.environ["DINKSTER_PACK_SCRATCH"]) / "produced-assets")
+        digest = digest_bytes(VIEWPORT_CAPTURE)
+        with vault.writer(digest) as writer:
+            writer.write(VIEWPORT_CAPTURE)
+            writer.commit()
+        return cls.outputs(
+            viewport={
+                "image": AssetRef(digest, "frame.png", len(VIEWPORT_CAPTURE), resolver=vault),
+                "camera_info": VIEWPORT_CAMERA,
+                "recording": "",
+            }
+        )
+
+
+class ViewportCaptureConsumer(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="viewport-consumer.read",
+            inputs=(InputSpec("viewport", TypeExpr.concrete(LOAD_3D_TYPE)),),
+            outputs=(OutputSpec("viewport", TypeExpr.concrete(LOAD_3D_TYPE)),),
+        )
+
+    @classmethod
+    def execute(cls, *, viewport: dict[str, object]) -> Mapping[str, object]:
+        assert cast(AssetRef, viewport["image"]).read_bytes() == VIEWPORT_CAPTURE
+        assert viewport["camera_info"] == VIEWPORT_CAMERA
+        assert viewport["recording"] == ""
+        return cls.outputs(viewport=viewport)
+
+
+def test_viewport_capture_survives_workers_and_persistent_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vault = AssetVault(tmp_path / "engine-vault")
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(vault.root))
+    manifests = []
+    for name, node in (
+        ("source", "ViewportCaptureProducer"),
+        ("consumer", "ViewportCaptureConsumer"),
+    ):
+        module = f"viewport_{name}"
+        (tmp_path / f"{module}.py").write_text(
+            f"from test_model3d_io import {node}, register_viewport_fixture_types\n"
+            f"NODES = ({node},)\n",
+            encoding="ascii",
+        )
+        manifest = tmp_path / f"{name}.toml"
+        manifest.write_text(
+            f'[pack]\nname="viewport-{name}"\npublisher="dinkster"\n'
+            f'namespaces=["viewport-{name}"]\n[pack.entry]\n'
+            f'nodes="{module}:NODES"\ntypes="{module}:register_viewport_fixture_types"\n',
+            encoding="ascii",
+        )
+        manifests.append(manifest)
+
+    async def scenario() -> None:
+        graph = Graph(
+            nodes={
+                "source": GraphNode("viewport-source.make"),
+                "consumer": GraphNode(
+                    "viewport-consumer.read", {"viewport": Link("source", "viewport")}
+                ),
+            }
+        )
+        for replay in (False, True):
+            registry = TypeRegistry()
+            register_core_types(registry)
+            register_asset_type(registry, vault)
+            register_load3d_type(registry)
+            composer = ServingComposer(
+                registry=registry,
+                cache_mode="layered",
+                cache_dir=tmp_path / "cache",
+                pack_scratch_root=tmp_path / "scratch",
+                worker_env={
+                    "DINKSTER_ACCELERATOR": "cpu",
+                    "PYTHONPATH": os.pathsep.join((str(tmp_path), str(Path(__file__).parent))),
+                },
+            )
+            try:
+                for manifest in manifests:
+                    await composer.add_pack(
+                        PackSpec(
+                            manifest=manifest,
+                            worker_group=manifest.stem,
+                            group_manifests=(manifest,),
+                        )
+                    )
+                result = await composer.composition.make_engine(lambda _event: None).run(
+                    graph, ["consumer"]
+                )
+                value = result.outputs["consumer"]["viewport"]
+                assert set(result.cached if replay else result.executed) == {"source", "consumer"}
+            finally:
+                await composer.close()
+            shutil.rmtree(tmp_path / "scratch")
+            restored = cast(dict[str, object], value.resolve())
+            capture = cast(AssetRef, restored["image"])
+            assert capture.read_bytes() == VIEWPORT_CAPTURE
+            assert restored["camera_info"] == VIEWPORT_CAMERA
+            assert vault.has(capture.digest)
+
+    asyncio.run(scenario())

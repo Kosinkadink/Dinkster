@@ -84,6 +84,7 @@ from .library import (
     LocalAssetLibrary,
     load_write_records,
 )
+from .load3d import register_load3d_type
 from .media import (
     MediaClassification,
     RasterImageFacts,
@@ -92,7 +93,6 @@ from .media import (
     classify_media_handle,
     raster_image_facts,
 )
-from .load3d import register_load3d_type
 from .model import AssetRef, AssetResolver, LocalAssetRef
 from .mounts import (
     MOUNT_MODES,
