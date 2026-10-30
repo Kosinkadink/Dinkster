@@ -634,6 +634,48 @@ def test_output_represents_wire_decode_rejects_unknown_fields_and_bad_shapes() -
         )
 
 
+@pytest.mark.parametrize("hidden", [False, True])
+def test_dynamic_combo_visibility_round_trips_without_changing_choice_contract(
+    hidden: bool,
+) -> None:
+    combo = DynamicComboSpec(
+        "codec",
+        (
+            DynamicComboOption("auto"),
+            DynamicComboOption("custom", (InputSpec("quality", TypeExpr.concrete("INT")),)),
+        ),
+        required=False,
+        hidden=hidden,
+    )
+    schema = NodeSchema("test.hidden-choice", combos=(combo,))
+    wire = schema_to_wire(schema)
+    entry = cast("list[dict[str, Any]]", wire["interface"])[0]
+    assert (entry.get("hidden") is True) is hidden
+    if not hidden:
+        assert "hidden" not in entry
+    assert "default" not in entry
+    assert entry["required"] is False
+    assert schema_from_wire(wire) == schema
+    effective = elaborate(schema_from_wire(wire), (), slot_variants={"codec": "custom"})
+    assert [item.id for item in effective.inputs] == ["codec.quality"]
+    assert effective.inputs[0].type == TypeExpr.concrete("INT")
+    assert elaborate(schema_from_wire(wire), ()).inputs == ()
+
+
+@pytest.mark.parametrize("hidden", [None, 0, 1, "true"])
+def test_dynamic_combo_visibility_rejects_nonboolean_flags(hidden: object) -> None:
+    with pytest.raises(ValueError, match="hidden must be a bool"):
+        DynamicComboSpec("codec", (DynamicComboOption("auto"),), hidden=hidden)  # type: ignore[arg-type]
+    wire = schema_to_wire(
+        NodeSchema(
+            "test.hidden-choice", combos=(DynamicComboSpec("codec", (DynamicComboOption("auto"),)),)
+        )
+    )
+    cast("list[dict[str, Any]]", wire["interface"])[0]["hidden"] = hidden
+    with pytest.raises(ValueError, match="dynamicCombo.hidden"):
+        schema_from_wire(wire)
+
+
 def test_mixed_input_order_survives_wire_and_elaboration() -> None:
     integer = TypeExpr.concrete("INT")
     schema = NodeSchema(
