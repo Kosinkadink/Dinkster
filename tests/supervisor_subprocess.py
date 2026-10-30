@@ -6,6 +6,7 @@ import faulthandler
 import json
 import os
 import runpy
+import shutil
 import subprocess
 import sys
 import threading
@@ -119,12 +120,19 @@ def _filesystem_progress(path: Path) -> Iterator[None]:
     finished = threading.Event()
 
     def audit(event: str, arguments: tuple[object, ...]) -> None:
-        if event not in {"os.link", "shutil.copyfile"}:
+        if event not in {"os.link", "shutil.copyfile", "shutil.copy2"}:
             return
         source, destination = str(arguments[0]), str(arguments[1])
         with lock:
             count = latest[event][0] if event in latest else 0
             latest[event] = (count + 1, time.monotonic() - started, source, destination)
+
+    copy2 = shutil.copy2
+
+    def observed_copy2(source, destination, *, follow_symlinks=True):
+        # Windows CopyFile2 bypasses shutil.copyfile and its audit event on CPython 3.12.
+        audit("shutil.copy2", (source, destination))
+        return copy2(source, destination, follow_symlinks=follow_symlinks)
 
     with _open_trace(path) as output:
 
@@ -149,11 +157,13 @@ def _filesystem_progress(path: Path) -> Iterator[None]:
                 output.flush()
 
         sys.addaudithook(audit)
+        shutil.copy2 = observed_copy2
         observer = threading.Thread(target=observe, daemon=True)
         observer.start()
         try:
             yield
         finally:
+            shutil.copy2 = copy2
             finished.set()
             observer.join()
 

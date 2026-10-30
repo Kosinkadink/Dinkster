@@ -25,6 +25,7 @@ def test_child_output_and_timeout_diagnostics(
         "    os.link(root / 'original', root / 'first-link')\n"
         "    os.link(root / 'original', root / 'second-link')\n"
         "    shutil.copy2(root / 'original', root / 'copied')\n"
+        "    shutil.copyfile(root / 'original', root / 'copied-file')\n"
         "    def pending_link(event, arguments):\n"
         "        if event == 'os.link':\n"
         "            threading.Event().wait(90)\n"
@@ -58,9 +59,11 @@ def test_child_output_and_timeout_diagnostics(
     assert operations["os.link"]["started"] == 3
     assert operations["os.link"]["source"] == str(tmp_path / "original")
     assert operations["os.link"]["destination"] == str(tmp_path / "pending-link")
-    assert operations["shutil.copyfile"]["started"] == 1
-    assert operations["shutil.copyfile"]["destination"] == str(tmp_path / "copied")
+    assert operations["shutil.copy2"]["started"] == 1
+    assert operations["shutil.copy2"]["destination"] == str(tmp_path / "copied")
+    assert operations["shutil.copyfile"]["destination"] == str(tmp_path / "copied-file")
     assert (tmp_path / "copied").read_text() == "filesystem diagnostic"
+    assert (tmp_path / "copied-file").read_text() == "filesystem diagnostic"
     assert not (tmp_path / "pending-link").exists()
 
 
