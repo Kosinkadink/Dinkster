@@ -58,9 +58,16 @@ def test_transform_splat_public_schema_and_production_claim() -> None:
     assert tomllib.loads(manifest.read_text())["pack"]["namespaces"].count("TransformSplat") == 1
 
 
-@pytest.mark.parametrize("members", [("splat0", "splat1"), ("splat10", "splat2")])
+@pytest.mark.parametrize(
+    ("members", "expected_order"),
+    [
+        (("splat0", "splat1"), ("splat0", "splat1")),
+        (("splat10", "splat2"), ("splat10", "splat2", "splat0", "splat1")),
+    ],
+)
 def test_merge_splat_required_initial_slots_and_optional_authored_tail(
     members: tuple[str, ...],
+    expected_order: tuple[str, ...],
 ) -> None:
     schema = schema_from_wire(schema_to_wire(MergeSplat.schema()))
     family = schema.input_families[0]
@@ -81,8 +88,7 @@ def test_merge_splat_required_initial_slots_and_optional_authored_tail(
     assert tomllib.loads(manifest.read_text())["pack"]["namespaces"].count("MergeSplat") == 1
     effective = elaborate(schema, tuple(f"splats.{member}" for member in members))
     assert [(port.id, port.required) for port in effective.inputs] == [
-        (f"splats.{member}", member in ("splat0", "splat1"))
-        for member in sorted({"splat0", "splat1", *members}, key=lambda name: int(name[5:]))
+        (f"splats.{member}", member in ("splat0", "splat1")) for member in expected_order
     ]
     source = NodeSchema(
         "test.source", outputs=(OutputSpec("splat", TypeExpr.concrete(SPLAT_TYPE)),)
