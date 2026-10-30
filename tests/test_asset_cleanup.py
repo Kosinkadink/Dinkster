@@ -322,6 +322,27 @@ def test_scratch_removal_refuses_readers_and_unsafe_trees_before_deleting(
     link.unlink()
     # A deletion interrupted before journal retirement is safe to retry.
     path.unlink()
+
+    async def clear(retained: bool) -> None:
+        store = LibraryStore(tmp_path / "library")
+        history = HistoryStore(tmp_path / "history")
+        try:
+            result = await inspect_cleanup(
+                vault, store, history, MemoryLRUCache(), scratch_root=scratch, collect=True
+            )
+            assert result["collectionEnabled"]
+            assert result["reclaimedFiles"] == (0 if retained else 2)
+            assert result["retainedFiles"] == int(retained)
+            durable = vault.resolve(digest)
+            if retained:
+                assert durable is not None and durable.read_bytes() == data
+            else:
+                assert durable is None
+        finally:
+            history.close()
+            store.close()
+
+    asyncio.run(clear(retained=True))
     unlink = Path.unlink
 
     def verify_owned_unlink(candidate: Path, missing_ok: bool = False) -> None:
@@ -338,6 +359,7 @@ def test_scratch_removal_refuses_readers_and_unsafe_trees_before_deleting(
     held = vault.resolve(digest)
     assert held is not None and held.read_bytes() == data
     assert recover_produced_publications(vault, scratch)["reclaimedFiles"] == 0
+    asyncio.run(clear(retained=False))
 
 
 def _crash_after_offering(channel: Connection, scratch: str) -> None:

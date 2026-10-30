@@ -392,6 +392,11 @@ def _inspect(
                 blocked.append("history_reference_state_unavailable")
             else:
                 roots.update(owners.enter_context(history.hold_asset_references()))
+            if scratch_root is not None:
+                for pack, root in _scratch_roots(scratch_root):
+                    state = owners.enter_context(_hold_scratch_job(scratch_root, pack, root))
+                    # Partial scratch removal must remain retryable until journal retirement.
+                    roots.update(digest for digest, _, offered in state.publications() if offered)
             references = owners.enter_context(store.hold_asset_references(sorted(roots)))
             retained_assets = len(references)
             try:

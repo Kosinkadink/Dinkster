@@ -290,7 +290,10 @@ an empty JSON object, with no query parameters. It currently returns HTTP409,
 request or individual complete owner manifest can bypass this global gate.
 
 The collector retains memory/disk, history and library reference barriers and
-their dependency closure through an exclusive vault claim and deletion. Its
+inactive scratch claims and their dependency closure through an exclusive vault
+claim and deletion. Offered scratch-journal identities remain roots until
+scratch removal retires their rows, so Clear cannot break an interrupted
+handoff's retry. Its
 frontend integration gate is disabled in source, not exposed as a request
 option. Behind that gate, only verified adoption rows are candidates, in original
 adoption order. A supplied byte target stops collection once canonical vault
