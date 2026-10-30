@@ -19,6 +19,7 @@ from dinkster_assets import AssetRef, AssetVault, LibraryStore, digest_bytes
 from dinkster_registry import Lockfile
 from dinkster_supervisor.environment_artifacts import acquire_sources, discover
 from dinkster_supervisor.environment_state import Journal, content_digest, writer_lock
+from supervisor_subprocess import run as run_with_diagnostics
 from test_environment_artifacts import _mirror, _release_sources
 from test_environment_generations import _assert_shared
 from test_environment_runtime import free_port, make_generation
@@ -28,19 +29,19 @@ from tests.fixtures.environments.build import executable_release as _executable_
 
 
 def _run(root: Path, *arguments: str) -> tuple[int, dict]:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "dinkster_supervisor.environment",
-            "--root",
-            str(root),
-            *arguments,
-            "--json",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30,
+    command = [
+        sys.executable,
+        "-m",
+        "dinkster_supervisor.environment",
+        "--root",
+        str(root),
+        *arguments,
+        "--json",
+    ]
+    result = (
+        run_with_diagnostics(command)
+        if "move" in arguments or ("doctor" in arguments and "--repair" in arguments)
+        else subprocess.run(command, capture_output=True, text=True, timeout=30)
     )
     assert result.stdout, result.stderr
     document = json.loads(result.stdout)
