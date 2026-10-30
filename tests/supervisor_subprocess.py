@@ -81,7 +81,7 @@ def _nested_diagnostics(directory: Path) -> str:
             f"state before cleanup={state}, returncode before cleanup={code}\n"
             f"Nested child stack before cleanup:\n"
             f"{saved or '(no nested child stack recorded)'}\n"
-            f"Nested filesystem audit starts before cleanup (not completions):\n"
+            f"Nested filesystem entry-point starts before cleanup (not completions):\n"
             f"{_read_progress(progress)}"
         )
     return "\n".join(rows)
@@ -129,10 +129,10 @@ def _filesystem_progress(path: Path) -> Iterator[None]:
 
     copy2 = shutil.copy2
 
-    def observed_copy2(source, destination, *, follow_symlinks=True):
+    def observed_copy2(src, dst, *, follow_symlinks=True):
         # Windows CopyFile2 bypasses shutil.copyfile and its audit event on CPython 3.12.
-        audit("shutil.copy2", (source, destination))
-        return copy2(source, destination, follow_symlinks=follow_symlinks)
+        audit("shutil.copy2", (src, dst))
+        return copy2(src, dst, follow_symlinks=follow_symlinks)
 
     with _open_trace(path) as output:
 
@@ -140,7 +140,7 @@ def _filesystem_progress(path: Path) -> Iterator[None]:
             while not finished.wait(5):
                 with lock:
                     snapshot = latest.copy()
-                # Audit events precede the OS call; these are starts, never completed work.
+                # Entry-point counts can overlap; neither their sum nor a start proves completed work.
                 row = {
                     "elapsed": time.monotonic() - started,
                     "operations": {
@@ -190,7 +190,7 @@ def run(command: list[str]) -> subprocess.CompletedProcess[str]:
                     f"Supervisor CLI child pid={process.pid}, "
                     f"returncode before cleanup={returncode}\n"
                     f"Child stack before cleanup:\n{stack or '(no child stack recorded)'}\n"
-                    f"Filesystem audit starts before cleanup (not completions):\n"
+                    f"Filesystem entry-point starts before cleanup (not completions):\n"
                     f"{_read_progress(progress)}\n"
                     f"{_nested_diagnostics(Path(directory))}"
                 )

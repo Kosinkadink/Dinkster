@@ -24,7 +24,7 @@ def test_child_output_and_timeout_diagnostics(
         "    (root / 'original').write_text('filesystem diagnostic')\n"
         "    os.link(root / 'original', root / 'first-link')\n"
         "    os.link(root / 'original', root / 'second-link')\n"
-        "    shutil.copy2(root / 'original', root / 'copied')\n"
+        "    assert shutil.copy2(src=root / 'original', dst=root / 'copied') == root / 'copied'\n"
         "    shutil.copyfile(root / 'original', root / 'copied-file')\n"
         "    def pending_link(event, arguments):\n"
         "        if event == 'os.link':\n"
